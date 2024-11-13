@@ -65,7 +65,7 @@ jobs:
       - name: Log into registry ${{ env.REGISTRY1 }}
         uses: docker/login-action@v3.3.0
         with:
-          registry: ${{ env.REGISTRY }}
+          registry: ${{ env.REGISTRY1 }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
