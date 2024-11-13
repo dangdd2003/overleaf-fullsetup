@@ -35,10 +35,10 @@ jobs:
           docker exec sharelatex apt update
           docker exec sharelatex apt upgrade -y
           docker exec sharelatex apt install inkscape python3-pygments -y
-          docker exec sharelatex bash -c echo "shell_escape = t" >> /usr/local/texlive/${{ env.TEXLIVE_YEAR }}/texmf.cnf
+          docker exec sharelatex bash -c 'echo "shell_escape = t" >> /usr/local/texlive/${{ env.TEXLIVE_YEAR }}/texmf.cnf'
           docker exec sharelatex mkdir -p /usr/local/lib/latexmk
-          docker exec sharelatex touch  /usr/local/lib/latexmk/latexmkrc
-          docker exec sharelatex echo "# Fix generating of glossaries
+          docker exec sharelatex touch /usr/local/lib/latexmk/latexmkrc
+          docker exec sharelatex bash -c 'echo "# Fix generating of glossaries
           # Source: https://github.com/overleaf/docker-image/issues/6#issuecomment-282931678
           add_cus_dep('glo', 'gls', 0, 'makeglo2gls');
           sub makeglo2gls {
@@ -48,7 +48,7 @@ jobs:
           add_cus_dep('acn', 'acr', 0, 'makeacn2acr');
           sub makeacn2acr {
               system("makeindex -s \"$_[0].ist\" -t \"$_[0].alg\" -o \"$_[0].acr\" \"$_[0].acn\"");
-          }" >> "/usr/local/lib/latexmk/latexmkrc"
+          }" >> "/usr/local/lib/latexmk/latexmkrc"'
           docker exec sharelatex tlmgr install scheme-full
 
       - name: Recheck created files

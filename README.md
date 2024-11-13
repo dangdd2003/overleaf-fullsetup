@@ -21,7 +21,8 @@ OVERLEAF_IMAGE_NAME=<registry>/<username>/sharelatex:latest-full-setup
 ...
 ```
 
-> [!NOTE] > `registry` is where to push the image (e.g. _docker.io_ or _ghcr.io_),
+> [!NOTE]
+> `registry` is where to push the image (e.g. _docker.io_ or _ghcr.io_),
 > `username` is username on the registry. For _docker.io_, omit `registry` is ok.
 
 For example:
