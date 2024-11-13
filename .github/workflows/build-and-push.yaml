@@ -54,7 +54,7 @@ jobs:
       - name: Recheck created files
         run: |
           docker exec sharelatex cat /usr/local/texlive/${{ env.TEXLIVE_YEAR }}/texmf.cnf
-          docker exec sharelatex cat /usr/local/lib/latexmk/lcatexmkrc
+          docker exec sharelatex cat /usr/local/lib/latexmk/latexmkrc
 
       - name: Commit new version
         run: docker commit sharelatex ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest-full-setup
