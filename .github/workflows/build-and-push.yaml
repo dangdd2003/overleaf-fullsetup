@@ -60,7 +60,7 @@ jobs:
       - name: Get current version
         run: |
           cat config/version
-          export $(cat config/version)
+          export VERSION=$(cat config/version)
           echo "Current overleaf version $VERSION"
 
       - name: Commit new version registry ${{ env.REGISTRY1 }}
