@@ -95,5 +95,3 @@ jobs:
         run: |
           docker push dangdoan2003/${{ env.IMAGE_NAME }}:latest
           docker push dangdoan2003/${{ env.IMAGE_NAME }}:$VERSION
-
-  build-image-and-push-full-version:
