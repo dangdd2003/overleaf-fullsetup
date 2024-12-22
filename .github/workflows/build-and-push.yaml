@@ -68,9 +68,9 @@ jobs:
           cache-to: type=gha,mode=max
           tag: |
             ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.IMAGE_NAME }}:latest
-            ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.IMAGE_NAME }}:${{ steps.build_env.output.date }}
+            ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.IMAGE_NAME }}:${{ steps.build_env.outputs.date }}
             ${{ vars.DOCKER_USERNAME }}/${{env.BASE_IMAGE_NAME }}:latest
-            ${{ vars.DOCKER_USERNAME }}/${{env.BASE_IMAGE_NAME }}:${{ steps.build_env.output.date }}
+            ${{ vars.DOCKER_USERNAME }}/${{env.BASE_IMAGE_NAME }}:${{ steps.build_env.outputs.date }}
           push: true
 
       - name: Build full
@@ -80,7 +80,7 @@ jobs:
           file: ./server-ce/Dockerfile
           build-args: |
             BUILDKIT_INLINE_CACHE=1
-            MONOREPO_REVISION=${{ steps.build_env.output.MONOREPO_REVISION }}
+            MONOREPO_REVISION=${{ steps.build_env.outputs.MONOREPO_REVISION }}
           cache-from: |
             ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.FULL_IMAGE_NAME }}:latest
             ${{ vars.DOCKER_USERNAME }}/${{ env.FULL_IMAGE_NAME }}:latest
@@ -88,7 +88,7 @@ jobs:
           cache-to: type=gha,mode=max
           tag: |
             ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.FULL_IMAGE_NAME }}:latest
-            ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.FULLIMAGE_NAME }}:${{ steps.build_env.output.date }}
+            ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.FULLIMAGE_NAME }}:${{ steps.build_env.outputs.date }}
             ${{ vars.DOCKER_USERNAME }}/${{ env.FULL_IMAGE_NAME }}:latest
-            ${{ vars.DOCKER_USERNAME }}/${{ env.FULL_IMAGE_NAME }}:${{ steps.build_env.output.date }}
+            ${{ vars.DOCKER_USERNAME }}/${{ env.FULL_IMAGE_NAME }}:${{ steps.build_env.outputs.date }}
           push: true
