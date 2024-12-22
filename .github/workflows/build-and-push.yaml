@@ -26,12 +26,16 @@ jobs:
           repository: overleaf/overleaf
 
       - name: Get Dockerfile
-        working-directory: ./server-ce
-        run: wget "https://script.dangdd.me/Dockerfile" -O Dockerfile
+        run: |
+          git clone https://${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.actor }}/overleaf-fullsetup.git
+          cp overleaf-fullsetup/Dockerfile server-ce/Dockerfile
+          rm -rf overleaf-fullsetup
 
-      - name: Get current build time
-        id: date
-        run: echo "date=$(TZ=Asia/Ho_Chi_Minh date +"%m-%d-%Y")" >> $GITHUB_OUTPUT
+      - name: Get build env
+        id: build_env
+        run: |
+          echo "date=$(TZ=Asia/Ho_Chi_Minh date +"%m-%d-%Y")" >> $GITHUB_OUTPUT
+          echo "MONOREPO_REVISION=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
 
       - name: Docker Setup Buildx
         uses: docker/setup-buildx-action@v3.8.0
@@ -76,6 +80,7 @@ jobs:
           file: ./server-ce/Dockerfile
           build-args: |
             BUILDKIT_INLINE_CACHE=1
+            MONOREPO_REVISION=${{ steps.date.output.MONOREPO_REVISION }}
           cache-from: |
             ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.FULL_IMAGE_NAME }}:latest
             ${{ vars.DOCKER_USERNAME }}/${{ env.FULL_IMAGE_NAME }}:latest
