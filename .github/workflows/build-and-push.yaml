@@ -41,7 +41,7 @@ jobs:
           file: ./server-ce/Dockerfile-base
           build-args: |
             BUILDKIT_INLINE_CACHE=1
-            TEXLIVE_MIRROR=$${{ env.TEXLIVE_MIRROR }}
+            TEXLIVE_MIRROR=${{ env.TEXLIVE_MIRROR }}
           cache-from: |
             sharelatex/sharelatex-base
             sharelatex/sharelatex-base:$(git rev-parse --abbrev-ref HEAD)
