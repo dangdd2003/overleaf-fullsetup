@@ -41,7 +41,7 @@ jobs:
       - name: Check build env
         run: |
           echo "Current build date: ${{ steps.build_env.outputs.date }}"
-          echo "Current repo commit hash: ${{ steps.build_env.outputs.MONOREPO_REVISION }}
+          echo "Current repo commit hash: ${{ steps.build_env.outputs.MONOREPO_REVISION }}"
 
       - name: Docker Setup Buildx
         uses: docker/setup-buildx-action@v3.8.0
