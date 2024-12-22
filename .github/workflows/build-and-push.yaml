@@ -10,6 +10,7 @@ env:
   IMAGE_NAME: sharelatex
   # Tex live year version
   TEXLIVE_YEAR: 2024
+  TEXLIVE_MIRROR: https://mirrors.mit.edu/CTAN/systems/texlive/tlnet
 
 jobs:
   build-image-and-push-full-version:
@@ -24,68 +25,38 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4.2.2
         with:
-          repository: "overleaf/toolkit"
+          repository: overleaf/overleaf
 
-      - name: Start sharelatex images
-        run: |
-          ./bin/init
-          ./bin/up -d
+      - name: Get Dockerfile
+        working-directory: ./server-ce
+        run: wget "https://script.dangdd.me/Dockerfile"
 
-      - name: Setup sharelatex images as production ready overleaf server
-        run: |
-          docker exec sharelatex apt update
-          docker exec sharelatex apt upgrade -y
-          docker exec sharelatex apt install inkscape python3-pygments -y
-          docker exec sharelatex bash -c 'echo "shell_escape = t" >> /usr/local/texlive/${{ env.TEXLIVE_YEAR }}/texmf.cnf'
-          docker exec sharelatex mkdir -p /usr/local/lib/latexmk
-          docker exec sharelatex touch /usr/local/lib/latexmk/latexmkrc
-          docker exec sharelatex bash -c 'echo "# Fix generating of glossaries
-          # Source: https://github.com/overleaf/docker-image/issues/6#issuecomment-282931678
-          add_cus_dep('glo', 'gls', 0, 'makeglo2gls');
-          sub makeglo2gls {
-              system("makeindex -s '$_[0]'.ist -t '$_[0]'.glg -o '$_[0]'.gls '$_[0]'.glo");
-          }
+      - name: Docker Setup Buildx
+        uses: docker/setup-buildx-action@v3.8.0
 
-          add_cus_dep('acn', 'acr', 0, 'makeacn2acr');
-          sub makeacn2acr {
-              system("makeindex -s \"$_[0].ist\" -t \"$_[0].alg\" -o \"$_[0].acr\" \"$_[0].acn\"");
-          }" >> "/usr/local/lib/latexmk/latexmkrc"'
-          docker exec sharelatex tlmgr install scheme-full
-
-      - name: Recheck created files
-        run: |
-          docker exec sharelatex cat /usr/local/texlive/${{ env.TEXLIVE_YEAR }}/texmf.cnf
-          docker exec sharelatex cat /usr/local/lib/latexmk/latexmkrc
-
-      - name: Commit new version registry ${{ env.REGISTRY1 }}
-        run: |
-          docker commit sharelatex ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.IMAGE_NAME }}:latest
-          docker commit sharelatex ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.IMAGE_NAME }}:$(cat config/version)
-
-      - name: Commit new version registry ${{ env.REGISTRY2 }}
-        run: |
-          docker commit sharelatex dangdoan2003/${{ env.IMAGE_NAME }}:latest
-          docker commit sharelatex dangdoan2003/${{ env.IMAGE_NAME }}:$(cat config/version)
-
-      - name: Log into registry ${{ env.REGISTRY1 }}
-        uses: docker/login-action@v3.3.0
+      - name: Build Base image
+        uses: docker/build-push-action@v6
         with:
-          registry: ${{ env.REGISTRY1 }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          context: .
+          file: ./server-ce/Dockerfile-base
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
+            TEXLIVE_MIRROR=$${{ env.TEXLIVE_MIRROR }}
+          cache-from: |
+            sharelatex/sharelatex-base
+            sharelatex/sharelatex-base:$(git rev-parse --abbrev-ref HEAD)
+            type=gha
+          cache-to: type=gha,mode=max
 
-      - name: Push image to registry ${{ env.REGISTRY1 }}
-        run: |
-          docker push ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.IMAGE_NAME }}:latest
-          docker push ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.IMAGE_NAME }}:$(cat config/version)
-
-      - name: Log into registry ${{ env.REGISTRY2 }}
-        uses: docker/login-action@v3.3.0
+      - name: Build full
+        uses: docker/build-push-action@v6
         with:
-          username: dangdoan2003
-          password: ${{ secrets.DOCKER_TOKEN }}
-
-      - name: Push image to registry ${{ env.REGISTRY2 }}
-        run: |
-          docker push dangdoan2003/${{ env.IMAGE_NAME }}:latest
-          docker push dangdoan2003/${{ env.IMAGE_NAME }}:$(cat config/version)
+          context: .
+          file: ./server-ce/Dockerfile
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
+          cache-from: |
+            sharelatex/sharelatex
+            sharelatex/sharelatex:$(git rev-parse --abbrev-ref HEAD)
+            type=gha
+          cache-to: type=gha,mode=max

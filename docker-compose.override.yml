@@ -1,0 +1,4 @@
+---
+services:
+  sharelatex:
+    image: dangdoan2003/sharelatex:latest-full-setup

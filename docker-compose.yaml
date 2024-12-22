@@ -1,0 +1,75 @@
+---
+services:
+  overleaf:
+    image: dangdoan2003/sharelatex:latest
+    container_name: editor
+    env_file: 
+      - './variable.env'
+    volumes:
+      - '$PWD/data/overleaf:/var/lib/overleaf'
+      - '$$PWD/data/overleaf/log:/var/log/overleaf'
+      - '/etc/localtime:/etc/localtime:ro'
+    stop_grace_period: 60s
+    # ports:
+    #   - '127.0.0.1:80:80'
+    expose:
+      - 80
+    depends_on:
+      mongo:
+        condition: service_healthy
+        redis:
+          condition: service_started
+      links:
+        - mongo
+        - redis
+
+  mongo:
+    restart: always
+    image: mongo:latest
+    command: mongosh --replSet overleaf
+    container_name: mongo
+    volumes:
+      - '/etc/localtime:/etc/localtime:ro'
+      - '$PWD/data/mongo:/data/db'
+    expose:
+      - 27017
+    healthcheck:
+      test: echo 'db.stats().ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 10s
+      retries: 5
+
+      # Initialize replica set, this container auto stop after running command
+    mongoinit:
+      restart: "no"
+    container_name: mongodb_init
+    image: mongo:latest
+    depends_on:
+      - mongo
+    command: 'mongosh --host mongo:27017 --eval "rs.initiate({ _id: "overleaf", members: [ { _id: 0, host: "mongo:27017" } ] })"'
+
+    redis:
+      restart: always
+    image: redis:latest
+    volumes:
+      - '/etc/localtime:/etc/localtime:ro'
+      - '$PWD/data/redis:/data'
+    container_name: redis
+    command: redis-server
+    expose:
+      - 6379
+
+    # Using TLS
+    nginx:
+      image: nginx:latest
+    ports:
+      - '443:443'
+      - '80:80'
+    volumes:
+      - '/etc/localtime:/etc/localtime:ro'
+      - '/etc/letsencrypt:/etc/letsencrypt:ro'
+      - '$PWD/nginx.conf:/etc/nginx/nginx.conf:ro'
+    restart: always
+    container_name: nginx
+    depends_on:
+      - overleaf
