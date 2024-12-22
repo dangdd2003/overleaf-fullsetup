@@ -68,13 +68,13 @@ jobs:
             BUILDKIT_INLINE_CACHE=1
             TEXLIVE_MIRROR=${{ vars.TEXLIVE_MIRROR }}
           cache-from: |
-            ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.BASE_IMAGE_NAME }}:latest
             ${{ vars.DOCKER_USERNAME }}/${{env.BASE_IMAGE_NAME }}:latest
             type=gha
           cache-to: type=gha,mode=max
           tags: |
-            ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.IMAGE_NAME }}:latest
-            ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.IMAGE_NAME }}:${{ steps.build_env.outputs.date }}
+            ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.BASE_IMAGE_NAME }}:latest
+            ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.BASE_IMAGE_NAME }}:${{ steps.build_env.outputs.date }}
             ${{ vars.DOCKER_USERNAME }}/${{env.BASE_IMAGE_NAME }}:latest
             ${{ vars.DOCKER_USERNAME }}/${{env.BASE_IMAGE_NAME }}:${{ steps.build_env.outputs.date }}
           push: true
@@ -87,7 +87,7 @@ jobs:
           build-args: |
             BUILDKIT_INLINE_CACHE=1
             MONOREPO_REVISION=${{ steps.build_env.outputs.MONOREPO_REVISION }}
-            OVERLEAF_BASE_TAG=${{ vars.DOCKER_USERNAME }}/${{ env.BASE_IMAGE_NAME }}:latest
+            OVERLEAF_BASE_TAG=${{ vars.DOCKER_USERNAME }}/${{ env.FULL_IMAGE_NAME }}:latest
           cache-from: |
             ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.FULL_IMAGE_NAME }}:latest
             ${{ vars.DOCKER_USERNAME }}/${{ env.FULL_IMAGE_NAME }}:latest
