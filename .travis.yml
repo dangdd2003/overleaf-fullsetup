@@ -23,16 +23,10 @@ install:
 
 jobs:
   include:
-    - stage: Prepare build environment
+    - stage: Build full image
       script:
         - git clone https://github.com/overleaf/overleaf
         - cd overleaf/server-ce
         - wget https://script.dangdd.me/Dockerfile
-
-    - stage: Build base image
-      script:
         - make build-base
-
-    - stage: Build full image
-      script:
         - make build-community
