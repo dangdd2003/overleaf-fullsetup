@@ -72,7 +72,7 @@ jobs:
             ${{ vars.DOCKER_USERNAME }}/${{env.BASE_IMAGE_NAME }}:latest
             type=gha
           cache-to: type=gha,mode=max
-          tag: |
+          tags: |
             ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.IMAGE_NAME }}:latest
             ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.IMAGE_NAME }}:${{ steps.build_env.outputs.date }}
             ${{ vars.DOCKER_USERNAME }}/${{env.BASE_IMAGE_NAME }}:latest
@@ -93,7 +93,7 @@ jobs:
             ${{ vars.DOCKER_USERNAME }}/${{ env.FULL_IMAGE_NAME }}:latest
             type=gha
           cache-to: type=gha,mode=max
-          tag: |
+          tags: |
             ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.FULL_IMAGE_NAME }}:latest
             ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.FULLIMAGE_NAME }}:${{ steps.build_env.outputs.date }}
             ${{ vars.DOCKER_USERNAME }}/${{ env.FULL_IMAGE_NAME }}:latest
