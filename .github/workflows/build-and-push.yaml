@@ -6,11 +6,9 @@ env:
   # Defined registries
   REGISTRY1: ghcr.io
   REGISTRY2: docker.io
-  # github.repository as <account>/<repo>
-  IMAGE_NAME: sharelatex
-  # Tex live year version
-  TEXLIVE_YEAR: 2024
-  TEXLIVE_MIRROR: https://mirrors.mit.edu/CTAN/systems/texlive/tlnet
+  # Image name
+  BASE_IMAGE_NAME: sharelatex-base
+  FULL_IMAGE_NAME: sharelatex
 
 jobs:
   build-image-and-push-full-version:
@@ -29,24 +27,43 @@ jobs:
 
       - name: Get Dockerfile
         working-directory: ./server-ce
-        run: wget "https://script.dangdd.me/Dockerfile"
+        run: wget "https://script.dangdd.me/Dockerfile" -O Dockerfile
 
       - name: Docker Setup Buildx
         uses: docker/setup-buildx-action@v3.8.0
 
-      - name: Build Base image
+      - name: Docker login registry ${{ env.REGISTRY1 }}
+        uses: docker/login-action@v3.3.0
+        with:
+          registry: {{ env.REGISTRY1 }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker login registry ${{ env.REGISTRY2 }}
+        uses: docker/login-action@v3.3.0
+        with:
+          username: ${{ vars.DOCKER_USERNAME}}
+          password: ${{ secrets.DOCKER_TOKEN }}
+
+      - name: Build base image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./server-ce/Dockerfile-base
           build-args: |
             BUILDKIT_INLINE_CACHE=1
-            TEXLIVE_MIRROR=${{ env.TEXLIVE_MIRROR }}
+            TEXLIVE_MIRROR=${{ vars.TEXLIVE_MIRROR }}
           cache-from: |
-            sharelatex/sharelatex-base
-            sharelatex/sharelatex-base:$(git rev-parse --abbrev-ref HEAD)
+            ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.IMAGE_NAME }}:latest
+            ${{ vars.DOCKER_USERNAME }}/${{env.BASE_IMAGE_NAME }}:latest
             type=gha
           cache-to: type=gha,mode=max
+          tag: |
+            ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.IMAGE_NAME }}:$(date +"%m-%d-%Y")
+            ${{ vars.DOCKER_USERNAME }}/${{env.BASE_IMAGE_NAME }}:latest
+            ${{ vars.DOCKER_USERNAME }}/${{env.BASE_IMAGE_NAME }}:$(date +"%m-%d-%Y")
+          push: true
 
       - name: Build full
         uses: docker/build-push-action@v6
@@ -56,7 +73,13 @@ jobs:
           build-args: |
             BUILDKIT_INLINE_CACHE=1
           cache-from: |
-            sharelatex/sharelatex
-            sharelatex/sharelatex:$(git rev-parse --abbrev-ref HEAD)
+            ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.FULL_IMAGE_NAME }}:latest
+            ${{ vars.DOCKER_USERNAME }}/${{ env.FULL_IMAGE_NAME }}:latest
             type=gha
           cache-to: type=gha,mode=max
+          tag: |
+            ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.FULL_IMAGE_NAME }}:latest
+            ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.FULLIMAGE_NAME }}:$(date +"%m-%d-%Y")
+            ${{ vars.DOCKER_USERNAME }}/${{ env.FULL_IMAGE_NAME }}:latest
+            ${{ vars.DOCKER_USERNAME }}/${{ env.FULL_IMAGE_NAME }}:$(date +"%m-%d-%Y")
+          push: true

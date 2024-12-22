@@ -4,6 +4,12 @@ dist: jammy
 services:
   - docker
 
+env:
+  global:
+    - TZ: "Asia/Ho_Chi_Minh"
+    - TEXLIVE_MIRROR: "https://mirrors.mit.edu/CTAN/systems/texlive/tlnet"
+    - BASE_IMAGE: dangdoan2003/sharelatex-base
+    - FULL_IMAGE: dangdoan2003/sharelatex
   # update docker
 before_install:
   - for pkg in docker.io docker-doc docker-compose docker-compose-v2 podman-docker containerd runc; do sudo apt-get remove $pkg; done
@@ -18,7 +24,7 @@ before_install:
   # install newest docker version
 install:
   - sudo apt-get install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-  - sudo systemctl enable docker
+  - sudo systemctl start docker
   - docker version
 
 jobs:
@@ -27,6 +33,11 @@ jobs:
       script:
         - git clone https://github.com/overleaf/overleaf
         - cd overleaf/server-ce
-        - wget https://script.dangdd.me/Dockerfile
-        - make build-base
-        - make build-community
+        - wget https://script.dangdd.me/Dockerfile -O Dockerfile
+        - cp .dockerignore ../ 
+        - docker build --build-arg BUILDKIT_INLINE_CACHE=1 --build-arg TEXLIVE_MIRROR=$TEXLIVE_MIRROR --file Dockerfile-base --pull --cache-from $BASE_IMAGE:latest --tag $BASE_IMAGE:latest --tag $BASE_IMAGE:$(date +"%m-%d-%Y") ../
+        - docker build --build-arg BUILDKIT_INLINE_CACHE=1 --build-arg MONOREPO_REVISION=$(git rev-parse HEAD) --file Dockerfile --pull --cache-from $FULL_IMAGE:latest --tag $FULL_IMAGE:latest --tag $FULL_IMAGE:$(date +"%m-%d-%Y") ../
+        - docker push $BASE_IMAGE:latest
+        - docker push $BASE_IMAGE:$(date +"%m-%d-%Y")
+        - docker push $FULL_IMAGE:latest
+        - docker push $FULL_IMAGE:$(date +"%m-%d-%Y")
