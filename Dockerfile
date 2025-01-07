@@ -113,7 +113,7 @@ ENV LOG_LEVEL="info"
 
 # Fully set up image as production ready
 RUN apt update && apt upgrade -y && \
-    apt install inkscape python3-pygments -y
+    apt install fontconfig inkscape pandoc python3-pygments -y
 
 RUN echo "shell_escape = t" >> /usr/local/texlive/2024/texmf.cnf && \
     mkdir -p /usr/local/lib/latexmk && \
