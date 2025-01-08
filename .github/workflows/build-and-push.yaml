@@ -65,7 +65,6 @@ jobs:
           context: .
           file: ./server-ce/Dockerfile-base
           build-args: |
-            BUILDKIT_INLINE_CACHE=1
             TEXLIVE_MIRROR=${{ vars.TEXLIVE_MIRROR }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -82,7 +81,6 @@ jobs:
           context: .
           file: ./server-ce/Dockerfile
           build-args: |
-            BUILDKIT_INLINE_CACHE=1
             MONOREPO_REVISION=${{ steps.build_env.outputs.MONOREPO_REVISION }}
             OVERLEAF_BASE_TAG=${{ vars.DOCKER_USERNAME }}/${{ env.FULL_IMAGE_NAME }}:latest
           cache-from: type=gha
