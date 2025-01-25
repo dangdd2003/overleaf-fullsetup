@@ -17,11 +17,11 @@ services:
     depends_on:
       mongo:
         condition: service_healthy
-        redis:
-          condition: service_started
-      links:
-        - mongo
-        - redis
+      redis:
+        condition: service_started
+    links:
+      - mongo
+      - redis
 
   mongo:
     restart: always
@@ -40,16 +40,16 @@ services:
       retries: 5
 
       # Initialize replica set, this container auto stop after running command
-    mongoinit:
-      restart: "no"
+  mongoinit:
+    restart: "no"
     container_name: mongodb_init
     image: mongo:latest
     depends_on:
       - mongo
     command: 'mongosh --host mongo:27017 --eval "rs.initiate({ _id: "overleaf", members: [ { _id: 0, host: "mongo:27017" } ] })"'
 
-    redis:
-      restart: always
+  redis:
+    restart: always
     image: redis:latest
     volumes:
       - '/etc/localtime:/etc/localtime:ro'

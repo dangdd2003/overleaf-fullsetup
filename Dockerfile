@@ -2,7 +2,7 @@
 # Overleaf Community Edition (overleaf/overleaf)
 # ---------------------------------------------
 
-ARG OVERLEAF_BASE_TAG=sharelatex/sharelatex-base:latest
+ARG OVERLEAF_BASE_TAG=dangdoan2003/sharelatex-base:latest
 FROM $OVERLEAF_BASE_TAG
 
 WORKDIR /overleaf
@@ -22,11 +22,11 @@ ADD patches/ /overleaf/patches
 # Install npm dependencies and build webpack assets
 # ------------------------
 RUN --mount=type=cache,target=/root/.cache \
-    --mount=type=cache,target=/root/.npm \
-    --mount=type=cache,target=/overleaf/services/web/node_modules/.cache,id=server-ce-webpack-cache \
-    --mount=type=tmpfs,target=/tmp true \
-&&  node genScript install | bash \
-&&  node genScript compile | bash
+  --mount=type=cache,target=/root/.npm \
+  --mount=type=cache,target=/overleaf/services/web/node_modules/.cache,id=server-ce-webpack-cache \
+  --mount=type=tmpfs,target=/tmp true \
+  &&  node genScript install | bash \
+  &&  node genScript compile | bash
 
 # Copy runit service startup scripts to its location
 # --------------------------------------------------
@@ -113,22 +113,22 @@ ENV LOG_LEVEL="info"
 
 # Fully set up image as production ready
 RUN apt update && apt upgrade -y && \
-    apt install fontconfig inkscape pandoc python3-pygments -y && \
-    echo "shell_escape = t" >> /usr/local/texlive/2024/texmf.cnf && \
-    mkdir -p /usr/local/lib/latexmk && \
-    touch /usr/local/lib/latexmk/latexmkrc && \
-    echo '# Fix generating of glossaries\n\
-    # Source: https://github.com/overleaf/docker-image/issues/6#issuecomment-282931678\n\
-    add_cus_dep('glo', 'gls', 0, 'makeglo2gls');\n\
-    sub makeglo2gls {\n\
-        system("makeindex -s '$_[0]'.ist -t '$_[0]'.glg -o '$_[0]'.gls '$_[0]'.glo");\n\
-    }\n\
-    \n\
-    add_cus_dep('acn', 'acr', 0, 'makeacn2acr');\n\
-    sub makeacn2acr {\n\
-        system("makeindex -s \"$_[0].ist\" -t \"$_[0].alg\" -o \"$_[0].acr\" \"$_[0].acn\"");\n\
-    }' >> /usr/local/lib/latexmk/latexmkrc && \
-    tlmgr install scheme-full
+  apt install fontconfig inkscape pandoc python3-pygments -y && \
+  echo "shell_escape = t" >> $(find /usr/local/texlive/ -type -d "20*")/texmf.cnf && \
+  mkdir -p /usr/local/lib/latexmk && \
+  touch /usr/local/lib/latexmk/latexmkrc && \
+  echo '# Fix generating of glossaries\n\
+  # Source: https://github.com/overleaf/docker-image/issues/6#issuecomment-282931678\n\
+  add_cus_dep('glo', 'gls', 0, 'makeglo2gls');\n\
+  sub makeglo2gls {\n\
+  system("makeindex -s '$_[0]'.ist -t '$_[0]'.glg -o '$_[0]'.gls '$_[0]'.glo");\n\
+  }\n\
+  \n\
+  add_cus_dep('acn', 'acr', 0, 'makeacn2acr');\n\
+  sub makeacn2acr {\n\
+  system("makeindex -s \"$_[0].ist\" -t \"$_[0].alg\" -o \"$_[0].acr\" \"$_[0].acn\"");\n\
+  }' >> /usr/local/lib/latexmk/latexmkrc && \
+  tlmgr install scheme-full
 
 EXPOSE 80
 

@@ -37,17 +37,17 @@ jobs:
         - cp overleaf-fullsetup/Dockerfile overleaf/server-ce/Dockerfile
         - rm -rf overleaf-fullsetup
         - cd overleaf
-        - docker build --build-arg BUILDKIT_INLINE_CACHE=1 --build-arg TEXLIVE_MIRROR=$TEXLIVE_MIRROR --file ./server-ce/Dockerfile-base --pull --cache-from $DOCKER_USERNAME/$BASE_IMAGE:latest --tag $DOCKER_USERNAME/$BASE_IMAGE:latest --tag $DOCKER_USERNAME/$BASE_IMAGE:$(date +"%m-%d-%Y") --tag $GHCR/$GITHUB_USERNAME/$BASE_IMAGE:latest --tag $GHCR/$GITHUB_USERNAME/$BASE_IMAGE:$(date +"%m-%d-%Y") .
-        - docker build --build-arg BUILDKIT_INLINE_CACHE=1 --build-arg MONOREPO_REVISION=$(git rev-parse HEAD) --build-arg OVERLEAF_BASE_TAG=$DOCKER_USERNAME/$BASE_IMAGE:latest --progress=plain --file ./server-ce/Dockerfile --pull --cache-from $DOCKER_USERNAME/$FULL_IMAGE:latest --tag $DOCKER_USERNAME/$FULL_IMAGE:latest --tag $DOCKER_USERNAME/$FULL_IMAGE:$(date +"%m-%d-%Y") --tag $GHCR/$GITHUB_USERNAME/$FULL_IMAGE:latest --tag $GHCR/$GITHUB_USERNAME/$FULL_IMAGE:$(date +"%m-%d-%Y") .
+        - docker build --build-arg BUILDKIT_INLINE_CACHE=1 --build-arg TEXLIVE_MIRROR=$TEXLIVE_MIRROR --file ./server-ce/Dockerfile-base --pull --cache-from $DOCKER_USERNAME/$BASE_IMAGE:latest --tag $DOCKER_USERNAME/$BASE_IMAGE:latest --tag $DOCKER_USERNAME/$BASE_IMAGE:$(date +"%Y-%m-%d") --tag $GHCR/$GITHUB_USERNAME/$BASE_IMAGE:latest --tag $GHCR/$GITHUB_USERNAME/$BASE_IMAGE:$(date +"%Y-%m-%d") .
+        - docker build --build-arg BUILDKIT_INLINE_CACHE=1 --build-arg MONOREPO_REVISION=$(git rev-parse HEAD) --build-arg OVERLEAF_BASE_TAG=$DOCKER_USERNAME/$BASE_IMAGE:latest --progress=plain --file ./server-ce/Dockerfile --pull --cache-from $DOCKER_USERNAME/$FULL_IMAGE:latest --tag $DOCKER_USERNAME/$FULL_IMAGE:latest --tag $DOCKER_USERNAME/$FULL_IMAGE:$(date +"%Y-%m-%d") --tag $GHCR/$GITHUB_USERNAME/$FULL_IMAGE:latest --tag $GHCR/$GITHUB_USERNAME/$FULL_IMAGE:$(date +"%Y-%m-%d") .
         - echo "$DOCKER_TOKEN" | docker login -u $DOCKER_USERNAME --password-stdin
         - echo "$GITHUB_TOKEN" | docker login $GHCR -u $GITHUB_USERNAME --password-stdin
         - docker push $DOCKER_USERNAME/$BASE_IMAGE:latest
-        - docker push $DOCKER_USERNAME/$BASE_IMAGE:$(date +"%m-%d-%Y")
+        - docker push $DOCKER_USERNAME/$BASE_IMAGE:$(date +"%Y-%m-%d")
         - docker push $DOCKER_USERNAME/$FULL_IMAGE:latest
-        - docker push $DOCKER_USERNAME/$FULL_IMAGE:$(date +"%m-%d-%Y")
+        - docker push $DOCKER_USERNAME/$FULL_IMAGE:$(date +"%Y-%m-%d")
         - docker push $GHCR/$GITHUB_USERNAME/$BASE_IMAGE:latest
-        - docker push $GHCR/$GITHUB_USERNAME/$BASE_IMAGE:$(date +"%m-%d-%Y")
+        - docker push $GHCR/$GITHUB_USERNAME/$BASE_IMAGE:$(date +"%Y-%m-%d")
         - docker push $GHCR/$GITHUB_USERNAME/$FULL_IMAGE:latest
-        - docker push $GHCR/$GITHUB_USERNAME/$FULL_IMAGE:$(date +"%m-%d-%Y")
+        - docker push $GHCR/$GITHUB_USERNAME/$FULL_IMAGE:$(date +"%Y-%m-%d")
         - docker logout
         - docker logout $GHCR

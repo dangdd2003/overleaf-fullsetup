@@ -34,7 +34,7 @@ jobs:
       - name: Set build env
         id: build_env
         run: |
-          echo "date=$(TZ=Asia/Ho_Chi_Minh date +"%m-%d-%Y")" >> "$GITHUB_OUTPUT"
+          echo "date=$(TZ=Asia/Ho_Chi_Minh date +"%Y-%m-%d")" >> "$GITHUB_OUTPUT"
           echo "MONOREPO_REVISION=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
         shell: bash
 

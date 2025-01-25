@@ -1,4 +1,8 @@
 ---
 services:
   sharelatex:
-    image: dangdoan2003/sharelatex:latest-full-setup
+    image: dangdoan2003/sharelatex:latest
+  mongo:
+    image: mongo:latest
+  redis:
+    image: mongo:latest
