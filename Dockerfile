@@ -114,7 +114,7 @@ ENV LOG_LEVEL="info"
 # Fully set up image as production ready
 RUN apt update && apt upgrade -y && \
   apt install fontconfig inkscape pandoc python3-pygments -y && \
-  echo "shell_escape = t" >> $(find /usr/local/texlive/ -type -d "20*")/texmf.cnf && \
+  echo "shell_escape = t" >> $(find /usr/local/texlive/ -type d -name "20*")/texmf.cnf && \
   mkdir -p /usr/local/lib/latexmk && \
   touch /usr/local/lib/latexmk/latexmkrc && \
   echo '# Fix generating of glossaries\n\
