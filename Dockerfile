@@ -5,6 +5,25 @@
 ARG OVERLEAF_BASE_TAG=dangdoan2003/sharelatex-base:latest
 FROM $OVERLEAF_BASE_TAG
 
+# Fully set up image as production ready
+RUN apt update && apt upgrade -y && \
+  apt install fontconfig inkscape pandoc python3-pygments -y && \
+  echo "shell_escape = t" >> $(find /usr/local/texlive/ -type d -name "20*")/texmf.cnf && \
+  mkdir -p /usr/local/lib/latexmk && \
+  touch /usr/local/lib/latexmk/latexmkrc && \
+  echo '# Fix generating of glossaries\n\
+  # Source: https://github.com/overleaf/docker-image/issues/6#issuecomment-282931678\n\
+  add_cus_dep('glo', 'gls', 0, 'makeglo2gls');\n\
+  sub makeglo2gls {\n\
+  system("makeindex -s '$_[0]'.ist -t '$_[0]'.glg -o '$_[0]'.gls '$_[0]'.glo");\n\
+  }\n\
+  \n\
+  add_cus_dep('acn', 'acr', 0, 'makeacn2acr');\n\
+  sub makeacn2acr {\n\
+  system("makeindex -s \"$_[0].ist\" -t \"$_[0].alg\" -o \"$_[0].acr\" \"$_[0].acn\"");\n\
+  }' >> /usr/local/lib/latexmk/latexmkrc && \
+  tlmgr install scheme-full
+
 WORKDIR /overleaf
 
 # Add required source files
@@ -110,25 +129,6 @@ ENV GRACEFUL_SHUTDOWN_DELAY_SECONDS=1
 
 ENV NODE_ENV="production"
 ENV LOG_LEVEL="info"
-
-# Fully set up image as production ready
-RUN apt update && apt upgrade -y && \
-  apt install fontconfig inkscape pandoc python3-pygments -y && \
-  echo "shell_escape = t" >> $(find /usr/local/texlive/ -type d -name "20*")/texmf.cnf && \
-  mkdir -p /usr/local/lib/latexmk && \
-  touch /usr/local/lib/latexmk/latexmkrc && \
-  echo '# Fix generating of glossaries\n\
-  # Source: https://github.com/overleaf/docker-image/issues/6#issuecomment-282931678\n\
-  add_cus_dep('glo', 'gls', 0, 'makeglo2gls');\n\
-  sub makeglo2gls {\n\
-  system("makeindex -s '$_[0]'.ist -t '$_[0]'.glg -o '$_[0]'.gls '$_[0]'.glo");\n\
-  }\n\
-  \n\
-  add_cus_dep('acn', 'acr', 0, 'makeacn2acr');\n\
-  sub makeacn2acr {\n\
-  system("makeindex -s \"$_[0].ist\" -t \"$_[0].alg\" -o \"$_[0].acr\" \"$_[0].acn\"");\n\
-  }' >> /usr/local/lib/latexmk/latexmkrc && \
-  tlmgr install scheme-full
 
 EXPOSE 80
 

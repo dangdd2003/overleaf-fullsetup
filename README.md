@@ -25,7 +25,7 @@ cd ./overleaf-toolkit
 > [!CAUTION]
 > The image is very large as it includes texlive full-scheme setup and additional packages.
 
-## Credits
+## References
 - More information on [Overleaf toolkit](https://github.com/overleaf/toolkit).
 - Visit [Server Pro](https://github.com/overleaf/overleaf/wiki/Getting-Server-Pro) for better 
 support from Overleaf team.
