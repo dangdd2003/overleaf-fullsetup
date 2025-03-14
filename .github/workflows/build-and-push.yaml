@@ -1,6 +1,11 @@
 name: Docker Image Builder
 
-on: workflow_dispatch
+on:
+  schedule:
+    - cron: "0 20 * * 1"
+      description: "Every Monday at 3:00 AM UTC +7"
+  workflow_dispatch:
+    - description: "Manually trigger the workflow"
 
 env:
   # Defined registries
@@ -11,8 +16,7 @@ env:
   FULL_IMAGE_NAME: sharelatex
 
 jobs:
-  build-image-and-push-full-version:
-    if: github.event_name != 'pull_request'
+  build-push-image-and-deploy:
     runs-on: ubuntu-latest
     permissions:
       contents: read
