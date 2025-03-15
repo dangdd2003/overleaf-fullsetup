@@ -2,10 +2,8 @@ name: Docker Image Builder
 
 on:
   schedule:
-    - cron: "0 20 * * 1"
-      description: "Every Monday at 3:00 AM UTC +7"
+    - cron: "0 20 * * 0"
   workflow_dispatch:
-    - description: "Manually trigger the workflow"
 
 env:
   # Defined registries
