@@ -2,7 +2,7 @@ name: Docker Image Builder
 
 on:
   schedule:
-    - cron: "0 20 * * 0"
+    - cron: "0 20 1,15 * *"
   workflow_dispatch:
 
 env:
@@ -14,7 +14,7 @@ env:
   FULL_IMAGE_NAME: sharelatex
 
 jobs:
-  build-push-image-and-deploy:
+  build-push-image:
     runs-on: ubuntu-latest
     permissions:
       contents: read
