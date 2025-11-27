@@ -2,7 +2,7 @@
 # Overleaf Community Edition (overleaf/overleaf)
 # ---------------------------------------------
 
-ARG OVERLEAF_BASE_TAG=sharelatex/sharelatex-base:latest
+ARG OVERLEAF_BASE_TAG=dangdoan2003/sharelatex-base:latest
 FROM $OVERLEAF_BASE_TAG
 
 # Fully set up image as production ready
