@@ -2,7 +2,7 @@
 # Overleaf Community Edition (overleaf/overleaf)
 # ---------------------------------------------
 
-ARG OVERLEAF_BASE_TAG=dangdoan2003/sharelatex-base:latest
+ARG OVERLEAF_BASE_TAG=sharelatex/sharelatex-base:latest
 FROM $OVERLEAF_BASE_TAG
 
 # Fully set up image as production ready
@@ -10,7 +10,7 @@ RUN apt update && apt upgrade -y && \
   apt install fontconfig inkscape pandoc python3-pygments -y && \
   echo "shell_escape = t" >> $(find /usr/local/texlive/ -type d -name "20*")/texmf.cnf && \
   tlmgr install scheme-full
-
+  
 WORKDIR /overleaf
 
 # Add required source files
@@ -20,6 +20,7 @@ ADD server-ce/services.js /overleaf/services.js
 ADD package.json package-lock.json /overleaf/
 ADD libraries/ /overleaf/libraries/
 ADD services/ /overleaf/services/
+ADD tools/migrations/ /overleaf/tools/migrations/
 
 # Add npm patches
 # -----------------------
@@ -28,11 +29,11 @@ ADD patches/ /overleaf/patches
 # Install npm dependencies and build webpack assets
 # ------------------------
 RUN --mount=type=cache,target=/root/.cache \
-  --mount=type=cache,target=/root/.npm \
-  --mount=type=cache,target=/overleaf/services/web/node_modules/.cache,id=server-ce-webpack-cache \
-  --mount=type=tmpfs,target=/tmp true \
-  &&  node genScript install | bash \
-  &&  node genScript compile | bash
+    --mount=type=cache,target=/root/.npm \
+    --mount=type=cache,target=/overleaf/services/web/node_modules/.cache,id=server-ce-webpack-cache \
+    --mount=type=tmpfs,target=/tmp true \
+&&  node genScript install | bash \
+&&  node genScript compile | bash
 
 # Copy runit service startup scripts to its location
 # --------------------------------------------------
@@ -117,12 +118,7 @@ ENV GRACEFUL_SHUTDOWN_DELAY_SECONDS=1
 ENV NODE_ENV="production"
 ENV LOG_LEVEL="info"
 
+
 EXPOSE 80
 
 ENTRYPOINT ["/sbin/my_init"]
-
-# Store the revision
-# ------------------
-# This should be the last step to optimize docker image caching.
-ARG MONOREPO_REVISION
-RUN echo "monorepo-server-ce,$MONOREPO_REVISION" > /var/www/revisions.txt
