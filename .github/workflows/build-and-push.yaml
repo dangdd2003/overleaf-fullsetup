@@ -27,11 +27,25 @@ jobs:
         with:
           repository: overleaf/overleaf
 
-      - name: Get Dockerfile
+      - name: Edit Dockerfile
         run: |
-          git clone https://${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.actor }}/overleaf-fullsetup.git
-          cp overleaf-fullsetup/Dockerfile server-ce/Dockerfile
-          rm -rf overleaf-fullsetup
+          sed -i \
+            -e 's|^ARG OVERLEAF_BASE_TAG=.*|ARG OVERLEAF_BASE_TAG=dangdoan2003/sharelatex-base:latest|' \
+            -e '/^FROM \$OVERLEAF_BASE_TAG$/a\
+          ARG TEXLIVE_MIRROR=https://mirrors.mit.edu/CTAN/systems/texlive/tlnet\
+          \
+          # Fully set up image as production ready\
+          RUN apt-get update \&\& apt-get upgrade -y \&\& \\\
+            DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \\\
+              git fontconfig pandoc python3 python3-pygments imagemagick ghostscript \\\
+              librsvg2-bin make chktex lacheck fonts-liberation fonts-linuxlibertine \&\& \\\
+            sed -i "s/<policy domain=\\"coder\\" rights=\\"none\\" pattern=\\"PDF\\" \/>/<policy domain=\\"coder\\" rights=\\"read|write\\" pattern=\\"PDF\\" \/>/" /etc/ImageMagick-6/policy.xml 2>/dev/null || true \&\& \\\
+            echo "shell_escape = t" >> $(find /usr/local/texlive/ -type d -name "20*")/texmf.cnf \&\& \\\
+            tlmgr option repository "$TEXLIVE_MIRROR" \&\& \\\
+            tlmgr install --persistent-downloads scheme-full \&\& \\\
+            fc-cache -f -v \&\& \\\
+            apt-get clean \&\& rm -rf /var/lib/apt/lists/*' \
+            server-ce/Dockerfile
 
       - name: Set build env
         id: build_env
@@ -58,7 +72,7 @@ jobs:
       - name: Docker login registry ${{ env.REGISTRY2 }}
         uses: docker/login-action@v3.3.0
         with:
-          username: ${{ vars.DOCKER_USERNAME}}
+          username: ${{ vars.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_TOKEN }}
 
       - name: Build base image
@@ -86,7 +100,7 @@ jobs:
           build-args: |
             BUILDKIT_INLINE_CACHE=1
             MONOREPO_REVISION=${{ steps.build_env.outputs.MONOREPO_REVISION }}
-            OVERLEAF_BASE_TAG=${{ vars.DOCKER_USERNAME }}/${{ env.BASE_IMAGE_NAME }}:latest
+            TEXLIVE_MIRROR=${{ vars.TEXLIVE_MIRROR }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           tags: |
