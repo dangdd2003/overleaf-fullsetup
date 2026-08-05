@@ -43,6 +43,7 @@ jobs:
             echo "shell_escape = t" >> $(find /usr/local/texlive/ -type d -name "20*")/texmf.cnf \&\& \\\
             tlmgr option repository "$TEXLIVE_MIRROR" \&\& \\\
             tlmgr install --persistent-downloads scheme-full \&\& \\\
+            tlmgr path add \&\& \\\
             fc-cache -f -v \&\& \\\
             apt-get clean \&\& rm -rf /var/lib/apt/lists/*' \
             server-ce/Dockerfile
