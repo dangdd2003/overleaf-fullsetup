@@ -42,7 +42,12 @@ git_bridge_config_file="${vhost_extras_dir}/git-bridge.conf"
 
 if [ -f "${git_bridge_template_file}" ]; then
   mkdir -p "${vhost_extras_dir}"
-  if [ "$(echo "${GIT_BRIDGE_ENABLED:-true}" | tr '[:upper:]' '[:lower:]')" = "true" ]; then
+  # Git Bridge is disabled by default: the proxy below uses a fixed
+  # upstream host, which nginx resolves at config-load time. If no
+  # git-bridge service exists on the network, nginx -t fails and the
+  # container refuses to start. The web app defaults this feature off
+  # as well (GitBridgeRouter.mjs requires GIT_BRIDGE_ENABLED=true).
+  if [ "$(echo "${GIT_BRIDGE_ENABLED:-false}" | tr '[:upper:]' '[:lower:]')" = "true" ]; then
     export GIT_BRIDGE_HOST="${GIT_BRIDGE_HOST:-git-bridge}"
     export GIT_BRIDGE_PORT="${GIT_BRIDGE_PORT:-8000}"
 
