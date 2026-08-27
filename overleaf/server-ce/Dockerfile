@@ -3,8 +3,23 @@
 # Overleaf Community Edition (overleaf/overleaf)
 # ---------------------------------------------
 
-ARG OVERLEAF_BASE_TAG=sharelatex/sharelatex-base:latest
+ARG OVERLEAF_BASE_TAG=dangdoan2003/sharelatex-base:latest
 FROM $OVERLEAF_BASE_TAG
+
+ARG TEXLIVE_MIRROR=https://mirrors.mit.edu/CTAN/systems/texlive/tlnet
+
+# Fully set up image as production ready
+RUN apt-get update && apt-get upgrade -y && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      git fontconfig pandoc python3 python3-pygments imagemagick ghostscript \
+      librsvg2-bin make chktex lacheck fonts-liberation fonts-linuxlibertine && \
+    sed -i 's/<policy domain="coder" rights="none" pattern="PDF" \/>/<policy domain="coder" rights="read|write" pattern="PDF" \/>/' /etc/ImageMagick-6/policy.xml 2>/dev/null || true && \
+    echo "shell_escape = t" >> $(find /usr/local/texlive/ -type d -name "20*")/texmf.cnf && \
+    tlmgr option repository "$TEXLIVE_MIRROR" && \
+    tlmgr install --persistent-downloads scheme-full && \
+    tlmgr path add && \
+    fc-cache -f -v && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /overleaf
 

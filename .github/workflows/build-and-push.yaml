@@ -24,29 +24,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4.2.2
-        with:
-          repository: overleaf/overleaf
-
-      - name: Edit Dockerfile
-        run: |
-          sed -i \
-            -e 's|^ARG OVERLEAF_BASE_TAG=.*|ARG OVERLEAF_BASE_TAG=dangdoan2003/sharelatex-base:latest|' \
-            -e '/^FROM \$OVERLEAF_BASE_TAG$/a\
-          ARG TEXLIVE_MIRROR=https://mirrors.mit.edu/CTAN/systems/texlive/tlnet\
-          \
-          # Fully set up image as production ready\
-          RUN apt-get update \&\& apt-get upgrade -y \&\& \\\
-            DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \\\
-              git fontconfig pandoc python3 python3-pygments imagemagick ghostscript \\\
-              librsvg2-bin make chktex lacheck fonts-liberation fonts-linuxlibertine \&\& \\\
-            sed -i "s/<policy domain=\\"coder\\" rights=\\"none\\" pattern=\\"PDF\\" \/>/<policy domain=\\"coder\\" rights=\\"read|write\\" pattern=\\"PDF\\" \/>/" /etc/ImageMagick-6/policy.xml 2>/dev/null || true \&\& \\\
-            echo "shell_escape = t" >> $(find /usr/local/texlive/ -type d -name "20*")/texmf.cnf \&\& \\\
-            tlmgr option repository "$TEXLIVE_MIRROR" \&\& \\\
-            tlmgr install --persistent-downloads scheme-full \&\& \\\
-            tlmgr path add \&\& \\\
-            fc-cache -f -v \&\& \\\
-            apt-get clean \&\& rm -rf /var/lib/apt/lists/*' \
-            server-ce/Dockerfile
 
       - name: Set build env
         id: build_env
@@ -79,8 +56,8 @@ jobs:
       - name: Build base image
         uses: docker/build-push-action@v6
         with:
-          context: .
-          file: ./server-ce/Dockerfile-base
+          context: ./overleaf
+          file: ./overleaf/server-ce/Dockerfile-base
           build-args: |
             BUILDKIT_INLINE_CACHE=1
             TEXLIVE_MIRROR=${{ vars.TEXLIVE_MIRROR }}
@@ -96,10 +73,11 @@ jobs:
       - name: Build full
         uses: docker/build-push-action@v6
         with:
-          context: .
-          file: ./server-ce/Dockerfile
+          context: ./overleaf
+          file: ./overleaf/server-ce/Dockerfile
           build-args: |
             BUILDKIT_INLINE_CACHE=1
+            OVERLEAF_BASE_TAG=${{ vars.DOCKER_USERNAME }}/${{ env.BASE_IMAGE_NAME }}:latest
             MONOREPO_REVISION=${{ steps.build_env.outputs.MONOREPO_REVISION }}
             TEXLIVE_MIRROR=${{ vars.TEXLIVE_MIRROR }}
           cache-from: type=gha
