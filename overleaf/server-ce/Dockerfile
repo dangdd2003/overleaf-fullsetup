@@ -23,12 +23,18 @@ RUN apt-get update && apt-get upgrade -y && \
 
 WORKDIR /overleaf
 
+# Node.js version argument (e.g. v24.20.0 or 24.20.0)
+ARG NODE_VERSION=v24.20.0
+
 # Ensure Node >= 24 is installed (Node.js 24 LTS Krypton with SHA256 verification)
 RUN if ! /usr/bin/node -e "if (parseInt(process.versions.node) < 24) process.exit(1)" 2>/dev/null; then \
-      curl -fsSL https://nodejs.org/dist/v24.20.0/node-v24.20.0-linux-x64.tar.xz -o /tmp/node.tar.xz && \
-      curl -fsSL https://nodejs.org/dist/v24.20.0/SHASUMS256.txt | grep "node-v24.20.0-linux-x64.tar.xz" | (cd /tmp && sha256sum -c -) && \
-      tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 && \
-      rm -f /tmp/node.tar.xz && \
+      NODE_VER="${NODE_VERSION:-v24.20.0}" && \
+      NODE_TAG="v${NODE_VER#v}" && \
+      NODE_TAR="node-${NODE_TAG}-linux-x64.tar.xz" && \
+      curl -fsSL "https://nodejs.org/dist/${NODE_TAG}/${NODE_TAR}" -o "/tmp/${NODE_TAR}" && \
+      curl -fsSL "https://nodejs.org/dist/${NODE_TAG}/SHASUMS256.txt" | grep "${NODE_TAR}" | (cd /tmp && sha256sum -c -) && \
+      tar -xJf "/tmp/${NODE_TAR}" -C /usr/local --strip-components=1 && \
+      rm -f "/tmp/${NODE_TAR}" && \
       ln -sf /usr/local/bin/node /usr/bin/node && \
       ln -sf /usr/local/bin/npm /usr/bin/npm && \
       ln -sf /usr/local/bin/npx /usr/bin/npx; \

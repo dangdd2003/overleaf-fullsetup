@@ -82,6 +82,7 @@ jobs:
             OVERLEAF_BASE_TAG=${{ vars.DOCKER_USERNAME }}/${{ env.BASE_IMAGE_NAME }}:latest
             MONOREPO_REVISION=${{ steps.build_env.outputs.MONOREPO_REVISION }}
             TEXLIVE_MIRROR=${{ vars.TEXLIVE_MIRROR }}
+            NODE_VERSION=${{ vars.NODE_VERSION || 'v24.20.0' }}
           cache-from: type=gha,scope=sharelatex-full
           cache-to: type=gha,mode=max,scope=sharelatex-full
           tags: |
