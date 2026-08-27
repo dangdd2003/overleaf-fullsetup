@@ -9,12 +9,14 @@ env:
   # Defined registries
   REGISTRY1: ghcr.io
   REGISTRY2: docker.io
-  # Image name
+  # Image names
   BASE_IMAGE_NAME: sharelatex-base
   FULL_IMAGE_NAME: sharelatex
+  GIT_BRIDGE_IMAGE_NAME: git-bridge
 
 jobs:
-  build-push-image:
+  build-sharelatex:
+    name: Build Sharelatex Images
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -61,8 +63,8 @@ jobs:
           build-args: |
             BUILDKIT_INLINE_CACHE=1
             TEXLIVE_MIRROR=${{ vars.TEXLIVE_MIRROR }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=sharelatex-base
+          cache-to: type=gha,mode=max,scope=sharelatex-base
           tags: |
             ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.BASE_IMAGE_NAME }}:latest
             ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.BASE_IMAGE_NAME }}:${{ steps.build_env.outputs.date }}
@@ -70,7 +72,7 @@ jobs:
             ${{ vars.DOCKER_USERNAME }}/${{ env.BASE_IMAGE_NAME }}:${{ steps.build_env.outputs.date }}
           push: true
 
-      - name: Build full
+      - name: Build full image
         uses: docker/build-push-action@v6
         with:
           context: ./overleaf
@@ -80,11 +82,65 @@ jobs:
             OVERLEAF_BASE_TAG=${{ vars.DOCKER_USERNAME }}/${{ env.BASE_IMAGE_NAME }}:latest
             MONOREPO_REVISION=${{ steps.build_env.outputs.MONOREPO_REVISION }}
             TEXLIVE_MIRROR=${{ vars.TEXLIVE_MIRROR }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=sharelatex-full
+          cache-to: type=gha,mode=max,scope=sharelatex-full
           tags: |
             ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.FULL_IMAGE_NAME }}:latest
             ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.FULL_IMAGE_NAME }}:${{ steps.build_env.outputs.date }}
             ${{ vars.DOCKER_USERNAME }}/${{ env.FULL_IMAGE_NAME }}:latest
             ${{ vars.DOCKER_USERNAME }}/${{ env.FULL_IMAGE_NAME }}:${{ steps.build_env.outputs.date }}
+          push: true
+
+  build-git-bridge:
+    name: Build Git Bridge Image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4.2.2
+
+      - name: Set build env
+        id: build_env
+        run: |
+          echo "date=$(TZ=Asia/Ho_Chi_Minh date +"%Y-%m-%d")" >> "$GITHUB_OUTPUT"
+          echo "MONOREPO_REVISION=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        shell: bash
+
+      - name: Check build env
+        run: |
+          echo "Current build date: ${{ steps.build_env.outputs.date }}"
+          echo "Current repo commit hash: ${{ steps.build_env.outputs.MONOREPO_REVISION }}"
+
+      - name: Docker Setup Buildx
+        uses: docker/setup-buildx-action@v3.8.0
+
+      - name: Docker login registry ${{ env.REGISTRY1 }}
+        uses: docker/login-action@v3.3.0
+        with:
+          registry: ${{ env.REGISTRY1 }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker login registry ${{ env.REGISTRY2 }}
+        uses: docker/login-action@v3.3.0
+        with:
+          username: ${{ vars.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_TOKEN }}
+
+      - name: Build and push git-bridge
+        uses: docker/build-push-action@v6
+        with:
+          context: ./overleaf/services/git-bridge
+          file: ./overleaf/services/git-bridge/Dockerfile
+          cache-from: type=gha,scope=git-bridge
+          cache-to: type=gha,mode=max,scope=git-bridge
+          tags: |
+            ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.GIT_BRIDGE_IMAGE_NAME }}:latest
+            ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.GIT_BRIDGE_IMAGE_NAME }}:${{ steps.build_env.outputs.date }}
+            ${{ vars.DOCKER_USERNAME }}/${{ env.GIT_BRIDGE_IMAGE_NAME }}:latest
+            ${{ vars.DOCKER_USERNAME }}/${{ env.GIT_BRIDGE_IMAGE_NAME }}:${{ steps.build_env.outputs.date }}
           push: true
