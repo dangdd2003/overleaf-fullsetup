@@ -1,0 +1,92 @@
+import { SharingPermissions } from '../modules/sharing-permissions/app/src/types'
+import { Brand } from './helpers/brand'
+
+export type RefProviders = {
+  mendeley?: boolean
+  papers?: boolean
+  zotero?: boolean
+}
+
+export type UserId = Brand<string, 'UserId'>
+
+export type Features = {
+  aiErrorAssistant?: boolean
+  aiUsageQuota?: string
+  collaborators?: number
+  compileGroup?: 'standard' | 'priority'
+  compileTimeout?: number
+  dropbox?: boolean
+  gitBridge?: boolean
+  github?: boolean
+  mendeley?: boolean
+  papers?: boolean
+  references?: boolean
+  referencesSearch?: boolean
+  symbolPalette?: boolean
+  templates?: boolean
+  trackChanges?: boolean
+  versioning?: boolean
+  zotero?: boolean
+}
+
+export type FeatureUsage = {
+  aiWorkbench: {
+    remainingTokens: number
+    resetDate: string // date string
+  }
+  aiFeatureUsage: {
+    remainingUsage: number
+    resetDate: string // date string
+  }
+}
+
+export type User = {
+  id: UserId
+  isAdmin?: boolean
+  email: string
+  allowedFreeTrial?: boolean
+  hasPaidSubscription?: boolean
+  first_name?: string
+  last_name?: string
+  alphaProgram?: boolean
+  betaProgram?: boolean
+  labsProgram?: boolean
+  signUpDate?: string // date string
+  features?: Features
+  refProviders?: RefProviders
+  writefull?: {
+    autoCreatedAccount: boolean
+    premiumSource: string
+  }
+  featureUsage?: FeatureUsage
+  planCode?: string
+  planName?: string
+  isAnnualPlan?: boolean
+  isMemberOfGroupSubscription?: boolean
+  isProfessionalGroupPlan?: boolean
+  hasInstitutionLicence?: boolean
+  activeProfessionalGroupSubscriptions?: {
+    _id: string
+    teamName?: string
+    sharingPermissions?: SharingPermissions
+  }[]
+}
+
+export type LoggedOutUser = {
+  id: null
+  email?: undefined
+  first_name?: undefined
+  last_name?: undefined
+  signUpDate?: undefined
+  labsProgram?: undefined
+  alphaProgram?: undefined
+  betaProgram?: undefined
+  allowedFreeTrial?: undefined
+  features?: undefined
+  refProviders?: undefined
+  writefull?: undefined
+  isAdmin?: undefined
+  featureUsage?: undefined
+}
+
+export type MongoUser = Pick<User, Exclude<keyof User, 'id'>> & { _id: string }

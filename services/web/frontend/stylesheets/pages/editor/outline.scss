@@ -1,0 +1,212 @@
+:root {
+  --outline-line-guide-color: var(--border-primary);
+  --outline-item-highlight-bg: var(--green-70);
+  --outline-item-highlight-color: var(--green-10);
+}
+
+@include theme('light') {
+  --outline-item-highlight-bg: var(--bg-accent-03);
+  --outline-item-highlight-color: var(--green-70);
+  --outline-line-guide-color: color-mix(
+    in srgb,
+    var(--border-primary) 24%,
+    transparent
+  );
+}
+
+.file-outline-panel {
+  min-height: 36px;
+}
+
+.outline-container {
+  --outline-item-hover-bg: var(--bg-secondary-themed);
+  --outline-container-color-bg: var(--bg-primary-themed);
+  --outline-content-color: var(--content-primary-themed);
+
+  width: 100%;
+  height: 100%;
+  background-color: var(--outline-container-color-bg);
+}
+
+.outline-pane {
+  @include body-sm;
+
+  display: flex;
+  flex-flow: column;
+  height: 100%;
+  color: var(--content-primary-dark);
+  padding: 4px;
+}
+
+.outline-pane-disabled {
+  opacity: 0.5;
+}
+
+.outline-header {
+  background-color: var(--bg-primary-themed);
+  display: flex;
+  flex-shrink: 0;
+  border: none;
+}
+
+.outline-header-expand-collapse-btn {
+  color: var(--outline-content-color);
+  display: flex;
+  align-items: center;
+  background-color: transparent;
+  border: 0;
+  padding: var(--spacing-02);
+  font-size: inherit;
+  vertical-align: inherit;
+  flex: 1 0 100%;
+  text-align: left;
+  white-space: nowrap;
+  box-shadow: none;
+  border-radius: var(--border-radius-base);
+
+  &:hover,
+  &:focus {
+    outline: 0;
+  }
+
+  &:hover {
+    background-color: var(--bg-secondary-themed);
+  }
+
+  &:hover[disabled] {
+    background-color: transparent;
+  }
+}
+
+.outline-header-name {
+  @include body-sm;
+
+  color: var(--outline-content-color);
+  display: inline-block;
+  font-weight: 700;
+  margin: 0;
+  flex-grow: 1;
+  flex-shrink: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.outline-body {
+  background-color: var(--outline-container-color-bg);
+  overflow-y: auto;
+  padding-right: 0;
+}
+
+.outline-body-no-elements {
+  color: var(--outline-content-color);
+  text-align: center;
+  padding: var(--spacing-08) var(--spacing-08) var(--spacing-11)
+    var(--spacing-08);
+}
+
+.outline-body-link {
+  color: var(--outline-content-color);
+  display: block;
+  text-decoration: underline;
+
+  &:hover,
+  &:focus {
+    color: var(--outline-content-color);
+    text-decoration: underline;
+  }
+}
+
+.outline-item-list {
+  position: relative;
+  list-style: none;
+  padding-left: var(--spacing-08);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-02);
+  margin-top: var(--spacing-02);
+
+  &::before {
+    content: '';
+    background-color: var(--outline-line-guide-color);
+    top: var(--spacing-03);
+    bottom: var(--spacing-03);
+    width: 1px;
+    left: var(--spacing-06);
+    position: absolute;
+  }
+
+  &.outline-item-list-root {
+    padding-left: 0;
+
+    &::before {
+      content: none;
+    }
+  }
+}
+
+.outline-item-no-children {
+  padding-left: 26px;
+}
+
+.outline-item-row {
+  display: flex;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.outline-item-expand-collapse-btn {
+  background-color: var(--outline-container-color-bg);
+  display: flex;
+  align-items: center;
+  border: 0;
+  padding: var(--spacing-02);
+  font-size: inherit;
+  vertical-align: inherit;
+  position: relative;
+  color: var(--content-primary-themed);
+  margin-right: calc(var(--spacing-03) * -1);
+  border-radius: var(--border-radius-base);
+
+  &:hover,
+  &:focus {
+    outline: 0;
+  }
+
+  &:hover {
+    background-color: var(--outline-item-hover-bg);
+  }
+}
+
+.outline-item-link {
+  @include text-truncate;
+
+  color: var(--outline-content-color);
+  display: inline;
+  background-color: transparent;
+  border: 0;
+  position: relative;
+  padding: var(--spacing-02);
+  line-height: var(--line-height-02);
+  font-size: var(--font-size-02);
+  border-radius: var(--border-radius-base);
+  text-align: left;
+  flex-grow: 1;
+
+  &:hover,
+  &:focus {
+    background-color: var(--outline-item-hover-bg);
+    outline: 0;
+  }
+}
+
+.outline-item-link-highlight {
+  background-color: var(--outline-item-highlight-bg);
+  color: var(--outline-item-highlight-color);
+  font-weight: bold;
+}
+
+.outline-caret-icon {
+  width: var(--spacing-08);
+  font-size: 17px;
+  text-align: center;
+}

@@ -1,0 +1,35 @@
+.tooltip {
+  line-height: 20px;
+
+  @include shadow-md;
+
+  &.#{$prefix}tooltip-top {
+    bottom: -1px !important;
+  }
+  &.#{$prefix}tooltip-end {
+    top: 1px !important;
+    left: -1px !important;
+  }
+  &.#{$prefix}tooltip-bottom {
+    top: -1px !important;
+  }
+  &.#{$prefix}tooltip-start {
+    top: 1px !important;
+    right: -1px !important;
+  }
+
+  &:not([data-popper-placement]) {
+    // Prevents flickering
+    position: absolute !important;
+    inset: 0 auto auto 0 !important;
+    opacity: 0;
+  }
+}
+
+.tooltip-inner {
+  text-align: initial;
+
+  .tooltip-wide & {
+    max-width: unset;
+  }
+}

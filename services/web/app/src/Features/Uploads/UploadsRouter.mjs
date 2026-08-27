@@ -1,0 +1,80 @@
+import AuthorizationMiddleware from '../Authorization/AuthorizationMiddleware.mjs'
+import AuthenticationController from '../Authentication/AuthenticationController.mjs'
+import ProjectUploadController from './ProjectUploadController.mjs'
+import { RateLimiter } from '../../infrastructure/RateLimiter.mjs'
+import RateLimiterMiddleware from '../Security/RateLimiterMiddleware.mjs'
+import Settings from '@overleaf/settings'
+import AsyncLocalStorage from '../../infrastructure/AsyncLocalStorage.mjs'
+
+const rateLimiters = {
+  projectUpload: new RateLimiter('project-upload', {
+    points: 20,
+    duration: 60,
+  }),
+  fileUpload: new RateLimiter('file-upload', {
+    points: 500,
+    duration: 60 * 15,
+  }),
+}
+
+export default {
+  apply(webRouter) {
+    webRouter.post(
+      '/project/new/upload',
+      AuthenticationController.requireLogin(),
+      RateLimiterMiddleware.rateLimit(rateLimiters.projectUpload),
+      ProjectUploadController.multerMiddleware,
+      ProjectUploadController.uploadProject
+    )
+
+    if (Settings.enablePandocConversions) {
+      webRouter.post(
+        '/project/new/import-document',
+        AuthenticationController.requireLogin(),
+        RateLimiterMiddleware.rateLimit(rateLimiters.projectUpload),
+        ProjectUploadController.multerMiddleware,
+        ProjectUploadController.importDocument
+      )
+      // Keep old route for backwards compatibility with old frontends that haven't reloaded
+      webRouter.post(
+        '/project/new/import-docx',
+        AuthenticationController.requireLogin(),
+        RateLimiterMiddleware.rateLimit(rateLimiters.projectUpload),
+        ProjectUploadController.multerMiddleware,
+        (req, res, next) => {
+          req.query.type = 'docx'
+          next()
+        },
+        ProjectUploadController.importDocument
+      )
+    }
+
+    const fileUploadEndpoint = '/Project/:Project_id/upload'
+    const fileUploadRateLimit = RateLimiterMiddleware.rateLimit(
+      rateLimiters.fileUpload,
+      {
+        params: ['Project_id'],
+      }
+    )
+    if (Settings.allowAnonymousReadAndWriteSharing) {
+      webRouter.post(
+        fileUploadEndpoint,
+        fileUploadRateLimit,
+        AsyncLocalStorage.middleware,
+        AuthorizationMiddleware.ensureUserCanWriteProjectContent,
+        ProjectUploadController.multerMiddleware,
+        ProjectUploadController.uploadFile
+      )
+    } else {
+      webRouter.post(
+        fileUploadEndpoint,
+        fileUploadRateLimit,
+        AuthenticationController.requireLogin(),
+        AsyncLocalStorage.middleware,
+        AuthorizationMiddleware.ensureUserCanWriteProjectContent,
+        ProjectUploadController.multerMiddleware,
+        ProjectUploadController.uploadFile
+      )
+    }
+  },
+}

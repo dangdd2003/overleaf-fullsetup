@@ -1,0 +1,31 @@
+.btn.reference-manager-search-group-dropdown-toggle {
+  font-weight: normal;
+  text-align: left;
+  display: flex;
+  justify-content: space-between;
+  border-radius: var(--border-radius-base);
+  cursor: default !important;
+  background-color: inherit;
+
+  &::after {
+    display: none;
+  }
+
+  &:hover,
+  &:active {
+    background-color: inherit !important;
+  }
+}
+
+.reference-manager-search-group-dropdown-icon {
+  .material-symbols {
+    vertical-align: middle;
+  }
+}
+
+.linked-reference-managers-summary {
+  font-size: var(--font-size-03);
+  line-height: var(--line-height-03);
+  margin-top: var(--spacing-06);
+  margin-bottom: 0;
+}

@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.backend.json",
+  "compilerOptions": {
+    "noImplicitAny": true
+  },
+  "include": [
+    "app/src/**/*",
+    "modules/*/app/src/**/*",
+    "modules/*/shared/**/*",
+    "modules/*/test/acceptance/**/*",
+    "modules/*/test/unit/**/*",
+    "scripts/**/*",
+    "test/acceptance/**/*",
+    "test/unit/**/*",
+    "types/backend/**/*"
+  ]
+}
