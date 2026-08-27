@@ -9,6 +9,7 @@ volumes:
   sharelatex-data:
   web-data:
   history-v1-buckets:
+  git-bridge-data:
 
 services:
   chat:
@@ -27,6 +28,7 @@ services:
       - dev.env
     environment:
       - SANDBOXED_COMPILES=false
+      - DOWNLOAD_HOST=http://clsi-nginx:8080
     user: root
     volumes:
       - ${PWD}/compiles:/overleaf/services/clsi/compiles
@@ -92,9 +94,9 @@ services:
     image: mongo:8
     command: --replSet overleaf
     ports:
-      - "127.0.0.1:27017:27017" # for debugging
+      - "27017:27017" # for debugging
     volumes:
-      - mongo-data:/data/db
+      - /home/dangdd/mongo_data:/data/db
       - ../bin/shared/mongodb-init-replica-set.js:/docker-entrypoint-initdb.d/mongodb-init-replica-set.js
     environment:
       MONGO_INITDB_DATABASE: sharelatex
@@ -126,11 +128,28 @@ services:
       - dev.env
 
   redis:
-    image: redis:7
+    image: redis:8
     ports:
-      - "127.0.0.1:6379:6379" # for debugging
+      - "6379:6379" # for debugging
     volumes:
-      - redis-data:/data
+      - /home/dangdd/redis_data:/data
+
+  git-bridge:
+    build:
+      context: ..
+      dockerfile: services/git-bridge/Dockerfile
+    environment:
+      GIT_BRIDGE_API_BASE_URL: "http://web:3000/api/v0"
+      GIT_BRIDGE_OAUTH2_SERVER: "http://web:3000"
+      GIT_BRIDGE_POSTBACK_BASE_URL: "http://git-bridge:8000"
+      GIT_BRIDGE_ROOT_DIR: "/data/git-bridge"
+    user: root
+    ports:
+      - "8000:8000"
+    volumes:
+      - git-bridge-data:/data/git-bridge
+    depends_on:
+      - web
 
   web:
     build:
@@ -170,6 +189,6 @@ services:
     command:
       ["npx", "webpack", "serve", "--config", "webpack.config.dev-env.js"]
     ports:
-      - "127.0.0.1:80:3808"
+      - "80:3808"
     volumes:
       - ./webpack.config.dev-env.js:/overleaf/services/web/webpack.config.dev-env.js

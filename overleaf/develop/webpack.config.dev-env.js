@@ -4,15 +4,20 @@ const base = require('./webpack.config.dev')
 
 module.exports = merge(base, {
   devServer: {
-    allowedHosts: 'auto',
+    allowedHosts: 'all',
     devMiddleware: {
       index: false,
     },
     proxy: [
       {
-        context: '/socket.io/**',
+        context: ['/socket.io'],
         target: 'http://real-time:3026',
         ws: true,
+      },
+      {
+        context: ['/git'],
+        target: 'http://git-bridge:8000',
+        pathRewrite: { '^/git': '' },
       },
       {
         context: ['!**/*.js', '!**/*.css', '!**/*.json'],

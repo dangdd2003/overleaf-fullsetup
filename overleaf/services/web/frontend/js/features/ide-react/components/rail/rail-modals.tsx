@@ -6,6 +6,7 @@ import {
 import { RailHelpContactUsModal } from './contact-us'
 import { RailHelpShowHotkeysModal } from './keyboard-shortcuts'
 import DictionarySettingsModal from '@/features/settings/components/editor-settings/dictionary-settings-modal'
+import GitBridgeModal from '@/features/ide-react/components/modals/git-bridge-modal'
 import importOverleafModules from '../../../../../macros/import-overleaf-module.macro'
 
 type RailModalEntry = {
@@ -32,6 +33,10 @@ const RAIL_MODALS: RailModalEntry[] = [
   {
     key: 'dictionary',
     modalComponentFunction: DictionarySettingsModal,
+  },
+  {
+    key: 'git-bridge',
+    modalComponentFunction: GitBridgeModal,
   },
   ...moduleRailModals,
 ]

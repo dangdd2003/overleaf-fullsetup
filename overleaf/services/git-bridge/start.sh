@@ -1,5 +1,16 @@
 #!/bin/sh
 
+# Ensure internal container network calls are never routed through external proxies
+unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy
+export NO_PROXY="*"
+export no_proxy="*"
+
+mkdir -p "${GIT_BRIDGE_ROOT_DIR:-/data/git-bridge}/.wlgb/atts" 2>/dev/null || true
+_gb_dir="${GIT_BRIDGE_ROOT_DIR:-/data/git-bridge}"
+if [ "$(stat -c %U "$_gb_dir" 2>/dev/null)" != "node" ]; then
+  chown -R node:node "$_gb_dir" 2>/dev/null || true
+fi
+
 /opt/envsubst < /envsubst_template.json > /conf/runtime.json
 
 VERSION=$(date +%y%m%d%H%M%S)

@@ -27,10 +27,7 @@ export type RailTabKey =
   | 'workbench'
 
 export type RailModalKey =
-  | 'keyboard-shortcuts'
-  | 'contact-us'
-  | 'dictionary'
-  | 'labs'
+  'keyboard-shortcuts' | 'contact-us' | 'dictionary' | 'labs' | 'git-bridge'
 
 export function dispatchOpenRailModal(key: RailModalKey) {
   window.dispatchEvent(new CustomEvent('ui:open-rail-modal', { detail: key }))

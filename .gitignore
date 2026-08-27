@@ -1,2 +1,54 @@
 /data/**/*
 !data/.gitkeep
+
+# Environment & Sandbox mounts
+/.bash_profile
+/.bashrc
+/.gitconfig
+/.gitmodules
+/.profile
+/.ripgreprc
+/.zprofile
+/.zshrc
+/.idea
+/.idea/**
+/.vscode
+/.vscode/**
+/.mcp.json
+/.claude
+/.claude/**
+
+# OS & Editor
+.DS_Store
+Thumbs.db
+
+# Overleaf - Yarn Berry & Package Manager Caches
+overleaf/.yarn/*
+!overleaf/.yarn/patches
+!overleaf/.yarn/plugins
+!overleaf/.yarn/releases
+!overleaf/.yarn/sdks
+!overleaf/.yarn/versions
+overleaf/.pnp.*
+overleaf/.pnp
+**/node_modules/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+
+# Overleaf - Build & Output & Cache directories
+overleaf/develop/output/
+overleaf/**/dist/
+overleaf/**/build/
+overleaf/**/.cache/
+overleaf/**/.eslintcache
+overleaf/**/.stylelintcache
+overleaf/**/*.tsbuildinfo
+
+# Overleaf - Local Environment & Overrides
+overleaf/**/.env.local
+overleaf/**/.env.*.local
+overleaf/docker-compose.override.yml

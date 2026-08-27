@@ -64,6 +64,4 @@ COPY server-pro-start.sh server-pro-start.sh
 RUN mkdir conf
 RUN chown node:node conf
 
-USER node
-
 CMD ["/start.sh"]

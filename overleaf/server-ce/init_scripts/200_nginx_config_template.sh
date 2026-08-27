@@ -34,10 +34,36 @@ if [ -f "${nginx_template_file}" ]; then
   ' \
     < "${nginx_template_file}" \
     > "${nginx_config_file}"
+fi
 
-  echo "Checking Nginx config"
-  nginx -t
+git_bridge_template_file="${nginx_templates_dir}/git-bridge.conf.template"
+vhost_extras_dir="${nginx_dir}/vhost-extras/overleaf"
+git_bridge_config_file="${vhost_extras_dir}/git-bridge.conf"
 
+if [ -f "${git_bridge_template_file}" ]; then
+  mkdir -p "${vhost_extras_dir}"
+  if [ "$(echo "${GIT_BRIDGE_ENABLED:-true}" | tr '[:upper:]' '[:lower:]')" = "true" ]; then
+    export GIT_BRIDGE_HOST="${GIT_BRIDGE_HOST:-git-bridge}"
+    export GIT_BRIDGE_PORT="${GIT_BRIDGE_PORT:-8000}"
+
+    echo "Nginx: generating git-bridge proxy config for http://${GIT_BRIDGE_HOST}:${GIT_BRIDGE_PORT}"
+
+    envsubst '
+      ${GIT_BRIDGE_HOST}
+      ${GIT_BRIDGE_PORT}
+    ' \
+      < "${git_bridge_template_file}" \
+      > "${git_bridge_config_file}"
+  else
+    echo "Nginx: Git Bridge disabled, skipping git-bridge proxy config"
+    rm -f "${git_bridge_config_file}"
+  fi
+fi
+
+echo "Checking Nginx config"
+nginx -t
+
+if service nginx status >/dev/null 2>&1; then
   echo "Nginx: reloading config"
   service nginx reload
 fi

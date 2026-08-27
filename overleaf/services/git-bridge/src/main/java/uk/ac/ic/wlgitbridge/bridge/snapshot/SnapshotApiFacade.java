@@ -77,14 +77,31 @@ public class SnapshotApiFacade {
     // to v2. In which case both `latest` and `version` will be zero.
     // See: https://github.com/overleaf/writelatex-git-bridge/pull/50
     if (latest > version || (latest == 0 && version == 0)) {
-      for (SnapshotInfo snapshotInfo : SnapshotApi.getResult(savedVers).getSavedVers()) {
+      List<SnapshotInfo> savedVersList = SnapshotApi.getResult(savedVers).getSavedVers();
+
+      // Add all saved versions that are after the tracked version.
+      // SnapshotInfo.equals() is based on versionId, so a SortedSet
+      // naturally deduplicates if a labeled version has the same versionId
+      // as the latest (e.g., the "Current version" default entry returned
+      // by saved_vers for the HEAD revision).
+      for (SnapshotInfo snapshotInfo : savedVersList) {
         if (snapshotInfo.getVersionId() > version) {
           versions.add(snapshotInfo);
         }
       }
-      versions.add(
-          new SnapshotInfo(
-              latest, latestDoc.getCreatedAt(), latestDoc.getName(), latestDoc.getEmail()));
+
+      // Only add the HEAD snapshot as a separate entry if it is not already
+      // represented in savedVers (i.e., no labeled version with the same
+      // versionId exists). This prevents duplicate commits when a labeled
+      // version is the current HEAD and the saved_vers response already
+      // includes it (e.g., as "Current version").
+      boolean latestHasLabeledEntry =
+          savedVersList.stream().anyMatch(sv -> sv.getVersionId() == latest);
+      if (!latestHasLabeledEntry) {
+        versions.add(
+            new SnapshotInfo(
+                latest, latestDoc.getCreatedAt(), latestDoc.getName(), latestDoc.getEmail()));
+      }
     }
     return new ArrayList<>(versions);
   }

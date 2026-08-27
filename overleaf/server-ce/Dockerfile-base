@@ -42,12 +42,12 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # Install TexLive
 # ---------------
 # CTAN mirrors occasionally fail, in that case install TexLive using a
-# different server, for example https://ctan.crest.fr
+# specific server, for example https://ctan.crest.fr
 #
 # # docker build \
 #     --build-arg TEXLIVE_MIRROR=https://ctan.crest.fr/tex-archive/systems/texlive/tlnet \
 #     -f Dockerfile-base -t sharelatex/sharelatex-base .
-ARG TEXLIVE_MIRROR=https://mirror.ox.ac.uk/sites/ctan.org/systems/texlive/tlnet
+ARG TEXLIVE_MIRROR=https://mirror.ctan.org/systems/texlive/tlnet
 
 RUN mkdir /install-tl-unx \
 &&  wget --quiet https://tug.org/texlive/files/texlive.asc \

@@ -72,6 +72,13 @@ public abstract class Request<T extends Result> {
       if (cause instanceof HttpResponseException) {
         HttpResponseException httpCause = (HttpResponseException) cause;
         int sc = httpCause.getStatusCode();
+        String responseBody = httpCause.getContent();
+        Log.warn(
+            "API request failed: {} {} -> {}, body: {}",
+            httpMethod(),
+            url,
+            sc,
+            responseBody);
         if (sc == HttpStatus.UNAUTHORIZED_401 || sc == HttpStatus.FORBIDDEN_403) {
           throw new ForbiddenException();
         } else if (sc == HttpStatus.TOO_MANY_REQUESTS_429) {

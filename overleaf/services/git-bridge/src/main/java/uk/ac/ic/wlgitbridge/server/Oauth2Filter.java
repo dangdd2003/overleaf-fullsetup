@@ -75,7 +75,9 @@ public class Oauth2Filter implements Filter {
       return;
     }
 
-    String projectId = Util.removeAllSuffixes(requestUri.split("/")[1], ".git");
+    String[] uriParts = requestUri.replaceAll("^/+", "").split("/");
+    String rawProjectId = uriParts.length > 0 ? uriParts[0] : "";
+    String projectId = Util.removeAllSuffixes(rawProjectId, ".git");
 
     BasicAuthCredentials basicAuthCreds = getBasicAuthCredentials(request);
     if (basicAuthCreds == null) {
@@ -359,6 +361,9 @@ public class Oauth2Filter implements Filter {
 
     String credentials = null;
     try {
+      if (!st.hasMoreTokens()) {
+        return null;
+      }
       credentials = new String(Base64.decodeBase64(st.nextToken()), "UTF-8");
     } catch (UnsupportedEncodingException e) {
       return null;

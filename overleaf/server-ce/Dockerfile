@@ -8,6 +8,17 @@ FROM $OVERLEAF_BASE_TAG
 
 WORKDIR /overleaf
 
+# Ensure Node >= 24 is installed (Node.js 24 LTS Krypton with SHA256 verification)
+RUN if ! /usr/bin/node -e "if (parseInt(process.versions.node) < 24) process.exit(1)" 2>/dev/null; then \
+      curl -fsSL https://nodejs.org/dist/v24.20.0/node-v24.20.0-linux-x64.tar.xz -o /tmp/node.tar.xz && \
+      curl -fsSL https://nodejs.org/dist/v24.20.0/SHASUMS256.txt | grep "node-v24.20.0-linux-x64.tar.xz" | (cd /tmp && sha256sum -c -) && \
+      tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 && \
+      rm -f /tmp/node.tar.xz && \
+      ln -sf /usr/local/bin/node /usr/bin/node && \
+      ln -sf /usr/local/bin/npm /usr/bin/npm && \
+      ln -sf /usr/local/bin/npx /usr/bin/npx; \
+    fi
+
 # Add required source files for yarn install
 # -------------------------------------------
 COPY --parents libraries/*/package.json .yarn/patches/ services/*/package.json tools/migrations/ package.json yarn.lock .yarnrc.yml /overleaf/
@@ -18,7 +29,7 @@ COPY server-ce/genScript.js server-ce/services.js /overleaf/
 # Corepack setup, shared between all the images.
 ENV PATH="/overleaf/node_modules/.bin:$PATH"
 ENV COREPACK_HOME=/opt/corepack
-RUN corepack enable && corepack install -g yarn@4.14.1
+RUN corepack enable && (corepack install -g yarn@4.14.1 2>/dev/null || corepack prepare yarn@4.14.1 --activate)
 ENV COREPACK_ENABLE_NETWORK=0
 
 # Install yarn dependencies
@@ -49,6 +60,7 @@ ADD server-ce/config/env.sh /etc/overleaf/env.sh
 # Configure nginx
 # ---------------
 ADD server-ce/nginx/nginx.conf.template /etc/nginx/templates/nginx.conf.template
+ADD server-ce/nginx/git-bridge.conf.template /etc/nginx/templates/git-bridge.conf.template
 ADD server-ce/nginx/overleaf.conf /etc/nginx/sites-enabled/overleaf.conf
 ADD server-ce/nginx/clsi-nginx.conf /etc/nginx/sites-enabled/clsi-nginx.conf
 
@@ -65,6 +77,10 @@ ADD server-ce/config/crontab-history /etc/cron.d/crontab-history
 RUN chmod 600 /etc/cron.d/crontab-history
 ADD server-ce/config/crontab-deletion /etc/cron.d/crontab-deletion
 RUN chmod 600 /etc/cron.d/crontab-deletion
+
+# Ensure legacy sharelatex paths are cleaned up from base image
+RUN for d in /etc/sharelatex /var/lib/sharelatex /var/log/sharelatex; do [ -e "$d" ] && rm -rf "$d"; done; \
+    mkdir -p /var/log/overleaf /var/lib/overleaf /etc/overleaf
 
 # Copy Phusion Image startup and shutdown scripts to their locations
 # ------------------------------------------------------------------

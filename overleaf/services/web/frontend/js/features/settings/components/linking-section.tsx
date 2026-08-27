@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import importOverleafModules from '../../../../macros/import-overleaf-module.macro'
 import { useSSOContext, SSOSubscription } from '../context/sso-context'
 import { SSOLinkingWidget } from './linking/sso-widget'
+import { GitTokensWidget } from './linking/git-tokens-widget'
 import getMeta from '../../../utils/meta'
 import { useBroadcastUser } from '@/shared/hooks/user-channel/use-broadcast-user'
 import OLNotification from '@/shared/components/ol/ol-notification'
@@ -48,11 +49,13 @@ function LinkingSection() {
     oauth2ServerComponents
   )
 
-  // since we only have Writefull here currently, we should hide the whole section if they cant use ai
+  const gitBridgeEnabled = Boolean(getMeta('ol-gitBridgeEnabled'))
+
   const haslangFeedbackLinkingWidgets =
     langFeedbackLinkingWidgets.length && !cannotUseAi
   const hasIntegrationLinkingSection =
-    renderSyncSection && allIntegrationLinkingWidgets.length
+    renderSyncSection &&
+    (allIntegrationLinkingWidgets.length > 0 || gitBridgeEnabled)
   const hasReferencesLinkingSection = referenceLinkingWidgets.length
 
   // Filter out SSO providers that are not allowed to be linked by
@@ -110,6 +113,7 @@ function LinkingSection() {
             />
           ) : null}
           <div className="settings-widgets-container">
+            {gitBridgeEnabled && <GitTokensWidget />}
             {allIntegrationLinkingWidgets.map(
               ({ import: importObject }, widgetIndex) => (
                 <ModuleLinkingWidget
