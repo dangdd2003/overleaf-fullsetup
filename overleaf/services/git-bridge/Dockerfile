@@ -64,4 +64,9 @@ COPY server-pro-start.sh server-pro-start.sh
 RUN mkdir conf
 RUN chown node:node conf
 
+# Default data directory for git repos; must exist and be owned by the
+# runtime user before start.sh runs
+RUN mkdir /data
+RUN chown node:node /data
+
 CMD ["/start.sh"]

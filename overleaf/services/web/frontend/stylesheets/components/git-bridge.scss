@@ -1,5 +1,61 @@
 // Git Bridge dedicated styles
 
+.git-bridge-modal {
+  color: var(--content-primary, #1b222c);
+
+  .modal-title {
+    color: var(--content-primary, #1b222c) !important;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6,
+  strong {
+    color: var(--content-primary, #1b222c) !important;
+  }
+
+  p,
+  li,
+  span {
+    color: var(--content-secondary, #495365);
+  }
+
+  .text-secondary,
+  .text-muted,
+  .git-bridge-secondary-text {
+    color: var(--content-secondary, #495365) !important;
+  }
+
+  .git-bridge-copy {
+    background: var(--bg-light-secondary, #f4f5f6);
+    color: var(--content-primary, #1b222c);
+    border: 1px solid var(--border-divider, #d0d5dd);
+
+    & code {
+      color: var(--content-primary, #1b222c) !important;
+    }
+  }
+
+  .git-copy-pill-btn {
+    background: var(--bg-light-primary, #ffffff) !important;
+    color: var(--content-primary, #1b222c) !important;
+    border: 1px solid var(--content-primary, #1b222c) !important;
+
+    &:hover {
+      background: var(--bg-light-secondary, #f4f5f6) !important;
+      border-color: #000000 !important;
+      color: #000000 !important;
+    }
+  }
+}
+
+.git-bridge-secondary-text {
+  color: var(--content-secondary, #495365) !important;
+}
+
 .git-bridge-copy {
   background: var(--neutral-10, #f4f5f6);
   color: var(--neutral-90, #1b222c);
@@ -109,7 +165,8 @@
   }
 
   .text-secondary,
-  .text-muted {
+  .text-muted,
+  .git-bridge-secondary-text {
     color: var(--neutral-70, #495365) !important;
   }
 }
@@ -120,59 +177,70 @@
 
 .linking-git-bridge {
   padding: var(--spacing-05);
-  color: var(--content-primary);
+  color: var(--content-primary, #1b222c);
 
+  h1,
+  h2,
   h3,
   h4,
   h5,
   h6 {
-    color: var(--content-primary) !important;
+    color: var(--content-primary, #1b222c) !important;
   }
 
   p,
   li {
-    color: var(--content-secondary);
+    color: var(--content-secondary, #495365);
   }
 
-  .git-tokens-instruction-text {
-    color: var(--content-secondary) !important;
+  strong {
+    color: var(--content-primary, #1b222c);
+  }
+
+  .text-secondary,
+  .text-muted,
+  .git-tokens-instruction-text,
+  .git-bridge-secondary-text {
+    color: var(--content-secondary, #495365) !important;
   }
 
   table {
-    color: var(--content-primary);
+    color: var(--content-primary, #1b222c);
 
     th {
-      color: var(--content-secondary) !important;
+      color: var(--content-secondary, #495365) !important;
       font-weight: 600;
+      background-color: var(--bg-light-primary, #ffffff);
     }
 
     td {
-      color: var(--content-primary) !important;
+      color: var(--content-primary, #1b222c) !important;
+      background-color: var(--bg-light-primary, #ffffff);
     }
 
     .token-text {
-      color: var(--content-primary) !important;
+      color: var(--content-primary, #1b222c) !important;
     }
 
     .date-text {
-      color: var(--content-secondary) !important;
+      color: var(--content-secondary, #495365) !important;
     }
   }
 
   .git-tokens-table-footer {
-    background-color: var(--bg-light-secondary);
-    border-top: 1px solid var(--border-divider);
+    background-color: var(--bg-light-secondary, #f4f5f6);
+    border-top: 1px solid var(--border-divider, #e2e8f0);
     padding: var(--spacing-04);
 
     .btn-inline-link,
     .btn-link {
-      color: var(--link-color);
+      color: var(--link-color, #1a73e8);
       font-size: var(--font-size-02, 14px);
       text-decoration: underline;
 
       &:hover,
       &:focus {
-        color: var(--link-hover-color);
+        color: var(--link-hover-color, #1557b0);
         text-decoration: none;
       }
     }

@@ -389,7 +389,7 @@ export function GitTokensWidget() {
           setGeneratedToken(null)
         }}
         animation={true}
-        className="modal-ds"
+        className="git-bridge-modal"
         aria-labelledby="generated-token-title"
       >
         <OLModalHeader closeButton>
@@ -398,7 +398,7 @@ export function GitTokensWidget() {
           </OLModalTitle>
         </OLModalHeader>
         <OLModalBody>
-          <p className="text-secondary mb-2" style={{ fontSize: '15px' }}>
+          <p className="git-bridge-secondary-text mb-2" style={{ fontSize: '15px' }}>
             {t(
               'git_token_info_subtitle',
               'This is your Git authentication token. You should enter this when prompted for a password.'
@@ -423,7 +423,7 @@ export function GitTokensWidget() {
             </button>
           </div>
           <p
-            className="text-secondary small mt-3 mb-0"
+            className="git-bridge-secondary-text small mt-3 mb-0"
             style={{ lineHeight: '1.5' }}
           >
             <strong>
@@ -466,7 +466,7 @@ export function GitTokensWidget() {
         show={Boolean(tokenToDelete)}
         onHide={() => setTokenToDelete(null)}
         animation={true}
-        className="modal-ds"
+        className="git-bridge-modal"
         aria-labelledby="delete-token-title"
       >
         <OLModalHeader closeButton>
@@ -475,7 +475,7 @@ export function GitTokensWidget() {
           </OLModalTitle>
         </OLModalHeader>
         <OLModalBody>
-          <p className="text-secondary">
+          <p className="git-bridge-secondary-text">
             {t(
               'delete_token_confirm',
               'Are you sure you want to delete this Git token? Any Git repositories configured with this token will lose access.'

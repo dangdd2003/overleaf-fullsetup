@@ -21,7 +21,7 @@ describe('<GitTokensWidget />', function () {
     expect(screen.getByText('Git integration')).to.exist
     expect(
       screen.getByText(
-        'Manage authentication tokens used for cloning and pushing via Git.'
+        /With Git integration, you can clone your Overleaf projects with Git/
       )
     ).to.exist
 

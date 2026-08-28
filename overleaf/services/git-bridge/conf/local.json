@@ -2,7 +2,7 @@
   "port": 8000,
   "bindIp": "0.0.0.0",
   "idleTimeout": 30000,
-  "rootGitDirectory": "/tmp/wlgb",
+  "rootGitDirectory": "/data",
   "allowedCorsOrigins": "http://v2.overleaf.test",
   "apiBaseUrl": "http://v2.overleaf.test:3000/api/v0",
   "postbackBaseUrl": "http://git-bridge:8000",

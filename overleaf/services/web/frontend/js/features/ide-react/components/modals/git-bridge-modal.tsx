@@ -173,7 +173,7 @@ export default function GitBridgeModal({ show, onHide }: GitBridgeModalProps) {
     <OLModal
       show={show}
       onHide={handleClose}
-      className="modal-ds"
+      className="git-bridge-modal"
       animation={true}
       data-testid="git-bridge-modal"
       aria-labelledby="git-bridge-modal-title"
@@ -184,7 +184,7 @@ export default function GitBridgeModal({ show, onHide }: GitBridgeModalProps) {
         </OLModalTitle>
       </OLModalHeader>
       <OLModalBody>
-        <p className="text-secondary mb-2">
+        <p className="git-bridge-secondary-text mb-2">
           {t(
             'git_bridge_description',
             'You can work on this project locally using Git.'
@@ -205,7 +205,7 @@ export default function GitBridgeModal({ show, onHide }: GitBridgeModalProps) {
 
         <div className="mt-4">
           <h5>{t('credentials', 'Credentials')}</h5>
-          <p className="text-secondary small mb-2">
+          <p className="git-bridge-secondary-text small mb-2">
             {t(
               'git_credentials_instructions',
               'Username is git, password is a Git Personal Access Token'
@@ -246,7 +246,7 @@ export default function GitBridgeModal({ show, onHide }: GitBridgeModalProps) {
             <h5 className="git-bridge-optional-tokens-header">
               {t('git_auth_token_heading', 'Git authentication token')}
             </h5>
-            <p className="text-secondary small mb-2">
+            <p className="git-bridge-secondary-text small mb-2">
               {t(
                 'git_token_info_subtitle',
                 'This is your Git authentication token. You should enter this when prompted for a password.'
@@ -263,7 +263,7 @@ export default function GitBridgeModal({ show, onHide }: GitBridgeModalProps) {
                 {tokenCopied ? t('copied', 'Copied') : t('copy', 'Copy')}
               </button>
             </div>
-            <p className="text-secondary small mt-2 mb-0">
+            <p className="git-bridge-secondary-text small mt-2 mb-0">
               <strong>
                 {t(
                   'git_token_created_warning_bold',
@@ -287,7 +287,7 @@ export default function GitBridgeModal({ show, onHide }: GitBridgeModalProps) {
         )}
 
         {!token && hasExistingTokens && (
-          <div className="mt-3 text-secondary small">
+          <div className="mt-3 git-bridge-secondary-text small">
             <p className="mb-1">
               {t(
                 'git_token_already_exists',
