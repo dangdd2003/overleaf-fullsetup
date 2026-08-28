@@ -1,4 +1,5 @@
 import GitBridgeSnapshotManager from './GitBridgeSnapshotManager.mjs'
+import GitBridgeFileTokenManager from './GitBridgeFileTokenManager.mjs'
 import PersonalAccessTokenManager from './PersonalAccessTokenManager.mjs'
 import AuthorizationManager from '../Authorization/AuthorizationManager.mjs'
 import Errors from '../Errors/Errors.js'
@@ -140,10 +141,56 @@ async function requireProjectWrite(req, res, next) {
   }
 }
 
+/**
+ * Auth for the git-bridge binary file endpoint.
+ *
+ * git-bridge fetches attachment URLs from the snapshot API with a plain
+ * unauthenticated GET, so those URLs carry a signed token scoped to a single
+ * project + file. A valid token grants access to that file only. Requests
+ * without one fall back to the normal PAT/session checks, so the endpoint
+ * still works for an authenticated user hitting it directly.
+ */
+async function requireFileAccess(req, res, next) {
+  const { projectId, fileId } = req.params
+  const token = req.query?.token
+
+  if (
+    typeof token === 'string' &&
+    GitBridgeFileTokenManager.verifyFileToken(token, projectId, fileId)
+  ) {
+    return next()
+  }
+
+  try {
+    await requireGitBridgeAuth(req, res, async err => {
+      if (err) return next(err)
+      try {
+        await requireProjectRead(req, res, next)
+      } catch (readErr) {
+        next(readErr)
+      }
+    })
+  } catch (err) {
+    next(err)
+  }
+}
+
+/**
+ * FileStoreController.getFile reads req.params.Project_id / File_id, the names
+ * used by the editor's own file route. Map this route's params onto those.
+ */
+function adaptFileParams(req, res, next) {
+  req.params.Project_id = req.params.projectId
+  req.params.File_id = req.params.fileId
+  return next()
+}
+
 const GitBridgeApiController = {
   requireGitBridgeAuth,
   requireProjectRead,
   requireProjectWrite,
+  requireFileAccess,
+  adaptFileParams,
 
   async getDoc(req, res) {
     const { projectId } = req.params

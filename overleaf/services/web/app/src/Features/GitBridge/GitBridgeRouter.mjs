@@ -13,6 +13,16 @@ if (Settings.enableGitBridge === undefined) {
 
 const GitBridgeRouter = {
   apply(webRouter, privateApiRouter, publicApiRouter) {
+    if (Settings.enableGitBridge === undefined) {
+      Settings.enableGitBridge =
+        process.env.GIT_BRIDGE_ENABLED === 'true' ||
+        process.env.OVERLEAF_GIT_BRIDGE_ENABLED === 'true'
+    }
+
+    if (!Settings.enableGitBridge) {
+      return
+    }
+
     // 1. User Personal Access Token (PAT) Management (Session Login & CSRF protected)
     webRouter.post(
       '/user/personal-access-tokens',
@@ -57,8 +67,8 @@ const GitBridgeRouter = {
       )
       r.get(
         '/api/v0/docs/:projectId/file/:fileId',
-        GitBridgeApiController.requireGitBridgeAuth,
-        GitBridgeApiController.requireProjectRead,
+        GitBridgeApiController.requireFileAccess,
+        GitBridgeApiController.adaptFileParams,
         FileStoreController.getFile
       )
       r.post(

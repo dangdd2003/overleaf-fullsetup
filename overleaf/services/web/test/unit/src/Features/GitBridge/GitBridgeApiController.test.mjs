@@ -1,7 +1,10 @@
 import { describe, it, beforeEach, afterEach, expect } from 'vitest'
 import sinon from 'sinon'
+import Settings from '@overleaf/settings'
+import AuthorizationManager from '../../../../../app/src/Features/Authorization/AuthorizationManager.mjs'
 import GitBridgeApiController from '../../../../../app/src/Features/GitBridge/GitBridgeApiController.mjs'
 import GitBridgeSnapshotManager from '../../../../../app/src/Features/GitBridge/GitBridgeSnapshotManager.mjs'
+import GitBridgeFileTokenManager from '../../../../../app/src/Features/GitBridge/GitBridgeFileTokenManager.mjs'
 
 describe('GitBridgeApiController', function () {
   let req, res, statusCalls, jsonCalls
@@ -110,6 +113,90 @@ describe('GitBridgeApiController', function () {
       await GitBridgeApiController.requireProjectRead(req, res, next)
       expect(statusCalls[0]).toBe(401)
       expect(next.called).toBe(false)
+    })
+  })
+
+  describe('requireFileAccess', function () {
+    let next
+    const fileId = 'file-abc-123'
+
+    beforeEach(function () {
+      next = sinon.spy()
+      req = {
+        headers: {},
+        params: { projectId, fileId },
+        query: {},
+        body: {},
+      }
+      Settings.security = { sessionSecret: 'test-secret-12345' }
+    })
+
+    it('calls next() when a valid token is provided in query', async function () {
+      const token = GitBridgeFileTokenManager.createFileToken(projectId, fileId)
+      req.query.token = token
+      await GitBridgeApiController.requireFileAccess(req, res, next)
+      expect(next.calledOnce).toBe(true)
+    })
+
+    it('falls back to auth check when token is invalid or missing', async function () {
+      req.query.token = 'invalid.token'
+
+      await GitBridgeApiController.requireFileAccess(req, res, next)
+      expect(statusCalls[0]).toBe(401)
+      expect(next.called).toBe(false)
+    })
+
+    it('allows access via session when no token is present and user can read', async function () {
+      req.session = { user: { _id: 'user-123' } }
+      const origCanRead = AuthorizationManager.promises.canUserReadProject
+      AuthorizationManager.promises.canUserReadProject = async () => true
+      try {
+        await GitBridgeApiController.requireFileAccess(req, res, next)
+        expect(next.calledOnce).toBe(true)
+      } finally {
+        AuthorizationManager.promises.canUserReadProject = origCanRead
+      }
+    })
+
+    it('returns 403 when session user cannot read project', async function () {
+      req.session = { user: { _id: 'user-123' } }
+      const origCanRead = AuthorizationManager.promises.canUserReadProject
+      AuthorizationManager.promises.canUserReadProject = async () => false
+      try {
+        await GitBridgeApiController.requireFileAccess(req, res, next)
+        expect(statusCalls[0]).toBe(403)
+        expect(next.called).toBe(false)
+      } finally {
+        AuthorizationManager.promises.canUserReadProject = origCanRead
+      }
+    })
+
+    it('returns 500 when auth check throws', async function () {
+      req.session = { user: { _id: 'user-123' } }
+      const origCanRead = AuthorizationManager.promises.canUserReadProject
+      AuthorizationManager.promises.canUserReadProject = async () => {
+        throw new Error('Database connection failure')
+      }
+      try {
+        await GitBridgeApiController.requireFileAccess(req, res, next)
+        expect(statusCalls[0]).toBe(500)
+        expect(next.called).toBe(false)
+      } finally {
+        AuthorizationManager.promises.canUserReadProject = origCanRead
+      }
+    })
+  })
+
+  describe('adaptFileParams', function () {
+    it('maps projectId and fileId to Project_id and File_id', function () {
+      const next = sinon.spy()
+      req.params = { projectId: 'p-1', fileId: 'f-1' }
+
+      GitBridgeApiController.adaptFileParams(req, res, next)
+
+      expect(req.params.Project_id).toBe('p-1')
+      expect(req.params.File_id).toBe('f-1')
+      expect(next.calledOnce).toBe(true)
     })
   })
 

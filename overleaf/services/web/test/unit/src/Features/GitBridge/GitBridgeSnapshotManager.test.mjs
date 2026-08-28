@@ -7,6 +7,7 @@ import UserGetter from '../../../../../app/src/Features/User/UserGetter.mjs'
 import DocstoreManager from '../../../../../app/src/Features/Docstore/DocstoreManager.mjs'
 import DocumentUpdaterHandler from '../../../../../app/src/Features/DocumentUpdater/DocumentUpdaterHandler.mjs'
 import EditorController from '../../../../../app/src/Features/Editor/EditorController.mjs'
+import Settings from '@overleaf/settings'
 import { fetchNothing } from '@overleaf/fetch-utils'
 
 describe('GitBridgeSnapshotManager', function () {
@@ -48,7 +49,11 @@ describe('GitBridgeSnapshotManager', function () {
     }
   }
 
+  let origSecurity
+
   beforeEach(function () {
+    origSecurity = Settings.security
+    Settings.security = { sessionSecret: 'test-secret-12345' }
     origGetProjectWithoutLock = ProjectGetter.getProjectWithoutLock
     origPromisesGetProjectWithoutLock =
       ProjectGetter.promises?.getProjectWithoutLock
@@ -79,6 +84,7 @@ describe('GitBridgeSnapshotManager', function () {
 
   afterEach(function () {
     sinon.restore()
+    Settings.security = origSecurity
     ProjectGetter.getProjectWithoutLock = origGetProjectWithoutLock
     if (ProjectGetter.promises) {
       ProjectGetter.promises.getProjectWithoutLock =
@@ -299,6 +305,8 @@ describe('GitBridgeSnapshotManager', function () {
       expect(Array.isArray(snapshot.atts)).toBe(true)
       expect(snapshot.atts.length).toBe(1)
       expect(snapshot.atts[0][1]).toContain('figure.png')
+      expect(snapshot.atts[0][0]).toContain(`/api/v0/docs/${projectId}/file/file-1`)
+      expect(snapshot.atts[0][0]).toContain('token=')
     })
 
     it('returns null if project is not found', async function () {

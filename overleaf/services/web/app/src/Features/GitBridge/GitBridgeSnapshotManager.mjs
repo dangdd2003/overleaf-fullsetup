@@ -4,6 +4,7 @@ import UserGetter from '../User/UserGetter.mjs'
 import DocstoreManager from '../Docstore/DocstoreManager.mjs'
 import DocumentUpdaterHandler from '../DocumentUpdater/DocumentUpdaterHandler.mjs'
 import EditorController from '../Editor/EditorController.mjs'
+import GitBridgeFileTokenManager from './GitBridgeFileTokenManager.mjs'
 import Settings from '@overleaf/settings'
 import logger from '@overleaf/logger'
 import { fetchJson, fetchNothing } from '@overleaf/fetch-utils'
@@ -303,6 +304,7 @@ const GitBridgeSnapshotManager = {
 
     async function traverseFolder(folder, currentPath = '') {
       for (const doc of folder.docs || []) {
+        if (!doc?._id) continue
         const filePath = currentPath ? `${currentPath}/${doc.name}` : doc.name
         let content = ''
         const docIdStr = doc._id.toString()
@@ -339,9 +341,21 @@ const GitBridgeSnapshotManager = {
         srcs.push([content, filePath])
       }
       for (const file of folder.fileRefs || []) {
+        if (!file?._id) continue
         const filePath = currentPath ? `${currentPath}/${file.name}` : file.name
-        // Git Bridge binary file endpoint with token auth and authorization
-        const fileUrl = `${baseUrl}/api/v0/docs/${projectId}/file/${file._id}`
+        // Git Bridge binary file endpoint. git-bridge fetches this URL itself
+        // with an unauthenticated GET, so the URL carries a short-lived token
+        // scoped to this project + file. The parameter must be named `token`
+        // for git-bridge's resource cache to strip it from its cache keys.
+        const fileId = file._id.toString()
+        const token = GitBridgeFileTokenManager.createFileToken(
+          projectId.toString(),
+          fileId
+        )
+        let fileUrl = `${baseUrl}/api/v0/docs/${projectId}/file/${fileId}`
+        if (token) {
+          fileUrl += `?token=${encodeURIComponent(token)}`
+        }
         atts.push([fileUrl, filePath])
       }
       for (const subFolder of folder.folders || []) {
