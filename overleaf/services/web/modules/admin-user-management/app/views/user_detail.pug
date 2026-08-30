@@ -1,0 +1,12 @@
+extends ../../../../app/views/layout-react
+
+block entrypointVar
+	- entrypoint = 'modules/admin-user-management/pages/admin-user-detail'
+
+block append meta
+	meta(name='ol-target-user-id' content=targetUserId)
+
+block content
+	#main-content.content.content-alt
+		.container
+			#admin-user-detail-container

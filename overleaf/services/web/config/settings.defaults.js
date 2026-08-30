@@ -409,6 +409,8 @@ module.exports = {
   adminOnlyLogin: process.env.ADMIN_ONLY_LOGIN === 'true',
   adminPrivilegeAvailable: process.env.ADMIN_PRIVILEGE_AVAILABLE === 'true',
   adminRolesEnabled: false,
+  enableAdminUserManagement:
+    process.env.OVERLEAF_ADMIN_USER_MANAGEMENT_ENABLED === 'true',
   blockCrossOriginRequests: process.env.BLOCK_CROSS_ORIGIN_REQUESTS === 'true',
   allowedOrigins: (process.env.ALLOWED_ORIGINS || siteUrl).split(','),
 
@@ -1114,6 +1116,7 @@ module.exports = {
     'history-v1',
     'launchpad',
     'server-ce-scripts',
+    'admin-user-management',
     'user-activate',
   ],
   viewIncludes: {},

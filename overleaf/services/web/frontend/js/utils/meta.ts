@@ -80,6 +80,7 @@ export interface Meta {
   'ol-adminCapabilities': AdminCapability[]
   'ol-adminSubscription': AdminSubscription
   'ol-adminUserExists': boolean
+  'ol-target-user-id': string
   'ol-aiAssistViaWritefullSource': string
   'ol-algolia': AlgoliaConfig | undefined
   'ol-allInReconfirmNotificationPeriods': UserEmailData[]

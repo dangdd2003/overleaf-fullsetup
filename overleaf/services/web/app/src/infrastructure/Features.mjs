@@ -65,6 +65,12 @@ const Features = {
         return Boolean(Settings.enableGithubSync)
       case 'git-bridge':
         return Boolean(Settings.enableGitBridge)
+      case 'admin-user-management':
+        return Boolean(
+          Settings.enableAdminUserManagement ??
+            (process.env.OVERLEAF_ADMIN_USER_MANAGEMENT_ENABLED === 'true' ||
+              process.env.ADMIN_USER_MANAGEMENT_ENABLED === 'true')
+        )
       case 'oauth':
         return Boolean(Settings.oauth)
       case 'templates-server-pro':
