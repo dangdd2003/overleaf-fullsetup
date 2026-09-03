@@ -448,6 +448,21 @@ export const LocalCompileProvider: FC<React.PropsWithChildren> = ({
     compiler,
   ])
 
+  // When a previous compile is still running, the warning remains displayed on screen,
+  // but we automatically check back every 2 seconds so the finished PDF is rendered
+  // immediately without forcing the user to manually click Recompile.
+  useEffect(() => {
+    if (error === 'compile-in-progress') {
+      const timeout = window.setTimeout(() => {
+        compiler.compile({ isAutoCompileOnLoad: true })
+      }, 2000)
+
+      return () => {
+        window.clearTimeout(timeout)
+      }
+    }
+  }, [error, compiler])
+
   useEffect(() => {
     setHasShortCompileTimeout(
       features?.compileTimeout !== undefined && features.compileTimeout <= 60

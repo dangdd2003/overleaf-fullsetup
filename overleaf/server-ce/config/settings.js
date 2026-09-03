@@ -54,6 +54,7 @@ const settings = {
       (process.env.DOCKER_RUNNER || process.env.SANDBOXED_COMPILES) === 'true',
     docker: {
       image: process.env.TEX_LIVE_DOCKER_IMAGE,
+      autoPullImages: process.env.AUTO_PULL_TEX_LIVE_IMAGES === 'true',
       allowedImages: (
         process.env.ALLOWED_IMAGES ||
         process.env.ALL_TEX_LIVE_DOCKER_IMAGES ||

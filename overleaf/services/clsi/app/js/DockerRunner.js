@@ -9,6 +9,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import * as LastProjectAccessModule from './LastProjectAccess.js'
 import LockManager from './LockManager.js'
+import * as AutoPullManager from './AutoPullManager.js'
 
 const LastProjectAccess =
   LastProjectAccessModule.getLastProjectAccessTime
@@ -17,6 +18,7 @@ const LastProjectAccess =
 
 let dockerClient
 let detectedMounts = null
+const activeCompiles = new Map()
 
 function getDocker() {
   if (!dockerClient) {
@@ -45,6 +47,26 @@ function getDetectedMounts(callback) {
     detectedMounts = {}
     callback(null, detectedMounts)
   }
+}
+
+function resolveHostPath(containerPath, mounts) {
+  if (!containerPath || !mounts) return null
+  let bestMatch = null
+  let bestDestLen = 0
+  for (const [dest, source] of Object.entries(mounts)) {
+    if (containerPath === dest) return source
+    if (containerPath.startsWith(dest.endsWith('/') ? dest : dest + '/')) {
+      if (dest.length > bestDestLen) {
+        bestDestLen = dest.length
+        bestMatch = { dest, source }
+      }
+    }
+  }
+  if (bestMatch) {
+    const rel = containerPath.slice(bestMatch.dest.length).replace(/^\/+/, '')
+    return Path.join(bestMatch.source, rel)
+  }
+  return null
 }
 
 const DockerRunner = {
@@ -93,6 +115,9 @@ const DockerRunner = {
       cwd = null
     }
 
+    const compileEntry = { containerName: null, killed: false }
+    activeCompiles.set(projectId, compileEntry)
+
     const defaultImage =
       Settings.clsi?.docker?.image || 'sharelatex/texlive-full:latest'
     let selectedImage = image || defaultImage
@@ -108,21 +133,20 @@ const DockerRunner = {
       Settings.clsi.docker.allowedImages.length > 0
     ) {
       if (!Settings.clsi.docker.allowedImages.includes(selectedImage)) {
+        activeCompiles.delete(projectId)
         return callback(new Error('image not allowed'))
       }
     }
 
     getDetectedMounts((_, mounts) => {
       const detectedCompiles =
-        mounts?.['/var/lib/overleaf/data/compiles'] ||
-        (mounts?.['/var/lib/overleaf/data']
-          ? Path.join(mounts['/var/lib/overleaf/data'], 'compiles')
-          : null)
+        resolveHostPath('/var/lib/overleaf/data/compiles', mounts) ||
+        resolveHostPath(Settings.path?.compilesDir, mounts) ||
+        resolveHostPath('/var/lib/sharelatex/data/compiles', mounts)
       const detectedOutput =
-        mounts?.['/var/lib/overleaf/data/output'] ||
-        (mounts?.['/var/lib/overleaf/data']
-          ? Path.join(mounts['/var/lib/overleaf/data'], 'output')
-          : null)
+        resolveHostPath('/var/lib/overleaf/data/output', mounts) ||
+        resolveHostPath(Settings.path?.outputDir, mounts) ||
+        resolveHostPath('/var/lib/sharelatex/data/output', mounts)
 
       // Build volume mapping and translate host directory
       const hostCompilesDir =
@@ -154,10 +178,22 @@ const DockerRunner = {
         }
       } else if (
         compileGroup === 'synctex' ||
-        compileGroup === 'wordcount' ||
-        compileGroup === 'conversions'
+        compileGroup === 'wordcount'
       ) {
         isReadOnly = true
+        if (directory.startsWith('/var/lib/overleaf/data/compile')) {
+          hostDirectory = directory.replace(
+            /^\/var\/lib\/overleaf\/data\/compiles?/,
+            hostCompilesDir
+          )
+        } else if (directory.startsWith('/local/compile/directory')) {
+          hostDirectory = directory.replace(
+            '/local/compile/directory',
+            hostCompilesDir + '/directory'
+          )
+        }
+      } else if (compileGroup === 'conversions') {
+        isReadOnly = false
         if (directory.startsWith('/var/lib/overleaf/data/compile')) {
           hostDirectory = directory.replace(
             /^\/var\/lib\/overleaf\/data\/compiles?/,
@@ -181,6 +217,12 @@ const DockerRunner = {
             hostCompilesDir + '/directory'
           )
         }
+      }
+
+      // If no manual host dir was specified, resolve directly from Docker inspect
+      const directResolved = resolveHostPath(directory, mounts)
+      if (!Settings.path?.sandboxedCompilesHostDirCompiles && directResolved) {
+        hostDirectory = directResolved
       }
 
       if (!isReadOnly && directory) {
@@ -227,25 +269,41 @@ const DockerRunner = {
       const containerName = `sandbox-compiler-${projectId}-${fingerprint}`
       options.name = containerName
 
+      compileEntry.containerName = containerName
+      if (compileEntry.killed) {
+        const err = new Error('terminated')
+        err.terminated = true
+        activeCompiles.delete(projectId)
+        return callback(err)
+      }
+
       const executeWithRetry = (isRetry = false) => {
-        this._runAndWaitForContainer(options, volumes, timeout, (err, output) => {
-          if (err && (err.statusCode === 500 || err.message?.includes('500'))) {
-            if (!isRetry) {
-              logger.warn(
-                { err, containerName, projectId },
-                'HTTP 500 from docker daemon, destroying container and retrying once'
-              )
-              return this.destroyContainer(containerName, null, false, () => {
-                executeWithRetry(true)
-              })
+        this._runAndWaitForContainer(
+          projectId,
+          options,
+          volumes,
+          timeout,
+          (err, output) => {
+            if (err && (err.statusCode === 500 || err.message?.includes('500'))) {
+              if (!isRetry && !compileEntry.killed) {
+                logger.warn(
+                  { err, containerName, projectId },
+                  'HTTP 500 from docker daemon, destroying container and retrying once'
+                )
+                return this.destroyContainer(containerName, null, false, () => {
+                  executeWithRetry(true)
+                })
+              }
             }
+            activeCompiles.delete(projectId)
+            callback(err, output)
           }
-          callback(err, output)
-        })
+        )
       }
 
       executeWithRetry(false)
     })
+    return projectId
   },
 
   _getContainerOptions(
@@ -332,7 +390,7 @@ const DockerRunner = {
       .digest('hex')
   },
 
-  _runAndWaitForContainer(options, volumes, timeout, callback) {
+  _runAndWaitForContainer(projectId, options, volumes, timeout, callback) {
     let capturedOutput = { stdout: '', stderr: '' }
 
     const attachStreamHandler = (err, stream) => {
@@ -355,11 +413,23 @@ const DockerRunner = {
       (err, containerId) => {
         if (err) return callback(err)
 
+        const compileEntry = activeCompiles.get(projectId)
+        if (compileEntry?.killed) {
+          const termErr = new Error('terminated')
+          termErr.terminated = true
+          return callback(termErr)
+        }
+
         this.waitForContainer(
           options.name || containerId,
           timeout,
           options,
           (waitErr, exitCode) => {
+            if (compileEntry?.killed) {
+              const termErr = new Error('terminated')
+              termErr.terminated = true
+              return callback(termErr)
+            }
             if (waitErr) return callback(waitErr)
             capturedOutput.exitCode = exitCode
             callback(null, capturedOutput)
@@ -377,7 +447,35 @@ const DockerRunner = {
       if (err && err.statusCode === 404) {
         // Container does not exist, create it
         docker.createContainer(options, (createErr, newContainer) => {
-          if (createErr) return callback(createErr)
+          if (createErr) {
+            if (
+              createErr.statusCode === 404 &&
+              createErr.message?.includes('No such image') &&
+              process.env.AUTO_PULL_TEX_LIVE_IMAGES === 'true'
+            ) {
+              logger.info(
+                { image: options.Image },
+                '[AutoPull] Image not found locally during compile. Pulling on demand...'
+              )
+              return AutoPullManager.pullImage(options.Image)
+                .then(() => {
+                  this.startContainer(
+                    options,
+                    volumes,
+                    attachStreamHandler,
+                    callback
+                  )
+                })
+                .catch(pullErr => {
+                  logger.error(
+                    { pullErr, image: options.Image },
+                    '[AutoPull] On-demand pull failed'
+                  )
+                  callback(createErr)
+                })
+            }
+            return callback(createErr)
+          }
           this.attachToContainer(
             options.name,
             attachStreamHandler,
@@ -524,7 +622,16 @@ const DockerRunner = {
     )
   },
 
-  kill(containerId, callback) {
+  kill(identifier, callback) {
+    if (typeof callback !== 'function') callback = () => {}
+    const entry = activeCompiles.get(identifier)
+    let containerId = identifier
+    if (entry) {
+      entry.killed = true
+      if (entry.containerName) {
+        containerId = entry.containerName
+      }
+    }
     const docker = getDocker()
     const container = docker.getContainer(containerId)
     container.kill(err => {
@@ -533,6 +640,9 @@ const DockerRunner = {
         (err.statusCode === 500 || err.statusCode === 404) &&
         err.message?.includes('is not running')
       ) {
+        return callback()
+      }
+      if (err && err.statusCode === 404) {
         return callback()
       }
       if (err) {
