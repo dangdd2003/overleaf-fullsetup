@@ -12,6 +12,8 @@ env:
   # Image names
   BASE_IMAGE_NAME: sharelatex-base
   FULL_IMAGE_NAME: sharelatex
+  SLIM_IMAGE_NAME: sharelatex-slim
+  TEXLIVE_FULL_IMAGE_NAME: texlive-full
   GIT_BRIDGE_IMAGE_NAME: git-bridge
 
 jobs:
@@ -62,7 +64,7 @@ jobs:
           file: ./overleaf/server-ce/Dockerfile-base
           build-args: |
             BUILDKIT_INLINE_CACHE=1
-            TEXLIVE_MIRROR=${{ vars.TEXLIVE_MIRROR }}
+            TEXLIVE_MIRROR=${{ vars.TEXLIVE_MIRROR || 'https://mirror.ctan.org/systems/texlive/tlnet' }}
           cache-from: type=gha,scope=sharelatex-base
           cache-to: type=gha,mode=max,scope=sharelatex-base
           tags: |
@@ -81,7 +83,7 @@ jobs:
             BUILDKIT_INLINE_CACHE=1
             OVERLEAF_BASE_TAG=${{ vars.DOCKER_USERNAME }}/${{ env.BASE_IMAGE_NAME }}:latest
             MONOREPO_REVISION=${{ steps.build_env.outputs.MONOREPO_REVISION }}
-            TEXLIVE_MIRROR=${{ vars.TEXLIVE_MIRROR }}
+            TEXLIVE_MIRROR=${{ vars.TEXLIVE_MIRROR || 'https://mirror.ctan.org/systems/texlive/tlnet' }}
             NODE_VERSION=${{ vars.NODE_VERSION || 'v24.20.0' }}
           cache-from: type=gha,scope=sharelatex-full
           cache-to: type=gha,mode=max,scope=sharelatex-full
@@ -90,6 +92,113 @@ jobs:
             ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.FULL_IMAGE_NAME }}:${{ steps.build_env.outputs.date }}
             ${{ vars.DOCKER_USERNAME }}/${{ env.FULL_IMAGE_NAME }}:latest
             ${{ vars.DOCKER_USERNAME }}/${{ env.FULL_IMAGE_NAME }}:${{ steps.build_env.outputs.date }}
+          push: true
+
+      - name: Build slim control plane image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./overleaf
+          file: ./overleaf/server-ce/Dockerfile.slim
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
+            OVERLEAF_BASE_TAG=${{ vars.DOCKER_USERNAME }}/${{ env.BASE_IMAGE_NAME }}:latest
+            MONOREPO_REVISION=${{ steps.build_env.outputs.MONOREPO_REVISION }}
+            NODE_VERSION=${{ vars.NODE_VERSION || 'v24.20.0' }}
+          cache-from: type=gha,scope=sharelatex-slim
+          cache-to: type=gha,mode=max,scope=sharelatex-slim
+          tags: |
+            ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.SLIM_IMAGE_NAME }}:latest
+            ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.SLIM_IMAGE_NAME }}:${{ steps.build_env.outputs.date }}
+            ${{ vars.DOCKER_USERNAME }}/${{ env.SLIM_IMAGE_NAME }}:latest
+            ${{ vars.DOCKER_USERNAME }}/${{ env.SLIM_IMAGE_NAME }}:${{ steps.build_env.outputs.date }}
+          push: true
+
+  build-texlive-full:
+    name: Build TeX Live Full (${{ matrix.year }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - year: "2026"
+            is_latest: true
+          - year: "2025"
+            is_latest: false
+          - year: "2024"
+            is_latest: false
+          - year: "2023"
+            is_latest: false
+          - year: "2022"
+            is_latest: false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4.2.2
+
+      - name: Set build env
+        id: build_env
+        run: |
+          echo "date=$(TZ=Asia/Ho_Chi_Minh date +"%Y-%m-%d")" >> "$GITHUB_OUTPUT"
+          
+          # Dynamic mirror URLs with verified HTTPS archives
+          DEFAULT_ACTIVE_MIRROR="${{ vars.TEXLIVE_MIRROR || 'https://mirror.ctan.org/systems/texlive/tlnet' }}"
+          DEFAULT_HISTORIC_MIRROR="${{ vars.TEXLIVE_HISTORIC_MIRROR || 'https://ftp.math.utah.edu/pub/tex/historic/systems/texlive' }}"
+          
+          if [ "${{ matrix.is_latest }}" = "true" ]; then
+            echo "mirror=${DEFAULT_ACTIVE_MIRROR}" >> "$GITHUB_OUTPUT"
+            echo "installer=${DEFAULT_ACTIVE_MIRROR}/install-tl-unx.tar.gz" >> "$GITHUB_OUTPUT"
+          else
+            echo "mirror=${DEFAULT_HISTORIC_MIRROR}/${{ matrix.year }}/tlnet-final" >> "$GITHUB_OUTPUT"
+            echo "installer=${DEFAULT_HISTORIC_MIRROR}/${{ matrix.year }}/install-tl-unx.tar.gz" >> "$GITHUB_OUTPUT"
+          fi
+        shell: bash
+
+      - name: Check build env
+        run: |
+          echo "Current build date: ${{ steps.build_env.outputs.date }}"
+          echo "Building TeX Live version: ${{ matrix.year }}"
+          echo "Using TeX Live mirror: ${{ steps.build_env.outputs.mirror }}"
+          echo "Dated tag will be: ${{ matrix.year }}_${{ steps.build_env.outputs.date }}"
+
+      - name: Docker Setup Buildx
+        uses: docker/setup-buildx-action@v3.8.0
+
+      - name: Docker login registry ${{ env.REGISTRY1 }}
+        uses: docker/login-action@v3.3.0
+        with:
+          registry: ${{ env.REGISTRY1 }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker login registry ${{ env.REGISTRY2 }}
+        uses: docker/login-action@v3.3.0
+        with:
+          username: ${{ vars.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_TOKEN }}
+
+      - name: Build and push texlive-full (${{ matrix.year }})
+        uses: docker/build-push-action@v6
+        with:
+          context: ./overleaf
+          file: ./overleaf/server-ce/Dockerfile.texlive-full
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
+            TEXLIVE_YEAR=${{ matrix.year }}
+            TEXLIVE_MIRROR=${{ steps.build_env.outputs.mirror }}
+            TEXLIVE_INSTALLER_URL=${{ steps.build_env.outputs.installer }}
+          cache-from: type=gha,scope=texlive-full-${{ matrix.year }}
+          cache-to: type=gha,mode=max,scope=texlive-full-${{ matrix.year }}
+          tags: |
+            ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.TEXLIVE_FULL_IMAGE_NAME }}:${{ matrix.year }}
+            ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.TEXLIVE_FULL_IMAGE_NAME }}:${{ matrix.year }}_${{ steps.build_env.outputs.date }}
+            ${{ vars.DOCKER_USERNAME }}/${{ env.TEXLIVE_FULL_IMAGE_NAME }}:${{ matrix.year }}
+            ${{ vars.DOCKER_USERNAME }}/${{ env.TEXLIVE_FULL_IMAGE_NAME }}:${{ matrix.year }}_${{ steps.build_env.outputs.date }}
+            ${{ matrix.is_latest && format('{0}/{1}/{2}:latest', env.REGISTRY1, github.actor, env.TEXLIVE_FULL_IMAGE_NAME) || '' }}
+            ${{ matrix.is_latest && format('{0}/{1}:latest', vars.DOCKER_USERNAME, env.TEXLIVE_FULL_IMAGE_NAME) || '' }}
           push: true
 
   build-git-bridge:

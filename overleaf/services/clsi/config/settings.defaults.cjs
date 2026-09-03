@@ -215,8 +215,10 @@ if ((process.env.DOCKER_RUNNER || process.env.SANDBOXED_COMPILES) === 'true') {
 
   if (process.env.ALLOWED_IMAGES) {
     try {
-      module.exports.clsi.docker.allowedImages =
-        process.env.ALLOWED_IMAGES.split(' ')
+      module.exports.clsi.docker.allowedImages = process.env.ALLOWED_IMAGES
+        .split(/[ ,]+/)
+        .map(s => s.trim())
+        .filter(Boolean)
     } catch (error) {
       console.error(error, 'could not apply allowed images setting')
       process.exit(1)
@@ -228,12 +230,8 @@ if ((process.env.DOCKER_RUNNER || process.env.SANDBOXED_COMPILES) === 'true') {
   module.exports.path.sandboxedCompilesHostDirCompiles =
     process.env.SANDBOXED_COMPILES_HOST_DIR_COMPILES ||
     process.env.SANDBOXED_COMPILES_HOST_DIR ||
-    process.env.COMPILES_HOST_DIR
-  if (!module.exports.path.sandboxedCompilesHostDirCompiles) {
-    throw new Error(
-      'SANDBOXED_COMPILES enabled, but SANDBOXED_COMPILES_HOST_DIR_COMPILES not set'
-    )
-  }
+    process.env.COMPILES_HOST_DIR ||
+    null
 
   module.exports.path.sandboxedCompilesHostDirOutput =
     process.env.SANDBOXED_COMPILES_HOST_DIR_OUTPUT ||

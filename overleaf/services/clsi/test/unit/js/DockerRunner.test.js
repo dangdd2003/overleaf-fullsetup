@@ -109,7 +109,7 @@ describe('DockerRunner', () => {
           .stub()
           .returns((ctx.fingerprint = 'fingerprint'))
 
-        ctx.containerName = `project-${ctx.project_id}-${ctx.fingerprint}`
+        ctx.containerName = `sandbox-compiler-${ctx.project_id}-${ctx.fingerprint}`
 
         ctx.command = ['mock', 'command', '--outdir=$COMPILE_DIR']
         ctx.command_with_dir = ['mock', 'command', '--outdir=/compile']
@@ -501,7 +501,7 @@ describe('DockerRunner', () => {
           .stub()
           .returns((ctx.fingerprint = 'fingerprint'))
 
-        ctx.containerName = `project-${ctx.project_id}-${ctx.fingerprint}`
+        ctx.containerName = `sandbox-compiler-${ctx.project_id}-${ctx.fingerprint}`
 
         ctx.command = ['mock', 'command', '--outdir=$COMPILE_DIR']
         ctx.command_with_dir = ['mock', 'command', '--outdir=/compile']

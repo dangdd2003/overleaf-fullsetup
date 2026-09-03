@@ -1,0 +1,100 @@
+# -----------------------------------------------------------
+# Overleaf TeX Live Full Sibling Compiler Image
+# Supports multi-year versions (2026, 2025, 2024, 2023, 2022, etc.)
+# -----------------------------------------------------------
+
+FROM phusion/baseimage:noble-1.0.3
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TEXMFVAR=/tmp/texmf-var
+ENV HOME=/tmp
+
+ARG TEXLIVE_YEAR=2026
+ARG TEXLIVE_MIRROR=https://mirror.ctan.org/systems/texlive/tlnet
+ARG TEXLIVE_INSTALLER_URL=""
+
+ENV PATH=/usr/local/texlive/${TEXLIVE_YEAR}/bin/x86_64-linux:/usr/local/bin:$PATH
+
+# 1. Install system dependencies, utilities, and fonts
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      build-essential \
+      wget \
+      net-tools \
+      unzip \
+      time \
+      poppler-utils \
+      optipng \
+      strace \
+      git \
+      python3 \
+      python-is-python3 \
+      python3-pygments \
+      zlib1g-dev \
+      libpcre3-dev \
+      gettext-base \
+      libwww-perl \
+      ca-certificates \
+      curl \
+      gnupg \
+      qpdf \
+      make \
+      fontconfig \
+      pandoc \
+      imagemagick \
+      ghostscript \
+      librsvg2-bin \
+      inkscape \
+      chktex \
+      lacheck \
+      fonts-liberation \
+      fonts-linuxlibertine \
+      fonts-freefont-ttf \
+      fonts-dejavu-core \
+      fonts-noto-cjk && \
+    sed -i 's/<policy domain="coder" rights="none" pattern="PDF" \/>/<policy domain="coder" rights="read|write" pattern="PDF" \/>/' /etc/ImageMagick-6/policy.xml 2>/dev/null || true && \
+    fc-cache -f -v && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# 2. Install TeX Live full scheme (Current or Historic)
+RUN mkdir -p /install-tl-unx && \
+    if [ -n "$TEXLIVE_INSTALLER_URL" ]; then \
+      echo "Downloading installer from specified URL: $TEXLIVE_INSTALLER_URL" && \
+      wget --quiet "$TEXLIVE_INSTALLER_URL" -O /install-tl-unx.tar.gz; \
+    else \
+      echo "Downloading installer for TeX Live ${TEXLIVE_YEAR}..." && \
+      (wget --quiet "${TEXLIVE_MIRROR}/install-tl-unx.tar.gz" -O /install-tl-unx.tar.gz || \
+       wget --quiet "https://ftp.math.utah.edu/pub/tex/historic/systems/texlive/${TEXLIVE_YEAR}/install-tl-unx.tar.gz" -O /install-tl-unx.tar.gz || \
+       wget --quiet "https://ftp.tu-chemnitz.de/pub/tug/historic/systems/texlive/${TEXLIVE_YEAR}/install-tl-unx.tar.gz" -O /install-tl-unx.tar.gz); \
+    fi && \
+    tar -xz -C /install-tl-unx --strip-components=1 -f /install-tl-unx.tar.gz && \
+    rm -f /install-tl-unx.tar.gz && \
+    echo "tlpdbopt_autobackup 0" >> /install-tl-unx/texlive.profile && \
+    echo "tlpdbopt_install_docfiles 0" >> /install-tl-unx/texlive.profile && \
+    echo "tlpdbopt_install_srcfiles 0" >> /install-tl-unx/texlive.profile && \
+    echo "selected_scheme scheme-full" >> /install-tl-unx/texlive.profile && \
+    echo "option_path 1" >> /install-tl-unx/texlive.profile && \
+    /install-tl-unx/install-tl \
+      -profile /install-tl-unx/texlive.profile \
+      -repository "${TEXLIVE_MIRROR}" && \
+    if [ -x "/usr/local/texlive/${TEXLIVE_YEAR}/bin/x86_64-linux/tlmgr" ]; then \
+      /usr/local/texlive/${TEXLIVE_YEAR}/bin/x86_64-linux/tlmgr path add; \
+    else \
+      $(find /usr/local/texlive -name tlmgr -perm /111 | head -n 1) path add; \
+    fi && \
+    echo "shell_escape = t" >> /usr/local/texlive/${TEXLIVE_YEAR}/texmf.cnf && \
+    rm -rf /install-tl-unx
+
+# 3. Copy custom Latexmk configuration
+COPY server-ce/config/latexmkrc /usr/local/share/latexmk/LatexMk
+
+# 4. User and workspace isolation (handle pre-existing UID 1000 in Ubuntu Noble)
+RUN (userdel -r ubuntu 2>/dev/null || true) && \
+    (userdel -r tex 2>/dev/null || true) && \
+    useradd -u 1000 -d /tmp -s /bin/bash tex && \
+    mkdir -p /compile /tmp/texmf-var /usr/local/share/latexmk && \
+    chown -R tex:tex /compile /tmp && \
+    chmod 1777 /tmp
+
+USER tex
+WORKDIR /compile

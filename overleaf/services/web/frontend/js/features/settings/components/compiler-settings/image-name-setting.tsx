@@ -18,17 +18,22 @@ export default function ImageNameSetting() {
 
   const imageNames = useMemo(() => getMeta('ol-imageNames') || [], [])
 
-  const options: Array<Option> = useMemo(
-    () =>
-      imageNames
-        // filter out images that aren't allowed, unless thats the current image the project is on
-        .filter(image => image.allowed || image.imageName === imageName)
-        .map(({ imageName, imageDesc }) => ({
-          value: imageName,
-          label: imageDesc,
-        })),
-    [imageNames, imageName]
-  )
+  const options: Array<Option> = useMemo(() => {
+    const list: Array<Option> = imageNames
+      // filter out images that aren't allowed, unless thats the current image the project is on
+      .filter(image => image.allowed || image.imageName === imageName)
+      .map(({ imageName, imageDesc }) => ({
+        value: imageName,
+        label: imageDesc,
+      }))
+    if (!imageName) {
+      list.unshift({
+        value: '',
+        label: '',
+      })
+    }
+    return list
+  }, [imageNames, imageName])
 
   if (imageNames.length === 0) {
     return null
@@ -42,7 +47,7 @@ export default function ImageNameSetting() {
       disabled={!write}
       options={options}
       onChange={changeImageName}
-      value={imageName}
+      value={imageName || ''}
       translateOptions="no"
     />
   )

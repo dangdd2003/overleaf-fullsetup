@@ -50,12 +50,28 @@ const TMP_DIR = '/var/lib/overleaf/tmp'
 const settings = {
   clsi: {
     optimiseInDocker: process.env.OPTIMISE_PDF === 'true',
+    dockerRunner:
+      (process.env.DOCKER_RUNNER || process.env.SANDBOXED_COMPILES) === 'true',
+    docker: {
+      image: process.env.TEX_LIVE_DOCKER_IMAGE,
+      allowedImages: (
+        process.env.ALLOWED_IMAGES ||
+        process.env.ALL_TEX_LIVE_DOCKER_IMAGES ||
+        ''
+      )
+        .split(/[ ,]+/)
+        .map(s => s.trim())
+        .filter(Boolean),
+    },
   },
 
   brandPrefix: '',
 
   allowAnonymousReadAndWriteSharing:
     process.env.OVERLEAF_ALLOW_ANONYMOUS_READ_AND_WRITE_SHARING === 'true',
+
+  enableGitBridge:
+    String(process.env.GIT_BRIDGE_ENABLED || 'true').toLowerCase() === 'true',
 
   // Databases
   // ---------
@@ -271,6 +287,17 @@ const settings = {
   },
 
   currentImageName: process.env.TEX_LIVE_DOCKER_IMAGE,
+  imageRoot: process.env.DOCKER_IMAGE_ROOT || '',
+
+  allowedImageNames: process.env.ALL_TEX_LIVE_DOCKER_IMAGES
+    ? process.env.ALL_TEX_LIVE_DOCKER_IMAGES.split(',').map((img, i) => ({
+        imageName: img.trim(),
+        imageDesc:
+          (process.env.ALL_TEX_LIVE_DOCKER_IMAGE_NAMES || '')
+            .split(',')[i]
+            ?.trim() || img.trim(),
+      }))
+    : undefined,
 
   apis: {
     web: {
