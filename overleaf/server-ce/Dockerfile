@@ -23,12 +23,12 @@ RUN apt-get update && apt-get upgrade -y && \
 
 WORKDIR /overleaf
 
-# Node.js version argument (e.g. v24.20.0 or 24.20.0)
-ARG NODE_VERSION=v24.20.0
+# Node.js version argument (e.g. v24.14.1)
+ARG NODE_VERSION=v24.14.1
 
-# Ensure Node >= 24 is installed (Node.js 24 LTS Krypton with SHA256 verification)
+# Ensure Node >= 24 is installed (Node.js 24 LTS with SHA256 verification)
 RUN if ! /usr/bin/node -e "if (parseInt(process.versions.node) < 24) process.exit(1)" 2>/dev/null; then \
-      NODE_VER="${NODE_VERSION:-v24.20.0}" && \
+      NODE_VER="${NODE_VERSION:-v24.14.1}" && \
       NODE_TAG="v${NODE_VER#v}" && \
       NODE_TAR="node-${NODE_TAG}-linux-x64.tar.xz" && \
       curl -fsSL "https://nodejs.org/dist/${NODE_TAG}/${NODE_TAR}" -o "/tmp/${NODE_TAR}" && \
