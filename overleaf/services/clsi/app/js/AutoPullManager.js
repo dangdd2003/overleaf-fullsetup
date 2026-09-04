@@ -100,16 +100,21 @@ export async function checkAndPullImages() {
 
   for (const imageName of images) {
     try {
-      const exists = await imageExists(imageName)
-      if (exists) {
-        logger.info({ imageName }, '[AutoPull] Image already exists locally. Skipping.')
-        continue
-      }
-
-      logger.info({ imageName }, '[AutoPull] Image not found locally. Initiating background pull...')
+      logger.info({ imageName }, '[AutoPull] Pulling latest image from remote registry...')
       await pullImage(imageName)
     } catch (err) {
-      logger.error({ err, imageName }, '[AutoPull] Failed to pull image in background. Continuing to next image.')
+      const existsLocally = await imageExists(imageName)
+      if (existsLocally) {
+        logger.warn(
+          { err: err.message, imageName },
+          '[AutoPull] Pull failed (registry/network issue), falling back to existing local image'
+        )
+      } else {
+        logger.error(
+          { err: err.message, imageName },
+          '[AutoPull] Failed to pull image from remote registry'
+        )
+      }
     }
   }
 
