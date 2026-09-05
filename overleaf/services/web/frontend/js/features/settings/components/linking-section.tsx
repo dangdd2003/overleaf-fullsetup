@@ -4,6 +4,7 @@ import importOverleafModules from '../../../../macros/import-overleaf-module.mac
 import { useSSOContext, SSOSubscription } from '../context/sso-context'
 import { SSOLinkingWidget } from './linking/sso-widget'
 import { GitTokensWidget } from './linking/git-tokens-widget'
+import { GoogleDriveLinkingWidget } from './linking/google-drive-widget'
 import getMeta from '../../../utils/meta'
 import { useBroadcastUser } from '@/shared/hooks/user-channel/use-broadcast-user'
 import OLNotification from '@/shared/components/ol/ol-notification'
@@ -42,20 +43,23 @@ function LinkingSection() {
     path: string
   }[]
 
+  const gitBridgeEnabled = Boolean(getMeta('ol-gitBridgeEnabled'))
+  const googleDriveSyncEnabled = Boolean(getMeta('ol-googleDriveSyncEnabled'))
+
   const renderSyncSection =
-    getMeta('ol-isSaas') || getMeta('ol-gitBridgeEnabled')
+    getMeta('ol-isSaas') || gitBridgeEnabled || googleDriveSyncEnabled
 
   const allIntegrationLinkingWidgets = integrationLinkingWidgets.concat(
     oauth2ServerComponents
   )
 
-  const gitBridgeEnabled = Boolean(getMeta('ol-gitBridgeEnabled'))
-
   const haslangFeedbackLinkingWidgets =
     langFeedbackLinkingWidgets.length && !cannotUseAi
   const hasIntegrationLinkingSection =
     renderSyncSection &&
-    (allIntegrationLinkingWidgets.length > 0 || gitBridgeEnabled)
+    (allIntegrationLinkingWidgets.length > 0 ||
+      gitBridgeEnabled ||
+      googleDriveSyncEnabled)
   const hasReferencesLinkingSection = referenceLinkingWidgets.length
 
   // Filter out SSO providers that are not allowed to be linked by
@@ -113,7 +117,19 @@ function LinkingSection() {
             />
           ) : null}
           <div className="settings-widgets-container">
-            {gitBridgeEnabled && <GitTokensWidget />}
+            {googleDriveSyncEnabled && (
+              <>
+                <GoogleDriveLinkingWidget />
+                {(gitBridgeEnabled ||
+                  allIntegrationLinkingWidgets.length > 0) && <hr />}
+              </>
+            )}
+            {gitBridgeEnabled && (
+              <>
+                <GitTokensWidget />
+                {allIntegrationLinkingWidgets.length > 0 && <hr />}
+              </>
+            )}
             {allIntegrationLinkingWidgets.map(
               ({ import: importObject }, widgetIndex) => (
                 <ModuleLinkingWidget

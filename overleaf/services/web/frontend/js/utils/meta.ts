@@ -140,6 +140,15 @@ export interface Meta {
   'ol-gitBridgeEnabled': boolean
   'ol-gitBridgePublicBaseUrl': string
   'ol-github': { enabled: boolean; error: boolean }
+  'ol-googleDrive':
+    | {
+        error?: boolean
+        registered?: boolean
+        linked?: boolean
+        email?: string
+      }
+    | undefined
+  'ol-googleDriveSyncEnabled': boolean
   'ol-groupAuditLogs': []
   'ol-groupDomains': []
   'ol-groupId': string

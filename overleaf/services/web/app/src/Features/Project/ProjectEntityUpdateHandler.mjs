@@ -19,6 +19,7 @@ import ProjectUpdateHandler from './ProjectUpdateHandler.mjs'
 import ProjectEntityMongoUpdateHandler from './ProjectEntityMongoUpdateHandler.mjs'
 import SafePath from './SafePath.mjs'
 import TpdsUpdateSender from '../ThirdPartyDataStore/TpdsUpdateSender.mjs'
+import Modules from '../../infrastructure/Modules.mjs'
 import FileWriter from '../../infrastructure/FileWriter.mjs'
 import EditorRealTimeController from '../Editor/EditorRealTimeController.mjs'
 import { callbackifyMultiResult, callbackify } from '@overleaf/promise-utils'
@@ -364,12 +365,20 @@ const addFile = wrapWithLock({
         fileRef,
         userId
       )
+    const filePath = result && result.path && result.path.fileSystem
+    await Modules.promises.hooks.fire(
+      'fileModified',
+      projectId,
+      fileRef._id,
+      filePath,
+      source
+    )
     const projectHistoryId = project.overleaf?.history?.id
     const newFiles = [
       {
         createdBlob,
         file: fileRef,
-        path: result && result.path && result.path.fileSystem,
+        path: filePath,
       },
     ]
     await DocumentUpdaterHandler.promises.updateProjectStructure(
@@ -620,6 +629,13 @@ const upsertFile = wrapWithLock({
         projectName: project.name,
         folderId,
       })
+      await Modules.promises.hooks.fire(
+        'fileModified',
+        project._id,
+        fileRef._id,
+        path.fileSystem,
+        source
+      )
       await DocumentUpdaterHandler.promises.updateProjectStructure(
         projectId,
         projectHistoryId,
@@ -826,6 +842,13 @@ const deleteEntity = wrapWithLock(
       entityType,
       subtreeEntityIds,
     })
+    await Modules.promises.hooks.fire(
+      'entityDeleted',
+      projectId,
+      path.fileSystem,
+      entityType,
+      source
+    )
 
     return entityId
   }
@@ -1401,6 +1424,13 @@ const ProjectEntityUpdateHandler = {
       projectName: project.name,
       folderId,
     })
+    await Modules.promises.hooks.fire(
+      'fileModified',
+      project._id,
+      updatedFileRef._id,
+      path.fileSystem,
+      source
+    )
 
     await DocumentUpdaterHandler.promises.updateProjectStructure(
       projectId,

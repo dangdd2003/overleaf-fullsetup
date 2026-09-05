@@ -71,6 +71,7 @@ export const RailLayout = () => {
   const { features } = useProjectContext()
   const { isRestrictedTokenMember } = useEditorContext()
   const gitBridgeEnabled = getMeta('ol-gitBridgeEnabled')
+  const googleDriveSyncEnabled = getMeta('ol-googleDriveSyncEnabled')
   const { isOverleaf } = getMeta('ol-ExposedSettings')
 
   const { view, setSettingsShown, focusMode } = useLayoutContext()
@@ -119,7 +120,7 @@ export const RailLayout = () => {
         icon: 'integration_instructions',
         title: t('integrations'),
         component: <IntegrationsPanel />,
-        hide: !isOverleaf && !gitBridgeEnabled,
+        hide: !isOverleaf && !gitBridgeEnabled && !googleDriveSyncEnabled,
       },
       {
         key: 'review-panel',
@@ -148,6 +149,7 @@ export const RailLayout = () => {
       isRestrictedTokenMember,
       isOverleaf,
       gitBridgeEnabled,
+      googleDriveSyncEnabled,
     ]
   )
 

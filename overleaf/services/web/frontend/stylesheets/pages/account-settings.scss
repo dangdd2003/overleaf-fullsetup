@@ -143,6 +143,16 @@
   padding: var(--spacing-01) var(--spacing-02);
 }
 
+// The shared `danger-ghost` button variant sets its border to the same
+// color as its own background (by design, for use as a low-emphasis ghost
+// button elsewhere), so it renders with no visible border. Give the Google
+// Drive "Unlink" button a real border, matching the outlined look of the
+// "Link" (`secondary`) button next to it.
+.google-drive-unlink-btn.btn-danger-ghost {
+  --btn-danger-ghost-border: var(--border-primary);
+  --btn-danger-ghost-hover-border: var(--border-primary);
+}
+
 .security-row {
   .line-header > b {
     color: var(--content-primary);

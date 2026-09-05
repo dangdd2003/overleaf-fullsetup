@@ -55,6 +55,7 @@ import LinkedFilesRouter from './Features/LinkedFiles/LinkedFilesRouter.mjs'
 import TemplatesRouter from './Features/Templates/TemplatesRouter.mjs'
 import UserMembershipRouter from './Features/UserMembership/UserMembershipRouter.mjs'
 import GitBridgeRouter from './Features/GitBridge/GitBridgeRouter.mjs'
+import GoogleDriveRouter from './Features/GoogleDriveSync/GoogleDriveRouter.mjs'
 import SystemMessageController from './Features/SystemMessages/SystemMessageController.mjs'
 import AnalyticsRegistrationSourceMiddleware from './Features/Analytics/AnalyticsRegistrationSourceMiddleware.mjs'
 import AnalyticsUTMTrackingMiddleware from './Features/Analytics/AnalyticsUTMTrackingMiddleware.mjs'
@@ -503,6 +504,7 @@ async function initialize(webRouter, privateApiRouter, publicApiRouter) {
   )
 
   GitBridgeRouter.apply(webRouter, privateApiRouter, publicApiRouter)
+  GoogleDriveRouter.apply(webRouter, publicApiRouter)
 
   webRouter.post(
     '/tutorial/:tutorialKey/complete',

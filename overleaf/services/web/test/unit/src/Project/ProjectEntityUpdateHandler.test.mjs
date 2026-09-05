@@ -154,6 +154,13 @@ describe('ProjectEntityUpdateHandler', function () {
         moveEntity: sinon.stub().resolves(),
       },
     }
+    ctx.Modules = {
+      promises: {
+        hooks: {
+          fire: sinon.stub().resolves(),
+        },
+      },
+    }
     ctx.FileStoreHandler = {
       promises: {
         uploadFileFromDisk: sinon.stub(),
@@ -255,6 +262,10 @@ describe('ProjectEntityUpdateHandler', function () {
         default: ctx.TpdsUpdateSender,
       })
     )
+
+    vi.doMock('../../../../app/src/infrastructure/Modules', () => ({
+      default: ctx.Modules,
+    }))
 
     vi.doMock(
       '../../../../app/src/Features/Editor/EditorRealTimeController',
@@ -776,6 +787,12 @@ describe('ProjectEntityUpdateHandler', function () {
           .should.equal(true)
       })
 
+      it('fires the fileModified hook', function (ctx) {
+        ctx.Modules.promises.hooks.fire
+          .calledWith('fileModified', projectId, fileId, ctx.path, ctx.source)
+          .should.equal(true)
+      })
+
       it('sends the change in project structure to the doc updater', function (ctx) {
         const newFiles = [
           {
@@ -1215,6 +1232,18 @@ describe('ProjectEntityUpdateHandler', function () {
           path: ctx.fileSystemPath,
           folderId,
         })
+      })
+
+      it('fires the fileModified hook', function (ctx) {
+        ctx.Modules.promises.hooks.fire
+          .calledWith(
+            'fileModified',
+            projectId,
+            ctx.newFile._id,
+            ctx.fileSystemPath,
+            ctx.source
+          )
+          .should.equal(true)
       })
 
       it('updates the project structure in the doc updater', function (ctx) {
@@ -1797,6 +1826,12 @@ describe('ProjectEntityUpdateHandler', function () {
         entityType: 'doc',
         subtreeEntityIds: [ctx.doc._id],
       })
+    })
+
+    it('fires the entityDeleted hook', function (ctx) {
+      ctx.Modules.promises.hooks.fire
+        .calledWith('entityDeleted', projectId, ctx.path, 'doc', ctx.source)
+        .should.equal(true)
     })
 
     it('retuns the entity_id', function () {

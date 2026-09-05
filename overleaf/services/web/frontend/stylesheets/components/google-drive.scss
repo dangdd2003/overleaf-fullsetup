@@ -1,0 +1,106 @@
+// Google Drive Sync dedicated styles
+
+.google-drive-modal {
+  color: var(--content-primary, #1b222c);
+
+  .modal-title {
+    color: var(--content-primary, #1b222c) !important;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6,
+  strong {
+    color: var(--content-primary, #1b222c) !important;
+  }
+
+  p,
+  li {
+    color: var(--content-secondary, #495365);
+  }
+
+  // Scoped to body-copy spans only (not `.button-content`, which OLButton
+  // wraps its label in) - otherwise this overrides the intentional white
+  // text color of primary/danger buttons like "Sync this project now".
+  p span,
+  li span {
+    color: var(--content-secondary, #495365);
+  }
+
+  // The app-wide .text-muted maps to --content-disabled, which reads as
+  // near-invisible against this modal's light background. Overriding it
+  // here (matching the same override in git-bridge.scss) keeps secondary
+  // text legible while still visually de-emphasized relative to headings.
+  // .google-drive-original-muted opts an element back out of this override
+  // and keeps the original .text-muted (--content-disabled) color.
+  .text-secondary,
+  .text-muted {
+    color: var(--content-secondary, #495365) !important;
+  }
+
+  .google-drive-original-muted.text-muted {
+    color: var(--content-disabled) !important;
+  }
+
+  // Explicit, high-specificity color for the "GOOGLE DRIVE FOLDER" label so
+  // it can't inherit a lighter color from any ancestor or utility class.
+  // Hardcoded (not a --content-* variable) so there is no theme-resolution
+  // path that could land on a lighter value.
+  h6.google-drive-folder-heading,
+  .google-drive-folder-heading {
+    color: #1b222c !important;
+    letter-spacing: 0.02em;
+  }
+
+  // Buttons keep their own variant-driven color (e.g. white on the green
+  // "primary" button) - none of the text-color rules above should ever
+  // apply inside one.
+  button,
+  .btn {
+    color: unset;
+
+    &.btn-primary {
+      color: var(--btn-primary-color) !important;
+    }
+  }
+
+  .google-drive-sync-btn {
+    min-width: 140px;
+    justify-content: center;
+    white-space: nowrap;
+  }
+}
+
+// Button frame stability styles to prevent layout jump during loading/cooldown/state changes
+.google-drive-sync-btn {
+  min-width: 140px;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.google-drive-scan-btn {
+  min-width: 220px;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.google-drive-unlink-btn {
+  min-width: 80px;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.google-drive-unlink-confirm-btn {
+  min-width: 90px;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.google-drive-link-btn {
+  min-width: 80px;
+  justify-content: center;
+  white-space: nowrap;
+}

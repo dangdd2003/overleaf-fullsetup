@@ -63,13 +63,15 @@ const Features = {
         return Boolean(Settings.disableLinkSharing) === false
       case 'github-sync':
         return Boolean(Settings.enableGithubSync)
+      case 'google-drive-sync':
+        return Boolean(Settings.enableGoogleDriveSync)
       case 'git-bridge':
         return Boolean(Settings.enableGitBridge)
       case 'admin-user-management':
         return Boolean(
           Settings.enableAdminUserManagement ??
-            (process.env.OVERLEAF_ADMIN_USER_MANAGEMENT_ENABLED === 'true' ||
-              process.env.ADMIN_USER_MANAGEMENT_ENABLED === 'true')
+          (process.env.OVERLEAF_ADMIN_USER_MANAGEMENT_ENABLED === 'true' ||
+            process.env.ADMIN_USER_MANAGEMENT_ENABLED === 'true')
         )
       case 'oauth':
         return Boolean(Settings.oauth)

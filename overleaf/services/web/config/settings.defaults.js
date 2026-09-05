@@ -1146,6 +1146,35 @@ module.exports = {
   },
 
   enablePandocConversions: process.env.ENABLE_PANDOC_CONVERSIONS === 'true',
+
+  enableGoogleDriveSync: process.env.ENABLE_GOOGLE_DRIVE_SYNC === 'true',
+  googleDrive: {
+    clientId: process.env.GOOGLE_DRIVE_CLIENT_ID || '',
+    clientSecret: process.env.GOOGLE_DRIVE_CLIENT_SECRET || '',
+    // Auto-derived from siteUrl with optional environment override
+    redirectUri:
+      process.env.GOOGLE_DRIVE_REDIRECT_URI ||
+      `${siteUrl}/oauth/google-drive/callback`,
+    webhookUrl:
+      process.env.GOOGLE_DRIVE_WEBHOOK_URL !== undefined
+        ? process.env.GOOGLE_DRIVE_WEBHOOK_URL
+        : siteUrl?.startsWith('https://')
+          ? `${siteUrl}/google-drive/webhook`
+          : '',
+    // Core rate-limit and quota controls
+    maxRps: intFromEnv('GOOGLE_DRIVE_MAX_RPS', 8),
+    pollIntervalSeconds: intFromEnv('GOOGLE_DRIVE_POLL_INTERVAL_SECONDS', 300),
+    outboundFlushSeconds: intFromEnv(
+      'GOOGLE_DRIVE_OUTBOUND_FLUSH_SECONDS',
+      600
+    ),
+    // Fixed internal defaults
+    folderName: 'Overleaf',
+    outboundDebounceSeconds: 15,
+    channelRenewIntervalSeconds: 3600,
+    watchedUserPollRatio: 10,
+    manualSyncCooldownSeconds: 60,
+  },
 }
 
 module.exports.mergeWith = function (overrides) {

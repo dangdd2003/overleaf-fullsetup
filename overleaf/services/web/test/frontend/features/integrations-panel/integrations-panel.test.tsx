@@ -35,10 +35,12 @@ describe('<IntegrationsPanel />', function () {
 
   beforeEach(function () {
     window.metaAttributesCache.set('ol-gitBridgeEnabled', true)
+    window.metaAttributesCache.set('ol-googleDriveSyncEnabled', true)
   })
 
   afterEach(function () {
     window.metaAttributesCache.delete('ol-gitBridgeEnabled')
+    window.metaAttributesCache.delete('ol-googleDriveSyncEnabled')
     sinon.restore()
   })
 
@@ -51,6 +53,15 @@ describe('<IntegrationsPanel />', function () {
     expect(screen.getByTestId('git-integration-card')).to.exist
   })
 
+  it('renders Google Drive card when googleDriveSyncEnabled is true', function () {
+    renderPanel()
+
+    expect(screen.getByText('Integrations')).to.exist
+    expect(screen.getByText('Google Drive')).to.exist
+    expect(screen.getByText('Synchronize with Google Drive')).to.exist
+    expect(screen.getByTestId('google-drive-integration-card')).to.exist
+  })
+
   it('does not render Git card when gitBridgeEnabled is false', function () {
     window.metaAttributesCache.set('ol-gitBridgeEnabled', false)
     renderPanel()
@@ -60,10 +71,26 @@ describe('<IntegrationsPanel />', function () {
     expect(screen.queryByTestId('git-integration-card')).to.not.exist
   })
 
+  it('does not render Google Drive card when googleDriveSyncEnabled is false', function () {
+    window.metaAttributesCache.set('ol-googleDriveSyncEnabled', false)
+    renderPanel()
+
+    expect(screen.queryByText('Google Drive')).to.not.exist
+    expect(screen.queryByText('Synchronize with Google Drive')).to.not.exist
+    expect(screen.queryByTestId('google-drive-integration-card')).to.not.exist
+  })
+
   it('opens Git Bridge modal on clicking Git card', function () {
     renderPanel()
 
     const gitCard = screen.getByTestId('git-integration-card')
     fireEvent.click(gitCard)
+  })
+
+  it('opens Google Drive modal on clicking Google Drive card', function () {
+    renderPanel()
+
+    const googleDriveCard = screen.getByTestId('google-drive-integration-card')
+    fireEvent.click(googleDriveCard)
   })
 })

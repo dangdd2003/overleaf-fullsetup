@@ -50,6 +50,10 @@ export const db = {
   githubSyncProjectStates: internalDb.collection('githubSyncProjectStates'),
   githubSyncUserCredentials: internalDb.collection('githubSyncUserCredentials'),
   globalMetrics: internalDb.collection('globalMetrics'),
+  googleDriveProjectStates: internalDb.collection('googleDriveProjectStates'),
+  googleDriveUserCredentials: internalDb.collection(
+    'googleDriveUserCredentials'
+  ),
   grouppolicies: internalDb.collection('grouppolicies'),
   groupAuditLogEntries: internalDb.collection('groupAuditLogEntries'),
   institutions: internalDb.collection('institutions'),
@@ -120,9 +124,72 @@ export async function waitForDb() {
   await connectionPromise
 }
 
+const { Schema } = Mongoose
+
+export const GoogleDriveUserCredentialsSchema = new Schema(
+  {
+    user_id: { type: ObjectId, ref: 'User', index: true, unique: true },
+    googleEmail: String,
+    googleUserId: String,
+    encryptedAccessToken: String,
+    encryptedRefreshToken: String,
+    tokenExpiry: Date,
+    rootFolderId: String,
+    startPageToken: String,
+    watchChannelId: { type: String, index: true },
+    watchResourceId: String,
+    watchChannelToken: String,
+    watchExpiresAt: Date,
+    linkedAt: { type: Date, default: Date.now },
+    updatedAt: { type: Date, default: Date.now },
+  },
+  { collection: 'googleDriveUserCredentials' }
+)
+
+export const GoogleDriveProjectStatesSchema = new Schema(
+  {
+    projectId: { type: ObjectId, ref: 'Project', index: true, unique: true },
+    userId: { type: ObjectId, ref: 'User', index: true },
+    driveFolderId: String,
+    folderName: String,
+    fileMap: { type: Map, of: Schema.Types.Mixed, default: {} },
+    syncStatus: {
+      type: String,
+      enum: ['idle', 'syncing', 'error'],
+      default: 'idle',
+    },
+    lastSyncedAt: Date,
+    lastError: String,
+    isSyncing: { type: Boolean, default: false },
+    lockExpiresAt: Date,
+    pendingChanges: { type: Map, of: Schema.Types.Mixed, default: {} },
+    outboundDirtyAt: Date,
+    lastOutboundError: String,
+    backoffUntil: Date,
+    consecutiveFailures: { type: Number, default: 0 },
+    syncSuspended: { type: Boolean, default: false },
+    suspendReason: String,
+  },
+  { collection: 'googleDriveProjectStates' }
+)
+
+export const GoogleDriveUserCredentials = Mongoose.model(
+  'GoogleDriveUserCredentials',
+  GoogleDriveUserCredentialsSchema
+)
+
+export const GoogleDriveProjectStates = Mongoose.model(
+  'GoogleDriveProjectStates',
+  GoogleDriveProjectStatesSchema
+)
+
 export default {
   db,
   ObjectId,
+  GoogleDriveUserCredentialsSchema,
+  GoogleDriveProjectStatesSchema,
+  GoogleDriveUserCredentials,
+  GoogleDriveProjectStates,
   connectionPromise,
   waitForDb,
   getCollectionNames,

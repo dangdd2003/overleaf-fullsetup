@@ -87,4 +87,28 @@ describe('<LinkingSection />', function () {
 
     expect(screen.queryByText('Linked accounts')).to.not.exist
   })
+
+  it('renders Project Synchronisation section with Google Drive widget when googleDriveSyncEnabled is true', async function () {
+    window.metaAttributesCache.set('ol-googleDriveSyncEnabled', true)
+    renderSectionWithProviders()
+
+    expect(screen.getByText(/Project synchronisation/i)).to.exist
+    expect(screen.getByText('Google Drive')).to.exist
+    expect(
+      screen.getByText(
+        /Keep your Overleaf projects in sync with your Google Drive account/
+      )
+    ).to.exist
+    expect(screen.getByRole('button', { name: /Link/ })).to.exist
+  })
+
+  it('does not render Project Synchronisation section when googleDriveSyncEnabled and gitBridgeEnabled are false and not SaaS', async function () {
+    window.metaAttributesCache.set('ol-googleDriveSyncEnabled', false)
+    window.metaAttributesCache.set('ol-gitBridgeEnabled', false)
+    window.metaAttributesCache.delete('ol-isSaas')
+    renderSectionWithProviders()
+
+    expect(screen.queryByText(/Project synchronisation/i)).to.not.exist
+    expect(screen.queryByText('Google Drive')).to.not.exist
+  })
 })

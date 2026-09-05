@@ -55,6 +55,7 @@ describe('Features', function () {
         expect(ctx.Features.hasFeature('analytics')).to.be.false
         expect(ctx.Features.hasFeature('git-bridge')).to.be.false
         expect(ctx.Features.hasFeature('github-sync')).to.be.false
+        expect(ctx.Features.hasFeature('google-drive-sync')).to.be.false
         expect(ctx.Features.hasFeature('homepage')).to.be.false
         expect(ctx.Features.hasFeature('link-url')).to.be.false
         expect(ctx.Features.hasFeature('oauth')).to.be.false
@@ -78,6 +79,7 @@ describe('Features', function () {
           expect(ctx.Features.hasFeature('analytics')).to.be.false
           expect(ctx.Features.hasFeature('git-bridge')).to.be.false
           expect(ctx.Features.hasFeature('github-sync')).to.be.false
+          expect(ctx.Features.hasFeature('google-drive-sync')).to.be.false
           expect(ctx.Features.hasFeature('homepage')).to.be.false
           expect(ctx.Features.hasFeature('link-url')).to.be.false
           expect(ctx.Features.hasFeature('oauth')).to.be.false
@@ -108,6 +110,7 @@ describe('Features', function () {
             expect(ctx.Features.hasFeature('link-url')).to.be.false
             expect(ctx.Features.hasFeature('git-bridge')).to.be.false
             expect(ctx.Features.hasFeature('github-sync')).to.be.false
+            expect(ctx.Features.hasFeature('google-drive-sync')).to.be.false
             expect(ctx.Features.hasFeature('homepage')).to.be.false
             expect(ctx.Features.hasFeature('oauth')).to.be.false
             expect(ctx.Features.hasFeature('saml')).to.be.false
@@ -141,6 +144,15 @@ describe('Features', function () {
             })
           })
         })
+      })
+    })
+    describe('google-drive-sync', function () {
+      it('should return true when enableGoogleDriveSync is set', function (ctx) {
+        ctx.settings.enableGoogleDriveSync = true
+        expect(ctx.Features.hasFeature('google-drive-sync')).to.be.true
+      })
+      it('should return false when enableGoogleDriveSync is not set', function (ctx) {
+        expect(ctx.Features.hasFeature('google-drive-sync')).to.be.false
       })
     })
   })
