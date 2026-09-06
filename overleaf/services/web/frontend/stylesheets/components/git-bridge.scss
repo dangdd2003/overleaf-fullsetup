@@ -179,6 +179,29 @@
   padding: var(--spacing-05);
   color: var(--content-primary, #1b222c);
 
+  // The icon + content row above is a flex container, and flex items default
+  // to `min-width: auto`, which stops them shrinking below their content's
+  // intrinsic width. Without this, the "Your Git authentication tokens"
+  // heading and "Generate token" button (also a flex row) can force this
+  // whole column wider than the viewport on narrow/mobile screens, pushing
+  // the button off-frame and clipping the paragraph text above it.
+  .linking-git-bridge-content {
+    min-width: 0;
+  }
+
+  // Keep "Generate token" in place next to the heading at desktop widths
+  // (unchanged from upstream), and only fold it onto its own line below
+  // the heading below the same breakpoint the Google Drive widget's
+  // action column collapses at (`settings-widget-container` in
+  // account-settings.scss), rather than reflowing based on content width.
+  .git-tokens-header-row {
+    @include media-breakpoint-down(md) {
+      flex-direction: column;
+      align-items: flex-start !important;
+      gap: var(--spacing-03);
+    }
+  }
+
   h1,
   h2,
   h3,
@@ -224,6 +247,19 @@
 
     .date-text {
       color: var(--content-secondary, #495365) !important;
+    }
+  }
+
+  .git-tokens-table-container {
+    // Clip the rounded corners without hiding overflow on the x-axis, so
+    // that on narrow viewports the token table scrolls horizontally inside
+    // its own bordered frame instead of clipping or overlapping content
+    // that no longer fits.
+    overflow-x: auto;
+    overflow-y: hidden;
+
+    table {
+      min-width: 640px;
     }
   }
 
