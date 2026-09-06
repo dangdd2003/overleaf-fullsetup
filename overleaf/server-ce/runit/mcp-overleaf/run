@@ -1,0 +1,23 @@
+#!/bin/bash
+
+NODE_PARAMS=""
+if [ "$DEBUG_NODE" == "true" ]; then
+    echo "running debug - mcp"
+    NODE_PARAMS="--inspect=0.0.0.0:30700"
+fi
+
+source /etc/overleaf/env.sh
+
+# The MCP service is off by default. runsv restarts anything that exits, so
+# idle instead of exiting: an exit here would spin the supervisor.
+if [ "$(echo "${OVERLEAF_MCP_ENABLED:-false}" | tr '[:upper:]' '[:lower:]')" != "true" ]; then
+    echo "MCP service disabled (OVERLEAF_MCP_ENABLED is not true), idling"
+    exec sleep infinity
+fi
+
+# Bind loopback only; nginx terminates external traffic for /mcp.
+export MCP_HOST="${MCP_HOST:-127.0.0.1}"
+export MCP_PORT="${MCP_PORT:-3050}"
+export OVERLEAF_INTERNAL_URL="${OVERLEAF_INTERNAL_URL:-http://127.0.0.1:3000}"
+
+exec /sbin/setuser www-data /usr/bin/node $NODE_PARAMS /overleaf/services/mcp/app.js >> /var/log/overleaf/mcp.log 2>&1

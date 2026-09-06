@@ -919,6 +919,16 @@ module.exports = {
     .split(',')
     .map(s => s.trim()),
 
+  enableMcp: process.env.OVERLEAF_MCP_ENABLED === 'true',
+  enableOAuth2: process.env.OVERLEAF_OAUTH2_ENABLED === 'true',
+
+  mcp: {
+    maxUploadBytes: parseInt(process.env.MCP_MAX_UPLOAD_MB || '20', 10) * 1024 * 1024,
+    allowedUploadExtensions: [
+      'png', 'jpg', 'jpeg', 'pdf', 'eps', 'svg', 'gif', 'csv', 'bib', 'txt',
+    ],
+  },
+
   // module options
   // ----------
   modules: {

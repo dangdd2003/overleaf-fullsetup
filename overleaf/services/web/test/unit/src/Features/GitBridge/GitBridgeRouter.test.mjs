@@ -38,11 +38,6 @@ describe('GitBridgeRouter', function () {
   it('mounts all GitBridge routes onto the routers when enabled', function () {
     GitBridgeRouter.apply(webRouter, privateApiRouter, publicApiRouter)
 
-    // Web router PAT endpoints
-    expect(webRouter.post.calledWith('/user/personal-access-tokens')).toBe(true)
-    expect(webRouter.get.calledWith('/user/personal-access-tokens')).toBe(true)
-    expect(webRouter.delete.calledWith('/user/personal-access-tokens/:tokenId')).toBe(true)
-
     // OAuth2 Token endpoints
     expect(webRouter.get.calledWith('/oauth/token/info')).toBe(true)
     expect(publicApiRouter.get.calledWith('/oauth/token/info')).toBe(true)

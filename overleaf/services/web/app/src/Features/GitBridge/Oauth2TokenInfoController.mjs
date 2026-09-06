@@ -1,4 +1,4 @@
-import PersonalAccessTokenManager from './PersonalAccessTokenManager.mjs'
+import PersonalAccessTokenManager from '../PersonalAccessToken/PersonalAccessTokenManager.mjs'
 
 function extractToken(req) {
   if (typeof req.query?.access_token === 'string') {

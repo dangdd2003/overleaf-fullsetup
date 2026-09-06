@@ -56,6 +56,9 @@ import TemplatesRouter from './Features/Templates/TemplatesRouter.mjs'
 import UserMembershipRouter from './Features/UserMembership/UserMembershipRouter.mjs'
 import GitBridgeRouter from './Features/GitBridge/GitBridgeRouter.mjs'
 import GoogleDriveRouter from './Features/GoogleDriveSync/GoogleDriveRouter.mjs'
+import PersonalAccessTokenRouter from './Features/PersonalAccessToken/PersonalAccessTokenRouter.mjs'
+import McpRouter from './Features/Mcp/McpRouter.mjs'
+import OAuth2Router from './Features/OAuth2/OAuth2Router.mjs'
 import SystemMessageController from './Features/SystemMessages/SystemMessageController.mjs'
 import AnalyticsRegistrationSourceMiddleware from './Features/Analytics/AnalyticsRegistrationSourceMiddleware.mjs'
 import AnalyticsUTMTrackingMiddleware from './Features/Analytics/AnalyticsUTMTrackingMiddleware.mjs'
@@ -505,6 +508,9 @@ async function initialize(webRouter, privateApiRouter, publicApiRouter) {
 
   GitBridgeRouter.apply(webRouter, privateApiRouter, publicApiRouter)
   GoogleDriveRouter.apply(webRouter, publicApiRouter)
+  PersonalAccessTokenRouter.apply(webRouter)
+  McpRouter.apply(webRouter, privateApiRouter, publicApiRouter)
+  OAuth2Router.apply(webRouter, privateApiRouter, publicApiRouter)
 
   webRouter.post(
     '/tutorial/:tutorialKey/complete',

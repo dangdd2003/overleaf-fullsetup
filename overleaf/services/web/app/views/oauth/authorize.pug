@@ -1,0 +1,48 @@
+extends ../layout-website-redesign
+
+block vars
+	- isWebsiteRedesign = true
+
+block content
+	main#main-content.content
+		.container
+			.row
+				.col-lg-6.offset-lg-3.col-xl-4.offset-xl-4
+					.page-header.text-center
+						h1 #{translate("oauth_authorization_request", {}, "Authorize Application")}
+
+					.card.shadow-sm.mb-4
+						.card-body
+							p.lead.text-center.mb-3
+								strong #{client.name || client.id}
+								|  #{translate("oauth_wants_access", {}, "wants to access your Overleaf account")}
+
+							if user && user.email
+								p.text-muted.text-center.small.mb-4
+									| #{translate("oauth_signed_in_as", {}, "Signed in as:")}
+									strong #{user.email}
+
+							.alert.alert-info.mb-4
+								h6.alert-heading #{translate("oauth_permissions_requested", {}, "Requested Permissions:")}
+								ul.mb-0.ps-3
+									li
+										strong #{scope}
+										|  - #{translate("oauth_scope_mcp_desc", {}, "Read and write access to projects via Model Context Protocol (MCP)")}
+
+							form(action='/oauth/authorize' method='POST')
+								input(name='_csrf' type='hidden' value=csrfToken)
+								input(name='client_id' type='hidden' value=client.id)
+								input(name='redirect_uri' type='hidden' value=redirect_uri)
+								input(name='response_type' type='hidden' value=response_type)
+								input(name='code_challenge' type='hidden' value=code_challenge)
+								input(name='code_challenge_method' type='hidden' value=code_challenge_method)
+								if state
+									input(name='state' type='hidden' value=state)
+								if scope
+									input(name='scope' type='hidden' value=scope)
+
+								.d-grid.gap-2
+									button.btn.btn-primary.btn-lg(type='submit' name='action' value='authorize')
+										| #{translate("oauth_authorize_button", {}, "Authorize")}
+									button.btn.btn-outline-secondary(type='submit' name='action' value='deny')
+										| #{translate("oauth_cancel_button", {}, "Cancel")}

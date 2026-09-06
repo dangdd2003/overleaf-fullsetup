@@ -175,6 +175,7 @@ async function settingsPage(req, res) {
     currentManagedUserAdminEmail,
     gitBridgeEnabled: Settings.enableGitBridge,
     googleDriveSyncEnabled: Features.hasFeature('google-drive-sync'),
+    mcpEnabled: Boolean(Settings.enableMcp),
     isSaas: Features.hasFeature('saas'),
     memberOfSSOEnabledGroups,
     capabilities: [...req.capabilitySet],

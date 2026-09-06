@@ -139,6 +139,7 @@ export interface Meta {
   'ol-galleryTagName': string
   'ol-gitBridgeEnabled': boolean
   'ol-gitBridgePublicBaseUrl': string
+  'ol-mcpEnabled': boolean
   'ol-github': { enabled: boolean; error: boolean }
   'ol-googleDrive':
     | {

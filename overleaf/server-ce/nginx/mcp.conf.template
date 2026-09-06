@@ -1,0 +1,21 @@
+# Overleaf MCP Streamable HTTP endpoint (Dynamic Template)
+location /mcp {
+	proxy_pass http://${MCP_HOST}:${MCP_PORT};
+	proxy_http_version 1.1;
+
+	proxy_set_header Host $host;
+	proxy_set_header X-Forwarded-Host $host;
+	proxy_set_header X-Forwarded-Proto $scheme;
+	proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+
+	# Streamable HTTP upgrades to SSE when a tool emits progress notifications.
+	# Buffering would hold those events until the response completed.
+	proxy_buffering off;
+	proxy_request_buffering off;
+	proxy_cache off;
+	chunked_transfer_encoding off;
+
+	# Long-running compiles keep the request open.
+	proxy_read_timeout 10m;
+	proxy_send_timeout 10m;
+}

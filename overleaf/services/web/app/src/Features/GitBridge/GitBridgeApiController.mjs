@@ -1,6 +1,6 @@
 import GitBridgeSnapshotManager from './GitBridgeSnapshotManager.mjs'
 import GitBridgeFileTokenManager from './GitBridgeFileTokenManager.mjs'
-import PersonalAccessTokenManager from './PersonalAccessTokenManager.mjs'
+import PersonalAccessTokenManager from '../PersonalAccessToken/PersonalAccessTokenManager.mjs'
 import AuthorizationManager from '../Authorization/AuthorizationManager.mjs'
 import Errors from '../Errors/Errors.js'
 import logger from '@overleaf/logger'
@@ -33,8 +33,16 @@ async function resolveAuthUser(req) {
   if (token) {
     try {
       const tokenInfo = await PersonalAccessTokenManager.validateToken(token)
-      if (tokenInfo?.user_id) {
-        return tokenInfo.user_id
+      if (tokenInfo?.userId) {
+        // Record that the caller authenticated via a personal access token and
+        // which scopes that token carries, so `requireGitBridgeAuth` can
+        // enforce the `git_bridge` scope. Session / oauth callers never set
+        // these and are therefore unaffected.
+        req.gitBridgeViaPat = true
+        req.gitBridgePatScopes = Array.isArray(tokenInfo.scopes)
+          ? tokenInfo.scopes
+          : []
+        return tokenInfo.userId
       }
     } catch (err) {
       logger.warn({ err }, 'failed to validate git-bridge auth token')
@@ -50,6 +58,15 @@ async function requireGitBridgeAuth(req, res, next) {
     return res
       .status(401)
       .json({ code: 'unauthorized', message: 'Valid authentication required' })
+  }
+  // A personal access token must carry the `git_bridge` scope to use the
+  // git-bridge API. An `mcp`-only token is rejected here rather than silently
+  // granting full git-bridge access. Session / oauth callers skip this check.
+  if (req.gitBridgeViaPat && !(req.gitBridgePatScopes || []).includes('git_bridge')) {
+    return res.status(403).json({
+      code: 'insufficient_scope',
+      message: 'token is missing the required git_bridge scope',
+    })
   }
   req.gitBridgeUserId = userId
   return next()

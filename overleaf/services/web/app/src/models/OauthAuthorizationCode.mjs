@@ -7,6 +7,7 @@ export const OauthAuthorizationCodeSchema = new Schema(
   {
     authorizationCode: String,
     expiresAt: Date,
+    client_id: String,
     oauthApplication_id: { type: ObjectId, ref: 'OauthApplication' },
     redirectUri: String,
     scope: String,
@@ -19,6 +20,8 @@ export const OauthAuthorizationCodeSchema = new Schema(
     minimize: false,
   }
 )
+
+OauthAuthorizationCodeSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 })
 
 export const OauthAuthorizationCode = mongoose.model(
   'OauthAuthorizationCode',

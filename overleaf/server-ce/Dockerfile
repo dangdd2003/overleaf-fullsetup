@@ -82,6 +82,7 @@ ADD server-ce/config/env.sh /etc/overleaf/env.sh
 # ---------------
 ADD server-ce/nginx/nginx.conf.template /etc/nginx/templates/nginx.conf.template
 ADD server-ce/nginx/git-bridge.conf.template /etc/nginx/templates/git-bridge.conf.template
+ADD server-ce/nginx/mcp.conf.template /etc/nginx/templates/mcp.conf.template
 ADD server-ce/nginx/overleaf.conf /etc/nginx/sites-enabled/overleaf.conf
 ADD server-ce/nginx/clsi-nginx.conf /etc/nginx/sites-enabled/clsi-nginx.conf
 

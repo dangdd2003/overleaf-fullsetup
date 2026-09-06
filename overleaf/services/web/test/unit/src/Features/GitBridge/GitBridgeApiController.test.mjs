@@ -5,6 +5,7 @@ import AuthorizationManager from '../../../../../app/src/Features/Authorization/
 import GitBridgeApiController from '../../../../../app/src/Features/GitBridge/GitBridgeApiController.mjs'
 import GitBridgeSnapshotManager from '../../../../../app/src/Features/GitBridge/GitBridgeSnapshotManager.mjs'
 import GitBridgeFileTokenManager from '../../../../../app/src/Features/GitBridge/GitBridgeFileTokenManager.mjs'
+import PersonalAccessTokenManager from '../../../../../app/src/Features/PersonalAccessToken/PersonalAccessTokenManager.mjs'
 
 describe('GitBridgeApiController', function () {
   let req, res, statusCalls, jsonCalls
@@ -78,6 +79,27 @@ describe('GitBridgeApiController', function () {
       await GitBridgeApiController.requireGitBridgeAuth(req, res, next)
       expect(next.calledOnce).toBe(true)
       expect(req.gitBridgeUserId).toBe('user-123')
+    })
+
+    it('rejects a PAT that lacks the git_bridge scope with 403 insufficient_scope', async function () {
+      req.headers.authorization = 'Bearer olp_mcponly'
+      sinon
+        .stub(PersonalAccessTokenManager, 'validateToken')
+        .resolves({ userId: 'user-9', scopes: ['mcp'] })
+      await GitBridgeApiController.requireGitBridgeAuth(req, res, next)
+      expect(statusCalls[0]).toBe(403)
+      expect(jsonCalls[0].code).toBe('insufficient_scope')
+      expect(next.called).toBe(false)
+    })
+
+    it('accepts a PAT that carries the git_bridge scope', async function () {
+      req.headers.authorization = 'Bearer olp_gitbridge'
+      sinon
+        .stub(PersonalAccessTokenManager, 'validateToken')
+        .resolves({ userId: 'user-9', scopes: ['git_bridge'] })
+      await GitBridgeApiController.requireGitBridgeAuth(req, res, next)
+      expect(next.calledOnce).toBe(true)
+      expect(req.gitBridgeUserId).toBe('user-9')
     })
   })
 

@@ -1,7 +1,7 @@
 import { describe, it, beforeEach, afterEach, expect } from 'vitest'
 import sinon from 'sinon'
 import Oauth2TokenInfoController from '../../../../../app/src/Features/GitBridge/Oauth2TokenInfoController.mjs'
-import PersonalAccessTokenManager from '../../../../../app/src/Features/GitBridge/PersonalAccessTokenManager.mjs'
+import PersonalAccessTokenManager from '../../../../../app/src/Features/PersonalAccessToken/PersonalAccessTokenManager.mjs'
 
 describe('Oauth2TokenInfoController', () => {
   let req, res
@@ -21,17 +21,17 @@ describe('Oauth2TokenInfoController', () => {
   it('authenticates Bearer token header and returns token info', async () => {
     req.headers.authorization = 'Bearer olp_validtoken123'
     sinon.stub(PersonalAccessTokenManager, 'validateToken').resolves({
-      user_id: 'user-123',
+      userId: 'user-123',
       email: 'test@example.com',
-      scope: 'git_bridge',
+      scopes: ['git_bridge'],
     })
 
     await Oauth2TokenInfoController.getTokenInfo(req, res)
     expect(
       res.json.calledWith({
-        user_id: 'user-123',
+        userId: 'user-123',
         email: 'test@example.com',
-        scope: 'git_bridge',
+        scopes: ['git_bridge'],
       })
     ).toBe(true)
   })
@@ -39,17 +39,17 @@ describe('Oauth2TokenInfoController', () => {
   it('authenticates Basic git:<token> header and returns token info', async () => {
     req.headers.authorization = `Basic ${Buffer.from('git:olp_validtoken123').toString('base64')}`
     sinon.stub(PersonalAccessTokenManager, 'validateToken').resolves({
-      user_id: 'user-123',
+      userId: 'user-123',
       email: 'test@example.com',
-      scope: 'git_bridge',
+      scopes: ['git_bridge'],
     })
 
     await Oauth2TokenInfoController.getTokenInfo(req, res)
     expect(
       res.json.calledWith({
-        user_id: 'user-123',
+        userId: 'user-123',
         email: 'test@example.com',
-        scope: 'git_bridge',
+        scopes: ['git_bridge'],
       })
     ).toBe(true)
   })

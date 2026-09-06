@@ -1,0 +1,42 @@
+{
+  "name": "@overleaf/mcp",
+  "description": "MCP protocol adapter for the Overleaf per-user MCP API",
+  "private": true,
+  "main": "app.js",
+  "type": "module",
+  "scripts": {
+    "start": "node app.js",
+    "nodemon": "node --watch app.js",
+    "test:unit": "yarn run test:unit:_run -- --grep=\"${MOCHA_GREP:-}\"",
+    "test:unit:_run": "mocha --recursive --exit $@ test/unit/js",
+    "test:acceptance": "yarn run test:acceptance:_run -- --grep=\"${MOCHA_GREP:-}\"",
+    "test:acceptance:_run": "mocha --recursive --timeout 15000 --exit --retries=${RETRIES:-0} $@ test/acceptance/js",
+    "lint": "eslint --cache --cache-location ../../.cache/eslint/ --max-warnings 0 --format unix .",
+    "lint:fix": "eslint --cache --cache-location ../../.cache/eslint/ --fix .",
+    "types:check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/express": "^2.0.0",
+    "@modelcontextprotocol/node": "^2.0.0",
+    "@modelcontextprotocol/server": "^2.0.0",
+    "@overleaf/logger": "workspace:*",
+    "@overleaf/metrics": "workspace:*",
+    "express": "4.22.1",
+    "zod": "^4.1.7"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "^2.0.0",
+    "chai": "^4.3.6",
+    "chai-as-promised": "^7.1.1",
+    "mocha": "^11.1.0",
+    "sinon": "^9.2.4",
+    "typescript": "^5.0.4"
+  },
+  "version": "1.0.0",
+  "directories": {
+    "test": "test"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "AGPL-3.0"
+}

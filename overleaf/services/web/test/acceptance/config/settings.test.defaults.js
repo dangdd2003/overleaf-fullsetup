@@ -11,6 +11,15 @@ module.exports = {
   catchErrors: false,
   clsiCookie: undefined,
 
+  // Enable the MCP HTTP API (/api/v0/mcp/*) for acceptance tests. The routes are
+  // registered at app boot from Settings.enableMcp, so this must be set here in
+  // config rather than toggled from a test `before` hook. See McpTests.mjs.
+  enableMcp: true,
+
+  // Enable the git-bridge API too, so McpTests.mjs's cross-feature scope-bleed
+  // test (which skips itself unless Settings.enableGitBridge) actually runs.
+  enableGitBridge: true,
+
   cacheStaticAssets: true,
 
   httpAuthUsers,

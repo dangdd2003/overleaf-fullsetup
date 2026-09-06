@@ -21,6 +21,9 @@ module.exports = [
     name: 'chat',
   },
   {
+    name: 'mcp',
+  },
+  {
     name: 'notifications',
   },
   {

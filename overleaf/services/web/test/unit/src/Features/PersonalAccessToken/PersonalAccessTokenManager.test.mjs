@@ -7,7 +7,7 @@ import PersonalAccessTokenManager, {
   validateToken,
   listTokens,
   revokeToken,
-} from '../../../../../app/src/Features/GitBridge/PersonalAccessTokenManager.mjs'
+} from '../../../../../app/src/Features/PersonalAccessToken/PersonalAccessTokenManager.mjs'
 
 describe('PersonalAccessTokenManager', () => {
   const userId = '64b1f2e3d4c5b6a789012345'
@@ -136,6 +136,27 @@ describe('PersonalAccessTokenManager', () => {
       expect(result.record.scopes).toEqual(['git_bridge'])
     })
 
+    it('defaults scopes to [git_bridge] when omitted', async () => {
+      const { record } = await createToken(userId, 'My Token')
+      expect(record.scopes).toEqual(['git_bridge'])
+    })
+
+    it('persists the requested scopes', async () => {
+      const { record } = await createToken(userId, 'AI', ['mcp'])
+      expect(record.scopes).toEqual(['mcp'])
+    })
+
+    it('rejects unknown scopes', async () => {
+      let err
+      try {
+        await createToken(userId, 'bad', ['root'])
+      } catch (e) {
+        err = e
+      }
+      expect(err).toBeDefined()
+      expect(err.message).toMatch(/scope/i)
+    })
+
     it('works with named export createToken', async () => {
       const result = await createToken(userId)
       expect(result.token).toBeDefined()
@@ -195,12 +216,31 @@ describe('PersonalAccessTokenManager', () => {
       const result = await PersonalAccessTokenManager.validateToken(validToken)
 
       expect(result).toBeDefined()
-      expect(result.user_id).toBe(userId)
+      expect(result.userId).toBe(userId)
       expect(result.email).toBe(userEmail)
-      expect(result.scope).toBe('git_bridge')
+      expect(result.scopes).toEqual(['git_bridge'])
+    })
+
+    it('validateToken returns userId, email and scopes array', async () => {
+      const token = 'olp_' + '0'.repeat(32)
+      mockFindRecord = {
+        user_id: userId,
+        tokenHash: crypto.createHash('sha256').update(token).digest('hex'),
+        scopes: ['mcp', 'git_bridge'],
+        expiresAt: new Date(Date.now() + 1000),
+        save: async () => {},
+      }
+      const info = await validateToken(token)
+      expect(info).toEqual({
+        userId,
+        email: userEmail,
+        scopes: ['mcp', 'git_bridge'],
+      })
     })
 
     it('updates lastUsedAt when token is successfully validated', async () => {
+      // stored lastUsedAt is old, so the throttled write still fires
+      mockFindRecord.lastUsedAt = new Date('2000-01-01T00:00:00Z')
       let saved = false
       mockFindRecord.save = async function () {
         saved = true
@@ -233,19 +273,19 @@ describe('PersonalAccessTokenManager', () => {
       expect(result).toBeNull()
     })
 
-    it('formats multiple scopes as space-separated string', async () => {
-      mockFindRecord.scopes = ['git_bridge', 'read_project', 'write_project']
+    it('returns multiple scopes as an array', async () => {
+      mockFindRecord.scopes = ['git_bridge', 'mcp']
       const result = await PersonalAccessTokenManager.validateToken(validToken)
 
       expect(result).toBeDefined()
-      expect(result.scope).toBe('git_bridge read_project write_project')
+      expect(result.scopes).toEqual(['git_bridge', 'mcp'])
     })
 
-    it('handles string scope if scopes is already a string', async () => {
+    it('wraps a string scope into an array', async () => {
       mockFindRecord.scopes = 'git_bridge'
       const result = await PersonalAccessTokenManager.validateToken(validToken)
       expect(result).toBeDefined()
-      expect(result.scope).toBe('git_bridge')
+      expect(result.scopes).toEqual(['git_bridge'])
     })
 
     it('works with named export validateToken', async () => {

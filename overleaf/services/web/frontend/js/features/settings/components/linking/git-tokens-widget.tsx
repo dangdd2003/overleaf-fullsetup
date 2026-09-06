@@ -19,6 +19,7 @@ interface TokenRecord {
   createdAt: string
   lastUsedAt?: string
   expiresAt?: string
+  scopes?: string[]
 }
 
 function formatOrdinalDate(dateInput?: string | Date): string {
@@ -115,6 +116,9 @@ export function GitTokensWidget() {
   const [generatedToken, setGeneratedToken] = useState<string | null>(null)
   const [tokenCopied, setTokenCopied] = useState<boolean>(false)
   const [tokenToDelete, setTokenToDelete] = useState<TokenRecord | null>(null)
+  const mcpEnabled = Boolean(getMeta('ol-mcpEnabled'))
+  const [scopeGitBridge, setScopeGitBridge] = useState<boolean>(true)
+  const [scopeMcp, setScopeMcp] = useState<boolean>(false)
 
   const fetchTokens = useCallback(async () => {
     try {
@@ -136,6 +140,10 @@ export function GitTokensWidget() {
 
   const handleGenerate = async () => {
     try {
+      const scopes: string[] = []
+      if (scopeGitBridge) scopes.push('git_bridge')
+      if (mcpEnabled && scopeMcp) scopes.push('mcp')
+      if (scopes.length === 0) scopes.push('git_bridge')
       const csrfToken =
         (typeof window !== 'undefined' && (window as any).csrfToken) ||
         getMeta('ol-csrfToken') ||
@@ -146,7 +154,7 @@ export function GitTokensWidget() {
           'Content-Type': 'application/json',
           'X-Csrf-Token': csrfToken,
         },
-        body: JSON.stringify({ name: 'Git Token' }),
+        body: JSON.stringify({ name: 'Git Token', scopes }),
       })
       if (res.ok) {
         const data = await res.json()
@@ -252,6 +260,47 @@ export function GitTokensWidget() {
             )}
           </p>
 
+          {mcpEnabled && (
+            <div className="git-token-scopes mb-3">
+              <p className="fw-bold mb-1" style={{ fontSize: '14px' }}>
+                {t('personal_access_token_scopes', 'Token permissions')}
+              </p>
+              <div className="form-check">
+                <input
+                  className="form-check-input"
+                  type="checkbox"
+                  id="git-token-scope-git-bridge"
+                  checked={scopeGitBridge}
+                  onChange={e => setScopeGitBridge(e.target.checked)}
+                />
+                <label
+                  className="form-check-label"
+                  htmlFor="git-token-scope-git-bridge"
+                >
+                  {t(
+                    'personal_access_token_scope_git_bridge',
+                    'Git integration'
+                  )}
+                </label>
+              </div>
+              <div className="form-check">
+                <input
+                  className="form-check-input"
+                  type="checkbox"
+                  id="git-token-scope-mcp"
+                  checked={scopeMcp}
+                  onChange={e => setScopeMcp(e.target.checked)}
+                />
+                <label
+                  className="form-check-label"
+                  htmlFor="git-token-scope-mcp"
+                >
+                  {t('personal_access_token_scope_mcp', 'AI assistant (MCP)')}
+                </label>
+              </div>
+            </div>
+          )}
+
           {!hasTokens ? (
             <ul
               className="git-tokens-instruction-text mb-4 ps-3"
@@ -306,10 +355,13 @@ export function GitTokensWidget() {
                       background: 'var(--bg-light-primary, #ffffff)',
                     }}
                   >
-                    <th className="py-2 px-3 fw-bold" style={{ width: '30%' }}>
+                    <th className="py-2 px-3 fw-bold" style={{ width: '24%' }}>
                       {t('token', 'Token')}
                     </th>
-                    <th className="py-2 px-3 fw-bold" style={{ width: '22%' }}>
+                    <th className="py-2 px-3 fw-bold" style={{ width: '18%' }}>
+                      {t('personal_access_token_scopes', 'Token permissions')}
+                    </th>
+                    <th className="py-2 px-3 fw-bold" style={{ width: '18%' }}>
                       {t('created', 'Created')}
                     </th>
                     <th className="py-2 px-3 fw-bold" style={{ width: '20%' }}>
@@ -337,6 +389,27 @@ export function GitTokensWidget() {
                       <td className="py-3 px-3 font-monospace token-text">
                         {token.tokenPrefix || 'olp_4LEj'}
                         {'*'.repeat(12)}
+                      </td>
+                      <td className="py-3 px-3">
+                        {(token.scopes && token.scopes.length
+                          ? token.scopes
+                          : ['git_bridge']
+                        ).map(scope => (
+                          <span
+                            key={scope}
+                            className="badge badge-bs3 badge-info me-1"
+                          >
+                            {scope === 'mcp'
+                              ? t(
+                                  'personal_access_token_scope_mcp',
+                                  'AI assistant (MCP)'
+                                )
+                              : t(
+                                  'personal_access_token_scope_git_bridge',
+                                  'Git integration'
+                                )}
+                          </span>
+                        ))}
                       </td>
                       <td className="py-3 px-3 date-text">
                         {formatOrdinalDate(token.createdAt)}

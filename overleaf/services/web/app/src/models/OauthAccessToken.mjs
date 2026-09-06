@@ -12,6 +12,8 @@ export const OauthAccessTokenSchema = new Schema(
     oauthApplication_id: { type: ObjectId, ref: 'OauthApplication' },
     refreshToken: String,
     refreshTokenExpiresAt: Date,
+    client_id: { type: String, default: null },
+    audience: { type: String, default: null },
     scope: String,
     user_id: { type: ObjectId, ref: 'User' },
     createdAt: { type: Date },
@@ -30,6 +32,11 @@ export const OauthAccessTokenSchema = new Schema(
     collection: 'oauthAccessTokens',
     minimize: false,
   }
+)
+
+OauthAccessTokenSchema.index(
+  { refreshTokenExpiresAt: 1 },
+  { expireAfterSeconds: 0 }
 )
 
 export const OauthAccessToken = mongoose.model(

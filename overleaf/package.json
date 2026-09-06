@@ -215,6 +215,7 @@
     "services/history-v1",
     "services/idp",
     "services/latexqc",
+    "services/mcp",
     "services/notifications",
     "services/project-history",
     "services/real-time",

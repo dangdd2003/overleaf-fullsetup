@@ -5,6 +5,11 @@ const base = require('./settings.test.defaults')
 module.exports = base.mergeWith({
   defaultFeatures: ServerCEDefaults.defaultFeatures,
   activeUserMetricInterval: 100,
+  apis: {
+    webpack: {
+      url: process.env.WEBPACK_URL || 'http://webpack:3808',
+    },
+  },
 })
 
 module.exports.mergeWith = function (overrides) {

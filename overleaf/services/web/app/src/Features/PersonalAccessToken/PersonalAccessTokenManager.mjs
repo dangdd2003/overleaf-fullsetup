@@ -1,7 +1,14 @@
 import crypto from 'node:crypto'
 import { callbackify } from 'node:util'
+import OError from '@overleaf/o-error'
 import { PersonalAccessToken } from '../../models/PersonalAccessToken.mjs'
 import UserGetter from '../User/UserGetter.mjs'
+
+const ALLOWED_SCOPES = ['git_bridge', 'mcp']
+
+// Only persist `lastUsedAt` when the stored value is missing or older than
+// this, to avoid a DB write on every authenticated request.
+const LAST_USED_THROTTLE_MS = 60 * 1000
 
 /**
  * Creates a new personal access token for git operations.
@@ -9,9 +16,18 @@ import UserGetter from '../User/UserGetter.mjs'
  *
  * @param {string|object} userId
  * @param {string} [name='Git Token']
+ * @param {string[]} [scopes=['git_bridge']]
  * @returns {Promise<{token: string, tokenPrefix: string, record: object}>}
  */
-async function createToken(userId, name) {
+async function createToken(userId, name, scopes) {
+  const finalScopes =
+    Array.isArray(scopes) && scopes.length ? scopes : ['git_bridge']
+  for (const s of finalScopes) {
+    if (!ALLOWED_SCOPES.includes(s)) {
+      throw new OError('invalid personal access token scope', { scope: s })
+    }
+  }
+
   const randomHex = crypto.randomBytes(16).toString('hex')
   const token = `olp_${randomHex}`
   const tokenHash = crypto.createHash('sha256').update(token).digest('hex')
@@ -25,7 +41,7 @@ async function createToken(userId, name) {
     name: name || 'Git Token',
     tokenHash,
     tokenPrefix,
-    scopes: ['git_bridge'],
+    scopes: finalScopes,
     createdAt: now,
     expiresAt,
   })
@@ -42,7 +58,7 @@ async function createToken(userId, name) {
  * Updates lastUsedAt on success and fetches user information.
  *
  * @param {string} rawToken
- * @returns {Promise<{user_id: string, email: string, scope: string}|null>}
+ * @returns {Promise<{userId: string, email: string, scopes: string[]}|null>}
  */
 async function validateToken(rawToken) {
   if (!rawToken || typeof rawToken !== 'string') {
@@ -64,15 +80,20 @@ async function validateToken(rawToken) {
     return null
   }
 
-  const now = new Date()
-  record.lastUsedAt = now
-  if (typeof record.save === 'function') {
-    await record.save()
-  } else {
-    await PersonalAccessToken.updateOne(
-      { _id: record._id },
-      { $set: { lastUsedAt: now } }
-    )
+  const stale =
+    !record.lastUsedAt ||
+    Date.now() - new Date(record.lastUsedAt).getTime() > LAST_USED_THROTTLE_MS
+  if (stale) {
+    const now = new Date()
+    record.lastUsedAt = now
+    if (typeof record.save === 'function') {
+      await record.save()
+    } else {
+      await PersonalAccessToken.updateOne(
+        { _id: record._id },
+        { $set: { lastUsedAt: now } }
+      )
+    }
   }
 
   let user = null
@@ -92,19 +113,21 @@ async function validateToken(rawToken) {
     return null
   }
 
-  const scope = Array.isArray(record.scopes)
-    ? record.scopes.join(' ')
-    : record.scopes || 'git_bridge'
+  const scopes = Array.isArray(record.scopes)
+    ? record.scopes
+    : record.scopes
+      ? [record.scopes]
+      : ['git_bridge']
 
   return {
-    user_id: record.user_id ? record.user_id.toString() : null,
+    userId: record.user_id ? record.user_id.toString() : null,
     email: user.email,
-    scope,
+    scopes,
   }
 }
 
 /**
- * Lists all active token records for a user (excluding tokenHash), sorted by createdAt descending.
+ * Lists all token records for a user (excluding tokenHash), sorted by createdAt descending.
  *
  * @param {string|object} userId
  * @returns {Promise<Array<object>>}
@@ -158,4 +181,6 @@ export {
   listTokens,
   revokeToken,
   PersonalAccessTokenManager,
+  ALLOWED_SCOPES,
+  LAST_USED_THROTTLE_MS,
 }

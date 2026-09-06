@@ -1,6 +1,4 @@
 import Settings from '@overleaf/settings'
-import AuthenticationController from '../Authentication/AuthenticationController.mjs'
-import PersonalAccessTokenController from './PersonalAccessTokenController.mjs'
 import Oauth2TokenInfoController from './Oauth2TokenInfoController.mjs'
 import GitBridgeApiController from './GitBridgeApiController.mjs'
 import FileStoreController from '../FileStore/FileStoreController.mjs'
@@ -23,24 +21,7 @@ const GitBridgeRouter = {
       return
     }
 
-    // 1. User Personal Access Token (PAT) Management (Session Login & CSRF protected)
-    webRouter.post(
-      '/user/personal-access-tokens',
-      AuthenticationController.requireLogin(),
-      PersonalAccessTokenController.createToken
-    )
-    webRouter.get(
-      '/user/personal-access-tokens',
-      AuthenticationController.requireLogin(),
-      PersonalAccessTokenController.listTokens
-    )
-    webRouter.delete(
-      '/user/personal-access-tokens/:tokenId',
-      AuthenticationController.requireLogin(),
-      PersonalAccessTokenController.revokeToken
-    )
-
-    // 2. OAuth2 Token Verification (token-authenticated)
+    // OAuth2 Token Verification (token-authenticated)
     for (const r of [webRouter, publicApiRouter, privateApiRouter]) {
       r.get('/oauth/token/info', Oauth2TokenInfoController.getTokenInfo)
     }

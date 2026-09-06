@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { expect } from 'chai'
 import sinon from 'sinon'
 import fetchMock from 'fetch-mock'
@@ -95,6 +95,70 @@ describe('<GitTokensWidget />', function () {
     const tokenCode = screen.getByText(fakeToken)
     expect(tokenCode).to.exist
     expect(tokenCode.textContent).to.equal(fakeToken)
+  })
+
+  it('shows the Git integration scope checkbox but hides the MCP checkbox when ol-mcpEnabled is false', async function () {
+    window.metaAttributesCache.set('ol-mcpEnabled', false)
+    fetchMock.get('/user/personal-access-tokens', [])
+    render(<GitTokensWidget />)
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Git integration')).to.exist
+    })
+    expect(screen.queryByLabelText('AI assistant (MCP)')).to.be.null
+  })
+
+  it('submits the selected scopes when generating a token', async function () {
+    window.metaAttributesCache.set('ol-mcpEnabled', true)
+    fetchMock.get('/user/personal-access-tokens', [])
+    fetchMock.post('/user/personal-access-tokens', {
+      token: 'olp_x',
+      tokenPrefix: 'olp_x',
+      name: 'Git Token',
+      scopes: ['git_bridge', 'mcp'],
+    })
+
+    render(<GitTokensWidget />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Generate token' })).to.exist
+    })
+
+    fireEvent.click(screen.getByLabelText('AI assistant (MCP)'))
+    fireEvent.click(screen.getByRole('button', { name: 'Generate token' }))
+
+    await waitFor(() => {
+      expect(fetchMock.called('/user/personal-access-tokens', { method: 'POST' }))
+        .to.be.true
+    })
+    const call = fetchMock.callHistory
+      ? fetchMock.callHistory.calls('/user/personal-access-tokens')
+      : []
+    const body = JSON.parse(
+      (call[call.length - 1]?.options?.body as string) || '{}'
+    )
+    expect(body.scopes).to.deep.equal(['git_bridge', 'mcp'])
+  })
+
+  it('renders scope badges in the token list', async function () {
+    window.metaAttributesCache.set('ol-mcpEnabled', true)
+    fetchMock.get('/user/personal-access-tokens', [
+      {
+        _id: 'token-1',
+        name: 'AI',
+        tokenPrefix: 'olp_1234',
+        createdAt: '2026-08-24T00:00:00.000Z',
+        scopes: ['mcp'],
+      },
+    ])
+
+    render(<GitTokensWidget />)
+
+    await waitFor(() => {
+      const tokenPrefix = screen.getByText('olp_1234')
+      const row = tokenPrefix.closest('tr')!
+      expect(within(row).getByText('AI assistant (MCP)')).to.exist
+    })
   })
 
   it('deletes a token when confirmed in delete modal', async function () {

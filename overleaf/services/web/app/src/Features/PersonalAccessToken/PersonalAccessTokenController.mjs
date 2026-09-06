@@ -1,4 +1,6 @@
-import PersonalAccessTokenManager from './PersonalAccessTokenManager.mjs'
+import PersonalAccessTokenManager, {
+  ALLOWED_SCOPES,
+} from './PersonalAccessTokenManager.mjs'
 import SessionManager from '../Authentication/SessionManager.mjs'
 import logger from '@overleaf/logger'
 
@@ -7,13 +9,34 @@ const PersonalAccessTokenController = {
     const userId =
       req.session?.user?._id || SessionManager.getLoggedInUserId(req.session)
     const { name } = req.body || {}
+
+    let scopes = req.body?.scopes
+    if (typeof scopes === 'string') {
+      scopes = [scopes]
+    }
+    if (!Array.isArray(scopes) || scopes.length === 0) {
+      scopes = ['git_bridge']
+    }
+    const invalidScope = scopes.find(s => !ALLOWED_SCOPES.includes(s))
+    if (invalidScope) {
+      return res.status(400).json({
+        code: 'validation_error',
+        message: `invalid token scope: ${invalidScope}`,
+      })
+    }
+
     try {
-      const result = await PersonalAccessTokenManager.createToken(userId, name)
+      const result = await PersonalAccessTokenManager.createToken(
+        userId,
+        name,
+        scopes
+      )
       return res.json({
         token: result.token,
         tokenPrefix: result.tokenPrefix,
         name: result.record.name,
         createdAt: result.record.createdAt,
+        scopes: result.record.scopes,
       })
     } catch (err) {
       logger.error({ err, userId }, 'error creating personal access token')

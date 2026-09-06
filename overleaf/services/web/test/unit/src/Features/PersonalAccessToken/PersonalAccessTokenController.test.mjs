@@ -1,7 +1,7 @@
 import { describe, it, beforeEach, afterEach, expect } from 'vitest'
 import sinon from 'sinon'
-import PersonalAccessTokenController from '../../../../../app/src/Features/GitBridge/PersonalAccessTokenController.mjs'
-import PersonalAccessTokenManager from '../../../../../app/src/Features/GitBridge/PersonalAccessTokenManager.mjs'
+import PersonalAccessTokenController from '../../../../../app/src/Features/PersonalAccessToken/PersonalAccessTokenController.mjs'
+import PersonalAccessTokenManager from '../../../../../app/src/Features/PersonalAccessToken/PersonalAccessTokenManager.mjs'
 
 describe('PersonalAccessTokenController', () => {
   let req, res
@@ -29,7 +29,12 @@ describe('PersonalAccessTokenController', () => {
     sinon.stub(PersonalAccessTokenManager, 'createToken').resolves({
       token: 'olp_secret123',
       tokenPrefix: 'olp_secr',
-      record: { _id: 'rec-1', name: 'Work Laptop', createdAt },
+      record: {
+        _id: 'rec-1',
+        name: 'Work Laptop',
+        createdAt,
+        scopes: ['git_bridge'],
+      },
     })
 
     await PersonalAccessTokenController.createToken(req, res)
@@ -39,8 +44,57 @@ describe('PersonalAccessTokenController', () => {
         tokenPrefix: 'olp_secr',
         name: 'Work Laptop',
         createdAt,
+        scopes: ['git_bridge'],
       })
     ).toBe(true)
+  })
+
+  it('createToken passes through the requested scopes', async () => {
+    req.body = { name: 'AI', scopes: ['mcp'] }
+    const spy = sinon
+      .stub(PersonalAccessTokenManager, 'createToken')
+      .resolves({
+        token: 'olp_x',
+        tokenPrefix: 'olp_x',
+        record: { _id: 'r', name: 'AI', scopes: ['mcp'] },
+      })
+    await PersonalAccessTokenController.createToken(req, res)
+    expect(spy.calledWith('user-123', 'AI', ['mcp'])).toBe(true)
+  })
+
+  it('createToken coerces a bare string scope to an array', async () => {
+    req.body = { name: 'AI', scopes: 'mcp' }
+    const spy = sinon
+      .stub(PersonalAccessTokenManager, 'createToken')
+      .resolves({
+        token: 'olp_x',
+        tokenPrefix: 'olp_x',
+        record: { _id: 'r', name: 'AI', scopes: ['mcp'] },
+      })
+    await PersonalAccessTokenController.createToken(req, res)
+    expect(spy.calledWith('user-123', 'AI', ['mcp'])).toBe(true)
+  })
+
+  it('createToken defaults to git_bridge when scopes absent', async () => {
+    req.body = { name: 'AI' }
+    const spy = sinon
+      .stub(PersonalAccessTokenManager, 'createToken')
+      .resolves({
+        token: 'olp_x',
+        tokenPrefix: 'olp_x',
+        record: { _id: 'r', name: 'AI', scopes: ['git_bridge'] },
+      })
+    await PersonalAccessTokenController.createToken(req, res)
+    expect(spy.calledWith('user-123', 'AI', ['git_bridge'])).toBe(true)
+  })
+
+  it('createToken rejects an unknown scope with 400 and does not call manager', async () => {
+    req.body = { name: 'x', scopes: ['root'] }
+    const spy = sinon.stub(PersonalAccessTokenManager, 'createToken').resolves()
+    await PersonalAccessTokenController.createToken(req, res)
+    expect(res.status.calledWith(400)).toBe(true)
+    expect(res.json.firstCall.args[0].code).toBe('validation_error')
+    expect(spy.called).toBe(false)
   })
 
   it('lists tokens for user', async () => {

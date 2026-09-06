@@ -45,21 +45,27 @@ function LinkingSection() {
 
   const gitBridgeEnabled = Boolean(getMeta('ol-gitBridgeEnabled'))
   const googleDriveSyncEnabled = Boolean(getMeta('ol-googleDriveSyncEnabled'))
+  const mcpEnabled = Boolean(getMeta('ol-mcpEnabled'))
 
   const renderSyncSection =
-    getMeta('ol-isSaas') || gitBridgeEnabled || googleDriveSyncEnabled
+    getMeta('ol-isSaas') ||
+    gitBridgeEnabled ||
+    googleDriveSyncEnabled ||
+    mcpEnabled
 
   const allIntegrationLinkingWidgets = integrationLinkingWidgets.concat(
     oauth2ServerComponents
   )
+
+  const showGitTokensWidget = gitBridgeEnabled || mcpEnabled
 
   const haslangFeedbackLinkingWidgets =
     langFeedbackLinkingWidgets.length && !cannotUseAi
   const hasIntegrationLinkingSection =
     renderSyncSection &&
     (allIntegrationLinkingWidgets.length > 0 ||
-      gitBridgeEnabled ||
-      googleDriveSyncEnabled)
+      googleDriveSyncEnabled ||
+      showGitTokensWidget)
   const hasReferencesLinkingSection = referenceLinkingWidgets.length
 
   // Filter out SSO providers that are not allowed to be linked by
@@ -120,11 +126,11 @@ function LinkingSection() {
             {googleDriveSyncEnabled && (
               <>
                 <GoogleDriveLinkingWidget />
-                {(gitBridgeEnabled ||
+                {(showGitTokensWidget ||
                   allIntegrationLinkingWidgets.length > 0) && <hr />}
               </>
             )}
-            {gitBridgeEnabled && (
+            {showGitTokensWidget && (
               <>
                 <GitTokensWidget />
                 {allIntegrationLinkingWidgets.length > 0 && <hr />}
