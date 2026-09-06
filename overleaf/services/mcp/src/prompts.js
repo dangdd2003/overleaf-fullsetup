@@ -5,7 +5,7 @@ const projectId = z.string().min(1).describe('The Overleaf project id')
 /**
  * Register high-signal prompt templates for AI assistants.
  *
- * Prompts guide Claude, ChatGPT, and Gemini to use the 19 tools in the optimal
+ * Prompts guide Claude, ChatGPT, and Gemini to use the 20 tools in the optimal
  * sequence (outline -> line-sliced read -> surgical edit -> compile).
  *
  * @param {import('@modelcontextprotocol/server').McpServer} server

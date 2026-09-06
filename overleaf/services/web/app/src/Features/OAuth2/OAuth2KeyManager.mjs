@@ -184,7 +184,10 @@ const OAuth2KeyManager = {
 
     const payload = JSON.parse(base64urlDecode(encodedPayload).toString('utf8'))
     const now = Math.floor(Date.now() / 1000)
-    if (payload.exp && payload.exp < now) {
+    if (typeof payload.exp !== 'number') {
+      throw new Error('JWT exp claim is missing or invalid')
+    }
+    if (payload.exp < now) {
       throw new Error('JWT has expired')
     }
     if (payload.nbf && payload.nbf > now) {

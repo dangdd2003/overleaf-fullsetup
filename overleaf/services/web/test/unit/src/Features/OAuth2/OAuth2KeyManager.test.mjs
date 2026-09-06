@@ -125,4 +125,35 @@ describe('OAuth2KeyManager', () => {
     expect(tamperErr).to.exist
     expect(tamperErr.message).to.match(/Invalid JWT signature/i)
   })
+
+  it('rejects token with missing exp claim', async () => {
+    const payloadWithoutExp = {
+      sub: 'user_123',
+    }
+    const token = await OAuth2KeyManager.signJwt(payloadWithoutExp)
+    let err
+    try {
+      await OAuth2KeyManager.verifyJwt(token)
+    } catch (e) {
+      err = e
+    }
+    expect(err).to.exist
+    expect(err.message).to.match(/missing or invalid/)
+  })
+
+  it('rejects token with non-numeric exp claim', async () => {
+    const payloadWithInvalidExp = {
+      sub: 'user_123',
+      exp: 'not-a-number',
+    }
+    const token = await OAuth2KeyManager.signJwt(payloadWithInvalidExp)
+    let err
+    try {
+      await OAuth2KeyManager.verifyJwt(token)
+    } catch (e) {
+      err = e
+    }
+    expect(err).to.exist
+    expect(err.message).to.match(/missing or invalid/)
+  })
 })

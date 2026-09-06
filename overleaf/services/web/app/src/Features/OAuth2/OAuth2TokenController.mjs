@@ -35,9 +35,19 @@ function getBaseUrl(req) {
   return 'http://localhost:3000'
 }
 
+const PKCE_VERIFIER_PATTERN = /^[A-Za-z0-9\-._~]{43,128}$/
+
 const OAuth2TokenController = {
   verifyPkce(codeVerifier, codeChallenge) {
-    if (!codeVerifier || !codeChallenge) return false
+    if (
+      !codeVerifier ||
+      !codeChallenge ||
+      typeof codeVerifier !== 'string' ||
+      typeof codeChallenge !== 'string' ||
+      !PKCE_VERIFIER_PATTERN.test(codeVerifier)
+    ) {
+      return false
+    }
     const computed = base64url(
       crypto.createHash('sha256').update(codeVerifier).digest()
     )

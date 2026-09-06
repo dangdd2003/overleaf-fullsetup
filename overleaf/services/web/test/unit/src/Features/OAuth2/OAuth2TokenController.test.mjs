@@ -55,6 +55,87 @@ describe('OAuth2TokenController', () => {
       expect(OAuth2TokenController.verifyPkce(null, expectedChallenge)).to.be.false
       expect(OAuth2TokenController.verifyPkce(verifier, null)).to.be.false
     })
+
+    it('returns false for code_verifier shorter than 43 chars', () => {
+      const shortVerifier = 'a'.repeat(42)
+      const challenge = crypto
+        .createHash('sha256')
+        .update(shortVerifier)
+        .digest('base64')
+        .replace(/=/g, '')
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+
+      expect(OAuth2TokenController.verifyPkce(shortVerifier, challenge)).to.be.false
+    })
+
+    it('returns false for code_verifier longer than 128 chars', () => {
+      const longVerifier = 'a'.repeat(129)
+      const challenge = crypto
+        .createHash('sha256')
+        .update(longVerifier)
+        .digest('base64')
+        .replace(/=/g, '')
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+
+      expect(OAuth2TokenController.verifyPkce(longVerifier, challenge)).to.be.false
+    })
+
+    it('returns false for code_verifier with invalid characters', () => {
+      const verifierWithSpaces = 'a'.repeat(42) + ' '
+      const challenge1 = crypto
+        .createHash('sha256')
+        .update(verifierWithSpaces)
+        .digest('base64')
+        .replace(/=/g, '')
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+      expect(OAuth2TokenController.verifyPkce(verifierWithSpaces, challenge1)).to.be.false
+
+      const verifierWithAt = 'a'.repeat(42) + '@'
+      const challenge2 = crypto
+        .createHash('sha256')
+        .update(verifierWithAt)
+        .digest('base64')
+        .replace(/=/g, '')
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+      expect(OAuth2TokenController.verifyPkce(verifierWithAt, challenge2)).to.be.false
+
+      const verifierWithExclamation = 'a'.repeat(42) + '!'
+      const challenge3 = crypto
+        .createHash('sha256')
+        .update(verifierWithExclamation)
+        .digest('base64')
+        .replace(/=/g, '')
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+      expect(OAuth2TokenController.verifyPkce(verifierWithExclamation, challenge3)).to.be.false
+    })
+
+    it('returns true for valid 43-128 char unreserved string matching challenge', () => {
+      const validChars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~'
+      const valid43 = validChars.slice(0, 43)
+      const challenge43 = crypto
+        .createHash('sha256')
+        .update(valid43)
+        .digest('base64')
+        .replace(/=/g, '')
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+      expect(OAuth2TokenController.verifyPkce(valid43, challenge43)).to.be.true
+
+      const valid128 = (validChars + validChars).slice(0, 128)
+      const challenge128 = crypto
+        .createHash('sha256')
+        .update(valid128)
+        .digest('base64')
+        .replace(/=/g, '')
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+      expect(OAuth2TokenController.verifyPkce(valid128, challenge128)).to.be.true
+    })
   })
 
   describe('grant_type validation', () => {
