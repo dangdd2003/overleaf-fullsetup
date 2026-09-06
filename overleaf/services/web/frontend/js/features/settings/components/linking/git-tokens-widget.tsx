@@ -210,7 +210,7 @@ export function GitTokensWidget() {
         <div className="linking-icon-fixed-position pt-1">
           <GitLogoOrange size={38} />
         </div>
-        <div className="flex-grow-1">
+        <div className="flex-grow-1 linking-git-bridge-content">
           <h3 className="h4 font-weight-bold mb-2" id="git-integration-heading">
             {t('git_integration', 'Git integration')}
           </h3>
@@ -235,7 +235,7 @@ export function GitTokensWidget() {
             .
           </p>
 
-          <div className="d-flex align-items-center justify-content-between mb-2">
+          <div className="git-tokens-header-row d-flex align-items-center justify-content-between mb-2">
             <h4 className="h5 font-weight-bold mb-0">
               {t('your_git_auth_tokens', 'Your Git authentication tokens')}
             </h4>
@@ -343,7 +343,7 @@ export function GitTokensWidget() {
 
           {hasTokens && (
             <div
-              className="git-tokens-table-container rounded overflow-hidden"
+              className="git-tokens-table-container rounded"
               style={{ border: '1px solid var(--border-divider, #e2e8f0)' }}
             >
               <table className="table table-borderless align-middle mb-0">
@@ -355,24 +355,24 @@ export function GitTokensWidget() {
                       background: 'var(--bg-light-primary, #ffffff)',
                     }}
                   >
-                    <th className="py-2 px-3 fw-bold" style={{ width: '24%' }}>
+                    <th className="py-2 px-3 fw-bold" style={{ width: '22%' }}>
                       {t('token', 'Token')}
                     </th>
-                    <th className="py-2 px-3 fw-bold" style={{ width: '18%' }}>
+                    <th className="py-2 px-3 fw-bold" style={{ width: '17%' }}>
                       {t('personal_access_token_scopes', 'Token permissions')}
                     </th>
-                    <th className="py-2 px-3 fw-bold" style={{ width: '18%' }}>
+                    <th className="py-2 px-3 fw-bold" style={{ width: '17%' }}>
                       {t('created', 'Created')}
                     </th>
-                    <th className="py-2 px-3 fw-bold" style={{ width: '20%' }}>
+                    <th className="py-2 px-3 fw-bold" style={{ width: '19%' }}>
                       {t('last_used', 'Last used')}
                     </th>
-                    <th className="py-2 px-3 fw-bold" style={{ width: '22%' }}>
+                    <th className="py-2 px-3 fw-bold" style={{ width: '20%' }}>
                       {t('expires', 'Expires')}
                     </th>
                     <th
                       className="py-2 px-3 text-end"
-                      style={{ width: '6%' }}
+                      style={{ width: '5%' }}
                     ></th>
                   </tr>
                 </thead>
