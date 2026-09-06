@@ -11,7 +11,7 @@ block append meta
 	- const canDisplayAdminMenu = hasAdminAccess()
 	- const canDisplayAdminRedirect = canRedirectToAdminDomain()
 	- const sessionUser = getSessionUser()
-	- const canDisplayProjectUrlLookup = settings.adminPrivilegeAvailable && canDisplayAdminMenu && hasAdminCapability('view-project-setting', false)
+	- const canDisplayProjectUrlLookup = settings.adminPrivilegeAvailable && canDisplayAdminMenu && hasAdminCapability('view-project-setting', false) && hasFeature('admin-project-management')
 	- const canDisplaySplitTestMenu = hasFeature('saas') && hasNonAdminDomainCapability('view-split-test')
 	- const canDisplaySurveyMenu = hasFeature('saas') && canDisplayAdminMenu && hasAdminCapability('manage-survey', false)
 	- const canDisplayScriptLogMenu = hasFeature('saas') && hasAdminCapability('view-script-log', false) && canDisplayAdminMenu

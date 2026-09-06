@@ -1,0 +1,57 @@
+extends ../../../../app/views/layout-marketing
+
+block content
+	#main-content.content.content-alt
+		.container
+			.row
+				.col-sm-12.col-md-8.col-md-offset-2
+					.card
+						.card-body
+							.page-header
+								h1 Project Info
+								p.small.text-muted: a(href='/admin/project') Look up a different project
+
+							if success === 'transferred'
+								.alert.alert-success(role='alert') Ownership transferred successfully.
+
+							if error === 'missing_email'
+								.alert.alert-danger(role='alert') Please enter the new owner's email address.
+							if error === 'user_not_found'
+								.alert.alert-danger(role='alert') No user was found with that email address.
+							if error === 'transfer_failed'
+								.alert.alert-danger(role='alert') Ownership transfer failed. See the server logs for details.
+
+							dl.dl-horizontal
+								dt Project name
+								dd= project.name
+								dt Project ID
+								dd
+									code= project.id
+								dt Owner
+								dd= ownerEmail
+								dt Collaborators
+								dd= collaboratorCount
+								dt Last updated
+								dd= project.lastUpdated
+
+							p
+								a.btn.btn-default(href=`/project/${project.id}` target='_blank' rel='noopener noreferrer') Open project
+
+							hr
+
+							h3 Transfer Ownership
+							p.small.text-muted.
+								The current owner will be kept on as a collaborator with
+								read-and-write access after the transfer.
+
+							form(method='POST' action=`/admin/project/${project.id}/transfer`)
+								input(type='hidden' name='_csrf' value=csrfToken)
+								.form-group
+									label(for='admin-project-new-owner-email') New owner's email
+									input#admin-project-new-owner-email.form-control(
+										type='email'
+										name='newOwnerEmail'
+										placeholder='new-owner@example.com'
+										required
+									)
+								button.btn.btn-warning(type='submit') Transfer ownership

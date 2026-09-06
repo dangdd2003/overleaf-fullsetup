@@ -411,6 +411,8 @@ module.exports = {
   adminRolesEnabled: false,
   enableAdminUserManagement:
     process.env.OVERLEAF_ADMIN_USER_MANAGEMENT_ENABLED === 'true',
+  enableAdminProjectManagement:
+    process.env.OVERLEAF_ADMIN_PROJECT_MANAGEMENT_ENABLED === 'true',
   blockCrossOriginRequests: process.env.BLOCK_CROSS_ORIGIN_REQUESTS === 'true',
   allowedOrigins: (process.env.ALLOWED_ORIGINS || siteUrl).split(','),
 
@@ -1117,6 +1119,7 @@ module.exports = {
     'launchpad',
     'server-ce-scripts',
     'admin-user-management',
+    'admin-project-management',
     'user-activate',
   ],
   viewIncludes: {},

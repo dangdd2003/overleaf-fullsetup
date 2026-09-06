@@ -1,0 +1,31 @@
+extends ../../../../app/views/layout-marketing
+
+block content
+	#main-content.content.content-alt
+		.container
+			.row
+				.col-sm-12.col-md-8.col-md-offset-2
+					.card
+						.card-body
+							.page-header
+								h1 Project URL Lookup
+
+							if error === 'not_found'
+								.alert.alert-danger(role='alert') Could not find a project matching that ID or URL.
+
+							p.small.text-muted.
+								Paste a project's URL (for example, one ending in
+								/project/ followed by its id) or just its bare
+								project id to jump straight to its admin page.
+
+							form(method='GET' action='/admin/project/lookup')
+								.form-group
+									label(for='admin-project-lookup-query') Project URL or ID
+									input#admin-project-lookup-query.form-control(
+										type='text'
+										name='query'
+										placeholder='https://your-instance/project/64f1c2...'
+										required
+										autofocus
+									)
+								button.btn.btn-primary(type='submit') Go to project
