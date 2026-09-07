@@ -39,11 +39,31 @@ const OAuth2RegistrationController = {
       }
     }
 
-    const clientId = `client_${crypto.randomBytes(16).toString('hex')}`
     const grants = Array.isArray(grant_types)
       ? grant_types
       : ['authorization_code', 'refresh_token']
     const scopes = typeof scope === 'string' ? scope.split(' ') : ['mcp']
+
+    // This endpoint is unauthenticated by design, so re-adding a connector in
+    // ChatGPT or Gemini would otherwise insert another permanent row for a
+    // client we already know. Hand back the existing registration instead; the
+    // client learns nothing it did not already supply.
+    const existing = await OauthApplication.findOne({
+      name: client_name,
+      redirectUris: { $all: redirect_uris, $size: redirect_uris.length },
+    })
+    if (existing) {
+      return res.status(201).json({
+        client_id: existing.id,
+        client_name: existing.name,
+        redirect_uris: existing.redirectUris,
+        grant_types: existing.grants,
+        scope: (existing.scopes || []).join(' '),
+        token_endpoint_auth_method: 'none',
+      })
+    }
+
+    const clientId = `client_${crypto.randomBytes(16).toString('hex')}`
 
     await OauthApplication.create({
       id: clientId,

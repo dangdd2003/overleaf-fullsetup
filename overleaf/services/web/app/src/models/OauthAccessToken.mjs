@@ -39,6 +39,10 @@ OauthAccessTokenSchema.index(
   { expireAfterSeconds: 0 }
 )
 
+// The refresh_token grant resolves the token with findOne({ refreshToken }).
+// The TTL index above does not serve that lookup, so without this it scans.
+OauthAccessTokenSchema.index({ refreshToken: 1 })
+
 export const OauthAccessToken = mongoose.model(
   'OauthAccessToken',
   OauthAccessTokenSchema

@@ -1,7 +1,7 @@
 import crypto from 'node:crypto'
 import Settings from '@overleaf/settings'
 import SessionManager from '../Authentication/SessionManager.mjs'
-import OAuth2PreconfiguredClients from './OAuth2PreconfiguredClients.mjs'
+import OAuth2RedirectUri from './OAuth2RedirectUri.mjs'
 import { OauthApplication } from '../../models/OauthApplication.mjs'
 import { OauthAuthorizationCode } from '../../models/OauthAuthorizationCode.mjs'
 
@@ -17,11 +17,9 @@ function getBaseUrl(req) {
   return 'http://localhost:3000'
 }
 
+// Clients exist only once they have registered at /oauth/register; there are no
+// pre-trusted client ids.
 async function findClient(clientId) {
-  const preconfigured = OAuth2PreconfiguredClients.getClient(clientId)
-  if (preconfigured) {
-    return preconfigured
-  }
   const dbClient = await OauthApplication.findOne({ id: clientId })
   if (dbClient) {
     return {
@@ -83,7 +81,7 @@ const OAuth2AuthorizeController = {
       })
     }
 
-    const isAllowed = OAuth2PreconfiguredClients.isRedirectUriAllowed(
+    const isAllowed = OAuth2RedirectUri.isRedirectUriAllowed(
       client,
       redirect_uri
     )
@@ -184,7 +182,7 @@ const OAuth2AuthorizeController = {
       })
     }
 
-    const isAllowed = OAuth2PreconfiguredClients.isRedirectUriAllowed(
+    const isAllowed = OAuth2RedirectUri.isRedirectUriAllowed(
       client,
       redirect_uri
     )

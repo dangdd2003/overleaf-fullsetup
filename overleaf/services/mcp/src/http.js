@@ -3,6 +3,7 @@ import { toNodeHandler } from '@modelcontextprotocol/node'
 import { createMcpHandler } from '@modelcontextprotocol/server'
 import { createMcpServerFactory } from './server.js'
 import {
+  PROTECTED_RESOURCE_WELL_KNOWN_PATH,
   getProtectedResourceMetadata,
   buildWwwAuthenticateHeader,
   createJwtVerifier,
@@ -176,12 +177,18 @@ export function createHttpApp({ config, client }) {
   app.locals.client = client
   app.locals.config = config
 
-  const protectedResourcePaths = [
-    '/.well-known/oauth-protected-resource',
-  ]
-  if (config.endpointPath && config.endpointPath !== '/') {
+  // RFC 9728 §3.1 puts the metadata for resource `https://host/mcp` at
+  // `/.well-known/oauth-protected-resource/mcp` — the suffix is inserted before
+  // the resource path, not appended to it. ChatGPT and Gemini request that form
+  // directly, so omitting it breaks their OAuth client resolution outright. The
+  // bare and path-appended forms stay registered as aliases for clients that
+  // reach us via the WWW-Authenticate challenge instead.
+  const endpointPath = (config.endpointPath || '/').replace(/\/+$/, '')
+  const protectedResourcePaths = [PROTECTED_RESOURCE_WELL_KNOWN_PATH]
+  if (endpointPath) {
     protectedResourcePaths.push(
-      `${config.endpointPath.replace(/\/$/, '')}/.well-known/oauth-protected-resource`
+      `${PROTECTED_RESOURCE_WELL_KNOWN_PATH}${endpointPath}`,
+      `${endpointPath}${PROTECTED_RESOURCE_WELL_KNOWN_PATH}`
     )
   }
 

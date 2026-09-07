@@ -1,7 +1,9 @@
+import http from 'node:http'
 import { expect } from 'chai'
 import sinon from 'sinon'
 import {
   createBearerAuthMiddleware,
+  createHttpApp,
   expandHosts,
   requireBearerToken,
   proxyToInternalUrl,
@@ -310,5 +312,62 @@ describe('requireBearerToken', function () {
       expect(res.status.calledWith(502)).to.be.true
       expect(res.json.firstCall.args[0].error).to.equal('bad_gateway')
     })
+  })
+})
+
+describe('protected resource metadata routes', function () {
+  // ChatGPT and Gemini build the discovery URL straight from the MCP server URL
+  // per RFC 9728 §3.1, so the path-insertion form must be served or their OAuth
+  // client resolution fails before it ever reaches dynamic client registration.
+  const config = {
+    host: '127.0.0.1',
+    port: 0,
+    endpointPath: '/mcp',
+    internalUrl: '',
+    resourceUri: 'https://overleaf.example.com/mcp',
+    authServerUrl: 'https://overleaf.example.com',
+    maxUploadBytes: 1024,
+    allowedHosts: [],
+    allowedOrigins: [],
+  }
+
+  let server
+  let baseUrl
+
+  before(async function () {
+    const { app } = createHttpApp({ config, client: null })
+    server = http.createServer(app)
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+    baseUrl = `http://127.0.0.1:${server.address().port}`
+  })
+
+  after(async function () {
+    if (server) await new Promise(resolve => server.close(resolve))
+  })
+
+  it('serves metadata at the RFC 9728 path-insertion URL', async function () {
+    const res = await fetch(
+      `${baseUrl}/.well-known/oauth-protected-resource/mcp`
+    )
+    expect(res.status).to.equal(200)
+    expect(await res.json()).to.deep.include({
+      resource: 'https://overleaf.example.com/mcp',
+    })
+  })
+
+  it('still serves metadata at the bare well-known URL', async function () {
+    const res = await fetch(`${baseUrl}/.well-known/oauth-protected-resource`)
+    expect(res.status).to.equal(200)
+    expect((await res.json()).resource).to.equal(
+      'https://overleaf.example.com/mcp'
+    )
+  })
+
+  it('advertises the path-insertion URL in the 401 challenge', async function () {
+    const res = await fetch(`${baseUrl}/mcp`, { method: 'POST' })
+    expect(res.status).to.equal(401)
+    expect(res.headers.get('www-authenticate')).to.include(
+      'resource_metadata="https://overleaf.example.com/.well-known/oauth-protected-resource/mcp"'
+    )
   })
 })

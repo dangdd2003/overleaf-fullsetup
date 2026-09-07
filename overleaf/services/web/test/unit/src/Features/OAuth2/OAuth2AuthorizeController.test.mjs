@@ -1,7 +1,6 @@
 import { describe, it, vi, beforeEach } from 'vitest'
 import { expect } from 'chai'
 import OAuth2AuthorizeController from '../../../../../app/src/Features/OAuth2/OAuth2AuthorizeController.mjs'
-import OAuth2PreconfiguredClients from '../../../../../app/src/Features/OAuth2/OAuth2PreconfiguredClients.mjs'
 import SessionManager from '../../../../../app/src/Features/Authentication/SessionManager.mjs'
 import { OauthApplication } from '../../../../../app/src/models/OauthApplication.mjs'
 import { OauthAuthorizationCode } from '../../../../../app/src/models/OauthAuthorizationCode.mjs'
@@ -49,6 +48,16 @@ describe('OAuth2AuthorizeController', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     Settings.siteUrl = 'http://localhost:3000'
+    // There are no pre-trusted client ids any more: every client is a row
+    // created by dynamic client registration, so the lookup must be mocked.
+    vi.spyOn(OauthApplication, 'findOne').mockResolvedValue({
+      id: 'client_registered',
+      name: 'Registered Client',
+      redirectUris: ['http://localhost:8080/callback'],
+      grants: ['authorization_code', 'refresh_token'],
+      scopes: ['mcp'],
+      _id: 'oauth_app_1',
+    })
   })
 
   describe('GET /oauth/authorize (showAuthorizePage)', () => {
@@ -84,7 +93,7 @@ describe('OAuth2AuthorizeController', () => {
     it('returns 400 invalid_request if redirect_uri is missing', async () => {
       const req = {
         query: {
-          client_id: 'claude',
+          client_id: 'client_registered',
         },
       }
       const res = createMockRes()
@@ -100,7 +109,7 @@ describe('OAuth2AuthorizeController', () => {
     it('returns 400 invalid_request if redirect_uri is not allowed for client', async () => {
       const req = {
         query: {
-          client_id: 'claude',
+          client_id: 'client_registered',
           redirect_uri: 'https://evil.com/callback',
         },
       }
@@ -117,7 +126,7 @@ describe('OAuth2AuthorizeController', () => {
     it('redirects to redirect_uri with error if response_type is not code', async () => {
       const req = {
         query: {
-          client_id: 'claude',
+          client_id: 'client_registered',
           redirect_uri: 'http://localhost:8080/callback',
           response_type: 'token',
           state: 'xyz123',
@@ -134,7 +143,7 @@ describe('OAuth2AuthorizeController', () => {
     it('redirects to redirect_uri with error if PKCE code_challenge is missing', async () => {
       const req = {
         query: {
-          client_id: 'claude',
+          client_id: 'client_registered',
           redirect_uri: 'http://localhost:8080/callback',
           response_type: 'code',
           state: 'xyz123',
@@ -151,7 +160,7 @@ describe('OAuth2AuthorizeController', () => {
     it('redirects to redirect_uri with error if code_challenge_method is not S256 (strict PKCE)', async () => {
       const req = {
         query: {
-          client_id: 'claude',
+          client_id: 'client_registered',
           redirect_uri: 'http://localhost:8080/callback',
           response_type: 'code',
           code_challenge: 'plain_challenge',
@@ -172,7 +181,7 @@ describe('OAuth2AuthorizeController', () => {
 
       const req = {
         query: {
-          client_id: 'claude',
+          client_id: 'client_registered',
           redirect_uri: 'http://localhost:8080/callback',
           response_type: 'code',
           code_challenge: 'E9Melhoa2OwvFrGMTJguCH5rtx64LxPU67A5CdFbW74',
@@ -193,7 +202,7 @@ describe('OAuth2AuthorizeController', () => {
 
       const req = {
         query: {
-          client_id: 'claude',
+          client_id: 'client_registered',
           redirect_uri: 'http://localhost:8080/callback',
           response_type: 'code',
           code_challenge: 'E9Melhoa2OwvFrGMTJguCH5rtx64LxPU67A5CdFbW74',
@@ -207,7 +216,7 @@ describe('OAuth2AuthorizeController', () => {
       await OAuth2AuthorizeController.showAuthorizePage(req, res)
       expect(res.renderedView).to.equal('oauth/authorize')
       expect(res.renderedData).to.exist
-      expect(res.renderedData.client.id).to.equal('claude')
+      expect(res.renderedData.client.id).to.equal('client_registered')
       expect(res.renderedData.user.email).to.equal('test@example.com')
       expect(res.renderedData.scope).to.equal('mcp')
       expect(res.renderedData.state).to.equal('xyz123')
@@ -247,7 +256,7 @@ describe('OAuth2AuthorizeController', () => {
       const req = {
         body: {
           action: 'deny',
-          client_id: 'claude',
+          client_id: 'client_registered',
           redirect_uri: 'http://localhost:8080/callback',
           state: 'state_deny_123',
         },
@@ -266,7 +275,7 @@ describe('OAuth2AuthorizeController', () => {
       const req = {
         body: {
           action: 'authorize',
-          client_id: 'claude',
+          client_id: 'client_registered',
           redirect_uri: 'http://localhost:8080/callback',
           response_type: 'code',
           code_challenge: 'E9Melhoa2OwvFrGMTJguCH5rtx64LxPU67A5CdFbW74',
@@ -291,7 +300,7 @@ describe('OAuth2AuthorizeController', () => {
       const req = {
         body: {
           action: 'authorize',
-          client_id: 'claude',
+          client_id: 'client_registered',
           redirect_uri: 'http://localhost:8080/callback',
           response_type: 'code',
           code_challenge: 'E9Melhoa2OwvFrGMTJguCH5rtx64LxPU67A5CdFbW74',

@@ -2,6 +2,7 @@ import crypto from 'node:crypto'
 import { expect } from 'chai'
 import {
   getProtectedResourceMetadata,
+  buildProtectedResourceMetadataUrl,
   buildWwwAuthenticateHeader,
   createJwtVerifier,
 } from '../../../src/oauth.js'
@@ -23,10 +24,42 @@ describe('MCP OAuth Protected Resource', () => {
     })
   })
 
-  it('builds WWW-Authenticate challenge header', () => {
+  // RFC 9728 §3.1: when the resource identifier has a path component, the
+  // well-known suffix is inserted between the host and that path. Appending it
+  // to the path instead is the OIDC convention and is not a valid form here.
+  describe('buildProtectedResourceMetadataUrl', () => {
+    it('inserts the well-known suffix before the resource path', () => {
+      expect(
+        buildProtectedResourceMetadataUrl('https://example.com/mcp')
+      ).to.equal('https://example.com/.well-known/oauth-protected-resource/mcp')
+    })
+
+    it('preserves nested resource paths', () => {
+      expect(
+        buildProtectedResourceMetadataUrl('https://example.com/a/b')
+      ).to.equal('https://example.com/.well-known/oauth-protected-resource/a/b')
+    })
+
+    it('drops a terminating slash before inserting the suffix', () => {
+      expect(
+        buildProtectedResourceMetadataUrl('https://example.com/mcp/')
+      ).to.equal('https://example.com/.well-known/oauth-protected-resource/mcp')
+    })
+
+    it('omits the path segment for a root resource', () => {
+      expect(buildProtectedResourceMetadataUrl('https://example.com/')).to.equal(
+        'https://example.com/.well-known/oauth-protected-resource'
+      )
+      expect(buildProtectedResourceMetadataUrl('https://example.com')).to.equal(
+        'https://example.com/.well-known/oauth-protected-resource'
+      )
+    })
+  })
+
+  it('builds WWW-Authenticate challenge header pointing at the RFC 9728 URL', () => {
     const header = buildWwwAuthenticateHeader(config)
     expect(header).to.equal(
-      'Bearer resource_metadata="http://localhost:3050/.well-known/oauth-protected-resource", scope="mcp"'
+      'Bearer resource_metadata="http://localhost:3050/.well-known/oauth-protected-resource/mcp", scope="mcp"'
     )
   })
 

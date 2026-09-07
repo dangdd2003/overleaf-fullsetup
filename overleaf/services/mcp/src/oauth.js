@@ -18,6 +18,26 @@ export function getProtectedResourceMetadata(config) {
   }
 }
 
+export const PROTECTED_RESOURCE_WELL_KNOWN_PATH =
+  '/.well-known/oauth-protected-resource'
+
+/**
+ * Build the RFC 9728 Protected Resource Metadata URL for a resource identifier.
+ *
+ * Per RFC 9728 §3.1 the well-known suffix is inserted *between* the host and
+ * the resource path, so `https://host/mcp` resolves to
+ * `https://host/.well-known/oauth-protected-resource/mcp`. Appending the suffix
+ * to the path is the OIDC convention and is not a valid form here.
+ *
+ * @param {string} resourceUri
+ * @returns {string}
+ */
+export function buildProtectedResourceMetadataUrl(resourceUri) {
+  const url = new URL(resourceUri)
+  const path = url.pathname.replace(/\/+$/, '')
+  return `${url.origin}${PROTECTED_RESOURCE_WELL_KNOWN_PATH}${path}`
+}
+
 /**
  * Build WWW-Authenticate challenge header value for OAuth 2.0 / RFC 9728.
  *
@@ -31,10 +51,7 @@ export function buildWwwAuthenticateHeader(config, error, description) {
   if (!resourceUri.startsWith('http://') && !resourceUri.startsWith('https://')) {
     resourceUri = `http://${resourceUri}`
   }
-  const metaUrl = new URL(
-    '/.well-known/oauth-protected-resource',
-    resourceUri
-  ).toString()
+  const metaUrl = buildProtectedResourceMetadataUrl(resourceUri)
   let header = `Bearer resource_metadata="${metaUrl}", scope="mcp"`
   if (error) {
     header += `, error="${error}"`
