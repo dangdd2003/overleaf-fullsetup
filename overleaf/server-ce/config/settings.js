@@ -234,6 +234,22 @@ const settings = {
       process.env.OVERLEAF_SESSION_SECRET || process.env.CRYPTO_RANDOM,
   },
 
+  // Google Drive sync derives its OAuth redirect and webhook URLs from the
+  // site URL. settings.defaults.js derives them from PUBLIC_URL, which
+  // server-ce never sets, so they are re-derived here from the siteUrl
+  // assigned above. Explicit environment variables still take precedence.
+  googleDrive: {
+    redirectUri:
+      process.env.GOOGLE_DRIVE_REDIRECT_URI ||
+      `${siteUrl}/oauth/google-drive/callback`,
+    webhookUrl:
+      process.env.GOOGLE_DRIVE_WEBHOOK_URL !== undefined
+        ? process.env.GOOGLE_DRIVE_WEBHOOK_URL
+        : siteUrl.startsWith('https://')
+          ? `${siteUrl}/google-drive/webhook`
+          : '',
+  },
+
   csp: {
     enabled: process.env.OVERLEAF_CSP_ENABLED !== 'false',
   },
