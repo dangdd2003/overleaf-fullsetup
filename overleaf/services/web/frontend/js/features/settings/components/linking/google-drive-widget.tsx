@@ -119,10 +119,23 @@ export function GoogleDriveLinkingWidget({
       if (event.data?.type === 'google-drive:oauth-success') {
         fetchStatus()
       } else if (event.data?.type === 'google-drive:oauth-error') {
-        const errorMsg =
-          event.data.error ||
-          t('google_drive_oauth_failed', 'Failed to link Google Drive account')
-        setErrorMessage(errorMsg)
+        // The popup sends back an error code, not something readable
+        const fallback = t(
+          'google_drive_oauth_failed',
+          'Failed to link Google Drive account'
+        )
+        const messages: Record<string, string> = {
+          google_drive_oauth_denied: t(
+            'google_drive_oauth_denied',
+            'Google Drive access was not granted'
+          ),
+          google_drive_oauth_invalid: t(
+            'google_drive_oauth_invalid',
+            'The Google Drive sign-in could not be verified. Please try again'
+          ),
+          google_drive_oauth_failed: fallback,
+        }
+        setErrorMessage(messages[event.data.error] || fallback)
         fetchStatus()
       }
     }

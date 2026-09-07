@@ -115,13 +115,31 @@ describe('<GoogleDriveLinkingWidget />', function () {
           origin: window.location.origin,
           data: {
             type: 'google-drive:oauth-error',
-            error: 'Google login was denied',
+            error: 'google_drive_oauth_denied',
           },
         })
       )
 
       await waitFor(() => {
-        expect(screen.getByText('Google login was denied')).to.exist
+        expect(screen.getByText('Google Drive access was not granted')).to.exist
+      })
+    })
+
+    it('displays a generic error message for an unrecognised error code', async function () {
+      render(<GoogleDriveLinkingWidget initialIsLinked={false} />)
+
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          origin: window.location.origin,
+          data: {
+            type: 'google-drive:oauth-error',
+            error: 'something_unexpected',
+          },
+        })
+      )
+
+      await waitFor(() => {
+        expect(screen.getByText('Failed to link Google Drive account')).to.exist
       })
     })
   })

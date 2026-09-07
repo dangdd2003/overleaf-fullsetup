@@ -92,6 +92,7 @@ describe('GoogleDriveController', () => {
       sendStatus: vi.fn(),
       status: vi.fn().mockReturnThis(),
       set: vi.fn().mockReturnThis(),
+      removeHeader: vi.fn(),
       send: vi.fn(),
     }
 
@@ -281,6 +282,35 @@ describe('GoogleDriveController', () => {
       expect(html).toContain('google_drive_oauth_denied')
       expect(html).toContain('window.close()')
       expect(res.redirect).not.toHaveBeenCalled()
+    })
+
+    it('serves the popup page under a CSP that allows its own inline script', async () => {
+      req.query = { code: 'auth-code-123', state: 'state-xyz', popup: 'true' }
+      GoogleDriveOAuthManager.handleOAuthCallback.mockResolvedValue({
+        googleEmail: 'test@example.com',
+      })
+
+      await GoogleDriveController.oauthCallback(req, res)
+
+      // The inherited policy is default-src 'none', which would block the
+      // script that closes the popup
+      expect(res.removeHeader).toHaveBeenCalledWith('Content-Security-Policy')
+      expect(res.removeHeader).toHaveBeenCalledWith(
+        'Content-Security-Policy-Report-Only'
+      )
+
+      const cspCall = res.set.mock.calls.find(
+        call => call[0] === 'Content-Security-Policy'
+      )
+      expect(cspCall).toBeDefined()
+      const policy = cspCall[1]
+      const nonce = policy.match(/script-src 'nonce-([^']+)'/)?.[1]
+      expect(nonce).toBeTruthy()
+      expect(policy).toContain(`style-src 'nonce-${nonce}'`)
+
+      const html = res.send.mock.calls[0][0]
+      expect(html).toContain(`<script nonce="${nonce}">`)
+      expect(html).toContain(`<style nonce="${nonce}">`)
     })
   })
 
