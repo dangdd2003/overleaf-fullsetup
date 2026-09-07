@@ -126,6 +126,12 @@ describe('GoogleDriveSyncManager', function () {
     },
   }
 
+  const DocumentUpdaterHandler = {
+    promises: {
+      flushProjectToMongo: vi.fn(),
+    },
+  }
+
   vi.doMock('@overleaf/logger', () => ({ default: logger }))
   vi.doMock('@overleaf/settings', () => ({ default: Settings }))
   vi.doMock('../../../../../app/src/infrastructure/mongodb.mjs', () => ({
@@ -201,10 +207,20 @@ describe('GoogleDriveSyncManager', function () {
       ...HistoryManager,
     })
   )
+  vi.doMock(
+    '../../../../../app/src/Features/DocumentUpdater/DocumentUpdaterHandler.mjs',
+    () => ({
+      default: DocumentUpdaterHandler,
+      ...DocumentUpdaterHandler,
+    })
+  )
 
   beforeEach(async () => {
     vi.clearAllMocks()
     Settings.googleDrive = { folderName: 'Overleaf' }
+    DocumentUpdaterHandler.promises.flushProjectToMongo.mockResolvedValue(
+      undefined
+    )
     GoogleDriveSyncManager = (await import(modulePath)).default
   })
 
@@ -1044,6 +1060,62 @@ describe('GoogleDriveSyncManager', function () {
       }
       expect(error).toBeDefined()
       expect(error.message).toMatch(/Could not acquire project lock/i)
+    })
+
+    it('flushes pending document-updater edits to Mongo before reading docs', async function () {
+      // Live editor keystrokes sit in document-updater's Redis and only reach
+      // docstore when it flushes. Without an explicit flush, a manual "Sync
+      // now" reconciles against stale docstore content and pushes nothing,
+      // leaving the user to wait for the outbound worker's next tick.
+      db.googleDriveProjectStates.findOneAndUpdate.mockResolvedValue({
+        value: { projectId: new MockObjectId(projectId) },
+      })
+      db.googleDriveProjectStates.updateOne.mockResolvedValue({
+        modifiedCount: 1,
+      })
+
+      ProjectGetter.promises.getProject.mockResolvedValue({
+        _id: new MockObjectId(projectId),
+        name: 'My Project',
+        owner_ref: new MockObjectId(userId),
+      })
+
+      GoogleDriveClient.getOrCreateRootFolder.mockResolvedValue(rootFolderId)
+      GoogleDriveClient.getOrCreateProjectFolder.mockResolvedValue(
+        projectFolderId
+      )
+
+      db.googleDriveProjectStates.findOne.mockResolvedValue({
+        projectId: new MockObjectId(projectId),
+        userId: new MockObjectId(userId),
+        driveFolderId: projectFolderId,
+        fileMap: {},
+      })
+
+      ProjectEntityHandler.promises.getAllEntities.mockResolvedValue({
+        docs: [],
+        files: [],
+        folders: [],
+      })
+      DocstoreManager.promises.getAllDocs.mockResolvedValue([])
+      GoogleDriveClient.listFiles.mockResolvedValue({
+        files: [],
+        nextPageToken: null,
+      })
+
+      await GoogleDriveSyncManager.syncProject(projectId, userId)
+
+      expect(
+        DocumentUpdaterHandler.promises.flushProjectToMongo
+      ).toHaveBeenCalledWith(projectId)
+
+      // The flush is only useful if it happens before the docs are read.
+      const flushOrder =
+        DocumentUpdaterHandler.promises.flushProjectToMongo.mock
+          .invocationCallOrder[0]
+      const readOrder =
+        DocstoreManager.promises.getAllDocs.mock.invocationCallOrder[0]
+      expect(flushOrder).toBeLessThan(readOrder)
     })
 
     it('performs full reconciliation between Overleaf and Google Drive', async function () {

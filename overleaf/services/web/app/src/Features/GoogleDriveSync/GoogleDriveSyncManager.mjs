@@ -14,6 +14,7 @@ import DocstoreManager from '../Docstore/DocstoreManager.mjs'
 import ProjectGetter from '../Project/ProjectGetter.mjs'
 import ProjectCreationHandler from '../Project/ProjectCreationHandler.mjs'
 import HistoryManager from '../History/HistoryManager.mjs'
+import DocumentUpdaterHandler from '../DocumentUpdater/DocumentUpdaterHandler.mjs'
 
 /**
  * Regex matching LaTeX compilation artifacts and temporary build files.
@@ -1208,7 +1209,16 @@ async function syncProject(projectId, userId, driveFolderId = null) {
 
     const fileMap = { ...(state.fileMap || {}) }
 
-    // 1. Gather all entities from Overleaf
+    // 1. Gather all entities from Overleaf.
+    //
+    // Editor keystrokes live in document-updater's Redis and only reach
+    // docstore when it flushes, so reading docstore directly would reconcile
+    // against content that is minutes old - a manual "Sync now" right after
+    // typing would find nothing to push. Flush first, exactly as every other
+    // out-of-band reader of project docs does (GitBridgeSnapshotManager,
+    // ClsiManager, ProjectDownloadsController, ProjectDuplicator).
+    await DocumentUpdaterHandler.promises.flushProjectToMongo(projectId)
+
     const entities =
       await ProjectEntityHandler.promises.getAllEntities(projectId)
     const docs = await DocstoreManager.promises.getAllDocs(projectId)
