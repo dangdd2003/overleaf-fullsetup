@@ -3,6 +3,7 @@ import { expect } from 'chai'
 import OAuth2PreconfiguredClients from '../../../../../app/src/Features/OAuth2/OAuth2PreconfiguredClients.mjs'
 import OAuth2RegistrationController from '../../../../../app/src/Features/OAuth2/OAuth2RegistrationController.mjs'
 import { OauthApplication } from '../../../../../app/src/models/OauthApplication.mjs'
+import Settings from '@overleaf/settings'
 
 describe('OAuth2PreconfiguredClients', () => {
   it('resolves Claude Desktop client and allows loopback ports and cloud callbacks', () => {
@@ -112,29 +113,33 @@ describe('OAuth2PreconfiguredClients', () => {
   })
 
   it('allows standard integration callbacks matching Google Drive and GitHub sync patterns', () => {
-    process.env.OVERLEAF_URL = 'https://custom-domain.example.com'
+    const origSiteUrl = Settings.siteUrl
+    Settings.siteUrl = 'https://custom-domain.example.com'
     const client = OAuth2PreconfiguredClients.getClient('claude')
 
     // Matches GitHub (${siteUrl}/user/github/callback) and Google Drive (${siteUrl}/user/google-drive/callback)
-    expect(
-      OAuth2PreconfiguredClients.isRedirectUriAllowed(
-        client,
-        'https://custom-domain.example.com/user/mcp/callback'
-      )
-    ).to.be.true
-    expect(
-      OAuth2PreconfiguredClients.isRedirectUriAllowed(
-        client,
-        'https://custom-domain.example.com/oauth/callback'
-      )
-    ).to.be.true
-    expect(
-      OAuth2PreconfiguredClients.isRedirectUriAllowed(
-        client,
-        'https://unauthorized-domain.com/user/mcp/callback'
-      )
-    ).to.be.false
-    delete process.env.OVERLEAF_URL
+    try {
+      expect(
+        OAuth2PreconfiguredClients.isRedirectUriAllowed(
+          client,
+          'https://custom-domain.example.com/user/mcp/callback'
+        )
+      ).to.be.true
+      expect(
+        OAuth2PreconfiguredClients.isRedirectUriAllowed(
+          client,
+          'https://custom-domain.example.com/oauth/callback'
+        )
+      ).to.be.true
+      expect(
+        OAuth2PreconfiguredClients.isRedirectUriAllowed(
+          client,
+          'https://unauthorized-domain.com/user/mcp/callback'
+        )
+      ).to.be.false
+    } finally {
+      Settings.siteUrl = origSiteUrl
+    }
   })
 
   it('strictly rejects loopback redirect URIs with userinfo tricks', () => {

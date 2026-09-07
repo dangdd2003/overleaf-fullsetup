@@ -3,7 +3,7 @@
 // ----------------------------------------------------------------------------
 // The `MCP API — cross-user isolation (RELEASE GATE)` describe block below is
 // the acceptance gate for the MCP HTTP API's per-user authorization model.
-// It MUST pass before `OVERLEAF_MCP_ENABLED=true` (Settings.enableMcp) is set
+// It MUST pass before `MCP_ENABLED=true` (Settings.enableMcp) is set
 // on ANY multi-user instance. A regression here means one user's token can
 // reach another user's projects — treat a failure as ship-blocking, not flaky.
 //

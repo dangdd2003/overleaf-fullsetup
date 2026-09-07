@@ -5,7 +5,7 @@ import { CODES, OverleafApiError, toToolError } from './errors.js'
  *
  * On the HTTP transport the token arrives as `ctx.http.authInfo`, put there by
  * the bearer middleware. On stdio there is no HTTP request, so the single-user
- * token from OVERLEAF_MCP_TOKEN is used instead.
+ * token from MCP_TOKEN is used instead.
  *
  * @param {object} ctx the tool-handler context
  * @param {string} [fallbackToken] the stdio token, if configured

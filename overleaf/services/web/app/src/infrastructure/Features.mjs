@@ -70,8 +70,7 @@ const Features = {
       case 'admin-user-management':
         return Boolean(
           Settings.enableAdminUserManagement ??
-          (process.env.OVERLEAF_ADMIN_USER_MANAGEMENT_ENABLED === 'true' ||
-            process.env.ADMIN_USER_MANAGEMENT_ENABLED === 'true')
+          process.env.ADMIN_USER_MANAGEMENT_ENABLED === 'true'
         )
       case 'oauth':
         return Boolean(Settings.oauth)

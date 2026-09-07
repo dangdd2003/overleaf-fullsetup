@@ -14,7 +14,7 @@ describe('buildApp', function () {
       await app.start()
       expect.fail('expected a throw')
     } catch (err) {
-      expect(err.message).to.match(/OVERLEAF_MCP_ENABLED/)
+      expect(err.message).to.match(/MCP_ENABLED/)
     }
   })
 

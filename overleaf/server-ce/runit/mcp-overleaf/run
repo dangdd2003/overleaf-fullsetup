@@ -10,8 +10,8 @@ source /etc/overleaf/env.sh
 
 # The MCP service is off by default. runsv restarts anything that exits, so
 # idle instead of exiting: an exit here would spin the supervisor.
-if [ "$(echo "${OVERLEAF_MCP_ENABLED:-false}" | tr '[:upper:]' '[:lower:]')" != "true" ]; then
-    echo "MCP service disabled (OVERLEAF_MCP_ENABLED is not true), idling"
+if [ "$(echo "${MCP_ENABLED:-false}" | tr '[:upper:]' '[:lower:]')" != "true" ]; then
+    echo "MCP service disabled (MCP_ENABLED is not true), idling"
     exec sleep infinity
 fi
 

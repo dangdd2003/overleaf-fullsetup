@@ -106,15 +106,6 @@ function getSiteUrls() {
   const urls = new Set()
   const fromSettings = (Settings.siteUrl || '').replace(/\/+$/, '')
   if (fromSettings) urls.add(fromSettings)
-  for (const envVar of [
-    process.env.PUBLIC_URL,
-    process.env.OVERLEAF_URL,
-    process.env.SITE_URL,
-  ]) {
-    if (envVar) {
-      urls.add(envVar.replace(/\/+$/, ''))
-    }
-  }
   return Array.from(urls)
 }
 
@@ -151,11 +142,7 @@ const OAuth2PreconfiguredClients = {
     }
 
     // Dynamic environment redirect patterns
-    const envRedirects = (
-      process.env.OVERLEAF_OAUTH_ALLOWED_REDIRECT_URIS ||
-      process.env.OVERLEAF_OAUTH_REDIRECT_URIS ||
-      ''
-    )
+    const envRedirects = (process.env.MCP_OAUTH2_ALLOWED_REDIRECT_URIS || '')
       .split(',')
       .map(s => s.trim())
       .filter(Boolean)

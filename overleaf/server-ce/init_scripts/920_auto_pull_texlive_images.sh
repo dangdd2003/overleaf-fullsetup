@@ -2,7 +2,7 @@
 set -e
 
 # Default disabled per AGENTS.md
-if [ "$AUTO_PULL_TEX_LIVE_IMAGES" != "true" ]; then
+if [ "$TEX_LIVE_AUTO_PULL_ENABLED" != "true" ]; then
   exit 0
 fi
 

@@ -34,7 +34,7 @@ function listFromEnv(env, name) {
  * @returns {Readonly<object>}
  */
 export function loadConfig(env = process.env) {
-  const enabled = env.OVERLEAF_MCP_ENABLED?.toLowerCase() === 'true'
+  const enabled = env.MCP_ENABLED?.toLowerCase() === 'true'
 
   const transport = env.MCP_TRANSPORT || 'http'
   if (enabled && !TRANSPORTS.includes(transport)) {
@@ -43,20 +43,21 @@ export function loadConfig(env = process.env) {
     )
   }
 
-  const internalUrl = (env.OVERLEAF_INTERNAL_URL || env.OVERLEAF_URL || '').replace(
-    /\/+$/,
+  const internalUrl = (
+    env.OVERLEAF_INTERNAL_URL ||
+    env.OVERLEAF_SITE_URL ||
     ''
-  )
+  ).replace(/\/+$/, '')
   if (enabled && !internalUrl) {
     throw new Error(
-      'OVERLEAF_INTERNAL_URL (or OVERLEAF_URL) is required when OVERLEAF_MCP_ENABLED=true'
+      'OVERLEAF_INTERNAL_URL (or OVERLEAF_SITE_URL) is required when MCP_ENABLED=true'
     )
   }
 
-  const stdioToken = env.OVERLEAF_MCP_TOKEN || ''
+  const stdioToken = env.MCP_TOKEN || ''
   if (enabled && transport === 'stdio' && !stdioToken) {
     throw new Error(
-      'OVERLEAF_MCP_TOKEN is required when MCP_TRANSPORT=stdio'
+      'MCP_TOKEN is required when MCP_TRANSPORT=stdio'
     )
   }
 
@@ -76,13 +77,13 @@ export function loadConfig(env = process.env) {
 
   const port = intFromEnv(env, 'MCP_PORT', DEFAULT_PORT)
   const endpointPath = env.MCP_ENDPOINT_PATH || DEFAULT_ENDPOINT_PATH
-  const authServerUrl = (env.OVERLEAF_URL || internalUrl || '').replace(
+  const authServerUrl = (env.OVERLEAF_SITE_URL || internalUrl || '').replace(
     /\/+$/,
     ''
   )
   const resourceUri =
     env.MCP_RESOURCE_URI ||
-    (env.OVERLEAF_URL
+    (env.OVERLEAF_SITE_URL
       ? `${authServerUrl}${endpointPath}`
       : `http://${host}:${port}${endpointPath}`)
 

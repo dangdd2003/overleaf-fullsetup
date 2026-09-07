@@ -33,11 +33,6 @@ function getBaseUrl(req) {
     const protocol = req?.protocol || 'http'
     return `${protocol}://${host}`
   }
-  const envUrl =
-    process.env.PUBLIC_URL || process.env.OVERLEAF_URL || process.env.SITE_URL
-  if (envUrl) {
-    return envUrl.replace(/\/+$/, '')
-  }
   return 'http://localhost:3000'
 }
 
@@ -51,20 +46,20 @@ const OAuth2KeyManager = {
       return cachedKeypair
     }
 
-    const kid = Settings.oauth2KeyId || 'overleaf-mcp-key-1'
+    const kid = Settings.mcpOauth2KeyId || 'overleaf-mcp-key-1'
     const envPrivateKey =
-      process.env.OVERLEAF_OAUTH2_PRIVATE_KEY || Settings.oauth2PrivateKey
+      process.env.MCP_OAUTH2_PRIVATE_KEY || Settings.mcpOauth2PrivateKey
 
     if (envPrivateKey) {
       let privateKey, publicKey
       try {
         privateKey = crypto.createPrivateKey(envPrivateKey)
-        publicKey = Settings.oauth2PublicKey
-          ? crypto.createPublicKey(Settings.oauth2PublicKey)
+        publicKey = Settings.mcpOauth2PublicKey
+          ? crypto.createPublicKey(Settings.mcpOauth2PublicKey)
           : crypto.createPublicKey(privateKey)
       } catch (err) {
         throw new Error(
-          'OAuth2 keypair is misconfigured: OVERLEAF_OAUTH2_PRIVATE_KEY / oauth2PublicKey must be a valid PEM-encoded key',
+          'OAuth2 keypair is misconfigured: MCP_OAUTH2_PRIVATE_KEY / mcpOauth2PublicKey must be a valid PEM-encoded key',
           { cause: err }
         )
       }
@@ -72,7 +67,7 @@ const OAuth2KeyManager = {
       return cachedKeypair
     }
 
-    const keyPath = process.env.OVERLEAF_OAUTH2_KEY_FILE || DEFAULT_KEY_PATH
+    const keyPath = process.env.MCP_OAUTH2_KEY_FILE || DEFAULT_KEY_PATH
     try {
       if (fs.existsSync(keyPath)) {
         const pem = fs.readFileSync(keyPath, 'utf8')

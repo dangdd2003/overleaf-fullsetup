@@ -9,8 +9,8 @@ import OAuth2KeyManager from '../../../../../app/src/Features/OAuth2/OAuth2KeyMa
 describe('OAuth2KeyManager', () => {
   beforeEach(() => {
     OAuth2KeyManager._clearCache()
-    delete process.env.OVERLEAF_OAUTH2_KEY_FILE
-    delete process.env.OVERLEAF_OAUTH2_PRIVATE_KEY
+    delete process.env.MCP_OAUTH2_KEY_FILE
+    delete process.env.MCP_OAUTH2_PRIVATE_KEY
   })
 
   it('generates a valid RS256 keypair and produces JWKS format', async () => {
@@ -32,7 +32,7 @@ describe('OAuth2KeyManager', () => {
   })
 
   it('throws a clear config error instead of crashing on a malformed private key', async () => {
-    process.env.OVERLEAF_OAUTH2_PRIVATE_KEY = 'not-a-valid-pem-key'
+    process.env.MCP_OAUTH2_PRIVATE_KEY = 'not-a-valid-pem-key'
     try {
       let err
       try {
@@ -44,14 +44,14 @@ describe('OAuth2KeyManager', () => {
       expect(err.message).to.match(/misconfigured/i)
       expect(err.cause).to.exist
     } finally {
-      delete process.env.OVERLEAF_OAUTH2_PRIVATE_KEY
+      delete process.env.MCP_OAUTH2_PRIVATE_KEY
     }
   })
 
-  it('persists and loads keypair from disk when OVERLEAF_OAUTH2_KEY_FILE is specified', async () => {
+  it('persists and loads keypair from disk when MCP_OAUTH2_KEY_FILE is specified', async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oauth2-key-test-'))
     const keyFile = path.join(tmpDir, 'test_key.pem')
-    process.env.OVERLEAF_OAUTH2_KEY_FILE = keyFile
+    process.env.MCP_OAUTH2_KEY_FILE = keyFile
 
     try {
       const keypair1 = await OAuth2KeyManager.getKeypair()
@@ -70,7 +70,7 @@ describe('OAuth2KeyManager', () => {
       expect(jwks1.keys[0].n).to.equal(jwks2.keys[0].n)
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true })
-      delete process.env.OVERLEAF_OAUTH2_KEY_FILE
+      delete process.env.MCP_OAUTH2_KEY_FILE
     }
   })
 

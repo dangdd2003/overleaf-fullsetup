@@ -17,7 +17,7 @@ export function buildApp(config) {
     async start() {
       if (!config.enabled) {
         throw new Error(
-          'the MCP service is disabled; set OVERLEAF_MCP_ENABLED=true to start it'
+          'the MCP service is disabled; set MCP_ENABLED=true to start it'
         )
       }
       const client = new OverleafClient({ baseUrl: config.internalUrl })

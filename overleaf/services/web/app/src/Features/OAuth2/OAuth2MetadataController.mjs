@@ -10,13 +10,6 @@ function getBaseUrl(req) {
     const protocol = req?.protocol || 'http'
     return `${protocol}://${host}`
   }
-  const envUrl =
-    process.env.PUBLIC_URL ||
-    process.env.OVERLEAF_URL ||
-    process.env.SITE_URL
-  if (envUrl) {
-    return envUrl.replace(/\/+$/, '')
-  }
   return 'http://localhost:3000'
 }
 

@@ -451,7 +451,7 @@ const DockerRunner = {
             if (
               createErr.statusCode === 404 &&
               createErr.message?.includes('No such image') &&
-              process.env.AUTO_PULL_TEX_LIVE_IMAGES === 'true'
+              process.env.TEX_LIVE_AUTO_PULL_ENABLED === 'true'
             ) {
               logger.info(
                 { image: options.Image },

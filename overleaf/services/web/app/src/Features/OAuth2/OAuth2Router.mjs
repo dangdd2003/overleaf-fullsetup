@@ -29,7 +29,8 @@ function oauthRateLimit(req, res, next) {
 
 const OAuth2Router = {
   apply(webRouter, privateApiRouter, publicApiRouter) {
-    if (!Settings.enableMcp && !Settings.enableOAuth2) {
+    // The OAuth2 authorization server exists solely to authenticate MCP clients.
+    if (!Settings.enableMcp) {
       return
     }
 

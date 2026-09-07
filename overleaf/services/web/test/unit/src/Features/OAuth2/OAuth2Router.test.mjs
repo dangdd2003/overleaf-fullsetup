@@ -34,12 +34,10 @@ describe('OAuth2Router', () => {
     privateApiRouter = createMockRouter()
     publicApiRouter = createMockRouter()
     Settings.enableMcp = true
-    Settings.enableOAuth2 = undefined
   })
 
-  it('does nothing when enableMcp and enableOAuth2 are disabled', () => {
+  it('does nothing when enableMcp is disabled', () => {
     Settings.enableMcp = false
-    Settings.enableOAuth2 = false
 
     OAuth2Router.apply(webRouter, privateApiRouter, publicApiRouter)
 

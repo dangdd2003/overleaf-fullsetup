@@ -4,17 +4,13 @@ import GitBridgeApiController from './GitBridgeApiController.mjs'
 import FileStoreController from '../FileStore/FileStoreController.mjs'
 
 if (Settings.enableGitBridge === undefined) {
-  Settings.enableGitBridge =
-    process.env.GIT_BRIDGE_ENABLED === 'true' ||
-    process.env.OVERLEAF_GIT_BRIDGE_ENABLED === 'true'
+  Settings.enableGitBridge = process.env.GIT_BRIDGE_ENABLED === 'true'
 }
 
 const GitBridgeRouter = {
   apply(webRouter, privateApiRouter, publicApiRouter) {
     if (Settings.enableGitBridge === undefined) {
-      Settings.enableGitBridge =
-        process.env.GIT_BRIDGE_ENABLED === 'true' ||
-        process.env.OVERLEAF_GIT_BRIDGE_ENABLED === 'true'
+      Settings.enableGitBridge = process.env.GIT_BRIDGE_ENABLED === 'true'
     }
 
     if (!Settings.enableGitBridge) {

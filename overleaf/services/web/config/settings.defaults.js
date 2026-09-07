@@ -410,7 +410,7 @@ module.exports = {
   adminPrivilegeAvailable: process.env.ADMIN_PRIVILEGE_AVAILABLE === 'true',
   adminRolesEnabled: false,
   enableAdminUserManagement:
-    process.env.OVERLEAF_ADMIN_USER_MANAGEMENT_ENABLED === 'true',
+    process.env.ADMIN_USER_MANAGEMENT_ENABLED === 'true',
   blockCrossOriginRequests: process.env.BLOCK_CROSS_ORIGIN_REQUESTS === 'true',
   allowedOrigins: (process.env.ALLOWED_ORIGINS || siteUrl).split(','),
 
@@ -919,8 +919,7 @@ module.exports = {
     .split(',')
     .map(s => s.trim()),
 
-  enableMcp: process.env.OVERLEAF_MCP_ENABLED === 'true',
-  enableOAuth2: process.env.OVERLEAF_OAUTH2_ENABLED === 'true',
+  enableMcp: process.env.MCP_ENABLED === 'true',
 
   mcp: {
     maxUploadBytes: parseInt(process.env.MCP_MAX_UPLOAD_MB || '20', 10) * 1024 * 1024,
@@ -1157,7 +1156,7 @@ module.exports = {
 
   enablePandocConversions: process.env.ENABLE_PANDOC_CONVERSIONS === 'true',
 
-  enableGoogleDriveSync: process.env.ENABLE_GOOGLE_DRIVE_SYNC === 'true',
+  enableGoogleDriveSync: process.env.GOOGLE_DRIVE_ENABLED === 'true',
   googleDrive: {
     clientId: process.env.GOOGLE_DRIVE_CLIENT_ID || '',
     clientSecret: process.env.GOOGLE_DRIVE_CLIENT_SECRET || '',

@@ -72,7 +72,7 @@ if [ -f "${mcp_template_file}" ]; then
   mkdir -p "${vhost_extras_dir}"
   # Same reasoning as git-bridge above: the proxy names a fixed upstream that
   # nginx resolves at config-load time, so only emit it when the feature is on.
-  if [ "$(echo "${OVERLEAF_MCP_ENABLED:-false}" | tr '[:upper:]' '[:lower:]')" = "true" ]; then
+  if [ "$(echo "${MCP_ENABLED:-false}" | tr '[:upper:]' '[:lower:]')" = "true" ]; then
     export MCP_HOST="${MCP_HOST:-127.0.0.1}"
     export MCP_PORT="${MCP_PORT:-3050}"
 

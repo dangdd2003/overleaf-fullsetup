@@ -6,11 +6,7 @@ import Settings from '@overleaf/settings'
 describe('OAuth2PreconfiguredClients', () => {
   beforeEach(() => {
     Settings.siteUrl = 'https://sharelatex.test.overleaf.com'
-    delete process.env.PUBLIC_URL
-    delete process.env.OVERLEAF_URL
-    delete process.env.SITE_URL
-    delete process.env.OVERLEAF_OAUTH_ALLOWED_REDIRECT_URIS
-    delete process.env.OVERLEAF_OAUTH_REDIRECT_URIS
+    delete process.env.MCP_OAUTH2_ALLOWED_REDIRECT_URIS
   })
 
   describe('getClient', () => {
