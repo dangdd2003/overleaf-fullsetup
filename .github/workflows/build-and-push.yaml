@@ -17,13 +17,16 @@ env:
   GIT_BRIDGE_IMAGE_NAME: git-bridge
 
 jobs:
-  build-sharelatex:
-    name: Build Sharelatex Images
+  build-base:
+    name: Build Sharelatex Base Image
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
       id-token: write
+    outputs:
+      date: ${{ steps.build_env.outputs.date }}
+      monorepo_revision: ${{ steps.build_env.outputs.MONOREPO_REVISION }}
 
     steps:
       - name: Checkout repository
@@ -74,6 +77,35 @@ jobs:
             ${{ vars.DOCKER_USERNAME }}/${{ env.BASE_IMAGE_NAME }}:${{ steps.build_env.outputs.date }}
           push: true
 
+  build-full:
+    name: Build Sharelatex Full Image
+    needs: build-base
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4.2.2
+
+      - name: Docker Setup Buildx
+        uses: docker/setup-buildx-action@v3.8.0
+
+      - name: Docker login registry ${{ env.REGISTRY1 }}
+        uses: docker/login-action@v3.3.0
+        with:
+          registry: ${{ env.REGISTRY1 }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker login registry ${{ env.REGISTRY2 }}
+        uses: docker/login-action@v3.3.0
+        with:
+          username: ${{ vars.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_TOKEN }}
+
       - name: Build full image
         uses: docker/build-push-action@v6
         with:
@@ -82,17 +114,46 @@ jobs:
           build-args: |
             BUILDKIT_INLINE_CACHE=1
             OVERLEAF_BASE_TAG=${{ vars.DOCKER_USERNAME }}/${{ env.BASE_IMAGE_NAME }}:latest
-            MONOREPO_REVISION=${{ steps.build_env.outputs.MONOREPO_REVISION }}
+            MONOREPO_REVISION=${{ needs.build-base.outputs.monorepo_revision }}
             TEXLIVE_MIRROR=${{ vars.TEXLIVE_MIRROR || 'https://mirror.ctan.org/systems/texlive/tlnet' }}
             NODE_VERSION=${{ vars.NODE_VERSION || 'v24.20.0' }}
           cache-from: type=gha,scope=sharelatex-full
           cache-to: type=gha,mode=max,scope=sharelatex-full
           tags: |
             ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.FULL_IMAGE_NAME }}:latest
-            ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.FULL_IMAGE_NAME }}:${{ steps.build_env.outputs.date }}
+            ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.FULL_IMAGE_NAME }}:${{ needs.build-base.outputs.date }}
             ${{ vars.DOCKER_USERNAME }}/${{ env.FULL_IMAGE_NAME }}:latest
-            ${{ vars.DOCKER_USERNAME }}/${{ env.FULL_IMAGE_NAME }}:${{ steps.build_env.outputs.date }}
+            ${{ vars.DOCKER_USERNAME }}/${{ env.FULL_IMAGE_NAME }}:${{ needs.build-base.outputs.date }}
           push: true
+
+  build-slim:
+    name: Build Sharelatex Slim Image
+    needs: build-base
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4.2.2
+
+      - name: Docker Setup Buildx
+        uses: docker/setup-buildx-action@v3.8.0
+
+      - name: Docker login registry ${{ env.REGISTRY1 }}
+        uses: docker/login-action@v3.3.0
+        with:
+          registry: ${{ env.REGISTRY1 }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker login registry ${{ env.REGISTRY2 }}
+        uses: docker/login-action@v3.3.0
+        with:
+          username: ${{ vars.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_TOKEN }}
 
       - name: Build slim control plane image
         uses: docker/build-push-action@v6
@@ -102,15 +163,15 @@ jobs:
           build-args: |
             BUILDKIT_INLINE_CACHE=1
             OVERLEAF_BASE_TAG=${{ vars.DOCKER_USERNAME }}/${{ env.BASE_IMAGE_NAME }}:latest
-            MONOREPO_REVISION=${{ steps.build_env.outputs.MONOREPO_REVISION }}
+            MONOREPO_REVISION=${{ needs.build-base.outputs.monorepo_revision }}
             NODE_VERSION=${{ vars.NODE_VERSION || 'v24.20.0' }}
           cache-from: type=gha,scope=sharelatex-slim
           cache-to: type=gha,mode=max,scope=sharelatex-slim
           tags: |
             ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.SLIM_IMAGE_NAME }}:latest
-            ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.SLIM_IMAGE_NAME }}:${{ steps.build_env.outputs.date }}
+            ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.SLIM_IMAGE_NAME }}:${{ needs.build-base.outputs.date }}
             ${{ vars.DOCKER_USERNAME }}/${{ env.SLIM_IMAGE_NAME }}:latest
-            ${{ vars.DOCKER_USERNAME }}/${{ env.SLIM_IMAGE_NAME }}:${{ steps.build_env.outputs.date }}
+            ${{ vars.DOCKER_USERNAME }}/${{ env.SLIM_IMAGE_NAME }}:${{ needs.build-base.outputs.date }}
           push: true
 
   build-texlive-full:
