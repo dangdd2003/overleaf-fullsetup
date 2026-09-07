@@ -26,6 +26,10 @@ export const db = {
   githubSyncProjectStates: internalDb.collection('githubSyncProjectStates'),
   githubSyncUserCredentials: internalDb.collection('githubSyncUserCredentials'),
   globalMetrics: internalDb.collection('globalMetrics'),
+  googleDriveProjectStates: internalDb.collection('googleDriveProjectStates'),
+  googleDriveUserCredentials: internalDb.collection(
+    'googleDriveUserCredentials'
+  ),
   grouppolicies: internalDb.collection('grouppolicies'),
   groupAuditLogEntries: internalDb.collection('groupAuditLogEntries'),
   institutions: internalDb.collection('institutions'),
