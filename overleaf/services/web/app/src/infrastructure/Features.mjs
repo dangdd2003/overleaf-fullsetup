@@ -72,6 +72,12 @@ const Features = {
           Settings.enableAdminUserManagement ??
           process.env.ADMIN_USER_MANAGEMENT_ENABLED === 'true'
         )
+      case 'admin-project-management':
+        return Boolean(
+          Settings.enableAdminProjectManagement ||
+            process.env.ADMIN_PROJECT_MANAGEMENT_ENABLED === 'true' ||
+            process.env.OVERLEAF_ADMIN_PROJECT_MANAGEMENT_ENABLED === 'true'
+        )
       case 'oauth':
         return Boolean(Settings.oauth)
       case 'templates-server-pro':
