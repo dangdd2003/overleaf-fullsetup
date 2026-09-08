@@ -4,6 +4,13 @@ on:
   schedule:
     - cron: "0 0 1 * *"
   workflow_dispatch:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
 
 env:
   # Defined registries
@@ -17,8 +24,47 @@ env:
   GIT_BRIDGE_IMAGE_NAME: git-bridge
 
 jobs:
+  detect-changes:
+    name: Detect Changed Paths
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      base: ${{ steps.filter.outputs.base }}
+      app: ${{ steps.filter.outputs.app }}
+      gitbridge: ${{ steps.filter.outputs.gitbridge }}
+      texlive: ${{ steps.filter.outputs.texlive }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Filter changed paths
+        id: filter
+        uses: dorny/paths-filter@v4.0.3
+        with:
+          filters: |
+            base:
+              - 'overleaf/server-ce/Dockerfile-base'
+            app:
+              - 'overleaf/libraries/**'
+              - 'overleaf/services/**'
+              - '!overleaf/services/git-bridge/**'
+              - 'overleaf/tools/migrations/**'
+              - 'overleaf/server-ce/Dockerfile'
+              - 'overleaf/server-ce/Dockerfile.slim'
+              - 'overleaf/server-ce/genScript.js'
+              - 'overleaf/server-ce/services.js'
+              - 'overleaf/package.json'
+              - 'overleaf/yarn.lock'
+              - 'overleaf/.yarnrc.yml'
+            gitbridge:
+              - 'overleaf/services/git-bridge/**'
+            texlive:
+              - 'overleaf/server-ce/Dockerfile.texlive-full'
+
   build-base:
     name: Build Sharelatex Base Image
+    needs: detect-changes
+    if: always() && (github.event_name != 'push' || needs.detect-changes.outputs.base == 'true')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -30,7 +76,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4.2.2
+        uses: actions/checkout@v7.0.1
 
       - name: Set build env
         id: build_env
@@ -45,23 +91,23 @@ jobs:
           echo "Current repo commit hash: ${{ steps.build_env.outputs.MONOREPO_REVISION }}"
 
       - name: Docker Setup Buildx
-        uses: docker/setup-buildx-action@v3.8.0
+        uses: docker/setup-buildx-action@v4.3.0
 
       - name: Docker login registry ${{ env.REGISTRY1 }}
-        uses: docker/login-action@v3.3.0
+        uses: docker/login-action@v4.6.0
         with:
           registry: ${{ env.REGISTRY1 }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Docker login registry ${{ env.REGISTRY2 }}
-        uses: docker/login-action@v3.3.0
+        uses: docker/login-action@v4.6.0
         with:
           username: ${{ vars.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_TOKEN }}
 
       - name: Build base image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7.3.0
         with:
           context: ./overleaf
           file: ./overleaf/server-ce/Dockerfile-base
@@ -79,7 +125,8 @@ jobs:
 
   build-full:
     name: Build Sharelatex Full Image
-    needs: build-base
+    needs: [detect-changes, build-base]
+    if: always() && needs.build-base.result != 'failure' && (github.event_name != 'push' || needs.detect-changes.outputs.base == 'true' || needs.detect-changes.outputs.app == 'true')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -88,47 +135,55 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4.2.2
+        uses: actions/checkout@v7.0.1
+
+      - name: Set build env
+        id: build_env
+        run: |
+          echo "date=$(TZ=Asia/Ho_Chi_Minh date +"%Y-%m-%d")" >> "$GITHUB_OUTPUT"
+          echo "MONOREPO_REVISION=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        shell: bash
 
       - name: Docker Setup Buildx
-        uses: docker/setup-buildx-action@v3.8.0
+        uses: docker/setup-buildx-action@v4.3.0
 
       - name: Docker login registry ${{ env.REGISTRY1 }}
-        uses: docker/login-action@v3.3.0
+        uses: docker/login-action@v4.6.0
         with:
           registry: ${{ env.REGISTRY1 }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Docker login registry ${{ env.REGISTRY2 }}
-        uses: docker/login-action@v3.3.0
+        uses: docker/login-action@v4.6.0
         with:
           username: ${{ vars.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_TOKEN }}
 
       - name: Build full image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7.3.0
         with:
           context: ./overleaf
           file: ./overleaf/server-ce/Dockerfile
           build-args: |
             BUILDKIT_INLINE_CACHE=1
             OVERLEAF_BASE_TAG=${{ vars.DOCKER_USERNAME }}/${{ env.BASE_IMAGE_NAME }}:latest
-            MONOREPO_REVISION=${{ needs.build-base.outputs.monorepo_revision }}
+            MONOREPO_REVISION=${{ steps.build_env.outputs.MONOREPO_REVISION }}
             TEXLIVE_MIRROR=${{ vars.TEXLIVE_MIRROR || 'https://mirror.ctan.org/systems/texlive/tlnet' }}
             NODE_VERSION=${{ vars.NODE_VERSION || 'v24.20.0' }}
           cache-from: type=gha,scope=sharelatex-full
           cache-to: type=gha,mode=max,scope=sharelatex-full
           tags: |
             ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.FULL_IMAGE_NAME }}:latest
-            ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.FULL_IMAGE_NAME }}:${{ needs.build-base.outputs.date }}
+            ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.FULL_IMAGE_NAME }}:${{ steps.build_env.outputs.date }}
             ${{ vars.DOCKER_USERNAME }}/${{ env.FULL_IMAGE_NAME }}:latest
-            ${{ vars.DOCKER_USERNAME }}/${{ env.FULL_IMAGE_NAME }}:${{ needs.build-base.outputs.date }}
+            ${{ vars.DOCKER_USERNAME }}/${{ env.FULL_IMAGE_NAME }}:${{ steps.build_env.outputs.date }}
           push: true
 
   build-slim:
     name: Build Sharelatex Slim Image
-    needs: build-base
+    needs: [detect-changes, build-base]
+    if: always() && needs.build-base.result != 'failure' && (github.event_name != 'push' || needs.detect-changes.outputs.base == 'true' || needs.detect-changes.outputs.app == 'true')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -137,45 +192,54 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4.2.2
+        uses: actions/checkout@v7.0.1
+
+      - name: Set build env
+        id: build_env
+        run: |
+          echo "date=$(TZ=Asia/Ho_Chi_Minh date +"%Y-%m-%d")" >> "$GITHUB_OUTPUT"
+          echo "MONOREPO_REVISION=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        shell: bash
 
       - name: Docker Setup Buildx
-        uses: docker/setup-buildx-action@v3.8.0
+        uses: docker/setup-buildx-action@v4.3.0
 
       - name: Docker login registry ${{ env.REGISTRY1 }}
-        uses: docker/login-action@v3.3.0
+        uses: docker/login-action@v4.6.0
         with:
           registry: ${{ env.REGISTRY1 }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Docker login registry ${{ env.REGISTRY2 }}
-        uses: docker/login-action@v3.3.0
+        uses: docker/login-action@v4.6.0
         with:
           username: ${{ vars.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_TOKEN }}
 
       - name: Build slim control plane image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7.3.0
         with:
           context: ./overleaf
           file: ./overleaf/server-ce/Dockerfile.slim
           build-args: |
             BUILDKIT_INLINE_CACHE=1
             OVERLEAF_BASE_TAG=${{ vars.DOCKER_USERNAME }}/${{ env.BASE_IMAGE_NAME }}:latest
-            MONOREPO_REVISION=${{ needs.build-base.outputs.monorepo_revision }}
+            MONOREPO_REVISION=${{ steps.build_env.outputs.MONOREPO_REVISION }}
             NODE_VERSION=${{ vars.NODE_VERSION || 'v24.20.0' }}
           cache-from: type=gha,scope=sharelatex-slim
           cache-to: type=gha,mode=max,scope=sharelatex-slim
           tags: |
             ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.SLIM_IMAGE_NAME }}:latest
-            ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.SLIM_IMAGE_NAME }}:${{ needs.build-base.outputs.date }}
+            ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.SLIM_IMAGE_NAME }}:${{ steps.build_env.outputs.date }}
             ${{ vars.DOCKER_USERNAME }}/${{ env.SLIM_IMAGE_NAME }}:latest
-            ${{ vars.DOCKER_USERNAME }}/${{ env.SLIM_IMAGE_NAME }}:${{ needs.build-base.outputs.date }}
+            ${{ vars.DOCKER_USERNAME }}/${{ env.SLIM_IMAGE_NAME }}:${{ steps.build_env.outputs.date }}
           push: true
 
   build-texlive-full:
     name: Build TeX Live Full (${{ matrix.year }})
+    needs: detect-changes
+    if: always() && (github.event_name != 'push' || needs.detect-changes.outputs.texlive == 'true')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -198,7 +262,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4.2.2
+        uses: actions/checkout@v7.0.1
 
       - name: Set build env
         id: build_env
@@ -226,23 +290,23 @@ jobs:
           echo "Dated tag will be: ${{ matrix.year }}_${{ steps.build_env.outputs.date }}"
 
       - name: Docker Setup Buildx
-        uses: docker/setup-buildx-action@v3.8.0
+        uses: docker/setup-buildx-action@v4.3.0
 
       - name: Docker login registry ${{ env.REGISTRY1 }}
-        uses: docker/login-action@v3.3.0
+        uses: docker/login-action@v4.6.0
         with:
           registry: ${{ env.REGISTRY1 }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Docker login registry ${{ env.REGISTRY2 }}
-        uses: docker/login-action@v3.3.0
+        uses: docker/login-action@v4.6.0
         with:
           username: ${{ vars.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_TOKEN }}
 
       - name: Build and push texlive-full (${{ matrix.year }})
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7.3.0
         with:
           context: ./overleaf
           file: ./overleaf/server-ce/Dockerfile.texlive-full
@@ -264,6 +328,8 @@ jobs:
 
   build-git-bridge:
     name: Build Git Bridge Image
+    needs: detect-changes
+    if: always() && (github.event_name != 'push' || needs.detect-changes.outputs.gitbridge == 'true')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -272,7 +338,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4.2.2
+        uses: actions/checkout@v7.0.1
 
       - name: Set build env
         id: build_env
@@ -287,23 +353,23 @@ jobs:
           echo "Current repo commit hash: ${{ steps.build_env.outputs.MONOREPO_REVISION }}"
 
       - name: Docker Setup Buildx
-        uses: docker/setup-buildx-action@v3.8.0
+        uses: docker/setup-buildx-action@v4.3.0
 
       - name: Docker login registry ${{ env.REGISTRY1 }}
-        uses: docker/login-action@v3.3.0
+        uses: docker/login-action@v4.6.0
         with:
           registry: ${{ env.REGISTRY1 }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Docker login registry ${{ env.REGISTRY2 }}
-        uses: docker/login-action@v3.3.0
+        uses: docker/login-action@v4.6.0
         with:
           username: ${{ vars.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_TOKEN }}
 
       - name: Build and push git-bridge
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7.3.0
         with:
           context: ./overleaf/services/git-bridge
           file: ./overleaf/services/git-bridge/Dockerfile
