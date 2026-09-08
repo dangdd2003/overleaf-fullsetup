@@ -71,6 +71,11 @@ html(
 			//- Expose some settings globally to the frontend
 			meta(name='ol-ExposedSettings' data-type='json' content=ExposedSettings)
 			meta(
+				name='ol-githubSyncEnabled'
+				data-type='boolean'
+				content=hasFeature('github-sync')
+			)
+			meta(
 				name='ol-splitTestVariants'
 				data-type='json'
 				content=splitTestVariants || {}

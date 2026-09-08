@@ -2051,6 +2051,7 @@
   "publisher_account": "Publisher Account",
   "publishing": "Publishing",
   "pull_github_changes_into_sharelatex": "Pull GitHub changes into __appName__",
+  "push": "Push",
   "push_sharelatex_changes_to_github": "Push __appName__ changes to GitHub",
   "push_to_github_pull_to_overleaf": "Push to GitHub, pull to __appName__",
   "quoted_text": "Quoted text",

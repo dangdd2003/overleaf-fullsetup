@@ -141,12 +141,16 @@ export interface Meta {
   'ol-gitBridgePublicBaseUrl': string
   'ol-mcpEnabled': boolean
   'ol-github': { enabled: boolean; error: boolean }
+  'ol-githubSyncEnabled': boolean
   'ol-googleDrive':
     | {
         error?: boolean
         registered?: boolean
         linked?: boolean
         email?: string
+        // returned by GoogleDriveOAuthManager.getLinkStatus and read by
+        // google-drive-widget.tsx; it was missing from this type
+        linkedAt?: string | Date
       }
     | undefined
   'ol-googleDriveSyncEnabled': boolean

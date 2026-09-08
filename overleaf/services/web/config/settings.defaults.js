@@ -1067,10 +1067,25 @@ module.exports = {
     pythonRunner: [],
     langFeedbackLinkingWidgets: [],
     labsExperiments: [],
-    integrationLinkingWidgets: [],
+    integrationLinkingWidgets: [
+      Path.resolve(
+        __dirname,
+        '../modules/github-sync/frontend/js/features/github-sync/components/github-settings-widget.tsx'
+      ),
+    ],
     referenceLinkingWidgets: [],
-    importProjectFromGithubModalWrapper: [],
-    importProjectFromGithubMenu: [],
+    importProjectFromGithubModalWrapper: [
+      Path.resolve(
+        __dirname,
+        '../modules/github-sync/frontend/js/features/github-sync/components/new-project-github-modal-wrapper.tsx'
+      ),
+    ],
+    importProjectFromGithubMenu: [
+      Path.resolve(
+        __dirname,
+        '../modules/github-sync/frontend/js/features/github-sync/components/new-project-github-menu.tsx'
+      ),
+    ],
     editorLeftMenuSync: [],
     editorLeftMenuManageTemplate: [],
     menubarExtraComponents: [],
@@ -1112,7 +1127,12 @@ module.exports = {
         '../modules/full-project-search/frontend/js/components/full-project-search.tsx'
       ),
     ],
-    integrationPanelComponents: [],
+    integrationPanelComponents: [
+      Path.resolve(
+        __dirname,
+        '../modules/github-sync/frontend/js/features/github-sync/components/github-sync-panel.tsx'
+      ),
+    ],
     referenceSearchSetting: [],
     settingsModalEditorTabSections: [],
     settingsModalSpellcheckSections: [],
@@ -1131,6 +1151,7 @@ module.exports = {
     'admin-user-management',
     'admin-project-management',
     'user-activate',
+    'github-sync',
   ],
   viewIncludes: {},
 

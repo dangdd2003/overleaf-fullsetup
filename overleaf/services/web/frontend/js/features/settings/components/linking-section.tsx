@@ -46,12 +46,14 @@ function LinkingSection() {
   const gitBridgeEnabled = Boolean(getMeta('ol-gitBridgeEnabled'))
   const googleDriveSyncEnabled = Boolean(getMeta('ol-googleDriveSyncEnabled'))
   const mcpEnabled = Boolean(getMeta('ol-mcpEnabled'))
+  const githubSyncEnabled = Boolean(getMeta('ol-githubSyncEnabled'))
 
   const renderSyncSection =
     getMeta('ol-isSaas') ||
     gitBridgeEnabled ||
     googleDriveSyncEnabled ||
-    mcpEnabled
+    mcpEnabled ||
+    githubSyncEnabled
 
   const allIntegrationLinkingWidgets = integrationLinkingWidgets.concat(
     oauth2ServerComponents
