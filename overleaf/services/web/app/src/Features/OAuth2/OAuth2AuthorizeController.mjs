@@ -134,7 +134,7 @@ const OAuth2AuthorizeController = {
 
     // Render consent page
     return res.render('oauth/authorize', {
-      title: 'Authorize Application',
+      title: req.i18n.translate('oauth_authorization_request'),
       client,
       user,
       scope: scope || 'mcp',
