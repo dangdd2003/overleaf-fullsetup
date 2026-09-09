@@ -4,6 +4,7 @@ import { registerFileTools } from './tools/files.js'
 import { registerCompileTools } from './tools/compile.js'
 import { registerLatexTools } from './tools/latex.js'
 import { registerAllPrompts } from './prompts.js'
+import { portable } from './schemas.js'
 
 const SERVER_INFO = { name: 'overleaf', version: '1.0.0' }
 
@@ -34,10 +35,36 @@ Overleaf MCP Operational Guidelines:
  * @param {{ client: import('./OverleafClient.js').OverleafClient, staticToken: string, maxUploadBytes?: number }} deps
  */
 export function registerAllTools(server, deps) {
-  registerProjectTools(server, deps)
-  registerFileTools(server, deps)
-  registerCompileTools(server, deps)
-  registerLatexTools(server, deps)
+  const target = withPortableSchemas(server)
+  registerProjectTools(target, deps)
+  registerFileTools(target, deps)
+  registerCompileTools(target, deps)
+  registerLatexTools(target, deps)
+}
+
+/**
+ * Interpose on registration so every tool advertises portable JSON Schema.
+ *
+ * Doing it here rather than at each `registerTool` call keeps the tool
+ * definitions readable as plain zod, and leaves one place to look when a
+ * client rejects a schema keyword.
+ *
+ * @param {McpServer} server
+ */
+function withPortableSchemas(server) {
+  return {
+    registerTool(name, config, handler) {
+      return server.registerTool(
+        name,
+        {
+          ...config,
+          ...(config.inputSchema ? { inputSchema: portable(config.inputSchema) } : {}),
+          ...(config.outputSchema ? { outputSchema: portable(config.outputSchema) } : {}),
+        },
+        handler
+      )
+    },
+  }
 }
 
 /**

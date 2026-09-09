@@ -40,11 +40,20 @@ export function runTool(fn) {
 }
 
 /**
- * Standard success result: one JSON text block the model can parse.
+ * Standard success result: one JSON text block the model can parse, plus the
+ * same value as `structuredContent`.
+ *
+ * Every tool advertises an `outputSchema`, and MCP requires a structured
+ * payload whenever one is advertised, so object values are echoed there for
+ * clients that consume the typed result instead of the rendered text.
  *
  * @param {unknown} value
  */
 export function textResult(value) {
   const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2)
-  return { content: [{ type: 'text', text }] }
+  const result = { content: [{ type: 'text', text }] }
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    result.structuredContent = value
+  }
+  return result
 }

@@ -1,9 +1,27 @@
 import * as z from 'zod/v4'
 import { CODES, OverleafApiError } from '../errors.js'
 import { runTool, textResult, tokenFrom } from '../context.js'
+import {
+  binaryFields,
+  looseObject,
+  okStatus,
+  projectId,
+  READ_ONLY,
+  WRITES,
+} from '../schemas.js'
 
-const projectId = z.string().min(1).describe('The Overleaf project id')
 const docPath = z.string().min(1).describe('Path within the project, e.g. /main.tex')
+
+const treeEntry = looseObject({
+  path: z.string().describe('Absolute path within the project, e.g. /main.tex'),
+  id: z.string().describe('Overleaf entity id'),
+})
+
+/** What web returns from a document write: an acknowledgement and the doc id. */
+const writeAck = {
+  status: okStatus,
+  docId: z.string().optional().describe('Id of the document that was written'),
+}
 
 function countOccurrences(haystack, needle) {
   if (!needle) return 0
@@ -20,8 +38,15 @@ export function registerFileTools(server, { client, staticToken, maxUploadBytes 
   server.registerTool(
     'list_files',
     {
-      description: 'List project files',
+      title: 'List project files',
+      description:
+        'List every entity in a project, split into editable documents (.tex, .bib and other text) and binary files (images, PDFs). Call this to discover the exact paths the read, edit and compile tools expect.',
+      annotations: READ_ONLY,
       inputSchema: z.object({ projectId }),
+      outputSchema: looseObject({
+        docs: z.array(treeEntry).describe('Editable text documents'),
+        files: z.array(treeEntry).describe('Binary files such as images'),
+      }),
     },
     runTool(async ({ projectId: id }, ctx) =>
       textResult(await client.get(tokenFrom(ctx, staticToken), `/projects/${id}/tree`))
@@ -31,8 +56,10 @@ export function registerFileTools(server, { client, staticToken, maxUploadBytes 
   server.registerTool(
     'search_files',
     {
+      title: 'Search project files',
       description:
-        'Search for text or patterns across all project files (e.g. find theorem definitions, macro usages, or citations)',
+        'Find a literal string across the project\'s documents and return the matching lines with their paths and line numbers. Use it to locate a theorem, macro definition or citation before reading a file, so only the relevant line range needs fetching.',
+      annotations: READ_ONLY,
       inputSchema: z.object({
         projectId,
         query: z.string().min(1).describe('Text string to search for across project files'),
@@ -57,6 +84,19 @@ export function registerFileTools(server, { client, staticToken, maxUploadBytes 
           .default(30)
           .describe('Maximum matching lines to return (default: 30)'),
       }),
+      outputSchema: looseObject({
+        query: z.string().describe('The string that was searched for'),
+        totalMatches: z.number().int().describe('How many matching lines are returned'),
+        matches: z
+          .array(
+            looseObject({
+              path: z.string().describe('Document containing the match'),
+              line: z.number().int().describe('1-based line number of the match'),
+              preview: z.string().describe('The matching line, trimmed'),
+            })
+          )
+          .describe('The matching lines, capped at maxMatches'),
+      }),
     },
     runTool(async ({ projectId: id, query, path, fileTypes, caseSensitive, maxMatches }, ctx) =>
       textResult(
@@ -74,12 +114,21 @@ export function registerFileTools(server, { client, staticToken, maxUploadBytes 
   server.registerTool(
     'read_file',
     {
-      description: 'Read file content',
+      title: 'Read document',
+      description:
+        'Read the text of a document in the project. Supply startLine and endLine to fetch only part of a long file — pair it with get_doc_outline, which reports the line range of each section, instead of reading a whole thesis into context.',
+      annotations: READ_ONLY,
       inputSchema: z.object({
         projectId,
         path: docPath,
         startLine: z.number().int().positive().optional().describe('First line to return'),
         endLine: z.number().int().positive().optional().describe('Last line to return'),
+      }),
+      outputSchema: looseObject({
+        path: z.string().describe('The document that was read'),
+        content: z
+          .string()
+          .describe('The document text, limited to the requested line range'),
       }),
     },
     runTool(async ({ projectId: id, path, startLine, endLine }, ctx) =>
@@ -96,12 +145,16 @@ export function registerFileTools(server, { client, staticToken, maxUploadBytes 
   server.registerTool(
     'write_file',
     {
-      description: 'Create or overwrite file',
+      title: 'Create or overwrite document',
+      description:
+        'Write a document, replacing its entire contents and creating it (and any missing parent folders) if absent. Use this only for new files or full rewrites; to change part of an existing document use edit_file, which cannot silently discard the rest of the text.',
+      annotations: { ...WRITES, destructiveHint: true, idempotentHint: true },
       inputSchema: z.object({
         projectId,
         path: docPath,
         content: z.string().describe('The complete new contents of the document'),
       }),
+      outputSchema: looseObject(writeAck),
     },
     runTool(async ({ projectId: id, path, content }, ctx) =>
       textResult(
@@ -116,7 +169,10 @@ export function registerFileTools(server, { client, staticToken, maxUploadBytes 
   server.registerTool(
     'edit_file',
     {
-      description: 'Replace text in file',
+      title: 'Replace text in document',
+      description:
+        'Replace an exact string in a document, leaving the rest untouched. This is the preferred way to modify an existing file. Give oldString enough surrounding context to match exactly once, or set replaceAll to change every occurrence; the call fails rather than guessing when the match is ambiguous or missing.',
+      annotations: { ...WRITES, destructiveHint: true, idempotentHint: false },
       inputSchema: z.object({
         projectId,
         path: docPath,
@@ -126,6 +182,13 @@ export function registerFileTools(server, { client, staticToken, maxUploadBytes 
           .boolean()
           .optional()
           .describe('Replace every occurrence instead of requiring a unique match'),
+      }),
+      outputSchema: looseObject({
+        ...writeAck,
+        replacements: z
+          .number()
+          .int()
+          .describe('How many occurrences were replaced'),
       }),
     },
     runTool(async ({ projectId: id, path, oldString, newString, replaceAll }, ctx) => {
@@ -164,12 +227,16 @@ export function registerFileTools(server, { client, staticToken, maxUploadBytes 
   server.registerTool(
     'move_file',
     {
-      description: 'Move or rename file',
+      title: 'Move or rename file',
+      description:
+        'Move or rename a document or binary file within the project, creating any missing destination folders. Remember that \\input and \\includegraphics references to the old path are not rewritten; check them with scan_latex afterwards.',
+      annotations: { ...WRITES, destructiveHint: true, idempotentHint: false },
       inputSchema: z.object({
         projectId,
         oldPath: z.string().min(1).describe('Current path'),
         newPath: z.string().min(1).describe('Destination path'),
       }),
+      outputSchema: looseObject({ status: okStatus }),
     },
     runTool(async ({ projectId: id, oldPath, newPath }, ctx) =>
       textResult(
@@ -184,12 +251,26 @@ export function registerFileTools(server, { client, staticToken, maxUploadBytes 
   server.registerTool(
     'upload_asset',
     {
-      description: 'Upload image or binary asset',
+      title: 'Upload image or binary asset',
+      description:
+        'Add a binary file such as a figure to the project, either from base64 content or from a URL Overleaf fetches server-side. Prefer the url option for anything large. Missing parent folders are created automatically.',
+      // The url option makes Overleaf fetch an arbitrary external address.
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
       inputSchema: z.object({
         projectId,
         path: z.string().min(1).describe('Destination path, e.g. /figures/plot.png'),
         contentBase64: z.string().optional().describe('Base64-encoded file contents'),
         url: z.string().url().optional().describe('URL for Overleaf to fetch server-side'),
+      }),
+      outputSchema: looseObject({
+        status: okStatus,
+        path: z.string().optional().describe('Path the asset was stored at'),
+        fileId: z.string().optional().describe('Id of the stored file'),
       }),
     },
     runTool(async ({ projectId: id, path, contentBase64, url }, ctx) => {
@@ -220,10 +301,18 @@ export function registerFileTools(server, { client, staticToken, maxUploadBytes 
   server.registerTool(
     'download_file',
     {
-      description: 'Download single file',
+      title: 'Download file',
+      description:
+        'Download one file from the project as a binary resource, for images and other assets that read_file cannot return as text.',
+      annotations: READ_ONLY,
       inputSchema: z.object({
         projectId,
         path: docPath,
+      }),
+      outputSchema: looseObject({
+        status: okStatus,
+        path: z.string().describe('The file that was downloaded'),
+        ...binaryFields,
       }),
     },
     runTool(async ({ projectId: id, path: filePath }, ctx) => {
@@ -234,26 +323,30 @@ export function registerFileTools(server, { client, staticToken, maxUploadBytes 
         { path: filePath }
       )
       const cleanPath = filePath.replace(/^\/+/, '')
+      const uri = `overleaf://projects/${id}/files/${cleanPath}`
+      const summary = {
+        status: 'ok',
+        path: filePath,
+        uri,
+        mimeType: contentType,
+        sizeBytes: Buffer.byteLength(base64, 'base64'),
+      }
       return {
         content: [
           {
             type: 'resource',
             resource: {
-              uri: `overleaf://projects/${id}/files/${cleanPath}`,
+              uri,
               mimeType: contentType,
               blob: base64,
             },
           },
           {
             type: 'text',
-            text: JSON.stringify({
-              status: 'ok',
-              path: filePath,
-              mimeType: contentType,
-              sizeBytes: Buffer.byteLength(base64, 'base64'),
-            }),
+            text: JSON.stringify(summary),
           },
         ],
+        structuredContent: summary,
       }
     })
   )
