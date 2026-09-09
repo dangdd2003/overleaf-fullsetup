@@ -400,6 +400,64 @@ describe('<UserNotifications />', function () {
       expect(screen.queryByRole('alert')).to.be.null
     })
 
+    it('shows project comment mention notification', async function () {
+      const commentNotification: DeepPartial<Notification> = {
+        _id: 1,
+        templateKey: 'notification_project_comment',
+        messageOpts: {
+          projectId: 'p123',
+          projectName: 'Quantum Computing Paper',
+          threadId: 't456',
+          userName: 'Alice Smith',
+          commentSnippet: 'Please check section 3 equation',
+          isMention: true,
+        },
+      }
+      window.metaAttributesCache.set('ol-notifications', [commentNotification])
+
+      renderWithinProjectListProvider(Common)
+      await fetchMock.callHistory.flush(true)
+      fetchMock.delete(`/notifications/${commentNotification._id}`, 200)
+
+      screen.getByRole('alert')
+      screen.getByText(/Alice Smith mentioned you on Quantum Computing Paper/i)
+      screen.getByText(/Please check section 3 equation/i)
+
+      const openBtn = screen.getByRole('link', { name: /open project/i })
+      expect(openBtn.getAttribute('href')).to.equal('/project/p123')
+
+      const closeBtn = screen.getByRole('button', { name: /close/i })
+      fireEvent.click(closeBtn)
+
+      expect(fetchMock.callHistory.called()).to.be.true
+      expect(screen.queryByRole('alert')).to.be.null
+    })
+
+    it('shows project comment reply notification', async function () {
+      const commentNotification: DeepPartial<Notification> = {
+        _id: 2,
+        templateKey: 'notification_project_comment',
+        messageOpts: {
+          projectId: 'p789',
+          projectName: 'Neural Networks Thesis',
+          threadId: 't999',
+          userName: 'Bob Jones',
+          commentSnippet: 'I agree with your suggestion',
+          isMention: false,
+        },
+      }
+      window.metaAttributesCache.set('ol-notifications', [commentNotification])
+
+      renderWithinProjectListProvider(Common)
+      await fetchMock.callHistory.flush(true)
+
+      screen.getByRole('alert')
+      screen.getByText(
+        /Bob Jones replied to a comment on Neural Networks Thesis/i
+      )
+      screen.getByText(/I agree with your suggestion/i)
+    })
+
     describe('<GroupInvitation />', function () {
       describe('without existing personal subscription', function () {
         it('shows group invitation notification for user without personal subscription', async function () {

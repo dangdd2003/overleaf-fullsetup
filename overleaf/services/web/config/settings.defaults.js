@@ -925,9 +925,19 @@ module.exports = {
   enableMcp: process.env.MCP_ENABLED === 'true',
 
   mcp: {
-    maxUploadBytes: parseInt(process.env.MCP_MAX_UPLOAD_MB || '20', 10) * 1024 * 1024,
+    maxUploadBytes:
+      parseInt(process.env.MCP_MAX_UPLOAD_MB || '20', 10) * 1024 * 1024,
     allowedUploadExtensions: [
-      'png', 'jpg', 'jpeg', 'pdf', 'eps', 'svg', 'gif', 'csv', 'bib', 'txt',
+      'png',
+      'jpg',
+      'jpeg',
+      'pdf',
+      'eps',
+      'svg',
+      'gif',
+      'csv',
+      'bib',
+      'txt',
     ],
     // Reached server-to-server to describe MCP tools on the OAuth consent
     // page, never from the browser.
@@ -1155,6 +1165,7 @@ module.exports = {
     'admin-project-management',
     'user-activate',
     'github-sync',
+    'comment-notifications',
   ],
   viewIncludes: {},
 

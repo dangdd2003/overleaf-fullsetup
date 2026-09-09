@@ -7,6 +7,7 @@ type TemplateKey =
   | 'notification_dropbox_unlinked_due_to_lapsed_reconfirmation'
   | 'notification_group_invitation'
   | 'notification_personal_and_group_subscriptions'
+  | 'notification_project_comment'
 
 type NotificationBase = {
   _id?: number
@@ -72,6 +73,29 @@ export interface NotificationGroupInvitation extends NotificationBase {
   }
 }
 
+export interface NotificationPersonalAndGroupSubscriptions extends NotificationBase {
+  templateKey: Extract<
+    TemplateKey,
+    'notification_personal_and_group_subscriptions'
+  >
+}
+
+export interface NotificationOldDebugProjects extends NotificationBase {
+  templateKey: 'notification_old_debug_projects'
+}
+
+export interface NotificationProjectComment extends NotificationBase {
+  templateKey: Extract<TemplateKey, 'notification_project_comment'>
+  messageOpts: {
+    projectId: string
+    projectName: string
+    threadId: string
+    userName: string
+    commentSnippet: string
+    isMention: boolean
+  }
+}
+
 export type Notification =
   | NotificationProjectInvite
   | NotificationWFH2020UpgradeOffer
@@ -80,6 +104,9 @@ export type Notification =
   | NotificationDropboxDuplicateProjectNames
   | NotificationDropboxUnlinkedDueToLapsedReconfirmation
   | NotificationGroupInvitation
+  | NotificationPersonalAndGroupSubscriptions
+  | NotificationOldDebugProjects
+  | NotificationProjectComment
 
 export type Institution = {
   _id?: number

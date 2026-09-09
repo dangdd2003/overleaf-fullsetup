@@ -293,6 +293,31 @@ function CommonNotification({ notification }: CommonNotificationProps) {
           onDismiss={() => id && handleDismiss(id)}
           content={html}
         />
+      ) : templateKey === 'notification_project_comment' ? (
+        <Notification
+          type="info"
+          onDismiss={() => id && handleDismiss(id)}
+          title={
+            notification.messageOpts?.isMention
+              ? `${notification.messageOpts?.userName || 'A collaborator'} mentioned you on ${notification.messageOpts?.projectName || 'a project'}`
+              : `${notification.messageOpts?.userName || 'A collaborator'} replied to a comment on ${notification.messageOpts?.projectName || 'a project'}`
+          }
+          content={
+            <p className="mb-0 italic">
+              "{notification.messageOpts?.commentSnippet || ''}"
+            </p>
+          }
+          action={
+            notification.messageOpts?.projectId ? (
+              <OLButton
+                variant="secondary"
+                href={`/project/${notification.messageOpts.projectId}`}
+              >
+                {t('open_project')}
+              </OLButton>
+            ) : undefined
+          }
+        />
       ) : (
         <Notification
           type="info"
