@@ -18,6 +18,6 @@ fi
 # Bind loopback only; nginx terminates external traffic for /mcp.
 export MCP_HOST="${MCP_HOST:-127.0.0.1}"
 export MCP_PORT="${MCP_PORT:-3050}"
-export OVERLEAF_INTERNAL_URL="${OVERLEAF_INTERNAL_URL:-http://127.0.0.1:3000}"
+export OVERLEAF_INTERNAL_URL="${OVERLEAF_INTERNAL_URL:-http://127.0.0.1:4000}"
 
 exec /sbin/setuser www-data /usr/bin/node $NODE_PARAMS /overleaf/services/mcp/app.js >> /var/log/overleaf/mcp.log 2>&1
