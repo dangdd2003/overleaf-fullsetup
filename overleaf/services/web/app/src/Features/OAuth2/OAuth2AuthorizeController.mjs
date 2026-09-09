@@ -4,6 +4,7 @@ import SessionManager from '../Authentication/SessionManager.mjs'
 import OAuth2RedirectUri from './OAuth2RedirectUri.mjs'
 import { OauthApplication } from '../../models/OauthApplication.mjs'
 import { OauthAuthorizationCode } from '../../models/OauthAuthorizationCode.mjs'
+import { getToolCategories } from './OAuth2ToolCatalog.mjs'
 
 function getBaseUrl(req) {
   if (Settings.siteUrl) {
@@ -132,6 +133,8 @@ const OAuth2AuthorizeController = {
       return res.redirect(`/login?redir=${encodeURIComponent(originalUrl)}`)
     }
 
+    const toolCategories = await getToolCategories()
+
     // Render consent page
     return res.render('oauth/authorize', {
       title: req.i18n.translate('oauth_authorization_request'),
@@ -143,6 +146,7 @@ const OAuth2AuthorizeController = {
       response_type,
       code_challenge,
       code_challenge_method,
+      toolCategories,
     })
   },
 

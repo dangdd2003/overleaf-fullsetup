@@ -1,11 +1,13 @@
 extends ../layout-website-redesign
 
+include ../_mixins/material_symbol
+
 block vars
 	- isWebsiteRedesign = true
 
 block content
 	main#main-content
-		.auth-aux-container(style='max-width: 400px')
+		.auth-aux-container(style=(toolCategories && toolCategories.length ? 'max-width: 480px' : 'max-width: 400px'))
 			h1.h3.mb-3 #{translate("oauth_authorization_request")}
 
 			p.mb-3
@@ -20,10 +22,39 @@ block content
 
 			.form-group.mb-4
 				p.small.text-muted.mb-1 #{translate("oauth_permissions_requested")}
-				ul.ps-4.mb-0
-					li
-						strong #{scope}
-						|  — #{translate("oauth_scope_mcp_desc")}
+				if toolCategories && toolCategories.length
+					.ol-accordions-container
+						each category, index in toolCategories
+							.custom-accordion-item
+								button.custom-accordion-header.collapsed(
+									type='button'
+									data-bs-toggle='collapse'
+									data-bs-target=`#oauthToolCategory${index}`
+									aria-expanded='false'
+									aria-controls=`oauthToolCategory${index}`
+								)
+									| #{category.title} — #{translate("oauth_tool_count", {count: category.tools.length})}
+									span.custom-accordion-icon
+										+material-symbol('keyboard_arrow_down')
+								.collapse(id=`oauthToolCategory${index}`)
+									.custom-accordion-body
+										each tool in category.tools
+											.mb-3
+												strong= tool.title || tool.name
+												p.small.text-muted.mb-1= tool.description
+												if tool.params && tool.params.length
+													ul.ps-4.mb-0.small
+														each param in tool.params
+															li
+																code= param.name
+																|  (#{param.type}#{param.required ? ', ' + translate("oauth_required_param") : ''})
+																if param.description
+																	|  — #{param.description}
+				else
+					ul.ps-4.mb-0
+						li
+							strong #{scope}
+							|  — #{translate("oauth_scope_mcp_desc")}
 
 			form(action='/oauth/authorize' method='POST')
 				input(name='_csrf' type='hidden' value=csrfToken)

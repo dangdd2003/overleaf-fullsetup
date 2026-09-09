@@ -370,4 +370,24 @@ describe('protected resource metadata routes', function () {
       'resource_metadata="https://overleaf.example.com/.well-known/oauth-protected-resource/mcp"'
     )
   })
+
+  it('serves tool metadata without requiring a bearer token', async function () {
+    const res = await fetch(`${baseUrl}/tools/metadata`)
+    expect(res.status).to.equal(200)
+    const body = await res.json()
+    const byKey = Object.fromEntries(body.categories.map(c => [c.key, c]))
+    expect(Object.keys(byKey)).to.have.members([
+      'projects',
+      'files',
+      'compile',
+      'latex',
+    ])
+    const allTools = body.categories.flatMap(c => c.tools)
+    expect(allTools).to.have.length(20)
+    for (const tool of allTools) {
+      expect(tool.name).to.be.a('string').and.not.be.empty
+      expect(tool.description).to.be.a('string').and.not.be.empty
+      expect(tool.params).to.be.an('array')
+    }
+  })
 })

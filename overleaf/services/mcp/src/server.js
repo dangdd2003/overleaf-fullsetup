@@ -9,6 +9,20 @@ import { portable } from './schemas.js'
 const SERVER_INFO = { name: 'overleaf', version: '1.0.0' }
 
 /**
+ * Categories the consent page groups tools under, in display order.
+ *
+ * Each `register` function only needs deps to build closures its handlers
+ * call later -- collecting metadata never invokes a handler, so an empty
+ * deps object is enough here.
+ */
+const TOOL_CATEGORIES = [
+  { key: 'projects', title: 'Projects', register: registerProjectTools },
+  { key: 'files', title: 'Files', register: registerFileTools },
+  { key: 'compile', title: 'Compile', register: registerCompileTools },
+  { key: 'latex', title: 'LaTeX', register: registerLatexTools },
+]
+
+/**
  * Operational instructions transmitted to clients on initialize.
  *
  * Directs frontier LLMs (Claude Opus/Sonnet, GPT-6/5.6, Gemini 3/2.5) to use
@@ -65,6 +79,55 @@ function withPortableSchemas(server) {
       )
     },
   }
+}
+
+/**
+ * Describe every registered tool without needing a live client or auth.
+ *
+ * The OAuth consent page renders this before the user has a token, so it
+ * must be derivable from the tool definitions alone -- deps are only ever
+ * read inside a handler, which nothing here calls.
+ *
+ * @returns {Array<{ key: string, title: string, tools: Array<{ name: string, title: string, description: string, annotations: object, params: Array<{ name: string, type: string, required: boolean, description: string }> }> }>}
+ */
+export function listToolMetadata() {
+  return TOOL_CATEGORIES.map(({ key, title, register }) => {
+    const collected = []
+    const collector = withPortableSchemas({
+      registerTool(name, config) {
+        collected.push({ name, config })
+      },
+    })
+    register(collector, {})
+
+    return {
+      key,
+      title,
+      tools: collected.map(({ name, config }) => ({
+        name,
+        title: config.title,
+        description: config.description,
+        annotations: config.annotations,
+        params: paramsFromInputSchema(config.inputSchema),
+      })),
+    }
+  })
+}
+
+/**
+ * Flatten a portable-wrapped input schema into a param list for display.
+ *
+ * @param {ReturnType<import('./schemas.js').portable>} inputSchema
+ */
+function paramsFromInputSchema(inputSchema) {
+  const jsonSchema = inputSchema['~standard'].jsonSchema.input()
+  const required = new Set(jsonSchema.required || [])
+  return Object.entries(jsonSchema.properties || {}).map(([name, prop]) => ({
+    name,
+    type: prop.type || 'any',
+    required: required.has(name),
+    description: prop.description || '',
+  }))
 }
 
 /**

@@ -4,6 +4,7 @@ import OAuth2AuthorizeController from '../../../../../app/src/Features/OAuth2/OA
 import SessionManager from '../../../../../app/src/Features/Authentication/SessionManager.mjs'
 import { OauthApplication } from '../../../../../app/src/models/OauthApplication.mjs'
 import { OauthAuthorizationCode } from '../../../../../app/src/models/OauthAuthorizationCode.mjs'
+import * as OAuth2ToolCatalog from '../../../../../app/src/Features/OAuth2/OAuth2ToolCatalog.mjs'
 import Settings from '@overleaf/settings'
 
 function createMockRes() {
@@ -58,6 +59,7 @@ describe('OAuth2AuthorizeController', () => {
       scopes: ['mcp'],
       _id: 'oauth_app_1',
     })
+    vi.spyOn(OAuth2ToolCatalog, 'getToolCategories').mockResolvedValue([])
   })
 
   describe('GET /oauth/authorize (showAuthorizePage)', () => {
@@ -222,6 +224,27 @@ describe('OAuth2AuthorizeController', () => {
       expect(res.renderedData.state).to.equal('xyz123')
       expect(res.renderedData.code_challenge).to.equal('E9Melhoa2OwvFrGMTJguCH5rtx64LxPU67A5CdFbW74')
       expect(res.renderedData.code_challenge_method).to.equal('S256')
+    })
+
+    it('passes the MCP tool categories from OAuth2ToolCatalog to the view', async () => {
+      vi.spyOn(SessionManager, 'getSessionUser').mockReturnValue(dummyUser)
+      const categories = [{ key: 'projects', title: 'Projects', tools: [] }]
+      OAuth2ToolCatalog.getToolCategories.mockResolvedValue(categories)
+
+      const req = {
+        query: {
+          client_id: 'client_registered',
+          redirect_uri: 'http://localhost:8080/callback',
+          response_type: 'code',
+          code_challenge: 'E9Melhoa2OwvFrGMTJguCH5rtx64LxPU67A5CdFbW74',
+          code_challenge_method: 'S256',
+        },
+        i18n: { translate: key => key },
+      }
+      const res = createMockRes()
+
+      await OAuth2AuthorizeController.showAuthorizePage(req, res)
+      expect(res.renderedData.toolCategories).to.deep.equal(categories)
     })
 
     it('supports dynamic registered clients from database', async () => {

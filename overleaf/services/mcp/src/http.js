@@ -1,7 +1,7 @@
 import { createMcpExpressApp } from '@modelcontextprotocol/express'
 import { toNodeHandler } from '@modelcontextprotocol/node'
 import { createMcpHandler } from '@modelcontextprotocol/server'
-import { createMcpServerFactory } from './server.js'
+import { createMcpServerFactory, listToolMetadata } from './server.js'
 import {
   PROTECTED_RESOURCE_WELL_KNOWN_PATH,
   getProtectedResourceMetadata,
@@ -10,6 +10,9 @@ import {
 } from './oauth.js'
 
 const BEARER_PATTERN = /^Bearer\s+(\S+)$/i
+
+/** Unauthenticated endpoint the OAuth consent page reads to describe tools. */
+export const TOOLS_METADATA_PATH = '/tools/metadata'
 
 /**
  * Require and authenticate a bearer token on the Authorization header.
@@ -195,6 +198,14 @@ export function createHttpApp({ config, client }) {
   app.get(protectedResourcePaths, (req, res) => {
     res.setHeader('Cache-Control', 'public, max-age=86400')
     res.json(getProtectedResourceMetadata(config))
+  })
+
+  // Tool descriptions are static per deployment and carry no user data, so the
+  // OAuth consent page -- rendered before the visitor holds a token -- can
+  // fetch this to show what it is granting access to.
+  app.get(TOOLS_METADATA_PATH, (req, res) => {
+    res.setHeader('Cache-Control', 'public, max-age=300')
+    res.json({ categories: listToolMetadata() })
   })
 
   // Proxy OAuth 2.1 authorization server endpoints, OIDC, and user auth flows to Overleaf Web

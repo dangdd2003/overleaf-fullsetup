@@ -929,6 +929,9 @@ module.exports = {
     allowedUploadExtensions: [
       'png', 'jpg', 'jpeg', 'pdf', 'eps', 'svg', 'gif', 'csv', 'bib', 'txt',
     ],
+    // Reached server-to-server to describe MCP tools on the OAuth consent
+    // page, never from the browser.
+    serviceUrl: process.env.MCP_SERVICE_URL || 'http://mcp:3050',
   },
 
   // module options
