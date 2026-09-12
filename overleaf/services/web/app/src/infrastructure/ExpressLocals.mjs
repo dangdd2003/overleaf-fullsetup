@@ -373,6 +373,7 @@ export default async function (webRouter, privateApiRouter, publicApiRouter) {
       ieeeBrandId: IEEE_BRAND_ID,
       hasSamlBeta: req.session.samlBeta,
       hasAffiliationsFeature: Features.hasFeature('affiliations'),
+      hasAdminUserManagement: Features.hasFeature('admin-user-management'),
       hasSamlFeature: Features.hasFeature('saml'),
       samlInitPath: _.get(Settings, ['saml', 'ukamf', 'initPath']),
       hasLinkUrlFeature: Features.hasFeature('link-url'),

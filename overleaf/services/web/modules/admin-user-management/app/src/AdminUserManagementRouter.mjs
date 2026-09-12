@@ -3,7 +3,9 @@ import AuthorizationMiddleware from '../../../../app/src/Features/Authorization/
 import RateLimiterMiddleware from '../../../../app/src/Features/Security/RateLimiterMiddleware.mjs'
 import { RateLimiter } from '../../../../app/src/infrastructure/RateLimiter.mjs'
 import Features from '../../../../app/src/infrastructure/Features.mjs'
+import AuthenticationController from '../../../../app/src/Features/Authentication/AuthenticationController.mjs'
 import AdminUserManagementController from './AdminUserManagementController.mjs'
+import AdminUserSelfServiceEmailsController from './AdminUserSelfServiceEmailsController.mjs'
 
 const rateLimiter = new RateLimiter('admin_user_mutations', {
   points: 30,
@@ -216,5 +218,29 @@ export default {
       AuthorizationMiddleware.ensureUserIsSiteAdmin,
       AdminUserManagementController.renderUserDetailPage
     )
+
+    // Self-Service Secondary Emails for Community Edition
+    webRouter.post(
+      '/user/emails/secondary',
+      rateLimit,
+      AuthenticationController.requireLogin(),
+      AdminUserSelfServiceEmailsController.addSecondaryEmail
+    )
+
+    if (!Features.hasFeature('affiliations')) {
+      webRouter.post(
+        '/user/emails/default',
+        rateLimit,
+        AuthenticationController.requireLogin(),
+        AdminUserSelfServiceEmailsController.setDefaultEmail
+      )
+
+      webRouter.post(
+        '/user/emails/delete',
+        rateLimit,
+        AuthenticationController.requireLogin(),
+        AdminUserSelfServiceEmailsController.deleteSecondaryEmail
+      )
+    }
   },
 }

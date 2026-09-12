@@ -1,0 +1,15 @@
+{
+  "name": "overleaf-playwright-e2e",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "End-to-end Playwright tests for Overleaf Community Edition",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "verify": "node --experimental-strip-types verify-mock.ts"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0"
+  }
+}

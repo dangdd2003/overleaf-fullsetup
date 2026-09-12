@@ -76,6 +76,11 @@ html(
 				content=hasFeature('github-sync')
 			)
 			meta(
+				name='ol-adminUserManagementEnabled'
+				data-type='boolean'
+				content=hasFeature('admin-user-management')
+			)
+			meta(
 				name='ol-splitTestVariants'
 				data-type='json'
 				content=splitTestVariants || {}

@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import AdminUserManagementRouter from '../../../app/src/AdminUserManagementRouter.mjs'
 import Features from '../../../../../app/src/infrastructure/Features.mjs'
+import AuthenticationController from '../../../../../app/src/Features/Authentication/AuthenticationController.mjs'
+import AdminUserSelfServiceEmailsController from '../../../app/src/AdminUserSelfServiceEmailsController.mjs'
 
 vi.mock('@overleaf/logger', () => ({
   default: {
@@ -13,6 +15,20 @@ vi.mock('@overleaf/logger', () => ({
 vi.mock('../../../../../app/src/Features/Authorization/AuthorizationMiddleware.mjs', () => ({
   default: {
     ensureUserIsSiteAdmin: vi.fn((req, res, next) => next()),
+  },
+}))
+
+vi.mock('../../../../../app/src/Features/Authentication/AuthenticationController.mjs', () => ({
+  default: {
+    requireLogin: vi.fn(() => (req, res, next) => next()),
+  },
+}))
+
+vi.mock('../../../app/src/AdminUserSelfServiceEmailsController.mjs', () => ({
+  default: {
+    addSecondaryEmail: vi.fn(),
+    setDefaultEmail: vi.fn(),
+    deleteSecondaryEmail: vi.fn(),
   },
 }))
 
@@ -136,5 +152,67 @@ describe('AdminUserManagementRouter', () => {
     expect(postPaths).toContain(
       '/admin/users/api/users/:userId/projects/transfer-all'
     )
+  })
+
+  it('registers self-service email routes with requireLogin when admin-user-management is enabled and affiliations is disabled', () => {
+    Features.hasFeature.mockImplementation(feature => {
+      if (feature === 'admin-user-management') return true
+      if (feature === 'affiliations') return false
+      return false
+    })
+    const mockWebRouter = {
+      get: vi.fn(),
+      post: vi.fn(),
+    }
+
+    AdminUserManagementRouter.apply(mockWebRouter)
+
+    const postCalls = mockWebRouter.post.mock.calls
+    const postPaths = postCalls.map(call => call[0])
+
+    expect(postPaths).toContain('/user/emails/secondary')
+    expect(postPaths).toContain('/user/emails/default')
+    expect(postPaths).toContain('/user/emails/delete')
+
+    expect(mockWebRouter.post).toHaveBeenCalledWith(
+      '/user/emails/secondary',
+      expect.anything(),
+      expect.anything(),
+      AdminUserSelfServiceEmailsController.addSecondaryEmail
+    )
+    expect(mockWebRouter.post).toHaveBeenCalledWith(
+      '/user/emails/default',
+      expect.anything(),
+      expect.anything(),
+      AdminUserSelfServiceEmailsController.setDefaultEmail
+    )
+    expect(mockWebRouter.post).toHaveBeenCalledWith(
+      '/user/emails/delete',
+      expect.anything(),
+      expect.anything(),
+      AdminUserSelfServiceEmailsController.deleteSecondaryEmail
+    )
+    expect(AuthenticationController.requireLogin).toHaveBeenCalled()
+  })
+
+  it('does not register default and delete email routes when affiliations is enabled', () => {
+    Features.hasFeature.mockImplementation(feature => {
+      if (feature === 'admin-user-management') return true
+      if (feature === 'affiliations') return true
+      return false
+    })
+    const mockWebRouter = {
+      get: vi.fn(),
+      post: vi.fn(),
+    }
+
+    AdminUserManagementRouter.apply(mockWebRouter)
+
+    const postCalls = mockWebRouter.post.mock.calls
+    const postPaths = postCalls.map(call => call[0])
+
+    expect(postPaths).toContain('/user/emails/secondary')
+    expect(postPaths).not.toContain('/user/emails/default')
+    expect(postPaths).not.toContain('/user/emails/delete')
   })
 })

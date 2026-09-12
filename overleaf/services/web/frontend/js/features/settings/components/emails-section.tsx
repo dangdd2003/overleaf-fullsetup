@@ -8,10 +8,17 @@ import {
 import EmailsHeader from './emails/header'
 import EmailsRow from './emails/row'
 import AddEmail from './emails/add-email'
+import SimpleEmailsHeader from './emails/simple-emails-header'
+import SimpleEmailsRow from './emails/simple-emails-row'
+import SimpleAddEmailForm from './emails/simple-add-email-form'
 import OLNotification from '@/shared/components/ol/ol-notification'
 import LoadingSpinner from '@/shared/components/loading-spinner'
 
-function EmailsSectionContent() {
+type EmailsSectionContentProps = {
+  isSimpleMode: boolean
+}
+
+function EmailsSectionContent({ isSimpleMode }: EmailsSectionContentProps) {
   const { t } = useTranslation()
   const {
     state: { data: userEmailsData },
@@ -38,6 +45,46 @@ function EmailsSectionContent() {
     // If both have the same status, sort by email string
     return a.email.localeCompare(b.email)
   })
+
+  if (isSimpleMode) {
+    return (
+      <>
+        <h2 className="h3">{t('emails', 'Emails')}</h2>
+        <p className="small">
+          {t(
+            'emails_explanation',
+            'Add additional email addresses to your account to make sure you can recover your account and collaborators can find you.'
+          )}
+        </p>
+        <>
+          <SimpleEmailsHeader />
+          {isInitializing ? (
+            <div className="affiliations-table-row-highlighted">
+              <div className="affiliations-table-cell text-center">
+                <LoadingSpinner size="sm" />
+              </div>
+            </div>
+          ) : (
+            <>
+              {sortedUserEmails.map(userEmail => (
+                <Fragment key={userEmail.email}>
+                  <SimpleEmailsRow userEmailData={userEmail} primary={primary} />
+                  <div className="horizontal-divider" />
+                </Fragment>
+              ))}
+            </>
+          )}
+          {isInitializingSuccess && !hideAddSecondaryEmail && <SimpleAddEmailForm />}
+          {isInitializingError && (
+            <OLNotification
+              type="error"
+              content={t('error_performing_request')}
+            />
+          )}
+        </>
+      </>
+    )
+  }
 
   return (
     <>
@@ -88,17 +135,26 @@ function EmailsSectionContent() {
 }
 
 function EmailsSection() {
-  const { hasAffiliationsFeature } = getMeta('ol-ExposedSettings')
-  if (!hasAffiliationsFeature) {
+  const exposedSettings = (getMeta('ol-ExposedSettings') || {}) as {
+    hasAffiliationsFeature?: boolean
+    hasAdminUserManagement?: boolean
+  }
+  const hasAffiliationsFeature = Boolean(exposedSettings.hasAffiliationsFeature)
+  const hasAdminUserManagement = Boolean(
+    exposedSettings.hasAdminUserManagement ||
+      (getMeta as (key: string) => unknown)('ol-adminUserManagementEnabled')
+  )
+
+  if (!hasAffiliationsFeature && !hasAdminUserManagement) {
     return null
   }
 
+  const isSimpleMode = !hasAffiliationsFeature && hasAdminUserManagement
+
   return (
-    <>
-      <UserEmailsProvider>
-        <EmailsSectionContent />
-      </UserEmailsProvider>
-    </>
+    <UserEmailsProvider>
+      <EmailsSectionContent isSimpleMode={isSimpleMode} />
+    </UserEmailsProvider>
   )
 }
 

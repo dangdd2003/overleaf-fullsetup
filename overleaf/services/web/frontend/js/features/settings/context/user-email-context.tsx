@@ -274,7 +274,7 @@ function useUserEmails() {
   }
 }
 
-const UserEmailsContext = createContext<
+export const UserEmailsContext = createContext<
   ReturnType<typeof useUserEmails> | undefined
 >(undefined)
 UserEmailsContext.displayName = 'UserEmailsContext'
