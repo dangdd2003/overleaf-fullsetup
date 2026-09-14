@@ -111,37 +111,85 @@ describe('project tools', function () {
     expect(result.content[0].resource.mimeType).to.equal('application/zip')
     expect(result.content[0].resource.uri).to.include('/p1/project.zip')
     expect(result.content[1].type).to.equal('text')
-    expect(JSON.parse(result.content[1].text).message).to.include('Exported project "p1"')
+    const summary = JSON.parse(result.content[1].text)
+    expect(summary.message).to.include('Exported project "p1"')
+    expect(summary.count).to.equal(1)
+    expect(summary.projects).to.have.lengthOf(1)
+    expect(summary.projects[0].projectId).to.equal('p1')
   })
 
-  it('export_project_zip bundles multiple projects via POST /projects-zip', async function () {
+  it('export_project_zip returns 1 project when projectIds contains only 1 project', async function () {
     client.requestBinary.resolves({
       contentType: 'application/zip',
-      base64: Buffer.from('PK-multi-zip-content').toString('base64'),
+      base64: Buffer.from('PK-single-arr-content').toString('base64'),
     })
+    const result = await server.call('export_project_zip', {
+      projectIds: ['p1'],
+    })
+    expect(client.requestBinary.firstCall.args[0]).to.equal(TOKEN)
+    expect(client.requestBinary.firstCall.args[1]).to.equal('/projects/p1/zip')
+    expect(result.content[0].type).to.equal('resource')
+    expect(result.content[0].resource.uri).to.include('/p1/project.zip')
+    expect(result.content).to.have.lengthOf(2)
+    const summary = JSON.parse(result.content[1].text)
+    expect(summary.message).to.include('Exported project "p1"')
+    expect(summary.count).to.equal(1)
+    expect(summary.projectId).to.equal('p1')
+    expect(summary.projects).to.have.lengthOf(1)
+  })
+
+  it('export_project_zip returns multiple projects when multiple projectIds are requested', async function () {
+    client.requestBinary.callsFake(async (token, path) => ({
+      contentType: 'application/zip',
+      base64: Buffer.from(`PK-content-for-${path}`).toString('base64'),
+    }))
     const result = await server.call('export_project_zip', {
       projectIds: ['p1', 'p2', 'p3'],
     })
-    expect(client.requestBinary.firstCall.args[0]).to.equal(TOKEN)
-    expect(client.requestBinary.firstCall.args[1]).to.equal('/projects-zip')
-    expect(client.requestBinary.firstCall.args[2]).to.deep.equal({
-      method: 'POST',
-      body: { projectIds: ['p1', 'p2', 'p3'] },
-    })
+    expect(client.requestBinary.callCount).to.equal(3)
+    expect(client.requestBinary.getCall(0).args[1]).to.equal('/projects/p1/zip')
+    expect(client.requestBinary.getCall(1).args[1]).to.equal('/projects/p2/zip')
+    expect(client.requestBinary.getCall(2).args[1]).to.equal('/projects/p3/zip')
+    // 3 resource items + 1 text summary
+    expect(result.content).to.have.lengthOf(4)
     expect(result.content[0].type).to.equal('resource')
-    expect(result.content[0].resource.uri).to.include('bundle-3-projects.zip')
-    expect(JSON.parse(result.content[1].text).message).to.include('Exported 3 projects')
+    expect(result.content[0].resource.uri).to.include('/p1/project.zip')
+    expect(result.content[1].type).to.equal('resource')
+    expect(result.content[1].resource.uri).to.include('/p2/project.zip')
+    expect(result.content[2].type).to.equal('resource')
+    expect(result.content[2].resource.uri).to.include('/p3/project.zip')
+    expect(result.content[3].type).to.equal('text')
+    const summary = JSON.parse(result.content[3].text)
+    expect(summary.count).to.equal(3)
+    expect(summary.projects).to.have.lengthOf(3)
+    expect(summary.projects[0].projectId).to.equal('p1')
+    expect(summary.projects[1].projectId).to.equal('p2')
+    expect(summary.projects[2].projectId).to.equal('p3')
+    expect(summary.message).to.include('Exported 3 projects')
   })
 
-  it('export_project_zip rejects when neither or both projectId and projectIds are passed', async function () {
+  it('export_project_zip combines and deduplicates projectId and projectIds', async function () {
+    client.requestBinary.callsFake(async (token, path) => ({
+      contentType: 'application/zip',
+      base64: Buffer.from(`PK-content-for-${path}`).toString('base64'),
+    }))
+    const result = await server.call('export_project_zip', {
+      projectId: 'p1',
+      projectIds: ['p1', 'p2'],
+    })
+    expect(client.requestBinary.callCount).to.equal(2)
+    expect(result.content).to.have.lengthOf(3) // 2 resources + 1 text
+    const summary = JSON.parse(result.content[2].text)
+    expect(summary.count).to.equal(2)
+  })
+
+  it('export_project_zip rejects when neither projectId nor projectIds are passed', async function () {
     const neither = await server.call('export_project_zip', {})
     expect(neither.isError).to.be.true
+    expect(client.requestBinary.called).to.be.false
 
-    const both = await server.call('export_project_zip', {
-      projectId: 'p1',
-      projectIds: ['p2'],
-    })
-    expect(both.isError).to.be.true
+    const empty = await server.call('export_project_zip', { projectIds: [] })
+    expect(empty.isError).to.be.true
     expect(client.requestBinary.called).to.be.false
   })
 })
