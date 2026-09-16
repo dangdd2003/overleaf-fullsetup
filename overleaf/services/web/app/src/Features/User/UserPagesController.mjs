@@ -148,7 +148,7 @@ async function settingsPage(req, res) {
         papers: Boolean(user.refProviders?.papers),
       },
     },
-    showAiFeatures: Boolean(user.aiFeatures?.enabled),
+    showAiFeatures: user.aiFeatures?.enabled !== false,
     labsExperiments: user.labsExperiments ?? [],
     hasPassword: !!user.hashedPassword,
     shouldAllowEditingDetails,

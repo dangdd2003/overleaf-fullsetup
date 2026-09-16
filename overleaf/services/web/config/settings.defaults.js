@@ -1062,10 +1062,30 @@ module.exports = {
     contactUsModal: [],
     sourceEditorExtensions: [],
     sourceEditorVisualExtensions: [],
-    sourceEditorComponents: [],
-    pdfLogEntryHeaderActionComponents: [],
-    pdfLogEntryComponents: [],
-    pdfLogEntriesComponents: [],
+    sourceEditorComponents: [
+      Path.resolve(
+        __dirname,
+        '../modules/ai-assist/frontend/js/features/ai-assist/components/apply-fix-listener.tsx'
+      ),
+    ],
+    pdfLogEntryHeaderActionComponents: [
+      Path.resolve(
+        __dirname,
+        '../modules/ai-assist/frontend/js/features/ai-assist/components/suggest-fix-button.tsx'
+      ),
+    ],
+    pdfLogEntryComponents: [
+      Path.resolve(
+        __dirname,
+        '../modules/ai-assist/frontend/js/features/ai-assist/components/suggest-fix-panel.tsx'
+      ),
+    ],
+    pdfLogEntriesComponents: [
+      Path.resolve(
+        __dirname,
+        '../modules/ai-assist/frontend/js/features/ai-assist/components/last-fix-banner.tsx'
+      ),
+    ],
     pdfPreviewPromotions: [],
     diagnosticActions: [],
     sourceEditorCompletionSources: [],
@@ -1076,9 +1096,19 @@ module.exports = {
     sourceEditorToolbarEndButtons: [],
     rootContextProviders: [],
     mainEditorLayoutModals: [],
-    mainEditorLayoutPanels: [],
+    mainEditorLayoutPanels: [
+      Path.resolve(
+        __dirname,
+        '../modules/ai-assist/frontend/js/features/ai-assist/components/agent/ai-assist-right-panel.tsx'
+      ),
+    ],
     pythonRunner: [],
-    langFeedbackLinkingWidgets: [],
+    langFeedbackLinkingWidgets: [
+      Path.resolve(
+        __dirname,
+        '../modules/ai-assist/frontend/js/features/ai-assist/components/ai-providers-widget.tsx'
+      ),
+    ],
     labsExperiments: [],
     integrationLinkingWidgets: [
       Path.resolve(
@@ -1151,7 +1181,12 @@ module.exports = {
     settingsModalSpellcheckSections: [],
     editorFloatingMenuActions: [],
     referenceIndices: [],
-    railEntries: [],
+    railEntries: [
+      Path.resolve(
+        __dirname,
+        '../modules/ai-assist/frontend/js/features/ai-assist/rail-entry.tsx'
+      ),
+    ],
     railPopovers: [],
     railActions: [],
     railModals: [],
@@ -1166,6 +1201,7 @@ module.exports = {
     'user-activate',
     'github-sync',
     'comment-notifications',
+    'ai-assist',
   ],
   viewIncludes: {},
 

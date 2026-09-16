@@ -81,6 +81,11 @@ html(
 				content=hasFeature('admin-user-management')
 			)
 			meta(
+				name='ol-aiAssistEnabled'
+				data-type='boolean'
+				content=settings.aiAssist && settings.aiAssist.enabled
+			)
+			meta(
 				name='ol-splitTestVariants'
 				data-type='json'
 				content=splitTestVariants || {}

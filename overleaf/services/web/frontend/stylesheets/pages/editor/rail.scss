@@ -24,6 +24,16 @@ body {
   background-color: var(--ide-rail-background);
 
   .rail-panel-header-button-subdued {
+    border-radius: var(--border-radius-full) !important;
+    width: 28px !important;
+    height: 28px !important;
+    min-width: 28px !important;
+    min-height: 28px !important;
+    padding: 0 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+
     @include ol-button-variant(
       var(--ide-rail-header-subdued-button-color),
       transparent,

@@ -349,6 +349,11 @@ const updateUserSettingsSchema = z.object({
       zotero: refProviderSettingsSchema,
       mendeley: refProviderSettingsSchema,
       papers: refProviderSettingsSchema,
+      aiFeatures: z
+        .object({
+          enabled: z.boolean(),
+        })
+        .optional(),
     })
     .passthrough(),
   // TODO: complete the schema and remove the passthrough
@@ -448,6 +453,12 @@ async function updateUserSettings(req, res, next) {
   }
   if (body.papers != null) {
     user.ace.papers = { ...user.ace.papers, ...body.papers }
+  }
+  if (body.aiFeatures?.enabled != null) {
+    user.aiFeatures = {
+      ...user.aiFeatures,
+      enabled: Boolean(body.aiFeatures.enabled),
+    }
   }
   await user.save()
 

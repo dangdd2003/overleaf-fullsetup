@@ -17,9 +17,10 @@ export default function RailPanelHeader({
   const { handlePaneCollapse } = useRailContext()
 
   const handleClose = useCallback(() => {
-    handlePaneCollapse()
     if (onClose) {
       onClose()
+    } else {
+      handlePaneCollapse()
     }
   }, [handlePaneCollapse, onClose])
 

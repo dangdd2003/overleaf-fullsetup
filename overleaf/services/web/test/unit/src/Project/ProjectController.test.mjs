@@ -1597,6 +1597,38 @@ describe('ProjectController', function () {
         })
       })
 
+      it('should set showAiFeatures to true in CE when aiAssist is enabled', async function (ctx) {
+        ctx.Features.hasFeature.withArgs('saas').returns(false)
+        ctx.settings.aiAssist = { enabled: true }
+        await new Promise((resolve, reject) => {
+          ctx.res.render = (pageName, opts) => {
+            expect(opts.showAiFeatures).to.equal(true)
+            resolve()
+          }
+          ctx.ProjectController.loadEditor(ctx.req, ctx.res, err => {
+            if (err) reject(err)
+          })
+        })
+      })
+
+      it('should set showAiFeatures to false in CE when user disabled aiFeatures', async function (ctx) {
+        ctx.Features.hasFeature.withArgs('saas').returns(false)
+        ctx.settings.aiAssist = { enabled: true }
+        ctx.user.aiFeatures = { enabled: false }
+        ctx.UserModel.findById.returns({
+          exec: sinon.stub().resolves(ctx.user),
+        })
+        await new Promise((resolve, reject) => {
+          ctx.res.render = (pageName, opts) => {
+            expect(opts.showAiFeatures).to.equal(false)
+            resolve()
+          }
+          ctx.ProjectController.loadEditor(ctx.req, ctx.res, err => {
+            if (err) reject(err)
+          })
+        })
+      })
+
       it('should set showAiFeatures to false when the permission check throws', async function (ctx) {
         ctx.PermissionsManager.promises.checkUserPermissions.rejects(
           new Error('permission check failed')

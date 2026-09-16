@@ -89,7 +89,9 @@ async function getComment(projectId, docId, commentId) {
 
 async function getDocument(projectId, docId, fromVersion) {
   const url = new URL(`${BASE_URL}/project/${projectId}/doc/${docId}`)
-  url.searchParams.set('fromVersion', fromVersion)
+  if (fromVersion !== undefined && fromVersion !== null) {
+    url.searchParams.set('fromVersion', fromVersion)
+  }
   const doc = await fetchJson(url, {
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   })

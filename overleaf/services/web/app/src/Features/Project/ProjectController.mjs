@@ -833,6 +833,13 @@ const _ProjectController = {
           aiFeaturesAllowedForUser = false
           aiFeaturesAllowedForProject = false
         }
+      } else if (
+        userId &&
+        !Features.hasFeature('saas') &&
+        Settings.aiAssist?.enabled
+      ) {
+        aiFeaturesAllowedForUser = true
+        aiFeaturesAllowedForProject = true
       }
 
       let featureUsage = {}
@@ -899,7 +906,9 @@ const _ProjectController = {
 
       // only add-on is ai based, so we only need its pricing info if ai features are usable
       const addonPrices =
-        showAiFeatures && (await ProjectController._getAddonPrices(req, res))
+        showAiFeatures &&
+        Features.hasFeature('saas') &&
+        (await ProjectController._getAddonPrices(req, res))
 
       let standardPlanPricing
       let recommendedCurrency
@@ -1079,12 +1088,18 @@ const _ProjectController = {
   // todo: quota clean-up: these can be removed potentially?
   async _getAddonPrices(req, res, addonPlans = ['assistant']) {
     const plansData = {}
+    if (!Settings.localizedAddOnsPricing) {
+      return plansData
+    }
 
     const locale = req.i18n.language
     const { currency } = await SubscriptionController.getRecommendedCurrency(
       req,
       res
     )
+    if (!Settings.localizedAddOnsPricing[currency]) {
+      return plansData
+    }
 
     addonPlans.forEach(plan => {
       const annualPrice = Settings.localizedAddOnsPricing[currency][plan].annual

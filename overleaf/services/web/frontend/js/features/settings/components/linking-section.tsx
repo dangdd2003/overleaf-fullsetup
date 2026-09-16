@@ -47,6 +47,7 @@ function LinkingSection() {
   const googleDriveSyncEnabled = Boolean(getMeta('ol-googleDriveSyncEnabled'))
   const mcpEnabled = Boolean(getMeta('ol-mcpEnabled'))
   const githubSyncEnabled = Boolean(getMeta('ol-githubSyncEnabled'))
+  const aiAssistEnabled = Boolean(getMeta('ol-aiAssistEnabled'))
 
   const renderSyncSection =
     getMeta('ol-isSaas') ||
@@ -62,7 +63,9 @@ function LinkingSection() {
   const showGitTokensWidget = gitBridgeEnabled || mcpEnabled
 
   const haslangFeedbackLinkingWidgets =
-    langFeedbackLinkingWidgets.length && !cannotUseAi
+    langFeedbackLinkingWidgets.length &&
+    !cannotUseAi &&
+    (aiAssistEnabled || getMeta('ol-isSaas'))
   const hasIntegrationLinkingSection =
     renderSyncSection &&
     (allIntegrationLinkingWidgets.length > 0 ||

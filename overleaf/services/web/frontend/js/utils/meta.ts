@@ -83,6 +83,7 @@ export interface Meta {
   'ol-target-user-id': string
   'ol-aiAssistViaWritefullSource': string
   'ol-algolia': AlgoliaConfig | undefined
+  'ol-aiAssistEnabled': boolean
   'ol-allInReconfirmNotificationPeriods': UserEmailData[]
   'ol-allowedExperiments': string[]
   'ol-anonymous': boolean

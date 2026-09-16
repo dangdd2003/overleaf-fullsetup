@@ -234,8 +234,15 @@ export const EditorManagerProvider: FC<React.PropsWithChildren> = ({
           return
         }
         if (
+          update.meta.source === 'ai-assist' ||
+          update.meta.origin?.kind === 'ai-assist'
+        ) {
+          return
+        }
+        if (
           update.meta.type === 'external' &&
-          update.meta.source === 'git-bridge'
+          (update.meta.source === 'git-bridge' ||
+            update.meta.source === 'ai-assist')
         ) {
           return
         }

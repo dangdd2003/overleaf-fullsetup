@@ -89,10 +89,12 @@ export const RailLayout = () => {
           detail: { tab, open },
         } = event as CustomEvent<{
           tab: RailTabKey
-          open: boolean
+          open?: boolean
         }>
         selectTab(tab)
-        setIsOpen(open)
+        if (typeof open === 'boolean') {
+          setIsOpen(open)
+        }
       },
       [selectTab, setIsOpen]
     )

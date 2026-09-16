@@ -565,6 +565,17 @@ describe('UserController', function () {
       })
     })
 
+    it('should update aiFeatures.enabled', function (ctx) {
+      return new Promise(resolve => {
+        ctx.req.body = { aiFeatures: { enabled: false } }
+        ctx.res.sendStatus = code => {
+          ctx.user.aiFeatures.enabled.should.equal(false)
+          resolve()
+        }
+        ctx.UserController.updateUserSettings(ctx.req, ctx.res)
+      })
+    })
+
     it('should keep darkModePdf a boolean', function (ctx) {
       return new Promise(resolve => {
         ctx.req.body = { darkModePdf: 'foobar' }
