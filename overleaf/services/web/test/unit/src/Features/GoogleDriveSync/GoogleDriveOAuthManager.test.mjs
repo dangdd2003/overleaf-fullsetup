@@ -49,6 +49,10 @@ describe('GoogleDriveOAuthManager', function () {
     stopChannel: vi.fn(),
   }
 
+  const GoogleDriveBulkSyncManager = {
+    cancelActiveJobs: vi.fn(),
+  }
+
   class MockObjectId {
     constructor(id) {
       this.id = id
@@ -62,6 +66,13 @@ describe('GoogleDriveOAuthManager', function () {
     }
   }
 
+  vi.doMock(
+    '../../../../../app/src/Features/GoogleDriveSync/GoogleDriveBulkSyncManager.mjs',
+    () => ({
+      default: GoogleDriveBulkSyncManager,
+      ...GoogleDriveBulkSyncManager,
+    })
+  )
   vi.doMock('@overleaf/settings', () => ({ default: Settings }))
   vi.doMock('@overleaf/logger', () => ({ default: logger }))
   vi.doMock('@overleaf/fetch-utils', () => fetchUtils)
@@ -620,6 +631,13 @@ describe('GoogleDriveOAuthManager', function () {
       const deleteQuery =
         db.googleDriveUserCredentials.deleteOne.mock.calls[0][0]
       expect(deleteQuery.user_id.toString()).toBe(userId)
+
+      expect(GoogleDriveBulkSyncManager.cancelActiveJobs).toHaveBeenCalledTimes(
+        1
+      )
+      expect(
+        GoogleDriveBulkSyncManager.cancelActiveJobs.mock.calls[0][0].toString()
+      ).toBe(userId)
     })
 
     it('completes unlink even if GoogleDriveWatchManager.stopChannel fails', async function () {

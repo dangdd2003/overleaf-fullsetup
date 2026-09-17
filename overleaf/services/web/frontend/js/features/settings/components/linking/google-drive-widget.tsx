@@ -11,6 +11,11 @@ import OLButton from '@/shared/components/ol/ol-button'
 import GoogleDriveLogo from '@/shared/svgs/google-drive-logo'
 import LinkingStatus from './status'
 import getMeta from '@/utils/meta'
+import {
+  BulkSyncJob,
+  GoogleDriveBulkSyncPanel,
+  useGoogleDriveBulkSync,
+} from './google-drive-bulk-sync'
 
 export interface GoogleDriveWidgetProps {
   initialIsLinked?: boolean
@@ -63,6 +68,7 @@ export function GoogleDriveLinkingWidget({
   const [errorMessage, setErrorMessage] = useState<string>('')
   const [scanInflight, setScanInflight] = useState<boolean>(false)
   const [scanMessage, setScanMessage] = useState<string>('')
+  const [showBulkSync, setShowBulkSync] = useState<boolean>(false)
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -271,6 +277,49 @@ export function GoogleDriveLinkingWidget({
     }
   }, [t])
 
+  const handleBulkSyncFinished = useCallback(
+    (job: BulkSyncJob) => {
+      if (job.status !== 'completed') {
+        return
+      }
+      if (job.failedCount > 0) {
+        setErrorMessage(
+          t(
+            'google_drive_bulk_sync_partial',
+            '{{failedCount}} of {{total}} project(s) failed to sync to Google Drive.',
+            { failedCount: job.failedCount, total: job.total }
+          )
+        )
+      }
+      if (job.syncedCount > 0) {
+        setScanMessage(
+          t(
+            'google_drive_bulk_sync_done',
+            'Synced {{syncedCount}} project(s) to Google Drive.',
+            { syncedCount: job.syncedCount }
+          )
+        )
+      }
+    },
+    [t]
+  )
+
+  const {
+    job: bulkSyncJob,
+    active: bulkSyncActive,
+    applyJob: applyBulkSyncJob,
+  } = useGoogleDriveBulkSync(isLinked, handleBulkSyncFinished)
+
+  const handleBulkSyncClick = useCallback(() => {
+    setErrorMessage('')
+    setScanMessage('')
+    setShowBulkSync(true)
+  }, [])
+
+  const handleBulkSyncClose = useCallback(() => {
+    setShowBulkSync(false)
+  }, [])
+
   const handleUnlinkClick = useCallback(() => {
     setShowModal(true)
     setErrorMessage('')
@@ -304,6 +353,7 @@ export function GoogleDriveLinkingWidget({
         setIsLinked(false)
         setGoogleEmail('')
         setLinkedAt(undefined)
+        setShowBulkSync(false)
         setShowModal(false)
         if (onUnlinkSuccess) {
           onUnlinkSuccess()
@@ -404,6 +454,16 @@ export function GoogleDriveLinkingWidget({
         ) : (
           <div className="d-flex flex-column align-items-end gap-2">
             <OLButton
+              variant="danger-ghost"
+              className="google-drive-unlink-btn"
+              onClick={handleUnlinkClick}
+              disabled={unlinkInflight}
+              id={unlinkTextId}
+              aria-labelledby={`${unlinkTextId} ${titleId}`}
+            >
+              {t('unlink', 'Unlink')}
+            </OLButton>
+            <OLButton
               variant="secondary"
               className="google-drive-scan-btn"
               onClick={handleScanClick}
@@ -414,18 +474,29 @@ export function GoogleDriveLinkingWidget({
               {t('scan_for_existing_projects', 'Scan for existing projects')}
             </OLButton>
             <OLButton
-              variant="danger-ghost"
-              className="google-drive-unlink-btn"
-              onClick={handleUnlinkClick}
-              disabled={unlinkInflight}
-              id={unlinkTextId}
-              aria-labelledby={`${unlinkTextId} ${titleId}`}
+              variant="secondary"
+              className="google-drive-bulk-sync-btn"
+              onClick={handleBulkSyncClick}
+              isLoading={bulkSyncActive}
+              loadingLabel={t('syncing', 'Syncing...')}
+              data-testid="google-drive-bulk-sync-button"
             >
-              {t('unlink', 'Unlink')}
+              {t(
+                'sync_projects_to_google_drive',
+                'Sync projects to Google Drive'
+              )}
             </OLButton>
           </div>
         )}
       </div>
+
+      {isLinked && showBulkSync ? (
+        <GoogleDriveBulkSyncPanel
+          job={bulkSyncJob}
+          onJobChange={applyBulkSyncJob}
+          onClose={handleBulkSyncClose}
+        />
+      ) : null}
 
       {/* Unlink Confirmation Modal */}
       <OLModal

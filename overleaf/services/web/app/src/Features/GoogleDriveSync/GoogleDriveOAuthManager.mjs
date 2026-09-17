@@ -5,6 +5,7 @@ import OError from '@overleaf/o-error'
 import { fetchJson, fetchNothing } from '@overleaf/fetch-utils'
 import { db, ObjectId } from '../../infrastructure/mongodb.mjs'
 import GoogleDriveWatchManager from './GoogleDriveWatchManager.mjs'
+import GoogleDriveBulkSyncManager from './GoogleDriveBulkSyncManager.mjs'
 
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
@@ -465,6 +466,11 @@ async function unlinkAccount(userId) {
   }
 
   await db.googleDriveUserCredentials.deleteOne({ user_id: userObjectId })
+
+  // A queued bulk sync would otherwise keep failing project by project
+  // against credentials that no longer exist.
+  await GoogleDriveBulkSyncManager.cancelActiveJobs(userObjectId)
+
   logger.info({ userId }, 'Unlinked Google Drive account')
 
   return { success: true }

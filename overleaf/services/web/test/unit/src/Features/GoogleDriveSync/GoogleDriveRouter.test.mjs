@@ -30,6 +30,10 @@ describe('GoogleDriveRouter', function () {
     syncProjectNow: vi.fn(),
     scanExistingProjects: vi.fn(),
     dismissConflicts: vi.fn(),
+    listSyncableProjects: vi.fn(),
+    getBulkSync: vi.fn(),
+    startBulkSync: vi.fn(),
+    cancelBulkSync: vi.fn(),
   }
 
   const GoogleDriveWebhookController = {
@@ -169,6 +173,28 @@ describe('GoogleDriveRouter', function () {
       expect.any(Function),
       AuthorizationMiddleware.ensureUserCanWriteProjectContent,
       GoogleDriveController.dismissConflicts
+    )
+
+    // 9. Sync selected projects in the background
+    expect(webRouter.get).toHaveBeenCalledWith(
+      '/auth/google-drive/projects',
+      expect.any(Function),
+      GoogleDriveController.listSyncableProjects
+    )
+    expect(webRouter.get).toHaveBeenCalledWith(
+      '/auth/google-drive/bulk-sync',
+      expect.any(Function),
+      GoogleDriveController.getBulkSync
+    )
+    expect(webRouter.post).toHaveBeenCalledWith(
+      '/auth/google-drive/bulk-sync',
+      expect.any(Function),
+      GoogleDriveController.startBulkSync
+    )
+    expect(webRouter.post).toHaveBeenCalledWith(
+      '/auth/google-drive/bulk-sync/cancel',
+      expect.any(Function),
+      GoogleDriveController.cancelBulkSync
     )
   })
 

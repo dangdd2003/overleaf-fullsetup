@@ -23,6 +23,7 @@ describe('GoogleDriveController', () => {
     getAuthorizationUrl: vi.fn(),
     handleOAuthCallback: vi.fn(),
     unlinkAccount: vi.fn(),
+    isLinked: vi.fn(),
   }
 
   const GoogleDriveSyncManager = {
@@ -30,6 +31,23 @@ describe('GoogleDriveController', () => {
     syncProject: vi.fn(),
     enforceManualSyncCooldown: vi.fn(),
     reconcileExistingDriveProjects: vi.fn(),
+  }
+
+  class InvalidBulkSyncRequestError extends Error {}
+  class BulkSyncAlreadyRunningError extends Error {}
+
+  const GoogleDriveBulkSyncManager = {
+    InvalidBulkSyncRequestError,
+    BulkSyncAlreadyRunningError,
+    listSyncableProjects: vi.fn(),
+    createJob: vi.fn(),
+    getLatestJob: vi.fn(),
+    cancelActiveJobs: vi.fn(),
+    serializeJob: vi.fn(job => (job ? { id: job._id } : null)),
+  }
+
+  const GoogleDriveBulkSyncWorker = {
+    kick: vi.fn(),
   }
 
   const db = {
@@ -74,6 +92,21 @@ describe('GoogleDriveController', () => {
     () => ({
       default: GoogleDriveSyncManager,
       ...GoogleDriveSyncManager,
+    })
+  )
+
+  vi.doMock(
+    '../../../../../app/src/Features/GoogleDriveSync/GoogleDriveBulkSyncManager.mjs',
+    () => ({
+      default: GoogleDriveBulkSyncManager,
+      ...GoogleDriveBulkSyncManager,
+    })
+  )
+  vi.doMock(
+    '../../../../../app/src/Features/GoogleDriveSync/GoogleDriveBulkSyncWorker.mjs',
+    () => ({
+      default: GoogleDriveBulkSyncWorker,
+      ...GoogleDriveBulkSyncWorker,
     })
   )
 
@@ -630,6 +663,112 @@ describe('GoogleDriveController', () => {
         code: 'error',
         message: 'Database write failure',
       })
+    })
+  })
+
+  describe('listSyncableProjects', () => {
+    it('returns the projects from GoogleDriveBulkSyncManager', async () => {
+      const projects = [{ id: 'p1', name: 'Thesis' }]
+      GoogleDriveBulkSyncManager.listSyncableProjects.mockResolvedValue(
+        projects
+      )
+
+      await GoogleDriveController.listSyncableProjects(req, res)
+
+      expect(
+        GoogleDriveBulkSyncManager.listSyncableProjects
+      ).toHaveBeenCalledWith('user-123')
+      expect(res.json).toHaveBeenCalledWith({ projects })
+    })
+  })
+
+  describe('startBulkSync', () => {
+    beforeEach(() => {
+      GoogleDriveOAuthManager.isLinked.mockResolvedValue({ isLinked: true })
+      req.body = { projectIds: ['p1', 'p2'] }
+    })
+
+    it('queues a job, kicks the worker and responds 202', async () => {
+      GoogleDriveBulkSyncManager.createJob.mockResolvedValue({ _id: 'job-1' })
+
+      await GoogleDriveController.startBulkSync(req, res)
+
+      expect(GoogleDriveBulkSyncManager.createJob).toHaveBeenCalledWith(
+        'user-123',
+        ['p1', 'p2']
+      )
+      expect(GoogleDriveBulkSyncWorker.kick).toHaveBeenCalledTimes(1)
+      expect(res.status).toHaveBeenCalledWith(202)
+      expect(res.json).toHaveBeenCalledWith({ job: { id: 'job-1' } })
+    })
+
+    it('responds 400 when the account is not linked', async () => {
+      GoogleDriveOAuthManager.isLinked.mockResolvedValue({ isLinked: false })
+
+      await GoogleDriveController.startBulkSync(req, res)
+
+      expect(GoogleDriveBulkSyncManager.createJob).not.toHaveBeenCalled()
+      expect(res.status).toHaveBeenCalledWith(400)
+    })
+
+    it('responds 400 for an invalid selection', async () => {
+      GoogleDriveBulkSyncManager.createJob.mockRejectedValue(
+        new InvalidBulkSyncRequestError('No projects selected')
+      )
+
+      await GoogleDriveController.startBulkSync(req, res)
+
+      expect(GoogleDriveBulkSyncWorker.kick).not.toHaveBeenCalled()
+      expect(res.status).toHaveBeenCalledWith(400)
+      expect(res.json).toHaveBeenCalledWith({
+        code: 'bad_request',
+        message: 'No projects selected',
+      })
+    })
+
+    it('responds 409 when a sync is already running', async () => {
+      GoogleDriveBulkSyncManager.createJob.mockRejectedValue(
+        new BulkSyncAlreadyRunningError('already running')
+      )
+
+      await GoogleDriveController.startBulkSync(req, res)
+
+      expect(res.status).toHaveBeenCalledWith(409)
+    })
+  })
+
+  describe('getBulkSync', () => {
+    it('returns the latest job', async () => {
+      GoogleDriveBulkSyncManager.getLatestJob.mockResolvedValue({
+        _id: 'job-1',
+      })
+
+      await GoogleDriveController.getBulkSync(req, res)
+
+      expect(res.json).toHaveBeenCalledWith({ job: { id: 'job-1' } })
+    })
+
+    it('returns null when the user has never run one', async () => {
+      GoogleDriveBulkSyncManager.getLatestJob.mockResolvedValue(null)
+
+      await GoogleDriveController.getBulkSync(req, res)
+
+      expect(res.json).toHaveBeenCalledWith({ job: null })
+    })
+  })
+
+  describe('cancelBulkSync', () => {
+    it('cancels active jobs and returns the updated job', async () => {
+      GoogleDriveBulkSyncManager.getLatestJob.mockResolvedValue({
+        _id: 'job-1',
+      })
+
+      await GoogleDriveController.cancelBulkSync(req, res)
+
+      expect(GoogleDriveBulkSyncManager.cancelActiveJobs).toHaveBeenCalledWith(
+        'user-123'
+      )
+      expect(res.json).toHaveBeenCalledWith({ job: { id: 'job-1' } })
     })
   })
 })

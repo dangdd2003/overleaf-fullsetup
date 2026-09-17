@@ -64,6 +64,26 @@ const GoogleDriveRouter = {
       AuthenticationController.requireLogin(),
       GoogleDriveController.scanExistingProjects
     )
+    webRouter.get(
+      '/auth/google-drive/projects',
+      AuthenticationController.requireLogin(),
+      GoogleDriveController.listSyncableProjects
+    )
+    webRouter.get(
+      '/auth/google-drive/bulk-sync',
+      AuthenticationController.requireLogin(),
+      GoogleDriveController.getBulkSync
+    )
+    webRouter.post(
+      '/auth/google-drive/bulk-sync',
+      AuthenticationController.requireLogin(),
+      GoogleDriveController.startBulkSync
+    )
+    webRouter.post(
+      '/auth/google-drive/bulk-sync/cancel',
+      AuthenticationController.requireLogin(),
+      GoogleDriveController.cancelBulkSync
+    )
 
     // 2. Per-project synchronization
     webRouter.get(

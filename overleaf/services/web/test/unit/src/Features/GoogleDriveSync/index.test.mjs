@@ -9,6 +9,7 @@ describe('GoogleDriveSync index', () => {
   const GoogleDrivePollingWorker = { start: vi.fn(), stop: vi.fn() }
   const GoogleDriveOutboundWorker = { start: vi.fn(), stop: vi.fn() }
   const GoogleDriveChannelRenewalWorker = { start: vi.fn(), stop: vi.fn() }
+  const GoogleDriveBulkSyncWorker = { start: vi.fn(), stop: vi.fn() }
   const GoogleDriveHookHandler = {
     onFileModified: vi.fn(),
     onEntityDeleted: vi.fn(),
@@ -35,6 +36,10 @@ describe('GoogleDriveSync index', () => {
     () => ({ default: GoogleDriveChannelRenewalWorker })
   )
   vi.doMock(
+    '../../../../../app/src/Features/GoogleDriveSync/GoogleDriveBulkSyncWorker.mjs',
+    () => ({ default: GoogleDriveBulkSyncWorker })
+  )
+  vi.doMock(
     '../../../../../app/src/Features/GoogleDriveSync/GoogleDriveHookHandler.mjs',
     () => ({ default: GoogleDriveHookHandler })
   )
@@ -53,6 +58,7 @@ describe('GoogleDriveSync index', () => {
     expect(GoogleDrivePollingWorker.start).toHaveBeenCalled()
     expect(GoogleDriveOutboundWorker.start).toHaveBeenCalled()
     expect(GoogleDriveChannelRenewalWorker.start).toHaveBeenCalled()
+    expect(GoogleDriveBulkSyncWorker.start).toHaveBeenCalled()
     expect(Modules.hooks.attach).toHaveBeenCalledWith(
       'fileModified',
       GoogleDriveHookHandler.onFileModified
@@ -76,6 +82,7 @@ describe('GoogleDriveSync index', () => {
     expect(GoogleDrivePollingWorker.start).not.toHaveBeenCalled()
     expect(GoogleDriveOutboundWorker.start).not.toHaveBeenCalled()
     expect(GoogleDriveChannelRenewalWorker.start).not.toHaveBeenCalled()
+    expect(GoogleDriveBulkSyncWorker.start).not.toHaveBeenCalled()
     expect(Modules.hooks.attach).not.toHaveBeenCalled()
   })
 })

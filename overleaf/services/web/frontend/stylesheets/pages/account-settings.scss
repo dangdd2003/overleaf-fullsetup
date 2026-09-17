@@ -153,6 +153,70 @@
   --btn-danger-ghost-hover-border: var(--border-primary);
 }
 
+// Opens under the whole Google Drive widget, spanning every grid column
+.settings-widget-container > .google-drive-bulk-sync {
+  grid-column: 1 / -1;
+  padding-right: var(--spacing-00);
+  gap: var(--spacing-04);
+}
+
+.google-drive-bulk-sync-table-container {
+  max-height: 360px;
+  overflow-y: auto;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--border-radius-base);
+}
+
+.google-drive-bulk-sync-table {
+  margin-bottom: 0;
+
+  thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background-color: var(--bg-light-primary);
+  }
+
+  th,
+  td {
+    vertical-align: middle;
+  }
+
+  .cell-checkbox {
+    width: 40px;
+
+    .form-check {
+      margin-bottom: 0;
+      min-height: 0;
+    }
+  }
+
+  .cell-name {
+    overflow-wrap: anywhere;
+  }
+
+  .cell-status {
+    white-space: nowrap;
+    width: 1%;
+  }
+}
+
+.google-drive-bulk-sync-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-02);
+
+  .material-symbols {
+    font-size: 16px;
+  }
+}
+
+.google-drive-bulk-sync-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spacing-04);
+}
+
 .security-row {
   .line-header > b {
     color: var(--content-primary);

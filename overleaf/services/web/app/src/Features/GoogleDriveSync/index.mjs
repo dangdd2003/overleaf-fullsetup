@@ -3,6 +3,7 @@ import Modules from '../../infrastructure/Modules.mjs'
 import GoogleDrivePollingWorker from './GoogleDrivePollingWorker.mjs'
 import GoogleDriveOutboundWorker from './GoogleDriveOutboundWorker.mjs'
 import GoogleDriveChannelRenewalWorker from './GoogleDriveChannelRenewalWorker.mjs'
+import GoogleDriveBulkSyncWorker from './GoogleDriveBulkSyncWorker.mjs'
 import GoogleDriveHookHandler from './GoogleDriveHookHandler.mjs'
 
 /**
@@ -40,6 +41,7 @@ function start() {
   GoogleDrivePollingWorker.start()
   GoogleDriveOutboundWorker.start()
   GoogleDriveChannelRenewalWorker.start()
+  GoogleDriveBulkSyncWorker.start()
 }
 
 export default { start }

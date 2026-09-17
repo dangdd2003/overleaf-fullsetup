@@ -447,6 +447,182 @@ describe('<GoogleDriveLinkingWidget />', function () {
     })
   })
 
+  describe('Sync projects to Google Drive', function () {
+    const projects = [
+      {
+        id: 'project-1',
+        name: 'Thesis',
+        lastUpdated: '2026-09-10T10:00:00.000Z',
+        linked: true,
+        lastSyncedAt: '2026-09-01T10:00:00.000Z',
+      },
+      {
+        id: 'project-2',
+        name: 'Paper draft',
+        lastUpdated: '2026-09-09T10:00:00.000Z',
+        linked: false,
+        lastSyncedAt: null,
+      },
+    ]
+
+    function runningJob(status = 'running') {
+      return {
+        id: 'job-1',
+        status,
+        total: 2,
+        syncedCount: 0,
+        failedCount: 0,
+        projects: [
+          {
+            projectId: 'project-1',
+            name: 'Thesis',
+            status: 'syncing',
+            error: null,
+          },
+          {
+            projectId: 'project-2',
+            name: 'Paper draft',
+            status: 'queued',
+            error: null,
+          },
+        ],
+      }
+    }
+
+    function renderLinked() {
+      return render(
+        <GoogleDriveLinkingWidget
+          initialIsLinked={true}
+          initialGoogleEmail="researcher@gmail.com"
+        />
+      )
+    }
+
+    beforeEach(function () {
+      fetchMock.get('/auth/google-drive/projects', { projects })
+    })
+
+    it('orders the buttons unlink, scan, then sync projects', async function () {
+      fetchMock.get('/auth/google-drive/bulk-sync', { job: null })
+      const { container } = renderLinked()
+
+      const labels = Array.from(
+        container.querySelectorAll('.settings-widget-container button')
+      ).map(button => button.textContent)
+      expect(labels).to.deep.equal([
+        'Unlink',
+        'Scan for existing projects',
+        'Sync projects to Google Drive',
+      ])
+      expect(screen.queryByTestId('google-drive-bulk-sync-panel')).to.be.null
+    })
+
+    it('lists projects and queues the selected ones in the background', async function () {
+      fetchMock.get('/auth/google-drive/bulk-sync', { job: null })
+      fetchMock.post('/auth/google-drive/bulk-sync', {
+        status: 202,
+        body: { job: runningJob('queued') },
+      })
+      renderLinked()
+
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Sync projects to Google Drive' })
+      )
+
+      await screen.findByText('Thesis')
+      expect(screen.getByText('Paper draft')).to.exist
+      expect(screen.getByText('Not synced yet')).to.exist
+
+      const syncNow = screen.getByTestId('google-drive-bulk-sync-now')
+      expect(syncNow.hasAttribute('disabled')).to.be.true
+
+      fireEvent.click(screen.getByTestId('google-drive-bulk-sync-select-all'))
+      expect(
+        screen
+          .getAllByRole('checkbox')
+          .every(checkbox => (checkbox as HTMLInputElement).checked)
+      ).to.be.true
+
+      fireEvent.click(syncNow)
+
+      await waitFor(() => {
+        expect(isFetchCalled('/auth/google-drive/bulk-sync')).to.be.true
+        expect(
+          screen
+            .getByTestId('google-drive-bulk-sync-button')
+            .getAttribute('data-ol-loading')
+        ).to.equal('true')
+      })
+
+      const call = getFetchLastCall('/auth/google-drive/bulk-sync')
+      const body = call?.options?.body || call?.[1]?.body
+      expect(JSON.parse(body as string)).to.deep.equal({
+        projectIds: ['project-1', 'project-2'],
+      })
+    })
+
+    it('shows the sync button loading when a sync is already running', async function () {
+      fetchMock.get('/auth/google-drive/bulk-sync', { job: runningJob() })
+      renderLinked()
+
+      await waitFor(() => {
+        expect(
+          screen
+            .getByTestId('google-drive-bulk-sync-button')
+            .getAttribute('data-ol-loading')
+        ).to.equal('true')
+      })
+    })
+
+    it('cancel stops a running sync and closes the table', async function () {
+      fetchMock.get('/auth/google-drive/bulk-sync', { job: null })
+      fetchMock.post('/auth/google-drive/bulk-sync', {
+        status: 202,
+        body: { job: runningJob() },
+      })
+      fetchMock.post('/auth/google-drive/bulk-sync/cancel', {
+        job: runningJob('cancelled'),
+      })
+      renderLinked()
+
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Sync projects to Google Drive' })
+      )
+      await screen.findByText('Thesis')
+      fireEvent.click(screen.getByRole('checkbox', { name: 'Thesis' }))
+      fireEvent.click(screen.getByTestId('google-drive-bulk-sync-now'))
+      await screen.findByText('Queued')
+
+      fireEvent.click(screen.getByTestId('google-drive-bulk-sync-cancel'))
+
+      await waitFor(() => {
+        expect(isFetchCalled('/auth/google-drive/bulk-sync/cancel')).to.be.true
+        expect(screen.queryByTestId('google-drive-bulk-sync-panel')).to.be.null
+      })
+      expect(
+        screen
+          .getByTestId('google-drive-bulk-sync-button')
+          .getAttribute('data-ol-loading')
+      ).to.equal('false')
+    })
+
+    it('cancel just closes the table when nothing is running', async function () {
+      fetchMock.get('/auth/google-drive/bulk-sync', { job: null })
+      renderLinked()
+
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Sync projects to Google Drive' })
+      )
+      await screen.findByText('Thesis')
+      fireEvent.click(screen.getByTestId('google-drive-bulk-sync-cancel'))
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('google-drive-bulk-sync-panel')).to.be.null
+      })
+      expect(isFetchCalled('/auth/google-drive/bulk-sync/cancel')).to.be.false
+    })
+  })
+
   describe('Status Fetch on Mount', function () {
     it('fetches status from endpoint on mount when not supplied via props/meta', async function () {
       fetchMock.get('/auth/google-drive/status', {

@@ -3,6 +3,8 @@ import logger from '@overleaf/logger'
 import SessionManager from '../Authentication/SessionManager.mjs'
 import GoogleDriveOAuthManager from './GoogleDriveOAuthManager.mjs'
 import GoogleDriveSyncManager from './GoogleDriveSyncManager.mjs'
+import GoogleDriveBulkSyncManager from './GoogleDriveBulkSyncManager.mjs'
+import GoogleDriveBulkSyncWorker from './GoogleDriveBulkSyncWorker.mjs'
 import { db, ObjectId } from '../../infrastructure/mongodb.mjs'
 import { removeCSPHeaders } from '../../infrastructure/CSP.mjs'
 
@@ -510,6 +512,115 @@ const GoogleDriveController = {
         { err, userId },
         'error scanning for existing google drive projects'
       )
+      return res.status(500).json({ code: 'error', message: err.message })
+    }
+  },
+
+  /**
+   * Lists the projects the user can choose to sync to Google Drive.
+   *
+   * @param {import('express').Request} req
+   * @param {import('express').Response} res
+   */
+  async listSyncableProjects(req, res) {
+    const userId = SessionManager.getLoggedInUserId(req.session)
+
+    try {
+      const projects =
+        await GoogleDriveBulkSyncManager.listSyncableProjects(userId)
+      return res.json({ projects })
+    } catch (err) {
+      logger.error(
+        { err, userId },
+        'error listing projects for google drive sync'
+      )
+      return res.status(500).json({ code: 'error', message: err.message })
+    }
+  },
+
+  /**
+   * Returns the user's running bulk sync, or their most recent one.
+   *
+   * @param {import('express').Request} req
+   * @param {import('express').Response} res
+   */
+  async getBulkSync(req, res) {
+    const userId = SessionManager.getLoggedInUserId(req.session)
+
+    try {
+      const job = await GoogleDriveBulkSyncManager.getLatestJob(userId)
+      return res.json({ job: GoogleDriveBulkSyncManager.serializeJob(job) })
+    } catch (err) {
+      logger.error(
+        { err, userId },
+        'error retrieving google drive bulk sync status'
+      )
+      return res.status(500).json({ code: 'error', message: err.message })
+    }
+  },
+
+  /**
+   * Queues a background sync of the selected projects. The response returns
+   * as soon as the job is stored; the work continues after the browser leaves.
+   *
+   * @param {import('express').Request} req
+   * @param {import('express').Response} res
+   */
+  async startBulkSync(req, res) {
+    const userId = SessionManager.getLoggedInUserId(req.session)
+
+    try {
+      const { isLinked } = await GoogleDriveOAuthManager.isLinked(userId)
+      if (!isLinked) {
+        return res.status(400).json({
+          code: 'not_linked',
+          message: 'Google Drive account is not linked',
+        })
+      }
+
+      const job = await GoogleDriveBulkSyncManager.createJob(
+        userId,
+        req.body?.projectIds
+      )
+      GoogleDriveBulkSyncWorker.kick()
+      return res
+        .status(202)
+        .json({ job: GoogleDriveBulkSyncManager.serializeJob(job) })
+    } catch (err) {
+      if (
+        err instanceof GoogleDriveBulkSyncManager.InvalidBulkSyncRequestError
+      ) {
+        return res
+          .status(400)
+          .json({ code: 'bad_request', message: err.message })
+      }
+      if (
+        err instanceof GoogleDriveBulkSyncManager.BulkSyncAlreadyRunningError
+      ) {
+        return res
+          .status(409)
+          .json({ code: 'already_running', message: err.message })
+      }
+      logger.error({ err, userId }, 'error starting google drive bulk sync')
+      return res.status(500).json({ code: 'error', message: err.message })
+    }
+  },
+
+  /**
+   * Cancels the user's running bulk sync.
+   *
+   * @param {import('express').Request} req
+   * @param {import('express').Response} res
+   */
+  async cancelBulkSync(req, res) {
+    const userId = SessionManager.getLoggedInUserId(req.session)
+
+    try {
+      await GoogleDriveBulkSyncManager.cancelActiveJobs(userId)
+      const job = await GoogleDriveBulkSyncManager.getLatestJob(userId)
+      return res.json({ job: GoogleDriveBulkSyncManager.serializeJob(job) })
+    } catch (err) {
+      logger.error({ err, userId }, 'error cancelling google drive bulk sync')
       return res.status(500).json({ code: 'error', message: err.message })
     }
   },
