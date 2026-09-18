@@ -11,7 +11,7 @@ import OLCol from '@/shared/components/ol/ol-col'
 import OLFormControl from '@/shared/components/ol/ol-form-control'
 import OLForm from '@/shared/components/ol/ol-form'
 import OLFormGroup from '@/shared/components/ol/ol-form-group'
-import OLNotification from '@/shared/components/ol/ol-notification'
+import Notification from '@/shared/components/notification'
 import AddAnotherEmailBtn from './add-email/add-another-email-btn'
 
 function SimpleAddEmailForm() {
@@ -89,8 +89,8 @@ function SimpleAddEmailForm() {
     return (
       <div className="mt-3">
         {successMessage && (
-          <div className="mb-2">
-            <OLNotification type="success" content={successMessage} />
+          <div className="mb-2 notification-list">
+            <Notification type="success" content={successMessage} />
           </div>
         )}
         {state.data.emailCount >= emailAddressLimit ? (
@@ -113,8 +113,8 @@ function SimpleAddEmailForm() {
   return (
     <div className="affiliations-table-row-highlighted p-3 my-2">
       {errorMessage && (
-        <div className="mb-2">
-          <OLNotification type="error" content={errorMessage} />
+        <div className="mb-2 notification-list">
+          <Notification type="error" content={errorMessage} />
         </div>
       )}
       <OLForm onSubmit={handleSubmit} noValidate>

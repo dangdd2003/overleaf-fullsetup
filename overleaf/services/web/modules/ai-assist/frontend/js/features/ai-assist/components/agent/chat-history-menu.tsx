@@ -2,10 +2,10 @@ import React, { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ClockCounterClockwise, Trash } from '@phosphor-icons/react'
 import {
-  Dropdown,
-  DropdownMenu,
-  DropdownToggle,
-} from '@/shared/components/dropdown/dropdown-menu'
+  OLDropdown,
+  OLDropdownMenu,
+  OLDropdownToggle,
+} from '@/shared/components/ol/ol-dropdown-menu'
 import OLTooltip from '@/shared/components/ol/ol-tooltip'
 import { ChatSummary, listChats } from '../../agent/chat-history-client'
 
@@ -46,24 +46,24 @@ export function ChatHistoryMenu({
   const label = t('ai_assist_chat_history', 'Chat history')
 
   return (
-    <Dropdown align="end" onToggle={onToggle}>
+    <OLDropdown align="end" onToggle={onToggle}>
       <OLTooltip
         id="ai-assist-history-tooltip"
         description={label}
         overlayProps={{ placement: 'bottom' }}
       >
         <span>
-          <DropdownToggle
+          <OLDropdownToggle
             id="ai-assist-history-toggle"
             as="button"
             className="btn icon-button-small rail-panel-header-button-subdued d-inline-flex align-items-center justify-content-center ai-assist-history-toggle"
             aria-label={label}
           >
             <ClockCounterClockwise size={18} />
-          </DropdownToggle>
+          </OLDropdownToggle>
         </span>
       </OLTooltip>
-      <DropdownMenu className="ai-assist-history-menu">
+      <OLDropdownMenu className="ai-assist-history-menu">
         {failed ? (
           <li className="ai-assist-history-empty">
             {t('ai_assist_chat_history_failed', 'Could not load chat history')}
@@ -115,7 +115,7 @@ export function ChatHistoryMenu({
             )
           })
         )}
-      </DropdownMenu>
-    </Dropdown>
+      </OLDropdownMenu>
+    </OLDropdown>
   )
 }

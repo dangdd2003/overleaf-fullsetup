@@ -1,4 +1,4 @@
-import { DropdownItem } from '@/shared/components/dropdown/dropdown-menu'
+import { OLDropdownItem } from '@/shared/components/ol/ol-dropdown-menu'
 import { useTranslation } from 'react-i18next'
 import getMeta from '@/utils/meta'
 
@@ -11,5 +11,5 @@ export default function NewProjectGithubMenu({ onClick }: Props) {
 
 function NewProjectGithubMenuInner({ onClick }: Props) {
   const { t } = useTranslation()
-  return <DropdownItem onClick={onClick}>{t('github', 'GitHub')}</DropdownItem>
+  return <OLDropdownItem onClick={onClick}>{t('github', 'GitHub')}</OLDropdownItem>
 }

@@ -76,10 +76,12 @@ function EmailsSectionContent({ isSimpleMode }: EmailsSectionContentProps) {
           )}
           {isInitializingSuccess && !hideAddSecondaryEmail && <SimpleAddEmailForm />}
           {isInitializingError && (
-            <OLNotification
-              type="error"
-              content={t('error_performing_request')}
-            />
+            <div className="notification-list">
+              <Notification
+                type="error"
+                content={t('error_performing_request')}
+              />
+            </div>
           )}
         </>
       </>

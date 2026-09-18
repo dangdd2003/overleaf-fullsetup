@@ -3,7 +3,33 @@ import os from 'node:os'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { pipeline } from 'node:stream/promises'
-import mime from 'mime-types'
+const MIME_TYPES = {
+  '.tex': 'application/x-tex',
+  '.latex': 'application/x-latex',
+  '.bib': 'application/x-bibtex',
+  '.cls': 'text/x-tex',
+  '.sty': 'text/x-tex',
+  '.bst': 'text/x-tex',
+  '.pdf': 'application/pdf',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.svg': 'image/svg+xml',
+  '.eps': 'application/postscript',
+  '.txt': 'text/plain; charset=utf-8',
+  '.md': 'text/markdown; charset=utf-8',
+  '.json': 'application/json',
+  '.zip': 'application/zip',
+  '.tar': 'application/x-tar',
+  '.gz': 'application/gzip',
+  '.csv': 'text/csv',
+}
+
+function lookupMimeType(filename) {
+  const ext = path.extname(filename).toLowerCase()
+  return MIME_TYPES[ext] || null
+}
 import logger from '@overleaf/logger'
 import Settings from '@overleaf/settings'
 import ProjectGetter from '../Project/ProjectGetter.mjs'
@@ -415,7 +441,7 @@ async function downloadFile(req, res) {
     }
 
     const filename = path.basename(target)
-    const contentType = mime.lookup(filename) || 'application/octet-stream'
+    const contentType = lookupMimeType(filename) || 'application/octet-stream'
     res.contentType(contentType)
     res.setHeader(
       'Content-Disposition',
@@ -437,7 +463,7 @@ async function downloadFile(req, res) {
     const content = (lines || []).join('\n')
     const filename = path.basename(target)
     const contentType =
-      mime.lookup(filename) || 'text/plain; charset=utf-8'
+      lookupMimeType(filename) || 'text/plain; charset=utf-8'
     res.contentType(contentType)
     res.setHeader(
       'Content-Disposition',

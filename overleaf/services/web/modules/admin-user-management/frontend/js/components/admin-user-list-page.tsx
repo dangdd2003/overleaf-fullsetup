@@ -9,11 +9,11 @@ import OLSpinner from '@/shared/components/ol/ol-spinner'
 import Pagination from '@/shared/components/pagination'
 import Notification from '@/shared/components/notification'
 import {
-  Dropdown,
-  DropdownToggle,
-  DropdownMenu,
-  DropdownItem,
-} from '@/shared/components/dropdown/dropdown-menu'
+  OLDropdown,
+  OLDropdownToggle,
+  OLDropdownMenu,
+  OLDropdownItem,
+} from '@/shared/components/ol/ol-dropdown-menu'
 import getMeta from '@/utils/meta'
 import { getJSON, postJSON } from '@/infrastructure/fetch-json'
 import UserStatusBadge from './user-status-badge'
@@ -519,7 +519,7 @@ export default function AdminUserListPage() {
                                   : 'Never'}
                               </td>
                               <td className="text-end">
-                                <Dropdown
+                                <OLDropdown
                                   as={OLButtonGroup}
                                   align="end"
                                   size="sm"
@@ -531,16 +531,16 @@ export default function AdminUserListPage() {
                                   >
                                     Manage
                                   </OLButton>
-                                  <DropdownToggle
+                                  <OLDropdownToggle
                                     split
                                     variant="secondary"
                                     size="sm"
                                     id={`active-user-actions-${user._id}`}
                                     aria-label="More actions"
                                   />
-                                  <DropdownMenu className="dropdown-menu-sm-width">
+                                  <OLDropdownMenu className="dropdown-menu-sm-width">
                                     <li role="none">
-                                      <DropdownItem
+                                      <OLDropdownItem
                                         as="button"
                                         onClick={() => handleToggleAdmin(user)}
                                         leadingIcon={
@@ -552,10 +552,10 @@ export default function AdminUserListPage() {
                                         {user.isAdmin
                                           ? 'Revoke Site Admin'
                                           : 'Grant Site Admin'}
-                                      </DropdownItem>
+                                      </OLDropdownItem>
                                     </li>
                                     <li role="none">
-                                      <DropdownItem
+                                      <OLDropdownItem
                                         as="button"
                                         onClick={() =>
                                           setUserToRevokeSessions(user)
@@ -563,20 +563,20 @@ export default function AdminUserListPage() {
                                         leadingIcon="logout"
                                       >
                                         Revoke All Sessions
-                                      </DropdownItem>
+                                      </OLDropdownItem>
                                     </li>
                                     <li role="none">
-                                      <DropdownItem
+                                      <OLDropdownItem
                                         as="button"
                                         variant="danger"
                                         onClick={() => setUserToDelete(user)}
                                         leadingIcon="delete"
                                       >
                                         Delete Account
-                                      </DropdownItem>
+                                      </OLDropdownItem>
                                     </li>
-                                  </DropdownMenu>
-                                </Dropdown>
+                                  </OLDropdownMenu>
+                                </OLDropdown>
                               </td>
                             </tr>
                           )
@@ -668,7 +668,7 @@ export default function AdminUserListPage() {
                               </td>
                               <td>{deletedAt}</td>
                               <td className="text-end">
-                                <Dropdown
+                                <OLDropdown
                                   as={OLButtonGroup}
                                   align="end"
                                   size="sm"
@@ -680,26 +680,26 @@ export default function AdminUserListPage() {
                                   >
                                     Restore
                                   </OLButton>
-                                  <DropdownToggle
+                                  <OLDropdownToggle
                                     split
                                     variant="secondary"
                                     size="sm"
                                     id={`deleted-user-actions-${record._id}`}
                                     aria-label="More actions"
                                   />
-                                  <DropdownMenu className="dropdown-menu-sm-width">
+                                  <OLDropdownMenu className="dropdown-menu-sm-width">
                                     <li role="none">
-                                      <DropdownItem
+                                      <OLDropdownItem
                                         as="button"
                                         variant="danger"
                                         onClick={() => setUserToPurge(record)}
                                         leadingIcon="delete_forever"
                                       >
                                         Delete Permanently
-                                      </DropdownItem>
+                                      </OLDropdownItem>
                                     </li>
-                                  </DropdownMenu>
-                                </Dropdown>
+                                  </OLDropdownMenu>
+                                </OLDropdown>
                               </td>
                             </tr>
                           )

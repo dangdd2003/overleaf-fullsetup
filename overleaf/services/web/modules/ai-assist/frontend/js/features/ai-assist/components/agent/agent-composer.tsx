@@ -10,11 +10,11 @@ import {
   Check,
 } from '@phosphor-icons/react'
 import {
-  Dropdown,
-  DropdownMenu,
-  DropdownToggle,
-  DropdownItem,
-} from '@/shared/components/dropdown/dropdown-menu'
+  OLDropdown,
+  OLDropdownMenu,
+  OLDropdownToggle,
+  OLDropdownItem,
+} from '@/shared/components/ol/ol-dropdown-menu'
 import useEventListener from '@/shared/hooks/use-event-listener'
 import { AttachmentRef } from '../../agent/context/types'
 import { parseAttachmentRef } from '../../agent/context/attachments'
@@ -449,14 +449,14 @@ export function AgentComposer({
               </svg>
             </button>
 
-            <Dropdown
+            <OLDropdown
               drop="up"
               className="d-inline-flex"
               show={modeMenuOpen}
               onToggle={setModeMenuOpen}
               onKeyDown={onModeMenuKeyDown}
             >
-              <DropdownToggle
+              <OLDropdownToggle
                 id="ai-assist-mode-toggle"
                 as="button"
                 className="ai-assist-mode-selector-btn"
@@ -466,11 +466,11 @@ export function AgentComposer({
                 <span className="ai-assist-mode-icon">{currentModeConfig.icon}</span>
                 <span className="ai-assist-mode-label">{currentModeConfig.label}</span>
                 <CaretUp size={10} weight="bold" className="ai-assist-mode-caret" />
-              </DropdownToggle>
-              <DropdownMenu className="ai-assist-mode-menu">
+              </OLDropdownToggle>
+              <OLDropdownMenu className="ai-assist-mode-menu">
                 <div className="ai-assist-mode-menu-header">Mode</div>
                 {(['manual', 'acceptEdits', 'plan'] as AgentMode[]).map(m => (
-                  <DropdownItem
+                  <OLDropdownItem
                     key={m}
                     className={`ai-assist-mode-menu-row ${m === (mode || 'manual') ? 'is-selected' : ''}`}
                     onClick={() => onModeChange?.(m)}
@@ -481,10 +481,10 @@ export function AgentComposer({
                       <span className="ai-assist-mode-item-desc">{modeConfig[m].desc}</span>
                     </div>
                     <span className="ai-assist-mode-item-num">{modeConfig[m].num}</span>
-                  </DropdownItem>
+                  </OLDropdownItem>
                 ))}
-              </DropdownMenu>
-            </Dropdown>
+              </OLDropdownMenu>
+            </OLDropdown>
           </div>
 
           <div className="ai-assist-composer-right-actions">

@@ -6,7 +6,7 @@ import OLFormGroup from '@/shared/components/ol/ol-form-group'
 import OLFormLabel from '@/shared/components/ol/ol-form-label'
 import OLFormSelect from '@/shared/components/ol/ol-form-select'
 import OLFormText from '@/shared/components/ol/ol-form-text'
-import OLNotification from '@/shared/components/ol/ol-notification'
+import Notification from '@/shared/components/notification'
 import ProviderIcon from './provider-icon'
 import { AiAssistant } from '../assistant'
 import {
@@ -322,10 +322,14 @@ export default function ProviderForm({
       </OLFormGroup>
 
       {probe.state === 'ok' ? (
-        <OLNotification type="success" content={probe.message} />
+        <div className="notification-list">
+          <Notification type="success" content={probe.message} />
+        </div>
       ) : null}
       {probe.state === 'failed' ? (
-        <OLNotification type="error" content={probe.message} />
+        <div className="notification-list">
+          <Notification type="error" content={probe.message} />
+        </div>
       ) : null}
 
       <div className="linking-ai-assist-form-actions">

@@ -4,7 +4,7 @@ import { postJSON } from '@/infrastructure/fetch-json'
 import getMeta from '@/utils/meta'
 import OLBadge from '@/shared/components/ol/ol-badge'
 import OLButton from '@/shared/components/ol/ol-button'
-import OLNotification from '@/shared/components/ol/ol-notification'
+import Notification from '@/shared/components/notification'
 import ProviderForm from './provider-form'
 import ProviderIcon from './provider-icon'
 import { ProviderSettings } from '../providers/types'
@@ -165,10 +165,12 @@ export default function AiProvidersWidget() {
       ) : null}
 
       {!consented && settings && !editing && aiEnabled ? (
-        <OLNotification
-          type="info"
-          content="You will be asked to allow sending part of your document the first time you use the assistant."
-        />
+        <div className="notification-list">
+          <Notification
+            type="info"
+            content="You will be asked to allow sending part of your document the first time you use the assistant."
+          />
+        </div>
       ) : null}
 
       {editing ? (

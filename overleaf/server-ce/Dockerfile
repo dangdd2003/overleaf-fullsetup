@@ -23,12 +23,12 @@ RUN apt-get update && apt-get upgrade -y && \
 
 WORKDIR /overleaf
 
-# Node.js version argument (e.g. v24.14.1)
-ARG NODE_VERSION=v24.14.1
+# Node.js version argument (e.g. v24.20.0)
+ARG NODE_VERSION=v24.20.0
 
 # Ensure Node >= 24 is installed (Node.js 24 LTS with SHA256 verification)
 RUN if ! /usr/bin/node -e "if (parseInt(process.versions.node) < 24) process.exit(1)" 2>/dev/null; then \
-      NODE_VER="${NODE_VERSION:-v24.14.1}" && \
+      NODE_VER="${NODE_VERSION:-v24.20.0}" && \
       NODE_TAG="v${NODE_VER#v}" && \
       NODE_TAR="node-${NODE_TAG}-linux-x64.tar.xz" && \
       curl -fsSL "https://nodejs.org/dist/${NODE_TAG}/${NODE_TAR}" -o "/tmp/${NODE_TAR}" && \
@@ -55,7 +55,7 @@ ENV COREPACK_ENABLE_NETWORK=0
 # Install yarn dependencies
 # -------------------------
 RUN --mount=type=cache,target=/root/.cache \
-    --mount=type=cache,target=/root/.yarn/berry/cache,id=server-ce-yarn-cache \
+    --mount=type=cache,target=/root/.yarn/berry/cache,id=server-ce-yarn-cache-pnp \
     --mount=type=cache,target=/usr/local/share/.cache/yarn,id=server-ce-yarn-fallback-cache \
     --mount=type=tmpfs,target=/tmp node genScript install | bash
 
@@ -63,7 +63,7 @@ RUN --mount=type=cache,target=/root/.cache \
 # ---------------------------
 COPY --parents libraries/ services/ tools/migrations/ /overleaf/
 RUN --mount=type=cache,target=/root/.cache \
-    --mount=type=cache,target=/root/.yarn/berry/cache,id=server-ce-yarn-cache \
+    --mount=type=cache,target=/root/.yarn/berry/cache,id=server-ce-yarn-cache-pnp \
     --mount=type=cache,target=/usr/local/share/.cache/yarn,id=server-ce-yarn-fallback-cache \
     --mount=type=cache,target=/overleaf/services/web/.cache,id=server-ce-webpack-cache \
     --mount=type=tmpfs,target=/tmp \

@@ -1,18 +1,17 @@
 # Modelled on services/chat/Dockerfile.
 
-FROM node:24.14.1 AS base
+FROM node:24.20.0 AS base
 
 # Corepack setup, shared between all the images.
-ENV PATH="/overleaf/node_modules/.bin:$PATH"
 ENV COREPACK_HOME=/opt/corepack
-RUN corepack enable && corepack install -g yarn@4.14.1
+RUN corepack enable && corepack install -g yarn@4.18.0
 ENV COREPACK_ENABLE_NETWORK=0
 
 WORKDIR /overleaf/services/mcp
 
 FROM base AS app
 
-COPY package.json yarn.lock .yarnrc.yml /overleaf/
+COPY package.json yarn.lock .yarnrc.yml .pnp.register.mjs /overleaf/
 COPY libraries/eslint-plugin/package.json /overleaf/libraries/eslint-plugin/package.json
 COPY libraries/fetch-utils/package.json /overleaf/libraries/fetch-utils/package.json
 COPY libraries/logger/package.json /overleaf/libraries/logger/package.json
@@ -27,6 +26,9 @@ COPY .yarn/patches/ /overleaf/.yarn/patches/
 COPY tools/migrations/ /overleaf/tools/migrations/
 
 RUN cd /overleaf && yarn workspaces focus @overleaf/mcp overleaf
+
+# Yarn PnP: resolution is driven by .pnp.cjs, so every node process needs these loaders
+ENV NODE_OPTIONS="--require /overleaf/.pnp.cjs --import /overleaf/.pnp.register.mjs"
 COPY libraries/eslint-plugin/ /overleaf/libraries/eslint-plugin/
 COPY libraries/fetch-utils/ /overleaf/libraries/fetch-utils/
 COPY libraries/logger/ /overleaf/libraries/logger/
