@@ -11,6 +11,18 @@ export const READ_PREFERENCE_SECONDARY = Settings.mongo.hasSecondaries
 const mongoClient = new MongoClient(Settings.mongo.url, Settings.mongo.options)
 
 const internalDb = mongoClient.db()
+
+const auxMongoClient = Settings.mongo.auxUrl
+  ? new MongoClient(Settings.mongo.auxUrl, Settings.mongo.options)
+  : null
+
+export const auxInternalDb = auxMongoClient ? auxMongoClient.db() : null
+const auxConnectionPromise = auxMongoClient
+  ? auxMongoClient.connect()
+  : Promise.resolve()
+
+const libraryDb = auxInternalDb || internalDb
+
 export const db = {
   contacts: internalDb.collection('contacts'),
   deletedProjects: internalDb.collection('deletedProjects'),
@@ -33,7 +45,9 @@ export const db = {
   grouppolicies: internalDb.collection('grouppolicies'),
   groupAuditLogEntries: internalDb.collection('groupAuditLogEntries'),
   institutions: internalDb.collection('institutions'),
-  libraryReferences: internalDb.collection('libraryReferences'),
+  libraryReferences: libraryDb.collection('libraryReferences'),
+  librarySizes: libraryDb.collection('librarySizes'),
+  librarySyncStates: libraryDb.collection('librarySyncStates'),
   messages: internalDb.collection('messages'),
   migrations: internalDb.collection('migrations'),
   notifications: internalDb.collection('notifications'),
@@ -64,6 +78,7 @@ export const db = {
   tokens: internalDb.collection('tokens'),
   userAuditLogEntries: internalDb.collection('userAuditLogEntries'),
   users: internalDb.collection('users'),
+  workspaces: internalDb.collection('workspaces'),
   onboardingDataCollection: internalDb.collection('onboardingDataCollection'),
   scriptLogs: internalDb.collection('scriptLogs'),
 }
@@ -87,6 +102,7 @@ export async function getCollectionInternal(name) {
 
 export async function waitForDb() {
   await connectionPromise
+  await auxConnectionPromise
 }
 
 const mongodb = {

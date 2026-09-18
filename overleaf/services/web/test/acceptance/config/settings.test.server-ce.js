@@ -5,10 +5,10 @@ const base = require('./settings.test.defaults')
 module.exports = base.mergeWith({
   defaultFeatures: ServerCEDefaults.defaultFeatures,
   activeUserMetricInterval: 100,
-  apis: {
-    webpack: {
-      url: process.env.WEBPACK_URL || 'http://webpack:3808',
-    },
+
+  splitTestOverrides: {
+    'sharing-updates-new-link': 'enabled', // routes in acceptance tests
+    'linked-file-from-history': 'enabled', // read linked project files from history
   },
 })
 

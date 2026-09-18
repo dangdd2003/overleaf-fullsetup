@@ -103,20 +103,14 @@ async function getDocument(projectId, docId, fromVersion) {
   }
 }
 
-/**
- * Get a document with its history ranges
- * @param {string} projectId
- * @param {string} docId
- */
-async function getDocumentWithHistoryRanges(projectId, docId) {
-  const doc = await fetchJson(
-    `${BASE_URL}/project/${projectId}/doc/${docId}?historyRanges=true`,
-    { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) }
-  )
-  return doc
-}
-
-async function setDocument(projectId, docId, userId, docLines, source) {
+async function setDocument(
+  projectId,
+  docId,
+  userId,
+  docLines,
+  source,
+  trackChanges = false
+) {
   const maybeJson = await fetchString(
     `${BASE_URL}/project/${projectId}/doc/${docId}`,
     {
@@ -125,6 +119,7 @@ async function setDocument(projectId, docId, userId, docLines, source) {
         lines: docLines,
         source,
         user_id: userId,
+        trackChanges,
       },
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     }
@@ -140,7 +135,14 @@ async function setDocument(projectId, docId, userId, docLines, source) {
   }
 }
 
-async function appendToDocument(projectId, docId, userId, lines, source) {
+async function appendToDocument(
+  projectId,
+  docId,
+  userId,
+  lines,
+  source,
+  trackChanges = false
+) {
   const maybeJson = await fetchString(
     `${BASE_URL}/project/${projectId}/doc/${docId}/append`,
     {
@@ -149,6 +151,7 @@ async function appendToDocument(projectId, docId, userId, lines, source) {
         lines,
         source,
         user_id: userId,
+        trackChanges,
       },
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     }
@@ -207,7 +210,7 @@ async function clearProjectState(projectId) {
  * @param {string} userId
  */
 async function acceptChanges(projectId, docId, changeIds, userId) {
-  const { changeContributors } = await fetchJson(
+  const { changeContributors, previews } = await fetchJson(
     `${BASE_URL}/project/${projectId}/doc/${docId}/change/accept`,
     {
       method: 'POST',
@@ -220,25 +223,9 @@ async function acceptChanges(projectId, docId, changeIds, userId) {
     projectId,
     docId,
     userId,
-    changeContributors
+    changeContributors,
+    previews
   )
-}
-
-/**
- * @param {string} projectId
- * @param {string} docId
- * @param {string[]} changeIds
- */
-async function rejectChanges(projectId, docId, changeIds, userId) {
-  const { rejectedChangeIds } = await fetchJson(
-    `${BASE_URL}/project/${projectId}/doc/${docId}/change/reject`,
-    {
-      method: 'POST',
-      json: { change_ids: changeIds, user_id: userId },
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    }
-  )
-  return { rejectedChangeIds }
 }
 
 /**
@@ -540,7 +527,6 @@ const DocumentUpdaterHandler = {
   getProjectDocsIfMatch,
   clearProjectState,
   acceptChanges,
-  rejectChanges,
   resolveThread,
   reopenThread,
   deleteThread,
@@ -548,7 +534,6 @@ const DocumentUpdaterHandler = {
   blockProject,
   unblockProject,
   updateProjectStructure,
-  getDocumentWithHistoryRanges,
 }
 
 export default {

@@ -13,6 +13,7 @@ import LockManager from '../../infrastructure/LockManager.mjs'
 import { Project } from '../../models/Project.mjs'
 import ProjectEntityHandler from './ProjectEntityHandler.mjs'
 import ProjectGetter from './ProjectGetter.mjs'
+import ProjectHelper from './ProjectHelper.mjs'
 import ProjectLocator from './ProjectLocator.mjs'
 import ProjectOptionsHandler from './ProjectOptionsHandler.mjs'
 import ProjectUpdateHandler from './ProjectUpdateHandler.mjs'
@@ -397,11 +398,19 @@ const upsertDoc = wrapWithLock(
     if (!SafePath.isCleanFilename(docName)) {
       throw new Errors.InvalidNameError('invalid element name')
     }
+    const project = await ProjectGetter.promises.getProject(projectId, {
+      rootFolder: true,
+      rootDoc_id: true,
+      track_changes: true,
+    })
+    if (project == null) {
+      throw new Errors.NotFoundError('project not found')
+    }
     let element, folderPath
     try {
       ;({ element, path: folderPath } =
         await ProjectLocator.promises.findElement({
-          project_id: projectId,
+          project,
           element_id: folderId,
           type: 'folder',
         }))
@@ -430,7 +439,7 @@ const upsertDoc = wrapWithLock(
       )
 
       doc.rev = rev
-      const project =
+      const updatedProject =
         await ProjectEntityMongoUpdateHandler.promises.replaceFileWithDoc(
           projectId,
           existingFile._id,
@@ -442,15 +451,15 @@ const upsertDoc = wrapWithLock(
         projectId,
         docId: doc._id,
         path: filePath,
-        projectName: project.name,
+        projectName: updatedProject.name,
         rev: existingFile.rev + 1,
         folderId,
       })
 
       const projectHistoryId =
-        project.overleaf &&
-        project.overleaf.history &&
-        project.overleaf.history.id
+        updatedProject.overleaf &&
+        updatedProject.overleaf.history &&
+        updatedProject.overleaf.history.id
       const newDocs = [
         {
           doc,
@@ -468,7 +477,7 @@ const upsertDoc = wrapWithLock(
         projectId,
         projectHistoryId,
         userId,
-        { oldFiles, newDocs, newProject: project },
+        { oldFiles, newDocs, newProject: updatedProject },
         source
       )
 
@@ -480,12 +489,17 @@ const upsertDoc = wrapWithLock(
       )
       return { doc, isNew: true }
     } else if (existingDoc) {
+      const trackChanges = ProjectHelper.isTrackChangesEnabledForUser(
+        project.track_changes,
+        userId
+      )
       const result = await DocumentUpdaterHandler.promises.setDocument(
         projectId,
         existingDoc._id,
         userId,
         docLines,
-        source
+        source,
+        trackChanges
       )
       logger.debug(
         { projectId, docId: existingDoc._id },
@@ -518,18 +532,31 @@ const upsertDoc = wrapWithLock(
 
 const appendToDoc = wrapWithLock(
   async (projectId, docId, lines, source, userId) => {
+    const project = await ProjectGetter.promises.getProject(projectId, {
+      rootFolder: true,
+      rootDoc_id: true,
+      track_changes: true,
+    })
+    if (project == null) {
+      throw new Errors.NotFoundError('project not found')
+    }
     const { element } = await ProjectLocator.promises.findElement({
-      project_id: projectId,
+      project,
       element_id: docId,
       type: 'doc',
     })
 
+    const trackChanges = ProjectHelper.isTrackChangesEnabledForUser(
+      project.track_changes,
+      userId
+    )
     return await DocumentUpdaterHandler.promises.appendToDocument(
       projectId,
       element._id,
       userId,
       lines,
-      source
+      source,
+      trackChanges
     )
   }
 )
