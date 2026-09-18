@@ -217,7 +217,7 @@ export const UserSchema = new Schema(
       premiumSource: { type: String, default: null },
     },
     aiFeatures: {
-      enabled: { type: Boolean, default: true },
+      enabled: { type: Boolean, default: false },
     },
     alphaProgram: { type: Boolean, default: false }, // experimental features
     betaProgram: { type: Boolean, default: false },

@@ -16,6 +16,7 @@ import {
   setAiAssistEnabled,
   writeSettings,
 } from '../provider-store'
+import '../../../../stylesheets/ai-assist.scss'
 
 const TYPE_LABELS: Record<string, string> = {
   openai: 'OpenAI',

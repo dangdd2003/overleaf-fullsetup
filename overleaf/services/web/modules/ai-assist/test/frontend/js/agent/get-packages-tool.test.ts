@@ -35,4 +35,31 @@ describe('get_packages', function () {
     const result: any = await getPackagesTool.execute({}, handle)
     expect(getPackagesTool.render!(result)).to.include('graphicx')
   })
+
+  it('returns package options and compiler settings', async function () {
+    const { handle } = createFakeHandle({
+      docs: {
+        'main.tex': '\\documentclass{article}\n\\usepackage[table,dvipsnames]{xcolor}\n',
+      },
+    })
+    const result: any = await getPackagesTool.execute({}, handle)
+    expect(result.documentClass).to.equal('article')
+    expect(result.compiler).to.equal('pdflatex')
+    const xcolor = result.packages.find((p: any) => p.name === 'xcolor')
+    expect(xcolor.options).to.equal('table,dvipsnames')
+    expect(xcolor.path).to.equal('main.tex')
+    expect(xcolor.line).to.equal(2)
+  })
+
+  it('renders package options and compiler in output', async function () {
+    const { handle } = createFakeHandle({
+      docs: {
+        'main.tex': '\\documentclass{article}\n\\usepackage[table]{xcolor}\n',
+      },
+    })
+    const result: any = await getPackagesTool.execute({}, handle)
+    const rendered = getPackagesTool.render!(result)
+    expect(rendered).to.include('compiler: pdflatex')
+    expect(rendered).to.include('xcolor [table]  (main.tex:2)')
+  })
 })

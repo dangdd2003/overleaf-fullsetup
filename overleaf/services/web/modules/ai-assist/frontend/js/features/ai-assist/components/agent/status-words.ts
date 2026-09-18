@@ -1,5 +1,6 @@
 import { AssistantBlock, ToolCallRecord } from '../../agent/agent-messages'
 import { estimateTokens } from '../../agent/context/budget'
+import { wantsCleanCompile } from '../../agent/tools/compile-args'
 
 /**
  * The vocabulary of the idle / text-generating status line.
@@ -209,7 +210,10 @@ export const TOOL_ACTION_LABELS: Record<string, (args: any) => string> = {
     args?.path ? `Preparing edit to ${args.path}…` : 'Editing file…',
   create_file: args =>
     args?.path ? `Creating ${args.path}…` : 'Creating file…',
-  compile_project: () => 'Compiling project…',
+  compile_project: args =>
+    wantsCleanCompile(args)
+      ? 'Clearing build cache and rebuilding…'
+      : 'Compiling project…',
   get_compile_result: () => 'Checking compile logs…',
   get_compile_log: () => 'Reading compile log…',
   get_outline: () => 'Reading project outline…',

@@ -2,7 +2,6 @@ import { expect } from 'chai'
 import { TranscriptEntry } from '../../../../frontend/js/features/ai-assist/agent/agent-messages'
 import {
   FIX_TOOLS,
-  FIX_MAX_STEPS,
   FIX_TASK_BLOCK,
   buildFixTaskBlock,
   buildFixTranscript,
@@ -33,10 +32,6 @@ describe('fix-run', function () {
     expect(FIX_TOOLS).to.not.have.property('create_file')
   })
 
-  it('caps the loop well below the rail', function () {
-    expect(FIX_MAX_STEPS).to.equal(14)
-  })
-
   // The panel this run renders into has no composer: a question or an offer
   // to investigate is a dead end, and narration between tool calls is what
   // turns one click into three assistant turns.
@@ -46,20 +41,15 @@ describe('fix-run', function () {
     expect(FIX_TASK_BLOCK).to.match(/no text between/)
   })
 
-  it('demands a finished job: an edit, or the exact change as a snippet', function () {
-    expect(FIX_TASK_BLOCK).to.include('edit_file')
-    expect(FIX_TASK_BLOCK).to.match(/before\/after\s+snippet/)
-    // A checklist of things to check is explicitly not a suggestion.
-    expect(FIX_TASK_BLOCK).to.match(/not a suggestion/)
+  it('demands an edit, never an explanation in its place', function () {
+    expect(FIX_TASK_BLOCK).to.include('Call edit_file')
+    expect(FIX_TASK_BLOCK).to.match(/being unsure is not a reason to withhold it/)
+    expect(FIX_TASK_BLOCK).to.match(/never replace\s+the edit with instructions/)
+    expect(FIX_TASK_BLOCK).to.not.match(/make no edit/)
   })
 
-  // A 1pt overfull hbox is not a defect. Without this branch the model either
-  // forces a risky reflow of the author's equation or trails off with nothing
-  // concrete, both of which were real behaviours before it existed.
-  it('lets a cosmetic warning end in no edit, still offering a concrete option', function () {
-    expect(FIX_TASK_BLOCK).to.match(/nothing is actually broken/)
-    expect(FIX_TASK_BLOCK).to.match(/make no edit/)
-    expect(FIX_TASK_BLOCK).to.match(/optional/)
+  it('still proposes a safe change for a warning the author could live with', function () {
+    expect(FIX_TASK_BLOCK).to.match(/still propose the safe change/)
   })
 
   it('ranks fixes by how invasive they are', function () {

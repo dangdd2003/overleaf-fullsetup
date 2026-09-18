@@ -10,11 +10,17 @@ import {
   ProjectHandle,
 } from '../../../../frontend/js/features/ai-assist/agent/project-handle'
 import useEventListener from '@/shared/hooks/use-event-listener'
+import { ProjectSnapshot } from '@/infrastructure/project-snapshot'
 import { resetMeta } from '../../../../../../test/frontend/helpers/reset-meta'
 
 describe('fake handle context accessors', function () {
   beforeEach(function () {
     resetMeta()
+    const exposed = window.metaAttributesCache.get('ol-ExposedSettings') || {}
+    window.metaAttributesCache.set('ol-ExposedSettings', {
+      ...exposed,
+      validRootDocExtensions: ['tex', 'latex'],
+    })
   })
   it('reports no open file and no compile by default', function () {
     const { handle } = createFakeHandle({ docs: { 'main.tex': 'hello' } })
@@ -134,6 +140,11 @@ function Probe({
 describe('useProjectHandle (real) proposeEdit', function () {
   beforeEach(function () {
     resetMeta()
+    const exposed = window.metaAttributesCache.get('ol-ExposedSettings') || {}
+    window.metaAttributesCache.set('ol-ExposedSettings', {
+      ...exposed,
+      validRootDocExtensions: ['tex', 'latex'],
+    })
   })
 
   it('tells the approver which line the edit starts on', async function () {
@@ -143,7 +154,14 @@ describe('useProjectHandle (real) proposeEdit', function () {
     render(
       React.createElement(
         EditorProviders,
-        {},
+        {
+          scope: {
+            editor: {
+              currentDocumentId: '_root_doc_id',
+              openDocName: 'main.tex',
+            },
+          },
+        },
         React.createElement(FakeEditorBridge, {
           text: 'line one\nline two\nline three',
         }),
@@ -160,24 +178,61 @@ describe('useProjectHandle (real) proposeEdit', function () {
       expect(handle).to.not.equal(undefined)
     })
 
-    // 'notes.tex' is deliberately absent from EditorProviders' default file
-    // tree (which only seeds 'main.tex'). proposeEdit only calls
-    // openDocWithId for a path it finds in the file tree, and that call needs
-    // a live, socket-backed document-open flow this harness does not provide.
-    // Using a path outside the tree skips that branch, which is orthogonal to
-    // what this task changes -- the startLine computed from the matched span
-    // in the document text read back over the window-event bridge above.
     const outcome = await handle!.proposeEdit({
-      path: 'notes.tex',
+      path: 'main.tex',
       oldText: 'line two',
       newText: 'line 2',
     })
 
     expect(requestApproval).to.have.been.calledOnce
     expect(requestApproval.firstCall.args[1]).to.deep.equal({ startLine: 2 })
-    // requestApproval resolved { accepted: false }, so proposeEdit rejects
-    // before it ever needs the (unimplemented-in-this-test) apply-edit half
-    // of the bridge.
     expect(outcome.status).to.equal('rejected')
+  })
+})
+
+describe('useProjectHandle (real) listFiles', function () {
+  afterEach(function () {
+    sinon.restore()
+  })
+
+  it('refreshes the snapshot before reading it', async function () {
+    // The snapshot starts empty and its instance is never replaced, so reading
+    // it without refreshing first yields no files for the rest of the session.
+    // That is what broke @-mentions and the attach menu, which list these paths.
+    let refreshed = false
+    const refresh = sinon.stub(ProjectSnapshot.prototype, 'refresh').callsFake(
+      async () => {
+        refreshed = true
+      }
+    )
+    sinon
+      .stub(ProjectSnapshot.prototype, 'getDocPaths')
+      .callsFake(() => (refreshed ? ['/main.tex'] : []))
+    sinon
+      .stub(ProjectSnapshot.prototype, 'getDocContents')
+      .callsFake(() => 'a\nb')
+
+    let handle: ProjectHandle | undefined
+    render(
+      React.createElement(
+        EditorProviders,
+        {},
+        React.createElement(Probe, {
+          requestApproval: sinon.stub().resolves({ accepted: false }),
+          onHandle: (h: ProjectHandle) => {
+            handle = h
+          },
+        })
+      )
+    )
+
+    await waitFor(() => {
+      expect(handle).to.not.equal(undefined)
+    })
+
+    const files = await handle!.listFiles()
+
+    expect(refresh).to.have.been.called
+    expect(files.map(file => file.path)).to.include('main.tex')
   })
 })

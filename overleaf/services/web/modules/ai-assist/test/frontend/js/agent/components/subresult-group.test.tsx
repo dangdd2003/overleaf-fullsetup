@@ -172,6 +172,65 @@ describe('formatSubresultsSummary', function () {
     expect(title.toLowerCase()).to.include('edited 1 file')
     expect(title.toLowerCase()).to.include('1 edit rejected')
   })
+
+  it('summarizes cancelled or unfinished edits as cancelled rather than edited', function () {
+    const items: any[] = [
+      {
+        type: 'tool_call',
+        call: {
+          name: 'read_file',
+          args: { path: 'main.tex' },
+          result: { lines: ['a'] },
+        },
+      },
+      {
+        type: 'tool_call',
+        call: {
+          name: 'edit_file',
+          args: { path: 'main.tex', oldText: 'a', newText: 'b' },
+          result: { status: 'stopped' },
+        },
+      },
+    ]
+    const { title, diffStats } = formatSubresultsSummary(items, false, fakeT)
+    expect(title.toLowerCase()).to.include('read 1 file')
+    expect(title.toLowerCase()).to.include('1 edit cancelled')
+    expect(title.toLowerCase()).to.not.include('edited 1 file')
+    expect(diffStats).to.equal(null)
+  })
+
+  it('treats in-flight edits without a result as cancelled after run finished', function () {
+    const items: any[] = [
+      {
+        type: 'tool_call',
+        call: {
+          name: 'edit_file',
+          args: { path: 'main.tex', oldText: 'a', newText: 'b' },
+        },
+      },
+    ]
+    const { title, diffStats } = formatSubresultsSummary(items, false, fakeT)
+    expect(title.toLowerCase()).to.include('1 edit cancelled')
+    expect(title.toLowerCase()).to.not.include('edited 1 file')
+    expect(diffStats).to.equal(null)
+  })
+
+  it('summarizes cancelled file creations as cancelled rather than created', function () {
+    const items: any[] = [
+      {
+        type: 'tool_call',
+        call: {
+          name: 'create_file',
+          args: { path: 'new.tex', content: 'abc' },
+          result: { status: 'stopped' },
+        },
+      },
+    ]
+    const { title, diffStats } = formatSubresultsSummary(items, false, fakeT)
+    expect(title.toLowerCase()).to.include('1 file creation cancelled')
+    expect(title.toLowerCase()).to.not.include('created 1 file')
+    expect(diffStats).to.equal(null)
+  })
 })
 
 describe('SubresultGroup Component', function () {

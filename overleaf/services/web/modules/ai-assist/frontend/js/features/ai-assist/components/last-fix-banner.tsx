@@ -5,6 +5,7 @@ import { ProjectContext } from '@/shared/context/project-context'
 import { useDetachCompileContext } from '@/shared/context/detach-compile-context'
 import { getLastCompletedFix, LastFixSummary, buildLogEntryFingerprint } from '../agent/fix-store'
 import SuggestFixPanel from './suggest-fix-panel'
+import '../../../../stylesheets/ai-assist.scss'
 
 /**
  * Keeps the last suggested fix reachable after its log entry is gone.

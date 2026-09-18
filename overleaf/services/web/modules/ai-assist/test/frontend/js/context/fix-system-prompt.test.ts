@@ -45,8 +45,10 @@ describe('FIX_SYSTEM_PROMPT', function () {
     expect(FIX_SYSTEM_PROMPT).to.match(/fewest lines/)
   })
 
-  it('allows "nothing is wrong" as an answer', function () {
-    expect(FIX_SYSTEM_PROMPT).to.match(/Not\s+every entry is a defect/i)
+  it('answers with an edit, never with only an explanation', function () {
+    expect(FIX_SYSTEM_PROMPT).to.match(/Your answer is an edit/)
+    expect(FIX_SYSTEM_PROMPT).to.match(/Never answer with only an\s+explanation/)
+    expect(FIX_SYSTEM_PROMPT).to.not.match(/Not\s+every entry is a defect/i)
   })
 
   // Same caching contract as the rail's prompt: a constant, or every request

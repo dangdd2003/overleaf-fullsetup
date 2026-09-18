@@ -45,4 +45,17 @@ describe('get_outline', function () {
     const result: any = await getOutlineTool.execute({}, handle)
     expect(getOutlineTool.render!(result)).to.include('Intro')
   })
+
+  it('bounds the final section range to file line count and avoids to=end hint', async function () {
+    const { handle } = createFakeHandle({
+      docs: { 'main.tex': '\\section{Intro}\na\n\\section{Method}\nb\nc\n' },
+    })
+    const result: any = await getOutlineTool.execute(
+      { section: 'Method' },
+      handle
+    )
+    expect(result.range.to).to.equal(6)
+    expect(result.hint).to.include('to=6')
+    expect(result.hint).to.not.include('to=end')
+  })
 })

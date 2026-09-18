@@ -31,11 +31,22 @@ describe('DiffView', function () {
     expect(container.querySelectorAll('.diff-line-ins')).to.have.length(1)
   })
 
-  it('folds the middle of a long hunk', function () {
+  it('renders all lines for a long hunk in a scrollable view by default without folding', function () {
     const oldText = Array.from({ length: 40 }, (_unused, i) => `old ${i}`).join('\n')
     const newText = Array.from({ length: 40 }, (_unused, i) => `new ${i}`).join('\n')
 
-    render(<DiffView oldText={oldText} newText={newText} startLine={1} />)
+    const { container } = render(<DiffView oldText={oldText} newText={newText} startLine={1} />)
+
+    expect(screen.queryByText(/more lines/)).to.not.exist
+    expect(container.querySelectorAll('.diff-line-del')).to.have.length(40)
+    expect(container.querySelectorAll('.diff-line-ins')).to.have.length(40)
+  })
+
+  it('folds the middle of a long hunk when foldLongHunks is enabled', function () {
+    const oldText = Array.from({ length: 40 }, (_unused, i) => `old ${i}`).join('\n')
+    const newText = Array.from({ length: 40 }, (_unused, i) => `new ${i}`).join('\n')
+
+    render(<DiffView oldText={oldText} newText={newText} startLine={1} foldLongHunks={true} />)
 
     expect(screen.getByText(/more lines/)).to.exist
   })

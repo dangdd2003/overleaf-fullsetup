@@ -37,21 +37,6 @@ export const FIX_TOOLS: Record<string, AgentTool> = Object.fromEntries(
 )
 
 /**
- * The step budget for a fix run, counted in tool calls (see run-agent.ts).
- *
- * This is not the number of assistant turns: every read, search and edit
- * spends one. Six was too few to finish the job the task block asks for.
- * Orienting costs a project_map and one or two reads, a cascade of log
- * entries can cost a get_compile_log, the edit itself costs one, and an
- * anchor that comes back `noMatch` or `ambiguous` costs a re-read plus a
- * second edit. A run that spends its last step on the edit_file it was
- * building towards leaves the user with an explanation and no fix — the
- * worst of both. Fourteen covers that path with room for one retry, and
- * still stops well short of the rail's 30.
- */
-export const FIX_MAX_STEPS = 14
-
-/**
  * The task block for a fix run.
  *
  * The level is the one interpolated value: calling a warning an "error" would
@@ -72,22 +57,20 @@ export function buildFixTaskBlock(level: string): string {
     '   first command that needs it, and an unclosed brace surfaces far below',
     '   itself. Check the preamble and the compile log index before you assume',
     '   the fix is local.',
-    '2. If you are confident, call edit_file with the smallest change that',
-    '   fixes this entry — one anchor, no drive-by cleanup; the fix may belong',
-    '   in a different file from the one the entry names — then write one text',
-    '   block: the cause in two or three sentences of plain language, and one',
-    '   sentence on what you changed. Prefer the least invasive fix that',
-    '   works: change an argument before you add a package, and add a package',
-    '   before you restructure the author\'s content.',
-    '3. If you are not confident, make no edit and write one text block: the',
-    '   cause, then the exact change you recommend as a short before/after',
-    '   snippet with the file and line it belongs at, and the one reason you',
-    '   did not apply it yourself. A checklist of things the user might check',
-    '   is not a suggestion.',
-    '4. If nothing is actually broken — a cosmetic warning the author can',
-    '   live with — say so in one or two sentences and make no edit. Still',
-    '   give the before/after snippet if a safe change exists, marked as',
-    '   optional, so the user has something concrete to accept or ignore.',
+    '2. Call edit_file with the smallest change that fixes this entry — one',
+    '   anchor, no drive-by cleanup; the fix may belong in a different file',
+    '   from the one the entry names. The user sees your edit as a diff and',
+    '   accepts or rejects it, so the edit is a proposal, not a commitment:',
+    '   being unsure is not a reason to withhold it. Prefer the least invasive',
+    '   fix that works: change an argument before you add a package, and add',
+    '   a package before you restructure the author\'s content. For a warning',
+    '   the author could live with, still propose the safe change.',
+    '3. After the edit, write one short text block: the cause in one sentence',
+    '   of plain language, and one sentence on what the edit changes. The fix',
+    '   is the answer; do not explain the error at length, and never replace',
+    '   the edit with instructions for the user to carry out.',
+    '4. If the edit was rejected, do not resend it; say in one sentence what',
+    '   you proposed.',
     '',
     'compile_project and create_file are not available for this task. Do not',
     'offer to compile; the user will rebuild when they apply your fix.',

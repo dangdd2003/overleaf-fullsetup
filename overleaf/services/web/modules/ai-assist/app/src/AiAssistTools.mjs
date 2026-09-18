@@ -8,6 +8,22 @@ import ProjectOptionsHandler from '../../../../app/src/Features/Project/ProjectO
 import { User } from '../../../../app/src/models/User.mjs'
 import Settings from '@overleaf/settings'
 import { LatexLogParser } from './LatexLogParser.mjs'
+import { matchesGlob } from './AiAssistGlob.mjs'
+import { buildProjectIndex, matchSection } from './AiAssistProjectIndex.mjs'
+import { regexSearch } from './AiAssistRegexSearch.mjs'
+
+// A tool call reads the project through one snapshot: one flush plus one bulk
+// read, instead of one document-updater request per document per call. Short
+// enough that a user typing alongside the agent is seen on the next step;
+// read_file and edit_file still read the live document.
+const SNAPSHOT_TTL_MS = 5000
+const MAX_FILE_ROWS = 400
+const MAX_READ_LINES = 1000
+// Without from/to, read_file returns a window instead of a whole long file:
+// the result stays in the conversation and is re-sent on every later step.
+const DEFAULT_READ_LINES = 500
+const MAX_SEARCH_HITS = 50
+const MAX_REMEMBERED_COMPILES = 100
 
 const FORBIDDEN_ACCOUNT_KEYS = new Set([
   'password',
@@ -65,6 +81,45 @@ export function cleanLineNumbers(text) {
   return (text || '').replace(/^\s*\d+[:|]\s?/gm, '')
 }
 
+export function cleanLineNumberPrefixes(text, oldTextWasStripped = false) {
+  if (!text) return ''
+  const lines = text.split('\n')
+  const nonEmptyLines = lines.filter(l => l.trim().length > 0)
+  if (nonEmptyLines.length === 0) return text
+
+  const prefixRegex = /^\s*\d+[:|]\s?/
+  const matchingLines = nonEmptyLines.filter(l => prefixRegex.test(l))
+
+  const isMajority = matchingLines.length >= Math.ceil(nonEmptyLines.length / 2)
+  if (oldTextWasStripped || isMajority) {
+    return lines.map(line => line.replace(prefixRegex, '')).join('\n')
+  }
+
+  return text
+}
+
+export function errorSignature(e) {
+  return `${e.file || ''}::${(e.message || '').trim()}`
+}
+
+export function computeErrorDelta(currentErrors = [], previousErrors = []) {
+  const previousSignatures = new Set(previousErrors.map(errorSignature))
+  const currentSignatures = new Set(currentErrors.map(errorSignature))
+
+  const newErrors = currentErrors.filter(e => !previousSignatures.has(errorSignature(e)))
+  const resolvedErrors = previousErrors.filter(e => !currentSignatures.has(errorSignature(e)))
+
+  const countDelta = currentErrors.length - previousErrors.length
+
+  return {
+    countDelta,
+    newErrors,
+    newErrorsCount: newErrors.length,
+    resolvedErrorsCount: resolvedErrors.length,
+    regressed: countDelta > 0 || newErrors.length > 0,
+  }
+}
+
 export function countOccurrences(haystack, needle) {
   if (!needle) return 0
   const normH = normalizeLines(haystack)
@@ -97,7 +152,7 @@ export function cleanOldText(text) {
   if (!text) return ''
   let cleaned = cleanLineNumbers(text)
   // Normalize double-escaped LaTeX backslashes e.g. \\centering -> \centering
-  cleaned = cleaned.replace(/\\\\([a-zA-Z@]+)/g, '\\$1')
+  cleaned = cleaned.replace(/\\\\([a-zA-Z@{}\[\]$%&_#\\]|\\\\)/g, '\\$1')
   return cleaned
 }
 
@@ -186,19 +241,144 @@ export function locateAnchorInText(docText, anchor) {
     }
   }
 
+  // 5. Fuzzy word window matching
+  const wordMatch = findFuzzyWordWindow(docText, anchor) || (cleaned ? findFuzzyWordWindow(docText, cleaned) : null)
+  if (wordMatch) {
+    return {
+      type: 'fuzzy_words',
+      anchor: wordMatch.anchor,
+      charStart: wordMatch.charStart,
+      charEnd: wordMatch.charEnd,
+      score: wordMatch.score,
+    }
+  }
+
   return null
 }
 
+export function cleanWord(w) {
+  return (w || '').toLowerCase().replace(/[^a-z0-9\\]/g, '')
+}
+
+export function findFuzzyWordWindow(docText, needleText, threshold = 0.75) {
+  if (!docText || !needleText) return null
+  const docWords = []
+  const wordRe = /\S+/g
+  let m
+  while ((m = wordRe.exec(docText)) !== null) {
+    const raw = m[0]
+    const clean = cleanWord(raw)
+    if (clean) {
+      docWords.push({ clean, start: m.index, end: m.index + raw.length })
+    }
+  }
+
+  const needleWords = []
+  while ((m = wordRe.exec(needleText)) !== null) {
+    const clean = cleanWord(m[0])
+    if (clean) needleWords.push(clean)
+  }
+
+  if (needleWords.length < 3 || docWords.length < 3) return null
+  const nLen = needleWords.length
+
+  const hits = []
+  const minW = Math.max(3, nLen - 4)
+  const maxW = Math.min(docWords.length, nLen + 4)
+
+  for (let i = 0; i <= docWords.length - minW; i++) {
+    for (let w = minW; w <= Math.min(docWords.length - i, maxW); w++) {
+      let matches = 0
+      let d = 0
+      let n = 0
+      while (d < w && n < nLen) {
+        if (docWords[i + d].clean === needleWords[n]) {
+          matches++
+          d++
+          n++
+        } else if (d + 1 < w && docWords[i + d + 1].clean === needleWords[n]) {
+          d += 2
+          n++
+          matches += 0.8
+        } else if (n + 1 < nLen && docWords[i + d].clean === needleWords[n + 1]) {
+          d++
+          n += 2
+          matches += 0.8
+        } else {
+          d++
+          n++
+        }
+      }
+      const score = (2 * matches) / (w + nLen)
+      if (score >= threshold) {
+        hits.push({ startIdx: i, endIdx: i + w - 1, score })
+      }
+    }
+  }
+
+  if (hits.length === 0) return null
+
+  hits.sort((a, b) => b.score - a.score)
+  const clusters = []
+  for (const hit of hits) {
+    let merged = false
+    for (const cluster of clusters) {
+      if (Math.max(hit.startIdx, cluster.best.startIdx) <= Math.min(hit.endIdx, cluster.best.endIdx)) {
+        merged = true
+        break
+      }
+    }
+    if (!merged) {
+      clusters.push({ best: hit })
+    }
+  }
+
+  if (clusters.length === 1 && clusters[0].best.score >= threshold) {
+    const best = clusters[0].best
+    const startChar = docWords[best.startIdx].start
+    const endChar = docWords[best.endIdx].end
+    return {
+      anchor: docText.slice(startChar, endChar),
+      charStart: startChar,
+      charEnd: endChar,
+      score: best.score,
+    }
+  }
+
+  return null
+}
+
+export function formatAmbiguousOccurrences(docText, lineNumbers, maxOccurrences = 4) {
+  const lines = (docText || '').split('\n')
+  const shown = (lineNumbers || []).slice(0, maxOccurrences)
+  const previews = shown.map(lineNo => {
+    const idx = lineNo - 1
+    const start = Math.max(0, idx - 1)
+    const end = Math.min(lines.length, idx + 3)
+    const snippet = lines
+      .slice(start, end)
+      .map((l, offset) => `    ${start + offset + 1}: ${l}`)
+      .join('\n')
+    return `  Occurrence around line ${lineNo}:\n${snippet}`
+  })
+
+  return previews.join('\n\n')
+}
+
 export function findMatchingLines(haystack, needle) {
-  if (!needle) return []
+  if (!needle || !haystack) return []
   const normH = normalizeLines(haystack)
-  const normN = normalizeLines(needle)
+  const normN = cleanOldText(normalizeLines(needle))
   const hLines = normH.split('\n')
-  const nFirst = normN.split('\n')[0].trim()
+  const nLines = normN.split('\n').map(l => l.trim()).filter(Boolean)
+  if (nLines.length === 0) return []
+
+  const targetLine = nLines[0]
   const results = []
 
   for (let i = 0; i < hLines.length; i++) {
-    if (hLines[i].trim() === nFirst) {
+    const trimmedH = hLines[i].trim()
+    if (trimmedH === targetLine || (targetLine.length > 5 && trimmedH.includes(targetLine))) {
       results.push(i + 1)
     }
   }
@@ -219,9 +399,18 @@ export function findFuzzyUniqueAnchor(haystack, needle) {
     }
   }
 
+  // Also try cleaned old text (stripped line numbers + normalized backslashes)
+  const cleaned = cleanOldText(normN)
+  if (cleaned && cleaned !== normN) {
+    const cleanedOccurrences = countOccurrences(normH, cleaned)
+    if (cleanedOccurrences === 1) {
+      return cleaned
+    }
+  }
+
   // 2. Line-by-line trimmed matching against haystack lines
   const hLines = normH.split('\n')
-  const nLines = (stripped || normN).split('\n')
+  const nLines = (cleaned || stripped || normN).split('\n')
 
   while (nLines.length > 1 && nLines[nLines.length - 1].trim() === '') {
     nLines.pop()
@@ -256,15 +445,134 @@ export function findFuzzyUniqueAnchor(haystack, needle) {
   return null
 }
 
-function excerptAround(rawLog, needle, radius = 3) {
-  if (!rawLog || !needle) return null
-  const lines = rawLog.split('\n')
-  const index = lines.findIndex(line => line.includes(needle))
-  if (index === -1) return null
+export function nearestLines(text, oldText, limit = 5) {
+  const cleaned = cleanOldText(oldText || '')
+  const probes = cleaned
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line.length >= 4)
+  if (probes.length === 0) return []
 
-  return lines
-    .slice(Math.max(0, index - radius), index + radius + 1)
-    .join('\n')
+  const lines = normalizeLines(text).split('\n')
+  const scored = []
+
+  lines.forEach((line, index) => {
+    const candidate = line.trim()
+    if (!candidate) return
+    for (const probe of probes) {
+      let score = 0
+      if (candidate === probe) score = 3
+      else if (candidate.includes(probe) || probe.includes(candidate)) score = 2
+      else if (
+        probe.length > 6 &&
+        candidate.toLowerCase().includes(probe.slice(0, 6).toLowerCase())
+      ) {
+        score = 1
+      }
+      if (score > 0) {
+        scored.push({ line: index + 1, text: line, score })
+        break
+      }
+    }
+  })
+
+  return scored
+    .sort((a, b) => b.score - a.score || a.line - b.line)
+    .slice(0, limit)
+    .map(({ line, text: lineText }) => ({ line, text: lineText }))
+}
+
+const MAX_EXCERPT_LINES = 8
+
+/**
+ * The log lines TeX printed for one parsed error (`l.12 \foo` and friends),
+ * taken from the entry itself rather than searched for in the whole log, so
+ * two errors with the same message each keep their own context. The first raw
+ * line is the message, which the caller already shows.
+ */
+export function errorExcerpt(entry) {
+  if (!entry || typeof entry.raw !== 'string') return null
+  const lines = entry.raw
+    .split('\n')
+    .slice(1)
+    .filter(line => line.trim() !== '')
+    .slice(0, MAX_EXCERPT_LINES)
+  return lines.length > 0 ? lines.join('\n') : null
+}
+
+const EDIT_CONTEXT_LINES = 3
+const MAX_EDIT_EXCERPT_LINES = 40
+
+/**
+ * Where an applied edit landed, in the document as it is now. Line numbers the
+ * model read before the edit are stale below it; the new range, the shift and
+ * the numbered lines around the change let it chain further edits without
+ * reading the file again.
+ */
+export function describeAppliedEdit(plan) {
+  const startLine = Math.max(1, plan.startLine || 1)
+  const newSpan = plan.newText ? plan.newText.split('\n').length : 0
+  const endLine = newSpan > 0 ? startLine + newSpan - 1 : null
+  const from = Math.max(1, startLine - EDIT_CONTEXT_LINES)
+  const to = Math.min(
+    plan.lines.length,
+    (endLine ?? startLine) + EDIT_CONTEXT_LINES,
+    from + MAX_EDIT_EXCERPT_LINES - 1
+  )
+  return {
+    startLine,
+    endLine,
+    lineDelta:
+      typeof plan.previousLineCount === 'number'
+        ? plan.lines.length - plan.previousLineCount
+        : 0,
+    excerpt: plan.lines
+      .slice(from - 1, to)
+      .map((line, index) => `${from + index}: ${line}`)
+      .join('\n'),
+  }
+}
+
+/**
+ * The 1-based line of the last uncommented `\end{document}`, or null. Text
+ * appended to the end of such a file lands after it, where LaTeX never reads it.
+ */
+export function endDocumentLine(docText) {
+  const lines = String(docText || '').split('\n')
+  for (let index = lines.length - 1; index >= 0; index--) {
+    const code = lines[index].replace(/(^|[^\\])%.*$/, '$1')
+    if (code.includes('\\end{document}')) return index + 1
+  }
+  return null
+}
+
+/**
+ * Reads the clean flag out of whatever the model actually sent.
+ *
+ * Mirrors compile-args.ts on the frontend, which serves the in-editor run; this
+ * copy serves the background run, where the same tool call executes here
+ * instead. Providers vary in how faithfully they honour a boolean schema and
+ * local models routinely send `"true"` for `true`, so both sides coerce rather
+ * than trusting the declared type.
+ */
+export function wantsCleanCompile(args) {
+  if (!args || typeof args !== 'object') return false
+  // `clean` is the documented name. The others are the ways models phrase the
+  // same idea when they have not read the schema closely.
+  const raw =
+    args.clean ??
+    args.clearCache ??
+    args.clear_cache ??
+    args.fromScratch ??
+    args.from_scratch ??
+    args.rebuild
+  if (typeof raw === 'boolean') return raw
+  if (typeof raw === 'number') return raw !== 0
+  if (typeof raw === 'string') {
+    const normalized = raw.trim().toLowerCase()
+    return ['true', '1', 'yes', 'y', 'on'].includes(normalized)
+  }
+  return false
 }
 
 export class AiAssistTools {
@@ -289,6 +597,8 @@ export class AiAssistTools {
     this.userModel = userModel
     this.settings = settings
     this.lastCompileResult = new Map()
+    this._snapshots = new Map()
+    this._indexes = new Map()
   }
 
   async _getRootFolderId(projectId) {
@@ -316,7 +626,7 @@ export class AiAssistTools {
       return raw.map(d => ({
         _id: d._id,
         name: d.name || '',
-        path: (d.name || '').replace(/^\//, ''),
+        path: (d.path || d.name || '').replace(/^\//, ''),
         lines: d.lines || [],
       }))
     }
@@ -331,6 +641,100 @@ export class AiAssistTools {
     return []
   }
 
+  async _getFilesList(projectId) {
+    if (!this.entityHandler.getAllFiles) return []
+    const raw = await this.entityHandler.getAllFiles(projectId)
+    const entries = Array.isArray(raw)
+      ? raw.map(file => [file.path || file.name || '', file])
+      : Object.entries(raw || {})
+    return entries.map(([filePath, file]) => ({
+      _id: file._id,
+      path: String(filePath).replace(/^\//, ''),
+    }))
+  }
+
+  /** Keeps the newest compile per project, for at most MAX_REMEMBERED_COMPILES projects. */
+  _rememberCompile(projectId, value) {
+    const key = String(projectId)
+    this.lastCompileResult.delete(key)
+    this.lastCompileResult.set(key, value)
+    while (this.lastCompileResult.size > MAX_REMEMBERED_COMPILES) {
+      this.lastCompileResult.delete(this.lastCompileResult.keys().next().value)
+    }
+  }
+
+  invalidateSnapshot(projectId) {
+    this._snapshots.delete(String(projectId))
+  }
+
+  async _getSnapshot(projectId) {
+    const key = String(projectId)
+    const now = Date.now()
+    const cached = this._snapshots.get(key)
+    if (cached && now - cached.at < SNAPSHOT_TTL_MS) return cached.value
+
+    // Cached snapshots can only grow as projects are opened; drop stale ones.
+    for (const [otherKey, entry] of this._snapshots) {
+      if (now - entry.at >= SNAPSHOT_TTL_MS) this._snapshots.delete(otherKey)
+    }
+
+    let flushed = false
+    if (this.docUpdater.flushProjectToMongo) {
+      try {
+        await this.docUpdater.flushProjectToMongo(projectId)
+        flushed = true
+      } catch {
+        // fall back to reading each document from the document updater
+      }
+    }
+
+    const listed = await this._getDocsList(projectId)
+    const docs = flushed
+      ? listed
+      : await Promise.all(
+          listed.map(async doc => {
+            try {
+              const fetched = await this.docUpdater.getDocument(projectId, doc._id, -1)
+              if (fetched?.lines) return { ...doc, lines: fetched.lines }
+            } catch {
+              // keep the docstore copy
+            }
+            return doc
+          })
+        )
+
+    let rootPath = null
+    try {
+      const project = await this.projectGetter.getProject(projectId, { rootDoc_id: 1 })
+      if (project?.rootDoc_id) {
+        const root = docs.find(doc => String(doc._id) === String(project.rootDoc_id))
+        rootPath = root ? root.path : null
+      }
+    } catch {
+      // no root document: index in file order
+    }
+
+    const files = await this._getFilesList(projectId).catch(() => [])
+    const docTexts = {}
+    for (const doc of docs) docTexts[doc.path] = (doc.lines || []).join('\n')
+
+    const value = { docs, files, rootPath, docTexts }
+    this._snapshots.set(key, { at: Date.now(), value })
+    return value
+  }
+
+  async _getIndex(projectId) {
+    const snapshot = await this._getSnapshot(projectId)
+    const key = String(projectId)
+    // buildProjectIndex returns `previous` unchanged when no file changed.
+    const index = buildProjectIndex(
+      { docs: snapshot.docTexts, rootPath: snapshot.rootPath },
+      this._indexes.get(key)
+    )
+    this._indexes.set(key, index)
+    return index
+  }
+
   async resolveEditTarget(args, { projectId }) {
     if (!args || !args.oldText || typeof args.oldText !== 'string' || !args.oldText.trim()) {
       return null
@@ -339,7 +743,7 @@ export class AiAssistTools {
     if (doc) {
       let docText = (doc.lines || []).join('\n')
       try {
-        const fetched = await this.docUpdater.getDocument(projectId, doc._id)
+        const fetched = await this.docUpdater.getDocument(projectId, doc._id, -1)
         if (fetched?.lines) docText = fetched.lines.join('\n')
       } catch {}
       const match = locateAnchorInText(docText, args.oldText)
@@ -352,7 +756,7 @@ export class AiAssistTools {
       if (doc && String(other._id) === String(doc._id)) continue
       let otherText = (other.lines || []).join('\n')
       try {
-        const fetched = await this.docUpdater.getDocument(projectId, other._id)
+        const fetched = await this.docUpdater.getDocument(projectId, other._id, -1)
         if (fetched?.lines) otherText = fetched.lines.join('\n')
       } catch {}
       const match = locateAnchorInText(otherText, args.oldText)
@@ -382,10 +786,13 @@ export class AiAssistTools {
       }
     }
     const docs = await this._getDocsList(projectId)
-    const exact = docs.find(d => d.path === normalized || d.name === normalized)
+    const exact = docs.find(d => d.path === normalized)
     if (exact) return exact
-    const suffix = docs.find(d => d.path.endsWith(normalized) || normalized.endsWith(d.name))
-    return suffix || null
+    // A partial path matches whole path segments only ("intro.tex" matches
+    // "chapters/intro.tex", never "myintro.tex"), and only when exactly one
+    // document fits: taking the first of several reads or edits the wrong file.
+    const bySegments = docs.filter(d => d.path.endsWith(`/${normalized}`))
+    return bySegments.length === 1 ? bySegments[0] : null
   }
 
   async _resolveDocId(projectId, path) {
@@ -393,186 +800,521 @@ export class AiAssistTools {
     return doc?._id ?? null
   }
 
-  async execute(name, args = {}, { projectId, userId: rawUserId }) {
+  /**
+   * Works out what an edit_file call would write, without writing it.
+   *
+   * Returns { result } for a call that cannot apply (the result is what the
+   * model should see), or { doc, lines, path, note? } for one that can. The run
+   * loop calls this before asking the user to approve, so nobody reviews a diff
+   * that could never apply.
+   */
+  async _planEdit(projectId, args = {}) {
+    if (args._parseError) {
+      return {
+        result: {
+          status: 'error',
+          error: 'Tool arguments were truncated or invalid JSON. Please perform smaller edits or edit one section at a time.',
+        },
+      }
+    }
+    if (!args.path || typeof args.path !== 'string' || !args.path.trim()) {
+      return { result: { status: 'error', error: "Parameter 'path' is required for edit_file." } }
+    }
+
+    const doc = await this._resolveDoc(projectId, args.path)
+    let docText = ''
+    if (doc) {
+      let lines = doc.lines || []
+      try {
+        const docObj = await this.docUpdater.getDocument(projectId, doc._id, -1)
+        if (docObj?.lines) lines = docObj.lines
+      } catch {}
+      docText = lines.join('\n')
+    }
+
+    const strippedOld = cleanLineNumbers(args.oldText || '')
+    const oldTextWasStripped = strippedOld !== args.oldText && strippedOld.length > 0
+    const sanitizedNewText = cleanLineNumberPrefixes(args.newText || '', oldTextWasStripped)
+
+    // Line-range mode: startLine..endLine name the block, so replacing or
+    // deleting a long block does not require copying it into oldText. Copying
+    // hundreds of lines verbatim takes minutes of generation with nothing on
+    // the wire (gateways cut the stream) and rarely matches exactly. The run
+    // loop re-executes with the resolved oldText, which equals the range text.
+    // Some gateways send numeric arguments as strings.
+    const lineArg = v =>
+      typeof v === 'number' || (typeof v === 'string' && v.trim() !== '') ? Number(v) : NaN
+    const from = lineArg(args.startLine)
+    const until = lineArg(args.endLine)
+    if (Number.isInteger(from) && Number.isInteger(until)) {
+      const docLines = docText.split('\n')
+      const to = Math.min(until, docLines.length)
+      const rangeText = doc ? docLines.slice(Math.max(0, from - 1), to).join('\n') : ''
+      if (args.oldText === undefined || args.oldText === null || args.oldText === '' || args.oldText === rangeText) {
+        if (!doc) {
+          return { result: { status: 'error', error: `File not found: ${args.path}. Use list_files to see the project's paths.` } }
+        }
+        if (from < 1 || from > to) {
+          return {
+            result: {
+              status: 'error',
+              error: `Line range ${args.startLine}-${args.endLine} is outside ${doc.path}, which has ${docLines.length} lines. Use read_file to check the line numbers.`,
+            },
+          }
+        }
+        const rangeNewText = cleanLineNumberPrefixes(args.newText || '', false)
+        const inserted = rangeNewText === '' ? [] : rangeNewText.split('\n')
+        return {
+          doc,
+          lines: [...docLines.slice(0, from - 1), ...inserted, ...docLines.slice(to)],
+          path: doc.path,
+          oldText: rangeText,
+          newText: rangeNewText,
+          startLine: from,
+          previousLineCount: docLines.length,
+        }
+      }
+    }
+
+    // Whole file replacement: only when oldText matches the full file or file is empty
+    const isDocEmpty = !doc || docText.trim().length === 0
+    const isFullFileReplace =
+      (typeof args.oldText === 'string' && args.oldText.trim().length > 0 && normalizeLines(args.oldText).trim() === normalizeLines(docText).trim()) ||
+      (isDocEmpty && typeof args.oldText === 'string')
+
+    if (isFullFileReplace && doc) {
+      const updatedLines = sanitizedNewText.split('\n')
+      return { doc, lines: updatedLines, path: doc.path, oldText: args.oldText, newText: sanitizedNewText, startLine: 1, previousLineCount: docText.split('\n').length }
+    }
+
+    // Append mode: when oldText is explicitly empty string ""
+    if (args.oldText === '' && doc) {
+      const endLine = endDocumentLine(docText)
+      if (endLine) {
+        return {
+          result: {
+            status: 'error',
+            error: `Appending to ${doc.path} would put the text after \\end{document} on line ${endLine}, where LaTeX ignores it. Insert it where it belongs instead: give an oldText anchor from the passage it follows, or startLine and endLine for the lines to replace.`,
+          },
+        }
+      }
+      const appended = docText.endsWith('\n') || docText.length === 0
+        ? docText + sanitizedNewText
+        : docText + '\n' + sanitizedNewText
+      const startLine = appended.split('\n').length - sanitizedNewText.split('\n').length + 1
+      return { doc, lines: appended.split('\n'), path: doc.path, oldText: '', newText: sanitizedNewText, startLine, previousLineCount: docText.split('\n').length }
+    }
+
+    if (typeof args.oldText !== 'string') {
+      return {
+        result: {
+          status: 'error',
+          error: `Parameter 'oldText' is required to replace text in ${args.path}. Provide the exact snippet from the file to replace, or pass startLine and endLine to replace those lines.`,
+        },
+      }
+    }
+
+    const targetAnchor = args.oldText
+    let resolvedDoc = doc
+    let resolvedDocText = docText
+    let searchDocText = resolvedDocText
+    let searchLineOffset = 0
+
+    // Constrain the search if startLine is given. Always the live text
+    // (`docText`), never `doc.lines`: that is the stored copy, which lags
+    // behind unsaved typing, while the match offset is applied to the live
+    // text. `from`/`until` come from lineArg above, which accepts numbers sent
+    // as strings.
+    if (Number.isInteger(from) && from >= 1 && doc) {
+      const docLines = docText.split('\n')
+      const startIdx = from - 1
+      const anchorLineCount = targetAnchor.split('\n').length
+      const windowRadius = Math.max(2, anchorLineCount + 1)
+      const hasEnd = Number.isInteger(until) && until >= from
+      const localEndIdx = hasEnd ? until : Math.min(docLines.length, startIdx + windowRadius)
+      const localSearchText = docLines.slice(startIdx, localEndIdx).join('\n')
+      const localMatch = locateAnchorInText(localSearchText, targetAnchor)
+
+      if (localMatch) {
+        searchDocText = localSearchText
+        searchLineOffset = startIdx
+      } else {
+        const endIdx = hasEnd ? until : docLines.length
+        searchDocText = docLines.slice(startIdx, endIdx).join('\n')
+        searchLineOffset = startIdx
+      }
+    }
+
+    let targetMatch = doc ? locateAnchorInText(searchDocText, targetAnchor) : null
+
+    // If scoped search didn't match, fall back to searching the full document
+    if (!targetMatch && searchDocText !== resolvedDocText && doc) {
+      targetMatch = locateAnchorInText(resolvedDocText, targetAnchor)
+      searchLineOffset = 0
+    }
+
+    // Not in the named file: look in the other documents. Only an exact (or
+    // line-number-cleaned) match may move the edit to another file; a fuzzy
+    // match in a file the model never named is a guess. Candidates come from
+    // the snapshot (one flush and one bulk read), and the chosen file is
+    // confirmed against its live text before anything is planned on it.
+    if (!targetMatch) {
+      const isExact = match => match && (match.type === 'exact' || match.type === 'cleaned')
+      const snapshot = await this._getSnapshot(projectId)
+      for (const other of snapshot.docs) {
+        if (doc && String(other._id) === String(doc._id)) continue
+        if (!isExact(locateAnchorInText((other.lines || []).join('\n'), targetAnchor))) continue
+
+        let liveText = (other.lines || []).join('\n')
+        try {
+          const fetched = await this.docUpdater.getDocument(projectId, other._id, -1)
+          if (fetched?.lines) liveText = fetched.lines.join('\n')
+        } catch {}
+        const liveMatch = locateAnchorInText(liveText, targetAnchor)
+        if (!isExact(liveMatch)) continue
+
+        resolvedDoc = other
+        resolvedDocText = liveText
+        targetMatch = liveMatch
+        searchLineOffset = 0
+        break
+      }
+    }
+
+    if (!targetMatch || !resolvedDoc) {
+      if (resolvedDocText) {
+        const cleanedOld = cleanOldText(targetAnchor)
+        const checkAnchor = countOccurrences(resolvedDocText, cleanedOld) > 0 ? cleanedOld : targetAnchor
+        const matches = countOccurrences(resolvedDocText, checkAnchor)
+        if (matches > 1) {
+          const occurrences = findMatchingLines(resolvedDocText, checkAnchor)
+          const contextPreviews = occurrences.length > 0
+            ? `:\n${formatAmbiguousOccurrences(resolvedDocText, occurrences)}\n\nTo disambiguate, include unique surrounding text in oldText, or pass startLine to target a specific line (e.g. startLine: ${occurrences[0]}).`
+            : '. Include more surrounding context lines or use startLine/endLine to disambiguate.'
+          return {
+            result: {
+              status: 'ambiguous',
+              matches,
+              error: `That text appears ${matches} times in ${resolvedDoc.path} (around line(s) ${occurrences.join(', ')})${contextPreviews}`,
+            },
+          }
+        }
+      }
+      const hints = resolvedDocText ? nearestLines(resolvedDocText, targetAnchor) : []
+      const candidateLines = resolvedDocText ? findMatchingLines(resolvedDocText, targetAnchor) : []
+      let candidateHint = ''
+      if (hints.length > 0) {
+        candidateHint = ` The closest lines in ${args.path} right now are:\n${hints
+          .map(h => `${h.line}: ${h.text}`)
+          .join('\n')}\nCopy the anchor from those exact lines (without line-number prefixes), or call read_file on ${args.path} first.`
+      } else if (candidateLines.length > 0) {
+        candidateHint = ` (Found similar line around line(s) ${candidateLines.join(', ')}). Use read_file to inspect the file around those lines.`
+      } else {
+        candidateHint = ` Use read_file to inspect ${args.path} and copy the exact lines to replace.`
+      }
+      return {
+        result: {
+          status: 'noMatch',
+          error: `Could not find target text in ${args.path}.${candidateHint} To replace or delete whole lines, pass startLine and endLine and omit oldText.`,
+        },
+      }
+    }
+
+    // Perform replacement
+    let searchDocOffset = 0
+    if (searchLineOffset > 0 && resolvedDocText) {
+      const docLines = resolvedDocText.split('\n')
+      for (let i = 0; i < searchLineOffset; i++) {
+        searchDocOffset += (docLines[i] ? docLines[i].length : 0) + 1
+      }
+    }
+
+    let replaced
+    let matchStartOffset
+    let resolvedOldText
+    if (targetMatch.charStart !== undefined && targetMatch.charEnd !== undefined) {
+      matchStartOffset = searchDocOffset + targetMatch.charStart
+      const matchEndOffset = searchDocOffset + targetMatch.charEnd
+      resolvedOldText = resolvedDocText.slice(matchStartOffset, matchEndOffset)
+      replaced = resolvedDocText.slice(0, matchStartOffset) + sanitizedNewText + resolvedDocText.slice(matchEndOffset)
+    } else {
+      const matchedAnchor = targetMatch.anchor
+      resolvedOldText = matchedAnchor
+      matchStartOffset = resolvedDocText.indexOf(matchedAnchor, searchDocOffset)
+      if (matchStartOffset === -1) {
+        matchStartOffset = resolvedDocText.indexOf(matchedAnchor)
+      }
+      if (matchStartOffset !== -1) {
+        replaced = resolvedDocText.slice(0, matchStartOffset) + sanitizedNewText + resolvedDocText.slice(matchStartOffset + matchedAnchor.length)
+      } else {
+        const normDoc = normalizeLines(resolvedDocText)
+        const normAnchor = normalizeLines(matchedAnchor)
+        matchStartOffset = Math.max(0, normDoc.indexOf(normAnchor))
+        replaced = normDoc.replace(normAnchor, sanitizedNewText)
+      }
+    }
+    const startLine = resolvedDocText.slice(0, Math.max(0, matchStartOffset)).split('\n').length
+
+    const note = doc && resolvedDoc.path !== doc.path
+      ? `Text was located in '${resolvedDoc.path}' (redirected from '${args.path}').`
+      : undefined
+    return {
+      doc: resolvedDoc,
+      lines: replaced.split('\n'),
+      path: resolvedDoc.path,
+      note,
+      oldText: resolvedOldText,
+      newText: sanitizedNewText,
+      startLine,
+      previousLineCount: resolvedDocText.split('\n').length,
+    }
+  }
+
+  /**
+   * Works out what an edit_file call would show and write, without writing
+   * it. `oldText`/`newText` here are the resolved anchor actually matched in
+   * the document (after fuzzy/whitespace-tolerant matching), not the model's
+   * raw, possibly-imprecise quote — the run loop shows these to the user as
+   * the approval diff, so the diff matches what execute() will really apply.
+   */
+  async checkEdit(args = {}, { projectId }) {
+    const traversal = this._traversalError(args)
+    if (traversal) return { status: 'error', error: traversal }
+    const plan = await this._planEdit(projectId, args)
+    if (plan.result) return plan.result
+    return {
+      status: 'ok',
+      path: plan.path,
+      oldText: plan.oldText,
+      newText: plan.newText,
+      startLine: plan.startLine,
+    }
+  }
+
+  _traversalError(args) {
+    if (args?.path && typeof args.path === 'string') {
+      const normalized = args.path.replace(/\\/g, '/').replace(/^\/+/, '')
+      if (normalized.startsWith('../') || normalized.includes('/../') || normalized === '..') {
+        return 'Path traversal forbidden: file path cannot reference parent directories.'
+      }
+    }
+    return null
+  }
+
+  /**
+   * Records a compile as the project's last one and phrases it for the model,
+   * whether the editor or the server ran it.
+   */
+  _compileToolResult(projectId, outcome, clean) {
+    const errors = Array.isArray(outcome.errors) ? outcome.errors : []
+    const warnings = Array.isArray(outcome.warnings) ? outcome.warnings : []
+    const status = outcome.status || 'failure'
+    const previous = this.lastCompileResult.get(String(projectId))
+    const previousErrors = previous?.errors || []
+
+    this._rememberCompile(projectId, {
+      status,
+      errors,
+      warnings,
+    })
+
+    const delta = computeErrorDelta(errors, previousErrors)
+    const primaryError = errors.length > 0 ? errors[0] : null
+    const cascadingErrorsCount = Math.max(0, errors.length - 1)
+
+    let message
+    if (status === 'skipped') {
+      message = 'No compile ran: another build was still in progress and did not finish in time. Try again.'
+    } else if (status === 'timedout') {
+      message = 'The compile timed out. Call compile_project with clean set to true to clear the cached build and rebuild from scratch.'
+    } else if (status === 'no-output') {
+      message = 'The compile produced no parsable output. Call compile_project with clean set to true to clear the cached build and rebuild from scratch.'
+    } else if (errors.length === 0 && status !== 'success') {
+      message = `The build ended as "${status}" with no errors in the log. Nothing was verified.`
+    } else if (errors.length === 0) {
+      message = warnings.length > 0
+        ? `The project compiled with 0 errors and ${warnings.length} warning(s).`
+        : 'The project compiled without errors.'
+    } else if (previous && delta.regressed) {
+      message = `WARNING: Compilation worsened. Error count changed by ${delta.countDelta >= 0 ? `+${delta.countDelta}` : delta.countDelta} (${delta.newErrorsCount} new error(s) introduced, ${delta.resolvedErrorsCount} resolved). Recent edits likely introduced invalid LaTeX syntax. Focus on fixing the primary error first.`
+    } else if (previous && delta.resolvedErrorsCount > 0) {
+      message = `The project compiled with ${errors.length} error(s) (${delta.resolvedErrorsCount} error(s) resolved).`
+    } else {
+      message = `The project compiled with ${errors.length} error(s) and ${warnings.length} warning(s).`
+    }
+
+    const maxReported = 20
+    return {
+      status,
+      clean,
+      errorCount: errors.length,
+      warningCount: warnings.length,
+      errorDelta: previous ? delta.countDelta : 0,
+      newErrorsCount: previous ? delta.newErrorsCount : errors.length,
+      resolvedErrorsCount: previous ? delta.resolvedErrorsCount : 0,
+      regressed: previous ? delta.regressed : false,
+      primaryError,
+      cascadingErrorsCount,
+      errors: errors.slice(0, maxReported),
+      warnings: warnings.slice(0, maxReported),
+      message,
+    }
+  }
+
+  async execute(name, args = {}, { projectId, userId: rawUserId, callId, compileInEditor }) {
     const userId = await this._resolveValidUserId(projectId, rawUserId)
     if (!userId) {
       return { error: 'A valid authenticated user context is required to execute tools.' }
     }
 
     // Path sanitization for file operations
-    if (args.path && typeof args.path === 'string') {
-      const normalized = args.path.replace(/\\/g, '/').replace(/^\/+/, '')
-      if (normalized.startsWith('../') || normalized.includes('/../') || normalized === '..') {
-        return { error: 'Path traversal forbidden: file path cannot reference parent directories.' }
-      }
-    }
+    const traversal = this._traversalError(args)
+    if (traversal) return { error: traversal }
 
     switch (name) {
       case 'read_file': {
         const doc = await this._resolveDoc(projectId, args.path)
-        if (!doc) return { error: `File not found: ${args.path}` }
-        let lines = doc.lines
+        if (!doc) {
+          const wanted = String(args.path || '').replace(/^\//, '')
+          const files = await this._getFilesList(projectId).catch(() => [])
+          if (files.some(file => file.path === wanted)) {
+            return { error: `${wanted} is a binary file and cannot be read as text.` }
+          }
+          const baseName = wanted.split('/').pop()
+          const candidates = (await this._getDocsList(projectId).catch(() => []))
+            .map(d => d.path)
+            .filter(path => path !== wanted && path.split('/').pop() === baseName)
+          if (candidates.length > 1) {
+            return { error: `File not found: ${args.path}. Did you mean ${candidates.join(' or ')}?` }
+          }
+          return { error: `File not found: ${args.path}` }
+        }
+        let lines = doc.lines || []
         try {
-          const fetched = await this.docUpdater.getDocument(projectId, doc._id)
+          // The live document, not the snapshot: the user may be typing.
+          const fetched = await this.docUpdater.getDocument(projectId, doc._id, -1)
           if (fetched?.lines) lines = fetched.lines
         } catch {
           // keep fallback lines
         }
         const totalLines = lines.length
-        const from = Math.max(1, Math.min(args.from || 1, totalLines || 1))
-        const to = Math.min(args.to || totalLines, totalLines)
-        const sliced = lines.slice(from - 1, to)
+        const hasRange = Number(args.from) > 0 || Number(args.to) > 0
+        const windowSize = hasRange ? MAX_READ_LINES : DEFAULT_READ_LINES
+        const start = Math.max(1, Math.min(Number(args.from) || 1, totalLines || 1))
+        const requestedEnd = Math.min(Number(args.to) || totalLines, totalLines)
+        const capped = lines.slice(start - 1, requestedEnd).slice(0, windowSize)
+        const end = start + capped.length - 1
+        const nextRange = end < totalLines
+          ? { from: end + 1, to: Math.min(end + windowSize, totalLines) }
+          : undefined
         return {
           path: args.path,
-          from,
-          to,
+          from: start,
+          to: end,
           totalLines,
-          content: sliced.join('\n'),
+          content: capped.map((line, i) => `${start + i}: ${line}`).join('\n'),
+          truncated: Boolean(nextRange),
+          ...(nextRange ? { nextRange } : {}),
         }
       }
 
       case 'search_text':
       case 'search_project': {
-        const docs = await this._getDocsList(projectId)
-        const hits = []
-        for (const doc of docs) {
-          let lines = doc.lines
-          try {
-            const fetched = await this.docUpdater.getDocument(projectId, doc._id)
-            if (fetched?.lines) lines = fetched.lines
-          } catch {
-            // keep fallback lines
-          }
-          lines.forEach((line, idx) => {
-            if (line.includes(args.query)) {
-              hits.push({ path: doc.path, line: idx + 1, text: line.trim() })
-            }
-          })
+        if (typeof args.query !== 'string' || args.query === '') {
+          return { error: "Parameter 'query' is required for search_text." }
         }
-        return { hits: hits.slice(0, 50) }
+        const snapshot = await this._getSnapshot(projectId)
+        const pattern = typeof args.glob === 'string' && args.glob
+          ? args.glob
+          : (typeof args.path === 'string' && args.path ? args.path : null)
+        const docs = pattern
+          ? snapshot.docs.filter(doc => matchesGlob(doc.path, pattern))
+          : snapshot.docs
+        const contextLines = Number.isFinite(Number(args.contextLines))
+          ? Math.max(0, Math.floor(Number(args.contextLines)))
+          : 1
+
+        let found
+        if (args.regexp) {
+          try {
+            found = await regexSearch({
+              query: args.query,
+              caseSensitive: Boolean(args.caseSensitive),
+              docs,
+              limit: MAX_SEARCH_HITS,
+            })
+          } catch (err) {
+            if (err.code === 'regexTimeout') return { error: err.message }
+            // A SyntaxError message already reads "Invalid regular expression: /(/i: …".
+            return {
+              error: err instanceof SyntaxError
+                ? err.message
+                : `Invalid regular expression: ${err.message}`,
+            }
+          }
+        } else {
+          const needle = args.caseSensitive ? args.query : args.query.toLowerCase()
+          const hits = []
+          let total = 0
+          for (const doc of docs) {
+            const lines = doc.lines || []
+            for (let i = 0; i < lines.length; i++) {
+              const haystack = args.caseSensitive ? lines[i] : lines[i].toLowerCase()
+              if (haystack.includes(needle)) {
+                total++
+                if (hits.length < MAX_SEARCH_HITS) hits.push({ path: doc.path, line: i + 1 })
+              }
+            }
+          }
+          found = { hits, total }
+        }
+
+        const byPath = new Map(docs.map(doc => [doc.path, doc.lines || []]))
+        return {
+          hits: found.hits.map(({ path, line }) => {
+            const lines = byPath.get(path) || []
+            return {
+              path,
+              line,
+              text: lines[line - 1] ?? '',
+              ...(contextLines > 0
+                ? {
+                    before: lines.slice(Math.max(0, line - 1 - contextLines), line - 1),
+                    after: lines.slice(line, line + contextLines),
+                  }
+                : {}),
+            }
+          }),
+          total: found.total,
+          truncated: found.total > found.hits.length,
+        }
       }
 
       case 'list_files':
       case 'project_map': {
-        const docs = await this._getDocsList(projectId)
-        const files = docs.map(doc => ({
-          path: doc.path,
-          lines: doc.lines?.length || 0,
-          type: 'doc',
-        }))
-        return { files }
+        const snapshot = await this._getSnapshot(projectId)
+        const all = [
+          ...snapshot.docs.map(doc => ({ path: doc.path, type: 'doc', lines: (doc.lines || []).length })),
+          ...snapshot.files.map(file => ({ path: file.path, type: 'binary' })),
+        ].sort((a, b) => a.path.localeCompare(b.path))
+        const listed = typeof args.glob === 'string' && args.glob
+          ? all.filter(file => matchesGlob(file.path, args.glob))
+          : all
+        const shown = listed.slice(0, MAX_FILE_ROWS)
+        return { files: shown, total: listed.length, truncated: listed.length > shown.length }
       }
 
       case 'edit_file': {
-        if (args._parseError) {
-          return {
-            error: 'Tool arguments were truncated or invalid JSON. Please perform smaller edits or edit one section at a time.',
-          }
+        const plan = await this._planEdit(projectId, args)
+        if (plan.result) return plan.result
+        await this.docUpdater.setDocument(projectId, plan.doc._id, userId, plan.lines, 'ai-assist')
+        this.invalidateSnapshot(projectId)
+        return {
+          status: 'applied',
+          path: plan.path,
+          ...describeAppliedEdit(plan),
+          ...(plan.note ? { note: plan.note } : {}),
         }
-        if (!args.path || typeof args.path !== 'string' || !args.path.trim()) {
-          return { error: "Parameter 'path' is required for edit_file." }
-        }
-
-        let doc = await this._resolveDoc(projectId, args.path)
-        let docText = ''
-        if (doc) {
-          let lines = doc.lines || []
-          try {
-            const docObj = await this.docUpdater.getDocument(projectId, doc._id)
-            if (docObj?.lines) lines = docObj.lines
-          } catch {}
-          docText = lines.join('\n')
-        }
-
-        // Whole file replacement:
-        const hasDocClass = (args.newText || '').includes('\\documentclass')
-        const isDocEmpty = !doc || docText.trim().length === 0
-        const isFullFileReplace =
-          (typeof args.oldText === 'string' && args.oldText.trim().length > 0 && normalizeLines(args.oldText).trim() === normalizeLines(docText).trim()) ||
-          ((args.oldText === '' || args.oldText === undefined) && (hasDocClass || isDocEmpty))
-
-        if (isFullFileReplace && doc) {
-          const updatedLines = (args.newText || '').split('\n')
-          await this.docUpdater.setDocument(projectId, doc._id, userId, updatedLines, 'ai-assist')
-          return { status: 'applied', path: doc.path }
-        }
-
-        // Append mode: only when oldText is explicitly empty string "" and NOT full-file LaTeX
-        if (args.oldText === '' && doc) {
-          const appended = docText.endsWith('\n') || docText.length === 0
-            ? docText + (args.newText || '')
-            : docText + '\n' + (args.newText || '')
-          await this.docUpdater.setDocument(projectId, doc._id, userId, appended.split('\n'), 'ai-assist')
-          return { status: 'applied', path: doc.path }
-        }
-
-        if (typeof args.oldText !== 'string') {
-          return {
-            error: `Parameter 'oldText' is required to replace text in ${args.path}. Provide the exact snippet from the file to replace, or pass the full file content if replacing the entire file.`,
-          }
-        }
-
-        let targetAnchor = args.oldText
-        let resolvedDoc = doc
-        let resolvedDocText = docText
-        let targetMatch = doc ? locateAnchorInText(resolvedDocText, targetAnchor) : null
-
-        // If not found in target file, search other project documents
-        if (!targetMatch) {
-          const allDocs = await this._getDocsList(projectId)
-          for (const other of allDocs) {
-            if (doc && String(other._id) === String(doc._id)) continue
-            let otherText = (other.lines || []).join('\n')
-            try {
-              const fetched = await this.docUpdater.getDocument(projectId, other._id)
-              if (fetched?.lines) otherText = fetched.lines.join('\n')
-            } catch {}
-
-            const candidateMatch = locateAnchorInText(otherText, targetAnchor)
-            if (candidateMatch) {
-              resolvedDoc = other
-              resolvedDocText = otherText
-              targetMatch = candidateMatch
-              break
-            }
-          }
-        }
-
-        if (!targetMatch || !resolvedDoc) {
-          if (resolvedDocText) {
-            const matches = countOccurrences(resolvedDocText, targetAnchor)
-            if (matches > 1) {
-              const occurrences = findMatchingLines(resolvedDocText, targetAnchor)
-              return {
-                error: `That text appears ${matches} times in ${resolvedDoc.path} (around line(s) ${occurrences.join(', ')}). Include more surrounding context lines so the anchor is unique.`,
-              }
-            }
-          }
-          return {
-            error: `Could not find target text in ${args.path} or any other project file. If replacing text, copy an existing anchor line that appears in the file.`,
-          }
-        }
-
-        // Perform replacement
-        let replaced
-        if (targetMatch.charStart !== undefined && targetMatch.charEnd !== undefined) {
-          replaced = resolvedDocText.slice(0, targetMatch.charStart) + (args.newText || '') + resolvedDocText.slice(targetMatch.charEnd)
-        } else {
-          const matchedAnchor = targetMatch.anchor
-          const normDoc = normalizeLines(resolvedDocText)
-          const normAnchor = normalizeLines(matchedAnchor)
-          if (normDoc.includes(normAnchor)) {
-            replaced = normDoc.replace(normAnchor, args.newText || '')
-          } else {
-            replaced = resolvedDocText.replace(matchedAnchor, args.newText || '')
-          }
-        }
-
-        await this.docUpdater.setDocument(projectId, resolvedDoc._id, userId, replaced.split('\n'), 'ai-assist')
-        const note = doc && resolvedDoc.path !== doc.path
-          ? `Text was located in '${resolvedDoc.path}' (redirected from '${args.path}').`
-          : undefined
-        return { status: 'applied', path: resolvedDoc.path, ...(note ? { note } : {}) }
       }
 
       case 'create_file': {
@@ -588,6 +1330,7 @@ export class AiAssistTools {
               'ai-assist',
               userId
             )
+            this.invalidateSnapshot(projectId)
             return { status: 'applied', path: args.path, docId: doc?._id }
           } catch (err) {
             // fall through to addDoc
@@ -605,6 +1348,7 @@ export class AiAssistTools {
             userId,
             (err, newDoc) => {
               if (err) return reject(err)
+              this.invalidateSnapshot(projectId)
               resolve({ status: 'applied', path: args.path, docId: newDoc?._id })
             }
           )
@@ -612,10 +1356,36 @@ export class AiAssistTools {
       }
 
       case 'compile_project': {
+        const clean = wantsCleanCompile(args)
+
+        // With the project open in the editor, the editor compiles: it waits for
+        // a build the user or auto-compile already started, shows progress in
+        // the PDF pane, and never races a second CLSI compile for the same
+        // project ("another compile is in progress"). Its outcome is null when
+        // no editor is watching the run, and only then does the server compile.
+        const editorOutcome = compileInEditor
+          ? await compileInEditor({ id: callId, clean })
+          : null
+        if (editorOutcome) {
+          return this._compileToolResult(projectId, editorOutcome, clean)
+        }
+
+        if (clean && this.compileManager?.deleteAuxFiles) {
+          // Clears the CLSI build directory, the clsi-cache entry, the
+          // doc-updater project state and the pinned CLSI server, which is what
+          // makes the next build a full one instead of an incremental one over
+          // stale .aux/.fls files. Not worth abandoning the compile over: the
+          // incremental build may still succeed.
+          try {
+            await this.compileManager.deleteAuxFiles(projectId, userId, null)
+          } catch {
+            // ignore, the compile below still runs
+          }
+        }
+
         const result = await this.compileManager.compile(projectId, userId, {})
         let errors = []
         let warnings = []
-        let rawLog = ''
 
         const logFile = (result.outputFiles || []).find(f => f.path === 'output.log' || f.path?.endsWith('.log'))
         if (logFile && result.buildId && this.clsiManager?.getOutputFileStream) {
@@ -629,13 +1399,18 @@ export class AiAssistTools {
             )
             const chunks = []
             for await (const chunk of stream) chunks.push(chunk)
-            rawLog = Buffer.concat(chunks).toString('utf8')
+            const rawLog = Buffer.concat(chunks).toString('utf8')
             const parsed = LatexLogParser.parse(rawLog, { ignoreDuplicates: true })
-            errors = (parsed.errors || []).map(e => ({
-              file: e.file || null,
-              line: typeof e.line === 'number' ? e.line : (parseInt(e.line, 10) || null),
-              message: e.message || '',
-            }))
+            errors = (parsed.errors || []).map(e => {
+              const summary = {
+                file: e.file || null,
+                line: typeof e.line === 'number' ? e.line : (parseInt(e.line, 10) || null),
+                message: e.message || '',
+              }
+              const excerpt = errorExcerpt(e)
+              if (excerpt) summary.excerpt = excerpt
+              return summary
+            })
             warnings = (parsed.warnings || []).map(w => ({
               file: w.file || null,
               line: typeof w.line === 'number' ? w.line : (parseInt(w.line, 10) || null),
@@ -647,92 +1422,131 @@ export class AiAssistTools {
         }
 
         const compileStatus = errors.length > 0 ? 'failure' : (result.status === 'success' ? 'success' : result.status)
-        this.lastCompileResult.set(projectId, {
-          status: compileStatus,
-          errors,
-          warnings,
-          rawLog,
-        })
-
-        const maxReported = 20
-        return {
-          status: compileStatus,
-          errorCount: errors.length,
-          warningCount: warnings.length,
-          errors: errors.slice(0, maxReported),
-          warnings: warnings.slice(0, maxReported),
-          message:
-            errors.length === 0
-              ? (warnings.length > 0
-                  ? `The project compiled with 0 errors and ${warnings.length} warning(s).`
-                  : 'The project compiled without errors.')
-              : `The project compiled with ${errors.length} error(s) and ${warnings.length} warning(s).`,
-        }
+        return this._compileToolResult(
+          projectId,
+          { status: compileStatus, errors, warnings },
+          clean
+        )
       }
 
       case 'get_compile_result':
       case 'get_compile_log': {
-        let compile = this.lastCompileResult.get(projectId)
-        if (!compile) {
-          try {
-            await this.execute('compile_project', {}, { projectId, userId: rawUserId })
-            compile = this.lastCompileResult.get(projectId)
-          } catch {
-            // ignore
-          }
-        }
-
+        // Reads only. Compiling here would make a "read" slow, and reads can
+        // run in parallel with each other.
+        const compile = this.lastCompileResult.get(String(projectId))
         if (!compile) {
           return {
             status: 'none',
-            message: 'The project has not been compiled in this session. Call compile_project to build it.',
+            message: 'No compile has run in this chat yet. Call compile_project to build the project.',
           }
         }
 
         const severity = args.severity || 'all'
-        const limit = args.limit || args.maxEntries || 20
-        const includeRaw = Boolean(args.includeRaw)
+        const requestedLimit = Number(args.limit || args.maxEntries)
+        const limit = requestedLimit > 0 ? Math.floor(requestedLimit) : 20
+        const includeRaw = args.includeRaw !== false && args.includeRaw !== 'false'
 
-        const errors = compile.errors.slice(0, limit)
+        const errors = compile.errors.slice(0, limit).map(entry => {
+          if (includeRaw || !entry.excerpt) return entry
+          const copy = { ...entry }
+          delete copy.excerpt
+          return copy
+        })
         const warnings = compile.warnings.slice(0, limit)
-
-        const decorate = (entries) => {
-          if (!includeRaw || !compile.rawLog) return entries
-          return entries.map(e => {
-            const excerpt = excerptAround(compile.rawLog, e.message)
-            return excerpt ? { ...e, excerpt } : e
-          })
-        }
 
         const outcome = {
           status: compile.status,
           errorCount: compile.errors.length,
           warningCount: compile.warnings.length,
+          primaryError: errors.length > 0 ? errors[0] : null,
+          cascadingErrorsCount: Math.max(0, compile.errors.length - 1),
           truncated: compile.errors.length > limit || compile.warnings.length > limit,
         }
 
         if (severity === 'all' || severity === 'errors') {
-          outcome.errors = decorate(errors)
+          outcome.errors = errors
         }
         if (severity === 'all' || severity === 'warnings') {
-          outcome.warnings = decorate(warnings)
+          outcome.warnings = warnings
         }
 
         return outcome
       }
 
       case 'get_outline': {
-        const docs = await this._getDocsList(projectId)
-        const rootDoc = docs.find(d => d.name === 'main.tex' || d.path === 'main.tex') || docs[0]
-        return { rootDoc: rootDoc?.path || rootDoc?.name || 'main.tex', sections: [] }
+        const index = await this._getIndex(projectId)
+        const section = typeof args.section === 'string' ? args.section : ''
+
+        if (!section) {
+          return {
+            documentClass: index.outline.documentClass,
+            sections: index.outline.sections,
+            includes: index.outline.includes,
+            notes: index.outline.notes,
+          }
+        }
+
+        const match = matchSection(index.outline, section)
+        if (match.kind === 'none') {
+          return {
+            error: `No section matches "${section}".`,
+            candidates: index.outline.sections.map(s => s.title),
+          }
+        }
+        if (match.kind === 'ambiguous') {
+          return {
+            error: `"${section}" matches more than one section. Pick one.`,
+            candidates: match.candidates.map(c => ({ title: c.title, path: c.path, line: c.line })),
+          }
+        }
+        const target = match.section
+        const siblings = index.outline.sections
+        const startIndex = siblings.indexOf(target)
+        const nextPeer = siblings
+          .slice(startIndex + 1)
+          .find(candidate => candidate.level <= target.level)
+        const nextPeerInFile = siblings
+          .slice(startIndex + 1)
+          .find(candidate => candidate.path === target.path && candidate.level <= target.level)
+        const end = nextPeerInFile ? nextPeerInFile.line - 1 : Number.MAX_SAFE_INTEGER
+        const nextIndex = nextPeer ? siblings.indexOf(nextPeer) : siblings.length
+        return {
+          range: { from: target.line, to: end },
+          sections: siblings.slice(startIndex, nextIndex),
+          hint: `read_file with path=${target.path} from=${target.line} to=${
+            end === Number.MAX_SAFE_INTEGER ? 'end' : end
+          } for the body`,
+        }
       }
 
       case 'get_packages': {
-        return { packages: [] }
+        const index = await this._getIndex(projectId)
+        return {
+          documentClass: index.outline.documentClass,
+          packages: index.packages,
+        }
       }
 
       case 'get_references': {
-        return { references: [] }
+        const index = await this._getIndex(projectId)
+        const refs = index.references
+        const kind = typeof args.kind === 'string' ? args.kind : 'all'
+        const pick = {
+          labels: { labels: refs.labels, duplicateLabels: refs.duplicateLabels },
+          refs: { refs: refs.refs },
+          citations: { citations: refs.citations, bibKeys: refs.bibKeys },
+          all: refs,
+        }[kind] ?? refs
+
+        if (!args.unresolvedOnly) return pick
+
+        const filterUnresolved = uses => uses.filter(use => !use.resolved)
+        return {
+          ...('refs' in pick ? { refs: filterUnresolved(pick.refs) } : {}),
+          ...('citations' in pick ? { citations: filterUnresolved(pick.citations) } : {}),
+          ...('labels' in pick ? { labels: pick.labels, duplicateLabels: pick.duplicateLabels } : {}),
+          ...('bibKeys' in pick ? { bibKeys: pick.bibKeys } : {}),
+        }
       }
 
       case 'get_project_settings': {
@@ -950,6 +1764,7 @@ export class AiAssistTools {
           updated.stopOnFirstError = stopVal
         }
 
+        this.invalidateSnapshot(projectId)
         return {
           status: 'applied',
           updatedSettings: updated,
@@ -1127,20 +1942,22 @@ export class AiAssistTools {
     return [
       {
         name: 'get_outline',
-        description: 'Extract document outline, sections, and structural hierarchy.',
+        description:
+          "The section tree with each section's file and line range, plus the \\input graph. Pass section to get one subtree. Use this before read_file to find where something lives — it costs a fraction of reading the file.",
         parameters: {
           type: 'object',
           properties: {
             section: {
               type: 'string',
-              description: 'Optional section name or title to focus outline on',
+              description: 'Return only this section and its subsections',
             },
           },
         },
       },
       {
         name: 'get_packages',
-        description: 'List all LaTeX packages imported across project documents.',
+        description:
+          "The documentclass and every \\usepackage in the project, with the file and line that loads it. Use this to check whether a command's package is available before assuming it is missing.",
         parameters: {
           type: 'object',
           properties: {},
@@ -1148,38 +1965,41 @@ export class AiAssistTools {
       },
       {
         name: 'get_references',
-        description: 'List labels, cross-references, and citations across project files.',
+        description:
+          'Every \\label, \\ref and \\cite in the project with its file, line and whether it resolves, plus any duplicated labels. Pass kind to narrow, or unresolvedOnly to see just what is broken.',
         parameters: {
           type: 'object',
           properties: {
             kind: {
               type: 'string',
               enum: ['labels', 'refs', 'citations', 'all'],
-              description: 'Kind of references to retrieve. Defaults to all.',
+              description: 'Which kind to return. Defaults to all.',
             },
             unresolvedOnly: {
               type: 'boolean',
-              description: 'Whether to only return unresolved references',
+              description: 'Return only refs and citations that do not resolve',
             },
           },
         },
       },
       {
         name: 'list_files',
-        description: 'List all documents and files in the project.',
+        description:
+          'List the files in the project with their type and line count. Pass glob to narrow the listing, for example sections/*.tex. Answered from a prebuilt index, so it is far cheaper than reading files.',
         parameters: {
           type: 'object',
           properties: {
             glob: {
               type: 'string',
-              description: 'Optional glob pattern to filter files by path or extension',
+              description: 'Pattern to narrow the listing, e.g. sections/*.tex',
             },
           },
         },
       },
       {
         name: 'read_file',
-        description: 'Read one text file, or a line range of one, as numbered lines.',
+        description:
+          'Read one text file, or a line range of one, as numbered lines. Without from/to it returns the first 500 lines. Get the range from get_outline or search_text first rather than guessing it.',
         parameters: {
           type: 'object',
           properties: {
@@ -1192,33 +2012,55 @@ export class AiAssistTools {
       },
       {
         name: 'search_text',
-        description: 'Search for text across project files.',
+        description:
+          "Find a string or regular expression across the project's text files, with surrounding context lines. Pass glob to search only matching files. Use this to locate something whose file you do not know.",
         parameters: {
           type: 'object',
           properties: {
-            query: { type: 'string', description: 'Search query or regex pattern' },
-            glob: { type: 'string', description: 'Optional glob pattern to restrict file search scope' },
-            contextLines: { type: 'number', description: 'Number of context lines before and after match' },
-            caseSensitive: { type: 'boolean', description: 'Whether the search is case-sensitive' },
-            regexp: { type: 'boolean', description: 'Whether query should be treated as a regular expression' },
+            query: { type: 'string' },
+            glob: {
+              type: 'string',
+              description: 'Only search files matching this glob, e.g. sections/*.tex',
+            },
+            contextLines: {
+              type: 'number',
+              description: 'Lines of surrounding context per hit. Defaults to 1.',
+            },
+            caseSensitive: { type: 'boolean' },
+            regexp: { type: 'boolean' },
           },
           required: ['query'],
         },
       },
       {
         name: 'edit_file',
-        description: 'Edit a project file. Replace oldText with newText. If replacing the entire file, you can pass oldText matching the whole file or empty string "".',
+        description:
+          'Edit a project file. Replace oldText with newText, or pass startLine and endLine without oldText to replace those lines with newText (use this for blocks longer than a few lines instead of copying them). Pass oldText: "" to append newText to the end of the file. Pass newText: "" to delete.',
         parameters: {
           type: 'object',
           properties: {
             path: { type: 'string', description: 'Path to file' },
             oldText: {
               type: 'string',
-              description: 'The exact text to replace. Pass an empty string "" if replacing the entire file or appending content.',
+              description:
+                'The exact text to replace. Omit it when passing startLine and endLine. Pass an empty string "" to append content to the end of the file.',
             },
-            newText: { type: 'string', description: 'Replacement text' },
+            newText: {
+              type: 'string',
+              description:
+                'Replacement text (or text to append if oldText is empty). Pass an empty string "" to delete.',
+            },
+            startLine: {
+              type: 'number',
+              description:
+                '1-based first line, as numbered by read_file. With endLine and no oldText, the lines to replace; with oldText, narrows where to look for it.',
+            },
+            endLine: {
+              type: 'number',
+              description: '1-based last line, inclusive. See startLine.',
+            },
           },
-          required: ['path', 'oldText', 'newText'],
+          required: ['path', 'newText'],
         },
       },
       {
@@ -1235,15 +2077,22 @@ export class AiAssistTools {
       },
       {
         name: 'compile_project',
-        description: 'Compile the project and check for build errors and warnings.',
+        description:
+          'Compile the project and check for build errors and warnings. Set clean to true to clear the cached build first (the .aux/.fls/.fdb_latexmk files and the previous output), which forces a full rebuild from scratch. Clean when a build produced no output, timed out, or behaved inconsistently with the source, or after changing the root document, bibliography or a package that caches state.',
         parameters: {
           type: 'object',
-          properties: {},
+          properties: {
+            clean: {
+              type: 'boolean',
+              description:
+                'Clear the cached build output and auxiliary files before compiling, forcing a full rebuild. Defaults to false. Slower than an incremental build, so reach for it when the incremental one is untrustworthy rather than as a habit.',
+            },
+          },
         },
       },
       {
         name: 'get_compile_result',
-        description: 'Get the result of the last project compilation: errors, warnings and diagnostics.',
+        description: 'The errors and warnings of the last compile_project in this chat, without rebuilding.',
         parameters: {
           type: 'object',
           properties: {
@@ -1258,7 +2107,7 @@ export class AiAssistTools {
             },
             includeRaw: {
               type: 'boolean',
-              description: 'Include raw log lines around each entry',
+              description: 'Include the TeX log lines of each error. Defaults to true.',
             },
           },
         },
@@ -1287,7 +2136,7 @@ export class AiAssistTools {
             editorTheme: {
               type: 'string',
               description:
-                'Editor syntax theme. Overleaf supports: cobalt, dracula, eclipse, monokai, overleaf, overleaf_dark, textmate, ambiance, chaos, chrome, clouds, clouds_midnight, crimson_editor, dawn, dreamweaver, github, gob, gruvbox, idle_fingers, iplastic, katzenmilch, kr_theme, kuroir, merbivore, merbivore_soft, mono_industrial, nord_dark, pastel_on_dark, solarized_dark, solarized_light, sqlserver, terminal, tomorrow, tomorrow_night, tomorrow_night_blue, tomorrow_night_bright, tomorrow_night_eighties, twilight, vibrant_ink, xcode.',
+                'Editor syntax theme name, e.g. "monokai". list_available_settings lists every theme.',
             },
             editorLightTheme: {
               type: 'string',
@@ -1401,7 +2250,7 @@ export class AiAssistTools {
       {
         name: 'list_available_settings',
         description:
-          'List all allowed and available options for project and editor settings: compilers, TeX Live versions, spellcheck languages, overall themes, all 40+ editor syntax themes, code fonts (fontFamilies: monaco, lucida, opendyslexicmono), line heights, font sizes, and PDF viewers.',
+          'List the allowed values for every setting: compilers, TeX Live versions, spell-check languages, themes, fonts, line heights, font sizes and PDF viewers.',
         parameters: {
           type: 'object',
           properties: {},

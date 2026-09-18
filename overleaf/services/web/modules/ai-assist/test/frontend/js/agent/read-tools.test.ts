@@ -27,6 +27,11 @@ describe('read tools', function () {
     }
   })
 
+  it('read_file description clarifies line numbers are for display only', function () {
+    expect(readFileTool.spec.description).to.include('Line numbers in the output')
+    expect(readFileTool.spec.description).to.include('never include line number prefixes in oldText or newText')
+  })
+
   it('list_files returns every path with its type', async function () {
     const { handle } = createFakeHandle({
       docs: DOCS,
@@ -81,9 +86,22 @@ describe('read tools', function () {
   it('read_file truncates a file longer than the cap', async function () {
     const long = Array.from({ length: 1200 }, (_, i) => `line ${i + 1}`).join('\n')
     const { handle } = createFakeHandle({ docs: { 'long.tex': long } })
-    const result: any = await TOOLS.read_file.execute({ path: 'long.tex' }, handle)
+    const result: any = await TOOLS.read_file.execute({ path: 'long.tex', from: 1 }, handle)
     expect(result.truncated).to.equal(true)
     expect(result.content.split('\n')).to.have.length(1000)
+  })
+
+  it('read_file reads at most 500 lines when no range is given', async function () {
+    const text = Array.from({ length: 1200 }, (_, i) => `l${i + 1}`).join('\n')
+    const { handle } = createFakeHandle({ docs: { 'long.tex': text } })
+
+    const result: any = await readFileTool.execute({ path: 'long.tex' }, handle)
+
+    expect(result.to).to.equal(500)
+    expect(result.nextRange).to.deep.equal({ from: 501, to: 1000 })
+
+    const ranged: any = await readFileTool.execute({ path: 'long.tex', from: 1, to: 1200 }, handle)
+    expect(ranged.to).to.equal(1000)
   })
 
   it('search_text returns path, line and text', async function () {
@@ -129,7 +147,7 @@ describe('read tools', function () {
     const lines = Array.from({ length: MAX_READ_LINES + 50 }, (_unused, index) => `l${index}`)
     const { handle } = createFakeHandle({ docs: { 'big.tex': lines.join('\n') } })
 
-    const result: any = await readFileTool.execute({ path: 'big.tex' }, handle)
+    const result: any = await readFileTool.execute({ path: 'big.tex', from: 1 }, handle)
 
     expect(result.truncated).to.equal(true)
     expect(result.nextRange).to.deep.equal({
@@ -171,6 +189,39 @@ describe('read tools', function () {
     expect(result.hits.map((hit: any) => hit.path)).to.deep.equal(['sections/one.tex'])
   })
 
+  it('accepts path parameter as alias for glob', async function () {
+    const { handle } = createFakeHandle({
+      docs: {
+        'main.tex': 'needle here',
+        'sections/one.tex': 'needle here too',
+      },
+    })
+
+    const result: any = await searchTextTool.execute(
+      { query: 'needle', path: 'sections/one.tex' },
+      handle
+    )
+
+    expect(result.hits.map((hit: any) => hit.path)).to.deep.equal(['sections/one.tex'])
+  })
+
+  it('finds matches in targeted file even when another file contains 60+ matches', async function () {
+    const many = Array.from({ length: 70 }, () => 'needle').join('\n')
+    const { handle } = createFakeHandle({
+      docs: {
+        'noisy.tex': many,
+        'target.tex': 'needle in target',
+      },
+    })
+
+    const result: any = await searchTextTool.execute(
+      { query: 'needle', glob: 'target.tex' },
+      handle
+    )
+
+    expect(result.hits.map((hit: any) => hit.path)).to.deep.equal(['target.tex'])
+  })
+
   it('matches globs with and without directory crossing', function () {
     expect(matchesGlob('a/b/c.tex', '**/*.tex')).to.equal(true)
     expect(matchesGlob('a/b/c.bib', '**/*.tex')).to.equal(false)
@@ -206,10 +257,10 @@ describe('read tools', function () {
   })
 
   describe('the read tools share one parameter vocabulary', function () {
-    it('search_text takes a glob, not a path', function () {
+    it('search_text takes a glob or path', function () {
       const props = (searchTextTool.spec.parameters as any).properties
       expect(props).to.have.property('glob')
-      expect(props).to.not.have.property('path')
+      expect(props).to.have.property('path')
     })
 
     it('read_file takes an exact path and line numbers only', function () {
@@ -230,5 +281,15 @@ describe('read tools', function () {
         'sections/a.tex',
       ])
     })
+  })
+
+  it('search_text renders context lines in file order', function () {
+    expect(
+      searchTextTool.render!({
+        hits: [{ path: 'main.tex', line: 5, text: 'hit', before: ['b1', 'b2'], after: ['a1'] }],
+        total: 1,
+        truncated: false,
+      })
+    ).to.equal('Found 1 hit(s):\n  3: b1\n  4: b2\nmain.tex:5: hit\n  6: a1')
   })
 })

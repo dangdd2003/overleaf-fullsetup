@@ -6,6 +6,7 @@ describe('AiAssistRunController', function () {
   let controller
   let mockManager
   let mockStore
+  let fakeSubscriber
 
   beforeEach(function () {
     mockManager = {
@@ -19,11 +20,23 @@ describe('AiAssistRunController', function () {
       getEvents: sinon.stub().resolves([
         { seq: 1, event: { type: 'text', text: 'hi' } },
       ]),
+      addWatcher: sinon.stub().resolves(1),
+      removeWatcher: sinon.stub().resolves(0),
+    }
+
+    fakeSubscriber = {
+      listeners: new Map(),
+      subscribe: sinon.stub().callsFake(async (channel, listener) => {
+        fakeSubscriber.listeners.set(channel, listener)
+        return fakeSubscriber.release
+      }),
+      release: sinon.stub(),
     }
 
     controller = new AiAssistRunController({
       manager: mockManager,
       store: mockStore,
+      subscriber: fakeSubscriber,
     })
   })
 
@@ -149,4 +162,186 @@ describe('AiAssistRunController', function () {
     expect(res.status.calledWith(403)).to.be.true
     expect(mockManager.approveEdit.called).to.be.false
   })
+
+  it('increments watcher count on subscribe and decrements on close', async function () {
+    let closeHandler
+    const req = {
+      params: { Project_id: 'p1', runId: 'run-1' },
+      query: {},
+      session: { user: { _id: 'user-1' } },
+      on: sinon.stub().callsFake((event, handler) => {
+        if (event === 'close') closeHandler = handler
+      }),
+    }
+    const res = {
+      setHeader: sinon.stub(),
+      flushHeaders: sinon.stub(),
+      write: sinon.stub(),
+      end: sinon.stub(),
+    }
+
+    await controller.streamRun(req, res)
+    expect(fakeSubscriber.subscribe.calledWith('ai-assist:run:run-1:channel')).to.be.true
+    expect(mockStore.addWatcher.calledWith('run-1')).to.be.true
+    expect(mockStore.removeWatcher.called).to.be.false
+
+    closeHandler()
+    expect(mockStore.removeWatcher.calledWith('run-1')).to.be.true
+    expect(fakeSubscriber.release.calledOnce).to.be.true
+  })
+
+  it('does not increment or decrement watcher count if request closes before subscribe resolves', async function () {
+    let resolveSubscribe
+    fakeSubscriber.subscribe = sinon.stub().callsFake(
+      () => new Promise(resolve => {
+        resolveSubscribe = () => resolve(fakeSubscriber.release)
+      })
+    )
+
+    let closeHandler
+    const req = {
+      params: { Project_id: 'p1', runId: 'run-1' },
+      query: {},
+      session: { user: { _id: 'user-1' } },
+      on: sinon.stub().callsFake((event, handler) => {
+        if (event === 'close') closeHandler = handler
+      }),
+    }
+    const res = {
+      setHeader: sinon.stub(),
+      flushHeaders: sinon.stub(),
+      write: sinon.stub(),
+      end: sinon.stub(),
+    }
+
+    const streamPromise = controller.streamRun(req, res)
+    await new Promise(r => setTimeout(r, 0))
+    closeHandler()
+    resolveSubscribe()
+    await streamPromise
+
+    expect(mockStore.addWatcher.called).to.be.false
+    expect(mockStore.removeWatcher.called).to.be.false
+    // The channel handle obtained after close must still be released.
+    expect(fakeSubscriber.release.calledOnce).to.be.true
+  })
+
+  it('forwards live pub/sub messages to the SSE response', async function () {
+    mockStore.getEvents.resolves([])
+    mockStore.getRun.resolves({ runId: 'run-1', projectId: 'p1', status: 'running' })
+    const req = {
+      params: { Project_id: 'p1', runId: 'run-1' },
+      query: {},
+      session: { user: { _id: 'user-1' } },
+      on: sinon.stub(),
+    }
+    const res = {
+      setHeader: sinon.stub(),
+      flushHeaders: sinon.stub(),
+      write: sinon.stub(),
+      end: sinon.stub(),
+    }
+
+    await controller.streamRun(req, res)
+    const listener = fakeSubscriber.listeners.get('ai-assist:run:run-1:channel')
+    listener(JSON.stringify({ seq: 5, event: { type: 'text', text: 'hi' } }))
+
+    expect(res.write.calledWith(`data: ${JSON.stringify({ seq: 5, event: { type: 'text', text: 'hi' } })}\n\n`)).to.be.true
+  })
+
+  it('accepts createRun with rich transcripts up to maxTranscriptBytes (e.g. 500KB)', async function () {
+    const largeText = 'x'.repeat(500000)
+    const req = {
+      params: { Project_id: 'proj-1' },
+      session: { user: { _id: 'user-1' } },
+      body: {
+        transcript: [{ role: 'user', content: largeText }],
+        providerSettings: { type: 'openai', apiKey: 'key' },
+      },
+    }
+    const res = {
+      json: sinon.stub(),
+      status: sinon.stub().returnsThis(),
+    }
+
+    await controller.createRun(req, res)
+    expect(res.status.called).to.be.false
+    expect(res.json.calledOnce).to.be.true
+    expect(mockManager.startRun.calledOnce).to.be.true
+  })
+
+  it('rejects createRun with 400 when transcript exceeds maxTranscriptBytes', async function () {
+    const hugeText = 'x'.repeat(5500000)
+    const req = {
+      params: { Project_id: 'proj-1' },
+      session: { user: { _id: 'user-1' } },
+      body: {
+        transcript: [{ role: 'user', content: hugeText }],
+        providerSettings: { type: 'openai', apiKey: 'key' },
+      },
+    }
+    const res = {
+      json: sinon.stub(),
+      status: sinon.stub().returnsThis(),
+    }
+
+    await controller.createRun(req, res)
+    expect(res.status.calledWith(400)).to.be.true
+    expect(res.json.firstCall.args[0].error).to.include('too large')
+    expect(mockManager.startRun.called).to.be.false
+  })
+
+  it('disables proxy buffering on the SSE response', async function () {
+    const req = {
+      params: { Project_id: 'p1', runId: 'run-1' },
+      query: {},
+      session: { user: { _id: 'user-1' } },
+      on: sinon.stub(),
+    }
+    const res = {
+      setHeader: sinon.stub(),
+      flushHeaders: sinon.stub(),
+      write: sinon.stub(),
+      end: sinon.stub(),
+    }
+
+    await controller.streamRun(req, res)
+
+    expect(res.setHeader.calledWith('X-Accel-Buffering', 'no')).to.be.true
+    expect(res.setHeader.calledWith('Cache-Control', 'no-cache, no-transform')).to.be.true
+  })
+
+  it('writes SSE comment keep-alives while the stream is idle and stops after close', async function () {
+    const clock = sinon.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    try {
+      let closeHandler
+      const req = {
+        params: { Project_id: 'p1', runId: 'run-1' },
+        query: {},
+        session: { user: { _id: 'user-1' } },
+        on: sinon.stub().callsFake((event, handler) => {
+          if (event === 'close') closeHandler = handler
+        }),
+      }
+      const res = {
+        setHeader: sinon.stub(),
+        flushHeaders: sinon.stub(),
+        write: sinon.stub(),
+        end: sinon.stub(),
+        writableEnded: false,
+      }
+
+      await controller.streamRun(req, res)
+      clock.tick(15000)
+      expect(res.write.calledWith(': keepalive\n\n')).to.be.true
+
+      const writesBeforeClose = res.write.callCount
+      closeHandler()
+      clock.tick(60000)
+      expect(res.write.callCount).to.equal(writesBeforeClose)
+    } finally {
+      clock.restore()
+    }
+  })
 })
+

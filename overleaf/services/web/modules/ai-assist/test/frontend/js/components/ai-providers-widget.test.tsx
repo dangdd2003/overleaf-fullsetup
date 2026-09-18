@@ -157,4 +157,18 @@ describe('AiProvidersWidget', function () {
       screen.getByRole('button', { name: /disable ai features/i })
     ).to.exist
   })
+
+  it('initializes as disabled when ol-showAiFeatures is false (default for new accounts)', function () {
+    window.metaAttributesCache?.clear()
+    document.head.innerHTML =
+      '<meta name="ol-csrfToken" content="csrf-token-123">' +
+      '<meta name="ol-aiAssistEnabled" data-type="boolean" content="">' +
+      '<meta name="ol-showAiFeatures" data-type="boolean">'
+    customLocalStorage.setItem('ai-assist:provider', STORED)
+
+    render(<AiProvidersWidget />)
+
+    expect(screen.getByRole('button', { name: /enable ai features/i })).to.exist
+    expect(screen.getByText('Disabled')).to.exist
+  })
 })

@@ -1,6 +1,7 @@
-import { FC, useState } from 'react'
+import { FC, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Brain } from '@phosphor-icons/react'
+import { useStickToBottom } from '../../hooks/use-stick-to-bottom'
 
 export const ThinkingBlock: FC<{
   thinking: string
@@ -9,6 +10,14 @@ export const ThinkingBlock: FC<{
 }> = ({ thinking, isLive = false, elapsedMs }) => {
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState(false)
+  const bodyRef = useRef<HTMLDivElement>(null)
+  const { onScroll, scrollToBottom } = useStickToBottom(bodyRef)
+
+  useLayoutEffect(() => {
+    if (expanded && isLive) {
+      scrollToBottom({ smooth: false })
+    }
+  }, [expanded, isLive, scrollToBottom])
 
   if (!thinking) return null
 
@@ -25,13 +34,23 @@ export const ThinkingBlock: FC<{
     title = t('ai_assist_thought_summary', 'Thought process')
   }
 
+  const handleToggle = () => {
+    setExpanded(prev => {
+      const next = !prev
+      if (next) {
+        window.dispatchEvent(new CustomEvent('aiAssist:stickToBottom'))
+      }
+      return next
+    })
+  }
+
   return (
     <div className="ai-assist-thinking-block">
       <button
         type="button"
         className="ai-assist-thinking-header"
         aria-expanded={expanded}
-        onClick={() => setExpanded(prev => !prev)}
+        onClick={handleToggle}
       >
         <span className="ai-assist-thinking-left">
           <span className="ai-assist-thinking-icon" aria-hidden="true">
@@ -63,6 +82,8 @@ export const ThinkingBlock: FC<{
       </button>
 
       <div
+        ref={bodyRef}
+        onScroll={onScroll}
         className={`ai-assist-thinking-body ${expanded ? 'is-expanded' : ''}`}
         aria-hidden={!expanded}
       >

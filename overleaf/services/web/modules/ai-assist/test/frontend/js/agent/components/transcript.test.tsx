@@ -167,6 +167,22 @@ describe('ToolCallCard', function () {
     const fileLink = screen.getByTitle(/open chapters\/intro\.tex/i)
     expect(fileLink).to.exist
   })
+
+  it('separates tool action and target file with whitespace', function () {
+    const { container } = render(
+      <ToolCallCard
+        call={{
+          id: 'c-space-test',
+          name: 'edit_file',
+          args: { path: 'sections/epistemology.tex', oldText: 'a', newText: 'b' },
+          result: { status: 'applied' },
+        }}
+      />
+    )
+    const summaryLine = container.querySelector('.ai-assist-tool-call-summary')
+    expect(summaryLine?.textContent).to.include('Edited file sections/epistemology.tex')
+    expect(summaryLine?.textContent).to.not.include('Edited filesections/epistemology.tex')
+  })
 })
 
 describe('EditApprovalCard', function () {
@@ -226,6 +242,49 @@ describe('EditApprovalCard', function () {
     expect(screen.getByText('sections/new.tex')).to.exist
     expect(screen.getByText('new file')).to.exist
     expect(screen.getByText('\\section{New}')).to.exist
+  })
+
+  it('shows append text badge instead of new file when edit_file has empty oldText', function () {
+    const APPEND = {
+      path: 'main.tex',
+      oldText: '',
+      newText: '\\section{Appended Section}',
+      toolName: 'edit_file',
+      action: 'append' as const,
+    }
+    render(<EditApprovalCard edit={APPEND} onDecision={sinon.stub()} />)
+    expect(screen.getByText('main.tex')).to.exist
+    expect(screen.getByText('append text')).to.exist
+    expect(screen.queryByText('new file')).to.not.exist
+    expect(screen.getByText('Review text to append to file:')).to.exist
+  })
+
+  it('shows delete text badge when replacing with empty string', function () {
+    const DELETE = {
+      path: 'main.tex',
+      oldText: '\\section{Deprecated}',
+      newText: '',
+      action: 'delete' as const,
+      toolName: 'edit_file',
+    }
+    render(<EditApprovalCard edit={DELETE} onDecision={sinon.stub()} />)
+    expect(screen.getByText('delete text')).to.exist
+    expect(screen.queryByText('new file')).to.not.exist
+    expect(screen.getByText('Review text to delete from file:')).to.exist
+  })
+
+  it('shows edit file badge when modifying existing text', function () {
+    const EDIT = {
+      path: 'main.tex',
+      oldText: 'original',
+      newText: 'modified',
+      action: 'edit' as const,
+      toolName: 'edit_file',
+    }
+    render(<EditApprovalCard edit={EDIT} onDecision={sinon.stub()} />)
+    expect(screen.getByText('edit file')).to.exist
+    expect(screen.queryByText('new file')).to.not.exist
+    expect(screen.getByText('Review proposed change before applying:')).to.exist
   })
 
   it('renders the approval diff with gutters and word-level highlighting', function () {

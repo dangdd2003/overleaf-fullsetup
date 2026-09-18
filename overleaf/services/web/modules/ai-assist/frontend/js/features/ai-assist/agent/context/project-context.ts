@@ -11,6 +11,8 @@ function plural(count: number, noun: string) {
   return `${count} ${noun}${count === 1 ? '' : 's'}`
 }
 
+const MAX_EXPLICIT_FILES = 50
+
 function renderFiles(snapshot: ContextSnapshot, previous: EnvelopeState | null) {
   const fingerprint = fingerprintFiles(snapshot.files)
 
@@ -26,6 +28,25 @@ function renderFiles(snapshot: ContextSnapshot, previous: EnvelopeState | null) 
   const bib = docs.filter(file => file.path.endsWith('.bib')).length
   const other = snapshot.files.length - tex - bib
 
+  const open = snapshot.rootDocPath
+    ? `<files root="${escapeAttribute(snapshot.rootDocPath)}" tex="${tex}" bib="${bib}" other="${other}">`
+    : `<files tex="${tex}" bib="${bib}" other="${other}">`
+
+  // For small projects (<= 50 files), list explicit file paths so the model knows what files exist
+  if (snapshot.files.length <= MAX_EXPLICIT_FILES) {
+    const rows = snapshot.files
+      .map(file => {
+        const safePath = neutraliseClosingTags(file.path)
+        const tag = file.type === 'binary' ? 'binary' : file.path.endsWith('.tex') ? 'tex' : file.path.endsWith('.bib') ? 'bib' : 'doc'
+        return `${safePath} [${tag}]`
+      })
+    return {
+      text: [open, ...rows, '</files>'].join('\n'),
+      fingerprint,
+    }
+  }
+
+  // Fallback for large projects (> 50 files): aggregate by top-level directory
   const dirs = new Map<string, { tex: number; other: number }>()
   for (const file of snapshot.files) {
     const slash = file.path.indexOf('/')
@@ -46,10 +67,6 @@ function renderFiles(snapshot: ContextSnapshot, previous: EnvelopeState | null) 
       ].filter(Boolean)
       return `${neutraliseClosingTags(dir)}  ${parts.join(', ')}`
     })
-
-  const open = snapshot.rootDocPath
-    ? `<files root="${escapeAttribute(snapshot.rootDocPath)}" tex="${tex}" bib="${bib}" other="${other}">`
-    : `<files tex="${tex}" bib="${bib}" other="${other}">`
 
   return {
     text: [open, ...rows, '</files>'].join('\n'),

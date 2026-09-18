@@ -29,7 +29,11 @@ export type AgentTool = {
    * closed.
    */
   mutates: boolean
-  execute(args: any, handle: ProjectHandle): Promise<unknown>
+  execute(
+    args: any,
+    handle: ProjectHandle,
+    options?: { signal?: AbortSignal }
+  ): Promise<unknown>
   /**
    * Optional plain-text rendering of a result for the model.
    *
@@ -59,6 +63,16 @@ export const TOOLS: Record<string, AgentTool> = {
   list_available_settings: listAvailableSettingsTool,
 }
 
+// Backward-compatible alias that resolves when called but does not clutter the canonical tool surface
+Object.defineProperty(TOOLS, 'get_compile_log', {
+  value: compileResultTool,
+  enumerable: false,
+  configurable: true,
+  writable: true,
+})
+
 export function toolSpecs(): ToolSpec[] {
-  return Object.values(TOOLS).map(tool => tool.spec)
+  // Deduplicate tools so aliases pointing to the same AgentTool do not emit duplicate tool specs to LLM APIs
+  const uniqueTools = Array.from(new Set(Object.values(TOOLS)))
+  return uniqueTools.map(tool => tool.spec)
 }

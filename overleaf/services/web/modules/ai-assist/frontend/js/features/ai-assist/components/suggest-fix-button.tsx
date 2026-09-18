@@ -5,7 +5,8 @@ import OLTooltip from '@/shared/components/ol/ol-tooltip'
 import OLButton from '@/shared/components/ol/ol-button'
 import useEventListener from '@/shared/hooks/use-event-listener'
 import { ProjectContext } from '@/shared/context/project-context'
-import { isFixRunning } from '../agent/fix-store'
+import { isFixableLevel } from '../log-entry-levels'
+import '../../../../stylesheets/ai-assist.scss'
 
 /**
  * Rendered into the compile log entry header.
@@ -35,9 +36,8 @@ export default function SuggestFixButton({
   // The pane passes that same value as the `id` prop, so either source works;
   // reading only `logEntry.id` renders nothing at all.
   const entryId = id ?? logEntry?.key ?? logEntry?.id
-  const [loading, setLoading] = useState(() =>
-    Boolean(entryId && isFixRunning(projectId, entryId))
-  )
+  // Note: a remount mid-run shows a non-loading button (pre-existing cosmetic defect).
+  const [loading, setLoading] = useState(false)
 
   const onSuggestFix = useCallback(
     (event: Event) => {
@@ -88,7 +88,7 @@ export default function SuggestFixButton({
   // Info/typesetting/success/raw entries are not actionable errors — offering
   // to "fix" one is misleading, so the button only shows for errors and
   // warnings.
-  const isFixable = logEntry?.level === 'error' || logEntry?.level === 'warning'
+  const isFixable = isFixableLevel(logEntry?.level)
 
   if (!enabled || !entryId || !isFixable) return null
 

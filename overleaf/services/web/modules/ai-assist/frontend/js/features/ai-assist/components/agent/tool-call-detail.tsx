@@ -84,10 +84,11 @@ export const ToolCallDetailView: FC<{ call: ToolCallRecord }> = ({ call }) => {
     const startLine =
       (result as any)?.startLine ?? args?.from ?? args?.startLine ?? 1
     const isRejected = result?.status === 'rejected'
+    const isCancelled = result?.status === 'stopped'
 
     if (oldText || newText) {
       return (
-        <div className={`ai-assist-tool-detail-diff ${isRejected ? 'is-rejected' : ''}`}>
+        <div className={`ai-assist-tool-detail-diff ${isRejected ? 'is-rejected' : ''} ${isCancelled ? 'is-cancelled' : ''}`}>
           <div className="ai-assist-tool-detail-header">
             <span
               role="button"
@@ -105,6 +106,11 @@ export const ToolCallDetailView: FC<{ call: ToolCallRecord }> = ({ call }) => {
             {isRejected && (
               <span className="ai-assist-tool-detail-badge rejected">
                 {t('ai_assist_rejected_badge', 'Rejected')}
+              </span>
+            )}
+            {isCancelled && (
+              <span className="ai-assist-tool-detail-badge cancelled">
+                {t('ai_assist_cancelled_badge', 'Cancelled')}
               </span>
             )}
           </div>
@@ -131,8 +137,9 @@ export const ToolCallDetailView: FC<{ call: ToolCallRecord }> = ({ call }) => {
   if (call.name === 'create_file') {
     const content = args.content ?? ''
     const isRejected = result?.status === 'rejected'
+    const isCancelled = result?.status === 'stopped'
     return (
-      <div className={`ai-assist-tool-detail-diff ${isRejected ? 'is-rejected' : ''}`}>
+      <div className={`ai-assist-tool-detail-diff ${isRejected ? 'is-rejected' : ''} ${isCancelled ? 'is-cancelled' : ''}`}>
         <div className="ai-assist-tool-detail-header">
           <span
             role="button"
@@ -150,6 +157,11 @@ export const ToolCallDetailView: FC<{ call: ToolCallRecord }> = ({ call }) => {
           {isRejected && (
             <span className="ai-assist-tool-detail-badge rejected">
               {t('ai_assist_rejected_badge', 'Rejected')}
+            </span>
+          )}
+          {isCancelled && (
+            <span className="ai-assist-tool-detail-badge cancelled">
+              {t('ai_assist_cancelled_badge', 'Cancelled')}
             </span>
           )}
         </div>

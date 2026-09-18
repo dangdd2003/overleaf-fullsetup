@@ -1,9 +1,24 @@
 import { ChangeEvent, KeyboardEvent, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { FileText, PaperPlaneRight } from '@phosphor-icons/react'
+import {
+  FileText,
+  PaperPlaneRight,
+  HandPalm,
+  PencilSimple,
+  ListChecks,
+  CaretUp,
+  Check,
+} from '@phosphor-icons/react'
+import {
+  Dropdown,
+  DropdownMenu,
+  DropdownToggle,
+  DropdownItem,
+} from '@/shared/components/dropdown/dropdown-menu'
 import useEventListener from '@/shared/hooks/use-event-listener'
 import { AttachmentRef } from '../../agent/context/types'
 import { parseAttachmentRef } from '../../agent/context/attachments'
+import { AgentMode, nextMode } from '../../agent/agent-mode'
 
 export interface AttachedSelection {
   path: string
@@ -30,10 +45,13 @@ export function AgentComposer({
   paths = [],
   onSend,
   onStop,
+  mode = 'manual',
+  onModeChange,
   attachments: externalAttachments,
   setAttachments: externalSetAttachments,
   attachedSelection: externalAttachedSelection,
   setAttachedSelection: externalSetAttachedSelection,
+  history = [],
 }: {
   running: boolean
   paths?: string[]
@@ -43,13 +61,18 @@ export function AgentComposer({
     attachedSelection?: AttachedSelection | null
   ) => void
   onStop: () => void
+  mode?: AgentMode
+  onModeChange?: (mode: AgentMode) => void
   attachments?: AttachmentRef[]
   setAttachments?: React.Dispatch<React.SetStateAction<AttachmentRef[]>>
   attachedSelection?: AttachedSelection | null
   setAttachedSelection?: React.Dispatch<React.SetStateAction<AttachedSelection | null>>
+  history?: string[]
 }) {
   const { t } = useTranslation()
   const [value, setValue] = useState('')
+  const [historyIndex, setHistoryIndex] = useState<number>(-1)
+  const draftRef = useRef<string>('')
   const [internalAttachments, setInternalAttachments] = useState<AttachmentRef[]>([])
   const [internalAttachedSelection, setInternalAttachedSelection] =
     useState<AttachedSelection | null>(null)
@@ -64,9 +87,53 @@ export function AgentComposer({
     externalSetAttachedSelection ?? setInternalAttachedSelection
 
   const [query, setQuery] = useState<string | null>(null)
+  const [modeMenuOpen, setModeMenuOpen] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const menuRef = useRef<HTMLUListElement>(null)
   const attachBtnRef = useRef<HTMLButtonElement>(null)
+
+  const modeConfig: Record<
+    AgentMode,
+    { label: string; desc: string; num: string; icon: React.ReactNode }
+  > = {
+    manual: {
+      label: t('ai_assist_mode_manual', 'Manual'),
+      desc: t('ai_assist_mode_manual_desc', 'Ask before making changes'),
+      num: '1',
+      icon: <HandPalm size={15} weight="bold" />,
+    },
+    acceptEdits: {
+      label: t('ai_assist_mode_accept_edits', 'Accept edits'),
+      desc: t('ai_assist_mode_accept_edits_desc', 'Accept all file edits'),
+      num: '2',
+      icon: <PencilSimple size={15} weight="bold" />,
+    },
+    plan: {
+      label: t('ai_assist_mode_plan', 'Plan'),
+      desc: t('ai_assist_mode_plan_desc', 'Plan before making changes'),
+      num: '3',
+      icon: <ListChecks size={15} weight="bold" />,
+    },
+  }
+
+  const currentModeConfig = modeConfig[mode || 'manual'] || modeConfig.manual
+
+  /**
+   * Pick a mode by typing the number shown against it, like Claude Code.
+   *
+   * Only while the menu is open: the composer textarea has focus otherwise, and
+   * there a digit is just text. The accepted keys come from the same `num` the
+   * menu renders, so the badge and the shortcut cannot drift apart.
+   */
+  const onModeMenuKeyDown = (event: KeyboardEvent) => {
+    const picked = (Object.keys(modeConfig) as AgentMode[]).find(
+      candidate => modeConfig[candidate].num === event.key
+    )
+    if (!picked) return
+    event.preventDefault()
+    onModeChange?.(picked)
+    setModeMenuOpen(false)
+  }
 
   const toggleAttachMenu = (event: React.MouseEvent) => {
     event.preventDefault()
@@ -92,6 +159,10 @@ export function AgentComposer({
     }
   }, [query])
 
+  useEffect(() => {
+    setHistoryIndex(-1)
+  }, [history])
+
   useEventListener('aiAssist:selectionChanged', (event: Event) => {
     if (externalSetAttachedSelection) return
     const detail = (event as CustomEvent<AttachedSelection | null>).detail
@@ -105,6 +176,10 @@ export function AgentComposer({
   const onChange = (event: ChangeEvent<HTMLTextAreaElement>) => {
     const next = event.target.value
     const caret = event.target.selectionStart ?? next.length
+
+    if (historyIndex !== -1) {
+      setHistoryIndex(-1)
+    }
 
     const completed = next.match(/@([^\s@]+)\s$/)
     if (completed) {
@@ -139,9 +214,31 @@ export function AgentComposer({
     setAttachments([])
     setQuery(null)
     setAttachedSelection(null)
+    setHistoryIndex(-1)
+    draftRef.current = ''
+  }
+
+  const setCaretToEnd = (len: number) => {
+    const textarea = textareaRef.current
+    if (textarea) {
+      textarea.selectionStart = len
+      textarea.selectionEnd = len
+    }
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => {
+        if (textareaRef.current) {
+          textareaRef.current.setSelectionRange(len, len)
+        }
+      })
+    }
   }
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === 'Tab' && event.shiftKey) {
+      event.preventDefault()
+      onModeChange?.(nextMode(mode || 'manual'))
+      return
+    }
     if (event.key === 'Escape') {
       if (query !== null) {
         event.preventDefault()
@@ -156,9 +253,48 @@ export function AgentComposer({
     }
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
+      if (running) return
       // Enter picks from the menu rather than sending a half-typed mention.
       if (query !== null) return
       send()
+      return
+    }
+
+    if (query === null && history.length > 0) {
+      if (event.key === 'ArrowUp') {
+        const textarea = textareaRef.current
+        const caret = textarea?.selectionStart ?? 0
+        const isAtTopLine = !value.slice(0, caret).includes('\n')
+
+        if (isAtTopLine || historyIndex >= 0 || value === '') {
+          event.preventDefault()
+          if (historyIndex === -1) {
+            draftRef.current = value
+          }
+          const nextIndex =
+            historyIndex === -1
+              ? 0
+              : Math.min(historyIndex + 1, history.length - 1)
+          const targetText = history[history.length - 1 - nextIndex]
+          setValue(targetText)
+          setHistoryIndex(nextIndex)
+          setCaretToEnd(targetText.length)
+        }
+      } else if (event.key === 'ArrowDown' && historyIndex >= 0) {
+        event.preventDefault()
+        if (historyIndex > 0) {
+          const nextIndex = historyIndex - 1
+          const targetText = history[history.length - 1 - nextIndex]
+          setValue(targetText)
+          setHistoryIndex(nextIndex)
+          setCaretToEnd(targetText.length)
+        } else {
+          const draft = draftRef.current
+          setValue(draft)
+          setHistoryIndex(-1)
+          setCaretToEnd(draft.length)
+        }
+      }
     }
   }
 
@@ -312,6 +448,43 @@ export function AgentComposer({
                 <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
               </svg>
             </button>
+
+            <Dropdown
+              drop="up"
+              className="d-inline-flex"
+              show={modeMenuOpen}
+              onToggle={setModeMenuOpen}
+              onKeyDown={onModeMenuKeyDown}
+            >
+              <DropdownToggle
+                id="ai-assist-mode-toggle"
+                as="button"
+                className="ai-assist-mode-selector-btn"
+                aria-label={t('ai_assist_select_mode', 'Select mode (Shift+Tab to cycle)')}
+                title={t('ai_assist_select_mode_tooltip', 'Mode: {{label}} (Shift+Tab to cycle)', { label: currentModeConfig.label })}
+              >
+                <span className="ai-assist-mode-icon">{currentModeConfig.icon}</span>
+                <span className="ai-assist-mode-label">{currentModeConfig.label}</span>
+                <CaretUp size={10} weight="bold" className="ai-assist-mode-caret" />
+              </DropdownToggle>
+              <DropdownMenu className="ai-assist-mode-menu">
+                <div className="ai-assist-mode-menu-header">Mode</div>
+                {(['manual', 'acceptEdits', 'plan'] as AgentMode[]).map(m => (
+                  <DropdownItem
+                    key={m}
+                    className={`ai-assist-mode-menu-row ${m === (mode || 'manual') ? 'is-selected' : ''}`}
+                    onClick={() => onModeChange?.(m)}
+                  >
+                    <span className="ai-assist-mode-item-icon">{modeConfig[m].icon}</span>
+                    <div className="ai-assist-mode-item-text">
+                      <span className="ai-assist-mode-item-title">{modeConfig[m].label}</span>
+                      <span className="ai-assist-mode-item-desc">{modeConfig[m].desc}</span>
+                    </div>
+                    <span className="ai-assist-mode-item-num">{modeConfig[m].num}</span>
+                  </DropdownItem>
+                ))}
+              </DropdownMenu>
+            </Dropdown>
           </div>
 
           <div className="ai-assist-composer-right-actions">

@@ -1087,7 +1087,12 @@ module.exports = {
       ),
     ],
     pdfPreviewPromotions: [],
-    diagnosticActions: [],
+    diagnosticActions: [
+      Path.resolve(
+        __dirname,
+        '../modules/ai-assist/frontend/js/features/ai-assist/diagnostic-action.ts'
+      ),
+    ],
     sourceEditorCompletionSources: [],
     sourceEditorSymbolPalette: [],
     sourceEditorToolbarStartButtons: [],
@@ -1227,6 +1232,10 @@ module.exports = {
 
   managedUsers: {
     enabled: false,
+  },
+
+  aiAssist: {
+    enabled: process.env.AI_ASSIST_ENABLED === 'true',
   },
 
   enablePandocConversions: process.env.ENABLE_PANDOC_CONVERSIONS === 'true',

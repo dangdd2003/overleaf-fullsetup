@@ -22,7 +22,11 @@ export const WINDOW_AFTER = 6
 /** The preamble is only ever a prefix; this caps a pathological one. */
 export const PREAMBLE_MAX_LINES = 40
 
-/** Renders `lines` with absolute line numbers, starting at `from`. */
+/**
+ * Renders `lines` with absolute line numbers, starting at `from`.
+ * Note: Line number prefixes (e.g. "14: ") are for display and reference only.
+ * They must not be included in edit_file oldText or newText.
+ */
 function numbered(lines: string[], from: number): string {
   return lines
     .map((text, index) => `${from + index}: ${neutraliseClosingTags(text)}`)

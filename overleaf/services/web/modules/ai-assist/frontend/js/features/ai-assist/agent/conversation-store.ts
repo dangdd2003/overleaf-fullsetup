@@ -185,6 +185,52 @@ function fit(transcript: TranscriptEntry[]) {
 }
 
 /**
+ * Prepares a transcript for a background run payload, ensuring oversized historical
+ * tool call results are shrunk or pruned so the request stays comfortably within limits.
+ */
+export function prepareTranscriptForRun(
+  transcript: TranscriptEntry[],
+  maxBytes: number = 4_500_000
+): TranscriptEntry[] {
+  if (!Array.isArray(transcript) || transcript.length === 0) {
+    return transcript
+  }
+
+  // If already comfortably within limits, return as-is
+  const jsonStr = JSON.stringify(transcript)
+  if (jsonStr.length <= maxBytes) {
+    return transcript
+  }
+
+  // First pass: shrink older assistant entries (preserve the latest assistant turn intact)
+  const lastAssistantIdx = transcript.map(e => e.role).lastIndexOf('assistant')
+  let result = transcript.map((entry, idx) => {
+    if (entry.role === 'assistant' && idx !== lastAssistantIdx) {
+      return shrink(entry)
+    }
+    return entry
+  })
+
+  if (JSON.stringify(result).length <= maxBytes) {
+    return result
+  }
+
+  // Second pass: shrink all assistant turns
+  result = result.map(entry => (entry.role === 'assistant' ? shrink(entry) : entry))
+
+  if (JSON.stringify(result).length <= maxBytes) {
+    return result
+  }
+
+  // Third pass: if still exceeds budget, drop oldest entries (preserving at least the last turn)
+  while (result.length > 1 && JSON.stringify(result).length > maxBytes) {
+    result = result.slice(1)
+  }
+
+  return result
+}
+
+/**
  * `customLocalStorage` handles the JSON encoding and swallows a denied, full or
  * corrupt store by returning null, so unreadable history degrades to an empty
  * transcript and unwritable history degrades to memory for this session.

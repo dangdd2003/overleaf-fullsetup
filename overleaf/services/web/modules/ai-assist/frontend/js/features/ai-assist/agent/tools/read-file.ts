@@ -1,6 +1,9 @@
 import { AgentTool } from './registry'
 import { MAX_READ_LINES } from '../project-handle'
 
+/** Without from/to, read a window: the result is re-sent on every later step. */
+const DEFAULT_READ_LINES = 500
+
 function number(lines: string[], offset: number) {
   return lines.map((line, index) => `${offset + index}: ${line}`).join('\n')
 }
@@ -11,7 +14,7 @@ export const readFileTool: AgentTool = {
   spec: {
     name: 'read_file',
     description:
-      'Read one text file, or a line range of one, as numbered lines. Get the range from get_outline or search_text first rather than guessing it.',
+      'Read one text file, or a line range of one, as numbered lines. Line numbers in the output (e.g. "14: ") are for display and reference only; never include line number prefixes in oldText or newText when calling edit_file.',
     parameters: {
       type: 'object',
       properties: {
@@ -47,14 +50,16 @@ export const readFileTool: AgentTool = {
     const { lines } = await handle.readFile(path)
     const totalLines = lines.length
 
+    const windowSize =
+      from !== undefined || to !== undefined ? MAX_READ_LINES : DEFAULT_READ_LINES
     const start = Math.max(1, from ?? 1)
     const requestedEnd = Math.min(to ?? totalLines, totalLines)
-    const capped = lines.slice(start - 1, requestedEnd).slice(0, MAX_READ_LINES)
+    const capped = lines.slice(start - 1, requestedEnd).slice(0, windowSize)
     const end = start + capped.length - 1
 
     const nextRange =
       end < totalLines
-        ? { from: end + 1, to: Math.min(end + MAX_READ_LINES, totalLines) }
+        ? { from: end + 1, to: Math.min(end + windowSize, totalLines) }
         : undefined
 
     return {

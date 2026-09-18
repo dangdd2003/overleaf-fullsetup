@@ -34,6 +34,22 @@ describe('ToolCallDetailView', function () {
     expect(screen.getByText(/applied change to main\.tex/i)).to.exist
   })
 
+  it('renders cancelled badge when edit_file was stopped', function () {
+    const call = {
+      id: '2b',
+      name: 'edit_file',
+      args: {
+        path: 'main.tex',
+        oldText: '\\begin{old}',
+        newText: '\\begin{new}',
+      },
+      result: { status: 'stopped' },
+    }
+    const { container } = render(<ToolCallDetailView call={call} />)
+    expect(screen.getByText('Cancelled')).to.exist
+    expect(container.querySelector('.ai-assist-tool-detail-diff.is-cancelled')).to.exist
+  })
+
   it('renders error messages when tool failed', function () {
     const call = {
       id: '3',

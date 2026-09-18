@@ -12,20 +12,28 @@ export type LogEntrySummary = {
   message: string
   file: string | null
   line: number | null
+  /** Raw TeX log snippet around the error line (e.g. `l.12 \badmacro`). */
+  excerpt?: string
 }
 
 export type EditRequest = {
   path: string
   oldText: string
   newText: string
+  startLine?: number
+  endLine?: number
+  action?: 'create' | 'append' | 'delete' | 'edit'
+  toolName?: string
 }
 
 export type EditOutcome =
   | { status: 'applied'; startLine?: number }
   | { status: 'rejected'; note?: string }
-  | { status: 'noMatch' }
-  | { status: 'ambiguous'; matches: number }
-  | { status: 'drifted' }
+  | { status: 'noMatch'; message?: string }
+  | { status: 'ambiguous'; matches: number; message?: string }
+  | { status: 'drifted'; message?: string }
+  | { status: 'timeout'; message?: string }
+  | { status: 'error'; message?: string }
 
 export type SearchHit = { path: string; line: number; text: string }
 
@@ -33,6 +41,20 @@ export type CompileOutcome = {
   status: string
   errors: LogEntrySummary[]
   warnings: LogEntrySummary[]
+}
+
+/**
+ * How to run a compile.
+ *
+ * `clean` clears the CLSI build directory and cached output first, which is
+ * what the "Recompile from scratch" menu item does. Incremental compiles reuse
+ * .aux/.fls/.fdb_latexmk from the previous build; when that state is stale or
+ * corrupt the build produces no usable output, and only a clean rebuild gets
+ * the project going again.
+ */
+export type CompileOptions = {
+  clean?: boolean
+  signal?: AbortSignal
 }
 
 /** The last compile, including the raw log `get_compile_log` excerpts from. */
@@ -109,7 +131,11 @@ export interface ProjectHandle {
   ): Promise<{ lines: string[]; truncated: boolean }>
   search(
     query: string,
-    options?: { caseSensitive?: boolean; regexp?: boolean }
+    options?: {
+      caseSensitive?: boolean
+      regexp?: boolean
+      glob?: string
+    }
   ): Promise<SearchHit[]>
   currentSelection(): {
     path: string
@@ -118,7 +144,7 @@ export interface ProjectHandle {
     text: string
   } | null
   proposeEdit(edit: EditRequest): Promise<EditOutcome>
-  compile(): Promise<CompileOutcome>
+  compile(options?: CompileOptions): Promise<CompileOutcome>
   /** The document the user is looking at, if any. */
   openFile(): { path: string; cursorLine: number | null } | null
   /** The last compile result, without triggering a new one. */

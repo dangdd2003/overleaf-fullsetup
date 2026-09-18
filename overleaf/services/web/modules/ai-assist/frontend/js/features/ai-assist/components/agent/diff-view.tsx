@@ -59,11 +59,13 @@ export default function DiffView({
   newText = '',
   startLine = 1,
   onLineClick,
+  foldLongHunks = false,
 }: {
   oldText?: string
   newText?: string
   startLine?: number
   onLineClick?: (line: number) => void
+  foldLongHunks?: boolean
 }) {
   const { editorStyle, gutterStyle, isDark } = useEditorThemeStyles()
   const safeOldText = typeof oldText === 'string' ? oldText : String(oldText ?? '')
@@ -210,9 +212,9 @@ export default function DiffView({
     })
   })
 
-  // The log entry is a narrow, crowded column. A long hunk must not push the
-  // rest of the compile log off screen, so the middle collapses.
-  if (rows.length > MAX_ROWS) {
+  // By default, renders the full diff inside the scrollable editor container.
+  // When foldLongHunks is explicitly enabled, the middle folds into a summary row.
+  if (foldLongHunks && rows.length > MAX_ROWS) {
     const head = rows.slice(0, MAX_ROWS / 2)
     const tail = rows.slice(rows.length - MAX_ROWS / 2)
     const hidden = rows.length - MAX_ROWS

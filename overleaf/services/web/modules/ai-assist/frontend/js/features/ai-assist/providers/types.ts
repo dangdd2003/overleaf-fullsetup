@@ -75,6 +75,11 @@ export type ChatChunk =
   | { type: 'thinking'; text: string }
   | { type: 'tool_call'; id: string; name: string; args: unknown }
   | { type: 'done'; stopReason?: 'stop' | 'tool_calls' | 'length' }
+  /**
+   * The reply hit the output token limit. Sent last, and only then. The last
+   * tool call of the reply, if any, has incomplete arguments.
+   */
+  | { type: 'stop'; reason: 'max_tokens' }
 
 export type CacheHints = {
   cacheSystem: boolean
@@ -89,6 +94,11 @@ export type ChatRequest = {
   system: string
   messages: AgentMessage[]
   maxTokens: number
+  /**
+   * The context window the caller budgets for. Ollama needs it as num_ctx,
+   * otherwise it runs with a small default and silently truncates the prompt.
+   */
+  contextWindow?: number
   tools?: ToolSpec[]
   cacheHints?: CacheHints
   signal?: AbortSignal
@@ -152,14 +162,14 @@ export type ProviderErrorCode =
   | 'contextExhausted'
   | 'runawayToolLoop'
   | 'consecutiveToolFailures'
+  | 'outputTruncated'
 
 /**
  * A failure talking to the provider.
  *
- * Unlike the server-side version this once had, the provider's own message is
- * kept: the request came from this browser using this user's own key, so there
- * is nobody else to leak it to, and "invalid_api_key: incorrect key provided"
- * is far more useful than a generic sentence.
+ * The server relays the provider's own message: the request used this user's
+ * own key, so there is nobody else to leak it to, and "invalid_api_key:
+ * incorrect key provided" is far more useful than a generic sentence.
  */
 export class ProviderError extends Error {
   code: ProviderErrorCode

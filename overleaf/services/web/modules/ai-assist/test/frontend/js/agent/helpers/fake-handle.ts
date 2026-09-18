@@ -1,6 +1,7 @@
 import {
   AppearanceSettings,
   AvailableSettingsOptions,
+  CompileOptions,
   CompilerSettings,
   EditOutcome,
   EditRequest,
@@ -11,6 +12,7 @@ import {
   SearchHit,
 } from '../../../../../frontend/js/features/ai-assist/agent/project-handle'
 import { buildProjectIndex, ProjectIndex } from '../../../../../frontend/js/features/ai-assist/agent/context/project-index'
+import { matchesGlob } from '../../../../../frontend/js/features/ai-assist/agent/tools/search-text'
 
 export type FakeHandleOptions = {
   docs?: Record<string, string>
@@ -107,10 +109,12 @@ export function createFakeHandle(options: FakeHandleOptions = {}) {
       return { lines: lines.slice(range.from - 1, range.to), truncated: false }
     },
 
-    async search(query) {
-      calls.push({ name: 'search', args: { query } })
+    async search(query, options) {
+      calls.push({ name: 'search', args: { query, options } })
       const hits: SearchHit[] = []
+      const pattern = options?.glob
       for (const [path, text] of Object.entries(docs)) {
+        if (pattern && !matchesGlob(path.replace(/^\//, ''), pattern)) continue
         text.split('\n').forEach((line, index) => {
           if (line.includes(query)) hits.push({ path, line: index + 1, text: line })
         })
@@ -132,8 +136,8 @@ export function createFakeHandle(options: FakeHandleOptions = {}) {
       return options.onEdit ? options.onEdit(edit) : { status: 'applied' }
     },
 
-    async compile() {
-      calls.push({ name: 'compile', args: null })
+    async compile(compileOptions?: CompileOptions) {
+      calls.push({ name: 'compile', args: compileOptions ?? null })
       return (
         options.compileResult ?? { status: 'success', errors: [], warnings: [] }
       )

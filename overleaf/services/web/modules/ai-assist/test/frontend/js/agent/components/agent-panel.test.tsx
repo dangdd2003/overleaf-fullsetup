@@ -18,6 +18,7 @@ import {
   PROJECT_ID,
 } from '../../../../../../../test/frontend/helpers/editor-providers'
 import { resetMeta } from '../../../../../../../test/frontend/helpers/reset-meta'
+import customLocalStorage from '@/infrastructure/local-storage'
 
 describe('buildUserEntry', function () {
   beforeEach(function () {
@@ -211,11 +212,183 @@ describe('AgentComposer', function () {
     })
     expect(onStop).to.have.been.calledOnce
   })
+
+  it('does not send on Enter while running', function () {
+    const onSend = sinon.stub()
+    render(<AgentComposer running onSend={onSend} onStop={sinon.stub()} />)
+
+    const input = screen.getByPlaceholderText(/what would you like to do/i)
+    fireEvent.change(input, { target: { value: 'add a section' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(onSend).to.have.not.been.called
+  })
+
+  it('navigates history prompts with ArrowUp and ArrowDown', function () {
+    render(
+      <AgentComposer
+        running={false}
+        onSend={sinon.stub()}
+        onStop={sinon.stub()}
+        history={['first prompt', 'second prompt']}
+      />
+    )
+
+    const input = screen.getByPlaceholderText(/what would you like to do/i) as HTMLTextAreaElement
+    expect(input.value).to.equal('')
+
+    // Up arrow to latest history prompt
+    fireEvent.keyDown(input, { key: 'ArrowUp' })
+    expect(input.value).to.equal('second prompt')
+
+    // Up arrow to older history prompt
+    fireEvent.keyDown(input, { key: 'ArrowUp' })
+    expect(input.value).to.equal('first prompt')
+
+    // Up arrow at oldest prompt stays there
+    fireEvent.keyDown(input, { key: 'ArrowUp' })
+    expect(input.value).to.equal('first prompt')
+
+    // Down arrow forward to newer prompt
+    fireEvent.keyDown(input, { key: 'ArrowDown' })
+    expect(input.value).to.equal('second prompt')
+
+    // Down arrow back to original empty draft
+    fireEvent.keyDown(input, { key: 'ArrowDown' })
+    expect(input.value).to.equal('')
+  })
+
+  it('preserves draft input when navigating history and returning with ArrowDown', function () {
+    render(
+      <AgentComposer
+        running={false}
+        onSend={sinon.stub()}
+        onStop={sinon.stub()}
+        history={['existing prompt']}
+      />
+    )
+
+    const input = screen.getByPlaceholderText(/what would you like to do/i) as HTMLTextAreaElement
+    fireEvent.change(input, { target: { value: 'my unfinished draft' } })
+
+    fireEvent.keyDown(input, { key: 'ArrowUp' })
+    expect(input.value).to.equal('existing prompt')
+
+    fireEvent.keyDown(input, { key: 'ArrowDown' })
+    expect(input.value).to.equal('my unfinished draft')
+  })
+
+  it('does not navigate history if history is empty', function () {
+    render(
+      <AgentComposer
+        running={false}
+        onSend={sinon.stub()}
+        onStop={sinon.stub()}
+        history={[]}
+      />
+    )
+
+    const input = screen.getByPlaceholderText(/what would you like to do/i) as HTMLTextAreaElement
+    fireEvent.change(input, { target: { value: 'current text' } })
+
+    fireEvent.keyDown(input, { key: 'ArrowUp' })
+    expect(input.value).to.equal('current text')
+  })
+
+  it('cycles mode with Shift+Tab in composer textarea', function () {
+    const onModeChange = sinon.stub()
+    render(
+      <AgentComposer
+        running={false}
+        mode="manual"
+        onModeChange={onModeChange}
+        onSend={sinon.stub()}
+        onStop={sinon.stub()}
+      />
+    )
+
+    const input = screen.getByPlaceholderText(/what would you like to do/i) as HTMLTextAreaElement
+    fireEvent.keyDown(input, { key: 'Tab', shiftKey: true })
+    expect(onModeChange.calledWith('acceptEdits')).to.be.true
+  })
+
+  it('opens mode menu and selects a mode', function () {
+    const onModeChange = sinon.stub()
+    render(
+      <AgentComposer
+        running={false}
+        mode="manual"
+        onModeChange={onModeChange}
+        onSend={sinon.stub()}
+        onStop={sinon.stub()}
+      />
+    )
+
+    const modeBtn = screen.getByLabelText(/select mode/i)
+    fireEvent.click(modeBtn)
+
+    const planOption = screen.getByText(/^plan$/i)
+    fireEvent.click(planOption)
+
+    expect(onModeChange.calledWith('plan')).to.be.true
+  })
+
+  it('selects a mode by typing its number while the menu is open', function () {
+    const onModeChange = sinon.stub()
+    render(
+      <AgentComposer
+        running={false}
+        mode="manual"
+        onModeChange={onModeChange}
+        onSend={sinon.stub()}
+        onStop={sinon.stub()}
+      />
+    )
+
+    const modeBtn = screen.getByLabelText(/select mode/i)
+    fireEvent.click(modeBtn)
+    fireEvent.keyDown(modeBtn, { key: '2' })
+
+    expect(onModeChange.calledWith('acceptEdits')).to.be.true
+  })
+
+  it('leaves digits as text in the textarea when the mode menu is closed', function () {
+    const onModeChange = sinon.stub()
+    render(
+      <AgentComposer
+        running={false}
+        mode="manual"
+        onModeChange={onModeChange}
+        onSend={sinon.stub()}
+        onStop={sinon.stub()}
+      />
+    )
+
+    const input = screen.getByPlaceholderText(
+      /what would you like to do/i
+    ) as HTMLTextAreaElement
+    fireEvent.keyDown(input, { key: '2' })
+    fireEvent.change(input, { target: { value: '2' } })
+
+    expect(onModeChange.called).to.be.false
+    expect(input.value).to.equal('2')
+  })
 })
 
 describe('AgentPanel', function () {
+  let origEventSource: any
+  let fakeFetch: sinon.SinonStub | null = null
+
+  beforeEach(function () {
+    origEventSource = globalThis.EventSource
+  })
+
   afterEach(function () {
     clearConversation(PROJECT_ID)
+    customLocalStorage.clear()
+    fakeFetch?.restore()
+    fakeFetch = null
+    globalThis.EventSource = origEventSource
   })
 
   it('seeds the transcript from a previously saved conversation on mount', function () {
@@ -224,11 +397,130 @@ describe('AgentPanel', function () {
     ])
 
     render(
-      <EditorProviders>
+      <EditorProviders mockCompileOnLoad>
         <AgentPanel />
       </EditorProviders>
     )
 
     expect(screen.getByText('what did we talk about last time?')).to.exist
+  })
+
+  it('stops active background run when New chat is clicked', async function () {
+    customLocalStorage.setItem('ai-assist:active-run:' + PROJECT_ID, 'run-123')
+    customLocalStorage.setItem('ai-assist:active-run-start:' + PROJECT_ID, String(Date.now()))
+
+    fakeFetch = sinon.stub(globalThis, 'fetch' as any).resolves({
+      ok: true,
+      json: async () => ({ ok: true }),
+    })
+
+    const closeStub = sinon.stub()
+    function FakeEventSource(this: any) {
+      this.close = closeStub
+      Object.defineProperty(this, 'onmessage', {
+        set(_fn) {},
+      })
+    }
+    globalThis.EventSource = FakeEventSource as any
+
+    render(
+      <EditorProviders mockCompileOnLoad>
+        <AgentPanel />
+      </EditorProviders>
+    )
+
+    fireEvent.click(screen.getByLabelText('New chat'))
+
+    const stopCall = fakeFetch.getCalls().find(c =>
+      String(c.args[0]).includes('/runs/run-123/stop')
+    )
+    expect(stopCall, 'New chat must POST stop for the active run').to.exist
+  })
+
+  it('does not repopulate transcript with stream events arriving after New chat', async function () {
+    customLocalStorage.setItem('ai-assist:active-run:' + PROJECT_ID, 'run-123')
+    customLocalStorage.setItem('ai-assist:active-run-start:' + PROJECT_ID, String(Date.now()))
+
+    fakeFetch = sinon.stub(globalThis, 'fetch' as any).resolves({
+      ok: true,
+      json: async () => ({ ok: true }),
+    })
+
+    let messageHandler: ((msg: any) => void) | null = null
+    const closeStub = sinon.stub()
+    function FakeEventSource(this: any) {
+      this.close = closeStub
+      Object.defineProperty(this, 'onmessage', {
+        set(fn) {
+          messageHandler = fn
+        },
+      })
+    }
+    globalThis.EventSource = FakeEventSource as any
+
+    render(
+      <EditorProviders mockCompileOnLoad>
+        <AgentPanel />
+      </EditorProviders>
+    )
+
+    fireEvent.click(screen.getByLabelText('New chat'))
+
+    // An event arriving from the old run after clicking New chat
+    const handler = messageHandler as ((msg: any) => void) | null
+    if (handler) {
+      handler({
+        data: JSON.stringify({
+          seq: 1,
+          event: { type: 'text', text: 'resurrected zombie text' },
+        }),
+      })
+    }
+
+    expect(screen.queryByText(/resurrected zombie text/)).to.equal(null)
+  })
+
+  it('shows jump to latest button when scrolled up and clicking it scrolls to bottom', function () {
+    saveConversation(PROJECT_ID, [
+      { id: 'u1', role: 'user', text: 'turn 1' },
+      { id: 'a1', role: 'assistant', text: 'turn 1 reply', toolCalls: [] },
+      { id: 'u2', role: 'user', text: 'turn 2' },
+      { id: 'a2', role: 'assistant', text: 'turn 2 reply', toolCalls: [] },
+    ])
+
+    const { container } = render(
+      <EditorProviders mockCompileOnLoad>
+        <AgentPanel />
+      </EditorProviders>
+    )
+
+    const transcript = container.querySelector('.ai-assist-transcript') as HTMLElement
+    expect(transcript).to.exist
+
+    let scrollTop = 0
+    Object.defineProperty(transcript, 'scrollHeight', { get: () => 1000 })
+    Object.defineProperty(transcript, 'clientHeight', { get: () => 200 })
+    Object.defineProperty(transcript, 'scrollTop', {
+      get: () => scrollTop,
+      set: v => {
+        scrollTop = v
+      },
+    })
+
+    // Initially at bottom, button not rendered
+    expect(screen.queryByLabelText(/jump to latest/i)).to.equal(null)
+
+    // Scroll up
+    scrollTop = 100
+    fireEvent.scroll(transcript)
+
+    // Button should now be rendered
+    const jumpBtn = screen.getByLabelText(/jump to latest/i)
+    expect(jumpBtn).to.exist
+
+    // Click jump button
+    fireEvent.click(jumpBtn)
+    expect(transcript.scrollTop).to.equal(1000)
+    expect(screen.queryByLabelText(/jump to latest/i)).to.equal(null)
   })
 })

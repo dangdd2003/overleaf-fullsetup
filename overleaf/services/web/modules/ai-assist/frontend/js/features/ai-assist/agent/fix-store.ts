@@ -1,15 +1,7 @@
-import { useEffect, useState, useCallback, useMemo } from 'react'
 import customLocalStorage from '@/infrastructure/local-storage'
 import { TranscriptEntry } from './agent-messages'
 import { shrink, cleanStoredResult } from './conversation-store'
-import { AgentState, reduceAgentEvent } from './agent-state'
-import { EditRequest, ProjectHandle } from './project-handle'
-import { AiAssistant } from '../assistant'
-import { hasConsented } from '../provider-store'
-import { runAgent } from './run-agent'
-import { resolveLimits } from '../providers/types'
-import { FIX_MAX_STEPS, FIX_TOOLS, buildFixTranscript } from './fix-run'
-import { FIX_SYSTEM_PROMPT } from './context/fix-system-prompt'
+import { EditRequest } from './project-handle'
 
 export interface StoredFix {
   entryId: string
@@ -19,17 +11,11 @@ export interface StoredFix {
   transcript: TranscriptEntry[]
   running?: boolean
   error?: { code: string; message: string } | null
-  stoppedForBudget?: boolean
   feedback?: 'up' | 'down' | null
   decidedEdits: Record<string, { path: string; startLine: number; accepted: boolean }>
   approvalContext?: { startLine: number } | null
   pendingApproval?: { id: string; edit: EditRequest } | null
   updatedAt: number
-}
-
-interface ActiveRun {
-  controller: AbortController
-  approvalResolver: ((decision: { accepted: boolean; note?: string }) => void) | null
 }
 
 export interface LastFixSummary {
@@ -42,7 +28,6 @@ export interface LastFixSummary {
 }
 
 const MAX_STORED_FIXES = 30
-const activeRuns = new Map<string, ActiveRun>()
 const inMemoryFixes = new Map<string, Map<string, StoredFix>>()
 const listeners = new Map<string, Set<() => void>>()
 
@@ -68,10 +53,6 @@ export function getLastCompletedFix(projectId: string): LastFixSummary | null {
 const keyFor = (projectId: string) => `ai-assist:fixes:${projectId}`
 
 export function clearFixStore(): void {
-  for (const active of activeRuns.values()) {
-    active.controller.abort()
-  }
-  activeRuns.clear()
   inMemoryFixes.clear()
   listeners.clear()
   lastCompletedFixByProject.clear()
@@ -200,29 +181,6 @@ export function getStoredFix(
   return null
 }
 
-export function isFixRunning(projectId: string, entryId: string): boolean {
-  return activeRuns.has(`${projectId}:${entryId}`)
-}
-
-export function setFixRunning(
-  projectId: string,
-  entryId: string,
-  running: boolean
-): void {
-  const k = `${projectId}:${entryId}`
-  if (running) {
-    if (!activeRuns.has(k)) {
-      activeRuns.set(k, {
-        controller: new AbortController(),
-        approvalResolver: null,
-      })
-    }
-  } else {
-    activeRuns.delete(k)
-  }
-  notify(projectId, entryId)
-}
-
 export function saveStoredFix(projectId: string, fix: StoredFix): void {
   const map = ensureProjectLoaded(projectId)
   map.set(fix.entryId, fix)
@@ -235,27 +193,6 @@ export function saveStoredFix(projectId: string, fix: StoredFix): void {
   }
   commitFixesToStorage(projectId)
   notify(projectId, fix.entryId)
-}
-
-export function stopFixRun(projectId: string, entryId: string): void {
-  const k = `${projectId}:${entryId}`
-  const active = activeRuns.get(k)
-  if (active) {
-    active.controller.abort()
-    active.approvalResolver?.({ accepted: false })
-    activeRuns.delete(k)
-  }
-
-  const map = ensureProjectLoaded(projectId)
-  const fix = map.get(entryId)
-  if (fix) {
-    fix.running = false
-    fix.approvalContext = null
-    fix.pendingApproval = null
-    fix.updatedAt = Date.now()
-    commitFixesToStorage(projectId)
-    notify(projectId, entryId)
-  }
 }
 
 export function setFixFeedback(
@@ -284,336 +221,5 @@ export function setFixOpen(
     fix.open = open
     fix.updatedAt = Date.now()
     notify(projectId, entryId)
-  }
-}
-
-export function decideFixApproval(
-  projectId: string,
-  entryId: string,
-  decision: { accepted: boolean; note?: string },
-  callId?: string,
-  edit?: EditRequest,
-  startLine?: number
-): void {
-  const k = `${projectId}:${entryId}`
-  const active = activeRuns.get(k)
-  if (active?.approvalResolver) {
-    active.approvalResolver(decision)
-    active.approvalResolver = null
-  }
-
-  const map = ensureProjectLoaded(projectId)
-  const fix = map.get(entryId)
-  if (fix) {
-    fix.approvalContext = null
-    fix.pendingApproval = null
-    if (callId && edit) {
-      fix.decidedEdits = {
-        ...fix.decidedEdits,
-        [callId]: {
-          path: edit.path,
-          startLine: startLine ?? 1,
-          accepted: decision.accepted,
-        },
-      }
-    }
-    fix.updatedAt = Date.now()
-    commitFixesToStorage(projectId)
-    notify(projectId, entryId)
-  }
-}
-
-export async function executeFixRun({
-  projectId,
-  entryId,
-  fingerprint,
-  handle,
-  logEntry,
-  startApproval: _startApproval,
-}: {
-  projectId: string
-  entryId: string
-  fingerprint: string
-  handle: ProjectHandle
-  logEntry?: any
-  startApproval: (
-    edit: EditRequest,
-    context: { startLine: number }
-  ) => Promise<{ accepted: boolean; note?: string }>
-}): Promise<void> {
-  const assistant = AiAssistant.fromStoredSettings()
-  const map = ensureProjectLoaded(projectId)
-
-  if (!assistant) {
-    const errorFix: StoredFix = {
-      entryId,
-      fingerprint,
-      open: true,
-      running: false,
-      transcript: [],
-      decidedEdits: {},
-      error: {
-        code: 'noProvider',
-        message: 'Configure an AI provider in Account Settings to use the assistant.',
-      },
-      updatedAt: Date.now(),
-    }
-    map.set(entryId, errorFix)
-    commitFixesToStorage(projectId)
-    notify(projectId, entryId)
-    return
-  }
-
-  if (!hasConsented()) {
-    const consentFix: StoredFix = {
-      entryId,
-      fingerprint,
-      open: true,
-      running: false,
-      transcript: [],
-      decidedEdits: {},
-      error: {
-        code: 'consentRequired',
-        message: 'You need to allow AI features before using this.',
-      },
-      updatedAt: Date.now(),
-    }
-    map.set(entryId, consentFix)
-    notify(projectId, entryId)
-    return
-  }
-
-  const runKey = `${projectId}:${entryId}`
-  const existingActive = activeRuns.get(runKey)
-  if (existingActive) {
-    existingActive.controller.abort()
-    activeRuns.delete(runKey)
-  }
-
-  const controller = new AbortController()
-  const activeRun: ActiveRun = {
-    controller,
-    approvalResolver: null,
-  }
-  activeRuns.set(runKey, activeRun)
-
-  // Build compile error transcript
-  const compile = handle.lastCompile()
-  const others = [
-    ...(compile?.errors ?? []).map(e => ({
-      level: 'error' as const,
-      file: e.file,
-      line: e.line,
-    })),
-    ...(compile?.warnings ?? []).map(w => ({
-      level: 'warning' as const,
-      file: w.file,
-      line: w.line,
-    })),
-  ].filter(
-    entry => !(entry.file === logEntry?.file && entry.line === logEntry?.line)
-  )
-
-  const transcript = await buildFixTranscript({
-    handle,
-    focused: {
-      level: logEntry?.level ?? 'error',
-      message: logEntry?.message ?? '',
-      raw: logEntry?.raw ?? null,
-      file: logEntry?.file ?? null,
-      line: logEntry?.line ?? null,
-    },
-    others,
-  })
-
-  const runningFix: StoredFix = {
-    entryId,
-    fingerprint,
-    open: true,
-    running: true,
-    transcript,
-    feedback: null,
-    decidedEdits: {},
-    approvalContext: null,
-    pendingApproval: null,
-    error: null,
-    stoppedForBudget: false,
-    updatedAt: Date.now(),
-  }
-  map.set(entryId, runningFix)
-  notify(projectId, entryId)
-
-  window.dispatchEvent(new CustomEvent('aiAssist:agentReadSelection'))
-
-  let state: AgentState = {
-    transcript,
-    running: true,
-    stoppedForBudget: false,
-    stoppedByUser: false,
-    pendingApproval: null,
-    error: null,
-  }
-
-  try {
-    for await (const event of runAgent({
-      client: assistant.client,
-      handle,
-      tools: FIX_TOOLS,
-      transcript,
-      limits: resolveLimits(assistant.settings),
-      cacheKey: projectId,
-      maxSteps: FIX_MAX_STEPS,
-      systemPrompt: FIX_SYSTEM_PROMPT,
-      signal: controller.signal,
-    })) {
-      state = reduceAgentEvent(state, event)
-
-      const currentFix = map.get(entryId) ?? runningFix
-      currentFix.transcript = state.transcript
-      currentFix.running = state.running
-      currentFix.stoppedForBudget = state.stoppedForBudget
-      currentFix.pendingApproval = state.pendingApproval
-      currentFix.error = state.error
-      currentFix.updatedAt = Date.now()
-
-      map.set(entryId, currentFix)
-      notify(projectId, entryId)
-    }
-  } catch (err: any) {
-    if (err?.name !== 'AbortError') {
-      const currentFix = map.get(entryId) ?? runningFix
-      currentFix.running = false
-      currentFix.error = {
-        code: 'unknown',
-        message: err?.message || 'Something went wrong.',
-      }
-      currentFix.updatedAt = Date.now()
-      map.set(entryId, currentFix)
-      notify(projectId, entryId)
-    }
-  } finally {
-    activeRuns.delete(runKey)
-    const currentFix = map.get(entryId)
-    if (currentFix) {
-      currentFix.running = false
-      currentFix.updatedAt = Date.now()
-      commitFixesToStorage(projectId)
-      notify(projectId, entryId)
-    }
-    window.dispatchEvent(
-      new CustomEvent('aiAssist:suggestDone', { detail: { entryId } })
-    )
-  }
-}
-
-export function useFix({
-  projectId,
-  logEntry,
-  handle,
-  requestApproval,
-}: {
-  projectId: string
-  logEntry?: any
-  handle: ProjectHandle
-  requestApproval: (
-    edit: EditRequest,
-    context: { startLine: number }
-  ) => Promise<{ accepted: boolean; note?: string }>
-}) {
-  const entryId = logEntry?.key ?? logEntry?.id ?? ''
-  const fingerprint = useMemo(
-    () => buildLogEntryFingerprint(logEntry),
-    [logEntry]
-  )
-
-  const [, setVersion] = useState(0)
-
-  useEffect(() => {
-    if (!entryId) return
-    const k = `${projectId}:${entryId}`
-    let set = listeners.get(k)
-    if (!set) {
-      set = new Set()
-      listeners.set(k, set)
-    }
-    const listener = () => setVersion(v => v + 1)
-    set.add(listener)
-    return () => {
-      set?.delete(listener)
-      if (set?.size === 0) {
-        listeners.delete(k)
-      }
-    }
-  }, [projectId, entryId])
-
-  const stored = useMemo(
-    () => (entryId ? getStoredFix(projectId, entryId, fingerprint) : null),
-    // Re-eval when version bumps
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [projectId, entryId, fingerprint, setVersion]
-  )
-
-  const startRun = useCallback(async () => {
-    if (!entryId) return
-    await executeFixRun({
-      projectId,
-      entryId,
-      fingerprint,
-      handle,
-      logEntry,
-      startApproval: requestApproval,
-    })
-  }, [projectId, entryId, fingerprint, handle, logEntry, requestApproval])
-
-  const stop = useCallback(() => {
-    if (!entryId) return
-    stopFixRun(projectId, entryId)
-  }, [projectId, entryId])
-
-  const onDecision = useCallback(
-    (
-      decision: { accepted: boolean; note?: string },
-      callId?: string,
-      edit?: EditRequest,
-      startLine?: number
-    ) => {
-      if (!entryId) return
-      decideFixApproval(projectId, entryId, decision, callId, edit, startLine)
-    },
-    [projectId, entryId]
-  )
-
-  const setFeedback = useCallback(
-    (f: 'up' | 'down' | null) => {
-      if (!entryId) return
-      setFixFeedback(projectId, entryId, f)
-    },
-    [projectId, entryId]
-  )
-
-  const setOpen = useCallback(
-    (open: boolean) => {
-      if (!entryId) return
-      setFixOpen(projectId, entryId, open)
-    },
-    [projectId, entryId]
-  )
-
-  return {
-    stored,
-    open: stored?.open ?? false,
-    running: stored?.running ?? isFixRunning(projectId, entryId),
-    transcript: stored?.transcript ?? [],
-    feedback: stored?.feedback ?? null,
-    decidedEdits: stored?.decidedEdits ?? {},
-    approvalContext: stored?.approvalContext ?? null,
-    pendingApproval: stored?.pendingApproval ?? null,
-    error: stored?.error ?? null,
-    stoppedForBudget: stored?.stoppedForBudget ?? false,
-    startRun,
-    stop,
-    onDecision,
-    setFeedback,
-    setOpen,
   }
 }

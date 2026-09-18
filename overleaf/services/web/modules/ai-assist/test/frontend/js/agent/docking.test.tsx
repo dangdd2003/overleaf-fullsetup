@@ -3,7 +3,7 @@ import { render, fireEvent, renderHook, act } from '@testing-library/react'
 import { useAiDock } from '../../../../frontend/js/features/ai-assist/hooks/use-ai-dock'
 import { AiAssistRightPanel } from '../../../../frontend/js/features/ai-assist/components/agent/ai-assist-right-panel'
 import railEntry from '../../../../frontend/js/features/ai-assist/rail-entry'
-import RailPanelHeader from '@/features/ide-react/components/rail/rail-panel-header'
+import AgentPanelHeader from '../../../../frontend/js/features/ai-assist/components/agent/agent-panel-header'
 import { RailProvider } from '@/features/ide-react/context/rail-context'
 import { ProjectContext } from '@/shared/context/project-context'
 import { Nav } from 'react-bootstrap'
@@ -146,14 +146,14 @@ describe('AI panel docking', function () {
     })
   })
 
-  describe('RailPanelHeader onClose separation', function () {
+  describe('AgentPanelHeader onClose separation', function () {
     it('calls onClose and does not collapse rail when onClose is provided', function () {
       let customCloseCalled = false
       localStorage.setItem('rail-is-open-test-project', 'true')
       const { getByRole } = render(
         <ProjectContext.Provider value={{ projectId: 'test-project' } as any}>
           <RailProvider>
-            <RailPanelHeader
+            <AgentPanelHeader
               title="AI assistant"
               onClose={() => {
                 customCloseCalled = true
@@ -173,7 +173,7 @@ describe('AI panel docking', function () {
       const { getByRole } = render(
         <ProjectContext.Provider value={{ projectId: 'test-project' } as any}>
           <RailProvider>
-            <RailPanelHeader title="Collaborator chat" />
+            <AgentPanelHeader title="Collaborator chat" />
           </RailProvider>
         </ProjectContext.Provider>
       )

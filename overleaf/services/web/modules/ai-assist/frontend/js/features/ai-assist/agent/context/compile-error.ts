@@ -43,7 +43,7 @@ function renderIndex(focusedLevel: string, others: LogIndexEntry[]): string {
   }
 
   // Other levels collapse to a count. Their locations are rarely what a reader
-  // of this error needs, and get_compile_log is one call away if they are.
+  // of this error needs, and get_compile_result is one call away if they are.
   const byLevel = new Map<string, number>()
   for (const entry of others) {
     if (entry.level === focusedLevel) continue
@@ -62,7 +62,7 @@ function renderIndex(focusedLevel: string, others: LogIndexEntry[]): string {
  * The index exists so the model can tell a root cause from a downstream
  * symptom: one unclosed brace produces a cascade of entries, and a fix aimed at
  * the last of them patches a symptom. It costs about thirty tokens; detail is
- * pulled lazily with get_compile_log when the index looks suspicious.
+ * pulled lazily with get_compile_result when the index looks suspicious.
  */
 export function renderCompileError({
   focused,

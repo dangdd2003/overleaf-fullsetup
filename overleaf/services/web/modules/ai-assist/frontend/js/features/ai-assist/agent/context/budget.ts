@@ -77,12 +77,21 @@ function stub(message: Extract<AgentMessage, { role: 'tool' }>): AgentMessage {
 }
 
 /**
+ * Once trimming is needed, trim to this fraction of the budget instead of to
+ * just under it. Every trim rewrites the prompt prefix and costs a full prompt
+ * cache miss; trimming further in one go leaves room for the next several
+ * steps to append without trimming again. Mirrors AiAssistRunManager.mjs.
+ */
+export const TRIM_TARGET_FRACTION = 0.7
+
+/**
  * Trims a conversation to fit, deterministically.
  *
  * Order matters and is fixed: stale tool results first, then old assistant
  * text, then give up. Elision is monotonic — an elided result is already at its
- * smallest, so re-running this leaves it alone and the cache prefix restabilises
- * after the one turn where trimming happened.
+ * smallest, so re-running this leaves it alone. Trimming only starts above the
+ * budget and continues down to TRIM_TARGET_FRACTION of it, so the cache prefix
+ * stays stable for the steps that follow.
  */
 export function applyBudget({
   system,
@@ -121,10 +130,25 @@ export function applyBudget({
   const budget = rawBudget
 
   const working = [...messages]
+  // Per-message estimates kept in step with `working`, so each trim updates
+  // the total instead of re-serialising the whole conversation.
+  const sizes = working.map(messageTokens)
+  let total =
+    estimateTokens(system) +
+    (tools.length ? estimateTokens(JSON.stringify(tools)) : 0) +
+    sizes.reduce((sum, size) => sum + size, 0)
+
+  if (total <= budget) return { messages: working, elided: 0, exhausted: false }
+
+  const target = Math.floor(budget * TRIM_TARGET_FRACTION)
   let elided = 0
 
-  const fits = () => estimateRequestTokens(system, working, tools) <= budget
-  if (fits()) return { messages: working, elided: 0, exhausted: false }
+  const replace = (index: number, message: AgentMessage) => {
+    const size = messageTokens(message)
+    total += size - sizes[index]
+    sizes[index] = size
+    working[index] = message
+  }
 
   // Pass one: tool results, oldest first, keeping the newest few intact.
   const toolIndexes = working
@@ -145,10 +169,10 @@ export function applyBudget({
     // error string, a boolean) can serialise to *more* tokens once wrapped in
     // the elision envelope, which would grow the request instead of
     // shrinking it.
-    if (estimateTokens(candidate.content) >= messageTokens(message)) continue
-    working[index] = candidate
+    if (estimateTokens(candidate.content) >= sizes[index]) continue
+    replace(index, candidate)
     elided += 1
-    if (fits()) return { messages: working, elided, exhausted: false }
+    if (total <= target) return { messages: working, elided, exhausted: false }
   }
 
   // Pass two: assistant prose from the oldest turns, keeping the newest few
@@ -174,9 +198,9 @@ export function applyBudget({
     if (estimateTokens(ASSISTANT_ELISION_MARKER) >= estimateTokens(message.content)) {
       continue
     }
-    working[index] = { ...message, content: ASSISTANT_ELISION_MARKER }
-    if (fits()) return { messages: working, elided, exhausted: false }
+    replace(index, { ...message, content: ASSISTANT_ELISION_MARKER })
+    if (total <= target) return { messages: working, elided, exhausted: false }
   }
 
-  return { messages: working, elided, exhausted: true }
+  return { messages: working, elided, exhausted: total > budget }
 }

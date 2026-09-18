@@ -156,16 +156,6 @@ describe('renderFixHandoff', function () {
     expect(out).to.contain('status="proposed, not applied"')
   })
 
-  it('notes a run that ran out of its step budget', function () {
-    const out = renderFixHandoff({
-      transcript: [userEntry(), assistantEntry([{ type: 'text', text: 'Partway.' }])],
-      decidedEdits: {},
-      stoppedForBudget: true,
-    })
-
-    expect(out).to.contain('step budget')
-  })
-
   it('notes a run that failed, with the provider message', function () {
     const out = renderFixHandoff({
       transcript: [userEntry()],

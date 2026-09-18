@@ -40,6 +40,10 @@ export const searchTextTool: AgentTool = {
           type: 'string',
           description: 'Only search files matching this glob, e.g. sections/*.tex',
         },
+        path: {
+          type: 'string',
+          description: 'Specific file path or glob pattern to search in (alias for glob)',
+        },
         contextLines: {
           type: 'number',
           description: 'Lines of surrounding context per hit. Defaults to 1.',
@@ -70,7 +74,7 @@ export const searchTextTool: AgentTool = {
     handle
   ) {
     const pattern = glob ?? legacyPath
-    const all = await handle.search(query, { caseSensitive, regexp })
+    const all = await handle.search(query, { caseSensitive, regexp, glob: pattern })
     const filtered = pattern ? all.filter(hit => matchesGlob(hit.path, pattern)) : all
     const shown = filtered.slice(0, MAX_SEARCH_HITS)
 
@@ -98,5 +102,28 @@ export const searchTextTool: AgentTool = {
     }
 
     return { hits, total: filtered.length, truncated: filtered.length > shown.length }
+  },
+
+  render(result: any) {
+    if (!result || !Array.isArray(result.hits)) return JSON.stringify(result)
+    if (result.hits.length === 0) return 'No matches found.'
+    const lines = [`Found ${result.total ?? result.hits.length} hit(s):`]
+    for (const hit of result.hits) {
+      if (typeof hit === 'string') {
+        lines.push(hit)
+      } else {
+        if (Array.isArray(hit.before) && hit.before.length > 0) {
+          lines.push(...hit.before.map((l: string, i: number) => `  ${hit.line - hit.before.length + i}: ${l}`))
+        }
+        lines.push(`${hit.path}:${hit.line}: ${hit.text}`)
+        if (Array.isArray(hit.after) && hit.after.length > 0) {
+          lines.push(...hit.after.map((l: string, i: number) => `  ${hit.line + 1 + i}: ${l}`))
+        }
+      }
+    }
+    if (result.truncated) {
+      lines.push(`(truncated - ${result.total - result.hits.length} more hits)`)
+    }
+    return lines.join('\n')
   },
 }

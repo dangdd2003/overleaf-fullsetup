@@ -32,7 +32,12 @@ export type FileIndex = {
   environments: EnvironmentCount[]
 }
 
-export type PackageUse = { name: string; path: string; line: number }
+export type PackageUse = {
+  name: string
+  options?: string
+  path: string
+  line: number
+}
 
 export type ProjectIndex = {
   /** Identity over every file's path and hash. Unchanged means reuse. */
@@ -91,12 +96,20 @@ export function scanPackages(
   const uses: Array<Omit<PackageUse, 'path'>> = []
   content.split('\n').forEach((rawLine, index) => {
     const line = rawLine.replace(/(?<!\\)%.*/, '')
-    const re = /\\(?:usepackage|RequirePackage)\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}/g
+    const re = /\\(?:usepackage|RequirePackage)\s*(?:\[([^\]]*)\])?\s*\{([^}]*)\}/g
     let match = re.exec(line)
     while (match) {
-      for (const name of match[1].split(',')) {
+      const options = match[1]?.trim() || undefined
+      const pkgList = match[2]
+      for (const name of pkgList.split(',')) {
         const trimmed = name.trim()
-        if (trimmed) uses.push({ name: trimmed, line: index + 1 })
+        if (trimmed) {
+          uses.push({
+            name: trimmed,
+            ...(options ? { options } : {}),
+            line: index + 1,
+          })
+        }
       }
       match = re.exec(line)
     }

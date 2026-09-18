@@ -180,7 +180,7 @@ describe('SuggestFixPanel handoff to the main chat', function () {
   })
 
   it('shows Stop instead while the run is still going', async function () {
-    fetchMock.post('https://api.openai.com/v1/chat/completions', () => {
+    fetchMock.post('/ai-assist/providers/chat', () => {
       return new Promise(() => {}) as any
     })
 

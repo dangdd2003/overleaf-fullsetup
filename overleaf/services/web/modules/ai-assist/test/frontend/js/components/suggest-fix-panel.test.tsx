@@ -5,7 +5,10 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import fetchMock from 'fetch-mock'
 import customLocalStorage from '@/infrastructure/local-storage'
 import { resetMeta } from '../../../../../../test/frontend/helpers/reset-meta'
-import { EditorProviders } from '../../../../../../test/frontend/helpers/editor-providers'
+import {
+  EditorProviders,
+  PROJECT_ID,
+} from '../../../../../../test/frontend/helpers/editor-providers'
 import { ProjectSnapshot } from '@/infrastructure/project-snapshot'
 import { EditorManagerContext } from '@/features/ide-react/context/editor-manager-context'
 import { LocalCompileContext } from '@/shared/context/local-compile-context'
@@ -41,8 +44,14 @@ const LOG_ENTRY = {
   raw: 'l.87 \\includegraphics',
 }
 
-function sse(body: string) {
-  return { body, headers: { 'Content-Type': 'text/event-stream' } }
+const CHAT = '/ai-assist/providers/chat'
+
+/** Chunks as the Overleaf server relays them from the provider. */
+function ndjson(...chunks: object[]) {
+  return {
+    body: [...chunks, { type: 'done' }].map(c => JSON.stringify(c) + '\n').join(''),
+    headers: { 'Content-Type': 'application/x-ndjson' },
+  }
 }
 
 function open() {
@@ -92,7 +101,7 @@ const MockLocalCompileProvider: React.FC<React.PropsWithChildren> = ({
   )
 }
 
-function renderPanel() {
+function renderPanel(logEntry: any = LOG_ENTRY) {
   return render(
     <EditorProviders
       mockCompileOnLoad={false}
@@ -101,7 +110,7 @@ function renderPanel() {
         LocalCompileProvider: MockLocalCompileProvider,
       }}
     >
-      <SuggestFixPanel logEntry={LOG_ENTRY} />
+      <SuggestFixPanel logEntry={logEntry} />
     </EditorProviders>
   )
 }
@@ -163,13 +172,25 @@ describe('SuggestFixPanel on the agent harness', function () {
     customLocalStorage.clear()
   })
 
+  it('never starts a hidden run for an entry the logs pane offers no fix for', async function () {
+    fetchMock.post(CHAT, ndjson({ type: 'text', text: 'should not run' }))
+    for (const level of ['info', 'typesetting']) {
+      const { container, unmount } = renderPanel({ ...LOG_ENTRY, level })
+      open()
+      await new Promise(resolve => setTimeout(resolve, 50))
+      expect(container.innerHTML).to.equal('')
+      unmount()
+    }
+    expect(fetchMock.callHistory.calls(CHAT)).to.have.length(0)
+  })
+
   it('renders the explanation as markdown, not as literal backticks', async function () {
-    fetchMock.post(
-      'https://api.openai.com/v1/chat/completions',
-      sse(
-        'data: {"choices":[{"delta":{"content":"Add `\\\\usepackage{graphicx}` to the preamble."}}]}\n\n' +
-          'data: [DONE]\n\n'
-      )
+    // Prose with no edit earns one follow-up turn asking for edit_file.
+    let turn = 0
+    fetchMock.post(CHAT, () =>
+      ++turn === 1
+        ? ndjson({ type: 'text', text: 'Add `\\usepackage{graphicx}` to the preamble.' })
+        : ndjson({ type: 'text', text: 'No edit.' })
     )
 
     renderPanel()
@@ -182,21 +203,15 @@ describe('SuggestFixPanel on the agent harness', function () {
 
   it('collapses the investigation into one row that expands in order', async function () {
     let turn = 0
-    fetchMock.post('https://api.openai.com/v1/chat/completions', () => {
+    fetchMock.post(CHAT, () => {
       turn++
       if (turn === 1) {
-        return sse(
-          'data: {"choices":[{"delta":{"tool_calls":[' +
-            '{"index":0,"id":"call_1","function":{"name":"read_file","arguments":"{\\"path\\":\\"main.tex\\"}"}},' +
-            '{"index":1,"id":"call_2","function":{"name":"get_references","arguments":"{}"}}' +
-            ']},"finish_reason":"tool_calls"}]}\n\n' +
-            'data: [DONE]\n\n'
+        return ndjson(
+          { type: 'tool_call', id: 'call_1', name: 'read_file', args: { path: 'main.tex' } },
+          { type: 'tool_call', id: 'call_2', name: 'get_references', args: {} }
         )
       }
-      return sse(
-        'data: {"choices":[{"delta":{"content":"Done."}}]}\n\n' +
-          'data: [DONE]\n\n'
-      )
+      return ndjson({ type: 'text', text: 'Done.' })
     })
 
     const { container } = renderPanel()
@@ -218,12 +233,9 @@ describe('SuggestFixPanel on the agent harness', function () {
 
   it('renders a pending approval card for an edit_file call', async function () {
     fetchMock.post(
-      'https://api.openai.com/v1/chat/completions',
-      sse(
-        'data: {"choices":[{"delta":{"tool_calls":[' +
-          '{"index":0,"id":"call_1","function":{"name":"edit_file","arguments":"{\\"path\\":\\"main.tex\\",\\"oldText\\":\\"hello\\",\\"newText\\":\\"hello world\\"}"}}' +
-          ']},"finish_reason":"tool_calls"}]}\n\n' +
-          'data: [DONE]\n\n'
+      CHAT,
+      ndjson(
+        { type: 'tool_call', id: 'call_1', name: 'edit_file', args: { path: 'main.tex', oldText: 'hello', newText: 'hello world' } }
       )
     )
 
@@ -238,20 +250,14 @@ describe('SuggestFixPanel on the agent harness', function () {
 
   it('collapses a decided edit to a one-line receipt', async function () {
     let turn = 0
-    fetchMock.post('https://api.openai.com/v1/chat/completions', () => {
+    fetchMock.post(CHAT, () => {
       turn++
       if (turn === 1) {
-        return sse(
-          'data: {"choices":[{"delta":{"tool_calls":[' +
-            '{"index":0,"id":"call_1","function":{"name":"edit_file","arguments":"{\\"path\\":\\"main.tex\\",\\"oldText\\":\\"hello\\",\\"newText\\":\\"hello world\\"}"}}' +
-            ']},"finish_reason":"tool_calls"}]}\n\n' +
-            'data: [DONE]\n\n'
+        return ndjson(
+          { type: 'tool_call', id: 'call_1', name: 'edit_file', args: { path: 'main.tex', oldText: 'hello', newText: 'hello world' } }
         )
       }
-      return sse(
-        'data: {"choices":[{"delta":{"content":"Applied fix."}}]}\n\n' +
-          'data: [DONE]\n\n'
-      )
+      return ndjson({ type: 'text', text: 'Applied fix.' })
     })
 
     const { container } = renderPanel()
@@ -266,62 +272,14 @@ describe('SuggestFixPanel on the agent harness', function () {
     })
   })
 
-  it('explains itself when it runs out of steps', async function () {
-    fetchMock.post(
-      'https://api.openai.com/v1/chat/completions',
-      sse(
-        'data: {"choices":[{"delta":{"tool_calls":[' +
-          '{"index":0,"id":"call_loop","function":{"name":"list_files","arguments":"{}"}}' +
-          ']},"finish_reason":"tool_calls"}]}\n\n' +
-          'data: [DONE]\n\n'
-      )
-    )
-
-    renderPanel()
-    open()
-
-    await waitFor(() => {
-      expect(screen.getByText(/could not pin this down/i)).to.exist
-    })
-  })
-
-  // Running out of steps after the suggestion is already on screen used to
-  // print "I could not pin this down" underneath a complete answer, which
-  // reads as a failure and hides a perfectly good fix.
-  it('does not call a finished suggestion a failure when steps run out', async function () {
-    fetchMock.post(
-      'https://api.openai.com/v1/chat/completions',
-      sse(
-        'data: {"choices":[{"delta":{"content":"Add `\\\\usepackage{graphicx}` to the preamble."}}]}\n\n' +
-          'data: {"choices":[{"delta":{"tool_calls":[' +
-          '{"index":0,"id":"call_loop","function":{"name":"list_files","arguments":"{}"}}' +
-          ']},"finish_reason":"tool_calls"}]}\n\n' +
-          'data: [DONE]\n\n'
-      )
-    )
-
-    renderPanel()
-    open()
-
-    // The explanation arrives, then the loop burns its budget on tool calls.
-    await waitFor(() => {
-      expect(screen.getAllByText(/usepackage\{graphicx\}/i)).to.not.be.empty
-    })
-    await waitFor(() => {
-      expect(screen.queryByRole('button', { name: /stop/i })).to.be.null
-    })
-
-    expect(screen.queryByText(/could not pin this down/i)).to.be.null
-  })
-
   it('persists output across unmount and remount without re-requesting the LLM', async function () {
     let requestCount = 0
-    fetchMock.post('https://api.openai.com/v1/chat/completions', () => {
+    fetchMock.post(CHAT, () => {
       requestCount++
-      return sse(
-        'data: {"choices":[{"delta":{"content":"Fix: replace with `htbp`."}}]}\n\n' +
-          'data: [DONE]\n\n'
-      )
+      // Prose with no edit earns one follow-up turn asking for edit_file.
+      return requestCount === 1
+        ? ndjson({ type: 'text', text: 'Fix: replace with `htbp`.' })
+        : ndjson({ type: 'text', text: 'No edit.' })
     })
 
     // 1. Initial render and open
@@ -331,8 +289,8 @@ describe('SuggestFixPanel on the agent harness', function () {
     // 2. Wait for LLM fix to appear
     await waitFor(() => {
       expect(screen.getByText(/replace with/i)).to.exist
+      expect(requestCount).to.equal(2)
     })
-    expect(requestCount).to.equal(1)
 
     // 3. Unmount (simulating user switching tab or toggling Back to PDF)
     unmount()
@@ -344,6 +302,57 @@ describe('SuggestFixPanel on the agent harness', function () {
     await waitFor(() => {
       expect(screen.getByText(/replace with/i)).to.exist
     })
-    expect(requestCount).to.equal(1)
+    expect(requestCount).to.equal(2)
+  })
+
+  it('aborts the in-page run when the panel unmounts', async function () {
+    fetchMock.post(
+      CHAT,
+      () => new Promise(() => {})
+    )
+
+    const { unmount } = renderPanel()
+    open()
+    await waitFor(() => expect(screen.getByText(/stop/i)).to.exist)
+
+    const [fetchCall] = fetchMock.callHistory.calls()
+    expect(fetchCall.options.signal.aborted).to.be.false
+
+    unmount()
+    expect(fetchCall.options.signal.aborted).to.be.true
+  })
+
+  it('stopping an in-page fix run does not clear stored active run id for main chat', async function () {
+    customLocalStorage.setItem('ai-assist:active-run:' + PROJECT_ID, 'run-main')
+
+    fetchMock.post(
+      CHAT,
+      () => new Promise(() => {})
+    )
+
+    renderPanel()
+    open()
+    await waitFor(() => expect(screen.getByText(/stop/i)).to.exist)
+    fireEvent.click(screen.getByText(/stop/i))
+
+    expect(customLocalStorage.getItem('ai-assist:active-run:' + PROJECT_ID)).to.equal('run-main')
+  })
+
+  it('aborts prior controller when starting a new in-page run on the same hook', async function () {
+    const abortSpy = sinon.spy(AbortController.prototype, 'abort')
+    fetchMock.post(
+      CHAT,
+      () => new Promise(() => {})
+    )
+
+    renderPanel()
+    open()
+    await waitFor(() => expect(screen.getByText(/stop/i)).to.exist)
+
+    // Trigger second fix run via event
+    open()
+
+    await waitFor(() => expect(abortSpy.called).to.be.true)
+    abortSpy.restore()
   })
 })

@@ -5,8 +5,45 @@ import { ToolCallCard, ToolCallSummaryLine } from './tool-call-card'
 import { ToolCallDetailView } from './tool-call-detail'
 import { ThinkingBlock } from './thinking-block'
 import { EditApprovalCard } from './edit-approval-card'
+import { SettingsApprovalCard } from './settings-approval-card'
+import { PlanApprovalCard } from './plan-approval-card'
 import { DiffStats, sumDiffStats } from './diff-stats'
 import { DiffStatBadge } from './diff-stat-badge'
+
+function renderApprovalCard(
+  pendingCall: any,
+  approvalContext: any,
+  onDecision: any
+) {
+  if (!pendingCall) return null
+  if (pendingCall.name === 'present_plan') {
+    return (
+      <PlanApprovalCard
+        key={pendingCall.id}
+        plan={pendingCall.args?.plan || ''}
+        onDecision={onDecision}
+      />
+    )
+  }
+  if (pendingCall.name && pendingCall.name.startsWith('configure_')) {
+    return (
+      <SettingsApprovalCard
+        key={pendingCall.id}
+        toolName={pendingCall.name}
+        args={pendingCall.args || {}}
+        onDecision={onDecision}
+      />
+    )
+  }
+  return (
+    <EditApprovalCard
+      key={pendingCall.id}
+      edit={getSafeEdit(pendingCall)}
+      startLine={pendingCall.args?.startLine ?? approvalContext?.startLine ?? 1}
+      onDecision={onDecision}
+    />
+  )
+}
 
 export type SubresultItem =
   | Extract<AssistantBlock, { type: 'thinking' }>
@@ -27,17 +64,38 @@ export function summariseToolCallActions(
   const counts: Record<string, number> = {}
   let rejectedEdits = 0
   let rejectedCreations = 0
+  let cancelledEdits = 0
+  let cancelledCreations = 0
+  let cancelledTools = 0
   let validCount = 0
   for (const call of toolCalls) {
     if (!call || !call.name) continue
     validCount++
-    const isRejected = (call.result as any)?.status === 'rejected'
-    if (call.name === 'edit_file' && isRejected) {
-      rejectedEdits++
-      continue
+    const status = (call.result as any)?.status
+    const isRejected = status === 'rejected'
+    const isCancelled = status === 'stopped'
+    if (call.name === 'edit_file') {
+      if (isRejected) {
+        rejectedEdits++
+        continue
+      }
+      if (isCancelled || !call.result || (status && status !== 'applied')) {
+        cancelledEdits++
+        continue
+      }
     }
-    if (call.name === 'create_file' && isRejected) {
-      rejectedCreations++
+    if (call.name === 'create_file') {
+      if (isRejected) {
+        rejectedCreations++
+        continue
+      }
+      if (isCancelled || !call.result || (status && status !== 'applied')) {
+        cancelledCreations++
+        continue
+      }
+    }
+    if (isCancelled) {
+      cancelledTools++
       continue
     }
     counts[call.name] = (counts[call.name] ?? 0) + 1
@@ -84,8 +142,17 @@ export function summariseToolCallActions(
   if (rejectedEdits > 0) {
     parts.push(rejectedEdits === 1 ? '1 edit rejected' : `${rejectedEdits} edits rejected`)
   }
+  if (cancelledEdits > 0) {
+    parts.push(cancelledEdits === 1 ? '1 edit cancelled' : `${cancelledEdits} edits cancelled`)
+  }
   if (rejectedCreations > 0) {
     parts.push(rejectedCreations === 1 ? '1 file creation rejected' : `${rejectedCreations} file creations rejected`)
+  }
+  if (cancelledCreations > 0) {
+    parts.push(cancelledCreations === 1 ? '1 file creation cancelled' : `${cancelledCreations} file creations cancelled`)
+  }
+  if (cancelledTools > 0 && parts.length === 0) {
+    parts.push(cancelledTools === 1 ? '1 tool cancelled' : `${cancelledTools} tools cancelled`)
   }
   const configuredSettingsCount =
     (counts['configure_project_settings'] ?? 0) +
@@ -161,23 +228,41 @@ export function formatSubresultsSummary(
 }
 
 function getSafeEdit(call: any) {
+  const name = call.name || ''
+  const isCreateTool = name === 'create_file'
+  const oldText =
+    isCreateTool
+      ? ''
+      : (call.args?.oldText ??
+        call.args?.old_text ??
+        call.args?.old_string ??
+        '')
+  const newText =
+    isCreateTool
+      ? (call.args?.content ?? call.args?.newText ?? '')
+      : (call.args?.newText ??
+        call.args?.new_text ??
+        call.args?.new_string ??
+        call.args?.content ??
+        '')
+
+  const action: 'create' | 'append' | 'delete' | 'edit' =
+    call.args?.action ??
+    (isCreateTool
+      ? 'create'
+      : !oldText
+      ? 'append'
+      : !newText
+      ? 'delete'
+      : 'edit')
+
   return {
     path: call.args?.path ?? '',
-    oldText:
-      call.name === 'create_file'
-        ? ''
-        : (call.args?.oldText ??
-          call.args?.old_text ??
-          call.args?.old_string ??
-          ''),
-    newText:
-      call.name === 'create_file'
-        ? (call.args?.content ?? call.args?.newText ?? '')
-        : (call.args?.newText ??
-          call.args?.new_text ??
-          call.args?.new_string ??
-          call.args?.content ??
-          ''),
+    oldText,
+    newText,
+    action,
+    toolName: name,
+    startLine: call.args?.startLine,
   }
 }
 
@@ -228,6 +313,9 @@ export const SubresultGroup: FC<{
     if (groupId) {
       subresultExpansionStore.set(groupId, next)
     }
+    if (next) {
+      window.dispatchEvent(new CustomEvent('aiAssist:stickToBottom'))
+    }
   }
 
   const pendingCallItem = items.find(
@@ -235,7 +323,10 @@ export const SubresultGroup: FC<{
       i.type === 'tool_call' &&
       i.call &&
       i.call.id === pendingApprovalId &&
-      (i.call.name === 'edit_file' || i.call.name === 'create_file')
+      (i.call.name === 'edit_file' ||
+        i.call.name === 'create_file' ||
+        i.call.name.startsWith('configure_') ||
+        i.call.name === 'present_plan')
   ) as Extract<AssistantBlock, { type: 'tool_call' }> | undefined
 
   const pastItems = pendingCallItem
@@ -246,14 +337,7 @@ export const SubresultGroup: FC<{
 
   // If the only item in this segment is pending approval, show the card directly without empty group
   if (pastItems.length === 0 && pendingCallItem) {
-    return (
-      <EditApprovalCard
-        key={pendingCallItem.call.id}
-        edit={getSafeEdit(pendingCallItem.call)}
-        startLine={approvalContext?.startLine ?? 1}
-        onDecision={onDecision}
-      />
-    )
+    return renderApprovalCard(pendingCallItem.call, approvalContext, onDecision)
   }
 
   const toolCalls = pastItems.filter(
@@ -277,14 +361,7 @@ export const SubresultGroup: FC<{
           }
           return null
         })}
-        {pendingCallItem && (
-          <EditApprovalCard
-            key={pendingCallItem.call.id}
-            edit={getSafeEdit(pendingCallItem.call)}
-            startLine={approvalContext?.startLine ?? 1}
-            onDecision={onDecision}
-          />
-        )}
+        {pendingCallItem && renderApprovalCard(pendingCallItem.call, approvalContext, onDecision)}
       </>
     )
   }
@@ -310,26 +387,14 @@ export const SubresultGroup: FC<{
               elapsedMs={item.elapsedMs}
             />
           ))}
-          {pendingCallItem && (
-            <EditApprovalCard
-              key={pendingCallItem.call.id}
-              edit={getSafeEdit(pendingCallItem.call)}
-              startLine={approvalContext?.startLine ?? 1}
-              onDecision={onDecision}
-            />
-          )}
+          {pendingCallItem && renderApprovalCard(pendingCallItem.call, approvalContext, onDecision)}
         </>
       )
     }
 
-    return pendingCallItem ? (
-      <EditApprovalCard
-        key={pendingCallItem.call.id}
-        edit={getSafeEdit(pendingCallItem.call)}
-        startLine={approvalContext?.startLine ?? 1}
-        onDecision={onDecision}
-      />
-    ) : null
+    return pendingCallItem
+      ? renderApprovalCard(pendingCallItem.call, approvalContext, onDecision)
+      : null
   }
 
   return (
@@ -404,14 +469,8 @@ export const SubresultGroup: FC<{
         )}
       </div>
 
-      {pendingCallItem && (
-        <EditApprovalCard
-          key={pendingCallItem.call.id}
-          edit={getSafeEdit(pendingCallItem.call)}
-          startLine={approvalContext?.startLine ?? 1}
-          onDecision={onDecision}
-        />
-      )}
+      {pendingCallItem &&
+        renderApprovalCard(pendingCallItem.call, approvalContext, onDecision)}
     </>
   )
 }

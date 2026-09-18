@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import {
   compileResultTool,
+  errorExcerpt,
   excerptAround,
 } from '../../../../frontend/js/features/ai-assist/agent/tools/compile-result'
 import { createFakeHandle } from './helpers/fake-handle'
@@ -93,14 +94,28 @@ describe('get_compile_result', function () {
     expect(result.truncated).to.equal(true)
   })
 
-  it('attaches raw log excerpts only when asked', async function () {
+  it('attaches raw log excerpts by default (includeRaw defaults to true)', async function () {
     const { handle } = createFakeHandle({ docs: { 'main.tex': 'x' }, lastCompile: COMPILE })
 
-    const without: any = await compileResultTool.execute({}, handle)
-    expect(without.errors[0].excerpt).to.equal(undefined)
+    const result: any = await compileResultTool.execute({}, handle)
+    expect(result.errors[0].excerpt).to.include('! Undefined control sequence.')
+    expect(result.errors[0].excerpt).to.include('l.3 \\foo')
+  })
 
-    const with_: any = await compileResultTool.execute({ includeRaw: true }, handle)
-    expect(with_.errors[0].excerpt).to.include('l.3 \\foo')
+  it('omits raw log excerpts when explicitly passed includeRaw: false', async function () {
+    const { handle } = createFakeHandle({ docs: { 'main.tex': 'x' }, lastCompile: COMPILE })
+
+    const result: any = await compileResultTool.execute({ includeRaw: false }, handle)
+    expect(result.errors[0].excerpt).to.equal(undefined)
+  })
+
+  it('surfaces primaryError and cascadingErrorsCount', async function () {
+    const { handle } = createFakeHandle({ docs: { 'main.tex': 'x' }, lastCompile: COMPILE })
+
+    const result: any = await compileResultTool.execute({}, handle)
+    expect(result.primaryError).to.not.equal(null)
+    expect(result.primaryError.message).to.equal('Undefined control sequence.')
+    expect(result.cascadingErrorsCount).to.equal(0)
   })
 
   it('ignores includeRaw when there is no raw log', async function () {
@@ -129,5 +144,55 @@ describe('get_compile_result', function () {
     const rendered = compileResultTool.render!(result)
     expect(rendered).to.include('main.tex:3')
     expect(rendered).to.not.include('\\n')
+  })
+
+  it('resolves get_compile_log alias in tool registry and deduplicates toolSpecs', async function () {
+    const { TOOLS, toolSpecs } = await import(
+      '../../../../frontend/js/features/ai-assist/agent/tools/registry'
+    )
+    expect(TOOLS).to.have.property('get_compile_log')
+    expect(TOOLS.get_compile_log).to.equal(TOOLS.get_compile_result)
+
+    const specs = toolSpecs()
+    const compileResultSpecs = specs.filter(s => s.name === 'get_compile_result')
+    expect(compileResultSpecs).to.have.lengthOf(1)
+
+    const { handle } = createFakeHandle({ docs: { 'main.tex': 'x' }, lastCompile: COMPILE })
+    const result: any = await TOOLS.get_compile_log.execute({}, handle)
+    expect(result.status).to.equal('failure')
+    expect(result.errorCount).to.equal(1)
+  })
+
+  it('never attaches excerpts to warnings', async function () {
+    const compile = {
+      ...COMPILE,
+      warnings: [{ message: 'Undefined control sequence.', file: 'main.tex', line: 3 }],
+    }
+    const { handle } = createFakeHandle({ docs: { 'main.tex': 'x' }, lastCompile: compile })
+    const result: any = await compileResultTool.execute({}, handle)
+
+    expect(result.warnings[0].excerpt).to.equal(undefined)
+  })
+
+  it('strips excerpts the entries already carry when includeRaw is false', async function () {
+    const compile = {
+      ...COMPILE,
+      errors: [{ ...COMPILE.errors[0], excerpt: 'l.3 \\foo' }],
+    }
+    const { handle } = createFakeHandle({ docs: { 'main.tex': 'x' }, lastCompile: compile })
+    const result: any = await compileResultTool.execute({ includeRaw: false }, handle)
+
+    expect(result.errors[0].excerpt).to.equal(undefined)
+  })
+})
+
+describe('errorExcerpt', function () {
+  it('returns the log lines after the message line, without blanks', function () {
+    expect(errorExcerpt({ raw: '! Undefined control sequence.\n\nl.3 \\foo\n' })).to.equal('l.3 \\foo')
+  })
+
+  it('returns null without raw context', function () {
+    expect(errorExcerpt({ raw: '! Emergency stop.\n' })).to.equal(null)
+    expect(errorExcerpt({})).to.equal(null)
   })
 })

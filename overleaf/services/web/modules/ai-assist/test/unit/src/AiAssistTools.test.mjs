@@ -1,6 +1,6 @@
 import { expect } from 'chai'
 import sinon from 'sinon'
-import { AiAssistTools } from '../../../app/src/AiAssistTools.mjs'
+import { AiAssistTools, endDocumentLine } from '../../../app/src/AiAssistTools.mjs'
 
 describe('AiAssistTools', function () {
   let tools
@@ -112,7 +112,7 @@ describe('AiAssistTools', function () {
       userId: '012345678901234567890123',
     })
 
-    expect(res.content).to.equal('line 1\nline 2: target text')
+    expect(res.content).to.equal('1: line 1\n2: line 2: target text')
     expect(res.from).to.equal(1)
     expect(res.to).to.equal(2)
   })
@@ -178,7 +178,7 @@ describe('AiAssistTools', function () {
       projectId: 'p1',
       userId: validUserId,
     })
-    expect(readRes.content).to.equal('@article{sample}')
+    expect(readRes.content).to.equal('1: @article{sample}')
     expect(readRes.totalLines).to.equal(1)
 
     const listRes = await tools.execute('list_files', {}, {
@@ -241,6 +241,140 @@ describe('AiAssistTools', function () {
     expect(logRes.warningCount).to.equal(1)
     expect(logRes.warnings).to.have.lengthOf(1)
     expect(logRes.warnings[0].message).to.include('Reference `sec:intro`')
+  })
+
+  it('uses the editor compile outcome instead of compiling on the server', async function () {
+    mockCompileManager.deleteAuxFiles = sinon.stub().resolves()
+    const compileInEditor = sinon.stub().resolves({
+      status: 'failure',
+      errors: [{ file: 'main.tex', line: 3, message: 'Undefined control sequence.' }],
+      warnings: [],
+      rawLog: 'l.3 \\foo',
+    })
+
+    const res = await tools.execute('compile_project', { clean: true }, {
+      projectId: 'p1',
+      userId: '012345678901234567890123',
+      callId: 'c1',
+      compileInEditor,
+    })
+
+    expect(compileInEditor.calledOnceWith({ id: 'c1', clean: true })).to.equal(true)
+    expect(mockCompileManager.compile.called).to.equal(false)
+    expect(mockCompileManager.deleteAuxFiles.called).to.equal(false)
+    expect(res.errorCount).to.equal(1)
+    expect(res.clean).to.equal(true)
+  })
+
+  it('compiles on the server when no editor answers', async function () {
+    await tools.execute('compile_project', {}, {
+      projectId: 'p1',
+      userId: '012345678901234567890123',
+      compileInEditor: sinon.stub().resolves(null),
+    })
+
+    expect(mockCompileManager.compile.calledOnce).to.equal(true)
+  })
+
+  it('does not clear the compile cache on an ordinary compile', async function () {
+    mockCompileManager.deleteAuxFiles = sinon.stub().resolves()
+
+    await tools.execute('compile_project', {}, {
+      projectId: 'p1',
+      userId: '012345678901234567890123',
+    })
+
+    expect(mockCompileManager.deleteAuxFiles.called).to.equal(false)
+    expect(mockCompileManager.compile.calledOnce).to.equal(true)
+  })
+
+  it('clears the compile cache before compiling when clean is requested', async function () {
+    const order = []
+    mockCompileManager.deleteAuxFiles = sinon.stub().callsFake(async () => {
+      order.push('clear')
+    })
+    mockCompileManager.compile.callsFake(async () => {
+      order.push('compile')
+      return { status: 'success', outputFiles: [] }
+    })
+
+    const res = await tools.execute('compile_project', { clean: true }, {
+      projectId: 'p1',
+      userId: '012345678901234567890123',
+    })
+
+    // Clearing after the build would leave the stale cache in place, which is
+    // the whole thing the option exists to avoid.
+    expect(order).to.deep.equal(['clear', 'compile'])
+    expect(mockCompileManager.deleteAuxFiles.args[0]).to.deep.equal([
+      'p1',
+      '012345678901234567890123',
+      null,
+    ])
+    expect(res.status).to.equal('success')
+    expect(res.clean).to.equal(true)
+  })
+
+  it('accepts the ways a model spells the clean flag', async function () {
+    mockCompileManager.deleteAuxFiles = sinon.stub().resolves()
+
+    for (const args of [
+      { clean: true },
+      { clean: 'true' },
+      { clear_cache: true },
+      { fromScratch: 'yes' },
+      { rebuild: 1 },
+    ]) {
+      mockCompileManager.deleteAuxFiles.resetHistory()
+      await tools.execute('compile_project', args, {
+        projectId: 'p1',
+        userId: '012345678901234567890123',
+      })
+      expect(
+        mockCompileManager.deleteAuxFiles.calledOnce,
+        JSON.stringify(args)
+      ).to.equal(true)
+    }
+  })
+
+  it('still compiles when clearing the cache fails', async function () {
+    mockCompileManager.deleteAuxFiles = sinon
+      .stub()
+      .rejects(new Error('clsi unreachable'))
+    mockCompileManager.compile.resolves({ status: 'success', outputFiles: [] })
+
+    const res = await tools.execute('compile_project', { clean: true }, {
+      projectId: 'p1',
+      userId: '012345678901234567890123',
+    })
+
+    expect(mockCompileManager.compile.calledOnce).to.equal(true)
+    expect(res.status).to.equal('success')
+    expect(res.error).to.equal(undefined)
+  })
+
+  it('compiles normally when the compile manager cannot clear the cache', async function () {
+    // The injected manager may predate deleteAuxFiles; the option must degrade
+    // to an incremental compile rather than throw.
+    delete mockCompileManager.deleteAuxFiles
+
+    const res = await tools.execute('compile_project', { clean: true }, {
+      projectId: 'p1',
+      userId: '012345678901234567890123',
+    })
+
+    expect(mockCompileManager.compile.calledOnce).to.equal(true)
+    expect(res.status).to.equal('success')
+  })
+
+  it('advertises the clean option in the compile_project tool spec', function () {
+    const spec = tools
+      .getToolSpecs()
+      .find(tool => tool.name === 'compile_project')
+
+    expect(spec.parameters.properties.clean.type).to.equal('boolean')
+    expect(spec.description).to.match(/clean/i)
+    expect(spec.description).to.match(/from scratch/i)
   })
 
   it('reads project settings summary via get_project_settings', async function () {
@@ -416,17 +550,251 @@ describe('AiAssistTools', function () {
     expect(res.options.spellCheckLanguages[0].code).to.equal('en')
   })
 
-  it('executes get_outline, get_packages, and get_references tools', async function () {
-    const validUserId = '012345678901234567890123'
-    const outlineRes = await tools.execute('get_outline', {}, { projectId: 'p1', userId: validUserId })
-    expect(outlineRes).to.have.property('rootDoc', 'main.tex')
-    expect(outlineRes).to.have.property('sections')
+  describe('project snapshot', function () {
+    const ctx = { projectId: 'p1', userId: '012345678901234567890123' }
 
-    const pkgRes = await tools.execute('get_packages', {}, { projectId: 'p1', userId: validUserId })
-    expect(pkgRes).to.have.property('packages')
+    it('flushes once and reads docs in bulk instead of fetching each document', async function () {
+      mockDocUpdater.flushProjectToMongo = sinon.stub().resolves()
+      mockEntityHandler.getAllDocs = sinon.stub().resolves({
+        '/main.tex': { _id: 'doc-1', name: 'main.tex', lines: ['\\section{Intro}'] },
+        '/sections/a.tex': { _id: 'doc-2', name: 'a.tex', lines: ['text'] },
+      })
 
-    const refRes = await tools.execute('get_references', { kind: 'all' }, { projectId: 'p1', userId: validUserId })
-    expect(refRes).to.have.property('references')
+      await tools.execute('list_files', {}, ctx)
+      await tools.execute('search_text', { query: 'intro' }, ctx)
+
+      expect(mockDocUpdater.flushProjectToMongo.calledOnce).to.equal(true)
+      expect(mockEntityHandler.getAllDocs.calledOnce).to.equal(true)
+      expect(mockDocUpdater.getDocument.called).to.equal(false)
+    })
+
+    it('falls back to per-document reads when flushing is unavailable', async function () {
+      const snapshot = await tools._getSnapshot('p1')
+      expect(snapshot.docs.find(d => d.path === 'main.tex').lines).to.deep.equal([
+        'line 1',
+        'line 2: target text',
+        'line 3',
+      ])
+    })
+
+    it('resolves the root document path', async function () {
+      const snapshot = await tools._getSnapshot('p1')
+      expect(snapshot.rootPath).to.equal('main.tex')
+    })
+
+    it('rebuilds after an edit is applied', async function () {
+      mockDocUpdater.flushProjectToMongo = sinon.stub().resolves()
+      await tools._getSnapshot('p1')
+      await tools.execute('edit_file', { path: 'main.tex', oldText: 'target text', newText: 'new text' }, ctx)
+      await tools._getSnapshot('p1')
+      expect(mockDocUpdater.flushProjectToMongo.calledTwice).to.equal(true)
+    })
+  })
+
+  describe('list_files', function () {
+    const ctx = { projectId: 'p1', userId: '012345678901234567890123' }
+
+    it('lists binary files next to docs, sorted, and filters by glob', async function () {
+      mockEntityHandler.getAllFiles = sinon.stub().resolves({
+        '/figures/plot.png': { _id: 'f1', name: 'plot.png' },
+      })
+
+      const all = await tools.execute('list_files', {}, ctx)
+      expect(all.files.map(f => `${f.path}:${f.type}`)).to.deep.equal([
+        'chapters/intro.tex:doc',
+        'figures/plot.png:binary',
+        'main.tex:doc',
+        'references.bib:doc',
+      ])
+      expect(all.total).to.equal(4)
+      expect(all.truncated).to.equal(false)
+
+      const figures = await tools.execute('list_files', { glob: 'figures/*' }, ctx)
+      expect(figures.files.map(f => f.path)).to.deep.equal(['figures/plot.png'])
+    })
+  })
+
+  describe('matchesGlob', function () {
+    it('matches like the browser helper', async function () {
+      const { matchesGlob } = await import('../../../app/src/AiAssistGlob.mjs')
+      const cases = [
+        ['sections/a.tex', 'sections/*.tex', true],
+        ['sections/deep/a.tex', 'sections/*.tex', false],
+        ['sections/deep/a.tex', 'sections/**/*.tex', true],
+        ['a.tex', '**/*.tex', true],
+        ['main.tex', 'mai?.tex', true],
+        ['file(1).tex', 'file(1).tex', true],
+      ]
+      for (const [path, pattern, expected] of cases) {
+        expect(matchesGlob(path, pattern), `${path} ~ ${pattern}`).to.equal(expected)
+      }
+    })
+  })
+
+  describe('index tools', function () {
+    const ctx = { projectId: 'p1', userId: '012345678901234567890123' }
+
+    beforeEach(function () {
+      mockDocUpdater.flushProjectToMongo = sinon.stub().resolves()
+      mockEntityHandler.getAllDocs = sinon.stub().resolves({
+        '/main.tex': {
+          _id: 'doc-1',
+          name: 'main.tex',
+          lines: [
+            '\\documentclass{article}',
+            '\\usepackage[margin=1in]{geometry}',
+            '\\begin{document}',
+            '\\section{Intro}\\label{sec:intro}',
+            'See \\ref{sec:intro} and \\ref{sec:nope} and \\cite{knuth84}.',
+            '\\subsection{Background}',
+            '\\section{Method}',
+            '\\end{document}',
+          ],
+        },
+        '/refs.bib': { _id: 'doc-bib', name: 'refs.bib', lines: ['@book{knuth84,', '}'] },
+      })
+    })
+
+    it('get_outline returns the section tree', async function () {
+      const res = await tools.execute('get_outline', {}, ctx)
+      expect(res.documentClass).to.equal('article')
+      expect(res.sections.map(s => `${s.level}:${s.title}:${s.line}`)).to.deep.equal([
+        '1:Intro:4',
+        '2:Background:6',
+        '1:Method:7',
+      ])
+    })
+
+    it('get_outline narrows to one section with a line range', async function () {
+      const res = await tools.execute('get_outline', { section: 'intro' }, ctx)
+      expect(res.range).to.deep.equal({ from: 4, to: 6 })
+      expect(res.sections.map(s => s.title)).to.deep.equal(['Intro', 'Background'])
+      expect(res.hint).to.equal('read_file with path=main.tex from=4 to=6 for the body')
+    })
+
+    it('get_outline reports an unknown section with candidates', async function () {
+      const res = await tools.execute('get_outline', { section: 'Results' }, ctx)
+      expect(res.error).to.include('No section matches')
+      expect(res.candidates).to.deep.equal(['Intro', 'Background', 'Method'])
+    })
+
+    it('get_packages lists packages with locations', async function () {
+      const res = await tools.execute('get_packages', {}, ctx)
+      expect(res.documentClass).to.equal('article')
+      expect(res.packages).to.deep.equal([{ name: 'geometry', options: 'margin=1in', line: 2, path: 'main.tex' }])
+    })
+
+    it('get_references resolves refs and citations', async function () {
+      const res = await tools.execute('get_references', { unresolvedOnly: true }, ctx)
+      expect(res.refs.map(r => r.key)).to.deep.equal(['sec:nope'])
+      expect(res.citations).to.deep.equal([])
+      expect(res.labels.map(l => l.key)).to.deep.equal(['sec:intro'])
+    })
+  })
+
+  describe('search_text', function () {
+    const ctx = { projectId: 'p1', userId: '012345678901234567890123' }
+
+    beforeEach(function () {
+      mockDocUpdater.flushProjectToMongo = sinon.stub().resolves()
+      mockEntityHandler.getAllDocs = sinon.stub().resolves({
+        '/main.tex': { _id: 'doc-1', name: 'main.tex', lines: ['\\section{Intro}', 'Hello World', 'bye'] },
+        '/sections/a.tex': { _id: 'doc-2', name: 'a.tex', lines: ['hello again'] },
+      })
+    })
+
+    it('is case-insensitive by default and returns context lines', async function () {
+      const res = await tools.execute('search_text', { query: 'hello' }, ctx)
+      expect(res.total).to.equal(2)
+      expect(res.hits[0]).to.deep.equal({
+        path: 'main.tex',
+        line: 2,
+        text: 'Hello World',
+        before: ['\\section{Intro}'],
+        after: ['bye'],
+      })
+    })
+
+    it('honours caseSensitive, glob and contextLines 0', async function () {
+      const res = await tools.execute(
+        'search_text',
+        { query: 'hello', caseSensitive: true, glob: 'sections/*.tex', contextLines: 0 },
+        ctx
+      )
+      expect(res.hits).to.deep.equal([{ path: 'sections/a.tex', line: 1, text: 'hello again' }])
+    })
+
+    it('supports regular expressions', async function () {
+      const res = await tools.execute('search_text', { query: '^\\\\section\\{', regexp: true }, ctx)
+      expect(res.hits.map(h => `${h.path}:${h.line}`)).to.deep.equal(['main.tex:1'])
+    })
+
+    it('returns an error for an invalid regular expression', async function () {
+      const res = await tools.execute('search_text', { query: '(', regexp: true }, ctx)
+      expect(res.error).to.include('regular expression')
+    })
+  })
+
+  describe('read_file limits', function () {
+    const ctx = { projectId: 'p1', userId: '012345678901234567890123' }
+
+    it('reads at most 500 lines when no range is given and says where to continue', async function () {
+      const lines = Array.from({ length: 1500 }, (_, i) => `l${i + 1}`)
+      mockDocUpdater.getDocument = sinon.stub().resolves({ lines })
+
+      const res = await tools.execute('read_file', { path: 'main.tex' }, ctx)
+
+      expect(res.from).to.equal(1)
+      expect(res.to).to.equal(500)
+      expect(res.totalLines).to.equal(1500)
+      expect(res.truncated).to.equal(true)
+      expect(res.nextRange).to.deep.equal({ from: 501, to: 1000 })
+      expect(res.content.split('\n')[499]).to.equal('500: l500')
+    })
+
+    it('caps an explicit range at 1000 lines', async function () {
+      const lines = Array.from({ length: 1500 }, (_, i) => `l${i + 1}`)
+      mockDocUpdater.getDocument = sinon.stub().resolves({ lines })
+
+      const res = await tools.execute('read_file', { path: 'main.tex', from: 1, to: 1500 }, ctx)
+
+      expect(res.to).to.equal(1000)
+      expect(res.nextRange).to.deep.equal({ from: 1001, to: 1500 })
+    })
+
+    it('explains that a binary file cannot be read as text', async function () {
+      mockEntityHandler.getAllFiles = sinon.stub().resolves({ '/fig.png': { _id: 'f1', name: 'fig.png' } })
+      const res = await tools.execute('read_file', { path: 'fig.png' }, ctx)
+      expect(res.error).to.equal('fig.png is a binary file and cannot be read as text.')
+    })
+
+    it('does not resolve a.tex to data.tex', async function () {
+      mockEntityHandler.getAllDocs = sinon.stub().resolves([{ _id: 'doc-data', name: 'data.tex', path: 'data.tex' }])
+
+      const res = await tools.execute('read_file', { path: 'a.tex' }, ctx)
+
+      expect(res.error).to.equal('File not found: a.tex')
+    })
+
+    it('resolves a bare file name when exactly one document has it', async function () {
+      mockEntityHandler.getAllDocs = sinon.stub().resolves([{ _id: 'doc-2', name: 'intro.tex', path: 'chapters/intro.tex' }])
+
+      const res = await tools.execute('read_file', { path: 'intro.tex' }, ctx)
+
+      expect(res.error).to.equal(undefined)
+      expect(res.totalLines).to.equal(2)
+    })
+
+    it('names the candidates when a bare file name is ambiguous', async function () {
+      mockEntityHandler.getAllDocs = sinon.stub().resolves([
+        { _id: 'doc-a', name: 'intro.tex', path: 'a/intro.tex' },
+        { _id: 'doc-b', name: 'intro.tex', path: 'b/intro.tex' },
+      ])
+
+      const res = await tools.execute('read_file', { path: 'intro.tex' }, ctx)
+
+      expect(res.error).to.equal('File not found: intro.tex. Did you mean a/intro.tex or b/intro.tex?')
+    })
   })
 
   it('returns all 15 tool specifications in getToolSpecs', function () {
@@ -489,6 +857,25 @@ describe('AiAssistTools', function () {
     )
   })
 
+  it('keeps the tool schemas lean', function () {
+    const specs = tools.getToolSpecs()
+    const search = specs.find(s => s.name === 'search_text')
+    expect(search.parameters.properties).to.not.have.property('path')
+    const appearance = specs.find(s => s.name === 'configure_appearance_settings')
+    expect(appearance.parameters.properties.editorTheme.description.length).to.be.lessThan(120)
+    const available = specs.find(s => s.name === 'list_available_settings')
+    expect(available.description.length).to.be.lessThan(200)
+  })
+
+  it('search_text still honours a path argument', async function () {
+    const res = await tools.execute(
+      'search_text',
+      { query: 'no match', path: 'chapters/*.tex' },
+      { projectId: 'p1', userId: '012345678901234567890123' }
+    )
+    expect(res.hits.map(hit => hit.path)).to.deep.equal(['chapters/intro.tex'])
+  })
+
   it('rejects execution when userId is missing or invalid without falling back to owner_ref', async function () {
     const customTools = new AiAssistTools({
       projectGetter: {
@@ -522,5 +909,282 @@ describe('AiAssistTools', function () {
       })
       expect(editResult.error, `edit_file should reject ${path}`).to.include('traversal')
     }
+  })
+
+  describe('edit planning', function () {
+    const ctx = { projectId: 'p1', userId: '012345678901234567890123' }
+
+    it('checkEdit accepts an edit whose anchor is unique, without writing', async function () {
+      const res = await tools.checkEdit({ path: 'main.tex', oldText: 'target text', newText: 'x' }, ctx)
+      expect(res.status).to.equal('ok')
+      expect(res.path).to.equal('main.tex')
+      expect(res.oldText).to.equal('target text')
+      expect(res.newText).to.equal('x')
+      expect(res.startLine).to.be.a('number')
+      expect(mockDocUpdater.setDocument.called).to.equal(false)
+    })
+
+    it('checkEdit reports noMatch when the anchor is nowhere in the project', async function () {
+      const res = await tools.checkEdit({ path: 'main.tex', oldText: 'nope', newText: 'x' }, ctx)
+      expect(res.status).to.equal('noMatch')
+      expect(res.error).to.be.a('string')
+    })
+
+    it('checkEdit reports ambiguous with the match count', async function () {
+      const res = await tools.checkEdit({ path: 'main.tex', oldText: 'line', newText: 'x' }, ctx)
+      expect(res.status).to.equal('ambiguous')
+      expect(res.matches).to.equal(3)
+    })
+
+    it('checkEdit rejects path traversal', async function () {
+      const res = await tools.checkEdit({ path: '../secret.tex', oldText: 'a', newText: 'b' }, ctx)
+      expect(res.status).to.equal('error')
+      expect(res.error).to.include('traversal')
+    })
+
+    it('edit_file returns a noMatch status instead of a bare error', async function () {
+      const res = await tools.execute('edit_file', { path: 'main.tex', oldText: 'nope', newText: 'x' }, ctx)
+      expect(res.status).to.equal('noMatch')
+      expect(mockDocUpdater.setDocument.called).to.equal(false)
+    })
+
+    it('sanitizes line-number prefixes from newText in edit_file', async function () {
+      const result = await tools.execute(
+        'edit_file',
+        {
+          path: 'main.tex',
+          oldText: 'line 2: target text',
+          newText: '2: line 2: replaced text',
+        },
+        ctx
+      )
+      expect(result.status).to.equal('applied')
+      expect(mockDocUpdater.setDocument.calledOnce).to.be.true
+      const lines = mockDocUpdater.setDocument.firstCall.args[3]
+      expect(lines).to.deep.equal(['line 1', 'line 2: replaced text', 'line 3'])
+    })
+
+    it('edit_file deletes a line range without oldText', async function () {
+      const res = await tools.execute('edit_file', { path: 'main.tex', startLine: 2, endLine: 3, newText: '' }, ctx)
+      expect(res.status).to.equal('applied')
+      expect(mockDocUpdater.setDocument.firstCall.args[3]).to.deep.equal(['line 1'])
+      expect(res).to.include({ startLine: 2, endLine: null, lineDelta: -2, excerpt: '1: line 1' })
+    })
+
+    it('edit_file reports the new line range, the line shift and the lines around it', async function () {
+      const res = await tools.execute('edit_file', { path: 'main.tex', oldText: 'target text', newText: 'a\nb' }, ctx)
+
+      expect(res.status).to.equal('applied')
+      expect(res).to.include({ path: 'main.tex', startLine: 2, endLine: 3, lineDelta: 1 })
+      expect(res.excerpt).to.equal('1: line 1\n2: line 2: a\n3: b\n4: line 3')
+    })
+
+    it('checkEdit uses startLine to pick one of two identical anchors', async function () {
+      mockDocUpdater.getDocument = sinon.stub().resolves({ lines: ['a', 'dup', 'b', 'dup'] })
+
+      const res = await tools.checkEdit({ path: 'main.tex', oldText: 'dup', newText: 'X', startLine: 4 }, ctx)
+
+      expect(res.status).to.equal('ok')
+      expect(res.startLine).to.equal(4)
+    })
+
+    it('checkEdit accepts startLine sent as a string', async function () {
+      mockDocUpdater.getDocument = sinon.stub().resolves({ lines: ['a', 'dup', 'b', 'dup'] })
+
+      const res = await tools.checkEdit({ path: 'main.tex', oldText: 'dup', newText: 'X', startLine: '4' }, ctx)
+
+      expect(res.status).to.equal('ok')
+      expect(res.startLine).to.equal(4)
+    })
+
+    it('does not move an edit to another file on a whitespace-only match', async function () {
+      const res = await tools.checkEdit({ path: 'main.tex', oldText: 'no   match  here', newText: 'x' }, ctx)
+
+      expect(res.status).to.equal('noMatch')
+    })
+
+    it('moves an edit to the file that contains the exact anchor', async function () {
+      const res = await tools.checkEdit({ path: 'main.tex', oldText: 'no match here', newText: 'x' }, ctx)
+
+      expect(res.status).to.equal('ok')
+      expect(res.path).to.equal('chapters/intro.tex')
+    })
+
+    it('endDocumentLine finds the last uncommented \\end{document}', function () {
+      expect(endDocumentLine('a\n\\end{document}\n')).to.equal(2)
+      expect(endDocumentLine('a\n% \\end{document}\n')).to.equal(null)
+      expect(endDocumentLine('\\end{document} % done')).to.equal(1)
+      expect(endDocumentLine('no end here')).to.equal(null)
+    })
+
+    it('refuses to append after \\end{document}', async function () {
+      mockDocUpdater.getDocument = sinon.stub().resolves({ lines: ['\\begin{document}', 'x', '\\end{document}'] })
+
+      const res = await tools.checkEdit({ path: 'main.tex', oldText: '', newText: 'y' }, ctx)
+
+      expect(res.status).to.equal('error')
+      expect(res.error).to.include('line 3')
+    })
+
+    it('still appends to a file without \\end{document}', async function () {
+      const res = await tools.checkEdit({ path: 'main.tex', oldText: '', newText: 'line 4' }, ctx)
+
+      expect(res.status).to.equal('ok')
+    })
+
+    it('checkEdit resolves a line range to the text it replaces, and re-applies from that', async function () {
+      const args = { path: 'main.tex', startLine: 1, endLine: 2, newText: 'new' }
+      const plan = await tools.checkEdit(args, ctx)
+      expect(plan).to.include({ status: 'ok', oldText: 'line 1\nline 2: target text', newText: 'new', startLine: 1 })
+
+      // The run loop executes with the resolved oldText alongside the original range.
+      const res = await tools.execute('edit_file', { ...args, oldText: plan.oldText }, ctx)
+      expect(res.status).to.equal('applied')
+      expect(mockDocUpdater.setDocument.firstCall.args[3]).to.deep.equal(['new', 'line 3'])
+    })
+
+    it('edit_file rejects a line range that starts past the end of the file', async function () {
+      const res = await tools.checkEdit({ path: 'main.tex', startLine: 9, endLine: 12, newText: '' }, ctx)
+      expect(res.status).to.equal('error')
+      expect(res.error).to.include('3 lines')
+    })
+
+    it('edit_file schema lets a line range stand in for oldText', function () {
+      const editSpec = tools.getToolSpecs().find(s => s.name === 'edit_file')
+      expect(editSpec.parameters.required).to.deep.equal(['path', 'newText'])
+    })
+
+    it('edit_file schema describes oldText: "" strictly for appending, not replacing', function () {
+      const specs = tools.getToolSpecs()
+      const editSpec = specs.find(s => s.name === 'edit_file')
+      expect(editSpec.description).to.not.include('empty string "" if replacing the entire file')
+      expect(editSpec.parameters.properties.oldText.description).to.include('append')
+      expect(editSpec.parameters.properties).to.have.property('startLine')
+      expect(editSpec.parameters.properties).to.have.property('endLine')
+    })
+
+    it('reports error deltas and regressed flag in compile_project', async function () {
+      const validUserId = '012345678901234567890123'
+      const log1 = [
+        './main.tex:10: Undefined control sequence.',
+        'l.10 \\foo',
+      ].join('\n')
+
+      tools.clsiManager = {
+        getOutputFileStream: sinon.stub().resolves([Buffer.from(log1)]),
+      }
+      mockCompileManager.compile.resolves({
+        status: 'failure',
+        buildId: 'b1',
+        clsiServerId: 's1',
+        outputFiles: [{ path: 'output.log' }],
+      })
+
+      const firstCompile = await tools.execute('compile_project', {}, { projectId: 'p1', userId: validUserId })
+      expect(firstCompile.status).to.equal('failure')
+      expect(firstCompile.errorCount).to.equal(1)
+      expect(firstCompile.errorDelta).to.equal(0)
+      expect(firstCompile.primaryError.message).to.equal('Undefined control sequence.')
+
+      // Second compile introduces an additional error
+      const log2 = [
+        './main.tex:15: Undefined control sequence.',
+        'l.15 \\foo',
+        './main.tex:20: Missing $ inserted.',
+        'l.20 $',
+      ].join('\n')
+      tools.clsiManager.getOutputFileStream = sinon.stub().resolves([Buffer.from(log2)])
+
+      const secondCompile = await tools.execute('compile_project', {}, { projectId: 'p1', userId: validUserId })
+      expect(secondCompile.errorCount).to.equal(2)
+      expect(secondCompile.errorDelta).to.equal(1)
+      expect(secondCompile.newErrorsCount).to.equal(1)
+      expect(secondCompile.regressed).to.equal(true)
+      expect(secondCompile.message).to.match(/WARNING: Compilation worsened/i)
+      expect(secondCompile.cascadingErrorsCount).to.equal(1)
+    })
+
+    it('defaults includeRaw to true in get_compile_result', async function () {
+      const validUserId = '012345678901234567890123'
+      const log = [
+        './main.tex:10: Undefined control sequence.',
+        'l.10 \\foo',
+      ].join('\n')
+
+      tools.clsiManager = {
+        getOutputFileStream: sinon.stub().resolves([Buffer.from(log)]),
+      }
+      mockCompileManager.compile.resolves({
+        status: 'failure',
+        buildId: 'b1',
+        clsiServerId: 's1',
+        outputFiles: [{ path: 'output.log' }],
+      })
+
+      await tools.execute('compile_project', {}, { projectId: 'p1', userId: validUserId })
+      const res = await tools.execute('get_compile_result', {}, { projectId: 'p1', userId: validUserId })
+
+      expect(res.status).to.equal('failure')
+      expect(res.primaryError).to.not.equal(null)
+      expect(res.errors[0].excerpt).to.include('l.10 \\foo')
+    })
+
+    it('gives each error its own log excerpt, even when messages repeat', async function () {
+      const validUserId = '012345678901234567890123'
+      const log = [
+        './main.tex:3: Undefined control sequence.',
+        'l.3 \\foo',
+        '',
+        './main.tex:9: Undefined control sequence.',
+        'l.9 \\bar',
+      ].join('\n')
+      tools.clsiManager = { getOutputFileStream: sinon.stub().resolves([Buffer.from(log)]) }
+      mockCompileManager.compile.resolves({ status: 'failure', buildId: 'b1', clsiServerId: 's1', outputFiles: [{ path: 'output.log' }] })
+
+      const res = await tools.execute('compile_project', {}, { projectId: 'p1', userId: validUserId })
+
+      expect(res.errors).to.have.length(2)
+      expect(res.errors[0].excerpt).to.equal('l.3 \\foo')
+      expect(res.errors[1].excerpt).to.equal('l.9 \\bar')
+    })
+
+    it('never attaches excerpts to warnings and strips them when includeRaw is false', async function () {
+      const validUserId = '012345678901234567890123'
+      const log = [
+        'LaTeX Warning: Reference `a` on page 1 undefined on input line 4.',
+        './main.tex:3: Undefined control sequence.',
+        'l.3 \\foo',
+      ].join('\n')
+      tools.clsiManager = { getOutputFileStream: sinon.stub().resolves([Buffer.from(log)]) }
+      mockCompileManager.compile.resolves({ status: 'failure', buildId: 'b1', clsiServerId: 's1', outputFiles: [{ path: 'output.log' }] })
+      await tools.execute('compile_project', {}, { projectId: 'p1', userId: validUserId })
+
+      const all = await tools.execute('get_compile_result', {}, { projectId: 'p1', userId: validUserId })
+      expect(all.warnings[0]).to.not.have.property('excerpt')
+      expect(all.errors[0].excerpt).to.equal('l.3 \\foo')
+
+      const bare = await tools.execute('get_compile_result', { includeRaw: false }, { projectId: 'p1', userId: validUserId })
+      expect(bare.errors[0]).to.not.have.property('excerpt')
+    })
+
+    it('get_compile_result never compiles', async function () {
+      const validUserId = '012345678901234567890123'
+      const res = await tools.execute('get_compile_result', {}, { projectId: 'never-compiled', userId: validUserId })
+
+      expect(res.status).to.equal('none')
+      expect(res.message).to.include('compile_project')
+      expect(mockCompileManager.compile.called).to.equal(false)
+    })
+
+    it('remembers compiles for at most 100 projects and keeps no raw log', async function () {
+      const validUserId = '012345678901234567890123'
+      for (let index = 0; index <= 100; index++) {
+        await tools.execute('compile_project', {}, { projectId: `p${index}`, userId: validUserId })
+      }
+
+      expect(tools.lastCompileResult.size).to.equal(100)
+      expect(tools.lastCompileResult.has('p0')).to.equal(false)
+      expect(tools.lastCompileResult.get('p100')).to.not.have.property('rawLog')
+    })
   })
 })

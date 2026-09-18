@@ -4,6 +4,7 @@ import { AgentPanel } from './components/agent/agent-panel'
 import { AiRailIcon } from './components/ai-rail-icon'
 import getMeta from '@/utils/meta'
 import { useAiDock } from './hooks/use-ai-dock'
+import '../../../stylesheets/ai-assist.scss'
 
 const AiRailTab = forwardRef<HTMLButtonElement, any>((props, ref) => {
   const { dock, isRightOpen, toggleRightOpen } = useAiDock()

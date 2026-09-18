@@ -17,6 +17,7 @@ import {
   Wrench,
 } from '@phosphor-icons/react'
 import { ToolCallRecord } from '../../agent/agent-messages'
+import { wantsCleanCompile } from '../../agent/tools/compile-args'
 import { diffStatsForCall } from './diff-stats'
 import { DiffStatBadge } from './diff-stat-badge'
 import { useOpenFileInEditor } from '../../hooks/use-open-file'
@@ -114,10 +115,6 @@ export function summarise(
   const args = (call.args ?? {}) as any
   const result = call.result as any
 
-  if (!('result' in call)) {
-    return { action: t('ai_assist_tool_running', 'Running…') }
-  }
-
   const getToolBaseAction = () => {
     switch (call.name) {
       case 'get_references':
@@ -139,7 +136,9 @@ export function summarise(
       case 'create_file':
         return t('ai_assist_tool_create_file', 'Created file')
       case 'compile_project':
-        return t('ai_assist_tool_compile_project', 'Compiled project')
+        return wantsCleanCompile(args)
+          ? t('ai_assist_tool_compile_project_clean', 'Rebuilt from scratch')
+          : t('ai_assist_tool_compile_project', 'Compiled project')
       case 'get_compile_result':
       case 'get_compile_log':
         return t('ai_assist_tool_get_compile_log', 'Read compile log')
@@ -160,6 +159,31 @@ export function summarise(
         // can say about it, so say that rather than mislabelling it.
         return call.name
     }
+  }
+
+  if (result?.status === 'stopped') {
+    switch (call.name) {
+      case 'edit_file':
+        return {
+          action: t('ai_assist_tool_edit_cancelled', 'Edit cancelled'),
+          target: args.path,
+          isFile: Boolean(args.path),
+        }
+      case 'create_file':
+        return {
+          action: t('ai_assist_tool_create_cancelled', 'Creation cancelled'),
+          target: args.path,
+          isFile: Boolean(args.path),
+        }
+      default:
+        return {
+          action: `${getToolBaseAction()} (${t('ai_assist_tool_cancelled', 'cancelled')})`,
+        }
+    }
+  }
+
+  if (!('result' in call)) {
+    return { action: t('ai_assist_tool_running', 'Running…') }
   }
 
   if (call.isError) {
@@ -236,7 +260,9 @@ export function summarise(
     }
     case 'compile_project':
       return {
-        action: t('ai_assist_tool_compile_project', 'Compiled project'),
+        action: wantsCleanCompile(args)
+          ? t('ai_assist_tool_compile_project_clean', 'Rebuilt from scratch')
+          : t('ai_assist_tool_compile_project', 'Compiled project'),
         target: t('ai_assist_tool_compile_project_detail', {
           count: result?.errorCount ?? 0,
           defaultValue: `${result?.errorCount ?? 0} errors`,
@@ -303,6 +329,7 @@ export function ToolCallSummaryLine({ call }: { call: ToolCallRecord }) {
         {getToolIcon(call.name || '')}
       </span>
       <span className="ai-assist-tool-call-action">{summary.action}</span>
+      {summary.target && ' '}
       {summary.target &&
         (summary.isFile ? (
           <span

@@ -29,7 +29,7 @@ describe('renderEnvelope', function () {
 
     expect(text).to.include('<project-context turn="1">')
     expect(text).to.include('<files root="main.tex" tex="1" bib="1" other="1">')
-    expect(text).to.include('figures/  1 other')
+    expect(text).to.include('figures/plot.pdf [binary]')
     expect(text).to.not.include('12 lines')
     expect(text).to.not.include('84 KB')
     expect(text).to.include('</project-context>')
@@ -43,7 +43,7 @@ describe('renderEnvelope', function () {
       previous: null,
     })
 
-    // Ties root attribute, per-type counts, and top-level directory rows
+    // Ties root attribute, per-type counts, and explicit file rows
     // into the envelope so the exact slim structure is contractual. Task 6
     // asserts turn 2 is a byte-exact extension of turn 1's request, so every
     // byte here matters.
@@ -51,7 +51,9 @@ describe('renderEnvelope', function () {
       [
         '<project-context turn="1">',
         '<files root="main.tex" tex="1" bib="1" other="1">',
-        'figures/  1 other',
+        'main.tex [tex]',
+        'refs.bib [bib]',
+        'figures/plot.pdf [binary]',
         '</files>',
         '<compile>not compiled yet</compile>',
         '</project-context>',
@@ -138,7 +140,7 @@ describe('renderEnvelope', function () {
       previous: first.state,
     })
 
-    expect(second.text).to.include('sections/  1 tex')
+    expect(second.text).to.include('sections/intro.tex [tex]')
     expect(second.text).to.include('tex="2"')
     expect(second.text).to.not.include('unchanged since')
   })
@@ -352,7 +354,7 @@ describe('renderEnvelope', function () {
     )
   })
 
-  it('renders a slim files block: root, counts and top-level dirs only', function () {
+  it('renders a slim files block: root, counts and explicit files for small projects', function () {
     const { text } = renderEnvelope({
       snapshot: {
         rootDocPath: 'main.tex',
@@ -374,10 +376,8 @@ describe('renderEnvelope', function () {
     })
 
     expect(text).to.contain('<files root="main.tex" tex="3" bib="1" other="2">')
-    expect(text).to.contain('sections/  2 tex')
-    expect(text).to.contain('figures/  2 other')
-    // The full listing must NOT be in the envelope any more.
-    expect(text).to.not.contain('sections/a.tex')
+    expect(text).to.contain('sections/a.tex [tex]')
+    expect(text).to.contain('figures/x.png [binary]')
   })
 
   it('still collapses to unchanged when the tree did not change', function () {

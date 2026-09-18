@@ -5,7 +5,7 @@ import OLButton from '@/shared/components/ol/ol-button'
 import MaterialIcon from '@/shared/components/material-icon'
 import { ProjectContext } from '@/shared/context/project-context'
 import { useAgentRun } from '../hooks/use-agent-run'
-import { FIX_MAX_STEPS, FIX_TOOLS, buildFixTranscript } from '../agent/fix-run'
+import { FIX_TOOLS, buildFixTranscript } from '../agent/fix-run'
 import { FIX_SYSTEM_PROMPT } from '../agent/context/fix-system-prompt'
 import {
   getStoredFix,
@@ -30,6 +30,8 @@ import { ThinkingBlock } from './agent/thinking-block'
 import { AgentStatusLine } from './agent/agent-status-line'
 import { EditApprovalCard } from './agent/edit-approval-card'
 import { MarkdownContent } from './agent/markdown-content'
+import { isFixableLevel } from '../log-entry-levels'
+import '../../../../stylesheets/ai-assist.scss'
 
 /** The host the document window would be sent to, for the consent prompt. */
 function providerHost() {
@@ -82,7 +84,7 @@ export default function SuggestFixPanel({
   const enabled =
     Boolean(getMeta('ol-aiAssistEnabled')) &&
     getMeta('ol-showAiFeatures') !== false &&
-    (logEntry?.level === 'error' || logEntry?.level === 'warning')
+    isFixableLevel(logEntry?.level)
 
   const projectContext = useContext(ProjectContext)
   const projectId = projectContext?.projectId || 'default'
@@ -146,7 +148,6 @@ export default function SuggestFixPanel({
         transcript: nextState.transcript,
         running: nextState.running,
         error: nextState.error,
-        stoppedForBudget: nextState.stoppedForBudget,
         feedback,
         decidedEdits,
         updatedAt: Date.now(),
@@ -169,11 +170,21 @@ export default function SuggestFixPanel({
     allowConsent,
   } = useAgentRun({
     tools: FIX_TOOLS,
-    maxSteps: FIX_MAX_STEPS,
     systemPrompt: FIX_SYSTEM_PROMPT,
+    requireTool: 'edit_file',
     cacheKey: projectId,
     onEvent: onAgentEvent,
   })
+
+  // The panel lives inside a compile-log entry. A recompile that fixes the
+  // error removes the entry and unmounts this panel with a run still in
+  // flight — there is no consumer left for its output, so cancel it.
+  useEffect(() => {
+    return () => {
+      void stop()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Stamped when a run begins so the status line can count from it; the
   // agent state carries no start time of its own.
@@ -194,7 +205,6 @@ export default function SuggestFixPanel({
     setState({
       transcript: stored.transcript,
       running: false,
-      stoppedForBudget: Boolean(stored.stoppedForBudget),
       stoppedByUser: false,
       pendingApproval: null,
       error: stored.error ?? null,
@@ -212,7 +222,6 @@ export default function SuggestFixPanel({
         collapsed,
         transcript: state.transcript,
         running,
-        stoppedForBudget: state.stoppedForBudget,
         error,
         feedback,
         decidedEdits,
@@ -228,7 +237,6 @@ export default function SuggestFixPanel({
     state.transcript,
     running,
     error,
-    state.stoppedForBudget,
     feedback,
     decidedEdits,
   ])
@@ -268,7 +276,8 @@ export default function SuggestFixPanel({
   const onSuggestFix = useCallback(
     async (event: Event) => {
       const detail = (event as CustomEvent<{ entryId?: string }>).detail ?? {}
-      if (!entryId || detail.entryId !== entryId) return
+      // A hidden panel must never start a run the user cannot see.
+      if (!enabled || !entryId || detail.entryId !== entryId) return
       setOpen(true)
       setCollapsed(false)
       setFeedback(null)
@@ -276,7 +285,7 @@ export default function SuggestFixPanel({
       setRequesting(true)
       await startRun()
     },
-    [entryId, startRun]
+    [enabled, entryId, startRun]
   )
 
   useEventListener('aiAssist:suggestFix', onSuggestFix)
@@ -326,7 +335,6 @@ export default function SuggestFixPanel({
           collapsed,
           transcript: state.transcript,
           running,
-          stoppedForBudget: state.stoppedForBudget,
           error,
           feedback,
           decidedEdits: nextDecided,
@@ -345,7 +353,6 @@ export default function SuggestFixPanel({
       running,
       error,
       state.transcript,
-      state.stoppedForBudget,
       feedback,
     ]
   )
@@ -411,7 +418,6 @@ export default function SuggestFixPanel({
       contextText: renderFixHandoff({
         transcript: state.transcript,
         decidedEdits,
-        stoppedForBudget: state.stoppedForBudget,
         error,
       }),
     })
@@ -440,7 +446,6 @@ export default function SuggestFixPanel({
     logEntry,
     projectId,
     setIsRightOpen,
-    state.stoppedForBudget,
     state.transcript,
   ])
 
@@ -781,13 +786,6 @@ export default function SuggestFixPanel({
                 })()
               }
             />
-          )}
-
-          {state.stoppedForBudget && !producedSuggestion && (
-            <p className="ai-suggest-budget-note">
-              I could not pin this down within my step budget. Try again, or ask in the AI
-              assistant panel for a longer look.
-            </p>
           )}
 
           {/* Footer with disclaimer and actions */}

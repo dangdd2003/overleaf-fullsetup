@@ -61,6 +61,96 @@ async function collect(generator: AsyncGenerator<AgentEvent>) {
 }
 
 describe('runAgent', function () {
+  describe('requireTool', function () {
+    it('asks once for the required tool when the model ends on prose', async function () {
+      const { client, requests } = fakeClient([
+        [
+          { type: 'text', text: 'The package is missing.' },
+          { type: 'done', stopReason: 'stop' },
+        ],
+        [
+          { type: 'tool_call', id: 'c1', name: 'echo', args: {} },
+          { type: 'done', stopReason: 'tool_calls' },
+        ],
+        [
+          { type: 'text', text: 'Added it.' },
+          { type: 'done', stopReason: 'stop' },
+        ],
+      ])
+      const { handle } = createFakeHandle()
+
+      const events = await collect(
+        runAgent({
+          client,
+          handle,
+          tools: { echo: echoTool },
+          transcript: [{ id: '1', role: 'user', text: 'fix' }],
+          requireTool: 'echo',
+        })
+      )
+
+      expect(requests).to.have.length(3)
+      const nudge: any = requests[1].messages.at(-1)
+      expect(nudge.role).to.equal('user')
+      expect(nudge.content).to.contain('echo')
+      expect(events.filter(e => e.type === 'toolCallStarted')).to.have.length(1)
+      expect(events.at(-1)).to.deep.equal({ type: 'turnFinished', reason: 'stop' })
+    })
+
+    it('nudges only once, then lets the run finish', async function () {
+      const { client, requests } = fakeClient([
+        [
+          { type: 'text', text: 'Explained.' },
+          { type: 'done', stopReason: 'stop' },
+        ],
+        [
+          { type: 'text', text: 'Explained again.' },
+          { type: 'done', stopReason: 'stop' },
+        ],
+      ])
+      const { handle } = createFakeHandle()
+
+      const events = await collect(
+        runAgent({
+          client,
+          handle,
+          tools: { echo: echoTool },
+          transcript: [{ id: '1', role: 'user', text: 'fix' }],
+          requireTool: 'echo',
+        })
+      )
+
+      expect(requests).to.have.length(2)
+      expect(events.at(-1)).to.deep.equal({ type: 'turnFinished', reason: 'stop' })
+    })
+
+    it('does not nudge once the required tool was called', async function () {
+      const { client, requests } = fakeClient([
+        [
+          { type: 'tool_call', id: 'c1', name: 'echo', args: {} },
+          { type: 'done', stopReason: 'tool_calls' },
+        ],
+        [
+          { type: 'text', text: 'Done.' },
+          { type: 'done', stopReason: 'stop' },
+        ],
+      ])
+      const { handle } = createFakeHandle()
+
+      await collect(
+        runAgent({
+          client,
+          handle,
+          tools: { echo: echoTool },
+          transcript: [{ id: '1', role: 'user', text: 'fix' }],
+          requireTool: 'echo',
+        })
+      )
+
+      expect(requests).to.have.length(2)
+    })
+  })
+
   it('streams a text-only turn and finishes', async function () {
     const { client } = fakeClient([
       [
@@ -198,12 +288,16 @@ describe('runAgent', function () {
     expect(JSON.stringify(finished.result)).to.match(/unknown tool/i)
   })
 
-  it('stops with reason budget once the step limit is reached', async function () {
-    const looping = Array.from({ length: 20 }, () => [
+  it('runs an unlimited number of tool calls', async function () {
+    const looping = Array.from({ length: 35 }, () => [
       { type: 'tool_call', id: 'c', name: 'echo', args: {} },
       { type: 'done', stopReason: 'tool_calls' },
     ])
-    const { client } = fakeClient(looping)
+    looping.push([
+      { type: 'text', text: 'all done' },
+      { type: 'done', stopReason: 'stop' },
+    ])
+    const { client, requests } = fakeClient(looping)
     const { handle } = createFakeHandle()
 
     const events = await collect(
@@ -212,12 +306,12 @@ describe('runAgent', function () {
         handle,
         tools: { echo: echoTool },
         transcript: [{ id: '1', role: 'user', text: 'go' }],
-        maxSteps: 3,
       })
     )
 
-    expect(events.filter(e => e.type === 'toolCallStarted')).to.have.length(3)
-    expect(events.at(-1)).to.deep.equal({ type: 'turnFinished', reason: 'budget' })
+    expect(events.filter(e => e.type === 'toolCallStarted')).to.have.length(35)
+    expect(events.at(-1)).to.deep.equal({ type: 'turnFinished', reason: 'stop' })
+    expect(requests).to.have.length(36)
   })
 
   it('emits awaitingApproval before a suspending tool runs', async function () {
@@ -601,9 +695,18 @@ describe('runAgent', function () {
         },
         { type: 'done', stopReason: 'tool_calls' },
       ],
+      [
+        {
+          type: 'tool_call',
+          id: 'c3',
+          name: 'edit_file',
+          args: { path: 'ref.bib', oldText: 'missing', newText: 'new' },
+        },
+        { type: 'done', stopReason: 'tool_calls' },
+      ],
     ]
 
-    const { client } = fakeClient(turns)
+    const { client, requests } = fakeClient(turns)
     const { handle } = createFakeHandle()
 
     const events = await collect(
@@ -620,10 +723,13 @@ describe('runAgent', function () {
     )
     expect(runawayError).to.not.be.undefined
     expect(runawayError.message).to.match(/repeated failing call/i)
+    // The second identical failure carried a warning; the third stopped the run.
+    expect(requests).to.have.length(3)
+    expect(requests[2].messages.at(-1).content).to.include('failed 2 times')
     expect(events.at(-1)).to.deep.equal({ type: 'turnFinished', reason: 'stop' })
   })
 
-  it('stops with consecutiveToolFailures after 3 consecutive failures', async function () {
+  it('stops with consecutiveToolFailures after 4 turns in which every call failed', async function () {
     let callCount = 0
     const failingEditTool: AgentTool = {
       suspends: false,
@@ -667,6 +773,15 @@ describe('runAgent', function () {
         },
         { type: 'done', stopReason: 'tool_calls' },
       ],
+      [
+        {
+          type: 'tool_call',
+          id: 'c4',
+          name: 'edit_file',
+          args: { path: 'ref.bib', oldText: 'missing4', newText: 'new' },
+        },
+        { type: 'done', stopReason: 'tool_calls' },
+      ],
     ]
 
     const { client } = fakeClient(turns)
@@ -685,7 +800,7 @@ describe('runAgent', function () {
       e => e.type === 'error' && (e as any).code === 'consecutiveToolFailures'
     )
     expect(consecutiveError).to.not.be.undefined
-    expect(consecutiveError.message).to.match(/3 consecutive failed/i)
+    expect(consecutiveError.message).to.match(/4 turns in a row/i)
     expect(events.at(-1)).to.deep.equal({ type: 'turnFinished', reason: 'stop' })
   })
 
@@ -748,5 +863,133 @@ describe('runAgent', function () {
     const textEvent: any = events.find(e => e.type === 'text')
     expect(textEvent.text).to.include('original table format')
     expect(events.at(-1)).to.deep.equal({ type: 'turnFinished', reason: 'stop' })
+  })
+
+  it('re-checks the context budget before every request, not only the first', async function () {
+    const bigTool: AgentTool = {
+      suspends: false,
+      mutates: false,
+      spec: { name: 'big', description: 'big', parameters: { type: 'object', properties: {} } },
+      async execute() {
+        return { text: 'x'.repeat(40000) }
+      },
+    }
+    const { client, requests } = fakeClient([
+      [{ type: 'tool_call', id: 'c1', name: 'big', args: {} }],
+      [{ type: 'text', text: 'never sent' }],
+    ])
+    const { handle } = createFakeHandle()
+
+    const events = await collect(
+      runAgent({
+        client,
+        handle,
+        tools: { big: bigTool },
+        transcript: [{ id: '1', role: 'user', text: 'go' }],
+        limits: { contextWindow: 8000, maxOutputTokens: 1000 },
+      })
+    )
+
+    expect(requests).to.have.length(1)
+    expect(events.some(e => e.type === 'error' && (e as any).code === 'contextExhausted')).to.equal(true)
+  })
+
+  it('stops an alternating loop whose calls repeat exactly', async function () {
+    const turns = Array.from({ length: 6 }, (_, i) => [
+      { type: 'tool_call', id: `c${i}`, name: 'echo', args: { n: i % 2 } },
+    ])
+    const { client, requests } = fakeClient(turns)
+    const { handle } = createFakeHandle()
+
+    const events = await collect(
+      runAgent({
+        client,
+        handle,
+        tools: { echo: echoTool },
+        transcript: [{ id: '1', role: 'user', text: 'go' }],
+      })
+    )
+
+    const error: any = events.find(e => e.type === 'error')
+    expect(error.code).to.equal('runawayToolLoop')
+    expect(error.message).to.match(/alternating/)
+    expect(requests).to.have.length(4)
+  })
+
+  it('never runs an edit that was cut off at the output limit', async function () {
+    let executed = false
+    const editTool: AgentTool = {
+      suspends: false,
+      mutates: true,
+      spec: { name: 'edit_file', description: 'edit', parameters: { type: 'object', properties: {} } },
+      async execute() {
+        executed = true
+        return { status: 'applied' }
+      },
+    }
+    const { client, requests } = fakeClient([
+      [
+        { type: 'tool_call', id: 'c1', name: 'edit_file', args: { path: 'main.tex', newText: 'half', _repaired: true } },
+        { type: 'stop', reason: 'max_tokens' },
+      ],
+      [{ type: 'text', text: 'ok' }],
+    ])
+    const { handle } = createFakeHandle()
+
+    const events = await collect(
+      runAgent({
+        client,
+        handle,
+        tools: { edit_file: editTool },
+        transcript: [{ id: '1', role: 'user', text: 'go' }],
+        limits: { contextWindow: 128000, maxOutputTokens: 4096 },
+      })
+    )
+
+    expect(executed).to.equal(false)
+    expect(events.some(e => e.type === 'awaitingApproval')).to.equal(false)
+    const assistant = requests[1].messages.find((m: any) => m.role === 'assistant')
+    expect(assistant.toolCalls[0].args).to.deep.equal({ path: 'main.tex' })
+    const tool = requests[1].messages.find((m: any) => m.role === 'tool')
+    expect(tool.content).to.include('cut off at the 4096-token output limit')
+  })
+
+  it('reports a text reply cut off at the output limit', async function () {
+    const { client } = fakeClient([
+      [
+        { type: 'text', text: 'A long answer that' },
+        { type: 'stop', reason: 'max_tokens' },
+      ],
+    ])
+    const { handle } = createFakeHandle()
+
+    const events = await collect(
+      runAgent({
+        client,
+        handle,
+        tools: {},
+        transcript: [{ id: '1', role: 'user', text: 'go' }],
+      })
+    )
+
+    expect(events.some(e => e.type === 'error' && (e as any).code === 'outputTruncated')).to.equal(true)
+    expect(events.at(-1)).to.deep.equal({ type: 'turnFinished', reason: 'stop' })
+  })
+
+  it('sends the context window with every request', async function () {
+    const { client, requests } = fakeClient([{ type: 'text', text: 'ok' }])
+    const { handle } = createFakeHandle()
+
+    await collect(
+      runAgent({
+        client,
+        handle,
+        tools: {},
+        transcript: [{ id: '1', role: 'user', text: 'hi' }],
+        limits: { contextWindow: 32000, maxOutputTokens: 2048 },
+      })
+    )
+
+    expect(requests[0].contextWindow).to.equal(32000)
   })
 })

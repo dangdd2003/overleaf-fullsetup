@@ -1,3 +1,9 @@
+// This stylesheet is imported from the module's own components, so it is
+// compiled standalone and does not inherit the app's Bootstrap variables.
+// Mirror the one token we use here so the file is self-contained like the other
+// CE modules; `!default` keeps it from clobbering the app value if ever bundled.
+$font-family-monospace: 'DM Mono', monospace !default;
+
 // AI Assist provider widget — settings page.
 // The settings page is not themed, so it uses the plain (light) tokens.
 
@@ -7,7 +13,7 @@
   .unboxed-setting-row {
     align-items: center;
 
-    @include media-breakpoint-down(md) {
+    @media (max-width: 767.98px) {
       flex-direction: column;
       align-items: flex-start;
       gap: var(--spacing-03);
@@ -72,7 +78,7 @@
   border-radius: var(--border-radius-base);
   background: var(--bg-light-secondary);
 
-  @include media-breakpoint-down(md) {
+  @media (max-width: 767.98px) {
     flex-direction: column;
     align-items: flex-start;
   }
@@ -147,6 +153,14 @@
   overflow: hidden;
 }
 
+.ai-assist-transcript-wrapper {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .ai-assist-transcript {
   flex: 1;
   overflow-y: auto;
@@ -154,6 +168,48 @@
   display: flex;
   flex-direction: column;
   gap: var(--spacing-03);
+}
+
+.ai-assist-scroll-bottom-btn {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid var(--border-divider-themed, rgba(0, 0, 0, 0.12));
+  background: var(--bg-primary-themed, #ffffff);
+  color: var(--content-secondary-themed, #666666);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
+    box-shadow 0.15s ease,
+    transform 0.15s ease;
+
+  &:hover {
+    background: var(--bg-secondary-themed, #f5f5f5);
+    color: var(--content-primary-themed, #111111);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.16);
+    transform: translateX(-50%) translateY(-1px);
+  }
+
+  &:active {
+    transform: translateX(-50%) translateY(0);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--focus-color, #0284c7);
+    outline-offset: 2px;
+  }
 }
 
 .ai-assist-message {
@@ -385,6 +441,7 @@
   font-size: 12px;
   opacity: 0.72;
   transition: opacity 0.15s ease, color 0.15s ease;
+  margin-right: 5px;
 }
 
 .ai-assist-tool-call-target {
@@ -661,18 +718,34 @@
     text-transform: uppercase;
     border-radius: 3px;
     background: rgba(239, 68, 68, 0.2);
-    color: var(--content-danger, #ef4444);
+    color: var(--content-danger-themed, #ef4444);
+    margin-left: 6px;
+  }
+
+  .ai-assist-tool-detail-badge.cancelled {
+    display: inline-block;
+    padding: 1px 6px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    border-radius: 3px;
+    background: rgba(148, 163, 184, 0.18);
+    color: var(--content-secondary-themed, #94a3b8);
     margin-left: 6px;
   }
 
   .ai-assist-tool-detail-rejection {
-    color: var(--content-danger, #ef4444);
+    color: var(--content-danger-themed, #ef4444);
     font-size: 11px;
     margin-top: 4px;
   }
 
   .ai-assist-tool-detail-diff.is-rejected {
     border-color: rgba(239, 68, 68, 0.3);
+  }
+
+  .ai-assist-tool-detail-diff.is-cancelled {
+    border-color: var(--border-divider-themed, rgba(255, 255, 255, 0.12));
   }
 }
 
@@ -708,6 +781,212 @@
     }
   }
 }
+
+.ai-assist-mode-selector-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: var(--border-radius-base, 4px) !important;
+  border: none !important;
+  background-color: transparent !important;
+  color: var(--content-secondary-themed);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  outline: none;
+  transition: color 0.15s ease, background-color 0.15s ease;
+  line-height: 1;
+
+  &:after {
+    display: none !important;
+  }
+
+  &:hover,
+  &:focus-visible,
+  &[aria-expanded='true'] {
+    color: var(--content-primary-themed);
+    background-color: var(--bg-tertiary-themed) !important;
+  }
+
+  .ai-assist-mode-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .ai-assist-mode-label {
+    line-height: 1;
+    white-space: nowrap;
+    font-weight: 600;
+  }
+
+  .ai-assist-mode-caret {
+    display: inline-flex;
+    align-items: center;
+    opacity: 0.6;
+    margin-left: 1px;
+  }
+}
+
+.ai-assist-mode-menu {
+  width: 220px;
+  max-width: calc(100vw - 32px);
+  padding: 4px !important;
+  border-radius: var(--border-radius-medium, 8px) !important;
+  background-color: var(--dropdown-background, var(--bg-dark-primary, #1b222c)) !important;
+  border: 1px solid var(--border-divider-themed, rgba(255, 255, 255, 0.12)) !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45) !important;
+  margin-bottom: 6px !important;
+
+  .ai-assist-mode-menu-header {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--content-secondary-themed, #94a3b8);
+    padding: 3px 8px 5px;
+    user-select: none;
+    letter-spacing: 0.02em;
+  }
+
+  .dropdown-item,
+  .ai-assist-mode-menu-row {
+    display: flex !important;
+    align-items: center !important;
+    width: 100% !important;
+    min-height: 44px !important;
+    padding: 4px 8px !important;
+    margin: 1px 0 !important;
+    border: none !important;
+    outline: none !important;
+    border-radius: var(--border-radius-base, 4px) !important;
+    background-color: transparent !important;
+    color: var(--content-primary-themed, #ffffff) !important;
+    text-decoration: none !important;
+    cursor: pointer !important;
+    box-sizing: border-box !important;
+    transition: background-color 0.15s ease;
+
+    &:hover,
+    &:focus-visible {
+      background-color: var(--file-tree-item-hover-bg, var(--bg-dark-secondary, rgba(255, 255, 255, 0.08))) !important;
+      color: var(--content-primary-themed, #ffffff) !important;
+    }
+
+    &.active,
+    &.is-selected {
+      border: none !important;
+      background-color: transparent !important;
+      color: var(--content-primary-themed, #ffffff) !important;
+
+      &:hover,
+      &:focus-visible {
+        background-color: var(--file-tree-item-hover-bg, var(--bg-dark-secondary, rgba(255, 255, 255, 0.08))) !important;
+      }
+    }
+  }
+
+  .ai-assist-mode-item-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    margin-right: 10px;
+    color: var(--content-secondary-themed, #94a3b8);
+    flex-shrink: 0;
+  }
+
+  .ai-assist-mode-item-text {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .ai-assist-mode-item-title {
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.3;
+    color: var(--content-primary-themed, #ffffff);
+    white-space: nowrap;
+  }
+
+  .ai-assist-mode-item-desc {
+    font-size: 11px;
+    line-height: 1.35;
+    color: var(--content-secondary-themed, #94a3b8);
+    margin-top: 2px;
+    white-space: normal;
+  }
+
+  .ai-assist-mode-item-num {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--content-secondary-themed, #94a3b8);
+    opacity: 0.45;
+    margin-left: 10px;
+    flex-shrink: 0;
+  }
+}
+
+.ai-assist-plan-body {
+  max-height: 280px;
+  overflow-y: auto;
+  padding: var(--spacing-02, 8px);
+  margin: var(--spacing-02, 8px) 0;
+  background: var(--bg-primary-themed);
+  border: 1px solid var(--border-divider-themed);
+  border-radius: var(--border-radius-base, 4px);
+  color: var(--content-primary-themed);
+  font-size: 12px;
+  line-height: 1.45;
+
+  p:last-child {
+    margin-bottom: 0;
+  }
+}
+
+.ai-assist-settings-list {
+  padding: var(--spacing-02, 8px);
+  margin: var(--spacing-02, 8px) 0;
+  background: var(--bg-primary-themed);
+  border: 1px solid var(--border-divider-themed);
+  border-radius: var(--border-radius-base, 4px);
+  font-family: $font-family-monospace;
+  font-size: var(--font-size-01, 11px);
+  color: var(--content-primary-themed);
+
+  .ai-assist-settings-tool-name {
+    color: var(--content-secondary-themed);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 6px;
+  }
+
+  .ai-assist-settings-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 3px 0;
+    border-bottom: 1px dashed var(--border-divider-themed);
+
+    &:last-child {
+      border-bottom: none;
+    }
+  }
+
+  .ai-assist-settings-key {
+    color: var(--content-secondary-themed);
+  }
+
+  .ai-assist-settings-value {
+    color: var(--content-primary-themed);
+    font-weight: 600;
+  }
+}
+
 
 .ai-assist-thinking-title {
   color: var(--content-secondary-themed);
@@ -932,7 +1211,7 @@
   max-height: 0;
   opacity: 0;
   overflow: hidden;
-  transition: max-height 0.25s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s ease;
+  transition: opacity 0.15s ease;
 
   &.is-expanded {
     max-height: 350px;
@@ -1599,10 +1878,6 @@
   font-weight: normal;
 }
 
-.ai-assist-continue {
-  align-self: flex-start;
-}
-
 // Composer: box uses 8px radius with generous padding matching official Overleaf.
 
 .ai-assist-composer {
@@ -1793,18 +2068,18 @@
   justify-content: center;
   width: 28px;
   height: 28px;
-  border-radius: 6px;
-  border: none;
-  background: transparent;
+  border-radius: var(--border-radius-base, 4px) !important;
+  border: none !important;
+  background-color: transparent !important;
   color: var(--content-secondary-themed);
-  opacity: 0.6;
   cursor: pointer;
-  transition: color 0.15s ease, opacity 0.15s ease, background-color 0.15s ease;
+  transition: color 0.15s ease, background-color 0.15s ease;
 
-  &:hover {
+  &:hover,
+  &:focus-visible,
+  &.is-active {
     color: var(--content-primary-themed);
-    opacity: 1;
-    background: var(--bg-secondary-themed);
+    background-color: var(--bg-tertiary-themed) !important;
   }
 }
 
@@ -1814,23 +2089,26 @@
   justify-content: center;
   width: 28px;
   height: 28px;
-  border-radius: 6px;
-  border: none;
-  background: transparent;
+  // Round, like the icon buttons in the panel header: Overleaf's buttons use
+  // $btn-border-radius: $border-radius-full, which on a square button is a circle.
+  border-radius: var(--border-radius-full, 9999px) !important;
+  border: none !important;
+  background-color: transparent !important;
   color: var(--content-secondary-themed);
-  opacity: 0.35;
+  opacity: 0.45;
   cursor: default;
-  transition: background-color 0.15s ease, transform 0.1s ease;
+  transition: color 0.15s ease, background-color 0.15s ease, opacity 0.15s ease;
   flex-shrink: 0;
 
   &.is-active {
-    color: var(--interactive-primary-themed, #00805a);
+    color: var(--content-secondary-themed);
     opacity: 1;
     cursor: pointer;
 
-    &:hover {
-      color: var(--interactive-primary-hover-themed, #00996c);
-      background: var(--bg-secondary-themed);
+    &:hover,
+    &:focus-visible {
+      color: var(--content-primary-themed);
+      background-color: var(--bg-tertiary-themed) !important;
     }
   }
 
@@ -1840,15 +2118,24 @@
 }
 
 .ai-assist-stop-btn {
-  background: transparent;
-  color: var(--content-secondary-themed);
-  border: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50% !important;
+  border: none !important;
+  background-color: rgba(239, 68, 68, 0.18) !important;
+  color: var(--content-danger-themed, #ef4444);
   cursor: pointer;
   opacity: 1;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
 
-  &:hover {
-    background: var(--bg-secondary-themed);
-    color: var(--content-danger, #d32f2f);
+  &:hover,
+  &:focus-visible {
+    background-color: rgba(239, 68, 68, 0.32) !important;
+    color: #ffffff;
     transform: scale(1.05);
   }
 
@@ -1943,7 +2230,7 @@
 
       &.is-rejected {
         background: rgba(239, 68, 68, 0.15);
-        color: var(--content-danger, #ef4444);
+        color: var(--content-danger-themed, #ef4444);
       }
     }
   }
@@ -2298,13 +2585,14 @@
   color: var(--content-secondary-themed);
   margin: 6px 0 10px 0;
   padding: 3px 8px;
-  background-color: var(--bg-tertiary-themed);
+  background-color: var(--bg-secondary-themed);
   border: 1px solid var(--border-divider-themed);
   border-radius: var(--border-radius-base, 4px);
   width: fit-content;
 
   &.is-accepted {
     color: var(--content-positive-themed, #22c55e);
+    background-color: rgba(34, 197, 94, 0.12);
     border-color: rgba(34, 197, 94, 0.3);
   }
 
@@ -2459,14 +2747,6 @@
   margin: var(--spacing-02, 8px) 0;
 }
 
-.ai-suggest-budget-note {
-  margin: var(--spacing-02, 8px) 0 0 0;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--content-secondary-themed);
-  font-style: italic;
-}
-
 .ai-suggest-explanation {
   margin: var(--spacing-02) 0;
   font-size: 12.5px;
@@ -2538,8 +2818,9 @@
   color: var(--editor-fg, inherit);
   border: 1px solid var(--border-divider-themed, rgba(128, 128, 128, 0.2));
   border-radius: var(--border-radius-base, 4px);
-  overflow: auto;
-  max-height: 260px;
+  overflow-y: auto;
+  overflow-x: auto;
+  max-height: 360px;
   position: relative;
   box-sizing: border-box;
 
@@ -2814,3 +3095,154 @@
   color: var(--content-danger-themed, #ef4444);
 }
 
+
+// Chat history dropdown in the panel header.
+.ai-assist-history-toggle::after {
+  display: none;
+}
+
+.ai-assist-history-menu {
+  width: 340px;
+  max-height: 380px;
+  overflow-y: auto;
+  padding: 4px;
+  border-radius: 8px;
+  background-color: var(--dropdown-background, var(--bg-primary-themed, #18191e));
+  border: 1px solid var(--border-divider-themed, rgba(255, 255, 255, 0.12));
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.ai-assist-history-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-radius: 6px;
+  margin-bottom: 2px;
+  padding: 2px 4px 2px 8px;
+  border-left: 3px solid transparent;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+
+  &:hover {
+    background-color: var(--dropdown-background-hover, rgba(255, 255, 255, 0.08));
+
+    .ai-assist-history-when {
+      color: var(--content-primary-themed, #ffffff);
+    }
+  }
+
+  &.is-active {
+    background-color: rgba(16, 185, 129, 0.14);
+    border-left-color: var(--content-positive-themed, #10b981);
+
+    &:hover {
+      background-color: rgba(16, 185, 129, 0.22);
+    }
+
+    .ai-assist-history-title {
+      color: var(--content-primary-themed, #ffffff);
+      font-weight: 600;
+    }
+
+    .ai-assist-history-when {
+      color: #34d399;
+      font-weight: 600;
+    }
+  }
+}
+
+.ai-assist-history-item-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  padding: 6px 4px 6px 2px;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+  outline: none;
+
+  &:focus-visible {
+    outline: 2px solid var(--focus-color, #0284c7);
+    outline-offset: 1px;
+    border-radius: 4px;
+  }
+}
+
+.ai-assist-history-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--content-primary-themed, #e4e4e7);
+  font-weight: 400;
+}
+
+.ai-assist-history-when {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--content-secondary-themed, #9ca3af);
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+  transition: color 0.15s ease;
+}
+
+.ai-assist-history-delete {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  color: #f87171;
+  cursor: pointer;
+  opacity: 0.85;
+  transition: opacity 0.15s ease, background-color 0.15s ease, color 0.15s ease, transform 0.1s ease;
+
+  &:hover,
+  &:focus-visible {
+    opacity: 1;
+    color: #ef4444;
+    background-color: rgba(239, 68, 68, 0.2);
+    transform: scale(1.05);
+  }
+}
+
+.ai-assist-history-empty {
+  padding: 16px 12px;
+  font-size: 12px;
+  text-align: center;
+  color: var(--content-secondary-themed, #9ca3af);
+}
+
+.ai-diagnostic-suggest-fix {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-02);
+  border-radius: var(--border-radius-full);
+}
+
+// AI panels use round header buttons. Scoped to the AI panel so the stock
+// rail panels keep upstream styling.
+.ai-assist-panel .rail-panel-header .rail-panel-header-button-subdued {
+  border-radius: var(--border-radius-full) !important;
+  width: 28px !important;
+  height: 28px !important;
+  min-width: 28px !important;
+  min-height: 28px !important;
+  padding: 0 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}

@@ -1,17 +1,26 @@
-import { AgentEvent } from './agent-events'
+import { AgentEvent, ApprovalKind, SettingsApproval } from './agent-events'
 import {
   TranscriptEntry,
   ToolCallRecord,
   AssistantBlock,
 } from './agent-messages'
 import { EditRequest } from './project-handle'
+import { AgentMode } from './agent-mode'
+
+export type PendingApproval = {
+  id: string
+  kind: ApprovalKind
+  edit?: EditRequest
+  settings?: SettingsApproval
+  plan?: string
+}
 
 export type AgentState = {
   transcript: TranscriptEntry[]
   running: boolean
-  stoppedForBudget: boolean
+  mode: AgentMode
   stoppedByUser: boolean
-  pendingApproval: { id: string; edit: EditRequest } | null
+  pendingApproval: PendingApproval | null
   error: {
     code: string
     message: string
@@ -22,11 +31,14 @@ export type AgentState = {
   } | null
 }
 
-export function emptyAgentState(transcript: TranscriptEntry[]): AgentState {
+export function emptyAgentState(
+  transcript: TranscriptEntry[] = [],
+  mode: AgentMode = 'manual'
+): AgentState {
   return {
     transcript,
     running: false,
-    stoppedForBudget: false,
+    mode,
     stoppedByUser: false,
     pendingApproval: null,
     error: null,
@@ -194,6 +206,43 @@ export function finishToolCall(
   })
 }
 
+export function cancelPendingToolCalls(
+  transcript: TranscriptEntry[]
+): TranscriptEntry[] {
+  return transcript.map(entry => {
+    if (entry.role !== 'assistant') return entry
+    let changed = false
+    const toolCalls = (entry.toolCalls || []).map(call => {
+      if (!('result' in call) || call.result === undefined) {
+        changed = true
+        return { ...call, result: { status: 'stopped' }, isError: false }
+      }
+      return call
+    })
+    const blocks = entry.blocks?.map(block => {
+      if (
+        block &&
+        block.type === 'tool_call' &&
+        block.call &&
+        (!('result' in block.call) || block.call.result === undefined)
+      ) {
+        changed = true
+        return {
+          ...block,
+          call: { ...block.call, result: { status: 'stopped' }, isError: false },
+        }
+      }
+      return block
+    })
+    if (!changed) return entry
+    return {
+      ...entry,
+      toolCalls,
+      ...(blocks ? { blocks } : {}),
+    }
+  })
+}
+
 export function reduceAgentEvent(
   state: AgentState,
   event: AgentEvent
@@ -227,8 +276,19 @@ export function reduceAgentEvent(
           event.isError
         ),
       }
+    case 'modeChanged':
+      return { ...state, mode: event.mode }
     case 'awaitingApproval':
-      return { ...state, pendingApproval: { id: event.id, edit: event.edit } }
+      return {
+        ...state,
+        pendingApproval: {
+          id: event.id,
+          kind: event.kind || 'edit',
+          edit: event.edit,
+          settings: event.settings,
+          plan: event.plan,
+        },
+      }
     case 'turnFinished': {
       const last = state.transcript.at(-1)
       let nextTranscript = state.transcript
@@ -243,19 +303,27 @@ export function reduceAgentEvent(
         ]
       }
       const stoppedByUser = event.reason === 'aborted'
+      const interrupted = event.reason === 'interrupted'
+      if (stoppedByUser || interrupted) {
+        nextTranscript = cancelPendingToolCalls(nextTranscript)
+      }
       return {
         ...state,
         transcript: nextTranscript,
         running: false,
-        stoppedForBudget: event.reason === 'budget',
         stoppedByUser,
         pendingApproval: null,
-        error: stoppedByUser ? null : state.error,
+        error: stoppedByUser
+          ? null
+          : interrupted
+            ? { code: 'interrupted', message: 'This run was interrupted.' }
+            : state.error,
       }
     }
     case 'error':
       return {
         ...state,
+        transcript: cancelPendingToolCalls(state.transcript),
         running: false,
         pendingApproval: null,
         error: {

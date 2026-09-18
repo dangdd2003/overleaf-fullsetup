@@ -26,10 +26,16 @@ function makeScrollable(
 
 function Panel({ text }: { text: string }) {
   const ref = useRef<HTMLDivElement>(null)
-  const onScroll = useStickToBottom(ref)
+  const { onScroll, isAtBottom, scrollToBottom } = useStickToBottom(ref)
   return (
-    <div data-testid="scroller" ref={ref} onScroll={onScroll}>
-      {text}
+    <div>
+      <div data-testid="scroller" ref={ref} onScroll={onScroll}>
+        {text}
+      </div>
+      <div data-testid="status">{isAtBottom ? 'at-bottom' : 'scrolled-up'}</div>
+      <button data-testid="jump-btn" onClick={() => scrollToBottom()}>
+        Jump
+      </button>
     </div>
   )
 }
@@ -86,5 +92,59 @@ describe('useStickToBottom', function () {
     rerender(<Panel text="more text still arriving" />)
 
     expect(scroller.scrollTop).to.equal(800)
+  })
+
+  it('tracks isAtBottom state when scrolling up and down', function () {
+    const { getByTestId } = render(<Panel text="content" />)
+    const scroller = getByTestId('scroller')
+    const status = getByTestId('status')
+    makeScrollable(scroller, { scrollHeight: 1000, clientHeight: 200 })
+
+    expect(status.textContent).to.equal('at-bottom')
+
+    scroller.scrollTop = 100
+    fireEvent.scroll(scroller)
+    expect(status.textContent).to.equal('scrolled-up')
+
+    scroller.scrollTop = 800
+    fireEvent.scroll(scroller)
+    expect(status.textContent).to.equal('at-bottom')
+  })
+
+  it('scrolls to bottom and resumes following when scrollToBottom is invoked', function () {
+    const { getByTestId, rerender } = render(<Panel text="first" />)
+    const scroller = getByTestId('scroller')
+    const jumpBtn = getByTestId('jump-btn')
+    const status = getByTestId('status')
+    makeScrollable(scroller, { scrollHeight: 1000, clientHeight: 200 })
+
+    scroller.scrollTop = 100
+    fireEvent.scroll(scroller)
+    expect(status.textContent).to.equal('scrolled-up')
+
+    fireEvent.click(jumpBtn)
+    expect(scroller.scrollTop).to.equal(800)
+    expect(status.textContent).to.equal('at-bottom')
+
+    rerender(<Panel text="new text arriving while following is resumed" />)
+    expect(scroller.scrollTop).to.equal(800)
+  })
+
+  it('scrolls to bottom on aiAssist:stickToBottom event if following', function () {
+    const { getByTestId } = render(<Panel text="first" />)
+    const scroller = getByTestId('scroller')
+    makeScrollable(scroller, { scrollHeight: 1000, clientHeight: 200 })
+
+    // When following is true, dispatching stickToBottom scrolls to bottom
+    window.dispatchEvent(new CustomEvent('aiAssist:stickToBottom'))
+    expect(scroller.scrollTop).to.equal(800)
+
+    // When scrolled up (following is false), dispatching stickToBottom does not force scroll
+    scroller.scrollTop = 100
+    fireEvent.scroll(scroller)
+    expect(scroller.scrollTop).to.equal(100)
+
+    window.dispatchEvent(new CustomEvent('aiAssist:stickToBottom'))
+    expect(scroller.scrollTop).to.equal(100)
   })
 })

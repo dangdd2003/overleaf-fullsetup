@@ -66,6 +66,11 @@ async function createNewUser(attributes, options = {}) {
   Object.assign(user, attributes)
 
   user.ace.syntaxValidation = true
+  if (user.aiFeatures == null) {
+    user.aiFeatures = { enabled: false }
+  } else if (user.aiFeatures.enabled == null) {
+    user.aiFeatures.enabled = false
+  }
 
   const reversedHostname = user.email.split('@')[1].split('').reverse().join('')
 

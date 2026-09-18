@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next'
 import getMeta from '@/utils/meta'
 import { useAiDock } from '../../hooks/use-ai-dock'
 import { AgentPanel } from './agent-panel'
+import '../../../../../stylesheets/ai-assist.scss'
 
 export const AiAssistRightPanel: FC<{ order?: number }> = ({ order = 3 }) => {
   const { t } = useTranslation()

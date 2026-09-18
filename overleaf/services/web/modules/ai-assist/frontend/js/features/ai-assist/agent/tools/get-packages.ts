@@ -11,9 +11,14 @@ export const getPackagesTool: AgentTool = {
   },
 
   async execute(_args = {}, handle) {
-    const index = await handle.index()
+    const [index, settings] = await Promise.all([
+      handle.index(),
+      handle.getProjectSettings().catch(() => null),
+    ])
     return {
       documentClass: index.outline.documentClass,
+      compiler: settings?.compiler?.compiler ?? 'pdflatex',
+      imageName: settings?.compiler?.imageName ?? null,
       packages: index.packages,
     }
   },
@@ -22,12 +27,15 @@ export const getPackagesTool: AgentTool = {
     if (result?.error) return JSON.stringify(result)
 
     if (result.packages) {
-      return [
+      const header = [
         `documentclass: ${result.documentClass ?? 'unknown'}`,
-        ...result.packages.map(
-          (pkg: any) => `${pkg.name}  (${pkg.path}:${pkg.line})`
-        ),
-      ].join('\n')
+        `compiler: ${result.compiler ?? 'unknown'}${result.imageName ? ` (${result.imageName})` : ''}`,
+      ]
+      const pkgLines = result.packages.map((pkg: any) => {
+        const optStr = pkg.options ? ` [${pkg.options}]` : ''
+        return `${pkg.name}${optStr}  (${pkg.path}:${pkg.line})`
+      })
+      return [...header, ...pkgLines].join('\n')
     }
 
     return JSON.stringify(result)

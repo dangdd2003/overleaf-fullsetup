@@ -3,6 +3,7 @@ import customLocalStorage from '@/infrastructure/local-storage'
 import {
   clearConversation,
   loadConversation,
+  prepareTranscriptForRun,
   saveConversation,
 } from '../../../../frontend/js/features/ai-assist/agent/conversation-store'
 import { TranscriptEntry } from '../../../../frontend/js/features/ai-assist/agent/agent-messages'
@@ -142,5 +143,94 @@ describe('conversation-store', function () {
     expect(assistant.toolCalls[0].id).to.equal('call_1')
     expect(assistant.toolCalls[1].id).to.equal('call_2')
     expect(assistant.blocks).to.have.lengthOf(2)
+  })
+
+  describe('prepareTranscriptForRun', function () {
+    it('returns empty or non-array transcript unchanged', function () {
+      expect(prepareTranscriptForRun([])).to.deep.equal([])
+      expect(prepareTranscriptForRun(null as any)).to.equal(null)
+    })
+
+    it('returns transcript as-is when size is within limit', function () {
+      const transcript: TranscriptEntry[] = [
+        { id: '1', role: 'user', text: 'hello' },
+        { id: '2', role: 'assistant', text: 'hi' },
+      ]
+      expect(prepareTranscriptForRun(transcript, 10000)).to.deep.equal(transcript)
+    })
+
+    it('shrinks older assistant tool results while preserving the latest turn intact if it fits', function () {
+      const largeResult = { content: 'x'.repeat(10000) }
+      const smallResult = { content: 'y'.repeat(1000) }
+      const transcript: TranscriptEntry[] = [
+        { id: '1', role: 'user', text: 'read older file' },
+        {
+          id: '2',
+          role: 'assistant',
+          text: 'here is old file',
+          toolCalls: [
+            { id: 'call_1', name: 'read_file', args: { path: 'old.tex' }, result: largeResult },
+          ],
+        },
+        { id: '3', role: 'user', text: 'read latest file' },
+        {
+          id: '4',
+          role: 'assistant',
+          text: 'here is latest file',
+          toolCalls: [
+            { id: 'call_2', name: 'read_file', args: { path: 'latest.tex' }, result: smallResult },
+          ],
+        },
+      ]
+
+      const prepared = prepareTranscriptForRun(transcript, 7000)
+      const oldAssistant = prepared[1] as any
+      const latestAssistant = prepared[3] as any
+
+      expect(oldAssistant.toolCalls[0].result._shrunk).to.be.true
+      expect(oldAssistant.toolCalls[0].result.truncated).to.be.true
+      expect(latestAssistant.toolCalls[0].result._shrunk).to.be.undefined
+      expect(latestAssistant.toolCalls[0].result.content).to.equal(smallResult.content)
+    })
+
+    it('shrinks all assistant turns if older shrinking alone is not enough', function () {
+      const largeResult1 = { content: 'a'.repeat(8000) }
+      const largeResult2 = { content: 'b'.repeat(8000) }
+      const transcript: TranscriptEntry[] = [
+        {
+          id: '1',
+          role: 'assistant',
+          text: 'one',
+          toolCalls: [
+            { id: 'c1', name: 'read_file', args: { path: '1.tex' }, result: largeResult1 },
+          ],
+        },
+        {
+          id: '2',
+          role: 'assistant',
+          text: 'two',
+          toolCalls: [
+            { id: 'c2', name: 'read_file', args: { path: '2.tex' }, result: largeResult2 },
+          ],
+        },
+      ]
+
+      const prepared = prepareTranscriptForRun(transcript, 9000)
+      expect((prepared[0] as any).toolCalls[0].result._shrunk).to.be.true
+      expect((prepared[1] as any).toolCalls[0].result._shrunk).to.be.true
+    })
+
+    it('drops oldest entries if shrinking all turns still exceeds limit, keeping at least the latest turn', function () {
+      const hugeText = 'z'.repeat(5000)
+      const transcript: TranscriptEntry[] = [
+        { id: '1', role: 'user', text: hugeText },
+        { id: '2', role: 'user', text: hugeText },
+        { id: '3', role: 'user', text: 'latest prompt' },
+      ]
+
+      const prepared = prepareTranscriptForRun(transcript, 6000)
+      expect(prepared.length).to.be.lessThan(transcript.length)
+      expect(prepared.at(-1)?.id).to.equal('3')
+    })
   })
 })

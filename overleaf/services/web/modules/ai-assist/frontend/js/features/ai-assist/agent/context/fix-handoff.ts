@@ -13,7 +13,6 @@ export type FixHandoffInput = {
   transcript: TranscriptEntry[]
   /** Approve/reject decisions the panel recorded outside the tool result. */
   decidedEdits: Record<string, EditDecision>
-  stoppedForBudget?: boolean
   error?: { code?: string; message?: string } | null
 }
 
@@ -35,9 +34,9 @@ const HANDOFF_BLOCK = [
   'working on it with you. Everything above is what already happened there.',
   '',
   'That earlier run worked under a restricted harness: no compile_project, no',
-  'create_file, a hard step budget, and instructions never to ask a question,',
-  'because the compile-log panel has no reply box. None of that applies to you.',
-  'You have the full toolset, no step budget, and a user who can answer you.',
+  'create_file, and instructions never to ask a question, because the',
+  'compile-log panel has no reply box. None of that applies to you.',
+  'You have the full toolset and a user who can answer you.',
   '',
   'Do not repeat the investigation above — the reads and searches it already',
   'made are recorded with their results, and redoing them wastes the budget',
@@ -136,7 +135,6 @@ function renderBlock(
 export function renderFixHandoff({
   transcript,
   decidedEdits,
-  stoppedForBudget,
   error,
 }: FixHandoffInput): string {
   const first = transcript.find(entry => entry.role === 'user') as
@@ -153,14 +151,6 @@ export function renderFixHandoff({
       const rendered = renderBlock(block, decidedEdits)
       if (rendered) steps.push(rendered)
     }
-  }
-
-  if (stoppedForBudget) {
-    steps.push(
-      '<note>',
-      'The run hit its step budget and stopped before it had finished.',
-      '</note>'
-    )
   }
 
   if (error?.message) {

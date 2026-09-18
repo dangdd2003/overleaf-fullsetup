@@ -33,7 +33,7 @@ class LogText {
         this.lines.push(currentLine)
       }
     }
-    this.row = 0
+    this.row = -1
   }
 
   nextLine() {
@@ -57,7 +57,7 @@ class LogText {
     while (true) {
       const nextLine = this.nextLine()
       if (nextLine === false) break
-      if (stopAtError && nextLine.match(/^! /)) {
+      if (stopAtError && (nextLine.match(/^! /) || FILE_LINE_ERROR_REGEX.test(nextLine))) {
         this.rewindLine()
         break
       }
@@ -99,8 +99,18 @@ export class LatexLogParser {
             raw: this.currentLine + '\n',
           }
         } else if (this.currentLineIsFileLineError()) {
-          this.state = STATE.ERROR
           this.parseFileLineError()
+          if (this.currentError) {
+            // Collect immediate context lines up to next error or whitespace
+            const contextLines = this.log.linesUpToNextWhitespaceLine(true)
+            if (contextLines.length > 0) {
+              this.currentError.content += contextLines.join('\n') + '\n'
+              this.currentError.raw += this.currentError.content
+            }
+            this.data.push(this.currentError)
+            this.currentError = undefined
+          }
+          this.state = STATE.NORMAL
         } else if (this.currentLineIsRunawayArgument()) {
           this.parseRunawayArgumentError()
         } else if (this.currentLineIsWarning()) {
@@ -167,12 +177,34 @@ export class LatexLogParser {
     return !!this.currentLine.match(HBOX_WARNING_REGEX)
   }
 
+  normalizeFilePath(filePath) {
+    if (!filePath) return filePath
+    let cleaned = filePath.trim()
+    // Strip leading ./
+    cleaned = cleaned.replace(/^\.\//, '')
+    // Strip container compile prefixes like /compiles/<id>/ or /tmp/<id>/
+    cleaned = cleaned.replace(/^\/compiles\/[^/]+\//, '')
+    cleaned = cleaned.replace(/^\/tmp\/[^/]+\//, '')
+    for (const regex of this.fileBaseNames) {
+      if (regex.test(cleaned)) {
+        const parts = cleaned.split(regex)
+        const remainder = parts[parts.length - 1].replace(/^\/+/, '')
+        if (regex.source.includes('compiles') || regex.source.includes('tmp')) {
+          cleaned = remainder.replace(/^[^/]+\//, '')
+        } else {
+          cleaned = remainder
+        }
+      }
+    }
+    return cleaned.replace(/^\/+/, '')
+  }
+
   parseFileLineError() {
     const result = this.currentLine.match(FILE_LINE_ERROR_REGEX)
     if (!result) return
     this.currentError = {
       line: parseInt(result[2], 10) || null,
-      file: result[1],
+      file: this.normalizeFilePath(result[1]),
       level: 'error',
       message: result[3],
       content: '',

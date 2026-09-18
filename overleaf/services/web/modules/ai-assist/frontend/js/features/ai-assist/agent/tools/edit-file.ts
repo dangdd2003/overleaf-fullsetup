@@ -1,87 +1,43 @@
 import { AgentTool } from './registry'
+import {
+  cleanLineNumbers,
+  cleanOldText,
+  cleanLineNumberPrefixes,
+  countOccurrences,
+  findFuzzyUniqueAnchor,
+  findFuzzyWordWindow,
+  findMatchingLines,
+  formatAmbiguousOccurrences,
+  locateAnchorInText,
+  nearestLines,
+  normalizeLines,
+} from '../latex-matcher'
 
-function normalizeLines(str: string): string {
-  return str.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+// Re-export matching utilities for external callers and backwards compatibility
+export {
+  cleanLineNumbers,
+  cleanOldText,
+  cleanLineNumberPrefixes,
+  countOccurrences,
+  findFuzzyUniqueAnchor,
+  findFuzzyWordWindow,
+  findMatchingLines,
+  formatAmbiguousOccurrences,
+  locateAnchorInText,
+  nearestLines,
 }
 
-export function cleanLineNumbers(text: string): string {
-  return text.replace(/^\s*\d+[:|]\s?/gm, '')
-}
-
-export function countOccurrences(haystack: string, needle: string): number {
-  if (!needle) return 0
-  const normH = normalizeLines(haystack)
-  const normN = normalizeLines(needle)
-  let count = 0
-  let index = normH.indexOf(normN)
-  while (index !== -1) {
-    count += 1
-    index = normH.indexOf(normN, index + normN.length)
+/**
+ * The 1-based line of the last uncommented `\end{document}`, or null. Text
+ * appended to the end of such a file lands after it, where LaTeX never reads
+ * it. Mirrors `endDocumentLine` in AiAssistTools.mjs.
+ */
+export function endDocumentLine(docText: string): number | null {
+  const lines = String(docText || '').split('\n')
+  for (let index = lines.length - 1; index >= 0; index--) {
+    const code = lines[index].replace(/(^|[^\\])%.*$/, '$1')
+    if (code.includes('\\end{document}')) return index + 1
   }
-  if (count > 0) return count
-
-  // Fallback: trimmed lines (ignore trailing whitespace differences)
-  const trimH = normH
-    .split('\n')
-    .map(l => l.trimEnd())
-    .join('\n')
-  const trimN = normN
-    .split('\n')
-    .map(l => l.trimEnd())
-    .join('\n')
-  index = trimH.indexOf(trimN)
-  while (index !== -1) {
-    count += 1
-    index = trimH.indexOf(trimN, index + trimN.length)
-  }
-  return count
-}
-
-export function findFuzzyUniqueAnchor(haystack: string, needle: string): string | null {
-  if (!needle) return null
-  const normH = normalizeLines(haystack)
-  const normN = normalizeLines(needle)
-
-  // 1. Try stripped line numbers
-  const stripped = cleanLineNumbers(normN)
-  if (stripped && stripped !== normN) {
-    const strippedOccurrences = countOccurrences(normH, stripped)
-    if (strippedOccurrences === 1) {
-      return stripped
-    }
-  }
-
-  // 2. Line-by-line trimmed matching against haystack lines
-  const hLines = normH.split('\n')
-  const nLines = (stripped || normN).split('\n')
-
-  while (nLines.length > 1 && nLines[nLines.length - 1].trim() === '') {
-    nLines.pop()
-  }
-
-  const trimmedN = nLines.map(l => l.trim())
-  if (trimmedN.length === 0 || trimmedN.every(l => l === '')) return null
-
-  const matchIndices: number[] = []
-
-  for (let i = 0; i <= hLines.length - trimmedN.length; i++) {
-    let matches = true
-    for (let j = 0; j < trimmedN.length; j++) {
-      if (hLines[i + j].trim() !== trimmedN[j]) {
-        matches = false
-        break
-      }
-    }
-    if (matches) {
-      matchIndices.push(i)
-    }
-  }
-
-  if (matchIndices.length === 1) {
-    const startIdx = matchIndices[0]
-    return hLines.slice(startIdx, startIdx + trimmedN.length).join('\n')
-  }
-
   return null
 }
 
@@ -92,7 +48,7 @@ export const editFileTool: AgentTool = {
   spec: {
     name: 'edit_file',
     description:
-      'Edit a project file. Replace oldText with newText, or leave oldText empty ("") to append newText to the end of the file. The user reviews the change as a diff and may reject it.',
+      'Edit a project file. Replace oldText with newText. Pass oldText: "" to append newText to the end of the file. Pass newText: "" to delete oldText. The user reviews the change as a diff and may reject it.',
     parameters: {
       type: 'object',
       properties: {
@@ -100,17 +56,37 @@ export const editFileTool: AgentTool = {
         oldText: {
           type: 'string',
           description:
-            'The exact text to replace, unique within the file. Pass an empty string "" to append newText to the end of the file.',
+            'The exact text to replace, unique within the file. Pass an empty string "" to append newText to the end of the file. Pass full file content if replacing the entire file.',
         },
-        newText: { type: 'string', description: 'The replacement text (or text to append if oldText is empty)' },
+        newText: {
+          type: 'string',
+          description:
+            'The replacement text (or text to append if oldText is empty). Pass an empty string "" to delete oldText.',
+        },
+        startLine: {
+          type: 'number',
+          description:
+            'Optional 1-based start line to constrain anchor search for ambiguous or repetitive LaTeX blocks.',
+        },
+        endLine: {
+          type: 'number',
+          description:
+            'Optional 1-based end line to constrain anchor search for ambiguous or repetitive LaTeX blocks.',
+        },
       },
-      required: ['path', 'newText'],
+      required: ['path', 'oldText', 'newText'],
     },
   },
 
-  async execute({ path, oldText, newText }, handle) {
+  async execute({ path, oldText, newText, startLine, endLine }, handle) {
     if (typeof newText !== 'string') {
-      return { error: 'newText must be a string containing the replacement or appended text.' }
+      return { error: 'Parameter \'newText\' must be a string containing the replacement or appended text (pass "" to delete).' }
+    }
+
+    if (typeof oldText !== 'string') {
+      return {
+        error: `Parameter 'oldText' is required to replace text in ${path}. Provide the exact snippet from the file to replace, or pass "" to append to the end of the file.`,
+      }
     }
 
     const files = await handle.listFiles()
@@ -120,10 +96,24 @@ export const editFileTool: AgentTool = {
       return { error: `${path} is a binary file and cannot be edited.` }
     }
 
-    // Append mode: when oldText is empty or omitted
-    const isAppend = typeof oldText !== 'string' || oldText.length === 0
+    // Determine if oldText had line number prefixes stripped
+    const strippedOld = cleanLineNumbers(oldText)
+    const oldTextWasStripped = strippedOld !== oldText && strippedOld.length > 0
+
+    // Sanitize newText to prevent raw line-number prefix contamination
+    const sanitizedNewText = cleanLineNumberPrefixes(newText, oldTextWasStripped)
+
+    // Append mode: when oldText is explicitly empty string ""
+    const isAppend = oldText.length === 0
     if (isAppend) {
-      const outcome = await handle.proposeEdit({ path, oldText: '', newText })
+      const current = await handle.readFile(path)
+      const endLine = endDocumentLine(current.lines.join('\n'))
+      if (endLine) {
+        return {
+          error: `Appending to ${path} would put the text after \\end{document} on line ${endLine}, where LaTeX ignores it. Insert it where it belongs instead: give an oldText anchor from the passage it follows.`,
+        }
+      }
+      const outcome = await handle.proposeEdit({ path, oldText: '', newText: sanitizedNewText })
       switch (outcome.status) {
         case 'applied':
           return {
@@ -144,40 +134,95 @@ export const editFileTool: AgentTool = {
             status: 'drifted',
             message: `${path} changed while the user was reviewing. Re-read it before trying again.`,
           }
+        case 'timeout':
+          return {
+            status: 'timeout',
+            message:
+              outcome.message ||
+              `The editor bridge timed out while attempting to edit ${path}. The editor may be busy or unmounted. Please retry.`,
+          }
+        case 'error':
+          return {
+            status: 'error',
+            message:
+              outcome.message ||
+              `An error occurred while communicating with the editor for ${path}.`,
+          }
         default:
           return outcome
       }
     }
 
     const { lines } = await handle.readFile(path)
-    const docText = lines.join('\n')
+    const fullDocText = lines.join('\n')
 
-    let targetAnchor = oldText
-    let matches = countOccurrences(docText, targetAnchor)
+    // Apply optional line scoping if startLine / endLine provided
+    let searchDocText = fullDocText
+    let lineOffset = 0
+    if (typeof startLine === 'number' && startLine >= 1) {
+      const startIdx = startLine - 1
+      const anchorLineCount = oldText.split('\n').length
+      // If endLine is omitted, prefer a tight local window around startLine first
+      const windowRadius = Math.max(2, anchorLineCount + 1)
+      const localEndIdx = typeof endLine === 'number' && endLine >= startLine ? endLine : Math.min(lines.length, startIdx + windowRadius)
+      const localSearchText = lines.slice(startIdx, localEndIdx).join('\n')
+      const localMatch = locateAnchorInText(localSearchText, oldText)
 
-    if (matches === 0) {
-      const fuzzyAnchor = findFuzzyUniqueAnchor(docText, targetAnchor)
-      if (fuzzyAnchor) {
-        targetAnchor = fuzzyAnchor
-        matches = 1
+      if (localMatch) {
+        searchDocText = localSearchText
+        lineOffset = startIdx
+      } else {
+        const endIdx = typeof endLine === 'number' && endLine >= startLine ? endLine : lines.length
+        searchDocText = lines.slice(startIdx, endIdx).join('\n')
+        lineOffset = startIdx
       }
     }
 
-    if (matches === 0) {
+    const match = locateAnchorInText(searchDocText, oldText)
+    const cleanedOld = cleanOldText(oldText)
+    let targetAnchor = match ? match.anchor : (countOccurrences(searchDocText, cleanedOld) > 0 ? cleanedOld : oldText)
+    let matches = countOccurrences(searchDocText, targetAnchor)
+
+    if (!match && matches === 0) {
+      const candidateLines = findMatchingLines(fullDocText, oldText)
+      const hints = nearestLines(fullDocText, oldText)
+      let candidateHint = ''
+      if (candidateLines.length > 0) {
+        candidateHint = ` (Found similar line around line(s) ${candidateLines.join(', ')}). Use read_file to inspect the file around those lines.`
+      } else if (hints.length > 0) {
+        candidateHint = ` The closest lines in ${path} right now are:\n${hints
+          .map(h => `${h.line}: ${h.text}`)
+          .join('\n')}\nCopy the anchor from those exact lines (without line-number prefixes), or call read_file on ${path} first.`
+      } else {
+        candidateHint = ` Use read_file to inspect ${path} and copy the exact lines to replace.`
+      }
+
       return {
         status: 'noMatch',
-        message: `That text did not appear in ${path}. If you want to append content to the end of ${path}, call edit_file with oldText: "" and newText with your content. If replacing existing text, copy an existing anchor line that already appears in ${path}.`,
+        message: `That text did not appear in ${path}.${candidateHint}`,
       }
     }
+
     if (matches > 1) {
+      const candidateLines = findMatchingLines(searchDocText, targetAnchor).map(l => l + lineOffset)
+      const lineList = candidateLines.length > 0 ? ` (around line(s) ${candidateLines.join(', ')})` : ''
+      const contextPreviews = candidateLines.length > 0
+        ? `:\n${formatAmbiguousOccurrences(fullDocText, candidateLines)}\n\nTo disambiguate, include more context (surrounding lines) in oldText, or pass startLine to target a specific line (e.g. startLine: ${candidateLines[0]}).`
+        : '. Include more context (surrounding lines) or use startLine/endLine to disambiguate.'
       return {
         status: 'ambiguous',
         matches,
-        message: `That text appears ${matches} times in ${path}. Include more context so the anchor is unique.`,
+        message: `That text appears ${matches} times in ${path}${lineList}${contextPreviews}`,
       }
     }
 
-    const outcome = await handle.proposeEdit({ path, oldText: targetAnchor, newText })
+    const outcome = await handle.proposeEdit({
+      path,
+      oldText: targetAnchor,
+      newText: sanitizedNewText,
+      ...(startLine !== undefined ? { startLine } : {}),
+      ...(endLine !== undefined ? { endLine } : {}),
+    })
 
     switch (outcome.status) {
       case 'applied':
@@ -199,8 +244,40 @@ export const editFileTool: AgentTool = {
           status: 'drifted',
           message: `${path} changed while the user was reviewing. Re-read it before trying again.`,
         }
+      case 'timeout':
+        return {
+          status: 'timeout',
+          message:
+            outcome.message ||
+            `The editor bridge timed out while attempting to edit ${path}. The editor may be busy or unmounted. Please retry.`,
+        }
+      case 'error':
+        return {
+          status: 'error',
+          message:
+            outcome.message ||
+            `An error occurred while communicating with the editor for ${path}.`,
+        }
       default:
         return outcome
     }
+  },
+
+  render(result: any) {
+    if (!result) return JSON.stringify(result)
+    if (result.error) return `Error: ${result.error}`
+    if (result.status === 'applied') {
+      return result.message || `Applied change to file.`
+    }
+    if (result.status === 'rejected') {
+      return result.message || `The user rejected this change.`
+    }
+    if (result.status === 'noMatch') {
+      return result.message || 'That text did not appear in the file.'
+    }
+    if (result.status === 'ambiguous') {
+      return result.message || 'That text appears multiple times in the file.'
+    }
+    return JSON.stringify(result)
   },
 }

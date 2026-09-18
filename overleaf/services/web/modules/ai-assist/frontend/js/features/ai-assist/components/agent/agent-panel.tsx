@@ -1,15 +1,14 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useProjectContext } from '@/shared/context/project-context'
-import RailPanelHeader from '@/features/ide-react/components/rail/rail-panel-header'
+import AgentPanelHeader from './agent-panel-header'
 import OLButton from '@/shared/components/ol/ol-button'
 import OLTooltip from '@/shared/components/ol/ol-tooltip'
 import useEventListener from '@/shared/hooks/use-event-listener'
-import { NotePencil, SidebarSimple } from '@phosphor-icons/react'
+import { ArrowDown, NotePencil, SidebarSimple } from '@phosphor-icons/react'
 import { AiAssistant } from '../../assistant'
 import { TranscriptEntry } from '../../agent/agent-messages'
 import { ProjectFile, ProjectHandle } from '../../agent/project-handle'
-import { MAX_STEPS } from '../../agent/run-agent'
 import { TOOLS } from '../../agent/tools/registry'
 import { renderEnvelope } from '../../agent/context/project-context'
 import { Attachment, AttachmentRef, ContextSnapshot } from '../../agent/context/types'
@@ -19,6 +18,15 @@ import {
   loadConversation,
   saveConversation,
 } from '../../agent/conversation-store'
+import {
+  deleteChat,
+  fetchChat,
+  getActiveChatId,
+  newChatId,
+  saveChat,
+  setActiveChatId,
+} from '../../agent/chat-history-client'
+import { ChatHistoryMenu } from './chat-history-menu'
 import { AgentMessageView } from './agent-message'
 import { AgentEmptyState, PickedStarter } from './agent-empty-state'
 import { AgentComposer, AttachedSelection } from './agent-composer'
@@ -31,8 +39,10 @@ import { emptyAgentState } from '../../agent/agent-state'
 import withErrorBoundary from '@/infrastructure/error-boundary'
 import type { FallbackProps } from 'react-error-boundary'
 import {
+  getStoredActiveRunId,
   getStoredActiveRunStartedAt,
   setStoredActiveRunId,
+  stopBackgroundRun,
 } from '../../agent/background/background-run-client'
 import { useAiDock, DockPosition } from '../../hooks/use-ai-dock'
 
@@ -159,7 +169,7 @@ function AgentPanelInner({
       setIsRightOpen(true)
       window.dispatchEvent(
         new CustomEvent('ui:select-rail-tab', {
-          detail: { tab: 'file-tree' },
+          detail: { tab: 'file-tree', open: true },
         })
       )
     }
@@ -168,6 +178,7 @@ function AgentPanelInner({
   const {
     state,
     setState,
+    setMode,
     handle,
     approvalContext,
     run,
@@ -177,7 +188,6 @@ function AgentPanelInner({
     allowConsent,
   } = useAgentRun({
     tools: TOOLS,
-    maxSteps: MAX_STEPS,
     cacheKey: projectId,
     initialTranscript: loadConversation(projectId),
   })
@@ -246,11 +256,36 @@ function AgentPanelInner({
   }, [state.running, state.stoppedByUser, state.error, state.pendingApproval, setState])
   const transcriptRef = useRef<HTMLDivElement>(null)
 
-  const onTranscriptScroll = useStickToBottom(transcriptRef)
+  const { onScroll: onTranscriptScroll, isAtBottom, scrollToBottom } =
+    useStickToBottom(transcriptRef)
+
+  const promptHistory = useMemo(
+    () =>
+      state.transcript
+        .filter(entry => entry.role === 'user' && Boolean(entry.text?.trim()))
+        .map(entry => entry.text.trim()),
+    [state.transcript]
+  )
 
   useEffect(() => {
     saveConversation(projectId, state.transcript)
   }, [projectId, state.transcript])
+
+  // Mirror the conversation to a JSON file on the server once a run settles.
+  // The ref skips re-saving a chat that was just opened from history, which
+  // would otherwise bump its timestamp without any change.
+  const [chatId, setChatId] = useState(() => getActiveChatId(projectId))
+  const lastSavedTranscriptRef = useRef(state.transcript)
+  useEffect(() => {
+    if (state.running || state.transcript.length === 0) return
+    if (lastSavedTranscriptRef.current === state.transcript) return
+    const transcript = state.transcript
+    const timer = window.setTimeout(() => {
+      lastSavedTranscriptRef.current = transcript
+      saveChat(projectId, chatId, transcript, state.mode).catch(() => {})
+    }, 800)
+    return () => window.clearTimeout(timer)
+  }, [projectId, chatId, state.running, state.transcript, state.mode])
 
   useEffect(() => {
     let mounted = true
@@ -434,16 +469,53 @@ function AgentPanelInner({
   )
 
   const onNewChat = useCallback(() => {
+    // Stop first: the EventSource is still live, so clearing the transcript
+    // without cancelling would let the old run's events reduce into the new
+    // empty conversation and get saved over it.
+    // Unawaited: stop's setState runs before its first await, so React 18 batches
+    // both updates and emptyAgentState wins. If an await is ever moved before
+    // setState in stop(), onNewChat must be revisited.
+    void stop()
     clearConversation(projectId)
-    setState(emptyAgentState([]))
+    const id = newChatId()
+    setActiveChatId(projectId, id)
+    setChatId(id)
+    setState(emptyAgentState([], 'manual'))
     setNewChatSeed(s => s + 1)
     setCompletedRun(null)
     setRunStartedAt(null)
-  }, [projectId, setState])
+  }, [projectId, setState, stop])
+
+  const onOpenChat = useCallback(
+    async (id: string) => {
+      if (id === chatId) return
+      const chat = await fetchChat(projectId, id).catch(() => null)
+      if (!chat) return
+      // Same ordering as onNewChat: cancel the live run before swapping in
+      // the stored transcript so its events cannot land in the opened chat.
+      void stop()
+      lastSavedTranscriptRef.current = chat.transcript
+      saveConversation(projectId, chat.transcript)
+      setActiveChatId(projectId, id)
+      setChatId(id)
+      setState(emptyAgentState(chat.transcript, chat.mode || 'manual'))
+      setCompletedRun(null)
+      setRunStartedAt(null)
+    },
+    [chatId, projectId, setState, stop]
+  )
+
+  const onDeleteChat = useCallback(
+    async (id: string) => {
+      await deleteChat(projectId, id)
+      if (id === chatId) onNewChat()
+    },
+    [chatId, onNewChat, projectId]
+  )
 
   return (
     <div className="ai-assist-panel">
-      <RailPanelHeader
+      <AgentPanelHeader
         title={t('ai_assist_panel_title', 'AI assistant')}
         actions={
           <div className="d-flex align-items-center gap-1">
@@ -461,6 +533,12 @@ function AgentPanelInner({
                 <NotePencil size={18} />
               </button>
             </OLTooltip>
+            <ChatHistoryMenu
+              projectId={projectId}
+              activeChatId={chatId}
+              onOpen={id => void onOpenChat(id)}
+              onDelete={onDeleteChat}
+            />
             <OLTooltip
               id="ai-assist-dock-tooltip"
               description={
@@ -495,13 +573,14 @@ function AgentPanelInner({
         onClose={onClose}
       />
 
-      <div
-        className="ai-assist-transcript"
-        ref={transcriptRef}
-        onScroll={onTranscriptScroll}
-      >
-        {state.transcript.length === 0 ? (
-          <AgentEmptyState
+      <div className="ai-assist-transcript-wrapper">
+        <div
+          className="ai-assist-transcript"
+          ref={transcriptRef}
+          onScroll={onTranscriptScroll}
+        >
+          {state.transcript.length === 0 ? (
+            <AgentEmptyState
             onPick={onPickStarter}
             handle={handle}
             files={files}
@@ -643,29 +722,34 @@ function AgentPanelInner({
           </div>
         )}
 
-        {state.stoppedForBudget && (
-          <OLButton
-            type="button"
-            variant="secondary"
-            size="sm"
-            className="ai-assist-continue"
-            onClick={() => void run(state.transcript)}
-          >
-            {t('ai_assist_continue', 'Continue')}
-          </OLButton>
-        )}
       </div>
 
-      <AgentComposer
-        running={state.running}
-        paths={files.map(file => file.path)}
-        onSend={onSend}
-        onStop={stop}
-        attachments={attachments}
-        setAttachments={setAttachments}
-        attachedSelection={attachedSelection}
-        setAttachedSelection={setAttachedSelection}
-      />
+      {!isAtBottom && (
+        <button
+          type="button"
+          className="ai-assist-scroll-bottom-btn"
+          onClick={() => scrollToBottom({ smooth: true })}
+          aria-label={t('ai_assist_scroll_to_bottom', 'Jump to latest')}
+          title={t('ai_assist_scroll_to_bottom', 'Jump to latest')}
+        >
+          <ArrowDown size={16} weight="bold" />
+        </button>
+      )}
+    </div>
+
+    <AgentComposer
+      running={state.running}
+      mode={state.mode}
+      onModeChange={setMode}
+      paths={files.map(file => file.path)}
+      onSend={onSend}
+      onStop={stop}
+      attachments={attachments}
+      setAttachments={setAttachments}
+      attachedSelection={attachedSelection}
+      setAttachedSelection={setAttachedSelection}
+      history={promptHistory}
+    />
     </div>
   )
 }
@@ -678,6 +762,10 @@ export const AgentPanelFallback: React.FC<FallbackProps> = ({
   const { projectId } = useProjectContext()
 
   const handleReset = () => {
+    const activeRunId = getStoredActiveRunId(projectId)
+    if (activeRunId) {
+      void stopBackgroundRun(activeRunId).catch(() => {})
+    }
     clearConversation(projectId)
     setStoredActiveRunId(projectId, null)
     if (resetErrorBoundary) {

@@ -165,6 +165,13 @@ describe('UserCreator', function () {
         user.emails[0].reversedHostname.should.equal('moc.liamg')
       })
 
+      it('should disable AI features by default on new account creation', async function (ctx) {
+        const user = await ctx.UserCreator.promises.createNewUser(
+          ctx.attributes
+        )
+        assert.equal(user.aiFeatures?.enabled, false)
+      })
+
       describe('with affiliations feature', function () {
         let user
         beforeEach(function (ctx) {

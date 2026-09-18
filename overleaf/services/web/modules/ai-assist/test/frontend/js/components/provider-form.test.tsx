@@ -11,8 +11,9 @@ function setMeta() {
     '<meta name="ol-aiAssistEnabled" data-type="boolean" content="">'
 }
 
-const OPENAI_MODELS = 'https://api.openai.com/v1/models'
-const OPENAI_CHAT = 'https://api.openai.com/v1/chat/completions'
+// The form never talks to the provider: the Overleaf server relays both calls.
+const MODELS = '/ai-assist/providers/models'
+const TEST = '/ai-assist/providers/test'
 
 const STORED = {
   type: 'openai' as const,
@@ -28,15 +29,16 @@ function renderForm(props = {}) {
 }
 
 function modelList(ids: string[]) {
-  return { object: 'list', data: ids.map(id => ({ id, object: 'model' })) }
+  return { models: ids.map(id => ({ id, label: id })) }
 }
 
-/** A minimal OpenAI-format SSE body. */
-function chatStream() {
-  return {
-    body: 'data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n',
-    headers: { 'Content-Type': 'text/event-stream' },
-  }
+function serverError(code: string, message: string) {
+  return { status: 502, body: { error: { code, message } } }
+}
+
+function sentSettings(url: string) {
+  const [call] = fetchMock.callHistory.calls(url)
+  return JSON.parse(call.options.body as string).providerSettings
 }
 
 describe('ProviderForm', function () {
@@ -56,41 +58,39 @@ describe('ProviderForm', function () {
     expect(screen.queryByTestId('ai-provider-model-select')).to.be.null
   })
 
-  it('calls the provider directly, not an Overleaf endpoint', async function () {
-    fetchMock.get(OPENAI_MODELS, modelList(['gpt-4o']))
+  it('lists models through the Overleaf server, never the provider directly', async function () {
+    fetchMock.post(MODELS, modelList(['gpt-4o']))
     renderForm({ initial: STORED })
 
     fireEvent.click(screen.getByRole('button', { name: /load models/i }))
 
     await waitFor(() => {
-      expect(fetchMock.callHistory.calls(OPENAI_MODELS)).to.have.length(1)
+      expect(fetchMock.callHistory.calls(MODELS)).to.have.length(1)
     })
-    // Nothing may be sent to Overleaf: there is no endpoint to send it to.
+    // A page on a public domain cannot reach providers on a private network.
     expect(
-      fetchMock.callHistory
-        .calls()
-        .every(call => call.url.startsWith('https://api.openai.com'))
+      fetchMock.callHistory.calls().every(call => call.url.includes('/ai-assist/providers/'))
     ).to.be.true
   })
 
-  it('sends the key as a bearer token to the provider', async function () {
-    fetchMock.get(OPENAI_MODELS, modelList(['gpt-4o']))
+  it('hands the server the endpoint, key and model to use', async function () {
+    fetchMock.post(MODELS, modelList(['gpt-4o']))
     renderForm({ initial: STORED })
 
     fireEvent.click(screen.getByRole('button', { name: /load models/i }))
 
     await waitFor(() => {
-      expect(fetchMock.callHistory.calls(OPENAI_MODELS)).to.have.length(1)
+      expect(fetchMock.callHistory.calls(MODELS)).to.have.length(1)
     })
-    const headers = fetchMock.callHistory.calls(OPENAI_MODELS)[0].options
-      .headers as Record<string, string>
-    expect(headers.authorization ?? headers.Authorization).to.equal(
-      'Bearer sk-test'
-    )
+    expect(sentSettings(MODELS)).to.include({
+      type: 'openai',
+      baseUrl: 'https://api.openai.com/v1',
+      apiKey: 'sk-test',
+    })
   })
 
   it('loads models and swaps the field for a dropdown', async function () {
-    fetchMock.get(OPENAI_MODELS, modelList(['gpt-4o', 'gpt-4o-mini']))
+    fetchMock.post(MODELS, modelList(['gpt-4o', 'gpt-4o-mini']))
     renderForm({ initial: STORED })
 
     fireEvent.click(screen.getByRole('button', { name: /load models/i }))
@@ -102,7 +102,7 @@ describe('ProviderForm', function () {
   })
 
   it('keeps the current model when the provider still offers it', async function () {
-    fetchMock.get(OPENAI_MODELS, modelList(['gpt-4o', 'gpt-4o-mini']))
+    fetchMock.post(MODELS, modelList(['gpt-4o', 'gpt-4o-mini']))
     renderForm({ initial: STORED })
 
     fireEvent.click(screen.getByRole('button', { name: /load models/i }))
@@ -116,7 +116,7 @@ describe('ProviderForm', function () {
   })
 
   it('lets the user switch back to typing a model name', async function () {
-    fetchMock.get(OPENAI_MODELS, modelList(['gpt-4o']))
+    fetchMock.post(MODELS, modelList(['gpt-4o']))
     renderForm({ initial: STORED })
 
     fireEvent.click(screen.getByRole('button', { name: /load models/i }))
@@ -130,7 +130,7 @@ describe('ProviderForm', function () {
 
   it('stays on manual entry when the endpoint has no models route', async function () {
     // Azure OpenAI and similar gateways have no /v1/models.
-    fetchMock.get(OPENAI_MODELS, { status: 404, body: 'not found' })
+    fetchMock.post(MODELS, serverError('modelsUnsupported', 'Provider returned 404'))
     renderForm({ initial: STORED })
 
     fireEvent.click(screen.getByRole('button', { name: /load models/i }))
@@ -142,12 +142,12 @@ describe('ProviderForm', function () {
   })
 
   it('shows the provider’s own words when the key is rejected', async function () {
-    // The key is this user's own and the call came from their browser, so the
-    // real message is safe to show and far more useful than a generic one.
-    fetchMock.get(OPENAI_MODELS, {
-      status: 401,
-      body: 'Incorrect API key provided: sk-test',
-    })
+    // The key is this user's own, so the provider's real message is safe to
+    // show and far more useful than a generic one.
+    fetchMock.post(
+      MODELS,
+      serverError('providerAuth', 'Incorrect API key provided: sk-test')
+    )
     renderForm({ initial: STORED })
 
     fireEvent.click(screen.getByRole('button', { name: /load models/i }))
@@ -158,7 +158,7 @@ describe('ProviderForm', function () {
   })
 
   it('reports a successful connection test', async function () {
-    fetchMock.post(OPENAI_CHAT, chatStream())
+    fetchMock.post(TEST, { latencyMs: 42 })
     renderForm({ initial: STORED })
 
     fireEvent.click(screen.getByRole('button', { name: /test connection/i }))
@@ -168,26 +168,20 @@ describe('ProviderForm', function () {
     })
   })
 
-  it('sends a single token when testing so it costs almost nothing', async function () {
-    fetchMock.post(OPENAI_CHAT, chatStream())
+  it('runs the connection test on the server with the form settings', async function () {
+    fetchMock.post(TEST, { latencyMs: 42 })
     renderForm({ initial: STORED })
 
     fireEvent.click(screen.getByRole('button', { name: /test connection/i }))
 
     await waitFor(() => {
-      expect(fetchMock.callHistory.calls(OPENAI_CHAT)).to.have.length(1)
+      expect(fetchMock.callHistory.calls(TEST)).to.have.length(1)
     })
-    const body = JSON.parse(
-      fetchMock.callHistory.calls(OPENAI_CHAT)[0].options.body as string
-    )
-    expect(body.max_tokens).to.equal(1)
+    expect(sentSettings(TEST)).to.include({ model: 'gpt-4o-mini', apiKey: 'sk-test' })
   })
 
   it('surfaces the reason a connection test failed', async function () {
-    fetchMock.post(OPENAI_CHAT, {
-      status: 401,
-      body: 'invalid_api_key',
-    })
+    fetchMock.post(TEST, serverError('providerAuth', 'invalid_api_key'))
     renderForm({ initial: STORED })
 
     fireEvent.click(screen.getByRole('button', { name: /test connection/i }))
@@ -209,7 +203,7 @@ describe('ProviderForm', function () {
   })
 
   it('discards a loaded list when the provider type changes', async function () {
-    fetchMock.get(OPENAI_MODELS, modelList(['gpt-4o']))
+    fetchMock.post(MODELS, modelList(['gpt-4o']))
     renderForm({ initial: STORED })
 
     fireEvent.click(screen.getByRole('button', { name: /load models/i }))
@@ -285,10 +279,8 @@ describe('ProviderForm', function () {
     expect(saved.baseUrl).to.equal('http://localhost:11434')
   })
 
-  it('loads models from Ollama /api/tags', async function () {
-    fetchMock.get('http://localhost:11434/api/tags', {
-      models: [{ name: 'llama3.2', model: 'llama3.2' }],
-    })
+  it('loads Ollama models through the server', async function () {
+    fetchMock.post(MODELS, modelList(['llama3.2']))
     renderForm({
       initial: {
         type: 'ollama',
@@ -302,7 +294,10 @@ describe('ProviderForm', function () {
     await waitFor(() => {
       expect(screen.getByTestId('ai-provider-model-select')).to.exist
     })
-    expect(fetchMock.callHistory.calls('http://localhost:11434/api/tags')).to.have.length(1)
+    expect(sentSettings(MODELS)).to.include({
+      type: 'ollama',
+      baseUrl: 'http://localhost:11434',
+    })
   })
 
   it('lets the user set a context window and output cap', async function () {

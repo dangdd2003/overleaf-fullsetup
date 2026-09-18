@@ -99,7 +99,7 @@ describe('AgentPanel receiving a compile-error handoff', function () {
       .returns([])
 
     fetchMock.post(
-      'https://api.openai.com/v1/chat/completions',
+      '/ai-assist/providers/chat',
       sse(
         'data: {"choices":[{"delta":{"content":"Looking at it now."}}]}\n\n' +
           'data: [DONE]\n\n'

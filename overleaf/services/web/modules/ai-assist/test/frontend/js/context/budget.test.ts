@@ -165,8 +165,20 @@ describe('applyBudget boundaries', function () {
   it('elision can succeed: a request too big to send untrimmed fits after eliding', function () {
     const roomy = { contextWindow: 50000, maxOutputTokens: 1000 }
     const result = applyBudget({ system: 'sys', messages: conversation(6), limits: roomy })
-    expect(result.elided).to.equal(2)
+    // Two elisions would already fit the 44,000 budget; trimming continues
+    // toward 70% of it (30,800) so the next steps keep the cached prefix.
+    // Only three results are elidable (the newest three are kept).
+    expect(result.elided).to.equal(3)
     expect(result.exhausted).to.equal(false)
+  })
+
+  it('trims no further than needed to reach the target', function () {
+    const roomy = { contextWindow: 50000, maxOutputTokens: 1000 }
+    const once = applyBudget({ system: 'sys', messages: conversation(6), limits: roomy })
+    const next = [...once.messages, { role: 'user', content: 'another question' } as AgentMessage]
+    const twice = applyBudget({ system: 'sys', messages: next, limits: roomy })
+    expect(twice.elided).to.equal(0)
+    expect(twice.messages.slice(0, once.messages.length)).to.deep.equal(once.messages)
   })
 })
 

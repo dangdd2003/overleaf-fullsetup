@@ -23,7 +23,7 @@ export function validateNewPath(path: string, existing: string[]): string | null
     return 'The path must not contain "..".'
   }
   if (existing.includes(path)) {
-    return `${path} already exists. To add or append content to ${path}, call edit_file with path: "${path}", oldText: "", and newText with your content.`
+    return `${path} already exists. To edit ${path}, call read_file to inspect it, then call edit_file with oldText containing the exact lines to replace and newText containing the replacement.`
   }
   if (BINARY_EXTENSIONS.some(extension => path.toLowerCase().endsWith(extension))) {
     return `${path} looks like a binary file, which this tool cannot create.`
@@ -78,6 +78,20 @@ export const createFileTool: AgentTool = {
           message: `The user rejected creating ${path}${userNote}. Do not attempt to create the same file again in this turn. Acknowledge the rejection, address their feedback, and explain alternatives or ask how they would like to proceed.`,
         }
       }
+      case 'timeout':
+        return {
+          status: 'timeout',
+          message:
+            outcome.message ||
+            `The editor bridge timed out while creating ${path}. Please retry.`,
+        }
+      case 'error':
+        return {
+          status: 'error',
+          message:
+            outcome.message ||
+            `An error occurred while creating ${path}.`,
+        }
       default:
         return outcome
     }

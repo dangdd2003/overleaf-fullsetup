@@ -83,4 +83,34 @@ describe('create_file', function () {
     expect(result.message).to.include('not now')
     expect(result.message).to.match(/acknowledge the rejection/i)
   })
+
+  it('reports a timeout when creating a file', async function () {
+    const { handle } = createFakeHandle({
+      docs: DOCS,
+      onCreate: () => ({ status: 'timeout', message: 'Bridge timed out.' } as any),
+    })
+
+    const result: any = await createFileTool.execute(
+      { path: 'new.tex', content: 'content' },
+      handle
+    )
+
+    expect(result.status).to.equal('timeout')
+    expect(result.message).to.match(/timed out/i)
+  })
+
+  it('reports an error when entity creation fails', async function () {
+    const { handle } = createFakeHandle({
+      docs: DOCS,
+      onCreate: () => ({ status: 'error', message: 'Failed to create folder.' } as any),
+    })
+
+    const result: any = await createFileTool.execute(
+      { path: 'sections/new.tex', content: 'content' },
+      handle
+    )
+
+    expect(result.status).to.equal('error')
+    expect(result.message).to.include('Failed to create folder.')
+  })
 })

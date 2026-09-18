@@ -10,34 +10,42 @@ import { resolveLimits } from '../providers/types'
 import { useProjectHandle } from '../agent/use-project-handle'
 import { AgentTool } from '../agent/tools/registry'
 import { EditRequest } from '../agent/project-handle'
+import { locateAnchorInText } from '../agent/latex-matcher'
 import { TranscriptEntry } from '../agent/agent-messages'
 import { AgentEvent } from '../agent/agent-events'
+import { AgentMode } from '../agent/agent-mode'
 import {
   AgentState,
   emptyAgentState,
   reduceAgentEvent,
+  cancelPendingToolCalls,
 } from '../agent/agent-state'
 import {
   startBackgroundRun,
   connectRunStream,
   stopBackgroundRun,
   approveBackgroundEdit,
+  submitBackgroundCompile,
   getStoredActiveRunId,
   setStoredActiveRunId,
+  setBackgroundRunMode,
 } from '../agent/background/background-run-client'
+
+const REPLAY_SETTLE_MS = 250
 
 export function useAgentRun({
   tools,
-  maxSteps,
   systemPrompt,
+  requireTool,
   cacheKey,
   onEvent,
   initialTranscript,
 }: {
   tools: Record<string, AgentTool>
-  maxSteps: number
   /** A narrow run (the compile-log fix) supplies its own, smaller prompt. */
   systemPrompt?: string
+  /** See runAgent: the tool the run must call before it may finish. */
+  requireTool?: string
   cacheKey?: string
   onEvent?: (event: AgentEvent, nextState: AgentState) => void
   initialTranscript?: TranscriptEntry[]
@@ -83,6 +91,8 @@ export function useAgentRun({
   handleRef.current = handle
   const onEventRef = useRef(onEvent)
   onEventRef.current = onEvent
+  const requestedCompileIdsRef = useRef<Set<string>>(new Set())
+  const finishedCallIdsRef = useRef<Set<string>>(new Set())
 
   const handleStreamEvent = useCallback((event: AgentEvent) => {
     if (event.type === 'toolCallStarted') {
@@ -111,12 +121,24 @@ export function useAgentRun({
     }
     if (event.type === 'awaitingApproval' && (event as any).edit) {
       const edit = (event as any).edit
-      if (edit?.path) {
+      if (typeof edit?.startLine === 'number' && edit.startLine > 0) {
+        setApprovalContext({ startLine: edit.startLine })
+      } else if (edit?.path) {
         handleRef.current
           .readFile(edit.path)
           .then(res => {
             const lines = res?.lines
             const text = Array.isArray(lines) ? lines.join('\n') : ''
+            const match = locateAnchorInText(text, edit.oldText)
+            if (match) {
+              const anchor = match.anchor
+              const idx = text.indexOf(anchor)
+              if (idx !== -1) {
+                const line = text.slice(0, idx).split('\n').length
+                setApprovalContext({ startLine: line })
+                return
+              }
+            }
             const idx = edit.oldText ? text.indexOf(edit.oldText) : text.length
             if (idx !== -1) {
               const line = text.slice(0, idx).split('\n').length
@@ -130,6 +152,43 @@ export function useAgentRun({
           })
       }
     }
+    if (event.type === 'toolCallFinished') {
+      finishedCallIdsRef.current.add(event.id)
+    }
+    if (event.type === 'awaitingCompile') {
+      const { id, clean } = event
+      const runId = currentRunIdRef.current
+      if (runId && !requestedCompileIdsRef.current.has(id)) {
+        requestedCompileIdsRef.current.add(id)
+        // A reconnect replays the run from the start, where a request that was
+        // already answered is followed by its toolCallFinished. Give that a
+        // moment to arrive so an old request does not start a real compile.
+        window.setTimeout(() => {
+          if (finishedCallIdsRef.current.has(id)) return
+          if (currentRunIdRef.current !== runId) return
+          // Every open tab of the project watches the run; only one compiles.
+          const claimKey = `aiAssist:compileClaim:${runId}:${id}`
+          try {
+            if (window.localStorage.getItem(claimKey)) return
+            window.localStorage.setItem(claimKey, '1')
+          } catch {
+            // no storage: compile anyway
+          }
+          // The editor's own compile: it waits for a build already running,
+          // shows progress in the PDF pane, and fills the logs the user sees.
+          handleRef.current
+            .compile({ clean })
+            .catch(() => ({ status: 'failure', errors: [], warnings: [] }))
+            .then(outcome =>
+              submitBackgroundCompile(projectIdRef.current, runId, id, {
+                ...outcome,
+                rawLog: handleRef.current.lastCompile()?.rawLog ?? null,
+              })
+            )
+            .catch(() => {})
+        }, REPLAY_SETTLE_MS)
+      }
+    }
     setState(current => {
       const next = reduceAgentEvent(current, event)
       onEventRef.current?.(event, next)
@@ -138,7 +197,7 @@ export function useAgentRun({
   }, [])
 
   const onDecision = useCallback(
-    async (decision: { accepted: boolean; note?: string }) => {
+    async (decision: { accepted: boolean; note?: string; nextMode?: AgentMode }) => {
       if (currentRunIdRef.current) {
         await approveBackgroundEdit(currentRunIdRef.current, decision)
       } else {
@@ -149,6 +208,42 @@ export function useAgentRun({
     },
     []
   )
+
+  const setMode = useCallback((mode: AgentMode) => {
+    setState(current => ({ ...current, mode }))
+    if (currentRunIdRef.current) {
+      void setBackgroundRunMode(projectIdRef.current, currentRunIdRef.current, mode).catch(err => {
+        console.warn('Failed to set background run mode:', err)
+      })
+    }
+  }, [])
+
+  const stop = useCallback(async () => {
+    const runId = currentRunIdRef.current
+    currentRunIdRef.current = null
+    abortRef.current?.abort()
+    streamCleanupRef.current?.()
+    // Only the background path owns this storage key. An in-page run (systemPrompt
+    // set) shares the same projectId, and clearing it here would drop the main
+    // chat's live run id and break its reconnect.
+    if (!systemPrompt) {
+      setStoredActiveRunId(projectId, null)
+    }
+    approvalRef.current?.({ accepted: false })
+    approvalRef.current = null
+    setApprovalContext(null)
+    setState(current => ({
+      ...current,
+      transcript: cancelPendingToolCalls(current.transcript),
+      running: false,
+      stoppedByUser: true,
+      pendingApproval: null,
+      error: null,
+    }))
+    if (runId) {
+      await stopBackgroundRun(runId).catch(() => {})
+    }
+  }, [projectId, systemPrompt])
 
   const run = useCallback(
     async (transcript: TranscriptEntry[]) => {
@@ -171,19 +266,24 @@ export function useAgentRun({
         return
       }
 
+      // One run per conversation. A second send is a new intent, not a continuation.
+      if (currentRunIdRef.current || abortRef.current) {
+        await stop()
+      }
+
       window.dispatchEvent(new CustomEvent('aiAssist:agentReadSelection'))
 
       setState(current => ({
         ...current,
         transcript,
         running: true,
-        stoppedForBudget: false,
         stoppedByUser: false,
         error: null,
       }))
 
       // If a narrow system prompt was supplied (e.g. compile-log fix), keep in-page
       if (systemPrompt) {
+        abortRef.current?.abort()
         const controller = new AbortController()
         abortRef.current = controller
 
@@ -195,8 +295,8 @@ export function useAgentRun({
             transcript,
             limits: resolveLimits(assistant.settings),
             cacheKey,
-            maxSteps,
             systemPrompt,
+            requireTool,
             signal: controller.signal,
           })) {
             if (event.type === 'toolCallStarted') {
@@ -256,6 +356,7 @@ export function useAgentRun({
           projectId,
           transcript,
           providerSettings: assistant.settings,
+          mode: state.mode,
         })
         currentRunIdRef.current = runId
 
@@ -289,29 +390,8 @@ export function useAgentRun({
         }))
       }
     },
-    [handle, tools, maxSteps, systemPrompt, cacheKey, projectId, onEvent, handleStreamEvent, t, projectContext, userSettingsContext]
+    [handle, tools, systemPrompt, requireTool, cacheKey, projectId, onEvent, handleStreamEvent, t, projectContext, userSettingsContext, stop]
   )
-
-  const stop = useCallback(async () => {
-    const runId = currentRunIdRef.current
-    currentRunIdRef.current = null
-    abortRef.current?.abort()
-    streamCleanupRef.current?.()
-    setStoredActiveRunId(projectId, null)
-    approvalRef.current?.({ accepted: false })
-    approvalRef.current = null
-    setApprovalContext(null)
-    setState(current => ({
-      ...current,
-      running: false,
-      stoppedByUser: true,
-      pendingApproval: null,
-      error: null,
-    }))
-    if (runId) {
-      await stopBackgroundRun(runId).catch(() => {})
-    }
-  }, [projectId])
 
   // Reconnect on mount if a background run is in progress
   useEffect(() => {
@@ -365,6 +445,8 @@ export function useAgentRun({
   return {
     state,
     setState,
+    mode: state.mode,
+    setMode,
     running: state.running,
     error: state.error,
     handle,

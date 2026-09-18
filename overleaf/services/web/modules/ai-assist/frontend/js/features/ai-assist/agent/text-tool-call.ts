@@ -8,6 +8,14 @@ type ToolParameters = {
   properties?: Record<string, unknown>
 }
 
+let callCounter = 0
+
+export function nextToolCallId(prefix = 'call_txt'): string {
+  callCounter += 1
+  const rand = Math.random().toString(36).slice(2, 8)
+  return `${prefix}_${Date.now()}_${callCounter}_${rand}`
+}
+
 function validate(
   parsed: any,
   tools: Record<string, AgentTool>
@@ -28,7 +36,7 @@ function validate(
   for (const key of Object.keys(args)) {
     if (!(key in properties)) return null
   }
-  return { id: 'text-1', name: parsed.name, args }
+  return { id: nextToolCallId(), name: parsed.name, args }
 }
 
 /**

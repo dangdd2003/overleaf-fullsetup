@@ -45,8 +45,20 @@ describe('ai-assist module entry', () => {
   })
 
   it('carries no credentials or endpoints in settings', async () => {
-    // Nothing server-side to configure: no key, no base URL, no quota.
+    // Lifecycle limits only: no keys, secrets, tokens, passwords, or endpoints.
     const { settings } = await loadModule({ AI_ASSIST_ENABLED: 'true' })
-    expect(Object.keys(settings.aiAssist)).toEqual(['enabled'])
+    const serialised = JSON.stringify(settings.aiAssist)
+    expect(serialised).not.toMatch(/key|secret|token|password|baseUrl/i)
+  })
+
+  it('exposes a start method for background jobs', async () => {
+    const { module } = await loadModule({ AI_ASSIST_ENABLED: 'true' })
+    expect(module.start).toBeTypeOf('function')
+  })
+
+  it('does nothing on start when the feature is disabled', async () => {
+    const { module } = await loadModule({ AI_ASSIST_ENABLED: 'false' })
+    const result = await module.start()
+    expect(result).toBeUndefined()
   })
 })

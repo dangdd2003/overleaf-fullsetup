@@ -91,15 +91,6 @@ describe('reduceAgentEvent', function () {
     expect(state.pendingApproval).to.equal(null)
   })
 
-  it('records a budget stop so the panel can offer Continue', function () {
-    const state = reduceAgentEvent(emptyAgentState([]), {
-      type: 'turnFinished',
-      reason: 'budget',
-    })
-    expect(state.running).to.equal(false)
-    expect(state.stoppedForBudget).to.equal(true)
-  })
-
   it('keeps a provider error on the state', function () {
     const state = reduceAgentEvent(emptyAgentState([]), {
       type: 'error',
@@ -139,6 +130,41 @@ describe('reduceAgentEvent', function () {
     expect(state.error).to.be.null
   })
 
+  it('finalizes pending in-flight tool calls when turnFinished aborted arrives', function () {
+    let state = emptyAgentState([])
+    state = reduceAgentEvent(state, {
+      type: 'toolCallStarted',
+      id: 'c1',
+      name: 'edit_file',
+      args: { path: 'main.tex', oldText: 'a', newText: 'b' },
+    })
+    state = reduceAgentEvent(state, {
+      type: 'turnFinished',
+      reason: 'aborted',
+    })
+    const last = state.transcript.at(-1) as any
+    expect(last.toolCalls[0].result).to.deep.equal({ status: 'stopped' })
+    expect(last.blocks[0].call.result).to.deep.equal({ status: 'stopped' })
+  })
+
+  it('finalizes pending in-flight tool calls when an error event arrives', function () {
+    let state = emptyAgentState([])
+    state = reduceAgentEvent(state, {
+      type: 'toolCallStarted',
+      id: 'c1',
+      name: 'read_file',
+      args: { path: 'main.tex' },
+    })
+    state = reduceAgentEvent(state, {
+      type: 'error',
+      code: 'providerError',
+      message: 'terminated',
+    })
+    const last = state.transcript.at(-1) as any
+    expect(last.toolCalls[0].result).to.deep.equal({ status: 'stopped' })
+    expect(last.blocks[0].call.result).to.deep.equal({ status: 'stopped' })
+  })
+
   it('sets running to false and clears pendingApproval when an error event arrives', function () {
     const initialState = {
       ...emptyAgentState([]),
@@ -153,5 +179,60 @@ describe('reduceAgentEvent', function () {
     expect(state.running).to.equal(false)
     expect(state.pendingApproval).to.be.null
     expect(state.error?.code).to.equal('consecutiveToolFailures')
+  })
+
+  it('records an interrupted run as terminal with an interrupted error code', function () {
+    const initialState = {
+      ...emptyAgentState([]),
+      running: true,
+    }
+    const state = reduceAgentEvent(initialState, {
+      type: 'turnFinished',
+      reason: 'interrupted' as any,
+    })
+    expect(state.running).to.equal(false)
+    expect(state.stoppedByUser).to.equal(false)
+    expect(state.error).to.deep.equal({
+      code: 'interrupted',
+      message: 'This run was interrupted.',
+    })
+  })
+
+  it('handles modeChanged event', () => {
+    const initial = emptyAgentState([])
+    expect(initial.mode).to.equal('manual')
+
+    const next = reduceAgentEvent(initial, {
+      type: 'modeChanged',
+      mode: 'plan',
+      source: 'user',
+    })
+    expect(next.mode).to.equal('plan')
+  })
+
+  it('stores settings and plan approvals in pendingApproval', () => {
+    const initial = emptyAgentState([])
+
+    const stateWithPlan = reduceAgentEvent(initial, {
+      type: 'awaitingApproval',
+      id: 'plan_call_1',
+      kind: 'plan',
+      plan: '# The Plan',
+    })
+    expect(stateWithPlan.pendingApproval).to.deep.equal({
+      id: 'plan_call_1',
+      kind: 'plan',
+      edit: undefined,
+      settings: undefined,
+      plan: '# The Plan',
+    })
+
+    const stateCleared = reduceAgentEvent(stateWithPlan, {
+      type: 'toolCallFinished',
+      id: 'plan_call_1',
+      result: { status: 'approved' },
+      isError: false,
+    })
+    expect(stateCleared.pendingApproval).to.be.null
   })
 })

@@ -22,11 +22,9 @@ describe('extractFencedToolCall', function () {
     const pending = 'Let me look.\n```json\n{"name":"read_file","arguments":{"path":"main.tex"}}\n```\nDone.'
     const found = extractFencedToolCall(pending, TOOLS)
     expect(found).to.not.equal(null)
-    expect(found!.call).to.deep.equal({
-      id: 'text-1',
-      name: 'read_file',
-      args: { path: 'main.tex' },
-    })
+    expect(found!.call.id).to.match(/^call_txt_/)
+    expect(found!.call.name).to.equal('read_file')
+    expect(found!.call.args).to.deep.equal({ path: 'main.tex' })
     expect(found!.before).to.equal('Let me look.\n')
     expect(found!.after).to.equal('\nDone.')
   })
@@ -59,11 +57,10 @@ describe('parseWholeMessageToolCall', function () {
       '{"name":"read_file","arguments":{"path":"main.tex"}}',
       TOOLS
     )
-    expect(call).to.deep.equal({
-      id: 'text-1',
-      name: 'read_file',
-      args: { path: 'main.tex' },
-    })
+    expect(call).to.not.equal(null)
+    expect(call!.id).to.match(/^call_txt_/)
+    expect(call!.name).to.equal('read_file')
+    expect(call!.args).to.deep.equal({ path: 'main.tex' })
   })
 
   it('returns null for a message that is prose', function () {

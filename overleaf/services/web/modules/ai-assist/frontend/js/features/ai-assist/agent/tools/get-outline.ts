@@ -61,16 +61,28 @@ export const getOutlineTool: AgentTool = {
         candidate =>
           candidate.path === target.path && candidate.level <= target.level
       )
+    // Bound to file line count if no next peer in file
+    let fileLines: number | undefined
+    try {
+      const fileEntry = (await handle.listFiles()).find(f => f.path === target.path)
+      fileLines = fileEntry?.lines
+    } catch {
+      // ignore
+    }
+
     const end = nextPeerInFile
       ? nextPeerInFile.line - 1
-      : Number.MAX_SAFE_INTEGER
+      : fileLines
+
     const nextIndex = nextPeer ? siblings.indexOf(nextPeer) : siblings.length
+    const hint = end !== undefined
+      ? `read_file with path=${target.path} from=${target.line} to=${end} for the body`
+      : `read_file with path=${target.path} from=${target.line} for the body`
+
     return {
-      range: { from: target.line, to: end },
+      range: { from: target.line, ...(end !== undefined ? { to: end } : {}) },
       sections: siblings.slice(startIndex, nextIndex),
-      hint: `read_file with path=${target.path} from=${target.line} to=${
-        end === Number.MAX_SAFE_INTEGER ? 'end' : end
-      } for the body`,
+      hint,
     }
   },
 
