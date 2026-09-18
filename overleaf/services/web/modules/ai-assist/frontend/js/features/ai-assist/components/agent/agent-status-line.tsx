@@ -1,4 +1,4 @@
-import { FC, useEffect, useState } from 'react'
+import { FC, useEffect, useRef, useState } from 'react'
 import { AssistantBlock } from '../../agent/agent-messages'
 import {
   formatElapsed,
@@ -50,6 +50,14 @@ export const AgentStatusLine: FC<{
     durationMs !== undefined ? durationMs : Math.max(0, Date.now() - startedAt)
   )
 
+  const onWordChangeRef = useRef(onWordChange)
+  onWordChangeRef.current = onWordChange
+
+  const wordRef = useRef(word)
+  wordRef.current = word
+
+  const prevStartedAtRef = useRef(startedAt)
+
   useEffect(() => {
     if (!isRunning) {
       if (durationMs !== undefined) {
@@ -58,9 +66,16 @@ export const AgentStatusLine: FC<{
       return
     }
 
-    const initialWord = nextStatusWord(null)
-    setWord(initialWord)
-    onWordChange?.(initialWord)
+    // Only pick a new word if a new run has actually started with a new startedAt
+    if (prevStartedAtRef.current !== startedAt) {
+      prevStartedAtRef.current = startedAt
+      const newWord = nextStatusWord(null)
+      setWord(newWord)
+      onWordChangeRef.current?.(newWord)
+    } else {
+      onWordChangeRef.current?.(wordRef.current)
+    }
+
     setElapsedMs(Math.max(0, Date.now() - startedAt))
 
     let ticks = 0
@@ -70,14 +85,14 @@ export const AgentStatusLine: FC<{
       if ((ticks * 1000) % WORD_ROTATE_MS === 0) {
         setWord(current => {
           const next = nextStatusWord(current)
-          onWordChange?.(next)
+          onWordChangeRef.current?.(next)
           return next
         })
       }
     }, 1000)
 
     return () => clearInterval(timer)
-  }, [startedAt, isRunning, durationMs, onWordChange])
+  }, [startedAt, isRunning, durationMs])
 
   if (pendingApproval) {
     return null

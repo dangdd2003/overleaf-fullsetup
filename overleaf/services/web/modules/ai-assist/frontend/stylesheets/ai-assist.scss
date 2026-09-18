@@ -164,10 +164,10 @@ $font-family-monospace: 'DM Mono', monospace !default;
 .ai-assist-transcript {
   flex: 1;
   overflow-y: auto;
-  padding: var(--spacing-04) 16px;
+  padding: var(--spacing-06) 16px var(--spacing-08);
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-03);
+  gap: var(--spacing-07);
 }
 
 .ai-assist-scroll-bottom-btn {
@@ -215,36 +215,51 @@ $font-family-monospace: 'DM Mono', monospace !default;
 .ai-assist-message {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-02);
+  gap: var(--spacing-03);
   max-width: 100%;
   font-size: var(--font-size-02);
-  line-height: var(--line-height-02);
+  line-height: var(--line-height-03, 1.5);
 }
 
 .ai-assist-message-user {
   align-self: flex-end;
   background: var(--bg-secondary-themed);
   color: var(--content-primary-themed);
-  padding: var(--spacing-02) var(--spacing-03);
+  padding: var(--spacing-05) var(--spacing-06);
   border: 1px solid var(--border-divider-themed);
-  border-radius: var(--border-radius-base, 4px);
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
   max-width: 85%;
   width: fit-content;
   word-break: break-word;
   white-space: pre-wrap;
+  margin-top: var(--spacing-02);
+  margin-bottom: var(--spacing-02);
 
-  .ai-assist-message-selection-chip {
+  .ai-assist-selection-chip-wrapper {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-02);
+    margin-bottom: var(--spacing-02);
+  }
+
+  .ai-assist-message-selection-chip,
+  .ai-assist-selection-chip {
     display: inline-flex;
     align-items: center;
     gap: 4px;
     font-size: 11px;
     font-family: $font-family-monospace;
-    padding: 1px 6px;
+    padding: 2px 8px;
     border-radius: 10px;
     background: var(--bg-tertiary-themed);
     color: var(--content-secondary-themed);
     margin-bottom: var(--spacing-01);
     width: fit-content;
+  }
+
+  .ai-assist-message-user-text {
+    line-height: var(--line-height-03, 1.5);
   }
 }
 
@@ -252,6 +267,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
   align-self: flex-start;
   width: 100%;
   color: var(--content-primary-themed);
+  padding: var(--spacing-01) 0;
 }
 
 // Collapsible Subresult Group (continuous tools and thinking)
@@ -1732,6 +1748,34 @@ $font-family-monospace: 'DM Mono', monospace !default;
         cursor: default;
       }
     }
+  }
+
+  // Streaming typewriter cursor effect
+  .ai-assist-streaming-cursor {
+    display: inline-block;
+    width: 2.5px;
+    height: 1.15em;
+    margin-left: 2px;
+    vertical-align: -0.15em;
+    border-radius: 1px;
+    background-color: var(--content-primary-themed, #111827);
+    animation: ai-assist-cursor-blink 0.75s ease-in-out infinite alternate;
+  }
+}
+
+@keyframes ai-assist-cursor-blink {
+  0% {
+    opacity: 0.15;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-assist-streaming-cursor {
+    animation: none;
+    opacity: 0.8;
   }
 }
 

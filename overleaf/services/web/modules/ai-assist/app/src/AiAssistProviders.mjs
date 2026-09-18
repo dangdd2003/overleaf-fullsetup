@@ -636,9 +636,9 @@ class AnthropicServerClient {
     }
 
     const isClaude37 =
-      this.model.includes('3-7') ||
-      this.model.includes('3.7') ||
-      this.model.includes('thinking')
+      (this.model.includes('claude-3-7') ||
+        this.model.includes('claude-3.7') ||
+        (this.model.includes('claude') && this.model.includes('thinking')))
     let effectiveMaxTokens = maxTokens
     let thinkingPayload = null
     if (isClaude37) {
@@ -1122,7 +1122,9 @@ export class GoogleServerClient {
       idleMs: this.streamIdleTimeoutMs,
     })
 
-    const cleanModel = this.model.replace(/^models\//, '')
+    const cleanModel = encodeURIComponent(this.model.replace(/^models\//, ''))
+      .replace(/\(/g, '%28')
+      .replace(/\)/g, '%29')
     const url = `${this.baseURL}/models/${cleanModel}:streamGenerateContent?alt=sse`
 
     const contents = toGeminiContents(messages)

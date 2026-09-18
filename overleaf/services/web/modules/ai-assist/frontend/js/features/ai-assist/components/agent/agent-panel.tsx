@@ -221,6 +221,9 @@ function AgentPanelInner({
   const runStartedAtRef = useRef<number | null>(runStartedAt)
   runStartedAtRef.current = runStartedAt
   const activeWordRef = useRef<string | null>(null)
+  const handleWordChange = useCallback((word: string) => {
+    activeWordRef.current = word
+  }, [])
 
   useEffect(() => {
     if (state.running) {
@@ -343,19 +346,66 @@ function AgentPanelInner({
       attachedSelection?: AttachedSelection | null
       extraContext?: string
     }) => {
-      const attachmentsResolved = await resolveAttachments(attachmentRefs, handle)
-      const userEntry = await buildUserEntry({
-        handle,
-        transcript: state.transcript,
+      // Instantly show user entry in transcript so chat feels immediate and never hangs/freezes
+      const initialAttachments: Attachment[] = [
+        ...attachmentRefs.map(r => ({ path: r.path })),
+        ...(selectionRef
+          ? [
+              {
+                path: selectionRef.path,
+                from: selectionRef.from,
+                to: selectionRef.to,
+                text: selectionRef.text,
+              },
+            ]
+          : []),
+      ]
+      const tempId = `u${state.transcript.length}`
+      const optimisticEntry: TranscriptEntry = {
+        id: tempId,
+        role: 'user',
         text,
-        attachments: attachmentsResolved,
-        attachedSelection: selectionRef,
-        extraContext,
-      })
-      const next: TranscriptEntry[] = [...state.transcript, userEntry]
-      void run(next)
+        attachments: initialAttachments,
+      }
+
+      setState(current => ({
+        ...current,
+        transcript: [...current.transcript, optimisticEntry],
+        running: true,
+        stoppedByUser: false,
+        error: null,
+      }))
+
+      try {
+        const attachmentsResolved = await resolveAttachments(
+          attachmentRefs,
+          handle
+        )
+        const userEntry = await buildUserEntry({
+          handle,
+          transcript: state.transcript,
+          text,
+          attachments: attachmentsResolved,
+          attachedSelection: selectionRef,
+          extraContext,
+        })
+        const next: TranscriptEntry[] = [
+          ...state.transcript,
+          userEntry,
+        ]
+        void run(next)
+      } catch (err: any) {
+        setState(current => ({
+          ...current,
+          running: false,
+          error: {
+            code: 'runFailed',
+            message: err?.message || 'Failed to prepare prompt',
+          },
+        }))
+      }
     },
-    [handle, state.transcript, run]
+    [handle, state.transcript, run, setState]
   )
 
   const onSend = useCallback(
@@ -610,9 +660,7 @@ function AgentPanelInner({
           <AgentStatusLine
             startedAt={runStartedAt}
             isRunning={true}
-            onWordChange={word => {
-              activeWordRef.current = word
-            }}
+            onWordChange={handleWordChange}
             blocks={
               (() => {
                 const last = state.running ? state.transcript.at(-1) : null

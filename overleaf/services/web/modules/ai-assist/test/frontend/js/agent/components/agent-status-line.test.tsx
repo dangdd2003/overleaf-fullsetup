@@ -297,6 +297,34 @@ describe('AgentStatusLine', function () {
     expect(wordSpy.calledOnce).to.be.true
     expect(STATUS_WORDS).to.include(wordSpy.firstCall.args[0])
   })
+
+  it('keeps the same status word across token updates rather than blinking on every token', function () {
+    const started = Date.now()
+    const { rerender } = render(
+      <AgentStatusLine
+        startedAt={started}
+        isRunning={true}
+        blocks={[{ type: 'text', text: 'Hello' }]}
+        onWordChange={() => {}}
+      />
+    )
+    const initialText = screen.getByRole('status').textContent
+
+    // Simulate 5 successive token arrivals with new callback references
+    for (let i = 1; i <= 5; i++) {
+      rerender(
+        <AgentStatusLine
+          startedAt={started}
+          isRunning={true}
+          blocks={[{ type: 'text', text: `Hello world ${i}` }]}
+          onWordChange={() => {}}
+        />
+      )
+      // The status word should be identical, never changing per token
+      const currentText = screen.getByRole('status').textContent
+      expect(currentText).to.equal(initialText)
+    }
+  })
 })
 
 describe('formatDuration and toPastTense', function () {

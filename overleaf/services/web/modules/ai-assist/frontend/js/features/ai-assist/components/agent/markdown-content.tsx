@@ -1,4 +1,4 @@
-import { FC, useCallback, useMemo } from 'react'
+import { FC, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import katex from 'katex'
@@ -409,8 +409,72 @@ marked.use({
   },
 })
 
-function renderMarkdown(content: string): string {
-  if (!content) return ''
+/**
+ * Smooth typewriter effect for streaming LLM text responses.
+ * Progressively reveals incoming streamed text at high frame rate,
+ * eliminating abrupt chunk jumps while never lagging behind generation.
+ */
+export function useTypewriter(targetText: string, isLive: boolean): string {
+  const [displayedLength, setDisplayedLength] = useState(() =>
+    isLive ? 0 : targetText.length
+  )
+  const targetRef = useRef(targetText)
+  targetRef.current = targetText
+
+  useEffect(() => {
+    if (!isLive) {
+      setDisplayedLength(targetText.length)
+      return
+    }
+
+    if (targetText.length < displayedLength) {
+      setDisplayedLength(targetText.length)
+      return
+    }
+
+    if (displayedLength >= targetText.length) {
+      return
+    }
+
+    const raf =
+      typeof window !== 'undefined' && window.requestAnimationFrame
+        ? window.requestAnimationFrame
+        : (cb: FrameRequestCallback) =>
+            (setTimeout(cb, 16) as unknown as number)
+    const caf =
+      typeof window !== 'undefined' && window.cancelAnimationFrame
+        ? window.cancelAnimationFrame
+        : (id: number) => clearTimeout(id)
+
+    let animId: number
+    const step = () => {
+      setDisplayedLength(current => {
+        const target = targetRef.current.length
+        if (current >= target) return current
+        const diff = target - current
+        // Progressive typing cadence:
+        // - Small buffer (1-6 chars): 1-2 chars/frame
+        // - Medium buffer (7-20 chars): 3-5 chars/frame
+        // - Large buffer (>20 chars): smoothly catch up in ~4 frames (diff / 4)
+        const increment = diff > 20 ? Math.ceil(diff / 4) : diff > 6 ? 3 : 1
+        return Math.min(target, current + increment)
+      })
+      animId = raf(step)
+    }
+
+    animId = raf(step)
+    return () => caf(animId)
+  }, [targetText, isLive, displayedLength])
+
+  return isLive ? targetText.slice(0, displayedLength) : targetText
+}
+
+export function renderMarkdown(content: string, isLive: boolean = false): string {
+  if (!content) {
+    return isLive
+      ? '<span class="ai-assist-streaming-cursor" aria-hidden="true"></span>'
+      : ''
+  }
 
   DOMPurify.addHook('afterSanitizeAttributes', node => {
     if (node.nodeName === 'A') {
@@ -420,7 +484,19 @@ function renderMarkdown(content: string): string {
   })
 
   try {
-    const rawHtml = marked.parse(content)
+    let rawHtml = marked.parse(content) as string
+    if (isLive) {
+      const cursorHtml =
+        '<span class="ai-assist-streaming-cursor" aria-hidden="true"></span>'
+      if (/(<\/(?:p|li|h[1-6]|div)>\s*)$/i.test(rawHtml)) {
+        rawHtml = rawHtml.replace(
+          /(<\/(?:p|li|h[1-6]|div)>\s*)$/i,
+          `${cursorHtml}$1`
+        )
+      } else {
+        rawHtml = rawHtml + cursorHtml
+      }
+    }
     return DOMPurify.sanitize(rawHtml, PURIFY_CONFIG)
   } finally {
     DOMPurify.removeHook('afterSanitizeAttributes')
@@ -436,11 +512,16 @@ function renderMarkdown(content: string): string {
 export const MarkdownContent: FC<{
   content: string
   onOpenFile?: (path: string, line?: number) => void
-}> = ({ content, onOpenFile }) => {
+  isLive?: boolean
+}> = ({ content, onOpenFile, isLive = false }) => {
   const defaultOpenFile = useOpenFileInEditor()
   const openFile = onOpenFile ?? defaultOpenFile
 
-  const html = useMemo(() => renderMarkdown(content), [content])
+  const displayedContent = useTypewriter(content, isLive)
+  const html = useMemo(
+    () => renderMarkdown(displayedContent, isLive),
+    [displayedContent, isLive]
+  )
 
   const handleClick = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
@@ -596,7 +677,7 @@ export const MarkdownContent: FC<{
   return (
     /* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions */
     <div
-      className="ai-assist-markdown"
+      className={`ai-assist-markdown${isLive ? ' is-streaming' : ''}`}
       onClick={handleClick}
       onKeyDown={handleKeyDown}
       dangerouslySetInnerHTML={{ __html: html }}

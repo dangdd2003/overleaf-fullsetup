@@ -150,6 +150,35 @@ describe('AiAssistProviders', function () {
       expect(error.message).to.include('Invalid API key')
     })
 
+    it('does not inject thinking config for non-Claude models containing 3.7', async function () {
+      const sseBody = [
+        'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n',
+        'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hi"}}\n\n',
+        'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+      ].join('')
+      const fakeResponse = {
+        ok: true,
+        status: 200,
+        body: (async function* () {
+          yield new TextEncoder().encode(sseBody)
+        })(),
+      }
+      const fetchStub = sinon.stub().resolves(fakeResponse)
+      const client = createProviderClient({
+        type: 'anthropic',
+        apiKey: 'test-key',
+        model: 'qwen3.7 max (free)',
+        fetchFn: fetchStub,
+      })
+      for await (const _ of client.streamChat({
+        system: 'test',
+        messages: [{ role: 'user', content: 'hello' }],
+      })) {}
+      const calledBody = JSON.parse(fetchStub.firstCall.args[1]?.body)
+      expect(calledBody).to.not.have.property('thinking')
+      expect(calledBody.model).to.equal('qwen3.7 max (free)')
+    })
+
     it('surfaces Anthropic error event frame as a thrown ProviderError', async function () {
       const sseBody = [
         'event: error\ndata: {"type":"error","error":{"type":"authentication_error","message":"Invalid x-api-key"}}\n\n',
@@ -585,6 +614,31 @@ describe('AiAssistProviders', function () {
       const calledBody = JSON.parse(fetchStub.firstCall.args[1]?.body)
       expect(calledBody.contents[0].parts[0].text).to.equal('hello')
       expect(calledBody.systemInstruction.parts[0].text).to.equal('test')
+    })
+
+    it('properly URL-encodes model names containing parentheses and spaces', async function () {
+      const sseBody = 'data: {"candidates":[{"content":{"parts":[{"text":"ok"}]}}]}\n\ndata: [DONE]\n\n'
+      const fakeResponse = {
+        ok: true,
+        status: 200,
+        body: (async function* () {
+          yield new TextEncoder().encode(sseBody)
+        })(),
+      }
+      const fetchStub = sinon.stub().resolves(fakeResponse)
+      const client = createProviderClient({
+        type: 'google',
+        apiKey: 'gemini-key',
+        model: 'qwen3.8 max (free)',
+        fetchFn: fetchStub,
+      })
+      for await (const _ of client.streamChat({
+        system: 'test',
+        messages: [{ role: 'user', content: 'hello' }],
+      })) {}
+      expect(fetchStub.calledOnce).to.be.true
+      const calledUrl = fetchStub.firstCall.args[0]
+      expect(calledUrl).to.include('models/qwen3.8%20max%20%28free%29:streamGenerateContent?alt=sse')
     })
   })
 

@@ -99,7 +99,11 @@ export function AgentMessageView({
 
         if (segment.type === 'text') {
           return (
-            <MarkdownContent key={`text-${idx}`} content={segment.text} />
+            <MarkdownContent
+              key={`text-${idx}`}
+              content={segment.text}
+              isLive={isSegmentLive}
+            />
           )
         }
 

@@ -376,4 +376,41 @@ describe('ProviderForm', function () {
 
     expect(onSave.lastCall.args[0]).to.not.have.property('contextWindow')
   })
+
+  it('resolves a model name with parentheses to its ID when matching a loaded model label', async function () {
+    fetchMock.post(MODELS, {
+      models: [
+        { id: 'qwen/qwen3.8-max:free', label: 'qwen3.8 max (free)' },
+        { id: 'gpt-4o', label: 'GPT-4o' },
+      ],
+    })
+    fetchMock.post(TEST, { latencyMs: 50 })
+    renderForm({ initial: { ...STORED, model: 'qwen3.8 max (free)' } })
+
+    fireEvent.click(screen.getByRole('button', { name: /load models/i }))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('ai-provider-model-select')).to.exist
+    })
+    expect(
+      (screen.getByTestId('ai-provider-model-select') as HTMLSelectElement).value
+    ).to.equal('qwen/qwen3.8-max:free')
+
+    fireEvent.click(screen.getByRole('button', { name: /test connection/i }))
+    await waitFor(() => {
+      expect(fetchMock.callHistory.calls(TEST)).to.have.length(1)
+    })
+    expect(sentSettings(TEST).model).to.equal('qwen/qwen3.8-max:free')
+  })
+
+  it('passes through custom model name with parentheses as raw string when not in model list', async function () {
+    fetchMock.post(TEST, { latencyMs: 30 })
+    renderForm({ initial: { ...STORED, model: 'custom-model (free)' } })
+
+    fireEvent.click(screen.getByRole('button', { name: /test connection/i }))
+    await waitFor(() => {
+      expect(fetchMock.callHistory.calls(TEST)).to.have.length(1)
+    })
+    expect(sentSettings(TEST).model).to.equal('custom-model (free)')
+  })
 })

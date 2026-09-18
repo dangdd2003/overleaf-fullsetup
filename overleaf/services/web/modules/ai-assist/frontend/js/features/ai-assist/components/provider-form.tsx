@@ -93,11 +93,27 @@ export default function ProviderForm({
   }, [])
 
   const current = (): ProviderSettings => {
-    const selected = models.find(entry => entry.id === model)
+    const trimmedModel = model.trim()
+    let selected = models.find(entry => entry.id === trimmedModel)
+    let effectiveModel = trimmedModel
+
+    if (!selected && trimmedModel && models.length > 0) {
+      const matchedByLabel = models.find(
+        entry =>
+          entry.label.trim().toLowerCase() === trimmedModel.toLowerCase() ||
+          entry.label.replace(/\s*\([^)]*\)$/, '').trim().toLowerCase() ===
+            trimmedModel.replace(/\s*\([^)]*\)$/, '').trim().toLowerCase()
+      )
+      if (matchedByLabel) {
+        selected = matchedByLabel
+        effectiveModel = matchedByLabel.id
+      }
+    }
+
     const realName =
-      selected?.label && selected.label !== selected.id
+      selected?.label && selected.label !== effectiveModel
         ? selected.label
-        : model === initial?.model
+        : effectiveModel === initial?.model
         ? initial?.modelName
         : undefined
     const parsedContextWindow = numeric(contextWindow)
@@ -106,7 +122,7 @@ export default function ProviderForm({
       type,
       baseUrl: baseUrl.trim() || DEFAULT_BASE_URLS[type],
       apiKey,
-      model,
+      model: effectiveModel,
       ...(realName ? { modelName: realName } : {}),
       ...(parsedContextWindow !== undefined
         ? { contextWindow: parsedContextWindow }
@@ -126,8 +142,15 @@ export default function ProviderForm({
       setModels(loaded)
       if (loaded.length > 0) {
         setManualModel(false)
-        const selected = loaded.find(entry => entry.id === model)
+        const selected = loaded.find(
+          entry =>
+            entry.id === model ||
+            entry.label.trim().toLowerCase() === model.trim().toLowerCase() ||
+            entry.label.replace(/\s*\([^)]*\)$/, '').trim().toLowerCase() ===
+              model.replace(/\s*\([^)]*\)$/, '').trim().toLowerCase()
+        )
         if (selected) {
+          setModel(selected.id)
           applyModelLimits(selected)
         } else {
           setModel(loaded[0].id)
