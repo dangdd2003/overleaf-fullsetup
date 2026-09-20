@@ -2,6 +2,7 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import Settings from '@overleaf/settings'
 import './ModuleSettings.mjs'
+import { sanitizeToolSchema } from './AiAssistToolSchema.mjs'
 
 export class ProviderError extends Error {
   constructor(message, { code = 'providerError', status = undefined, hint = '' } = {}) {
@@ -657,7 +658,7 @@ class AnthropicServerClient {
       wireTools = tools.map((t, index) => ({
         name: t.name,
         description: t.description,
-        input_schema: t.parameters,
+        input_schema: sanitizeToolSchema(t.parameters),
         ...(cacheHints?.cacheTools && index === tools.length - 1
           ? { cache_control: ephemeral }
           : {}),
@@ -893,7 +894,7 @@ export class OpenAiServerClient {
         function: {
           name: t.name,
           description: t.description,
-          parameters: t.parameters,
+          parameters: sanitizeToolSchema(t.parameters),
         },
       }))
     }
@@ -1151,11 +1152,18 @@ export class GoogleServerClient {
     if (tools?.length) {
       payload.tools = [
         {
-          functionDeclarations: tools.map(t => ({
-            name: t.name,
-            description: t.description,
-            parameters: t.parameters ? JSON.parse(JSON.stringify(t.parameters)) : {},
-          })),
+          functionDeclarations: tools.map(t => {
+            // Gemini rejects an object schema with no properties, so a
+            // no-argument tool must omit `parameters` rather than send `{}`.
+            const parameters = sanitizeToolSchema(t.parameters, {
+              emptyObject: 'omit',
+            })
+            return {
+              name: t.name,
+              description: t.description,
+              ...(parameters ? { parameters } : {}),
+            }
+          }),
         },
       ]
     }
@@ -1323,7 +1331,7 @@ export class OllamaServerClient {
       function: {
         name: tool.name,
         description: tool.description,
-        parameters: tool.parameters,
+        parameters: sanitizeToolSchema(tool.parameters),
       },
     }))
 

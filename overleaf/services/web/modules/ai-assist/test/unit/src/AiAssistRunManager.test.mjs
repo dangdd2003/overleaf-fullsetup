@@ -1194,6 +1194,108 @@ describe('AiAssistRunManager', function () {
     })
   })
 
+  describe('messages sent while the run is going', function () {
+    it('injects a queued message at the next request and announces it', async function () {
+      let turn = 0
+      const sentMessages = []
+      mockClient.streamChat.callsFake(async function* (opts) {
+        turn++
+        sentMessages.push(opts.messages.map(m => m.content))
+        if (turn === 1) {
+          yield { type: 'tool_call', id: 'r1', name: 'read_file', args: { path: 'main.tex' } }
+          // Sent while this turn was still streaming.
+          await manager.queueMessage('run-queue', {
+            id: 'q1',
+            text: 'also check the bibliography',
+            contextText: '<project-context turn="2"/>',
+          })
+        } else {
+          yield { type: 'text', text: 'Checked both.' }
+        }
+      })
+
+      await manager.startRun({
+        runId: 'run-queue',
+        projectId: 'p1',
+        userId: 'u1',
+        transcript: [{ role: 'user', content: 'check the preamble' }],
+        providerSettings: { type: 'openai', apiKey: 'k', model: 'gpt-4o' },
+      })
+
+      // The second request carries it, assembled envelope-first like a stored turn.
+      expect(sentMessages[1]).to.include(
+        '<project-context turn="2"/>\n\nalso check the bibliography'
+      )
+      expect(
+        mockStore.appendEvent.calledWith(
+          'run-queue',
+          sinon.match({ type: 'userMessage', id: 'q1', text: 'also check the bibliography' })
+        )
+      ).to.be.true
+    })
+
+    it('keeps the run going when a message lands as the model finishes', async function () {
+      let turn = 0
+      mockClient.streamChat.callsFake(async function* () {
+        turn++
+        if (turn === 1) {
+          yield { type: 'text', text: 'Done.' }
+          await manager.queueMessage('run-late', { id: 'q1', text: 'one more thing' })
+        } else {
+          yield { type: 'text', text: 'And that too.' }
+        }
+      })
+
+      await manager.startRun({
+        runId: 'run-late',
+        projectId: 'p1',
+        userId: 'u1',
+        transcript: [{ role: 'user', content: 'go' }],
+        providerSettings: { type: 'openai', apiKey: 'k', model: 'gpt-4o' },
+      })
+
+      expect(mockClient.streamChat.callCount).to.equal(2)
+      // One run, so exactly one terminal event.
+      expect(
+        mockStore.appendEvent.getCalls().filter(c => c.args[1]?.type === 'turnFinished')
+      ).to.have.lengthOf(1)
+    })
+
+    it('clears the decline block so a new instruction can edit again', async function () {
+      let turn = 0
+      mockClient.streamChat.callsFake(async function* () {
+        turn++
+        if (turn === 1) {
+          yield { type: 'tool_call', id: 'e1', name: 'edit_file', args: { path: 'main.tex', oldText: 'a', newText: 'b' } }
+        } else if (turn === 2) {
+          await manager.queueMessage('run-unblock', { id: 'q1', text: 'try this instead' })
+          yield { type: 'text', text: 'Understood.' }
+        } else if (turn === 3) {
+          yield { type: 'tool_call', id: 'e2', name: 'edit_file', args: { path: 'main.tex', oldText: 'a', newText: 'c' } }
+        } else {
+          yield { type: 'text', text: 'Applied.' }
+        }
+      })
+
+      const runPromise = manager.startRun({
+        runId: 'run-unblock',
+        projectId: 'p1',
+        userId: 'u1',
+        transcript: [{ role: 'user', content: 'edit it' }],
+        providerSettings: { type: 'openai', apiKey: 'k', model: 'gpt-4o' },
+        mode: 'acceptEdits',
+      })
+      await new Promise(r => setTimeout(r, 10))
+      await runPromise
+
+      // The second edit was not refused as "declined earlier in this turn".
+      const secondEdit = mockStore.appendEvent
+        .getCalls()
+        .find(c => c.args[1]?.type === 'toolCallFinished' && c.args[1]?.id === 'e2')
+      expect(secondEdit?.args[1]?.result?.status).to.not.equal('rejected')
+    })
+  })
+
   describe('failure accounting', function () {
     const start = (runId, extra = {}) =>
       manager.startRun({

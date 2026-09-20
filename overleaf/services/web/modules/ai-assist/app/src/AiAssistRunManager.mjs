@@ -5,10 +5,12 @@ import defaultTools from './AiAssistTools.mjs'
 import { createProviderClient } from './AiAssistProviders.mjs'
 import { renderToolResult } from './AiAssistToolRender.mjs'
 import { SYSTEM_PROMPT, systemPromptFor } from './AiAssistSystemPrompt.mjs'
+import { coerceToolArgs } from './AiAssistToolSchema.mjs'
 import {
   decide,
   toolSpecsFor,
   normalizeMode,
+  modeLabel,
   FILE_EDIT_TOOLS,
   READ_ONLY_TOOLS,
   SETTINGS_TOOLS,
@@ -101,6 +103,39 @@ export { FILE_EDIT_TOOLS, READ_ONLY_TOOLS }
 
 // The same failing call, arguments and all: the second failure carries a
 // warning in its result, the third ends the run.
+/**
+ * Sent once, as a user turn, when the model runs tools and then closes the run
+ * with an empty reply. Without it the panel shows a row of tool cards and
+ * nothing else, which reads as the assistant having ignored the request.
+ * Mirrors FINAL_REPLY_NUDGE in run-agent.ts.
+ */
+export const FINAL_REPLY_NUDGE =
+  'You ended the turn without replying, so nothing was shown to the user except the tool calls. Write the reply now, in one to three sentences: what you did or found, in which files, and anything they need to know. Do not call any more tools.'
+
+const MAX_QUEUED_MESSAGE_BYTES = 200_000
+
+/**
+ * Normalises a message the user sent while the run was already going.
+ *
+ * `content` is assembled the same way toAgentMessages assembles a stored user
+ * turn, so an injected message is indistinguishable from one the run started
+ * with — same <project-context> envelope, same ordering.
+ */
+export function toQueuedMessage(message, index = 0) {
+  const text = typeof message?.text === 'string' ? message.text : ''
+  const contextText =
+    typeof message?.contextText === 'string' ? message.contextText : ''
+  const content = contextText ? `${contextText}\n\n${text}` : text
+  return {
+    id:
+      typeof message?.id === 'string' && message.id
+        ? message.id
+        : `queued_${Date.now()}_${index}`,
+    text,
+    content: content.slice(0, MAX_QUEUED_MESSAGE_BYTES),
+  }
+}
+
 export const IDENTICAL_FAILURE_LIMIT = 3
 // Model turns in a row in which every tool call failed. Counted per turn, not
 // per call: one reply with three parallel guesses that all miss is one wrong
@@ -348,9 +383,16 @@ export function applyContextBudget({ system, messages, limits, tools = [] }) {
  * the document. Its arguments are reduced to the path, so a long cut-off text
  * is not re-sent on every later request.
  *
+ * Complete calls also have their arguments coerced to the types the tool
+ * declares, so a model that emits `"True"` for a boolean is not failed over a
+ * call that was otherwise correct.
+ *
  * Returns a Map from each incomplete call to 'cutOff' or 'invalid'.
  */
-export function classifyIncompleteCalls(calls, truncated) {
+export function classifyIncompleteCalls(calls, truncated, toolSpecs = []) {
+  const specsByName = new Map(
+    (toolSpecs ?? []).filter(spec => spec?.name).map(spec => [spec.name, spec])
+  )
   const incomplete = new Map()
   calls.forEach((call, index) => {
     const args =
@@ -367,7 +409,7 @@ export function classifyIncompleteCalls(calls, truncated) {
       incomplete.set(call, cutOff || repaired ? 'cutOff' : 'invalid')
       call.args = typeof args.path === 'string' ? { path: args.path } : {}
     } else {
-      call.args = args
+      call.args = coerceToolArgs(args, specsByName.get(call.name)?.parameters)
     }
   })
   return incomplete
@@ -409,6 +451,10 @@ export class AiAssistRunManager {
     const approvalPromiseResolvers = { resolve: null }
     const compileResolvers = new Map()
     const initialMode = normalizeMode(mode)
+    // Messages the user sent while this run was already going. Drained at the
+    // top of the loop, which is the only point at which the model is between
+    // requests and a new user turn can be added without splitting a turn.
+    const queuedMessages = []
 
     this.activeRuns.set(runId, {
       controller,
@@ -417,6 +463,7 @@ export class AiAssistRunManager {
       mode: initialMode,
       approvalResolver: approvalPromiseResolvers,
       compileResolvers,
+      queuedMessages,
     })
 
     await this.store.createRun({ runId, projectId, userId, mode: initialMode })
@@ -449,12 +496,17 @@ export class AiAssistRunManager {
     // read again until the write resolves. Only one kind is buffered at a
     // time, so a switch between thinking and text flushes first and order
     // is preserved.
+    // Streamed text and thinking are buffered and written in batches: every
+    // appendEvent is INCR + RPUSH + PUBLISH, and the provider stream is not
+    // read again until the write resolves. Only one kind is buffered at a
+    // time, so a switch between thinking and text flushes first and order
+    // is preserved.
     let pendingType = null
     let pendingText = ''
     let flushTimer = null
     let flushChain = Promise.resolve()
-    const FLUSH_MS = 50
-    const FLUSH_CHARS = 100
+    const FLUSH_MS = 16
+    const FLUSH_CHARS = 8
 
     const write = event => {
       flushChain = flushChain.then(() => this.store.appendEvent(runId, event))
@@ -589,6 +641,11 @@ export class AiAssistRunManager {
       const recentCallSignatures = []
       let shouldStop = false
       let userDeclinedEdit = false
+      // The user reads the reply, not the tool cards. A model that spends the
+      // turn on tools and then returns an empty final turn has told them
+      // nothing, so ask once for the reply before ending the run.
+      let toolsRanThisRun = false
+      let finalReplyNudged = false
 
       const finishWithError = async (code, message) => {
         await emitEvent({ type: 'error', code, message })
@@ -599,6 +656,27 @@ export class AiAssistRunManager {
 
       while (true) {
         if (controller.signal.aborted || shouldStop) break
+
+        // Anything the user typed while the model was busy goes in here, before
+        // the next request is built. A new instruction also resets the run's
+        // guard rails: the decline block, the repeat-failure counters and the
+        // reply nudge were all reasoning about the previous instruction.
+        if (queuedMessages.length > 0) {
+          const injected = queuedMessages.splice(0, queuedMessages.length)
+          for (const queued of injected) {
+            messages.push({ role: 'user', content: queued.content })
+            await emitEvent({
+              type: 'userMessage',
+              id: queued.id,
+              text: queued.text,
+            })
+          }
+          userDeclinedEdit = false
+          finalReplyNudged = false
+          failedTurns = 0
+          failedCallSignatures.clear()
+          recentCallSignatures.length = 0
+        }
 
         const calls = []
         let text = ''
@@ -669,6 +747,11 @@ export class AiAssistRunManager {
         }
 
         if (calls.length === 0) {
+          if (!text.trim() && toolsRanThisRun && !truncated && !finalReplyNudged) {
+            finalReplyNudged = true
+            messages.push({ role: 'user', content: FINAL_REPLY_NUDGE })
+            continue
+          }
           if (truncated) {
             await emitEvent({
               type: 'error',
@@ -676,14 +759,21 @@ export class AiAssistRunManager {
               message: `The reply was cut off at the ${maxTokens}-token output limit. Raise "Max output tokens" in the AI provider settings, or ask for a shorter answer.`,
             })
           }
+          // The user may have sent something while this reply was streaming.
+          // Answer it in this run rather than ending and making them resend.
+          if (queuedMessages.length > 0) {
+            if (text) messages.push({ role: 'assistant', content: text })
+            continue
+          }
           await emitEvent({ type: 'turnFinished', reason: 'stop' })
           await this.store.updateStatus(runId, 'done')
           shouldStop = true
           break
         }
 
-        const incomplete = classifyIncompleteCalls(calls, truncated)
+        const incomplete = classifyIncompleteCalls(calls, truncated, modeToolSpecs)
 
+        toolsRanThisRun = true
         messages.push({ role: 'assistant', content: text, toolCalls: calls })
 
         // The reads a model asks for together are independent, so run the ones
@@ -762,7 +852,7 @@ export class AiAssistRunManager {
           } else if (verdict === 'deny') {
             result = {
               status: 'denied',
-              error: `This tool is not available in ${liveMode} mode.${liveMode === 'plan' ? ' Use read-only tools and call present_plan.' : ''}`,
+              error: `${call.name} is not available in ${modeLabel(liveMode)} mode.${liveMode === 'plan' ? ' Research with the read-only tools, then call present_plan with what you would change.' : ''}`,
             }
             isError = true
           } else if (call.name === 'edit_file' || call.name === 'create_file') {
@@ -870,7 +960,7 @@ export class AiAssistRunManager {
               result = {
                 status: 'approved',
                 mode: nextMode,
-                message: `The user approved the plan. You are now in ${nextMode === 'acceptEdits' ? 'Accept edits' : 'Manual'} mode: carry out the plan now.`,
+                message: `The user approved the plan. You are now in ${modeLabel(nextMode)} mode: carry the plan out now, in this turn, then say what you changed.`,
               }
             } else {
               const userNote = decision?.note ? ` with note: "${decision.note}"` : ''
@@ -1078,6 +1168,26 @@ export class AiAssistRunManager {
     }
   }
 
+  /**
+   * Adds a message the user sent while the run was already going.
+   *
+   * Local first, broadcast only if this process does not own the run, which is
+   * the same shape as stop, approve and setMode. Returns true when the message
+   * was handed to a running loop here; the caller has already checked the
+   * stored status, so a false only means another instance owns it.
+   */
+  async queueMessage(runId, message) {
+    const active = this.activeRuns.get(runId)
+    if (active?.queuedMessages) {
+      active.queuedMessages.push(toQueuedMessage(message, active.queuedMessages.length))
+      return true
+    }
+    if (this.control) {
+      await this.control.publish(runId, { action: 'message', message }).catch(() => {})
+    }
+    return false
+  }
+
   async setMode(runId, mode) {
     const normalized = normalizeMode(mode)
     const active = this.activeRuns.get(runId)
@@ -1111,9 +1221,18 @@ export class AiAssistRunManager {
   }
 
   /** Handles a command received from the control channel. NEVER re-broadcasts. */
-  onCommand({ runId, action, decision, id, outcome, mode }) {
+  onCommand({ runId, action, decision, id, outcome, mode, message }) {
     if (action === 'stop') {
       void this.stopLocalRun(runId).catch(() => {})
+      return
+    }
+    if (action === 'message') {
+      const active = this.activeRuns.get(runId)
+      if (active?.queuedMessages) {
+        active.queuedMessages.push(
+          toQueuedMessage(message, active.queuedMessages.length)
+        )
+      }
       return
     }
     if (action === 'compile') {

@@ -346,32 +346,27 @@ describe('MarkdownContent', function () {
     expect(fileMentions[1].textContent).to.equal('src/table.tex:15')
   })
 
-  it('renders a streaming cursor when isLive is true', function () {
+  it('renders streaming word spans without cursor when isLive is true', function () {
     const { container } = render(
       <MarkdownContent content="Streaming response in progress" isLive={true} />
     )
 
     const cursor = container.querySelector('.ai-assist-streaming-cursor')
-    expect(cursor).to.exist
+    expect(cursor).to.not.exist
+    const streamWords = container.querySelectorAll('.ai-assist-stream-word')
+    expect(streamWords.length).to.be.greaterThan(0)
     expect(container.querySelector('.ai-assist-markdown')?.classList.contains('is-streaming')).to.be.true
   })
 
-  it('does not render a streaming cursor when isLive is false', function () {
+  it('does not render streaming words or cursor when isLive is false', function () {
     const { container } = render(
       <MarkdownContent content="Completed response" isLive={false} />
     )
 
     const cursor = container.querySelector('.ai-assist-streaming-cursor')
     expect(cursor).to.not.exist
+    const streamWords = container.querySelectorAll('.ai-assist-stream-word')
+    expect(streamWords.length).to.equal(0)
     expect(container.querySelector('.ai-assist-markdown')?.classList.contains('is-streaming')).to.be.false
-  })
-
-  it('renders streaming cursor even when content is initially empty while live', function () {
-    const { container } = render(
-      <MarkdownContent content="" isLive={true} />
-    )
-
-    const cursor = container.querySelector('.ai-assist-streaming-cursor')
-    expect(cursor).to.exist
   })
 })

@@ -30,6 +30,12 @@ export type TranscriptEntry =
       envelopeState?: EnvelopeState
       /** What the user pinned to this turn; the panel renders chips from it. */
       attachments?: Attachment[]
+      /**
+       * Sent while a run was already going and not yet read by it. Cleared by
+       * the run's `userMessage` event; still set when the run ends means the
+       * message never landed and has to be resent as a new run.
+       */
+      pending?: boolean
     }
   | {
       id: string

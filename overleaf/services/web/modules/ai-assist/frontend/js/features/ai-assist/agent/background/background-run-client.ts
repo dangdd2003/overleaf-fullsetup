@@ -230,3 +230,33 @@ export async function setBackgroundRunMode(
     throw new Error(`Failed to change mode: ${res.status}`)
   }
 }
+
+/**
+ * Sends a message into a run that is already going.
+ *
+ * Resolves true when the run took it, false when the run had already finished
+ * (409) — the caller then starts a fresh run instead, so nothing the user typed
+ * is lost to the race between them pressing send and the run ending.
+ */
+export async function sendBackgroundRunMessage(
+  projectId: string,
+  runId: string,
+  message: { id: string; text: string; contextText?: string }
+): Promise<boolean> {
+  const res = await fetch(
+    `/ai-assist/projects/${projectId}/runs/${runId}/message`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getCsrfHeaders(),
+      },
+      body: JSON.stringify(message),
+    }
+  )
+  if (res.status === 409 || res.status === 404) return false
+  if (!res.ok) {
+    throw new Error(`Failed to send message: ${res.status}`)
+  }
+  return true
+}

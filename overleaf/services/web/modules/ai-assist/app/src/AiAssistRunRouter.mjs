@@ -59,6 +59,15 @@ export default {
       AiAssistRunController.approve
     )
 
+    // A message typed while the run is still going: injected into the live run
+    // rather than starting a second one.
+    webRouter.post(
+      '/ai-assist/projects/:Project_id/runs/:runId/message',
+      AuthenticationController.requireLogin(),
+      AuthorizationMiddleware.ensureUserCanWriteProjectContent,
+      AiAssistRunController.queueMessage
+    )
+
     webRouter.post(
       '/ai-assist/projects/:Project_id/runs/:runId/mode',
       AuthenticationController.requireLogin(),

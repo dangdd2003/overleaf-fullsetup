@@ -23,6 +23,12 @@ export type AgentEvent =
       plan?: string
     }
   | { type: 'modeChanged'; mode: AgentMode; source: 'user' | 'planApproval' }
+  /**
+   * A message the user sent while the run was going, at the moment the run
+   * actually read it. The panel has already shown it optimistically; this
+   * confirms delivery, and is what a reconnecting tab replays from.
+   */
+  | { type: 'userMessage'; id: string; text: string }
   /** A server run asks the editor to compile, as its Recompile button would. */
   | { type: 'awaitingCompile'; id: string; clean: boolean }
   | { type: 'turnFinished'; reason: 'stop' | 'aborted' | 'interrupted' }

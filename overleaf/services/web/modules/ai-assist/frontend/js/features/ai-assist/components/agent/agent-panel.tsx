@@ -100,7 +100,7 @@ export async function buildUserEntry({
     const index = await handle.index().catch(() => null)
     const snapshot: ContextSnapshot = {
       rootDocPath: handle.rootDocPath(),
-      files: await handle.listFiles(),
+      files: await handle.listFiles().catch(() => []),
       openFile: handle.openFile(),
       selection: activeSel,
       outline: index?.outline ?? null,
@@ -184,6 +184,7 @@ function AgentPanelInner({
     run,
     stop,
     onDecision,
+    queueMessage,
     needsConsent,
     allowConsent,
   } = useAgentRun({
@@ -218,6 +219,14 @@ function AgentPanelInner({
   })
 
   const prevRunningRef = useRef(state.running)
+  // Read by sendPrompt, which is memoised and would otherwise see the
+  // transcript as it was when the callback was last built.
+  const liveTranscriptRef = useRef(state.transcript)
+  liveTranscriptRef.current = state.transcript
+  // Ids this session handed to a live run. A `pending` entry restored from
+  // storage is not in here, so reopening the project never resends an old
+  // message — only one this tab queued and watched fail can be revived.
+  const queuedIdsRef = useRef<Set<string>>(new Set())
   const runStartedAtRef = useRef<number | null>(runStartedAt)
   runStartedAtRef.current = runStartedAt
   const activeWordRef = useRef<string | null>(null)
@@ -348,7 +357,7 @@ function AgentPanelInner({
     }) => {
       // Instantly show user entry in transcript so chat feels immediate and never hangs/freezes
       const initialAttachments: Attachment[] = [
-        ...attachmentRefs.map(r => ({ path: r.path })),
+        ...attachmentRefs.map(r => ({ path: r.path, text: null })),
         ...(selectionRef
           ? [
               {
@@ -360,12 +369,23 @@ function AgentPanelInner({
             ]
           : []),
       ]
-      const tempId = `u${state.transcript.length}`
+      // A send while a run is going does not start a second run: it is handed
+      // to the one already in flight, which reads it the next time it is
+      // between provider requests.
+      const queueing = state.running
+      // The live transcript, not the one this callback closed over: two sends
+      // in quick succession must not compute the same id or delta-encode the
+      // envelope against the wrong previous turn.
+      const baseTranscript = liveTranscriptRef.current
+      const entryId = queueing
+        ? `q${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+        : `u${baseTranscript.length}`
       const optimisticEntry: TranscriptEntry = {
-        id: tempId,
+        id: entryId,
         role: 'user',
         text,
         attachments: initialAttachments,
+        ...(queueing ? { pending: true } : {}),
       }
 
       setState(current => ({
@@ -377,22 +397,36 @@ function AgentPanelInner({
       }))
 
       try {
-        const attachmentsResolved = await resolveAttachments(
-          attachmentRefs,
-          handle
-        )
-        const userEntry = await buildUserEntry({
+        let attachmentsResolved: Attachment[] = []
+        try {
+          attachmentsResolved = await resolveAttachments(
+            attachmentRefs,
+            handle
+          )
+        } catch {
+          // Never fail prompt send if attachment resolution fails
+          attachmentsResolved = attachmentRefs.map(r => ({ path: r.path, text: null }))
+        }
+        const built = await buildUserEntry({
           handle,
-          transcript: state.transcript,
+          transcript: baseTranscript,
           text,
           attachments: attachmentsResolved,
           attachedSelection: selectionRef,
           extraContext,
         })
-        const next: TranscriptEntry[] = [
-          ...state.transcript,
-          userEntry,
-        ]
+        const userEntry: TranscriptEntry = { ...built, id: entryId }
+
+        if (queueing && (await queueMessage(userEntry))) {
+          // The run took it. Its `userMessage` event clears `pending` once it
+          // has actually been read.
+          queuedIdsRef.current.add(entryId)
+          return
+        }
+
+        // Either nothing was running, or the run ended while we were building
+        // the envelope. Send it as a new run, replacing the optimistic entry.
+        const next: TranscriptEntry[] = [...baseTranscript, userEntry]
         void run(next)
       } catch (err: any) {
         setState(current => ({
@@ -405,7 +439,7 @@ function AgentPanelInner({
         }))
       }
     },
-    [handle, state.transcript, run, setState]
+    [handle, state.running, run, queueMessage, setState]
   )
 
   const onSend = useCallback(
@@ -451,6 +485,33 @@ function AgentPanelInner({
     },
     [attachments, attachedSelection, handle, sendPrompt, setState, t]
   )
+
+  /**
+   * Rescues a queued message the run never read.
+   *
+   * The endpoint refuses a run that has already finished, but a message can
+   * still arrive in the gap between the loop's last check of its queue and the
+   * run being marked done. Those entries are still `pending` when the run ends,
+   * and are resent here as a run of their own rather than silently lost.
+   */
+  useEffect(() => {
+    if (state.running || state.stoppedByUser) return
+    const transcript = liveTranscriptRef.current
+    const lost = (entry: TranscriptEntry) =>
+      entry.role === 'user' && entry.pending && queuedIdsRef.current.has(entry.id)
+    if (!transcript.some(lost)) return
+    const revived = transcript.map(entry => {
+      if (!lost(entry)) return entry
+      queuedIdsRef.current.delete(entry.id)
+      const { pending: _pending, ...rest } = entry as Extract<
+        TranscriptEntry,
+        { role: 'user' }
+      >
+      return rest
+    })
+    setState(current => ({ ...current, transcript: revived }))
+    void run(revived)
+  }, [state.running, state.stoppedByUser, run, setState])
 
   const onAllowConsent = useCallback(async () => {
     allowConsent()
@@ -530,7 +591,10 @@ function AgentPanelInner({
     const id = newChatId()
     setActiveChatId(projectId, id)
     setChatId(id)
-    setState(emptyAgentState([], 'manual'))
+    // The mode is the user's standing choice about how much they want to be
+    // asked, not a property of the conversation. Resetting it here is how
+    // Accept edits quietly became Manual again on every new chat.
+    setState(current => emptyAgentState([], current.mode))
     setNewChatSeed(s => s + 1)
     setCompletedRun(null)
     setRunStartedAt(null)
@@ -727,7 +791,9 @@ function AgentPanelInner({
                         ? 'Authentication Error'
                         : state.error.code === 'network'
                           ? 'Connection Error'
-                          : 'AI Provider Error'}
+                          : state.error.code === 'runFailed'
+                            ? 'Failed to Start Run'
+                            : 'AI Provider Error'}
                   </span>
                   {state.error.upstreamCode && (
                     <span className="ai-assist-error-badge">

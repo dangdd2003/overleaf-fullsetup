@@ -98,19 +98,22 @@ export function AgentComposer({
   > = {
     manual: {
       label: t('ai_assist_mode_manual', 'Manual'),
-      desc: t('ai_assist_mode_manual_desc', 'Ask before making changes'),
+      desc: t('ai_assist_mode_manual_desc', 'Approve each change before it applies'),
       num: '1',
       icon: <HandPalm size={15} weight="bold" />,
     },
     acceptEdits: {
       label: t('ai_assist_mode_accept_edits', 'Accept edits'),
-      desc: t('ai_assist_mode_accept_edits_desc', 'Accept all file edits'),
+      desc: t(
+        'ai_assist_mode_accept_edits_desc',
+        'Apply file edits without asking'
+      ),
       num: '2',
       icon: <PencilSimple size={15} weight="bold" />,
     },
     plan: {
       label: t('ai_assist_mode_plan', 'Plan'),
-      desc: t('ai_assist_mode_plan_desc', 'Plan before making changes'),
+      desc: t('ai_assist_mode_plan_desc', 'Research first, then propose a plan'),
       num: '3',
       icon: <ListChecks size={15} weight="bold" />,
     },
@@ -206,6 +209,9 @@ export function AgentComposer({
     textareaRef.current?.focus()
   }
 
+  const hasContent =
+    Boolean(value.trim()) || attachments.length > 0 || attachedSelection !== null
+
   const send = () => {
     const trimmed = value.trim()
     if (!trimmed && attachments.length === 0 && !attachedSelection) return
@@ -245,6 +251,15 @@ export function AgentComposer({
         setQuery(null)
         return
       }
+      if (hasContent) {
+        // Esc is the way out of whatever you just typed. Stopping the run as
+        // well would throw away the model's work to clear a textarea.
+        event.preventDefault()
+        setValue('')
+        setHistoryIndex(-1)
+        draftRef.current = ''
+        return
+      }
       if (running) {
         event.preventDefault()
         onStop()
@@ -253,9 +268,10 @@ export function AgentComposer({
     }
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
-      if (running) return
       // Enter picks from the menu rather than sending a half-typed mention.
       if (query !== null) return
+      // While a run is going this queues the message rather than starting a
+      // second run; the panel decides which, so the composer just sends.
       send()
       return
     }
@@ -305,8 +321,9 @@ export function AgentComposer({
           .filter(path => path.toLowerCase().includes(query.toLowerCase()))
           .slice(0, 8)
 
-  const hasContent =
-    Boolean(value.trim()) || attachments.length > 0 || attachedSelection !== null
+  const sendLabel = running
+    ? t('ai_assist_send_to_running_agent', 'Send to the running agent')
+    : t('send', 'Send')
 
   return (
     <div className="ai-assist-composer">
@@ -488,7 +505,7 @@ export function AgentComposer({
           </div>
 
           <div className="ai-assist-composer-right-actions">
-            {running ? (
+            {running && !hasContent ? (
               <button
                 type="button"
                 className="ai-assist-send-btn ai-assist-stop-btn"
@@ -512,8 +529,8 @@ export function AgentComposer({
                 className={`ai-assist-send-btn ${hasContent ? 'is-active' : ''}`}
                 disabled={!hasContent}
                 onClick={send}
-                aria-label={t('send', 'Send')}
-                title={t('send', 'Send')}
+                aria-label={sendLabel}
+                title={sendLabel}
               >
                 <PaperPlaneRight size={16} weight="fill" />
               </button>

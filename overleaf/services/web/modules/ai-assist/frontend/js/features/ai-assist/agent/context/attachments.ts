@@ -61,7 +61,7 @@ export async function resolveAttachments(
   refs: AttachmentRef[],
   handle: ProjectHandle
 ): Promise<Attachment[]> {
-  const files = await handle.listFiles()
+  const files = await handle.listFiles().catch(() => [])
 
   return Promise.all(
     refs.map(async ref => {

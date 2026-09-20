@@ -1,6 +1,17 @@
 export const MODES = ['manual', 'acceptEdits', 'plan']
 export const DEFAULT_MODE = 'manual'
 
+/** How each mode is named in the composer, so messages to the model match it. */
+export const MODE_LABELS = {
+  manual: 'Manual',
+  acceptEdits: 'Accept edits',
+  plan: 'Plan',
+}
+
+export function modeLabel(value) {
+  return MODE_LABELS[normalizeMode(value)]
+}
+
 export function normalizeMode(value) {
   return typeof value === 'string' && MODES.includes(value) ? value : DEFAULT_MODE
 }
@@ -19,10 +30,26 @@ export const READ_ONLY_TOOLS = new Set([
   'list_available_settings',
 ])
 
-export const SETTINGS_TOOLS = new Set([
+/**
+ * Settings that belong to this project and nothing else: the compiler engine,
+ * the root document, draft mode. They are project state exactly like a file is,
+ * so Accept edits mode applies them without asking.
+ */
+export const PROJECT_SETTINGS_TOOLS = new Set(['configure_compiler_settings'])
+
+/**
+ * Settings written to `user.ace` — the account's editor and appearance
+ * preferences. They outlive the project and follow the user into every other
+ * one, so they are confirmed in every mode, Accept edits included.
+ */
+export const ACCOUNT_SETTINGS_TOOLS = new Set([
   'configure_appearance_settings',
-  'configure_compiler_settings',
   'configure_editor_settings',
+])
+
+export const SETTINGS_TOOLS = new Set([
+  ...PROJECT_SETTINGS_TOOLS,
+  ...ACCOUNT_SETTINGS_TOOLS,
 ])
 
 export const PLAN_TOOL = 'present_plan'
@@ -60,9 +87,15 @@ export function decide(mode, toolName) {
     return 'ask' // manual
   }
 
-  if (SETTINGS_TOOLS.has(toolName)) {
+  if (PROJECT_SETTINGS_TOOLS.has(toolName)) {
     if (normMode === 'plan') return 'deny'
-    return 'ask' // manual & acceptEdits
+    if (normMode === 'acceptEdits') return 'allow'
+    return 'ask' // manual
+  }
+
+  if (ACCOUNT_SETTINGS_TOOLS.has(toolName)) {
+    if (normMode === 'plan') return 'deny'
+    return 'ask' // manual & acceptEdits: these leave the project
   }
 
   // Unknown tools: in plan mode deny; in other modes allow so standard unknown-tool handling triggers

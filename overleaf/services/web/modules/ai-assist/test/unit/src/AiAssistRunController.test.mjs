@@ -13,6 +13,7 @@ describe('AiAssistRunController', function () {
       startRun: sinon.stub().resolves(),
       stopRun: sinon.stub().resolves(),
       approveEdit: sinon.stub().resolves(),
+      queueMessage: sinon.stub().resolves(true),
     }
 
     mockStore = {
@@ -59,6 +60,76 @@ describe('AiAssistRunController', function () {
     const responseData = res.json.firstCall.args[0]
     expect(responseData.runId).to.be.a('string')
     expect(mockManager.startRun.calledOnce).to.be.true
+  })
+
+  describe('queueMessage', function () {
+    const reply = () => {
+      const res = {
+        statusCode: 200,
+        body: null,
+        status(code) {
+          this.statusCode = code
+          return this
+        },
+        json(payload) {
+          this.body = payload
+          return this
+        },
+      }
+      return res
+    }
+
+    it('hands a message to a run that is still going', async function () {
+      const res = reply()
+      await controller.queueMessage(
+        {
+          params: { Project_id: 'p1', runId: 'run-1' },
+          body: { id: 'q1', text: 'also check refs', contextText: '<ctx/>' },
+        },
+        res
+      )
+
+      expect(res.statusCode).to.equal(200)
+      expect(mockManager.queueMessage.calledOnce).to.be.true
+      expect(mockManager.queueMessage.firstCall.args[0]).to.equal('run-1')
+      expect(mockManager.queueMessage.firstCall.args[1]).to.deep.equal({
+        id: 'q1',
+        text: 'also check refs',
+        contextText: '<ctx/>',
+      })
+    })
+
+    it('answers 409 for a finished run so the client can start a fresh one', async function () {
+      mockStore.getRun.resolves({ runId: 'run-1', projectId: 'p1', status: 'done' })
+      const res = reply()
+      await controller.queueMessage(
+        {
+          params: { Project_id: 'p1', runId: 'run-1' },
+          body: { id: 'q1', text: 'too late' },
+        },
+        res
+      )
+
+      expect(res.statusCode).to.equal(409)
+      expect(mockManager.queueMessage.called).to.be.false
+    })
+
+    it('rejects an empty message and a cross-project run', async function () {
+      const empty = reply()
+      await controller.queueMessage(
+        { params: { Project_id: 'p1', runId: 'run-1' }, body: { text: '   ' } },
+        empty
+      )
+      expect(empty.statusCode).to.equal(400)
+
+      const crossProject = reply()
+      await controller.queueMessage(
+        { params: { Project_id: 'other', runId: 'run-1' }, body: { text: 'hi' } },
+        crossProject
+      )
+      expect(crossProject.statusCode).to.equal(403)
+      expect(mockManager.queueMessage.called).to.be.false
+    })
   })
 
   it('handles stop run requests', async function () {

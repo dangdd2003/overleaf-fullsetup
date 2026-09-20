@@ -61,6 +61,104 @@ async function collect(generator: AsyncGenerator<AgentEvent>) {
 }
 
 describe('runAgent', function () {
+  describe('the closing reply', function () {
+    it('asks once for a reply when the model ends silently after tool calls', async function () {
+      const { client, requests } = fakeClient([
+        [
+          { type: 'tool_call', id: 'c1', name: 'echo', args: {} },
+          { type: 'done', stopReason: 'tool_calls' },
+        ],
+        [{ type: 'done', stopReason: 'stop' }],
+        [
+          { type: 'text', text: 'Read it; nothing needed changing.' },
+          { type: 'done', stopReason: 'stop' },
+        ],
+      ])
+      const { handle } = createFakeHandle()
+
+      const events = await collect(
+        runAgent({
+          client,
+          handle,
+          tools: { echo: echoTool },
+          transcript: [{ id: '1', role: 'user', text: 'have a look' }],
+        })
+      )
+
+      expect(requests).to.have.length(3)
+      const nudge: any = requests[2].messages.at(-1)
+      expect(nudge.role).to.equal('user')
+      expect(nudge.content).to.match(/without replying/i)
+      const texts = events.filter(e => e.type === 'text') as any[]
+      expect(texts.map(e => e.text).join('')).to.contain('nothing needed changing')
+    })
+
+    it('asks only once, so a second silent turn ends the run', async function () {
+      const { client, requests } = fakeClient([
+        [
+          { type: 'tool_call', id: 'c1', name: 'echo', args: {} },
+          { type: 'done', stopReason: 'tool_calls' },
+        ],
+        [{ type: 'done', stopReason: 'stop' }],
+        [{ type: 'done', stopReason: 'stop' }],
+      ])
+      const { handle } = createFakeHandle()
+
+      const events = await collect(
+        runAgent({
+          client,
+          handle,
+          tools: { echo: echoTool },
+          transcript: [{ id: '1', role: 'user', text: 'have a look' }],
+        })
+      )
+
+      expect(requests).to.have.length(3)
+      expect(events.at(-1)).to.deep.equal({ type: 'turnFinished', reason: 'stop' })
+    })
+
+    it('does not ask when the model already replied', async function () {
+      const { client, requests } = fakeClient([
+        [
+          { type: 'tool_call', id: 'c1', name: 'echo', args: {} },
+          { type: 'done', stopReason: 'tool_calls' },
+        ],
+        [
+          { type: 'text', text: 'Checked it.' },
+          { type: 'done', stopReason: 'stop' },
+        ],
+      ])
+      const { handle } = createFakeHandle()
+
+      await collect(
+        runAgent({
+          client,
+          handle,
+          tools: { echo: echoTool },
+          transcript: [{ id: '1', role: 'user', text: 'have a look' }],
+        })
+      )
+
+      expect(requests).to.have.length(2)
+    })
+
+    it('does not ask when the turn ran no tools at all', async function () {
+      const { client, requests } = fakeClient([[{ type: 'done', stopReason: 'stop' }]])
+      const { handle } = createFakeHandle()
+
+      await collect(
+        runAgent({
+          client,
+          handle,
+          tools: { echo: echoTool },
+          transcript: [{ id: '1', role: 'user', text: 'hello' }],
+        })
+      )
+
+      expect(requests).to.have.length(1)
+    })
+  })
+
   describe('requireTool', function () {
     it('asks once for the required tool when the model ends on prose', async function () {
       const { client, requests } = fakeClient([

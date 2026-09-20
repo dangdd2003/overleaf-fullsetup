@@ -29,6 +29,7 @@ import {
   getStoredActiveRunId,
   setStoredActiveRunId,
   setBackgroundRunMode,
+  sendBackgroundRunMessage,
 } from '../agent/background/background-run-client'
 
 const REPLAY_SETTLE_MS = 250
@@ -76,6 +77,15 @@ export function useAgentRun({
   projectContextRef.current = projectContext
   const projectIdRef = useRef(projectId)
   projectIdRef.current = projectId
+  /**
+   * `run` is memoised without `state` in its dependencies, so reading
+   * `state.mode` inside it returns whichever mode was current when the callback
+   * was last rebuilt — usually the default. That is what made Accept edits
+   * intermittently still ask for approval: the panel showed the new mode while
+   * the run had been started in the old one. The ref is always current.
+   */
+  const modeRef = useRef(state.mode)
+  modeRef.current = state.mode
 
   const requestApproval = useCallback(
     (_edit: EditRequest, context: { startLine: number }) =>
@@ -209,7 +219,34 @@ export function useAgentRun({
     []
   )
 
+  /**
+   * Sends a message into the run that is already going.
+   *
+   * Returns false when there is no live run to take it — no run id, an in-page
+   * run (which has no message endpoint), or a run that finished between the
+   * user typing and pressing send. The caller starts a normal run instead.
+   */
+  const queueMessage = useCallback(
+    async (entry: TranscriptEntry): Promise<boolean> => {
+      const runId = currentRunIdRef.current
+      if (!runId || systemPrompt || entry.role !== 'user') return false
+      const accepted = await sendBackgroundRunMessage(
+        projectIdRef.current,
+        runId,
+        {
+          id: entry.id,
+          text: entry.text,
+          contextText: entry.contextText,
+        }
+      ).catch(() => false)
+      return accepted
+    },
+    [systemPrompt]
+  )
+
   const setMode = useCallback((mode: AgentMode) => {
+    // Before the re-render, so a send in the same tick starts in the new mode.
+    modeRef.current = mode
     setState(current => ({ ...current, mode }))
     if (currentRunIdRef.current) {
       void setBackgroundRunMode(projectIdRef.current, currentRunIdRef.current, mode).catch(err => {
@@ -356,7 +393,7 @@ export function useAgentRun({
           projectId,
           transcript,
           providerSettings: assistant.settings,
-          mode: state.mode,
+          mode: modeRef.current,
         })
         currentRunIdRef.current = runId
 
@@ -447,6 +484,7 @@ export function useAgentRun({
     setState,
     mode: state.mode,
     setMode,
+    queueMessage,
     running: state.running,
     error: state.error,
     handle,

@@ -141,6 +141,32 @@ export function appendText(
   ]
 }
 
+/**
+ * Records that the run has read a message the user sent mid-run.
+ *
+ * The panel adds the entry optimistically the moment it is sent, so the usual
+ * case is clearing `pending` on an entry that is already here. A tab that was
+ * not the sender — or one replaying the run after a reconnect — has never seen
+ * it, and appends it instead.
+ */
+export function deliverUserMessage(
+  transcript: TranscriptEntry[],
+  message: { id: string; text: string }
+): TranscriptEntry[] {
+  const existing = transcript.findIndex(entry => entry.id === message.id)
+  if (existing !== -1) {
+    const entry = transcript[existing]
+    if (entry.role !== 'user' || !entry.pending) return transcript
+    const { pending: _pending, ...delivered } = entry
+    return [
+      ...transcript.slice(0, existing),
+      delivered,
+      ...transcript.slice(existing + 1),
+    ]
+  }
+  return [...transcript, { id: message.id, role: 'user', text: message.text }]
+}
+
 export function appendToolCall(
   transcript: TranscriptEntry[],
   call: ToolCallRecord,
@@ -278,6 +304,8 @@ export function reduceAgentEvent(
       }
     case 'modeChanged':
       return { ...state, mode: event.mode }
+    case 'userMessage':
+      return { ...state, transcript: deliverUserMessage(state.transcript, event) }
     case 'awaitingApproval':
       return {
         ...state,

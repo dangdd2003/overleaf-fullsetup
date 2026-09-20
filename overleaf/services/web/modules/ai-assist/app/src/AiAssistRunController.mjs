@@ -3,7 +3,7 @@ import crypto from 'node:crypto'
 import Settings from '@overleaf/settings'
 import './ModuleSettings.mjs'
 import defaultManager from './AiAssistRunManager.mjs'
-import defaultStore from './AiAssistRunStore.mjs'
+import defaultStore, { TERMINAL_STATUSES } from './AiAssistRunStore.mjs'
 import defaultSubscriber from './AiAssistRunSubscriber.mjs'
 import { validateSafeProviderBaseUrl } from './AiAssistProviders.mjs'
 import { MODES } from './AiAssistModePolicy.mjs'
@@ -238,6 +238,44 @@ export class AiAssistRunController {
       return res.status(400).json({ error: 'Missing compile request id' })
     }
     await this.manager.submitCompileResult(runId, { id, outcome })
+    res.json({ ok: true })
+  }
+
+  /**
+   * Adds a message to a run that is already going, instead of starting a new
+   * one. A run that has already finished answers 409 so the client can fall
+   * back to a fresh run rather than silently dropping what the user typed.
+   */
+  queueMessage = async (req, res) => {
+    const { runId } = req.params
+    const run = await this.store.getRun(runId)
+    if (!run) {
+      return res.status(404).json({ error: 'Run not found' })
+    }
+
+    const projectId = req.params.Project_id || req.params.project_id
+    if (projectId && run.projectId !== projectId) {
+      return res.status(403).json({ error: 'Cross-project run access forbidden' })
+    }
+
+    if (TERMINAL_STATUSES.includes(run.status)) {
+      return res
+        .status(409)
+        .json({ error: 'Run is no longer accepting messages', status: run.status })
+    }
+
+    const { id, text, contextText } = req.body || {}
+    if (typeof text !== 'string' || !text.trim()) {
+      return res.status(400).json({ error: 'text must be a non-empty string' })
+    }
+
+    const maxBytes = Settings.aiAssist?.maxTranscriptBytes ?? 5000000
+    const size = Buffer.byteLength(text) + Buffer.byteLength(contextText || '')
+    if (size > maxBytes) {
+      return res.status(413).json({ error: 'Message too large' })
+    }
+
+    await this.manager.queueMessage(runId, { id, text, contextText })
     res.json({ ok: true })
   }
 

@@ -235,4 +235,43 @@ describe('reduceAgentEvent', function () {
     })
     expect(stateCleared.pendingApproval).to.be.null
   })
+
+  it('clears the pending flag when the run reads a queued message', () => {
+    const initial = {
+      ...emptyAgentState([
+        { id: 'u0', role: 'user', text: 'first' },
+        { id: 'q1', role: 'user', text: 'and also this', pending: true },
+      ]),
+    }
+
+    const next = reduceAgentEvent(initial, {
+      type: 'userMessage',
+      id: 'q1',
+      text: 'and also this',
+    })
+
+    expect(next.transcript).to.have.length(2)
+    expect(next.transcript[1]).to.deep.equal({
+      id: 'q1',
+      role: 'user',
+      text: 'and also this',
+    })
+  })
+
+  it('appends a queued message a tab has never seen', () => {
+    const initial = emptyAgentState([{ id: 'u0', role: 'user', text: 'first' }])
+
+    const next = reduceAgentEvent(initial, {
+      type: 'userMessage',
+      id: 'q1',
+      text: 'sent from another tab',
+    })
+
+    expect(next.transcript).to.have.length(2)
+    expect(next.transcript[1]).to.deep.equal({
+      id: 'q1',
+      role: 'user',
+      text: 'sent from another tab',
+    })
+  })
 })

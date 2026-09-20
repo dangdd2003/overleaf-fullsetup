@@ -18,6 +18,7 @@ import {
   nextToolCallId,
   parseWholeMessageToolCall,
 } from './text-tool-call'
+import { coerceToolArgs, JsonSchema } from './tools/coerce-args'
 
 /**
  * The same failing call, arguments and all: the second failure carries a
@@ -36,6 +37,15 @@ const FILE_EDIT_TOOLS = new Set(['edit_file', 'create_file'])
 const CONTEXT_EXHAUSTED_MESSAGE =
   'This conversation no longer fits in the model context window. Start a new chat to continue.'
 
+/**
+ * Sent once, as a user turn, when the model runs tools and then closes the run
+ * with an empty reply. Without it the panel shows a row of tool cards and
+ * nothing else, which reads as the assistant having ignored the request.
+ * Mirrors FINAL_REPLY_NUDGE in AiAssistRunManager.mjs.
+ */
+const FINAL_REPLY_NUDGE =
+  'You ended the turn without replying, so nothing was shown to the user except the tool calls. Write the reply now, in one to three sentences: what you did or found, in which files, and anything they need to know. Do not call any more tools.'
+
 type StopReason = {
   code: 'runawayToolLoop' | 'consecutiveToolFailures'
   message: string
@@ -44,11 +54,17 @@ type StopReason = {
 /**
  * Finds the tool calls that must not run, and strips the provider parser's
  * markers (`_parseError`, `_raw`, `_repaired`) from every call's arguments.
+ *
+ * Complete calls also have their arguments coerced to the types the tool
+ * declares, so a model that emits `"True"` for a boolean is not failed over a
+ * call that was otherwise correct.
+ *
  * Mirrors classifyIncompleteCalls in AiAssistRunManager.mjs.
  */
 function classifyIncompleteCalls(
   calls: ToolCall[],
-  truncated: boolean
+  truncated: boolean,
+  tools: Record<string, AgentTool> = {}
 ): Map<ToolCall, 'cutOff' | 'invalid'> {
   const incomplete = new Map<ToolCall, 'cutOff' | 'invalid'>()
   calls.forEach((call, index) => {
@@ -66,7 +82,10 @@ function classifyIncompleteCalls(
       incomplete.set(call, cutOff || repaired ? 'cutOff' : 'invalid')
       call.args = typeof args.path === 'string' ? { path: args.path } : {}
     } else {
-      call.args = args
+      call.args = coerceToolArgs(
+        args,
+        tools[call.name]?.spec?.parameters as JsonSchema | undefined
+      )
     }
   })
   return incomplete
@@ -132,6 +151,8 @@ export async function* runAgent({
   const recentCallSignatures: { name: string; signature: string }[] = []
   let requiredToolCalled = false
   let requiredToolNudged = false
+  let toolsRanThisRun = false
+  let finalReplyNudged = false
 
   while (true) {
     // Tool results added during this run count against the window too, so
@@ -276,6 +297,11 @@ export async function* runAgent({
         })
         continue
       }
+      if (!text.trim() && toolsRanThisRun && !truncated && !finalReplyNudged) {
+        finalReplyNudged = true
+        messages.push({ role: 'user', content: FINAL_REPLY_NUDGE })
+        continue
+      }
       if (truncated) {
         yield {
           type: 'error',
@@ -286,8 +312,9 @@ export async function* runAgent({
       return yield { type: 'turnFinished', reason: 'stop' }
     }
 
-    const incomplete = classifyIncompleteCalls(calls, truncated)
+    const incomplete = classifyIncompleteCalls(calls, truncated, tools)
 
+    toolsRanThisRun = true
     messages.push({ role: 'assistant', content: text, toolCalls: calls })
 
     let turnSucceeded = false

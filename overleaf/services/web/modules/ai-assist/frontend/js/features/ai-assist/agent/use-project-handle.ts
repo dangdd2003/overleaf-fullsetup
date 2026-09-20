@@ -14,6 +14,11 @@ import { errorExcerpt, excerptAround } from './tools/compile-result'
 import { matchesGlob } from './tools/search-text'
 import { applyLiveSettingsUpdate } from './live-settings-updater'
 import { locateAnchorInText, countOccurrences } from './latex-matcher'
+import {
+  createSnapshotGate,
+  filesFromFileTree,
+  SnapshotUnavailableError,
+} from './snapshot-gate'
 import { postJSON } from '@/infrastructure/fetch-json'
 import { UserSettingsContext } from '@/shared/context/user-settings-context'
 import getMeta from '@/utils/meta'
@@ -492,6 +497,8 @@ function snapshotDocs(projectSnapshot: any): Record<string, string> {
   return result
 }
 
+export { filesFromFileTree }
+
 export function readDocOverBridge(
   targetPath?: string,
   docId?: string,
@@ -700,11 +707,44 @@ export function useProjectHandle({
     return pathInFolder(fileTreeData, project.rootDocId)
   }, [project?.rootDocId, fileTreeData])
 
+  const openFile = useCallback((): { path: string; cursorLine: number | null } | null => {
+    if (!getCurrentDocumentId || !fileTreeData) return null
+    const docId = getCurrentDocumentId()
+    if (!docId) return null
+    const path = pathInFolder(fileTreeData, docId)
+    if (!path) return null
+    return { path, cursorLine: cursorLineRef.current }
+  }, [getCurrentDocumentId, fileTreeData])
+
+  /**
+   * Guarantees the snapshot holds the project before it is read.
+   *
+   * The snapshot is empty until refreshed at least once, and its instance is
+   * created once per project and never replaced — so without this the first
+   * read returns nothing and nothing ever invalidates that result. Every read
+   * path goes through here, because a reader that skipped it saw whatever the
+   * last caller happened to leave behind.
+   */
+  const snapshotGate = useMemo(
+    () => createSnapshotGate(projectSnapshot?.refresh?.bind(projectSnapshot)),
+    [projectSnapshot]
+  )
+  const ensureSnapshot = useCallback(
+    () => snapshotGate.ensure(),
+    [snapshotGate]
+  )
+  const invalidateSnapshot = useCallback(
+    () => snapshotGate.invalidate(),
+    [snapshotGate]
+  )
+
   const listFiles = useCallback(async (): Promise<ProjectFile[]> => {
-    // The snapshot is empty until it has been refreshed at least once, and its
-    // instance is created once per project and never replaced. Without this the
-    // first call returns no files and nothing ever invalidates that result.
-    await projectSnapshot?.refresh?.()
+    let snapshotFailed = false
+    try {
+      await ensureSnapshot()
+    } catch {
+      snapshotFailed = true
+    }
 
     const docs = (projectSnapshot as any)?.docs ?? {}
     const files = (projectSnapshot as any)?.files ?? {}
@@ -757,8 +797,35 @@ export function useProjectHandle({
       }
     }
 
+    if (result.length > 0) {
+      return result
+    }
+
+    // Fallback: when projectSnapshot fails or returns 0 files, derive list from fileTreeData
+    if (fileTreeData) {
+      const fallbackFiles = filesFromFileTree(fileTreeData)
+      if (fallbackFiles.length > 0) {
+        const open = openFile()
+        if (open?.path) {
+          const match = fallbackFiles.find(f => f.path === open.path)
+          if (match && match.type === 'doc') {
+            const live = await readDocOverBridge(open.path)
+            if (typeof live === 'string') {
+              match.lines = live.split('\n').length
+              match.size = live.length
+            }
+          }
+        }
+        return fallbackFiles
+      }
+    }
+
+    if (snapshotFailed) {
+      throw new SnapshotUnavailableError('Project files could not be loaded from server')
+    }
+
     return result
-  }, [projectSnapshot])
+  }, [projectSnapshot, ensureSnapshot, fileTreeData, openFile])
 
   const readFile = useCallback(
     async (
@@ -767,17 +834,51 @@ export function useProjectHandle({
     ): Promise<{ lines: string[]; truncated: boolean }> => {
       const norm = path.replace(/^\//, '')
       let allLines: string[] | null = null
-      const docContents = projectSnapshot?.getDocContents?.(norm) ?? projectSnapshot?.getDocContents?.('/' + norm)
-      if (typeof docContents === 'string') {
-        allLines = docContents.split('\n')
-      } else {
-        const docs = snapshotDocs(projectSnapshot)
-        const content = docs[norm] ?? docs['/' + norm]
-        if (typeof content !== 'string') {
-          throw new Error(`File not found: ${path}`)
+
+      // Fast path: if the document is currently active in CodeMirror, read live content directly
+      const open = openFile()
+      const isTargetOpen = Boolean(open?.path && open.path.replace(/^\//, '') === norm)
+      if (isTargetOpen) {
+        const live = await readDocOverBridge(norm)
+        if (typeof live === 'string') {
+          allLines = live.split('\n')
         }
-        allLines = content.split('\n')
       }
+
+      // Snapshot read if not resolved from editor bridge
+      if (allLines === null) {
+        try {
+          await ensureSnapshot()
+        } catch {
+          // Ignore snapshot failure; continue to fallbacks
+        }
+        const docContents = projectSnapshot?.getDocContents?.(norm) ?? projectSnapshot?.getDocContents?.('/' + norm)
+        if (typeof docContents === 'string') {
+          allLines = docContents.split('\n')
+        } else {
+          const docs = snapshotDocs(projectSnapshot)
+          const content = docs[norm] ?? docs['/' + norm]
+          if (typeof content === 'string') {
+            allLines = content.split('\n')
+          }
+        }
+      }
+
+      // Bridge fallback with docId from fileTreeData
+      if (allLines === null && fileTreeData) {
+        const entity = findEntityByPath(fileTreeData, norm)
+        if (entity?.type === 'doc' && entity.entity?._id) {
+          const live = await readDocOverBridge(norm, entity.entity._id)
+          if (typeof live === 'string') {
+            allLines = live.split('\n')
+          }
+        }
+      }
+
+      if (allLines === null) {
+        throw new Error(`File not found: ${path}`)
+      }
+
       const from = range ? Math.max(1, range.from) : 1
       const to = range ? Math.min(allLines.length, range.to) : allLines.length
       const lines = allLines.slice(from - 1, to)
@@ -786,7 +887,7 @@ export function useProjectHandle({
         truncated: lines.length < allLines.length,
       }
     },
-    [projectSnapshot]
+    [projectSnapshot, ensureSnapshot, openFile, fileTreeData]
   )
 
   const search = useCallback(
@@ -794,7 +895,25 @@ export function useProjectHandle({
       query: string,
       options: { caseSensitive?: boolean; regexp?: boolean; glob?: string } = {}
     ): Promise<SearchHit[]> => {
+      try {
+        await ensureSnapshot()
+      } catch {
+        // Snapshot failed; search whatever docs are available
+      }
       const docs = snapshotDocs(projectSnapshot)
+
+      // Augment docs with currently active open file from editor if not already present
+      const open = openFile()
+      if (open?.path) {
+        const normOpen = open.path.replace(/^\//, '')
+        if (!docs[normOpen] && !docs['/' + normOpen]) {
+          const live = await readDocOverBridge(normOpen)
+          if (typeof live === 'string') {
+            docs[normOpen] = live
+          }
+        }
+      }
+
       const hits: SearchHit[] = []
       const globPattern = options.glob?.trim()
 
@@ -851,21 +970,12 @@ export function useProjectHandle({
 
       return hits
     },
-    [projectSnapshot]
+    [projectSnapshot, ensureSnapshot, openFile]
   )
 
   const currentSelection = useCallback(() => {
     return selectionRef.current
   }, [])
-
-  const openFile = useCallback((): { path: string; cursorLine: number | null } | null => {
-    if (!getCurrentDocumentId || !fileTreeData) return null
-    const docId = getCurrentDocumentId()
-    if (!docId) return null
-    const path = pathInFolder(fileTreeData, docId)
-    if (!path) return null
-    return { path, cursorLine: cursorLineRef.current }
-  }, [getCurrentDocumentId, fileTreeData])
 
   const proposeEdit = useCallback(
     async (edit: EditRequest): Promise<EditOutcome> => {
@@ -879,6 +989,10 @@ export function useProjectHandle({
       }
 
       if (content === null) {
+        // The editor bridge had nothing, so the snapshot is the only source
+        // left. An unrefreshed one reports every file as missing, which would
+        // come back as a bare "noMatch" rather than the real reason.
+        await ensureSnapshot()
         const docContents =
           projectSnapshot?.getDocContents?.(norm) ??
           projectSnapshot?.getDocContents?.('/' + norm)
@@ -1008,9 +1122,10 @@ export function useProjectHandle({
       }
 
       if (applied.status === 'applied') {
-        if (projectSnapshot?.refresh) {
-          projectSnapshot.refresh().catch(() => {})
-        }
+        // The document just changed, so the cached snapshot is stale. Marking
+        // it so makes the next read refresh; refreshing here as well would
+        // only duplicate that round trip.
+        invalidateSnapshot()
         return { status: 'applied', startLine }
       }
       if (applied.status === 'timeout') {
@@ -1033,7 +1148,15 @@ export function useProjectHandle({
         message: applied.message || 'Failed to apply edit over bridge.',
       }
     },
-    [projectSnapshot, fileTreeData, openDocWithId, openFile, requestApproval]
+    [
+      projectSnapshot,
+      fileTreeData,
+      openDocWithId,
+      openFile,
+      requestApproval,
+      ensureSnapshot,
+      invalidateSnapshot,
+    ]
   )
 
   const compile = useCallback(
@@ -1161,13 +1284,31 @@ export function useProjectHandle({
   }, [])
 
   const index = useCallback(async (): Promise<ProjectIndex> => {
+    try {
+      await ensureSnapshot()
+    } catch {
+      // Snapshot failed; index available docs
+    }
     const stringDocs = snapshotDocs(projectSnapshot)
+
+    // Augment with active open document if missing from snapshot
+    const open = openFile()
+    if (open?.path) {
+      const normOpen = open.path.replace(/^\//, '')
+      if (!stringDocs[normOpen] && !stringDocs['/' + normOpen]) {
+        const live = await readDocOverBridge(normOpen)
+        if (typeof live === 'string') {
+          stringDocs[normOpen] = live
+        }
+      }
+    }
+
     indexRef.current = buildProjectIndex(
       { docs: stringDocs, rootPath: rootDocPath() },
       indexRef.current
     )
     return indexRef.current
-  }, [projectSnapshot, rootDocPath])
+  }, [projectSnapshot, rootDocPath, ensureSnapshot, openFile])
 
   const createFile = useCallback(
     async (request: { path: string; content: string }): Promise<EditOutcome> => {
@@ -1224,6 +1365,10 @@ export function useProjectHandle({
         }
       }
 
+      // The project gained a file, so any cached snapshot predates it. Without
+      // this a read taken straight afterwards would not see the new file.
+      invalidateSnapshot()
+
       // If openDoc is available, switch to the newly created document and populate initial content
       if (openDoc) {
         try {
@@ -1273,7 +1418,7 @@ export function useProjectHandle({
 
       return { status: 'applied', startLine: 1 }
     },
-    [fileTreeData, project?._id, openDoc, requestApproval]
+    [fileTreeData, project?._id, openDoc, requestApproval, invalidateSnapshot]
   )
 
   const getProjectSettings = useCallback(async (): Promise<ProjectSettingsSummary> => {

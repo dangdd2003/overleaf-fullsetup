@@ -410,70 +410,23 @@ marked.use({
 })
 
 /**
- * Smooth typewriter effect for streaming LLM text responses.
- * Progressively reveals incoming streamed text at high frame rate,
- * eliminating abrupt chunk jumps while never lagging behind generation.
+ * Backward-compatible passthrough alias for typewriter/smooth stream.
  */
-export function useTypewriter(targetText: string, isLive: boolean): string {
-  const [displayedLength, setDisplayedLength] = useState(() =>
-    isLive ? 0 : targetText.length
-  )
-  const targetRef = useRef(targetText)
-  targetRef.current = targetText
-
-  useEffect(() => {
-    if (!isLive) {
-      setDisplayedLength(targetText.length)
-      return
-    }
-
-    if (targetText.length < displayedLength) {
-      setDisplayedLength(targetText.length)
-      return
-    }
-
-    if (displayedLength >= targetText.length) {
-      return
-    }
-
-    const raf =
-      typeof window !== 'undefined' && window.requestAnimationFrame
-        ? window.requestAnimationFrame
-        : (cb: FrameRequestCallback) =>
-            (setTimeout(cb, 16) as unknown as number)
-    const caf =
-      typeof window !== 'undefined' && window.cancelAnimationFrame
-        ? window.cancelAnimationFrame
-        : (id: number) => clearTimeout(id)
-
-    let animId: number
-    const step = () => {
-      setDisplayedLength(current => {
-        const target = targetRef.current.length
-        if (current >= target) return current
-        const diff = target - current
-        // Progressive typing cadence:
-        // - Small buffer (1-6 chars): 1-2 chars/frame
-        // - Medium buffer (7-20 chars): 3-5 chars/frame
-        // - Large buffer (>20 chars): smoothly catch up in ~4 frames (diff / 4)
-        const increment = diff > 20 ? Math.ceil(diff / 4) : diff > 6 ? 3 : 1
-        return Math.min(target, current + increment)
-      })
-      animId = raf(step)
-    }
-
-    animId = raf(step)
-    return () => caf(animId)
-  }, [targetText, isLive, displayedLength])
-
-  return isLive ? targetText.slice(0, displayedLength) : targetText
+export function useTypewriter(targetText: string, _isLive?: boolean): string {
+  return targetText
 }
 
-export function renderMarkdown(content: string, isLive: boolean = false): string {
+export function useSmoothStream(targetText: string, _isLive?: boolean): string {
+  return targetText
+}
+
+export function decorateStreamingTail(html: string): string {
+  return html
+}
+
+export function renderMarkdown(content: string, _isLive: boolean = false): string {
   if (!content) {
-    return isLive
-      ? '<span class="ai-assist-streaming-cursor" aria-hidden="true"></span>'
-      : ''
+    return ''
   }
 
   DOMPurify.addHook('afterSanitizeAttributes', node => {
@@ -484,19 +437,7 @@ export function renderMarkdown(content: string, isLive: boolean = false): string
   })
 
   try {
-    let rawHtml = marked.parse(content) as string
-    if (isLive) {
-      const cursorHtml =
-        '<span class="ai-assist-streaming-cursor" aria-hidden="true"></span>'
-      if (/(<\/(?:p|li|h[1-6]|div)>\s*)$/i.test(rawHtml)) {
-        rawHtml = rawHtml.replace(
-          /(<\/(?:p|li|h[1-6]|div)>\s*)$/i,
-          `${cursorHtml}$1`
-        )
-      } else {
-        rawHtml = rawHtml + cursorHtml
-      }
-    }
+    const rawHtml = marked.parse(content) as string
     return DOMPurify.sanitize(rawHtml, PURIFY_CONFIG)
   } finally {
     DOMPurify.removeHook('afterSanitizeAttributes')
@@ -504,11 +445,162 @@ export function renderMarkdown(content: string, isLive: boolean = false): string
 }
 
 /**
- * Renders rich Markdown content in assistant messages.
- *
- * Supports bold, italic, lists, headers, inline code, and syntax-tagged code blocks
- * (e.g. ```latex ... ```) with one-click copy and insert to editor, with HTML sanitization via DOMPurify.
+ * Renders live streaming Markdown token by token.
+ * Words are mapped to stable keys so previously mounted <span> elements
+ * never re-render or re-fade, matching Claude.ai streaming animation.
  */
+export function LiveStreamingMarkdown({
+  content,
+}: {
+  content: string
+}) {
+  const tokens = useMemo(() => {
+    try {
+      return marked.lexer(content)
+    } catch {
+      return []
+    }
+  }, [content])
+
+  function renderInline(inlineTokens: any[], bIdx: number): React.ReactNode[] {
+    let blockWordIdx = 0
+    function walk(tokens: any[]): React.ReactNode[] {
+      const nodes: React.ReactNode[] = []
+      for (let i = 0; i < tokens.length; i++) {
+        const t = tokens[i]
+        if (t.type === 'text') {
+          let remaining = t.text
+          const leading = remaining.match(/^\s+/)
+          if (leading) {
+            nodes.push(
+              <span key={`space-${bIdx}-${i}`}>
+                {leading[0]}
+              </span>
+            )
+            remaining = remaining.slice(leading[0].length)
+          }
+          const words = remaining.match(/\S+\s*/g) || []
+          for (let wIdx = 0; wIdx < words.length; wIdx++) {
+            const currentId = `w-${bIdx}-${blockWordIdx++}`
+            nodes.push(
+              <span key={currentId} className="ai-assist-stream-word">
+                {words[wIdx]}
+              </span>
+            )
+          }
+        } else if (t.type === 'strong') {
+          nodes.push(
+            <strong key={`strong-${bIdx}-${i}`}>
+              {walk(t.tokens || [{ type: 'text', text: t.text }])}
+            </strong>
+          )
+        } else if (t.type === 'em') {
+          nodes.push(
+            <em key={`em-${bIdx}-${i}`}>
+              {walk(t.tokens || [{ type: 'text', text: t.text }])}
+            </em>
+          )
+        } else if (t.type === 'codespan') {
+          nodes.push(<code key={`code-${bIdx}-${i}`}>{t.text}</code>)
+        } else if (t.type === 'inlineMath') {
+          try {
+            const mathHtml = katex.renderToString(t.text, {
+              displayMode: false,
+              throwOnError: false,
+            })
+            nodes.push(
+              <span
+                key={`math-${bIdx}-${i}`}
+                dangerouslySetInnerHTML={{ __html: mathHtml }}
+              />
+            )
+          } catch {
+            nodes.push(<span key={`math-${bIdx}-${i}`}>{t.raw}</span>)
+          }
+        } else {
+          nodes.push(t.raw)
+        }
+      }
+      return nodes
+    }
+    return walk(inlineTokens)
+  }
+
+  const blocks: React.ReactNode[] = []
+  for (let bIdx = 0; bIdx < tokens.length; bIdx++) {
+    const b = tokens[bIdx]
+
+    if (b.type === 'paragraph') {
+      blocks.push(
+        <p key={`p-${bIdx}`}>
+          {renderInline(b.tokens || [{ type: 'text', text: b.text }], bIdx)}
+        </p>
+      )
+    } else if (b.type === 'heading') {
+      const Tag = `h${b.depth}` as keyof JSX.IntrinsicElements
+      blocks.push(
+        <Tag key={`h-${bIdx}`}>
+          {renderInline(b.tokens || [{ type: 'text', text: b.text }], bIdx)}
+        </Tag>
+      )
+    } else if (b.type === 'code') {
+      blocks.push(
+        <div className="ai-assist-code-block" key={`code-${bIdx}`}>
+          <div className="ai-assist-code-header">
+            <span className="ai-assist-code-lang">{b.lang || 'code'}</span>
+          </div>
+          <pre>
+            <code className={b.lang ? `language-${b.lang}` : ''}>
+              {b.text}
+            </code>
+          </pre>
+        </div>
+      )
+    } else if (b.type === 'list') {
+      const ListTag = b.ordered ? 'ol' : 'ul'
+      blocks.push(
+        <ListTag key={`list-${bIdx}`}>
+          {b.items.map((item: any, itemIdx: number) => (
+            <li key={`item-${bIdx}-${itemIdx}`}>
+              {renderInline(
+                item.tokens || [{ type: 'text', text: item.text }],
+                bIdx * 1000 + itemIdx
+              )}
+            </li>
+          ))}
+        </ListTag>
+      )
+    } else if (b.type === 'blockMath') {
+      try {
+        const mathHtml = katex.renderToString(b.text, {
+          displayMode: true,
+          throwOnError: false,
+        })
+        blocks.push(
+          <div
+            key={`blockMath-${bIdx}`}
+            dangerouslySetInnerHTML={{ __html: mathHtml }}
+          />
+        )
+      } catch {
+        blocks.push(<div key={`blockMath-${bIdx}`}>{b.raw}</div>)
+      }
+    } else if (b.type !== 'space') {
+      blocks.push(
+        <div key={`block-${bIdx}`}>
+          {b.raw}
+        </div>
+      )
+    }
+  }
+
+  if (blocks.length === 0) {
+    return null
+  }
+
+  return <div className="ai-assist-markdown is-streaming">{blocks}</div>
+}
+
 export const MarkdownContent: FC<{
   content: string
   onOpenFile?: (path: string, line?: number) => void
@@ -517,10 +609,9 @@ export const MarkdownContent: FC<{
   const defaultOpenFile = useOpenFileInEditor()
   const openFile = onOpenFile ?? defaultOpenFile
 
-  const displayedContent = useTypewriter(content, isLive)
   const html = useMemo(
-    () => renderMarkdown(displayedContent, isLive),
-    [displayedContent, isLive]
+    () => (isLive ? '' : renderMarkdown(content, false)),
+    [content, isLive]
   )
 
   const handleClick = useCallback(
@@ -672,12 +763,16 @@ export const MarkdownContent: FC<{
     [openFile]
   )
 
+  if (isLive) {
+    return <LiveStreamingMarkdown content={content} />
+  }
+
   if (!html) return null
 
   return (
     /* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions */
     <div
-      className={`ai-assist-markdown${isLive ? ' is-streaming' : ''}`}
+      className="ai-assist-markdown"
       onClick={handleClick}
       onKeyDown={handleKeyDown}
       dangerouslySetInnerHTML={{ __html: html }}
