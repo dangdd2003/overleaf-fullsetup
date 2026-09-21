@@ -84,6 +84,7 @@ export interface Meta {
   'ol-allInReconfirmNotificationPeriods': UserEmailData[]
   'ol-allowedExperiments': string[]
   'ol-anonymous': boolean
+  'ol-apiDocsEnabled': boolean
   'ol-baseAssetPath': string
   'ol-brandVariation': Record<string, any>
   'ol-canUseAddSeatsFeature': boolean

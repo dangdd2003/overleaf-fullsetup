@@ -1,0 +1,3934 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Overleaf API Reference",
+    "version": "v0",
+    "description": "Public REST endpoints exposed by this Overleaf deployment that external clients can call: the Git Bridge API, the Personal Access Token API used to create the tokens that authenticate API requests, the MCP REST API, and the OAuth2 authorization server used by MCP clients. Only endpoints of features enabled on this deployment are listed."
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "A personal access token created via POST /user/personal-access-tokens, sent as 'Authorization: Bearer <token>'. Basic auth (token as the username or password) and a query-string access_token parameter are also accepted for git compatibility."
+      },
+      "sessionAuth": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "overleaf_session2",
+        "description": "An authenticated browser session, for callers already logged into the web UI."
+      },
+      "mcpBearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Either a personal access token created with the 'mcp' scope, or an OAuth2 access token (JWT) issued by /oauth/token. Sent as 'Authorization: Bearer <token>'. Requests are rate limited to 200 per minute per token, and 60 per minute per client IP before authentication."
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ]
+      },
+      "TokenInfo": {
+        "type": "object",
+        "properties": {
+          "userId": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "git_bridge",
+                "mcp"
+              ]
+            }
+          }
+        },
+        "required": [
+          "userId",
+          "email",
+          "scopes"
+        ]
+      },
+      "DocInfo": {
+        "type": "object",
+        "properties": {
+          "latestVerId": {
+            "type": "integer"
+          },
+          "latestVerAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "latestVerBy": {
+            "type": "object",
+            "properties": {
+              "email": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "SavedVersion": {
+        "type": "object",
+        "properties": {
+          "versionId": {
+            "type": "integer"
+          },
+          "comment": {
+            "type": "string"
+          },
+          "user": {
+            "type": "object",
+            "properties": {
+              "email": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            }
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "Snapshot": {
+        "type": "object",
+        "properties": {
+          "srcs": {
+            "type": "array",
+            "description": "Text file entries as [content, path] pairs.",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            }
+          },
+          "atts": {
+            "type": "array",
+            "description": "Binary attachment entries as [url, path] pairs. The URL is a short-lived, project+file-scoped signed link to the file endpoint below.",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            }
+          }
+        }
+      },
+      "PersonalAccessToken": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "tokenPrefix": {
+            "type": "string"
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "git_bridge",
+                "mcp"
+              ]
+            }
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "McpError": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "enum": [
+              "unauthorized",
+              "insufficient_scope",
+              "forbidden",
+              "not_found",
+              "validation_error",
+              "rate_limited",
+              "upstream_error"
+            ]
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "description": "Error envelope. HTTP status by code: unauthorized 401, insufficient_scope 403, forbidden 403, not_found 404, validation_error 400, rate_limited 429, upstream_error 502."
+      },
+      "McpProject": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "lastUpdated": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "compiler": {
+            "type": "string",
+            "description": "e.g. pdflatex, xelatex, lualatex, latex."
+          },
+          "archived": {
+            "type": "boolean"
+          },
+          "trashed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ]
+      },
+      "McpProjectDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/McpProject"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "rootDocId": {
+                "type": "string",
+                "nullable": true,
+                "description": "Id of the main document, or null if none is set."
+              },
+              "spellCheckLanguage": {
+                "type": "string"
+              }
+            }
+          }
+        ]
+      },
+      "McpEntry": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "id"
+        ]
+      },
+      "McpSearchMatch": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "line": {
+            "type": "integer",
+            "description": "1-based line number."
+          },
+          "preview": {
+            "type": "string",
+            "description": "The matching line, trimmed."
+          }
+        }
+      },
+      "OAuthError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "OAuth error code, e.g. invalid_request, invalid_grant, invalid_client_metadata, invalid_redirect_uri, unsupported_grant_type, invalid_target, slow_down."
+          },
+          "error_description": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "error"
+        ]
+      },
+      "OAuthClient": {
+        "type": "object",
+        "properties": {
+          "client_id": {
+            "type": "string"
+          },
+          "client_name": {
+            "type": "string"
+          },
+          "redirect_uris": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "grant_types": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "scope": {
+            "type": "string"
+          },
+          "token_endpoint_auth_method": {
+            "type": "string",
+            "enum": [
+              "none"
+            ]
+          }
+        }
+      },
+      "OAuthTokenResponse": {
+        "type": "object",
+        "properties": {
+          "access_token": {
+            "type": "string",
+            "description": "JWT to send as a Bearer token. Valid for 1 hour."
+          },
+          "token_type": {
+            "type": "string",
+            "enum": [
+              "Bearer"
+            ]
+          },
+          "expires_in": {
+            "type": "integer",
+            "description": "Lifetime of the access token in seconds."
+          },
+          "refresh_token": {
+            "type": "string",
+            "description": "Use with grant_type=refresh_token to obtain a new access token."
+          },
+          "scope": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "access_token",
+          "token_type",
+          "expires_in"
+        ]
+      }
+    }
+  },
+  "security": [
+    {
+      "bearerAuth": []
+    },
+    {
+      "sessionAuth": []
+    }
+  ],
+  "paths": {
+    "/oauth/token/info": {
+      "get": {
+        "x-feature": "git-bridge",
+        "summary": "Inspect a personal access token",
+        "description": "Validates the bearer/basic/query-string token supplied on the request and returns the user and scopes it grants. This is the endpoint git-bridge itself calls to check whether a token is still valid.",
+        "responses": {
+          "200": {
+            "description": "Token is valid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenInfo"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, malformed, or expired token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Git Bridge"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v0/docs/{projectId}": {
+      "get": {
+        "x-feature": "git-bridge",
+        "summary": "Get the current version pointer for a project",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current version info",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocInfo"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated"
+          },
+          "403": {
+            "description": "No read access to this project"
+          },
+          "404": {
+            "description": "Project not found"
+          }
+        },
+        "tags": [
+          "Git Bridge"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v0/docs/{projectId}/saved_vers": {
+      "get": {
+        "x-feature": "git-bridge",
+        "summary": "List saved (labelled) versions of a project",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Saved versions, oldest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SavedVersion"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated"
+          },
+          "403": {
+            "description": "No read access to this project"
+          }
+        },
+        "tags": [
+          "Git Bridge"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v0/docs/{projectId}/snapshots/{versionId}": {
+      "get": {
+        "x-feature": "git-bridge",
+        "summary": "Get a full file-tree snapshot at a given version",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "versionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Snapshot of all text and binary files at this version",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Snapshot"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated"
+          },
+          "403": {
+            "description": "No read access to this project"
+          },
+          "404": {
+            "description": "Project or snapshot not found"
+          }
+        },
+        "tags": [
+          "Git Bridge"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v0/docs/{projectId}/file/{fileId}": {
+      "get": {
+        "x-feature": "git-bridge",
+        "summary": "Download a single binary file",
+        "description": "Called either with a signed `token` query parameter (as embedded in a snapshot's `atts` URLs, no further auth needed) or with normal bearer/session auth.",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "fileId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Short-lived signed token scoped to this project+file, bypasses normal auth."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The raw file contents"
+          },
+          "401": {
+            "description": "Unauthenticated and no valid token"
+          },
+          "403": {
+            "description": "No read access to this project"
+          }
+        },
+        "tags": [
+          "Git Bridge"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v0/docs/{projectId}/snapshots": {
+      "post": {
+        "x-feature": "git-bridge",
+        "summary": "Push a new snapshot to a project",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "latestVerId": {
+                    "type": "integer",
+                    "description": "The version this push is based on; must match the project's current version or the push is rejected as out of date."
+                  },
+                  "files": {
+                    "type": "array",
+                    "description": "The files to write, in git-bridge's internal push format."
+                  },
+                  "postbackUrl": {
+                    "type": "string",
+                    "description": "Optional URL git-bridge polls/receives a callback on once the push has been processed asynchronously."
+                  }
+                },
+                "required": [
+                  "latestVerId",
+                  "files"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted; processed asynchronously"
+          },
+          "401": {
+            "description": "Unauthenticated"
+          },
+          "403": {
+            "description": "No write access to this project"
+          },
+          "404": {
+            "description": "Project not found"
+          },
+          "409": {
+            "description": "Out of date — latestVerId does not match the project's current version"
+          }
+        },
+        "tags": [
+          "Git Bridge"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/user/personal-access-tokens": {
+      "post": {
+        "summary": "Create a personal access token",
+        "security": [
+          {
+            "sessionAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "scopes": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "git_bridge",
+                        "mcp"
+                      ]
+                    },
+                    "description": "Defaults to ['git_bridge'] if omitted."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Token created. The raw token value is only ever returned here, once.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/PersonalAccessToken"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "token": {
+                          "type": "string",
+                          "description": "The raw secret token, e.g. olp_xxxxxxxx. Store it now — it cannot be retrieved again."
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid scope requested"
+          }
+        },
+        "tags": [
+          "Personal Access Tokens"
+        ],
+        "x-feature": [
+          "git-bridge",
+          "mcp"
+        ]
+      },
+      "get": {
+        "summary": "List your personal access tokens",
+        "security": [
+          {
+            "sessionAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tokens belonging to the logged-in user (never includes the raw token value)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PersonalAccessToken"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Personal Access Tokens"
+        ],
+        "x-feature": [
+          "git-bridge",
+          "mcp"
+        ]
+      }
+    },
+    "/user/personal-access-tokens/{tokenId}": {
+      "delete": {
+        "summary": "Revoke a personal access token",
+        "security": [
+          {
+            "sessionAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "tokenId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Revoked"
+          }
+        },
+        "tags": [
+          "Personal Access Tokens"
+        ],
+        "x-feature": [
+          "git-bridge",
+          "mcp"
+        ]
+      }
+    },
+    "/api/v0/mcp/openapi.json": {
+      "get": {
+        "x-feature": "mcp",
+        "tags": [
+          "MCP OpenAPI"
+        ],
+        "summary": "Get the MCP service's own OpenAPI document",
+        "description": "Returns the summary OpenAPI 3.1 document used by the MCP microservice and Custom GPT Actions. It describes a subset of the operations documented here. Rate limited to 60 requests per minute per client IP.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "OpenAPI document",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "rate_limited: too many requests.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v0/mcp/projects": {
+      "get": {
+        "x-feature": "mcp",
+        "tags": [
+          "MCP Projects"
+        ],
+        "summary": "List projects",
+        "description": "Lists the projects you own or can access, including projects shared with you.",
+        "security": [
+          {
+            "mcpBearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Projects",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "projects": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/McpProject"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "validation_error: a parameter is missing or invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "unauthorized: missing, invalid or expired token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "insufficient_scope (token lacks the mcp scope) or forbidden (no access to this project).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "rate_limited: too many requests.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "upstream_error: a backing service failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "query",
+            "in": "query",
+            "required": false,
+            "description": "Case-insensitive substring to match against project names.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "Which projects to return.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "trashed",
+                "archived",
+                "all"
+              ],
+              "default": "active"
+            }
+          }
+        ]
+      },
+      "post": {
+        "x-feature": "mcp",
+        "tags": [
+          "MCP Projects"
+        ],
+        "summary": "Create a project",
+        "description": "Creates a blank project owned by you, optionally seeded with text documents.",
+        "security": [
+          {
+            "mcpBearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Created project",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "project": {
+                      "$ref": "#/components/schemas/McpProject"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "validation_error: a parameter is missing or invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "unauthorized: missing, invalid or expired token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "insufficient_scope (token lacks the mcp scope) or forbidden (no access to this project).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "rate_limited: too many requests.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "upstream_error: a backing service failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "description": "Name of the new project."
+                  },
+                  "initialFiles": {
+                    "type": "array",
+                    "description": "Text documents to create in the new project.",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "path": {
+                          "type": "string",
+                          "description": "Path inside the project, e.g. main.tex."
+                        },
+                        "content": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "path"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "name"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v0/mcp/projects/{projectId}": {
+      "get": {
+        "x-feature": "mcp",
+        "tags": [
+          "MCP Projects"
+        ],
+        "summary": "Get project metadata",
+        "description": "Requires read access to the project.",
+        "security": [
+          {
+            "mcpBearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Project",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "project": {
+                      "$ref": "#/components/schemas/McpProjectDetail"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "unauthorized: missing, invalid or expired token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "insufficient_scope (token lacks the mcp scope) or forbidden (no access to this project).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found: the project or entity does not exist, or you cannot see it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "rate_limited: too many requests.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "upstream_error: a backing service failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "description": "Project id (24-character hex string).",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v0/mcp/projects/{projectId}/settings": {
+      "patch": {
+        "x-feature": "mcp",
+        "tags": [
+          "MCP Projects"
+        ],
+        "summary": "Update project settings",
+        "description": "Requires write access to the project. Send at least one setting.",
+        "security": [
+          {
+            "mcpBearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Settings updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "ok"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "validation_error: a parameter is missing or invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "unauthorized: missing, invalid or expired token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "insufficient_scope (token lacks the mcp scope) or forbidden (no access to this project).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found: the project or entity does not exist, or you cannot see it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "rate_limited: too many requests.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "upstream_error: a backing service failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "description": "Project id (24-character hex string).",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "compiler": {
+                    "type": "string",
+                    "description": "e.g. pdflatex, xelatex, lualatex, latex."
+                  },
+                  "rootDocId": {
+                    "type": "string",
+                    "description": "Id of the document to compile as the main file."
+                  },
+                  "spellCheckLanguage": {
+                    "type": "string",
+                    "description": "Spell-check language code, e.g. en."
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v0/mcp/projects/{projectId}/tree": {
+      "get": {
+        "x-feature": "mcp",
+        "tags": [
+          "MCP Files"
+        ],
+        "summary": "List project files",
+        "description": "Requires read access to the project. Returns every document and binary file with its path and id.",
+        "security": [
+          {
+            "mcpBearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "File tree",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "docs": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/McpEntry"
+                      }
+                    },
+                    "files": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/McpEntry"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "unauthorized: missing, invalid or expired token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "insufficient_scope (token lacks the mcp scope) or forbidden (no access to this project).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found: the project or entity does not exist, or you cannot see it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "rate_limited: too many requests.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "upstream_error: a backing service failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "description": "Project id (24-character hex string).",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v0/mcp/projects/{projectId}/search": {
+      "get": {
+        "x-feature": "mcp",
+        "tags": [
+          "MCP Files"
+        ],
+        "summary": "Search project documents for text",
+        "description": "Requires read access to the project. Searches text documents line by line.",
+        "security": [
+          {
+            "mcpBearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Matches",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "query": {
+                      "type": "string"
+                    },
+                    "totalMatches": {
+                      "type": "integer"
+                    },
+                    "matches": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/McpSearchMatch"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "validation_error: a parameter is missing or invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "unauthorized: missing, invalid or expired token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "insufficient_scope (token lacks the mcp scope) or forbidden (no access to this project).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found: the project or entity does not exist, or you cannot see it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "rate_limited: too many requests.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "upstream_error: a backing service failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "description": "Project id (24-character hex string).",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "query",
+            "in": "query",
+            "required": true,
+            "description": "Text to search for.",
+            "schema": {
+              "type": "string"
+            },
+            "example": "section"
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": false,
+            "description": "Only search documents under this path prefix.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "fileTypes",
+            "in": "query",
+            "required": false,
+            "description": "Comma-separated file extensions to search, e.g. 'tex,bib'.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "caseSensitive",
+            "in": "query",
+            "required": false,
+            "description": "Match case exactly.",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "maxMatches",
+            "in": "query",
+            "required": false,
+            "description": "Maximum matches to return (1-100).",
+            "schema": {
+              "type": "integer",
+              "default": 30,
+              "maximum": 100
+            }
+          }
+        ]
+      }
+    },
+    "/api/v0/mcp/projects/{projectId}/doc": {
+      "get": {
+        "x-feature": "mcp",
+        "tags": [
+          "MCP Files"
+        ],
+        "summary": "Read a document",
+        "description": "Requires read access to the project. Returns the text of a document, optionally a range of lines.",
+        "security": [
+          {
+            "mcpBearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Document text",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string"
+                    },
+                    "content": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "validation_error: a parameter is missing or invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "unauthorized: missing, invalid or expired token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "insufficient_scope (token lacks the mcp scope) or forbidden (no access to this project).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found: the project or entity does not exist, or you cannot see it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "rate_limited: too many requests.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "upstream_error: a backing service failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "description": "Project id (24-character hex string).",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": true,
+            "description": "Path of the document inside the project.",
+            "schema": {
+              "type": "string"
+            },
+            "example": "main.tex"
+          },
+          {
+            "name": "startLine",
+            "in": "query",
+            "required": false,
+            "description": "First line to return (1-based).",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "endLine",
+            "in": "query",
+            "required": false,
+            "description": "Last line to return (inclusive).",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ]
+      },
+      "post": {
+        "x-feature": "mcp",
+        "tags": [
+          "MCP Files"
+        ],
+        "summary": "Create or overwrite a document",
+        "description": "Requires write access to the project. Creates the document, and any missing folders, or replaces its whole content.",
+        "security": [
+          {
+            "mcpBearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Document written",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "ok"
+                      ]
+                    },
+                    "docId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "validation_error: a parameter is missing or invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "unauthorized: missing, invalid or expired token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "insufficient_scope (token lacks the mcp scope) or forbidden (no access to this project).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found: the project or entity does not exist, or you cannot see it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "rate_limited: too many requests.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "upstream_error: a backing service failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "description": "Project id (24-character hex string).",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "description": "Path of the document, e.g. main.tex."
+                  },
+                  "content": {
+                    "type": "string",
+                    "description": "Full text of the document."
+                  }
+                },
+                "required": [
+                  "path",
+                  "content"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v0/mcp/projects/{projectId}/folder": {
+      "post": {
+        "x-feature": "mcp",
+        "tags": [
+          "MCP Files"
+        ],
+        "summary": "Create a folder",
+        "description": "Requires write access to the project.",
+        "security": [
+          {
+            "mcpBearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Folder created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "ok"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "validation_error: a parameter is missing or invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "unauthorized: missing, invalid or expired token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "insufficient_scope (token lacks the mcp scope) or forbidden (no access to this project).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found: the project or entity does not exist, or you cannot see it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "rate_limited: too many requests.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "upstream_error: a backing service failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "description": "Project id (24-character hex string).",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "description": "Folder path, e.g. figures/plots."
+                  }
+                },
+                "required": [
+                  "path"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v0/mcp/projects/{projectId}/file": {
+      "get": {
+        "x-feature": "mcp",
+        "tags": [
+          "MCP Files"
+        ],
+        "summary": "Download a file",
+        "description": "Requires read access to the project. Returns the raw file with a Content-Type inferred from the file name.",
+        "security": [
+          {
+            "mcpBearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "File content",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "validation_error: a parameter is missing or invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "unauthorized: missing, invalid or expired token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "insufficient_scope (token lacks the mcp scope) or forbidden (no access to this project).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found: the project or entity does not exist, or you cannot see it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "rate_limited: too many requests.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "upstream_error: a backing service failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "description": "Project id (24-character hex string).",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": true,
+            "description": "Path of the file inside the project.",
+            "schema": {
+              "type": "string"
+            },
+            "example": "figures/plot.png"
+          }
+        ]
+      },
+      "post": {
+        "x-feature": "mcp",
+        "tags": [
+          "MCP Files"
+        ],
+        "summary": "Upload a file",
+        "description": "Requires write access to the project. Provide the content inline as base64 or give a URL for the server to download. Subject to the deployment's upload size limit (20 MB by default).",
+        "security": [
+          {
+            "mcpBearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "File uploaded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "ok"
+                      ]
+                    },
+                    "path": {
+                      "type": "string"
+                    },
+                    "fileId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "validation_error: a parameter is missing or invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "unauthorized: missing, invalid or expired token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "insufficient_scope (token lacks the mcp scope) or forbidden (no access to this project).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found: the project or entity does not exist, or you cannot see it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "rate_limited: too many requests.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "upstream_error: a backing service failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "description": "Project id (24-character hex string).",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "description": "Destination path, e.g. figures/plot.png."
+                  },
+                  "contentBase64": {
+                    "type": "string",
+                    "description": "File content, base64-encoded. Use url instead for large files."
+                  },
+                  "url": {
+                    "type": "string",
+                    "description": "URL the server downloads the file from."
+                  }
+                },
+                "required": [
+                  "path"
+                ],
+                "description": "Provide either contentBase64 or url."
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v0/mcp/projects/{projectId}/move": {
+      "post": {
+        "x-feature": "mcp",
+        "tags": [
+          "MCP Files"
+        ],
+        "summary": "Move or rename a file or folder",
+        "description": "Requires write access to the project.",
+        "security": [
+          {
+            "mcpBearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Moved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "ok"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "validation_error: a parameter is missing or invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "unauthorized: missing, invalid or expired token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "insufficient_scope (token lacks the mcp scope) or forbidden (no access to this project).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found: the project or entity does not exist, or you cannot see it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "rate_limited: too many requests.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "upstream_error: a backing service failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "description": "Project id (24-character hex string).",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "oldPath": {
+                    "type": "string"
+                  },
+                  "newPath": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "oldPath",
+                  "newPath"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v0/mcp/projects/{projectId}/zip": {
+      "get": {
+        "x-feature": "mcp",
+        "tags": [
+          "MCP Files"
+        ],
+        "summary": "Download a project as a zip archive",
+        "description": "Requires read access to the project.",
+        "security": [
+          {
+            "mcpBearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Zip archive",
+            "content": {
+              "application/zip": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "unauthorized: missing, invalid or expired token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "insufficient_scope (token lacks the mcp scope) or forbidden (no access to this project).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found: the project or entity does not exist, or you cannot see it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "rate_limited: too many requests.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "upstream_error: a backing service failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "description": "Project id (24-character hex string).",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v0/mcp/projects-zip": {
+      "get": {
+        "x-feature": "mcp",
+        "tags": [
+          "MCP Files"
+        ],
+        "summary": "Download several projects as one zip archive",
+        "description": "Bundles up to 50 projects into one zip. You need read access to every project listed.",
+        "security": [
+          {
+            "mcpBearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Zip archive",
+            "content": {
+              "application/zip": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "validation_error: a parameter is missing or invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "unauthorized: missing, invalid or expired token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "insufficient_scope (token lacks the mcp scope) or forbidden (no access to this project).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found: the project or entity does not exist, or you cannot see it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "rate_limited: too many requests.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "upstream_error: a backing service failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "projectIds",
+            "in": "query",
+            "required": true,
+            "description": "Comma-separated project ids (at most 50).",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "post": {
+        "x-feature": "mcp",
+        "tags": [
+          "MCP Files"
+        ],
+        "summary": "Download several projects as one zip archive (JSON body)",
+        "description": "Same as the GET form, for lists too long for a query string.",
+        "security": [
+          {
+            "mcpBearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Zip archive",
+            "content": {
+              "application/zip": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "validation_error: a parameter is missing or invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "unauthorized: missing, invalid or expired token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "insufficient_scope (token lacks the mcp scope) or forbidden (no access to this project).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found: the project or entity does not exist, or you cannot see it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "rate_limited: too many requests.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "upstream_error: a backing service failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "projectIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 50
+                  }
+                },
+                "required": [
+                  "projectIds"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v0/mcp/projects/{projectId}/compile": {
+      "post": {
+        "x-feature": "mcp",
+        "tags": [
+          "MCP Compile"
+        ],
+        "summary": "Compile a project",
+        "description": "Requires read access to the project. Runs a compile and returns the build id needed to fetch the log and PDF.",
+        "security": [
+          {
+            "mcpBearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Compile result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "description": "Compile status, e.g. success, failure, timedout."
+                    },
+                    "pdf": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "build": {
+                          "type": "string"
+                        },
+                        "path": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "outputFiles": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "path": {
+                            "type": "string"
+                          },
+                          "build": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "unauthorized: missing, invalid or expired token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "insufficient_scope (token lacks the mcp scope) or forbidden (no access to this project).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found: the project or entity does not exist, or you cannot see it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "rate_limited: too many requests.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "upstream_error: a backing service failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "description": "Project id (24-character hex string).",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "compiler": {
+                    "type": "string",
+                    "description": "Override the project compiler for this run."
+                  },
+                  "draft": {
+                    "type": "boolean",
+                    "default": false
+                  },
+                  "stopOnFirstError": {
+                    "type": "boolean",
+                    "default": false
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v0/mcp/projects/{projectId}/compile/log": {
+      "get": {
+        "x-feature": "mcp",
+        "tags": [
+          "MCP Compile"
+        ],
+        "summary": "Get the compile log",
+        "description": "Requires read access to the project.",
+        "security": [
+          {
+            "mcpBearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Log text",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "log": {
+                      "type": "string"
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "validation_error: a parameter is missing or invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "unauthorized: missing, invalid or expired token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "insufficient_scope (token lacks the mcp scope) or forbidden (no access to this project).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found: the project or entity does not exist, or you cannot see it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "rate_limited: too many requests.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "upstream_error: a backing service failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "description": "Project id (24-character hex string).",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "buildId",
+            "in": "query",
+            "required": true,
+            "description": "Build id returned by the compile endpoint.",
+            "schema": {
+              "type": "string"
+            },
+            "example": "18f4c2a1b3d-7e5a9c0b1d2f3e4a"
+          },
+          {
+            "name": "clsiserverid",
+            "in": "query",
+            "required": false,
+            "description": "Compile server id returned by the compile endpoint; pass it back so the request reaches the server that holds the build.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "maxLines",
+            "in": "query",
+            "required": false,
+            "description": "Maximum lines to return (default 1000, at most 10000).",
+            "schema": {
+              "type": "integer",
+              "default": 1000,
+              "maximum": 10000
+            }
+          }
+        ]
+      }
+    },
+    "/api/v0/mcp/projects/{projectId}/compile/pdf": {
+      "get": {
+        "x-feature": "mcp",
+        "tags": [
+          "MCP Compile"
+        ],
+        "summary": "Download the compiled PDF",
+        "description": "Requires read access to the project.",
+        "security": [
+          {
+            "mcpBearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "PDF",
+            "content": {
+              "application/pdf": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "validation_error: a parameter is missing or invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "unauthorized: missing, invalid or expired token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "insufficient_scope (token lacks the mcp scope) or forbidden (no access to this project).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found: the project or entity does not exist, or you cannot see it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "rate_limited: too many requests.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "upstream_error: a backing service failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "description": "Project id (24-character hex string).",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "buildId",
+            "in": "query",
+            "required": true,
+            "description": "Build id returned by the compile endpoint.",
+            "schema": {
+              "type": "string"
+            },
+            "example": "18f4c2a1b3d-7e5a9c0b1d2f3e4a"
+          },
+          {
+            "name": "clsiserverid",
+            "in": "query",
+            "required": false,
+            "description": "Compile server id returned by the compile endpoint; pass it back so the request reaches the server that holds the build.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v0/mcp/projects/{projectId}/compile/clear-cache": {
+      "post": {
+        "x-feature": "mcp",
+        "tags": [
+          "MCP Compile"
+        ],
+        "summary": "Clear the compile cache",
+        "description": "Requires write access to the project. Deletes cached build output so the next compile starts clean.",
+        "security": [
+          {
+            "mcpBearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cache cleared",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "ok"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "unauthorized: missing, invalid or expired token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "insufficient_scope (token lacks the mcp scope) or forbidden (no access to this project).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found: the project or entity does not exist, or you cannot see it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "rate_limited: too many requests.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "upstream_error: a backing service failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "description": "Project id (24-character hex string).",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "clsiserverid",
+            "in": "query",
+            "required": false,
+            "description": "Compile server id returned by the compile endpoint; pass it back so the request reaches the server that holds the build.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v0/mcp/projects/{projectId}/wordcount": {
+      "get": {
+        "x-feature": "mcp",
+        "tags": [
+          "MCP Compile"
+        ],
+        "summary": "Get the word count",
+        "description": "Requires read access to the project.",
+        "security": [
+          {
+            "mcpBearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Word count",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "wordCount": {
+                      "type": "object",
+                      "description": "Counts as reported by the compiler."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "unauthorized: missing, invalid or expired token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "insufficient_scope (token lacks the mcp scope) or forbidden (no access to this project).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found: the project or entity does not exist, or you cannot see it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "rate_limited: too many requests.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "upstream_error: a backing service failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "description": "Project id (24-character hex string).",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "file",
+            "in": "query",
+            "required": false,
+            "description": "Main file to count; defaults to the project main document.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "clsiserverid",
+            "in": "query",
+            "required": false,
+            "description": "Compile server id returned by the compile endpoint; pass it back so the request reaches the server that holds the build.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v0/mcp/projects/{projectId}/synctex": {
+      "get": {
+        "x-feature": "mcp",
+        "tags": [
+          "MCP Compile"
+        ],
+        "summary": "Map between source and PDF positions",
+        "description": "Requires read access to the project. Give file and line to find the PDF position, or page, h and v to find the source position.",
+        "security": [
+          {
+            "mcpBearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "SyncTeX result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "synctex": {
+                      "type": "object",
+                      "description": "Position data as reported by SyncTeX."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "validation_error: a parameter is missing or invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "unauthorized: missing, invalid or expired token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "insufficient_scope (token lacks the mcp scope) or forbidden (no access to this project).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found: the project or entity does not exist, or you cannot see it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "rate_limited: too many requests.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "upstream_error: a backing service failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "description": "Project id (24-character hex string).",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "file",
+            "in": "query",
+            "required": false,
+            "description": "Source file (source to PDF).",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "line",
+            "in": "query",
+            "required": false,
+            "description": "Line number (source to PDF).",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "column",
+            "in": "query",
+            "required": false,
+            "description": "Column number (source to PDF).",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "description": "PDF page (PDF to source).",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "h",
+            "in": "query",
+            "required": false,
+            "description": "Horizontal position on the page (PDF to source).",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "v",
+            "in": "query",
+            "required": false,
+            "description": "Vertical position on the page (PDF to source).",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "buildId",
+            "in": "query",
+            "required": false,
+            "description": "Build to resolve against.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "editorId",
+            "in": "query",
+            "required": false,
+            "description": "Editor session id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "clsiserverid",
+            "in": "query",
+            "required": false,
+            "description": "Compile server id returned by the compile endpoint; pass it back so the request reaches the server that holds the build.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/.well-known/oauth-authorization-server": {
+      "get": {
+        "x-feature": "mcp",
+        "tags": [
+          "OAuth2"
+        ],
+        "summary": "Get authorization server metadata",
+        "description": "OAuth 2.0 authorization server metadata (RFC 8414). MCP clients use it to discover the other endpoints.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Metadata",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "issuer": {
+                      "type": "string"
+                    },
+                    "authorization_endpoint": {
+                      "type": "string"
+                    },
+                    "token_endpoint": {
+                      "type": "string"
+                    },
+                    "jwks_uri": {
+                      "type": "string"
+                    },
+                    "registration_endpoint": {
+                      "type": "string"
+                    },
+                    "scopes_supported": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "response_types_supported": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "grant_types_supported": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "token_endpoint_auth_methods_supported": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "code_challenge_methods_supported": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "authorization_response_iss_parameter_supported": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/.well-known/openid-configuration": {
+      "get": {
+        "x-feature": "mcp",
+        "tags": [
+          "OAuth2"
+        ],
+        "summary": "Get OpenID configuration",
+        "description": "Returns the same metadata document as /.well-known/oauth-authorization-server.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Metadata",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "issuer": {
+                      "type": "string"
+                    },
+                    "authorization_endpoint": {
+                      "type": "string"
+                    },
+                    "token_endpoint": {
+                      "type": "string"
+                    },
+                    "jwks_uri": {
+                      "type": "string"
+                    },
+                    "registration_endpoint": {
+                      "type": "string"
+                    },
+                    "scopes_supported": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "response_types_supported": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "grant_types_supported": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "token_endpoint_auth_methods_supported": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "code_challenge_methods_supported": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "authorization_response_iss_parameter_supported": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/.well-known/jwks.json": {
+      "get": {
+        "x-feature": "mcp",
+        "tags": [
+          "OAuth2"
+        ],
+        "summary": "Get the token signing keys",
+        "description": "JSON Web Key Set used to verify access tokens. Cached for 24 hours.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "JWK set",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "keys": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/oauth/register": {
+      "post": {
+        "x-feature": "mcp",
+        "tags": [
+          "OAuth2"
+        ],
+        "summary": "Register an OAuth client",
+        "description": "Dynamic client registration (RFC 7591). Registers a public client that uses PKCE. Registering the same name and redirect URIs again returns the existing client. Rate limited to 60 requests per minute per client IP.",
+        "security": [],
+        "responses": {
+          "201": {
+            "description": "Registered client",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthClient"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid client metadata or redirect URI",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "slow_down: too many requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "client_name": {
+                    "type": "string"
+                  },
+                  "redirect_uris": {
+                    "type": "array",
+                    "description": "HTTPS URLs, or http://localhost / http://127.0.0.1 for local clients. No user info allowed.",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "grant_types": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "authorization_code",
+                        "refresh_token"
+                      ]
+                    },
+                    "description": "Defaults to authorization_code and refresh_token."
+                  },
+                  "scope": {
+                    "type": "string",
+                    "description": "Space-separated scopes. Defaults to 'mcp'."
+                  }
+                },
+                "required": [
+                  "client_name",
+                  "redirect_uris"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/oauth/authorize": {
+      "get": {
+        "x-feature": "mcp",
+        "tags": [
+          "OAuth2"
+        ],
+        "summary": "Start the authorization code flow",
+        "description": "Open this URL in the user's browser. The user signs in to Overleaf if needed and approves access; the browser is then redirected to redirect_uri with a code and the state you sent. Exchange the code at /oauth/token. Only response_type=code with PKCE (S256) is supported.",
+        "security": [],
+        "parameters": [
+          {
+            "name": "response_type",
+            "in": "query",
+            "required": true,
+            "description": "Must be 'code'.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "code"
+              ]
+            }
+          },
+          {
+            "name": "client_id",
+            "in": "query",
+            "required": true,
+            "description": "Id returned by /oauth/register.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "redirect_uri",
+            "in": "query",
+            "required": true,
+            "description": "One of the client's registered redirect URIs.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "code_challenge",
+            "in": "query",
+            "required": true,
+            "description": "PKCE challenge: base64url(SHA-256(code_verifier)).",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "code_challenge_method",
+            "in": "query",
+            "required": true,
+            "description": "Must be 'S256'.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "S256"
+              ]
+            }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "required": false,
+            "description": "Requested scope, 'mcp'.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "description": "Opaque value returned unchanged to redirect_uri.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Consent page (HTML)",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "302": {
+            "description": "Redirect to redirect_uri with an error and the state, if the request is invalid."
+          }
+        }
+      }
+    },
+    "/oauth/token": {
+      "post": {
+        "x-feature": "mcp",
+        "tags": [
+          "OAuth2"
+        ],
+        "summary": "Exchange a code or refresh token for an access token",
+        "description": "Send the request body as application/x-www-form-urlencoded or JSON. Use grant_type=authorization_code with the code and PKCE verifier, or grant_type=refresh_token. Rate limited to 60 requests per minute per client IP.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Tokens",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthTokenResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request, grant or target",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "slow_down: too many requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "grant_type": {
+                    "type": "string",
+                    "enum": [
+                      "authorization_code",
+                      "refresh_token"
+                    ]
+                  },
+                  "client_id": {
+                    "type": "string"
+                  },
+                  "code": {
+                    "type": "string",
+                    "description": "Authorization code (authorization_code grant)."
+                  },
+                  "redirect_uri": {
+                    "type": "string",
+                    "description": "Must match the redirect_uri used to authorize (authorization_code grant)."
+                  },
+                  "code_verifier": {
+                    "type": "string",
+                    "description": "PKCE verifier (authorization_code grant)."
+                  },
+                  "refresh_token": {
+                    "type": "string",
+                    "description": "Refresh token (refresh_token grant)."
+                  },
+                  "resource": {
+                    "type": "string",
+                    "description": "Optional audience the token is requested for."
+                  }
+                },
+                "required": [
+                  "grant_type",
+                  "client_id"
+                ]
+              }
+            },
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "grant_type": {
+                    "type": "string",
+                    "enum": [
+                      "authorization_code",
+                      "refresh_token"
+                    ]
+                  },
+                  "client_id": {
+                    "type": "string"
+                  },
+                  "code": {
+                    "type": "string",
+                    "description": "Authorization code (authorization_code grant)."
+                  },
+                  "redirect_uri": {
+                    "type": "string",
+                    "description": "Must match the redirect_uri used to authorize (authorization_code grant)."
+                  },
+                  "code_verifier": {
+                    "type": "string",
+                    "description": "PKCE verifier (authorization_code grant)."
+                  },
+                  "refresh_token": {
+                    "type": "string",
+                    "description": "Refresh token (refresh_token grant)."
+                  },
+                  "resource": {
+                    "type": "string",
+                    "description": "Optional audience the token is requested for."
+                  }
+                },
+                "required": [
+                  "grant_type",
+                  "client_id"
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "Git Bridge",
+      "description": "Read and write project content over HTTP for the git-bridge integration. Authenticated with a personal access token."
+    },
+    {
+      "name": "Personal Access Tokens",
+      "description": "Create, list and revoke the tokens that authenticate Git Bridge and MCP requests. These endpoints use your logged-in browser session."
+    },
+    {
+      "name": "MCP OpenAPI",
+      "description": "The MCP service publishes its own summary OpenAPI document."
+    },
+    {
+      "name": "MCP Projects",
+      "description": "List, create and configure projects. Authenticated with a personal access token or OAuth2 access token that has the mcp scope."
+    },
+    {
+      "name": "MCP Files",
+      "description": "Browse, search, read, write, upload, move and download project files. Authenticated with a token that has the mcp scope."
+    },
+    {
+      "name": "MCP Compile",
+      "description": "Compile a project and fetch its log, PDF, word count and SyncTeX positions. Authenticated with a token that has the mcp scope."
+    },
+    {
+      "name": "OAuth2",
+      "description": "OAuth 2.1 authorization server (authorization code with PKCE) that issues access tokens to MCP clients."
+    }
+  ]
+}

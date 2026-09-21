@@ -1178,6 +1178,7 @@ module.exports = {
     'github-sync',
     'comment-notifications',
     'ai-assist',
+    'api-docs',
   ],
   viewIncludes: {},
 

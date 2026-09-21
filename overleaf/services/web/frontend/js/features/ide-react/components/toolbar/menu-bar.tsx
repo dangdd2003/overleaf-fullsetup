@@ -52,6 +52,7 @@ export const ToolbarMenuBar = () => {
   const anonymous = getMeta('ol-anonymous')
   const showSupport = getMeta('ol-showSupport')
   const showDocumentation = getMeta('ol-wikiEnabled')
+  const showApiDocs = getMeta('ol-apiDocsEnabled')
 
   useCommandProvider(
     () => [
@@ -333,6 +334,15 @@ export const ToolbarMenuBar = () => {
               title={t('documentation')}
               eventKey="documentation"
               href="/learn"
+              target="_blank"
+              rel="noopener noreferrer"
+            />
+          )}
+          {showApiDocs && (
+            <MenuBarOption
+              title={t('api_documentation')}
+              eventKey="api_documentation"
+              href="/api-docs"
               target="_blank"
               rel="noopener noreferrer"
             />

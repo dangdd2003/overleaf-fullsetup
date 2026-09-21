@@ -67,6 +67,10 @@ const Features = {
         return Boolean(Settings.enableGoogleDriveSync)
       case 'git-bridge':
         return Boolean(Settings.enableGitBridge)
+      case 'mcp':
+        return Boolean(Settings.enableMcp)
+      case 'api-docs':
+        return Boolean(Settings.enableApiDocs)
       case 'admin-user-management':
         return Boolean(
           Settings.enableAdminUserManagement ??

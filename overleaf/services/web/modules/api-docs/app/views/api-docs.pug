@@ -1,0 +1,11 @@
+extends ../../../../app/views/layout-react
+
+block entrypointVar
+	- entrypoint = 'modules/api-docs/pages/api-docs'
+
+block vars
+	- isWebsiteRedesign = true
+
+block content
+	#main-content.content.content-alt
+		#api-docs-page-root

@@ -11,6 +11,7 @@ import {
 export default function RailHelpDropdown() {
   const showSupport = getMeta('ol-showSupport')
   const showDocumentation = getMeta('ol-wikiEnabled')
+  const showApiDocs = getMeta('ol-apiDocsEnabled')
   const { t } = useTranslation()
   const { setActiveModal } = useRailContext()
   const openKeyboardShortcutsModal = useCallback(() => {
@@ -33,6 +34,16 @@ export default function RailHelpDropdown() {
           rel="noopener noreferrer"
         >
           {t('documentation')}
+        </OLDropdownItem>
+      )}
+      {showApiDocs && (
+        <OLDropdownItem
+          href="/api-docs"
+          role="menuitem"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          {t('api_documentation')}
         </OLDropdownItem>
       )}
       {showSupport && (
