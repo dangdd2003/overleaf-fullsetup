@@ -4,6 +4,30 @@ const API_PREFIX = '/api/v0/mcp'
 const DEFAULT_TIMEOUT_MS = 30000
 
 /**
+ * Read the download name out of a Content-Disposition header.
+ *
+ * web names every archive it serves in this header, so it stays the single
+ * source of truth for what an export is called; callers only have to pass the
+ * name on. Anything unparseable yields undefined and the caller falls back.
+ *
+ * @param {string|null} header
+ * @returns {string|undefined}
+ */
+function filenameFromDisposition(header) {
+  if (!header) return undefined
+  const encoded = /filename\*=\s*(?:UTF-8'')?([^;]+)/i.exec(header)
+  if (encoded) {
+    try {
+      return decodeURIComponent(encoded[1].trim().replace(/^"|"$/g, ''))
+    } catch {
+      // a malformed percent-escape is not worth failing the download over
+    }
+  }
+  const plain = /filename=\s*"?([^";]+)"?/i.exec(header)
+  return plain ? plain[1].trim() : undefined
+}
+
+/**
  * Thin fetch wrapper over the web service's per-user MCP API.
  *
  * It holds no credential of its own: every call takes the caller's token and
@@ -100,7 +124,7 @@ export class OverleafClient {
    * @param {string} token
    * @param {string} path
    * @param {object} [queryOrOptions]
-   * @returns {Promise<{ contentType: string, base64: string }>}
+   * @returns {Promise<{ contentType: string, filename: string|undefined, base64: string }>}
    */
   async requestBinary(token, path, queryOrOptions = {}) {
     this.#assertToken(token)
@@ -141,6 +165,9 @@ export class OverleafClient {
     return {
       contentType:
         response.headers.get('content-type') || 'application/octet-stream',
+      filename: filenameFromDisposition(
+        response.headers.get('content-disposition')
+      ),
       base64: buffer.toString('base64'),
     }
   }

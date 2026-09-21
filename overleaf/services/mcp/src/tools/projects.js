@@ -44,12 +44,8 @@ const projectDetail = projectSummary.extend({
     .describe('Spell-check language code, or empty when disabled'),
 })
 
-const exportedProjectItem = looseObject({
-  projectId: z.string().describe('The exported project id'),
-  uri: z.string().describe('overleaf:// uri identifying the project zip resource'),
-  mimeType: z.string().describe('Media type of the zip archive'),
-  sizeBytes: z.number().int().describe('Decoded size of the zip archive in bytes'),
-})
+/** Matches the ceiling web enforces on /projects-zip, so we reject before the round trip. */
+const MAX_PROJECTS_PER_EXPORT = 50
 
 /**
  * Register the project-level tools.
@@ -186,158 +182,99 @@ export function registerProjectTools(server, { client, staticToken }) {
   server.registerTool(
     'export_project_zip',
     {
-      title: 'Export project as ZIP',
+      title: 'Export projects as ZIP',
       description:
-        'Download a project, or several projects, as ZIP archives. Returns each project as a binary ZIP resource plus metadata. Use it to back up or hand off project files rather than reading files one at a time. If 1 project is requested, 1 project is returned; if multiple projects are requested, each project is returned.',
+        'Download projects as a single ZIP archive, the same archive the download button in the Overleaf UI produces. One project id returns that project\'s own zip, named after the project. Several project ids return one bundle zip holding a zip per project, named after the moment it was exported. Either way exactly one binary ZIP resource comes back, plus its metadata. Use it to back up or hand off whole projects rather than reading files one at a time.',
       annotations: READ_ONLY,
-      inputSchema: z
-        .object({
-          projectId: z
-            .string()
-            .optional()
-            .describe('Single Overleaf project id to export as ZIP'),
-          projectIds: z
-            .array(z.string().min(1))
-            .optional()
-            .describe(
-              'Array of Overleaf project ids to export as ZIP'
-            ),
-        })
-        .refine(
-          args =>
-            Boolean(args.projectId) ||
-            Boolean(args.projectIds && args.projectIds.length > 0),
-          {
-            message:
-              'supply either projectId for a single project or projectIds for multiple projects',
-          }
-        ),
+      inputSchema: z.object({
+        projectIds: z
+          .array(z.string().min(1))
+          .min(1)
+          .max(MAX_PROJECTS_PER_EXPORT)
+          .describe(
+            'Overleaf project ids to export. One id exports that project on its own; several ids export one bundle zip containing a zip per project.'
+          ),
+      }),
       outputSchema: looseObject({
         status: okStatus,
-        projectId: z
-          .string()
-          .optional()
-          .describe('The exported project, for a single-project export'),
+        projectIds: z
+          .array(z.string())
+          .describe('The project ids the archive holds'),
+        count: z.number().int().describe('How many projects the archive holds'),
+        bundled: z
+          .boolean()
+          .describe('True when the archive is a bundle of per-project zips'),
+        filename: z.string().describe('Name to save the archive under'),
         uri: z
           .string()
-          .optional()
-          .describe('overleaf:// uri identifying the returned resource'),
-        mimeType: z
-          .string()
-          .optional()
-          .describe('Media type of the returned resource'),
+          .describe('overleaf:// uri identifying the returned archive'),
+        mimeType: z.string().describe('Media type of the archive'),
         sizeBytes: z
           .number()
           .int()
-          .optional()
-          .describe('Decoded size of the resource in bytes'),
-        projects: z
-          .array(exportedProjectItem)
-          .optional()
-          .describe('The list of exported project zip archives'),
-        count: z
-          .number()
-          .int()
-          .optional()
-          .describe('How many projects were exported'),
+          .describe('Decoded size of the archive in bytes'),
         message: z.string().describe('Human-readable summary of the export'),
       }),
     },
-    runTool(async ({ projectId: id, projectIds: ids }, ctx) => {
-      const rawIds = [
-        ...(id ? [id] : []),
-        ...(Array.isArray(ids) ? ids : []),
-      ].filter(Boolean)
-      const projectIds = [...new Set(rawIds)]
+    runTool(async ({ projectIds: ids }, ctx) => {
+      const projectIds = [
+        ...new Set((Array.isArray(ids) ? ids : []).filter(Boolean)),
+      ]
 
       if (projectIds.length === 0) {
         throw new OverleafApiError(
           CODES.VALIDATION_ERROR,
-          'supply either projectId for a single project or projectIds for multiple projects',
+          'supply at least one project id in projectIds',
+          400
+        )
+      }
+      if (projectIds.length > MAX_PROJECTS_PER_EXPORT) {
+        throw new OverleafApiError(
+          CODES.VALIDATION_ERROR,
+          `cannot export more than ${MAX_PROJECTS_PER_EXPORT} projects at once`,
           400
         )
       }
       const token = tokenFrom(ctx, staticToken)
+      const bundled = projectIds.length > 1
 
-      const fetchProjectZip = async pid => {
-        const { contentType, base64 } = await client.requestBinary(
-          token,
-          `/projects/${pid}/zip`
-        )
-        const sizeBytes = Buffer.byteLength(base64, 'base64')
-        const uri = `overleaf://projects/${pid}/project.zip`
-        const mimeType = contentType || 'application/zip'
-        return {
-          projectId: pid,
-          uri,
-          mimeType,
-          sizeBytes,
-          base64,
-        }
-      }
+      // web already builds both archives for its own download buttons, so this
+      // is one request either way: never a zip per project stitched together
+      // here. POST keeps a 50-id bundle out of the query string.
+      const { contentType, filename, base64 } = bundled
+        ? await client.requestBinary(token, '/projects-zip', {
+            method: 'POST',
+            body: { projectIds },
+          })
+        : await client.requestBinary(token, `/projects/${projectIds[0]}/zip`)
 
-      if (projectIds.length === 1) {
-        const singleId = projectIds[0]
-        const project = await fetchProjectZip(singleId)
-        const sizeKb = Math.round((project.sizeBytes / 1024) * 10) / 10
-        const summary = {
-          status: 'ok',
-          projectId: project.projectId,
-          uri: project.uri,
-          mimeType: project.mimeType,
-          sizeBytes: project.sizeBytes,
-          count: 1,
-          projects: [
-            {
-              projectId: project.projectId,
-              uri: project.uri,
-              mimeType: project.mimeType,
-              sizeBytes: project.sizeBytes,
-            },
-          ],
-          message: `Exported project "${project.projectId}" as ZIP archive (${sizeKb} KB).`,
-        }
-        return {
-          content: [
-            {
-              type: 'resource',
-              resource: {
-                uri: project.uri,
-                mimeType: project.mimeType,
-                blob: project.base64,
-              },
-            },
-            { type: 'text', text: JSON.stringify(summary) },
-          ],
-          structuredContent: summary,
-        }
-      }
-
-      const results = await Promise.all(projectIds.map(fetchProjectZip))
-      const totalBytes = results.reduce((acc, p) => acc + p.sizeBytes, 0)
-      const totalKb = Math.round((totalBytes / 1024) * 10) / 10
-      const projectList = results.map(p => ({
-        projectId: p.projectId,
-        uri: p.uri,
-        mimeType: p.mimeType,
-        sizeBytes: p.sizeBytes,
-      }))
+      const sizeBytes = Buffer.byteLength(base64, 'base64')
+      const sizeKb = Math.round((sizeBytes / 1024) * 10) / 10
+      const name =
+        filename ||
+        (bundled ? 'Overleaf Projects.zip' : `${projectIds[0]}.zip`)
+      const uri = bundled
+        ? `overleaf://exports/${encodeURIComponent(name)}`
+        : `overleaf://projects/${projectIds[0]}/project.zip`
       const summary = {
         status: 'ok',
-        count: results.length,
-        projects: projectList,
-        message: `Exported ${results.length} projects as ZIP archives (total ${totalKb} KB).`,
+        projectIds,
+        count: projectIds.length,
+        bundled,
+        filename: name,
+        uri,
+        mimeType: contentType || 'application/zip',
+        sizeBytes,
+        message: bundled
+          ? `Exported ${projectIds.length} projects as "${name}" (${sizeKb} KB), one zip per project inside the bundle.`
+          : `Exported project "${projectIds[0]}" as "${name}" (${sizeKb} KB).`,
       }
       return {
         content: [
-          ...results.map(p => ({
+          {
             type: 'resource',
-            resource: {
-              uri: p.uri,
-              mimeType: p.mimeType,
-              blob: p.base64,
-            },
-          })),
+            resource: { uri, mimeType: summary.mimeType, blob: base64 },
+          },
           { type: 'text', text: JSON.stringify(summary) },
         ],
         structuredContent: summary,

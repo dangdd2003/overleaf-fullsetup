@@ -198,4 +198,43 @@ describe('OverleafClient', function () {
     expect(JSON.parse(init.body)).to.deep.equal({ projectIds: ['p1', 'p2'] })
     expect(result.contentType).to.equal('application/zip')
   })
+
+  it('requestBinary: reports the download name web put in Content-Disposition', async function () {
+    const headers = {
+      'content-type': 'application/zip',
+      'content-disposition': 'attachment; filename="My Thesis.zip"',
+    }
+    fetchImpl.resolves({
+      ok: true,
+      status: 200,
+      headers: { get: name => headers[name.toLowerCase()] ?? null },
+      arrayBuffer: async () => new TextEncoder().encode('PK-zip').buffer,
+    })
+    const result = await client.requestBinary(TOKEN, '/projects/p1/zip')
+    expect(result.filename).to.equal('My Thesis.zip')
+  })
+
+  it('requestBinary: decodes an RFC 5987 filename and tolerates a missing one', async function () {
+    const withEncoded = {
+      'content-disposition': "attachment; filename*=UTF-8''Th%C3%A8se.zip",
+    }
+    fetchImpl.resolves({
+      ok: true,
+      status: 200,
+      headers: { get: name => withEncoded[name.toLowerCase()] ?? null },
+      arrayBuffer: async () => new TextEncoder().encode('PK-zip').buffer,
+    })
+    expect((await client.requestBinary(TOKEN, '/projects/p1/zip')).filename).to.equal(
+      'Thèse.zip'
+    )
+
+    fetchImpl.resolves({
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      arrayBuffer: async () => new TextEncoder().encode('PK-zip').buffer,
+    })
+    expect((await client.requestBinary(TOKEN, '/projects/p1/zip')).filename).to.be
+      .undefined
+  })
 })

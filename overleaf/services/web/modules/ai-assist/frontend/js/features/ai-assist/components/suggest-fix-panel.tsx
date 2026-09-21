@@ -579,14 +579,15 @@ export default function SuggestFixPanel({
             {(error.code === 'providerAuth' ||
               error.code === 'modelsUnsupported' ||
               error.code === 'noProvider') && (
-              <a
+              <OLButton
                 href="/user/settings"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="btn btn-secondary btn-sm"
+                variant="secondary"
+                size="sm"
               >
                 Account Settings
-              </a>
+              </OLButton>
             )}
           </div>
         </div>

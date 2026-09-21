@@ -598,8 +598,9 @@ describe('McpFilesController.downloadMultipleProjectsZip', () => {
     await McpFilesController.downloadMultipleProjectsZip(req, r)
 
     expect(r.headers['content-type']).toBe('application/zip')
-    expect(r.headers['content-disposition']).toBe(
-      'attachment; filename="Overleaf Projects (2 items).zip"'
+    // Overleaf Projects <date> <clock> UTC (<count> projects).zip
+    expect(r.headers['content-disposition']).toMatch(
+      /^attachment; filename="Overleaf Projects \d{4}-\d{2}-\d{2} \d{2}-\d{2}-\d{2} UTC \(2 projects\)\.zip"$/
     )
     expect(mockStream.pipe).toHaveBeenCalledWith(r)
   })

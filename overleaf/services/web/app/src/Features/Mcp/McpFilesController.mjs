@@ -348,6 +348,23 @@ async function downloadProjectZip(req, res) {
   )
 }
 
+/**
+ * Name a multi-project bundle after the moment it was exported.
+ *
+ * A bundle has no project name to borrow, so the export time identifies it,
+ * written the way someone reading their downloads folder would want to read
+ * it. It keeps Overleaf's own "Overleaf Projects (N items)" phrasing, dates
+ * first so the names still sort chronologically, and says UTC out loud
+ * because the server has no idea what clock the reader is on. The clock uses
+ * hyphens rather than colons: a colon is illegal in a Windows filename.
+ *
+ * e.g. Overleaf Projects 2026-09-21 14-25-30 UTC (3 projects).zip
+ */
+function bundleFilename(count, now = new Date()) {
+  const [date, clock] = now.toISOString().replace(/\.\d+Z$/, '').split('T')
+  return `Overleaf Projects ${date} ${clock.replace(/:/g, '-')} UTC (${count} project${count === 1 ? '' : 's'}).zip`
+}
+
 async function downloadMultipleProjectsZip(req, res) {
   let projectIds = req.body?.projectIds || req.query?.projectIds
   if (typeof projectIds === 'string') {
@@ -400,7 +417,7 @@ async function downloadMultipleProjectsZip(req, res) {
       res.contentType('application/zip')
       res.setHeader(
         'Content-Disposition',
-        `attachment; filename="Overleaf Projects (${projectIds.length} items).zip"`
+        `attachment; filename="${bundleFilename(projectIds.length)}"`
       )
       stream.pipe(res)
     }

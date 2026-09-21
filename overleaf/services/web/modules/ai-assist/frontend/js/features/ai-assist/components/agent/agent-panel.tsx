@@ -193,10 +193,6 @@ function AgentPanelInner({
     initialTranscript: loadConversation(projectId),
   })
 
-  const [pendingPrompt, setPendingPrompt] = useState<{
-    text: string
-    attachments?: AttachmentRef[]
-  } | null>(null)
   const [files, setFiles] = useState<ProjectFile[]>([])
   // Stamped when a run begins so the status line can count from it;
   // persists across page reloads via getStoredActiveRunStartedAt.
@@ -471,13 +467,11 @@ function AgentPanelInner({
           ? selection
           : (attachedSelection ?? handle.currentSelection())
 
-      const prompt = {
+      await sendPrompt({
         text,
         attachments: finalAttachments,
         attachedSelection: finalSelection,
-      }
-      setPendingPrompt(prompt)
-      await sendPrompt(prompt)
+      })
 
       // Clear composer attachments and selection after sending
       setAttachments([])
@@ -513,14 +507,12 @@ function AgentPanelInner({
     void run(revived)
   }, [state.running, state.stoppedByUser, run, setState])
 
-  const onAllowConsent = useCallback(async () => {
+  // The blocked run already committed its transcript, user entry included, so
+  // resume it as-is; sending the prompt again would duplicate the message.
+  const onAllowConsent = useCallback(() => {
     allowConsent()
-    if (pendingPrompt) {
-      const prompt = pendingPrompt
-      setPendingPrompt(null)
-      await sendPrompt(prompt)
-    }
-  }, [allowConsent, pendingPrompt, sendPrompt])
+    void run(liveTranscriptRef.current)
+  }, [allowConsent, run])
 
   // Lets the compile-log panel see that a run is in flight, so its "Continue
   // in chat" button can refuse rather than race this one. Cleared on unmount
@@ -816,19 +808,20 @@ function AgentPanelInner({
                     size="sm"
                     onClick={() => void run(state.transcript)}
                   >
-                    Try again
+                    {t('try_again', 'Try again')}
                   </OLButton>
                   {(state.error.code === 'providerAuth' ||
                     state.error.code === 'modelsUnsupported' ||
                     state.error.code === 'noProvider') && (
-                    <a
+                    <OLButton
                       href="/user/settings"
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="btn btn-secondary btn-sm"
+                      variant="secondary"
+                      size="sm"
                     >
-                      Account Settings
-                    </a>
+                      {t('ai_assist_account_settings', 'Account Settings')}
+                    </OLButton>
                   )}
                 </div>
               </>

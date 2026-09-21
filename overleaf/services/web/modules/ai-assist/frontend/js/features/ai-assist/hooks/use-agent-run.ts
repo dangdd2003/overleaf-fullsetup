@@ -299,6 +299,10 @@ export function useAgentRun({
         return
       }
       if (!hasConsented()) {
+        // Commit the transcript now, replacing the caller's optimistic entry,
+        // so allowing consent resumes this exact run rather than re-sending
+        // the prompt as a second copy.
+        setState(current => ({ ...current, transcript, running: false }))
         setNeedsConsent(true)
         return
       }
