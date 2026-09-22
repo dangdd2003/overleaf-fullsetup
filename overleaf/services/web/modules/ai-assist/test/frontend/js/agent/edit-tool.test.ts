@@ -140,7 +140,7 @@ describe('edit_file', function () {
     expect(result.status).to.equal('rejected')
     expect(result.note).to.equal('keep the original wording')
     expect(result.message).to.include('keep the original wording')
-    expect(result.message).to.match(/acknowledge the rejection/i)
+    expect(result.message).to.match(/NOT applied/)
   })
 
   it('reports drift when the document changed before the user accepted', async function () {

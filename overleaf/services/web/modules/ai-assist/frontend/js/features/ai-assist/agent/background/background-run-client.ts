@@ -46,11 +46,13 @@ export async function startBackgroundRun({
   transcript,
   providerSettings,
   mode = 'manual',
+  chatId,
 }: {
   projectId: string
   transcript: TranscriptEntry[]
   providerSettings: ProviderSettings
   mode?: AgentMode
+  chatId?: string
 }): Promise<string> {
   const preparedTranscript = prepareTranscriptForRun(transcript)
   const res = await fetch(`/ai-assist/projects/${projectId}/runs`, {
@@ -59,7 +61,7 @@ export async function startBackgroundRun({
       'Content-Type': 'application/json',
       ...getCsrfHeaders(),
     },
-    body: JSON.stringify({ transcript: preparedTranscript, providerSettings, mode }),
+    body: JSON.stringify({ transcript: preparedTranscript, providerSettings, mode, ...(chatId ? { chatId } : {}) }),
   })
   if (!res.ok) {
     let errorMsg = `Failed to start AI run (${res.status})`

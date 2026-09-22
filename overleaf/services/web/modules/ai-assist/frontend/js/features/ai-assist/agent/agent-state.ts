@@ -19,6 +19,7 @@ export type AgentState = {
   transcript: TranscriptEntry[]
   running: boolean
   mode: AgentMode
+  chatTitle?: string
   stoppedByUser: boolean
   pendingApproval: PendingApproval | null
   error: {
@@ -33,12 +34,14 @@ export type AgentState = {
 
 export function emptyAgentState(
   transcript: TranscriptEntry[] = [],
-  mode: AgentMode = 'manual'
+  mode: AgentMode = 'manual',
+  chatTitle: string = ''
 ): AgentState {
   return {
     transcript,
     running: false,
     mode,
+    chatTitle,
     stoppedByUser: false,
     pendingApproval: null,
     error: null,
@@ -306,6 +309,8 @@ export function reduceAgentEvent(
       return { ...state, mode: event.mode }
     case 'userMessage':
       return { ...state, transcript: deliverUserMessage(state.transcript, event) }
+    case 'chatTitle':
+      return { ...state, chatTitle: event.title }
     case 'awaitingApproval':
       return {
         ...state,

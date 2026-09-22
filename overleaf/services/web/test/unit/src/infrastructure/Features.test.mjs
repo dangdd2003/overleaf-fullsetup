@@ -155,6 +155,24 @@ describe('Features', function () {
         expect(ctx.Features.hasFeature('google-drive-sync')).to.be.false
       })
     })
+    describe('mcp', function () {
+      it('should return true when enableMcp is set', function (ctx) {
+        ctx.settings.enableMcp = true
+        expect(ctx.Features.hasFeature('mcp')).to.be.true
+      })
+      it('should return false when enableMcp is not set', function (ctx) {
+        expect(ctx.Features.hasFeature('mcp')).to.be.false
+      })
+    })
+    describe('api-docs', function () {
+      it('should return true when enableApiDocs is set', function (ctx) {
+        ctx.settings.enableApiDocs = true
+        expect(ctx.Features.hasFeature('api-docs')).to.be.true
+      })
+      it('should return false when enableApiDocs is not set', function (ctx) {
+        expect(ctx.Features.hasFeature('api-docs')).to.be.false
+      })
+    })
     describe('admin-project-management', function () {
       afterEach(function () {
         delete process.env.ADMIN_PROJECT_MANAGEMENT_ENABLED

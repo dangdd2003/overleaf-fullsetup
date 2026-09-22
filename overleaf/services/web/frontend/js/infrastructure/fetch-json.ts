@@ -30,6 +30,10 @@ export function deleteJSON<T = any>(path: FetchPath, options?: FetchConfig) {
   return fetchJSON<T>(path, { ...options, method: 'DELETE' })
 }
 
+export function patchJSON<T = any>(path: FetchPath, options?: FetchConfig) {
+  return fetchJSON<T>(path, { ...options, method: 'PATCH' })
+}
+
 export class FetchError extends OError {
   public url: string
   public options?: RequestInit

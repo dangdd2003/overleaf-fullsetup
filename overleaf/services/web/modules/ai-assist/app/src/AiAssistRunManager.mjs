@@ -1,7 +1,10 @@
+import logger from '@overleaf/logger'
 import Settings from '@overleaf/settings'
 import './ModuleSettings.mjs'
 import defaultStore from './AiAssistRunStore.mjs'
 import defaultTools from './AiAssistTools.mjs'
+import defaultChatHistoryStore from './AiAssistChatHistoryStore.mjs'
+import { generateChatTitle } from './AiAssistChatTitler.mjs'
 import { createProviderClient } from './AiAssistProviders.mjs'
 import { renderToolResult } from './AiAssistToolRender.mjs'
 import { SYSTEM_PROMPT, systemPromptFor } from './AiAssistSystemPrompt.mjs'
@@ -426,12 +429,14 @@ export class AiAssistRunManager {
     store = defaultStore,
     tools = defaultTools,
     clientFactory = createProviderClient,
+    chatHistoryStore = defaultChatHistoryStore,
     approvalTimeoutMs = null,
     compileTimeoutMs = null,
   } = {}) {
     this.store = store
     this.tools = tools
     this.clientFactory = clientFactory
+    this.chatHistoryStore = chatHistoryStore
     this.activeRuns = new Map()
     this.control = null
     this.approvalTimeoutMs =
@@ -446,7 +451,7 @@ export class AiAssistRunManager {
     this.control = control
   }
 
-  async startRun({ runId, projectId, userId, transcript, providerSettings, mode = 'manual' }) {
+  async startRun({ runId, projectId, userId, transcript, providerSettings, mode = 'manual', chatId = null }) {
     const controller = new AbortController()
     const approvalPromiseResolvers = { resolve: null }
     const compileResolvers = new Map()
@@ -554,6 +559,41 @@ export class AiAssistRunManager {
       await write(event)
     }
 
+    // Asynchronously auto-generate the chat title directly from the first prompt (like Claude AI).
+    // The first prompt shows the full scheme of the chat; this reorganizes it into a concise title
+    // and emits it immediately so the session name updates right away.
+    if (chatId && userId && projectId) {
+      const firstUser = transcript.find(
+        e => e?.role === 'user' && typeof e.text === 'string' && e.text.trim()
+      )
+      if (firstUser) {
+        void (async () => {
+          try {
+            const existing = await this.chatHistoryStore.getChat(projectId, userId, chatId)
+            if (existing?.titleGenerated) return
+
+            const titlingClient = this.clientFactory(providerSettings)
+            const generatedTitle = await generateChatTitle({
+              client: titlingClient,
+              firstMessageText: firstUser.text,
+              signal: controller.signal,
+            })
+
+            if (generatedTitle && !controller.signal.aborted) {
+              await this.chatHistoryStore.saveChatTitle(projectId, userId, chatId, generatedTitle, true)
+              await emitEvent({
+                type: 'chatTitle',
+                chatId,
+                title: generatedTitle,
+              })
+            }
+          } catch (err) {
+            logger.warn({ err, chatId }, '[AiAssist] Title generation error')
+          }
+        })()
+      }
+    }
+
     // Asks the editor watching this run to compile, through the same compiler
     // as its Recompile button, and waits for the outcome. Resolves null when no
     // editor is watching, so the tool can compile on the server instead.
@@ -646,6 +686,7 @@ export class AiAssistRunManager {
       // nothing, so ask once for the reply before ending the run.
       let toolsRanThisRun = false
       let finalReplyNudged = false
+      const executedTools = []
 
       const finishWithError = async (code, message) => {
         await emitEvent({ type: 'error', code, message })
@@ -714,25 +755,82 @@ export class AiAssistRunManager {
           cacheKey: String(projectId),
         }
 
-        for await (const chunk of client.streamChat({
-          system: currentSystemPrompt,
-          messages,
-          maxTokens,
-          contextWindow: resolvedLimits.contextWindow,
-          tools: modeToolSpecs,
-          cacheHints,
-          signal: controller.signal,
-        })) {
-          if (controller.signal.aborted) break
-          if (chunk.type === 'thinking') {
-            await emitChunk('thinking', chunk.text)
-          } else if (chunk.type === 'text') {
-            text += chunk.text
-            await emitChunk('text', chunk.text)
-          } else if (chunk.type === 'tool_call') {
-            calls.push(chunk)
-          } else if (chunk.type === 'stop' && chunk.reason === 'max_tokens') {
-            truncated = true
+        let streamSucceeded = false
+        let streamAttempts = 0
+        const MAX_STREAM_ATTEMPTS = 3
+
+        while (!streamSucceeded && streamAttempts < MAX_STREAM_ATTEMPTS) {
+          if (controller.signal.aborted || shouldStop) break
+          streamAttempts++
+          text = ''
+          calls.length = 0
+          truncated = false
+
+          try {
+            for await (const chunk of client.streamChat({
+              system: currentSystemPrompt,
+              messages,
+              maxTokens,
+              contextWindow: resolvedLimits.contextWindow,
+              tools: modeToolSpecs,
+              cacheHints,
+              signal: controller.signal,
+            })) {
+              if (controller.signal.aborted) break
+              if (chunk.type === 'thinking') {
+                await emitChunk('thinking', chunk.text)
+              } else if (chunk.type === 'text') {
+                text += chunk.text
+                await emitChunk('text', chunk.text)
+              } else if (chunk.type === 'tool_call') {
+                calls.push(chunk)
+              } else if (chunk.type === 'stop' && chunk.reason === 'max_tokens') {
+                truncated = true
+              }
+            }
+            streamSucceeded = true
+          } catch (streamErr) {
+            if (
+              controller.signal.aborted ||
+              streamErr.code === 'aborted' ||
+              streamErr.name === 'AbortError' ||
+              streamAttempts >= MAX_STREAM_ATTEMPTS
+            ) {
+              throw streamErr
+            }
+
+            const isNonRetryable =
+              streamErr.status === 400 ||
+              streamErr.status === 401 ||
+              streamErr.status === 403 ||
+              streamErr.status === 404 ||
+              streamErr.code === 'providerAuth' ||
+              streamErr.code === 'invalidProviderUrl' ||
+              streamErr.code === 'restrictedProviderUrl' ||
+              streamErr.code === 'contextExhausted'
+
+            if (isNonRetryable) {
+              throw streamErr
+            }
+
+            logger.warn(
+              {
+                runId,
+                attempt: streamAttempts,
+                status: streamErr.status,
+                message: streamErr.message,
+              },
+              '[AiAssist] Transient error from provider during tool run, auto-retrying'
+            )
+            const delay = Math.min(1000 * Math.pow(2, streamAttempts - 1) + Math.random() * 300, 5000)
+            await new Promise(resolve => {
+              const timer = setTimeout(resolve, delay)
+              const onAbort = () => {
+                clearTimeout(timer)
+                resolve()
+              }
+              controller.signal.addEventListener('abort', onAbort, { once: true })
+            })
           }
         }
 
@@ -830,6 +928,7 @@ export class AiAssistRunManager {
             }
           }
 
+          executedTools.push(call.name)
           await emitEvent({
             type: 'toolCallStarted',
             id: callId,

@@ -1,4 +1,4 @@
-import { deleteJSON, getJSON, putJSON } from '@/infrastructure/fetch-json'
+import { deleteJSON, getJSON, putJSON, patchJSON } from '@/infrastructure/fetch-json'
 import customLocalStorage from '@/infrastructure/local-storage'
 import { TranscriptEntry } from './agent-messages'
 import { prepareTranscriptForRun } from './conversation-store'
@@ -51,13 +51,25 @@ export function saveChat(
   projectId: string,
   chatId: string,
   transcript: TranscriptEntry[],
-  mode: AgentMode = 'manual'
+  mode: AgentMode = 'manual',
+  title?: string
 ) {
   return putJSON<ChatSummary>(`${base(projectId)}/${chatId}`, {
     body: {
       transcript: prepareTranscriptForRun(transcript),
       mode,
+      ...(title ? { title } : {}),
     },
+  })
+}
+
+export function renameChat(
+  projectId: string,
+  chatId: string,
+  title: string
+) {
+  return patchJSON<ChatSummary>(`${base(projectId)}/${chatId}`, {
+    body: { title },
   })
 }
 

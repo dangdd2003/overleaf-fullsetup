@@ -963,6 +963,88 @@ describe('runAgent', function () {
     expect(events.at(-1)).to.deep.equal({ type: 'turnFinished', reason: 'stop' })
   })
 
+  describe('after the user rejects an edit', function () {
+    let proposals: number
+    const rejectingEditTool: AgentTool = {
+      suspends: true,
+      mutates: true,
+      spec: {
+        name: 'edit_file',
+        description: 'edit',
+        parameters: { type: 'object', properties: {} },
+      },
+      async execute() {
+        proposals++
+        return { status: 'rejected', message: 'REJECTED' }
+      },
+    }
+    const editTurn = (id: string) => [
+      {
+        type: 'tool_call',
+        id,
+        name: 'edit_file',
+        args: { path: 'main.cls', oldText: 'a', newText: id },
+      },
+      { type: 'done', stopReason: 'tool_calls' },
+    ]
+
+    beforeEach(function () {
+      proposals = 0
+    })
+
+    it('does not put a second edit in front of the user', async function () {
+      const { client, requests } = fakeClient([
+        editTurn('c1'),
+        editTurn('c2'),
+        [
+          { type: 'text', text: 'I proposed a change; it was not applied.' },
+          { type: 'done', stopReason: 'stop' },
+        ],
+      ])
+      const { handle } = createFakeHandle()
+
+      const events = await collect(
+        runAgent({
+          client,
+          handle,
+          tools: { edit_file: rejectingEditTool },
+          transcript: [{ id: '1', role: 'user', text: 'fix it' }],
+        })
+      )
+
+      expect(proposals).to.equal(1)
+      expect(events.filter(e => e.type === 'awaitingApproval')).to.have.length(1)
+      const blocked: any = requests[2].messages.at(-1)
+      expect(blocked.role).to.equal('tool')
+      expect(blocked.content).to.match(/nothing was changed/i)
+    })
+
+    it('tells the closing-reply nudge the edit was not applied', async function () {
+      const { client, requests } = fakeClient([
+        editTurn('c1'),
+        [{ type: 'done', stopReason: 'stop' }],
+        [
+          { type: 'text', text: 'Proposed; not applied.' },
+          { type: 'done', stopReason: 'stop' },
+        ],
+      ])
+      const { handle } = createFakeHandle()
+
+      await collect(
+        runAgent({
+          client,
+          handle,
+          tools: { edit_file: rejectingEditTool },
+          transcript: [{ id: '1', role: 'user', text: 'fix it' }],
+        })
+      )
+
+      const nudge: any = requests[2].messages.at(-1)
+      expect(nudge.content).to.match(/rejected your edit to main\.cls/)
+      expect(nudge.content).to.match(/not applied/)
+    })
+  })
+
   it('re-checks the context budget before every request, not only the first', async function () {
     const bigTool: AgentTool = {
       suspends: false,

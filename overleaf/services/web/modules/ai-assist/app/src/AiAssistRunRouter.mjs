@@ -114,6 +114,20 @@ export default {
       AiAssistChatHistoryController.delete
     )
 
+    webRouter.patch(
+      '/ai-assist/projects/:Project_id/chats/:chatId',
+      AuthenticationController.requireLogin(),
+      AuthorizationMiddleware.ensureUserCanReadProject,
+      AiAssistChatHistoryController.rename
+    )
+
+    webRouter.post(
+      '/ai-assist/projects/:Project_id/chats/:chatId/generate-title',
+      AuthenticationController.requireLogin(),
+      AuthorizationMiddleware.ensureUserCanReadProject,
+      AiAssistChatHistoryController.generateTitle
+    )
+
     // 2. Legacy fallback routes (controller performs inline authorization check)
     webRouter.get(
       '/ai-assist/runs/:runId/stream',

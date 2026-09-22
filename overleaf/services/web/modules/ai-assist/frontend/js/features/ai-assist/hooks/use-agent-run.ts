@@ -41,6 +41,7 @@ export function useAgentRun({
   cacheKey,
   onEvent,
   initialTranscript,
+  chatId,
 }: {
   tools: Record<string, AgentTool>
   /** A narrow run (the compile-log fix) supplies its own, smaller prompt. */
@@ -50,6 +51,7 @@ export function useAgentRun({
   cacheKey?: string
   onEvent?: (event: AgentEvent, nextState: AgentState) => void
   initialTranscript?: TranscriptEntry[]
+  chatId?: string
 }) {
   const { t } = useTranslation()
   const [state, setState] = useState<AgentState>(() =>
@@ -63,6 +65,9 @@ export function useAgentRun({
   const approvalRef = useRef<
     ((decision: { accepted: boolean; note?: string }) => void) | null
   >(null)
+  const chatIdRef = useRef(chatId)
+  chatIdRef.current = chatId
+
   const [approvalContext, setApprovalContext] = useState<{
     startLine: number
   } | null>(null)
@@ -398,6 +403,7 @@ export function useAgentRun({
           transcript,
           providerSettings: assistant.settings,
           mode: modeRef.current,
+          chatId: chatIdRef.current,
         })
         currentRunIdRef.current = runId
 
@@ -488,6 +494,7 @@ export function useAgentRun({
     setState,
     mode: state.mode,
     setMode,
+    chatTitle: state.chatTitle,
     queueMessage,
     running: state.running,
     error: state.error,

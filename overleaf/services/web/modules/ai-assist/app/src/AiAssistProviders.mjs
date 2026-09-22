@@ -75,9 +75,9 @@ export function validateSafeProviderBaseUrl(rawUrl) {
  * with exponential backoff and jitter, matching official agent SDKs.
  */
 export async function fetchWithRetry(url, options, {
-  maxRetries = 2,
-  initialDelayMs = 500,
-  maxDelayMs = 4000,
+  maxRetries = 3,
+  initialDelayMs = 1000,
+  maxDelayMs = 8000,
   fetchFn = fetch,
 } = {}) {
   let attempt = 0
@@ -89,7 +89,7 @@ export async function fetchWithRetry(url, options, {
     try {
       const res = await fetchFn(url, options)
 
-      if ((res.status === 429 || (res.status >= 500 && res.status <= 504)) && attempt < maxRetries) {
+      if ((res.status === 429 || (res.status >= 500 && res.status < 600)) && attempt < maxRetries) {
         attempt++
         const retryAfter = res.headers.get('retry-after')
         let delay = initialDelayMs * Math.pow(2, attempt - 1) + Math.random() * 200
@@ -129,7 +129,7 @@ export async function fetchWithRetry(url, options, {
         err.code === 'ECONNRESET' ||
         err.code === 'ETIMEDOUT' ||
         err.code === 'UND_ERR_SOCKET' ||
-        err.message?.includes('fetch failed')
+        err.message?.includes('fetch failed') || err.message?.includes('socket hang up') || err.message?.includes('network timeout')
 
       if (isTransientNetwork && attempt < maxRetries) {
         attempt++
@@ -858,20 +858,41 @@ export class OpenAiServerClient {
       ...(system ? [{ role: 'system', content: system }] : []),
       ...messages.map(m => {
         if (m.role === 'tool') {
-          return { role: 'tool', tool_call_id: m.toolCallId, content: m.content }
+          const safeContent =
+            typeof m.content === 'string'
+              ? m.content
+              : JSON.stringify(m.content ?? {})
+          return {
+            role: 'tool',
+            tool_call_id: m.toolCallId || 'call_0',
+            content: safeContent.trim() ? safeContent : '(empty result)',
+          }
         }
         if (m.toolCalls?.length) {
           return {
             role: 'assistant',
-            content: m.content || null,
-            tool_calls: m.toolCalls.map(tc => ({
-              id: tc.id,
-              type: 'function',
-              function: { name: tc.name, arguments: JSON.stringify(tc.args) },
-            })),
+            content: m.content || '',
+            tool_calls: m.toolCalls.map(tc => {
+              let argsStr = '{}'
+              if (typeof tc.args === 'string') {
+                try {
+                  JSON.parse(tc.args)
+                  argsStr = tc.args
+                } catch {
+                  argsStr = JSON.stringify({ raw: tc.args })
+                }
+              } else if (tc.args && typeof tc.args === 'object') {
+                argsStr = JSON.stringify(tc.args)
+              }
+              return {
+                id: tc.id || `call_${Math.random().toString(36).slice(2, 10)}`,
+                type: 'function',
+                function: { name: tc.name, arguments: argsStr },
+              }
+            }),
           }
         }
-        return { role: m.role, content: m.content }
+        return { role: m.role, content: m.content || '' }
       }),
     ]
 

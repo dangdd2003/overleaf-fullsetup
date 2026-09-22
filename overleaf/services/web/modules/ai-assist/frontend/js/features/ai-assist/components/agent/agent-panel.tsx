@@ -23,6 +23,7 @@ import {
   fetchChat,
   getActiveChatId,
   newChatId,
+  renameChat,
   saveChat,
   setActiveChatId,
 } from '../../agent/chat-history-client'
@@ -175,10 +176,14 @@ function AgentPanelInner({
     }
   }, [activeDock, setDock, setIsRightOpen])
 
+  const [chatId, setChatId] = useState(() => getActiveChatId(projectId))
+  const [chatTitle, setChatTitle] = useState<string>("")
+
   const {
     state,
     setState,
     setMode,
+    chatTitle: eventChatTitle,
     handle,
     approvalContext,
     run,
@@ -191,7 +196,29 @@ function AgentPanelInner({
     tools: TOOLS,
     cacheKey: projectId,
     initialTranscript: loadConversation(projectId),
+    chatId,
   })
+
+  useEffect(() => {
+    if (!chatId) return
+    let active = true
+    fetchChat(projectId, chatId)
+      .then(chat => {
+        if (active && chat?.title && chat.title !== "New chat" && chat.title !== "Untitled chat") {
+          setChatTitle(chat.title)
+        }
+      })
+      .catch(() => {})
+    return () => {
+      active = false
+    }
+  }, [projectId, chatId])
+
+  useEffect(() => {
+    if (eventChatTitle) {
+      setChatTitle(eventChatTitle)
+    }
+  }, [eventChatTitle])
 
   const [files, setFiles] = useState<ProjectFile[]>([])
   // Stamped when a run begins so the status line can count from it;
@@ -282,7 +309,6 @@ function AgentPanelInner({
   // Mirror the conversation to a JSON file on the server once a run settles.
   // The ref skips re-saving a chat that was just opened from history, which
   // would otherwise bump its timestamp without any change.
-  const [chatId, setChatId] = useState(() => getActiveChatId(projectId))
   const lastSavedTranscriptRef = useRef(state.transcript)
   useEffect(() => {
     if (state.running || state.transcript.length === 0) return
@@ -290,10 +316,10 @@ function AgentPanelInner({
     const transcript = state.transcript
     const timer = window.setTimeout(() => {
       lastSavedTranscriptRef.current = transcript
-      saveChat(projectId, chatId, transcript, state.mode).catch(() => {})
+      saveChat(projectId, chatId, transcript, state.mode, chatTitle || undefined).catch(() => {})
     }, 800)
     return () => window.clearTimeout(timer)
-  }, [projectId, chatId, state.running, state.transcript, state.mode])
+  }, [projectId, chatId, state.running, state.transcript, state.mode, chatTitle])
 
   useEffect(() => {
     let mounted = true
@@ -583,10 +609,11 @@ function AgentPanelInner({
     const id = newChatId()
     setActiveChatId(projectId, id)
     setChatId(id)
+    setChatTitle("")
     // The mode is the user's standing choice about how much they want to be
     // asked, not a property of the conversation. Resetting it here is how
     // Accept edits quietly became Manual again on every new chat.
-    setState(current => emptyAgentState([], current.mode))
+    setState(current => emptyAgentState([], current.mode, ""))
     setNewChatSeed(s => s + 1)
     setCompletedRun(null)
     setRunStartedAt(null)
@@ -604,11 +631,24 @@ function AgentPanelInner({
       saveConversation(projectId, chat.transcript)
       setActiveChatId(projectId, id)
       setChatId(id)
-      setState(emptyAgentState(chat.transcript, chat.mode || 'manual'))
+      setChatTitle(chat.title || "")
+      setState(emptyAgentState(chat.transcript, chat.mode || 'manual', chat.title || ""))
       setCompletedRun(null)
       setRunStartedAt(null)
     },
     [chatId, projectId, setState, stop]
+  )
+
+  const onRenameChat = useCallback(
+    async (id: string, newTitle: string) => {
+      const clean = newTitle.trim()
+      if (!clean) return
+      if (id === chatId) {
+        setChatTitle(clean)
+      }
+      await renameChat(projectId, id, clean).catch(() => {})
+    },
+    [chatId, projectId]
   )
 
   const onDeleteChat = useCallback(
@@ -622,7 +662,8 @@ function AgentPanelInner({
   return (
     <div className="ai-assist-panel">
       <AgentPanelHeader
-        title={t('ai_assist_panel_title', 'AI assistant')}
+        title={chatTitle || t('ai_assist_panel_title', 'AI assistant')}
+        onRenameTitle={newTitle => void onRenameChat(chatId, newTitle)}
         actions={
           <div className="d-flex align-items-center gap-1">
             <OLTooltip
@@ -644,6 +685,7 @@ function AgentPanelInner({
               activeChatId={chatId}
               onOpen={id => void onOpenChat(id)}
               onDelete={onDeleteChat}
+              onRename={onRenameChat}
             />
             <OLTooltip
               id="ai-assist-dock-tooltip"
@@ -862,6 +904,8 @@ function AgentPanelInner({
 }
 
 export const AgentPanelFallback: React.FC<FallbackProps> = ({
+  // debug
+
   error,
   resetErrorBoundary,
 }) => {

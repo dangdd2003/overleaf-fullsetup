@@ -27,7 +27,7 @@ export class AiAssistRunController {
       loggedInUserId && /^[0-9a-f]{24}$/i.test(String(loggedInUserId))
         ? String(loggedInUserId)
         : null
-    const { transcript, providerSettings, mode } = req.body || {}
+    const { transcript, providerSettings, mode, chatId } = req.body || {}
 
     if (!transcript || !providerSettings) {
       return res.status(400).json({ error: 'Missing transcript or providerSettings' })
@@ -62,6 +62,7 @@ export class AiAssistRunController {
         transcript,
         providerSettings,
         mode,
+        chatId,
       })
       .catch(err => {
         logger.error({ err, runId }, '[AiAssist] Run background failed')

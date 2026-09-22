@@ -46,6 +46,24 @@ const CONTEXT_EXHAUSTED_MESSAGE =
 const FINAL_REPLY_NUDGE =
   'You ended the turn without replying, so nothing was shown to the user except the tool calls. Write the reply now, in one to three sentences: what you did or found, in which files, and anything they need to know. Do not call any more tools.'
 
+/**
+ * Appended to the nudge when the user rejected an edit this run, so the reply
+ * the nudge asks for cannot claim a change that was never made.
+ */
+function rejectedEditsNote(paths: string[]): string {
+  return ` The user rejected your edit to ${[...new Set(paths)].join(', ')}: it was not applied and the file is unchanged. Do not say you changed it; say what you proposed and that it was not applied.`
+}
+
+/**
+ * Returned for an edit proposed after the user already rejected one in this
+ * run. Mirrors the userDeclinedEdit block in AiAssistRunManager.mjs.
+ */
+const EDITS_BLOCKED_AFTER_REJECTION = {
+  status: 'rejected',
+  message:
+    'Not proposed: the user rejected an edit earlier in this run, so no further edits are shown to them and nothing was changed. Do not try another edit. Reply now: say what you proposed and that it was not applied.',
+}
+
 type StopReason = {
   code: 'runawayToolLoop' | 'consecutiveToolFailures'
   message: string
@@ -153,6 +171,10 @@ export async function* runAgent({
   let requiredToolNudged = false
   let toolsRanThisRun = false
   let finalReplyNudged = false
+  // Paths of edits the user rejected in this run. One rejection ends editing
+  // for the run: the model hears it as a tool result, and is not allowed to
+  // put a second diff in front of a user who just said no.
+  const rejectedEditPaths: string[] = []
 
   while (true) {
     // Tool results added during this run count against the window too, so
@@ -299,7 +321,12 @@ export async function* runAgent({
       }
       if (!text.trim() && toolsRanThisRun && !truncated && !finalReplyNudged) {
         finalReplyNudged = true
-        messages.push({ role: 'user', content: FINAL_REPLY_NUDGE })
+        messages.push({
+          role: 'user',
+          content:
+            FINAL_REPLY_NUDGE +
+            (rejectedEditPaths.length ? rejectedEditsNote(rejectedEditPaths) : ''),
+        })
         continue
       }
       if (truncated) {
@@ -342,6 +369,8 @@ export async function* runAgent({
       } else if (!tool) {
         result = { error: `Unknown tool: ${call.name}` }
         isError = true
+      } else if (tool.suspends && tool.mutates && rejectedEditPaths.length) {
+        result = EDITS_BLOCKED_AFTER_REJECTION
       } else {
         if (call.name === requireTool) requiredToolCalled = true
         if (tool.suspends) {
@@ -359,6 +388,14 @@ export async function* runAgent({
       }
 
       const status = (result as any)?.status
+      if (
+        tool?.suspends &&
+        tool.mutates &&
+        status === 'rejected' &&
+        result !== EDITS_BLOCKED_AFTER_REJECTION
+      ) {
+        rejectedEditPaths.push(String((call.args as any)?.path ?? 'the file'))
+      }
       const isFailed =
         isError ||
         status === 'noMatch' ||

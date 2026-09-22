@@ -274,4 +274,13 @@ describe('reduceAgentEvent', function () {
       text: 'sent from another tab',
     })
   })
+
+  it('updates chatTitle on chatTitle event', () => {
+    const initial = emptyAgentState([])
+    const next = reduceAgentEvent(initial, {
+      type: 'chatTitle',
+      title: 'Smart Generated Title',
+    })
+    expect(next.chatTitle).to.equal('Smart Generated Title')
+  })
 })

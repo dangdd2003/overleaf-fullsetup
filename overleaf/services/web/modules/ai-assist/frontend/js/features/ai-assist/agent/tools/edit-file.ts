@@ -41,6 +41,16 @@ export function endDocumentLine(docText: string): number | null {
   return null
 }
 
+/**
+ * What the model reads when the user rejects an edit. States the outcome as a
+ * fact first — nothing was applied — so the model cannot go on to describe the
+ * change as made.
+ */
+export function rejectedMessage(path: string, note?: string): string {
+  const reason = note ? ` Their reason: "${note}".` : ''
+  return `REJECTED: the user declined this edit, so it was NOT applied and ${path} is unchanged.${reason} Do not send the same change again, and never describe it as done: say what you proposed and that it was not applied.`
+}
+
 export const editFileTool: AgentTool = {
   // The loop must wait for the user's decision before continuing.
   suspends: true,
@@ -122,11 +132,10 @@ export const editFileTool: AgentTool = {
             startLine: (outcome as any).startLine,
           }
         case 'rejected': {
-          const userNote = outcome.note ? ` with note: "${outcome.note}"` : ''
           return {
             status: 'rejected',
             note: outcome.note,
-            message: `The user rejected this change${userNote}. Do not attempt the same change again in this turn. Acknowledge the rejection, address their feedback, and explain an alternative approach or ask how they would like to proceed.`,
+            message: rejectedMessage(path, outcome.note),
           }
         }
         case 'drifted':
@@ -232,11 +241,10 @@ export const editFileTool: AgentTool = {
           startLine: (outcome as any).startLine,
         }
       case 'rejected': {
-        const userNote = outcome.note ? ` with note: "${outcome.note}"` : ''
         return {
           status: 'rejected',
           note: outcome.note,
-          message: `The user rejected this change${userNote}. Do not attempt the same change again in this turn. Acknowledge the rejection, address their feedback, and explain an alternative approach or ask how they would like to proceed.`,
+          message: rejectedMessage(path, outcome.note),
         }
       }
       case 'drifted':

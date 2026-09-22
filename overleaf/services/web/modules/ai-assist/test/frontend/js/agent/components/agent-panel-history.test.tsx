@@ -19,7 +19,7 @@ describe('AgentPanel chat history', function () {
     customLocalStorage.clear()
   })
 
-  it('lists saved chats and opens the picked one', async function () {
+  it('lists saved chats and opens the picked one with title in header', async function () {
     fetchMock.get(`/ai-assist/projects/${PROJECT_ID}/chats`, {
       chats: [
         {
@@ -39,6 +39,10 @@ describe('AgentPanel chat history', function () {
       messageCount: 1,
       transcript: [{ id: 'u0', role: 'user', text: 'Fix the bibliography' }],
     })
+    fetchMock.patch(`/ai-assist/projects/${PROJECT_ID}/chats/chat_old`, {
+      id: 'chat_old',
+      title: 'Updated Title',
+    })
 
     render(
       <EditorProviders mockCompileOnLoad>
@@ -54,6 +58,25 @@ describe('AgentPanel chat history', function () {
         'chat_old'
       )
     )
+
+    // Verify title displayed in header
     expect(screen.getAllByText('Fix the bibliography').length).to.be.greaterThan(0)
+
+    // Rename chat via header rename button
+    const renameBtn = document.querySelector('.ai-assist-header-rename-btn')!
+    expect(renameBtn).to.exist
+    fireEvent.click(renameBtn)
+
+    const input = screen.getByDisplayValue('Fix the bibliography')
+    fireEvent.change(input, { target: { value: 'Updated Title' } })
+    fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' })
+
+    await waitFor(() => {
+      const calls = fetchMock.callHistory.calls(`/ai-assist/projects/${PROJECT_ID}/chats/chat_old`)
+      expect(calls.length).to.be.at.least(1)
+      const lastCall = calls[calls.length - 1]
+      expect(lastCall.options.method.toUpperCase()).to.equal('PATCH')
+      expect(JSON.parse(lastCall.options.body as string)).to.deep.equal({ title: 'Updated Title' })
+    })
   })
 })

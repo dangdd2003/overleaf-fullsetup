@@ -3328,3 +3328,196 @@ $font-family-monospace: 'DM Mono', monospace !default;
   align-items: center !important;
   justify-content: center !important;
 }
+
+// Header chat title display & inline rename
+.ai-assist-header-title-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+
+  &:hover .ai-assist-header-rename-btn {
+    opacity: 1;
+  }
+}
+
+.ai-assist-panel-title-text {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--content-primary-themed, #ffffff);
+
+  &.is-editable {
+    cursor: pointer;
+    border-radius: 4px;
+    padding: 1px 4px;
+    margin-left: -4px;
+    transition: background-color 0.15s ease;
+
+    &:hover {
+      background-color: var(--dropdown-background-hover, rgba(255, 255, 255, 0.08));
+    }
+  }
+}
+
+.ai-assist-header-rename-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  color: var(--content-secondary-themed, #9ca3af);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease, background-color 0.15s ease;
+
+  &:hover,
+  &:focus-visible {
+    opacity: 1;
+    color: var(--content-primary-themed, #ffffff);
+    background-color: var(--dropdown-background-hover, rgba(255, 255, 255, 0.12));
+  }
+}
+
+.ai-assist-header-edit-container {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+.ai-assist-header-edit-input {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 2px 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--content-primary-themed, #ffffff);
+  background-color: var(--bg-secondary-themed, #24262e);
+  border: 1px solid var(--border-divider-themed, #0284c7);
+  border-radius: 4px;
+  outline: none;
+
+  &:focus {
+    border-color: #38bdf8;
+    box-shadow: 0 0 0 1px #38bdf8;
+  }
+}
+
+.ai-assist-header-edit-save,
+.ai-assist-header-edit-cancel {
+  width: 24px !important;
+  height: 24px !important;
+  min-width: 24px !important;
+  min-height: 24px !important;
+  padding: 0 !important;
+}
+
+.ai-assist-header-edit-save {
+  color: var(--content-positive-themed, #34d399) !important;
+  &:hover {
+    background-color: rgba(52, 211, 153, 0.15) !important;
+  }
+}
+
+.ai-assist-header-edit-cancel {
+  color: var(--content-secondary-themed, #9ca3af) !important;
+  &:hover {
+    background-color: rgba(255, 255, 255, 0.1) !important;
+  }
+}
+
+// Chat history dropdown actions & inline edit
+.ai-assist-history-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.ai-assist-history-rename {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  color: var(--content-secondary-themed, #9ca3af);
+  cursor: pointer;
+  opacity: 0.8;
+  transition: opacity 0.15s ease, background-color 0.15s ease, color 0.15s ease, transform 0.1s ease;
+
+  &:hover,
+  &:focus-visible {
+    opacity: 1;
+    color: var(--content-primary-themed, #ffffff);
+    background-color: var(--dropdown-background-hover, rgba(255, 255, 255, 0.12));
+    transform: scale(1.05);
+  }
+}
+
+.ai-assist-history-edit-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 2px;
+}
+
+.ai-assist-history-edit-input {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 2px 6px;
+  font-size: 12px;
+  color: var(--content-primary-themed, #ffffff);
+  background-color: var(--bg-secondary-themed, #24262e);
+  border: 1px solid #0284c7;
+  border-radius: 4px;
+  outline: none;
+
+  &:focus {
+    border-color: #38bdf8;
+  }
+}
+
+.ai-assist-history-edit-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.ai-assist-history-edit-confirm {
+  color: #34d399;
+  &:hover {
+    background-color: rgba(52, 211, 153, 0.18);
+  }
+}
+
+.ai-assist-history-edit-cancel {
+  color: #9ca3af;
+  &:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+  }
+}

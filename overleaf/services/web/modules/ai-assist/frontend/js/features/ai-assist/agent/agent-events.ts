@@ -29,6 +29,7 @@ export type AgentEvent =
    * confirms delivery, and is what a reconnecting tab replays from.
    */
   | { type: 'userMessage'; id: string; text: string }
+  | { type: 'chatTitle'; title: string; chatId?: string }
   /** A server run asks the editor to compile, as its Recompile button would. */
   | { type: 'awaitingCompile'; id: string; clean: boolean }
   | { type: 'turnFinished'; reason: 'stop' | 'aborted' | 'interrupted' }
