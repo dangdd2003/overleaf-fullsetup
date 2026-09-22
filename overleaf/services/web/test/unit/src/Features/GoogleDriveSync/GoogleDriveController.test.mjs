@@ -50,6 +50,23 @@ describe('GoogleDriveController', () => {
     kick: vi.fn(),
   }
 
+  class InvalidImportRequestError extends Error {}
+  class ImportJobAlreadyRunningError extends Error {}
+
+  const GoogleDriveImportManager = {
+    InvalidImportRequestError,
+    ImportJobAlreadyRunningError,
+    listImportableFolders: vi.fn(),
+    createImportJob: vi.fn(),
+    getLatestJob: vi.fn(),
+    cancelActiveJobs: vi.fn(),
+    serializeJob: vi.fn(job => (job ? { id: job._id } : null)),
+  }
+
+  const GoogleDriveImportWorker = {
+    kick: vi.fn(),
+  }
+
   const db = {
     googleDriveProjectStates: {
       updateOne: vi.fn(),
@@ -107,6 +124,20 @@ describe('GoogleDriveController', () => {
     () => ({
       default: GoogleDriveBulkSyncWorker,
       ...GoogleDriveBulkSyncWorker,
+    })
+  )
+  vi.doMock(
+    '../../../../../app/src/Features/GoogleDriveSync/GoogleDriveImportManager.mjs',
+    () => ({
+      default: GoogleDriveImportManager,
+      ...GoogleDriveImportManager,
+    })
+  )
+  vi.doMock(
+    '../../../../../app/src/Features/GoogleDriveSync/GoogleDriveImportWorker.mjs',
+    () => ({
+      default: GoogleDriveImportWorker,
+      ...GoogleDriveImportWorker,
     })
   )
 
@@ -603,6 +634,93 @@ describe('GoogleDriveController', () => {
         code: 'error',
         message: 'Drive API error',
       })
+    })
+  })
+
+
+  describe('listImportableFolders', () => {
+    it('returns 200 with folders array', async () => {
+      GoogleDriveImportManager.listImportableFolders.mockResolvedValue([
+        { folderId: 'f-1', name: 'Folder 1' },
+      ])
+
+      await GoogleDriveController.listImportableFolders(req, res)
+
+      expect(res.json).toHaveBeenCalledWith({
+        folders: [{ folderId: 'f-1', name: 'Folder 1' }],
+      })
+    })
+
+    it('returns 500 on manager failure', async () => {
+      GoogleDriveImportManager.listImportableFolders.mockRejectedValue(
+        new Error('Drive unavailable')
+      )
+
+      await GoogleDriveController.listImportableFolders(req, res)
+
+      expect(res.status).toHaveBeenCalledWith(500)
+    })
+  })
+
+  describe('getImportJob', () => {
+    it('returns serialized latest job', async () => {
+      const job = { _id: 'job-1' }
+      GoogleDriveImportManager.getLatestJob.mockResolvedValue(job)
+
+      await GoogleDriveController.getImportJob(req, res)
+
+      expect(res.json).toHaveBeenCalledWith({ job: { id: 'job-1' } })
+    })
+  })
+
+  describe('startImportJob', () => {
+    it('queues import job, kicks worker, and returns 202', async () => {
+      GoogleDriveOAuthManager.isLinked.mockResolvedValue({ isLinked: true })
+      const job = { _id: 'job-1' }
+      GoogleDriveImportManager.createImportJob.mockResolvedValue(job)
+      req.body = { folderIds: ['f-1'] }
+
+      await GoogleDriveController.startImportJob(req, res)
+
+      expect(GoogleDriveImportManager.createImportJob).toHaveBeenCalledWith(
+        'user-123',
+        ['f-1']
+      )
+      expect(GoogleDriveImportWorker.kick).toHaveBeenCalled()
+      expect(res.status).toHaveBeenCalledWith(202)
+      expect(res.json).toHaveBeenCalledWith({ job: { id: 'job-1' } })
+    })
+
+    it('returns 400 if user is not linked', async () => {
+      GoogleDriveOAuthManager.isLinked.mockResolvedValue({ isLinked: false })
+
+      await GoogleDriveController.startImportJob(req, res)
+
+      expect(res.status).toHaveBeenCalledWith(400)
+    })
+
+    it('returns 409 if import job is already running', async () => {
+      GoogleDriveOAuthManager.isLinked.mockResolvedValue({ isLinked: true })
+      GoogleDriveImportManager.createImportJob.mockRejectedValue(
+        new GoogleDriveImportManager.ImportJobAlreadyRunningError('running')
+      )
+      req.body = { folderIds: ['f-1'] }
+
+      await GoogleDriveController.startImportJob(req, res)
+
+      expect(res.status).toHaveBeenCalledWith(409)
+    })
+  })
+
+  describe('cancelImportJob', () => {
+    it('cancels active job and returns updated status', async () => {
+      const job = { _id: 'job-1', status: 'cancelled' }
+      GoogleDriveImportManager.getLatestJob.mockResolvedValue(job)
+
+      await GoogleDriveController.cancelImportJob(req, res)
+
+      expect(GoogleDriveImportManager.cancelActiveJobs).toHaveBeenCalledWith('user-123')
+      expect(res.json).toHaveBeenCalledWith({ job: { id: 'job-1' } })
     })
   })
 

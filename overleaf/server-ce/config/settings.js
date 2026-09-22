@@ -239,6 +239,10 @@ const settings = {
   // server-ce never sets, so they are re-derived here from the siteUrl
   // assigned above. Explicit environment variables still take precedence.
   googleDrive: {
+    tokenEncryptionSecret:
+      process.env.GOOGLE_DRIVE_TOKEN_ENCRYPTION_SECRET ||
+      process.env.GOOGLE_DRIVE_TOKEN_SECRET ||
+      '',
     redirectUri:
       process.env.GOOGLE_DRIVE_REDIRECT_URI ||
       `${siteUrl}/oauth/google-drive/callback`,

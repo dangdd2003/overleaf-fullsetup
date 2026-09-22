@@ -182,6 +182,37 @@ async function _processJobProjects(job) {
         { err, jobId: job._id, projectId: entry.projectId },
         'GoogleDriveBulkSyncWorker: project sync failed'
       )
+
+      const isDecryptionFailure =
+        err?.code === 'token_decryption_failed' ||
+        /authentication tag verification failed|Failed to decrypt token/i.test(
+          err?.message || ''
+        )
+
+      if (isDecryptionFailure) {
+        logger.error(
+          { err, jobId: job._id, userId: job.userId },
+          'GoogleDriveBulkSyncWorker: aborting bulk sync job due to token decryption failure'
+        )
+        const reauthMsg =
+          'Google Drive authorization has expired or changed. Please re-link your account in Account Settings.'
+        await db.googleDriveBulkSyncJobs.updateOne(
+          { _id: job._id },
+          {
+            $set: {
+              [`projects.${i}.status`]: 'failed',
+              [`projects.${i}.error`]: reauthMsg,
+              status: 'failed',
+              error: reauthMsg,
+              finishedAt: new Date(),
+              updatedAt: new Date(),
+            },
+            $unset: { active: '', leaseExpiresAt: '' },
+          }
+        )
+        return
+      }
+
       update = {
         $set: {
           [`projects.${i}.status`]: 'failed',

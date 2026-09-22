@@ -130,6 +130,24 @@ describe('GoogleDriveBulkSyncWorker', () => {
     )
   })
 
+  it('aborts the entire job immediately if token decryption fails', async () => {
+    const job = makeJob(['queued', 'queued', 'queued'])
+    const decryptErr = new Error('Failed to decrypt token: authentication tag verification failed')
+    decryptErr.code = 'token_decryption_failed'
+    GoogleDriveSyncManager.syncProject.mockRejectedValueOnce(decryptErr)
+
+    await GoogleDriveBulkSyncWorker.processJob(job)
+
+    // Should only attempt the first project and abort without trying project 1 or 2
+    expect(GoogleDriveSyncManager.syncProject).toHaveBeenCalledTimes(1)
+    const abortUpdate = db.googleDriveBulkSyncJobs.updateOne.mock.calls.find(
+      ([query, update]) => query._id === 'job-1' && update.$set?.status === 'failed'
+    )
+    expect(abortUpdate).toBeDefined()
+    expect(abortUpdate[1].$set.error).toMatch(/Google Drive authorization has expired or changed/)
+    expect(abortUpdate[1].$unset).toEqual({ active: '', leaseExpiresAt: '' })
+  })
+
   it('stops before the next project once the job is cancelled', async () => {
     const job = makeJob(['queued', 'queued'])
     db.googleDriveBulkSyncJobs.updateOne.mockImplementation(async query =>

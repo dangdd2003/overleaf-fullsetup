@@ -34,6 +34,10 @@ describe('GoogleDriveRouter', function () {
     getBulkSync: vi.fn(),
     startBulkSync: vi.fn(),
     cancelBulkSync: vi.fn(),
+    listImportableFolders: vi.fn(),
+    getImportJob: vi.fn(),
+    startImportJob: vi.fn(),
+    cancelImportJob: vi.fn(),
   }
 
   const GoogleDriveWebhookController = {
@@ -195,6 +199,28 @@ describe('GoogleDriveRouter', function () {
       '/auth/google-drive/bulk-sync/cancel',
       expect.any(Function),
       GoogleDriveController.cancelBulkSync
+    )
+
+    // 10. Scan and import Google Drive folders in the background
+    expect(webRouter.get).toHaveBeenCalledWith(
+      '/auth/google-drive/import-folders',
+      expect.any(Function),
+      GoogleDriveController.listImportableFolders
+    )
+    expect(webRouter.get).toHaveBeenCalledWith(
+      '/auth/google-drive/import-job',
+      expect.any(Function),
+      GoogleDriveController.getImportJob
+    )
+    expect(webRouter.post).toHaveBeenCalledWith(
+      '/auth/google-drive/import-job',
+      expect.any(Function),
+      GoogleDriveController.startImportJob
+    )
+    expect(webRouter.post).toHaveBeenCalledWith(
+      '/auth/google-drive/import-job/cancel',
+      expect.any(Function),
+      GoogleDriveController.cancelImportJob
     )
   })
 

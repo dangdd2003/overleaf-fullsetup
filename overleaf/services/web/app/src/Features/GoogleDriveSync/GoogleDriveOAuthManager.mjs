@@ -26,14 +26,57 @@ const STATE_MAX_AGE_MS = 15 * 60 * 1000 // 15 minutes
  * @param {string} [customSecret]
  * @returns {Buffer} 32-byte Buffer
  */
-function _getSecretKey(customSecret) {
-  const secret = customSecret || Settings.security?.sessionSecret
-  if (!secret) {
+class GoogleDriveDecryptionError extends OError {
+  constructor(message, info) {
+    super(
+      message ||
+        'Failed to decrypt token: authentication tag verification failed',
+      info
+    )
+    this.name = 'GoogleDriveDecryptionError'
+    this.code = 'token_decryption_failed'
+  }
+}
+
+/**
+ * Resolves candidate secrets in priority order for token encryption/decryption.
+ *
+ * @param {string} [customSecret]
+ * @returns {string[]} Non-empty list of unique secret strings
+ */
+function _getCandidateSecrets(customSecret) {
+  if (customSecret) return [customSecret]
+
+  const candidates = [
+    Settings.googleDrive?.tokenEncryptionSecret,
+    Settings.encryption?.userOAuthTokensSecret,
+    Settings.security?.sessionSecret,
+    Settings.security?.sessionSecretUpcoming,
+    Settings.security?.sessionSecretFallback,
+  ].filter(Boolean)
+
+  if (candidates.length === 0) {
     throw new OError(
       'Google Drive token encryption unavailable: no security.sessionSecret configured'
     )
   }
+
+  return [...new Set(candidates)]
+}
+
+function _deriveKey(secret) {
   return crypto.createHash('sha256').update(secret).digest()
+}
+
+/**
+ * Derives a 32-byte key for AES-256-GCM from the primary configured secret.
+ *
+ * @param {string} [customSecret]
+ * @returns {Buffer} 32-byte Buffer
+ */
+function _getSecretKey(customSecret) {
+  const candidates = _getCandidateSecrets(customSecret)
+  return _deriveKey(candidates[0])
 }
 
 /**
@@ -102,24 +145,30 @@ function decryptToken(encryptedText, secret) {
     throw new OError('Invalid IV or auth tag length for AES-256-GCM')
   }
 
-  const key = _getSecretKey(secret)
-  const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv)
-  decipher.setAuthTag(authTag)
+  const candidates = _getCandidateSecrets(secret)
+  let lastErr = null
 
-  try {
-    const decrypted = Buffer.concat([
-      decipher.update(encrypted),
-      decipher.final(),
-    ])
-    return decrypted.toString('utf8')
-  } catch (err) {
-    throw new OError(
-      'Failed to decrypt token: authentication tag verification failed',
-      {
-        cause: err,
-      }
-    )
+  for (const candidateSecret of candidates) {
+    try {
+      const key = _deriveKey(candidateSecret)
+      const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv)
+      decipher.setAuthTag(authTag)
+      const decrypted = Buffer.concat([
+        decipher.update(encrypted),
+        decipher.final(),
+      ])
+      return decrypted.toString('utf8')
+    } catch (err) {
+      lastErr = err
+    }
   }
+
+  throw new GoogleDriveDecryptionError(
+    'Failed to decrypt token: authentication tag verification failed',
+    {
+      cause: lastErr,
+    }
+  )
 }
 
 /**
@@ -488,21 +537,38 @@ async function isLinked(userId) {
     user_id: userObjectId,
   })
 
-  if (creds && creds.encryptedAccessToken) {
+  if (!creds || !creds.encryptedAccessToken) {
+    return {
+      isLinked: false,
+    }
+  }
+
+  try {
+    decryptToken(creds.encryptedAccessToken)
     return {
       isLinked: true,
       googleEmail: creds.googleEmail,
       googleUserId: creds.googleUserId,
       linkedAt: creds.linkedAt,
     }
-  }
-
-  return {
-    isLinked: false,
+  } catch (err) {
+    logger.warn(
+      { err, userId },
+      'Google Drive token decryption failed; re-authentication required'
+    )
+    return {
+      isLinked: false,
+      needsReauth: true,
+      error: 'token_decryption_failed',
+      googleEmail: creds.googleEmail,
+      googleUserId: creds.googleUserId,
+      linkedAt: creds.linkedAt,
+    }
   }
 }
 
 const GoogleDriveOAuthManager = {
+  GoogleDriveDecryptionError,
   encryptToken,
   decryptToken,
   createOAuthState,
@@ -516,6 +582,7 @@ const GoogleDriveOAuthManager = {
 
 export default GoogleDriveOAuthManager
 export {
+  GoogleDriveDecryptionError,
   encryptToken,
   decryptToken,
   createOAuthState,

@@ -15,6 +15,7 @@ import ProjectGetter from '../Project/ProjectGetter.mjs'
 import ProjectCreationHandler from '../Project/ProjectCreationHandler.mjs'
 import HistoryManager from '../History/HistoryManager.mjs'
 import DocumentUpdaterHandler from '../DocumentUpdater/DocumentUpdaterHandler.mjs'
+import ProjectRootDocManager from '../Project/ProjectRootDocManager.mjs'
 
 /**
  * Regex matching LaTeX compilation artifacts and temporary build files.
@@ -1209,16 +1210,10 @@ async function syncProject(projectId, userId, driveFolderId = null) {
 
     const fileMap = { ...(state.fileMap || {}) }
 
-    // 1. Gather all entities from Overleaf.
-    //
-    // Editor keystrokes live in document-updater's Redis and only reach
-    // docstore when it flushes, so reading docstore directly would reconcile
-    // against content that is minutes old - a manual "Sync now" right after
-    // typing would find nothing to push. Flush first, exactly as every other
-    // out-of-band reader of project docs does (GitBridgeSnapshotManager,
-    // ClsiManager, ProjectDownloadsController, ProjectDuplicator).
+    // 1. Flush Redis doc edits to Mongo before reading (safe read-only flush)
     await DocumentUpdaterHandler.promises.flushProjectToMongo(projectId)
 
+    // Gather all entities from Overleaf (PURE READ-ONLY - ZERO WRITES TO OVERLEAF)
     const entities =
       await ProjectEntityHandler.promises.getAllEntities(projectId)
     const docs = await DocstoreManager.promises.getAllDocs(projectId)
@@ -1257,7 +1252,7 @@ async function syncProject(projectId, userId, driveFolderId = null) {
       }
     }
 
-    // 2. Gather all files recursively from Google Drive
+    // 2. Gather existing files from Google Drive project folder
     const driveFiles = await listDriveFilesRecursively(
       effectiveUserId,
       projectFolderId
@@ -1275,243 +1270,70 @@ async function syncProject(projectId, userId, driveFolderId = null) {
       }
     }
 
-    // 3. Reconcile Drive -> Overleaf
-    for (const [relPath, driveFile] of Object.entries(driveFileMap)) {
-      const ovEntity = overleafEntities[relPath]
+    // 3. PUSH Overleaf entities to Google Drive (NEVER modify Overleaf files)
+    for (const [relPath, ovEntity] of Object.entries(overleafEntities)) {
+      const driveFile = driveFileMap[relPath]
       const lastMapped = fileMap[relPath]
 
-      if (ovEntity) {
-        const driveModifiedSinceSync =
-          !lastMapped ||
-          lastMapped.md5Checksum === undefined ||
-          lastMapped.md5Checksum !== driveFile.md5Checksum
+      if (ovEntity.type === 'doc') {
+        const ovContent = (ovEntity.lines || []).join('\n')
+        let needsPush = !driveFile
 
-        let localModifiedSinceSync = false
-        if (ovEntity.type === 'doc') {
-          if (lastMapped && lastMapped.rev !== undefined) {
-            localModifiedSinceSync = ovEntity.rev !== lastMapped.rev
-          } else if (lastMapped?.md5Checksum) {
-            const doc = docMap[ovEntity.id?.toString()] || ovEntity
-            const lines = doc?.lines || []
-            const content = Array.isArray(lines)
-              ? lines.join('\n')
-              : lines || ''
-            const localHash = crypto
-              .createHash('md5')
-              .update(Buffer.from(content, 'utf8'))
-              .digest('hex')
-            localModifiedSinceSync = localHash !== lastMapped.md5Checksum
-          }
-        } else if (ovEntity.hash) {
-          if (lastMapped?.overleafHash !== undefined) {
-            localModifiedSinceSync = ovEntity.hash !== lastMapped.overleafHash
-          } else if (lastMapped?.md5Checksum !== undefined) {
-            localModifiedSinceSync = ovEntity.hash !== lastMapped.md5Checksum
-          }
-        }
-
-        if (ovEntity.type === 'doc') {
+        if (driveFile && (!lastMapped || lastMapped.rev !== ovEntity.rev)) {
           const driveBuffer = await GoogleDriveClient.downloadFileBuffer(
             effectiveUserId,
             driveFile.id
           )
           const driveContent = driveBuffer.toString('utf8')
-          const ovContent = (ovEntity.lines || []).join('\n')
-          let updatedRev = ovEntity.rev
-
-          if (driveContent !== ovContent) {
-            // Whether Drive's own copy has actually changed since the last
-            // sync (not just "does it differ from Overleaf's current
-            // content", which is trivially true whenever only one side
-            // changed).
-            logger.info(
-              {
-                projectId,
-                relPath,
-                driveModifiedSinceSync,
-                localModifiedSinceSync,
-                lastMappedRev: lastMapped?.rev,
-                ovEntityRev: ovEntity.rev,
-                lastMappedMd5: lastMapped?.md5Checksum,
-                driveFileMd5: driveFile.md5Checksum,
-              },
-              'syncProject: doc content differs from Drive, deciding sync direction'
-            )
-
-            if (driveModifiedSinceSync && localModifiedSinceSync) {
-              // Both sides changed since the last sync - genuine conflict.
-              // Leave the live Overleaf doc untouched and land Drive's
-              // version as a timestamped copy instead of overwriting it.
-              const conflictPath = generateConflictPath(relPath)
-              logger.warn(
-                { projectId, path: relPath, conflictPath },
-                'GoogleDriveSync: conflict detected, creating conflict copy'
-              )
-              const conflictLines = driveContent.split('\n')
-              await EditorController.promises.upsertDocWithPath(
-                projectId,
-                toElementPath(conflictPath),
-                conflictLines,
-                'google-drive',
-                effectiveUserId
-              )
-
-              const conflictRecord = {
-                path: relPath,
-                conflictPath,
-                detectedAt: new Date(),
-              }
-              await db.googleDriveProjectStates.updateOne(
-                { projectId: projectObjectId },
-                {
-                  $push: {
-                    conflicts: {
-                      $each: [conflictRecord],
-                      $slice: -20,
-                    },
-                  },
-                }
-              )
-            } else if (driveModifiedSinceSync) {
-              // Confirmed only Drive changed - Overleaf's rev matches what
-              // we last synced, so it's safe for Drive to win here.
-              const driveLines = driveContent.split('\n')
-              const upsertRes =
-                await EditorController.promises.upsertDocWithPath(
-                  projectId,
-                  toElementPath(relPath),
-                  driveLines,
-                  'google-drive',
-                  effectiveUserId
-                )
-              ovEntity.lines = driveLines
-              updatedRev =
-                upsertRes?.doc?.rev ?? upsertRes?.rev ?? (ovEntity.rev ?? 0) + 1
-            } else {
-              // Not confirmed that Drive actually changed - either only
-              // Overleaf changed, or neither side's bookkeeping shows a
-              // change yet content still differs (e.g. residual state left
-              // by an earlier conflict, whose fallthrough recorded a rev
-              // without ever pushing that content to Drive). Never
-              // destructively overwrite the live Overleaf doc when we
-              // aren't sure Drive changed - push instead, which only
-              // touches Drive and can't lose local work.
-              const pushRes = await handleOutboundDocUpdate(
-                projectId,
-                ovEntity.id,
-                relPath,
-                ovEntity.rev
-              )
-              if (pushRes?.fileMapEntry) {
-                fileMap[relPath] = pushRes.fileMapEntry
-              }
-              continue
-            }
+          const normalizeDocText = str =>
+            (str || '')
+              .replace(/\r\n/g, '\n')
+              .replace(/\r/g, '\n')
+              .trimEnd()
+          if (normalizeDocText(driveContent) !== normalizeDocText(ovContent)) {
+            needsPush = true
           }
+        }
 
+        if (needsPush) {
+          const pushRes = await handleOutboundDocUpdate(
+            projectId,
+            ovEntity.id,
+            relPath,
+            ovEntity.rev
+          )
+          if (pushRes?.fileMapEntry) {
+            fileMap[relPath] = pushRes.fileMapEntry
+          }
+        } else if (driveFile) {
           fileMap[relPath] = {
             driveFileId: driveFile.id,
             md5Checksum: driveFile.md5Checksum,
             modifiedTime: driveFile.modifiedTime
               ? new Date(driveFile.modifiedTime)
               : new Date(),
-            rev: updatedRev,
+            rev: ovEntity.rev,
             entityId: ovEntity.id,
             entityType: 'doc',
           }
-        } else {
-          if (driveModifiedSinceSync && localModifiedSinceSync) {
-            // Both sides changed since last sync - genuine conflict for binary file.
-            const conflictPath = generateConflictPath(relPath)
-            logger.warn(
-              { projectId, path: relPath, conflictPath },
-              'GoogleDriveSync: conflict detected, creating conflict copy'
-            )
-            const tempDir = process.env.TMPDIR || os.tmpdir()
-            const tempFilePath = path.join(
-              tempDir,
-              `gdrive_sync_${crypto.randomBytes(8).toString('hex')}_${path.basename(conflictPath)}`
-            )
-            const driveBuffer = await GoogleDriveClient.downloadFileBuffer(
-              effectiveUserId,
-              driveFile.id
-            )
-            await fs.promises.writeFile(tempFilePath, driveBuffer)
-            try {
-              await EditorController.promises.upsertFileWithPath(
-                projectId,
-                toElementPath(conflictPath),
-                tempFilePath,
-                null,
-                'google-drive',
-                effectiveUserId
-              )
-            } finally {
-              try {
-                await fs.promises.unlink(tempFilePath)
-              } catch {}
-            }
-
-            const conflictRecord = {
-              path: relPath,
-              conflictPath,
-              detectedAt: new Date(),
-            }
-            await db.googleDriveProjectStates.updateOne(
-              { projectId: projectObjectId },
-              {
-                $push: {
-                  conflicts: {
-                    $each: [conflictRecord],
-                    $slice: -20,
-                  },
-                },
-              }
-            )
-          } else if (localModifiedSinceSync && !driveModifiedSinceSync) {
-            // Only Overleaf's file changed since the last sync - Drive's
-            // copy is untouched. Push it instead of leaving Drive
-            // permanently stale (there's no diffable content for binaries
-            // the way docs have via rev, so this only fires once we've
-            // actually recorded an Overleaf-side hash from a previous
-            // sync/push to compare against).
-            const pushRes = await handleOutboundFileUpdate(
-              projectId,
-              ovEntity.id,
-              relPath,
-              ovEntity.hash
-            )
-            if (pushRes?.fileMapEntry) {
-              fileMap[relPath] = pushRes.fileMapEntry
-            }
-            continue
-          } else if (driveModifiedSinceSync) {
-            const tempDir = process.env.TMPDIR || os.tmpdir()
-            const tempFilePath = path.join(
-              tempDir,
-              `gdrive_sync_${crypto.randomBytes(8).toString('hex')}_${path.basename(relPath)}`
-            )
-            const driveBuffer = await GoogleDriveClient.downloadFileBuffer(
-              effectiveUserId,
-              driveFile.id
-            )
-            await fs.promises.writeFile(tempFilePath, driveBuffer)
-            try {
-              await EditorController.promises.upsertFileWithPath(
-                projectId,
-                toElementPath(relPath),
-                tempFilePath,
-                null,
-                'google-drive',
-                effectiveUserId
-              )
-            } finally {
-              try {
-                await fs.promises.unlink(tempFilePath)
-              } catch {}
-            }
+        }
+      } else {
+        // Binary file: if missing in Drive or modified in Overleaf, push to Drive
+        const needsPush =
+          !driveFile ||
+          !lastMapped ||
+          lastMapped.overleafHash !== ovEntity.hash
+        if (needsPush) {
+          const pushRes = await handleOutboundFileUpdate(
+            projectId,
+            ovEntity.id,
+            relPath,
+            ovEntity.hash
+          )
+          if (pushRes?.fileMapEntry) {
+            fileMap[relPath] = pushRes.fileMapEntry
           }
-
+        } else if (driveFile) {
           fileMap[relPath] = {
             driveFileId: driveFile.id,
             md5Checksum: driveFile.md5Checksum,
@@ -1524,116 +1346,22 @@ async function syncProject(projectId, userId, driveFolderId = null) {
             overleafHash: ovEntity.hash,
           }
         }
-      } else if (lastMapped && lastMapped.driveFileId === driveFile.id) {
-        // We previously synced this exact Drive file to this path, and it's
-        // no longer an Overleaf entity - the user deleted it locally since
-        // the last sync. Without this check, every sync would treat "still
-        // in Drive, missing from Overleaf" as a brand-new file to pull in,
-        // permanently resurrecting anything ever deleted on the Overleaf
-        // side. Propagate the deletion outward instead, mirroring how
-        // handleOutboundDelete removes a file from Drive.
-        try {
-          await GoogleDriveClient.deleteFile(effectiveUserId, driveFile.id)
-        } catch (err) {
-          logger.warn(
-            { err, projectId, path: relPath, driveFileId: driveFile.id },
-            'Error deleting file from Google Drive after local deletion'
-          )
-        }
-        delete fileMap[relPath]
-      } else {
-        if (isBinaryFile(relPath, driveFile.mimeType)) {
-          const tempDir = process.env.TMPDIR || os.tmpdir()
-          const tempFilePath = path.join(
-            tempDir,
-            `gdrive_sync_${crypto.randomBytes(8).toString('hex')}_${path.basename(relPath)}`
-          )
-          const driveBuffer = await GoogleDriveClient.downloadFileBuffer(
-            effectiveUserId,
-            driveFile.id
-          )
-          await fs.promises.writeFile(tempFilePath, driveBuffer)
-          let upsertFileRes = null
-          try {
-            upsertFileRes = await EditorController.promises.upsertFileWithPath(
-              projectId,
-              toElementPath(relPath),
-              tempFilePath,
-              null,
-              'google-drive',
-              effectiveUserId
-            )
-          } finally {
-            try {
-              await fs.promises.unlink(tempFilePath)
-            } catch {}
-          }
-          fileMap[relPath] = {
-            driveFileId: driveFile.id,
-            md5Checksum: driveFile.md5Checksum,
-            modifiedTime: driveFile.modifiedTime
-              ? new Date(driveFile.modifiedTime)
-              : new Date(),
-            rev: null,
-            entityId: upsertFileRes?.file?._id || upsertFileRes?._id,
-            entityType: 'file',
-          }
-        } else {
-          const driveBuffer = await GoogleDriveClient.downloadFileBuffer(
-            effectiveUserId,
-            driveFile.id
-          )
-          const driveContent = driveBuffer.toString('utf8')
-          const driveLines = driveContent.split('\n')
-          const upsertRes = await EditorController.promises.upsertDocWithPath(
-            projectId,
-            toElementPath(relPath),
-            driveLines,
-            'google-drive',
-            effectiveUserId
-          )
-          const updatedRev = upsertRes?.doc?.rev ?? upsertRes?.rev ?? 0
-          fileMap[relPath] = {
-            driveFileId: driveFile.id,
-            md5Checksum: driveFile.md5Checksum,
-            modifiedTime: driveFile.modifiedTime
-              ? new Date(driveFile.modifiedTime)
-              : new Date(),
-            rev: updatedRev,
-            entityId: upsertRes?.doc?._id,
-            entityType: 'doc',
-          }
-        }
       }
     }
 
-    // 4. Overleaf entities missing in Drive or new in Overleaf
-    for (const [relPath, ovEntity] of Object.entries(overleafEntities)) {
-      if (!driveFileMap[relPath]) {
+    // 4. Delete files in Google Drive that were previously synced but deleted locally in Overleaf
+    for (const [relPath, driveFile] of Object.entries(driveFileMap)) {
+      if (!overleafEntities[relPath]) {
         if (fileMap[relPath]) {
-          await EditorController.promises.deleteEntityWithPath(
-            projectId,
-            toElementPath(relPath),
-            'google-drive',
-            effectiveUserId
-          )
-          delete fileMap[relPath]
-        } else {
-          if (ovEntity.type === 'doc') {
-            await handleOutboundDocUpdate(
-              projectId,
-              ovEntity.id,
-              relPath,
-              ovEntity.rev
-            )
-          } else {
-            await handleOutboundFileUpdate(
-              projectId,
-              ovEntity.id,
-              relPath,
-              ovEntity.hash
+          try {
+            await GoogleDriveClient.deleteFile(effectiveUserId, driveFile.id)
+          } catch (err) {
+            logger.warn(
+              { err, projectId, path: relPath, driveFileId: driveFile.id },
+              'Error deleting file from Google Drive after local deletion'
             )
           }
+          delete fileMap[relPath]
         }
       }
     }
@@ -1670,25 +1398,134 @@ async function syncProject(projectId, userId, driveFolderId = null) {
 }
 
 /**
- * Creates a new blank Overleaf project and googleDriveProjectStates doc for a
- * Google Drive folder that isn't linked to any known project yet, then runs
- * an initial sync to pull its contents in.
+ * Inbound download: downloads all files from a Google Drive folder into an Overleaf project.
+ * Used exclusively when importing from Google Drive to Overleaf.
+ * Normalizes CRLF line endings to prevent LaTeX syntax corruption and automatically sets rootDoc_id.
  *
- * Shared by pollUserChanges (reacting to a live folder-creation event) and
- * reconcileExistingDriveProjects (actively listing current folders), so both
- * paths create projects the exact same way.
- *
- * Resolves project name collisions against existing projects (active, archived, or trashed)
- * by appending suffixes " (1)", " (2)", up to 100.
- *
+ * @param {string|ObjectId} projectId
  * @param {string|ObjectId} userId
- * @param {ObjectId|object} userObjectIdOrFile
- * @param {object} [fileMaybe]
- * @param {Record<string, object>} [projectByFolderId]
- * @param {Record<string, {state: object, relativePath: string}>} [folderMap]
- * @param {object[]} [projectStates]
- * @returns {Promise<object>} the newly created state doc
+ * @param {string} driveFolderId
+ * @returns {Promise<{ success: boolean }>}
  */
+async function downloadDriveFolderToOverleaf(projectId, userId, driveFolderId) {
+  const projectObjectId = _toObjectId(projectId)
+  const userObjectId = _toObjectId(userId)
+
+  const driveFiles = await listDriveFilesRecursively(userId, driveFolderId)
+
+  // 1. Create subfolders in Overleaf
+  const folders = driveFiles.filter(f => f.isFolder)
+  for (const folder of folders) {
+    const cleanPath = normalizePath(folder.relativePath)
+    if (cleanPath) {
+      await EditorController.promises.mkdirp(
+        projectId,
+        toElementPath(cleanPath),
+        'google-drive',
+        userObjectId
+      )
+    }
+  }
+
+  // 2. Download documents and binary files
+  const files = driveFiles.filter(
+    f => !f.isFolder && !isIgnoredFile(f.relativePath)
+  )
+  const fileMap = {}
+
+  for (const driveFile of files) {
+    const relPath = normalizePath(driveFile.relativePath)
+    if (isBinaryFile(relPath, driveFile.mimeType)) {
+      const tempDir = process.env.TMPDIR || os.tmpdir()
+      const tempFilePath = path.join(
+        tempDir,
+        `gdrive_import_${crypto.randomBytes(8).toString('hex')}_${path.basename(relPath)}`
+      )
+      const driveBuffer = await GoogleDriveClient.downloadFileBuffer(
+        userId,
+        driveFile.id
+      )
+      await fs.promises.writeFile(tempFilePath, driveBuffer)
+      try {
+        const res = await EditorController.promises.upsertFileWithPath(
+          projectId,
+          toElementPath(relPath),
+          tempFilePath,
+          null,
+          'google-drive',
+          userObjectId
+        )
+        fileMap[relPath] = {
+          driveFileId: driveFile.id,
+          md5Checksum: driveFile.md5Checksum,
+          modifiedTime: driveFile.modifiedTime
+            ? new Date(driveFile.modifiedTime)
+            : new Date(),
+          rev: null,
+          entityId: res?.file?._id || res?._id,
+          entityType: 'file',
+        }
+      } finally {
+        try {
+          await fs.promises.unlink(tempFilePath)
+        } catch {}
+      }
+    } else {
+      const driveBuffer = await GoogleDriveClient.downloadFileBuffer(
+        userId,
+        driveFile.id
+      )
+      const driveContent = (driveBuffer.toString('utf8') || '')
+        .replace(/\r\n/g, '\n')
+        .replace(/\r/g, '\n')
+      const driveLines = driveContent.split('\n')
+      const res = await EditorController.promises.upsertDocWithPath(
+        projectId,
+        toElementPath(relPath),
+        driveLines,
+        'google-drive',
+        userObjectId
+      )
+      fileMap[relPath] = {
+        driveFileId: driveFile.id,
+        md5Checksum: driveFile.md5Checksum,
+        modifiedTime: driveFile.modifiedTime
+          ? new Date(driveFile.modifiedTime)
+          : new Date(),
+        rev: res?.doc?.rev ?? res?.rev ?? 0,
+        entityId: res?.doc?._id,
+        entityType: 'doc',
+      }
+    }
+  }
+
+  // 3. Automatically detect and set root document so Overleaf compiler works immediately
+  try {
+    await ProjectRootDocManager.promises.setRootDocAutomatically(projectId)
+  } catch (err) {
+    logger.warn(
+      { err, projectId },
+      'downloadDriveFolderToOverleaf: failed to set root doc automatically'
+    )
+  }
+
+  await db.googleDriveProjectStates.updateOne(
+    { projectId: projectObjectId },
+    {
+      $set: {
+        driveFolderId,
+        fileMap,
+        lastSyncedAt: new Date(),
+        syncStatus: 'idle',
+        lastError: null,
+      },
+    },
+    { upsert: true }
+  )
+
+  return { success: true }
+}
+
 async function _createProjectFromDriveFolder(
   userId,
   userObjectIdOrFile,
@@ -1786,7 +1623,7 @@ async function _createProjectFromDriveFolder(
   if (projectStates) projectStates.push(newState)
 
   try {
-    await syncProject(newProject._id, userId, file.id)
+    await downloadDriveFolderToOverleaf(newProject._id, userId, file.id)
   } catch (syncErr) {
     logger.warn(
       { syncErr, projectId: newProject._id },
@@ -2703,6 +2540,7 @@ const GoogleDriveSyncManager = {
   _ensureFolderPathInOverleaf,
   getOrCreateProjectFolder,
   _createProjectFromDriveFolder,
+  downloadDriveFolderToOverleaf,
 }
 
 export default GoogleDriveSyncManager
@@ -2729,4 +2567,5 @@ export {
   _ensureFolderPathInOverleaf,
   getOrCreateProjectFolder,
   _createProjectFromDriveFolder,
+  downloadDriveFolderToOverleaf,
 }

@@ -126,6 +126,12 @@ describe('GoogleDriveSyncManager', function () {
     },
   }
 
+  const ProjectRootDocManager = {
+    promises: {
+      setRootDocAutomatically: vi.fn(),
+    },
+  }
+
   const DocumentUpdaterHandler = {
     promises: {
       flushProjectToMongo: vi.fn(),
@@ -205,6 +211,13 @@ describe('GoogleDriveSyncManager', function () {
     () => ({
       default: HistoryManager,
       ...HistoryManager,
+    })
+  )
+  vi.doMock(
+    '../../../../../app/src/Features/Project/ProjectRootDocManager.mjs',
+    () => ({
+      default: ProjectRootDocManager,
+      ...ProjectRootDocManager,
     })
   )
   vi.doMock(
@@ -1097,6 +1110,10 @@ describe('GoogleDriveSyncManager', function () {
         files: [],
         folders: [],
       })
+      DocstoreManager.promises.getDoc.mockResolvedValue({
+        lines: ['\\documentclass{article}', 'Overleaf content'],
+        rev: 1,
+      })
       DocstoreManager.promises.getAllDocs.mockResolvedValue([])
       GoogleDriveClient.listFiles.mockResolvedValue({
         files: [],
@@ -1118,7 +1135,7 @@ describe('GoogleDriveSyncManager', function () {
       expect(flushOrder).toBeLessThan(readOrder)
     })
 
-    it('performs full reconciliation between Overleaf and Google Drive', async function () {
+    it('pushes Overleaf documents to Google Drive without touching Overleaf', async function () {
       db.googleDriveProjectStates.findOneAndUpdate.mockResolvedValue({
         value: { projectId: new MockObjectId(projectId) },
       })
@@ -1164,7 +1181,165 @@ describe('GoogleDriveSyncManager', function () {
       DocstoreManager.promises.getAllDocs.mockResolvedValue([
         {
           _id: docId,
-          lines: ['\\documentclass{article}', 'Initial line'],
+          lines: ['\\documentclass{article}', 'Overleaf content'],
+          rev: 2,
+        },
+      ])
+
+      DocstoreManager.promises.getDoc.mockResolvedValue({
+        lines: ['\\documentclass{article}', 'Overleaf content'],
+        rev: 2,
+      })
+      GoogleDriveClient.listFiles.mockResolvedValue({
+        files: [
+          {
+            id: 'drive-main-1',
+            name: 'main.tex',
+            mimeType: 'text/plain',
+            md5Checksum: 'chk1',
+            modifiedTime: '2026-08-30T17:20:00Z',
+          },
+        ],
+        nextPageToken: null,
+      })
+
+      GoogleDriveClient.downloadFileBuffer.mockResolvedValue(
+        Buffer.from('\\documentclass{article}\nOld Drive line', 'utf8')
+      )
+      GoogleDriveClient.uploadFile.mockResolvedValue({
+        id: 'drive-main-1',
+        md5Checksum: 'chk2',
+        modifiedTime: '2026-09-22T10:00:00Z',
+      })
+
+      const res = await GoogleDriveSyncManager.syncProject(projectId, userId)
+
+      expect(res.success).toBe(true)
+      // Overleaf is NEVER modified
+      expect(EditorController.promises.upsertDocWithPath).not.toHaveBeenCalled()
+      // Overleaf doc is pushed to Google Drive
+      expect(GoogleDriveClient.uploadFile).toHaveBeenCalledWith(
+        expect.anything(),
+        projectFolderId,
+        'main.tex',
+        expect.anything(),
+        'text/plain',
+        'drive-main-1'
+      )
+    })
+
+    it('does not touch Overleaf doc when content is identical except for CRLF line endings', async function () {
+      db.googleDriveProjectStates.findOneAndUpdate.mockResolvedValue({
+        value: { projectId: new MockObjectId(projectId) },
+      })
+      db.googleDriveProjectStates.updateOne.mockResolvedValue({
+        modifiedCount: 1,
+      })
+
+      ProjectGetter.promises.getProject.mockResolvedValue({
+        _id: new MockObjectId(projectId),
+        name: 'My Project',
+        owner_ref: new MockObjectId(userId),
+      })
+
+      GoogleDriveClient.getOrCreateRootFolder.mockResolvedValue(rootFolderId)
+      GoogleDriveClient.getOrCreateProjectFolder.mockResolvedValue(projectFolderId)
+
+      db.googleDriveProjectStates.findOne.mockResolvedValue({
+        projectId: new MockObjectId(projectId),
+        userId: new MockObjectId(userId),
+        driveFolderId: projectFolderId,
+        fileMap: {
+          'main.tex': {
+            driveFileId: 'drive-main-1',
+            md5Checksum: 'chk_old',
+            rev: 4,
+          },
+        },
+      })
+
+      ProjectEntityHandler.promises.getAllEntities.mockResolvedValue({
+        docs: [
+          {
+            path: 'main.tex',
+            doc: { _id: docId, name: 'main.tex' },
+          },
+        ],
+        files: [],
+        folders: [],
+      })
+      DocstoreManager.promises.getAllDocs.mockResolvedValue([
+        {
+          _id: docId,
+          name: 'main.tex',
+          lines: ['\\documentclass{article}', '\\begin{document}', '\\end{document}'],
+          rev: 4,
+        },
+      ])
+
+      GoogleDriveClient.listFiles.mockResolvedValue({
+        files: [
+          {
+            id: 'drive-main-1',
+            name: 'main.tex',
+            mimeType: 'text/plain',
+            md5Checksum: 'chk_new',
+          },
+        ],
+        nextPageToken: null,
+      })
+
+      // Drive has Windows CRLF line endings
+      GoogleDriveClient.downloadFileBuffer.mockResolvedValue(
+        Buffer.from('\\documentclass{article}\r\n\\begin{document}\r\n\\end{document}\r\n', 'utf8')
+      )
+
+      const res = await GoogleDriveSyncManager.syncProject(projectId, userId)
+
+      expect(res.success).toBe(true)
+      // Must NOT overwrite Overleaf doc
+      expect(EditorController.promises.upsertDocWithPath).not.toHaveBeenCalled()
+    })
+
+    it('does not overwrite Overleaf doc on initial sync when lastMapped does not exist', async function () {
+      db.googleDriveProjectStates.findOneAndUpdate.mockResolvedValue({
+        value: { projectId: new MockObjectId(projectId) },
+      })
+      db.googleDriveProjectStates.updateOne.mockResolvedValue({
+        modifiedCount: 1,
+      })
+
+      ProjectGetter.promises.getProject.mockResolvedValue({
+        _id: new MockObjectId(projectId),
+        name: 'My Project',
+        owner_ref: new MockObjectId(userId),
+      })
+
+      GoogleDriveClient.getOrCreateRootFolder.mockResolvedValue(rootFolderId)
+      GoogleDriveClient.getOrCreateProjectFolder.mockResolvedValue(projectFolderId)
+
+      db.googleDriveProjectStates.findOne.mockResolvedValue({
+        projectId: new MockObjectId(projectId),
+        userId: new MockObjectId(userId),
+        driveFolderId: projectFolderId,
+        fileMap: {}, // Empty initial map
+      })
+
+      ProjectEntityHandler.promises.getAllEntities.mockResolvedValue({
+        docs: [
+          {
+            path: 'main.tex',
+            doc: { _id: docId, name: 'main.tex' },
+          },
+        ],
+        files: [],
+        folders: [],
+      })
+      DocstoreManager.promises.getAllDocs.mockResolvedValue([
+        {
+          _id: docId,
+          name: 'main.tex',
+          lines: ['\\documentclass{article}', 'Overleaf content'],
           rev: 1,
         },
       ])
@@ -1175,258 +1350,117 @@ describe('GoogleDriveSyncManager', function () {
             id: 'drive-main-1',
             name: 'main.tex',
             mimeType: 'text/plain',
-            md5Checksum: 'chk2',
-            modifiedTime: '2026-08-30T17:20:00Z',
+            md5Checksum: 'chk_drive',
           },
         ],
         nextPageToken: null,
       })
 
       GoogleDriveClient.downloadFileBuffer.mockResolvedValue(
-        Buffer.from('\\documentclass{article}\nDrive updated line', 'utf8')
+        Buffer.from('\\documentclass{article}\nDifferent Drive content', 'utf8')
       )
 
-      EditorController.promises.upsertDocWithPath.mockResolvedValue({
-        doc: { _id: docId, rev: 5 },
+      GoogleDriveClient.uploadFile.mockResolvedValue({ id: 'drive-main-1', md5Checksum: 'chk_new' })
+      DocstoreManager.promises.getDoc.mockResolvedValue({
+        lines: ['\\documentclass{article}', 'Overleaf content'],
+        rev: 1,
       })
 
       const res = await GoogleDriveSyncManager.syncProject(projectId, userId)
 
       expect(res.success).toBe(true)
-      expect(EditorController.promises.upsertDocWithPath).toHaveBeenCalledWith(
-        projectId,
-        '/main.tex',
-        ['\\documentclass{article}', 'Drive updated line'],
-        'google-drive',
-        userId
-      )
-      expect(db.googleDriveProjectStates.updateOne).toHaveBeenCalledWith(
-        { projectId: expect.anything() },
-        expect.objectContaining({
-          $set: expect.objectContaining({
-            fileMap: expect.objectContaining({
-              'main.tex': expect.objectContaining({
-                rev: 5,
-              }),
-            }),
-          }),
-        })
-      )
+      // Must NEVER overwrite Overleaf on initial sync
+      expect(EditorController.promises.upsertDocWithPath).not.toHaveBeenCalled()
+      // Instead pushes to Drive
+      expect(GoogleDriveClient.uploadFile).toHaveBeenCalled()
     })
 
-    it('generates a conflict copy when doc is modified in both places concurrently', async function () {
+    it('pushes Overleaf doc to Google Drive without editing Overleaf when both differ', async function () {
       db.googleDriveProjectStates.findOneAndUpdate.mockResolvedValue({
         value: { projectId: new MockObjectId(projectId) },
       })
-      db.googleDriveProjectStates.updateOne.mockResolvedValue({
-        modifiedCount: 1,
-      })
-
+      db.googleDriveProjectStates.updateOne.mockResolvedValue({ modifiedCount: 1 })
       ProjectGetter.promises.getProject.mockResolvedValue({
         _id: new MockObjectId(projectId),
         name: 'My Project',
         owner_ref: new MockObjectId(userId),
       })
-
       GoogleDriveClient.getOrCreateRootFolder.mockResolvedValue(rootFolderId)
-      GoogleDriveClient.getOrCreateProjectFolder.mockResolvedValue(
-        projectFolderId
-      )
-
+      GoogleDriveClient.getOrCreateProjectFolder.mockResolvedValue(projectFolderId)
       db.googleDriveProjectStates.findOne.mockResolvedValue({
         projectId: new MockObjectId(projectId),
         userId: new MockObjectId(userId),
         driveFolderId: projectFolderId,
         fileMap: {
-          'main.tex': {
-            driveFileId: 'drive-main-1',
-            rev: 1,
-            md5Checksum: 'chk1',
-          },
+          'main.tex': { driveFileId: 'drive-main-1', rev: 1, md5Checksum: 'chk1' },
         },
       })
-
       ProjectEntityHandler.promises.getAllEntities.mockResolvedValue({
-        docs: [
-          {
-            path: '/main.tex',
-            doc: { _id: new MockObjectId(docId), name: 'main.tex' },
-          },
-        ],
+        docs: [{ path: '/main.tex', doc: { _id: new MockObjectId(docId), name: 'main.tex' } }],
         files: [],
       })
-
       DocstoreManager.promises.getAllDocs.mockResolvedValue([
-        {
-          _id: docId,
-          lines: ['\\documentclass{article}', 'Overleaf local edits'],
-          rev: 3,
-        },
+        { _id: docId, lines: ['\\documentclass{article}', 'Overleaf local edits'], rev: 3 },
       ])
-
+      DocstoreManager.promises.getDoc.mockResolvedValue({
+        lines: ['\\documentclass{article}', 'Overleaf local edits'],
+        rev: 3,
+      })
       GoogleDriveClient.listFiles.mockResolvedValue({
-        files: [
-          {
-            id: 'drive-main-1',
-            name: 'main.tex',
-            mimeType: 'text/plain',
-            md5Checksum: 'chk_drive_new',
-          },
-        ],
+        files: [{ id: 'drive-main-1', name: 'main.tex', mimeType: 'text/plain', md5Checksum: 'chk_drive_new' }],
         nextPageToken: null,
       })
-
       GoogleDriveClient.downloadFileBuffer.mockResolvedValue(
         Buffer.from('\\documentclass{article}\nDrive conflicting edits', 'utf8')
       )
-
-      EditorController.promises.upsertDocWithPath.mockResolvedValue({
-        doc: { _id: 'conflict-doc-id' },
-      })
+      GoogleDriveClient.uploadFile.mockResolvedValue({ id: 'drive-main-1', md5Checksum: 'chk3' })
 
       const res = await GoogleDriveSyncManager.syncProject(projectId, userId)
 
       expect(res.success).toBe(true)
-      expect(
-        EditorController.promises.upsertDocWithPath
-      ).not.toHaveBeenCalledWith(
-        projectId,
-        '/main.tex',
-        expect.anything(),
-        expect.anything(),
-        expect.anything()
-      )
-      expect(EditorController.promises.upsertDocWithPath).toHaveBeenCalledWith(
-        projectId,
-        expect.stringMatching(/^\/main \(Google Drive Conflict .*\)\.tex$/),
-        ['\\documentclass{article}', 'Drive conflicting edits'],
-        'google-drive',
-        userId
-      )
-      expect(db.googleDriveProjectStates.updateOne).toHaveBeenCalledWith(
-        { projectId: expect.anything() },
-        expect.objectContaining({
-          $push: {
-            conflicts: {
-              $each: [
-                expect.objectContaining({
-                  path: 'main.tex',
-                  conflictPath: expect.stringMatching(
-                    /^main \(Google Drive Conflict .*\)\.tex$/
-                  ),
-                  detectedAt: expect.any(Date),
-                }),
-              ],
-              $slice: -20,
-            },
-          },
-        })
-      )
+      expect(EditorController.promises.upsertDocWithPath).not.toHaveBeenCalled()
+      expect(GoogleDriveClient.uploadFile).toHaveBeenCalled()
     })
 
-    it('generates a conflict copy when binary file is modified in both places concurrently', async function () {
+    it('pushes Overleaf binary file to Drive without editing Overleaf when both differ', async function () {
       db.googleDriveProjectStates.findOneAndUpdate.mockResolvedValue({
         value: { projectId: new MockObjectId(projectId) },
       })
-      db.googleDriveProjectStates.updateOne.mockResolvedValue({
-        modifiedCount: 1,
-      })
-
+      db.googleDriveProjectStates.updateOne.mockResolvedValue({ modifiedCount: 1 })
       ProjectGetter.promises.getProject.mockResolvedValue({
         _id: new MockObjectId(projectId),
         name: 'My Project',
         owner_ref: new MockObjectId(userId),
       })
-
       GoogleDriveClient.getOrCreateRootFolder.mockResolvedValue(rootFolderId)
-      GoogleDriveClient.getOrCreateProjectFolder.mockResolvedValue(
-        projectFolderId
-      )
-
+      GoogleDriveClient.getOrCreateProjectFolder.mockResolvedValue(projectFolderId)
       db.googleDriveProjectStates.findOne.mockResolvedValue({
         projectId: new MockObjectId(projectId),
         userId: new MockObjectId(userId),
         driveFolderId: projectFolderId,
         fileMap: {
-          'logo.png': {
-            driveFileId: 'drive-file-png',
-            md5Checksum: 'pngmd5-old',
-            overleafHash: 'ov-hash-old',
-            entityType: 'file',
-          },
+          'logo.png': { driveFileId: 'drive-file-png', md5Checksum: 'pngmd5-old', overleafHash: 'ov-hash-old' },
         },
       })
-
       ProjectEntityHandler.promises.getAllEntities.mockResolvedValue({
         docs: [],
-        files: [
-          {
-            path: '/logo.png',
-            file: { _id: fileId, name: 'logo.png', hash: 'ov-hash-new' },
-          },
-        ],
+        files: [{ path: '/logo.png', file: { _id: fileId, name: 'logo.png', hash: 'ov-hash-new' } }],
       })
       DocstoreManager.promises.getAllDocs.mockResolvedValue([])
-
       GoogleDriveClient.listFiles.mockResolvedValue({
-        files: [
-          {
-            id: 'drive-file-png',
-            name: 'logo.png',
-            mimeType: 'image/png',
-            md5Checksum: 'pngmd5-remote-new',
-          },
-        ],
+        files: [{ id: 'drive-file-png', name: 'logo.png', mimeType: 'image/png', md5Checksum: 'pngmd5-drive-new' }],
         nextPageToken: null,
       })
-
-      GoogleDriveClient.downloadFileBuffer.mockResolvedValue(
-        Buffer.from('PNGDATA_REMOTE')
-      )
-      EditorController.promises.upsertFileWithPath.mockResolvedValue({
-        file: {},
+      HistoryManager.promises.requestBlobWithProjectId.mockResolvedValue({
+        stream: Buffer.from('NEWPNGDATA'),
       })
+      GoogleDriveClient.uploadFile.mockResolvedValue({ id: 'drive-file-png', md5Checksum: 'pngmd5-uploaded' })
 
       const res = await GoogleDriveSyncManager.syncProject(projectId, userId)
 
       expect(res.success).toBe(true)
-      expect(
-        EditorController.promises.upsertFileWithPath
-      ).not.toHaveBeenCalledWith(
-        projectId,
-        '/logo.png',
-        expect.anything(),
-        expect.anything(),
-        expect.anything(),
-        expect.anything()
-      )
-      expect(EditorController.promises.upsertFileWithPath).toHaveBeenCalledWith(
-        projectId,
-        expect.stringMatching(/^\/logo \(Google Drive Conflict .*\)\.png$/),
-        expect.any(String),
-        null,
-        'google-drive',
-        userId
-      )
-      expect(db.googleDriveProjectStates.updateOne).toHaveBeenCalledWith(
-        { projectId: expect.anything() },
-        expect.objectContaining({
-          $push: {
-            conflicts: {
-              $each: [
-                expect.objectContaining({
-                  path: 'logo.png',
-                  conflictPath: expect.stringMatching(
-                    /^logo \(Google Drive Conflict .*\)\.png$/
-                  ),
-                  detectedAt: expect.any(Date),
-                }),
-              ],
-              $slice: -20,
-            },
-          },
-        })
-      )
+      expect(EditorController.promises.upsertFileWithPath).not.toHaveBeenCalled()
+      expect(GoogleDriveClient.uploadFile).toHaveBeenCalled()
     })
 
     it('pushes the doc to Google Drive instead of creating a conflict copy, when only Overleaf changed since the last sync', async function () {
@@ -1705,38 +1739,7 @@ describe('GoogleDriveSyncManager', function () {
       )
     })
 
-    it('imports new binary file and text file from Google Drive into Overleaf', async function () {
-      db.googleDriveProjectStates.findOneAndUpdate.mockResolvedValue({
-        value: { projectId: new MockObjectId(projectId) },
-      })
-      db.googleDriveProjectStates.updateOne.mockResolvedValue({
-        modifiedCount: 1,
-      })
-
-      ProjectGetter.promises.getProject.mockResolvedValue({
-        _id: new MockObjectId(projectId),
-        name: 'My Project',
-        owner_ref: new MockObjectId(userId),
-      })
-
-      GoogleDriveClient.getOrCreateRootFolder.mockResolvedValue(rootFolderId)
-      GoogleDriveClient.getOrCreateProjectFolder.mockResolvedValue(
-        projectFolderId
-      )
-
-      db.googleDriveProjectStates.findOne.mockResolvedValue({
-        projectId: new MockObjectId(projectId),
-        userId: new MockObjectId(userId),
-        driveFolderId: projectFolderId,
-        fileMap: {},
-      })
-
-      ProjectEntityHandler.promises.getAllEntities.mockResolvedValue({
-        docs: [],
-        files: [],
-      })
-      DocstoreManager.promises.getAllDocs.mockResolvedValue([])
-
+    it('downloadDriveFolderToOverleaf imports files and automatically sets root doc', async function () {
       GoogleDriveClient.listFiles.mockResolvedValue({
         files: [
           {
@@ -1744,12 +1747,16 @@ describe('GoogleDriveSyncManager', function () {
             name: 'logo.png',
             mimeType: 'image/png',
             md5Checksum: 'pngmd5',
+            relativePath: 'logo.png',
+            isFolder: false,
           },
           {
             id: 'drive-doc-bib',
             name: 'references.bib',
             mimeType: 'text/plain',
             md5Checksum: 'bibmd5',
+            relativePath: 'references.bib',
+            isFolder: false,
           },
         ],
         nextPageToken: null,
@@ -1761,14 +1768,10 @@ describe('GoogleDriveSyncManager', function () {
         return Promise.resolve(Buffer.from('@article{test, author={Test}}'))
       })
 
-      EditorController.promises.upsertFileWithPath.mockResolvedValue({
-        file: {},
-      })
-      EditorController.promises.upsertDocWithPath.mockResolvedValue({
-        doc: {},
-      })
+      EditorController.promises.upsertFileWithPath.mockResolvedValue({ file: {} })
+      EditorController.promises.upsertDocWithPath.mockResolvedValue({ doc: {} })
 
-      const res = await GoogleDriveSyncManager.syncProject(projectId, userId)
+      const res = await GoogleDriveSyncManager.downloadDriveFolderToOverleaf(projectId, userId, projectFolderId)
 
       expect(res.success).toBe(true)
       expect(EditorController.promises.upsertFileWithPath).toHaveBeenCalledWith(
@@ -1777,15 +1780,16 @@ describe('GoogleDriveSyncManager', function () {
         expect.any(String),
         null,
         'google-drive',
-        userId
+        expect.anything()
       )
       expect(EditorController.promises.upsertDocWithPath).toHaveBeenCalledWith(
         projectId,
         '/references.bib',
         ['@article{test, author={Test}}'],
         'google-drive',
-        userId
+        expect.anything()
       )
+      expect(ProjectRootDocManager.promises.setRootDocAutomatically).toHaveBeenCalledWith(projectId)
     })
 
     it('deletes the file from Google Drive instead of resurrecting it in Overleaf, when a previously-synced file was deleted locally', async function () {
@@ -1865,64 +1869,46 @@ describe('GoogleDriveSyncManager', function () {
       ).toBeUndefined()
     })
 
-    it('deletes entity in Overleaf if it was previously synced but removed from Drive', async function () {
+    it('does not delete entity in Overleaf if removed from Drive during outbound sync', async function () {
       db.googleDriveProjectStates.findOneAndUpdate.mockResolvedValue({
         value: { projectId: new MockObjectId(projectId) },
       })
-      db.googleDriveProjectStates.updateOne.mockResolvedValue({
-        modifiedCount: 1,
-      })
-
+      db.googleDriveProjectStates.updateOne.mockResolvedValue({ modifiedCount: 1 })
       ProjectGetter.promises.getProject.mockResolvedValue({
         _id: new MockObjectId(projectId),
         name: 'My Project',
         owner_ref: new MockObjectId(userId),
       })
-
       GoogleDriveClient.getOrCreateRootFolder.mockResolvedValue(rootFolderId)
-      GoogleDriveClient.getOrCreateProjectFolder.mockResolvedValue(
-        projectFolderId
-      )
-
+      GoogleDriveClient.getOrCreateProjectFolder.mockResolvedValue(projectFolderId)
       db.googleDriveProjectStates.findOne.mockResolvedValue({
         projectId: new MockObjectId(projectId),
         userId: new MockObjectId(userId),
         driveFolderId: projectFolderId,
         fileMap: {
-          'deleted.tex': {
-            driveFileId: 'deleted-drive-file',
-            rev: 1,
-          },
+          'deleted.tex': { driveFileId: 'deleted-drive-file', rev: 1 },
         },
       })
-
       ProjectEntityHandler.promises.getAllEntities.mockResolvedValue({
-        docs: [
-          {
-            path: '/deleted.tex',
-            doc: { _id: new MockObjectId(docId), name: 'deleted.tex' },
-          },
-        ],
+        docs: [{ path: '/deleted.tex', doc: { _id: docId, name: 'deleted.tex' } }],
         files: [],
       })
       DocstoreManager.promises.getAllDocs.mockResolvedValue([
-        { _id: docId, lines: ['Content'], rev: 1 },
+        { _id: docId, name: 'deleted.tex', lines: ['still in overleaf'], rev: 1 },
       ])
-
-      // Drive has no files
-      GoogleDriveClient.listFiles.mockResolvedValue({
-        files: [],
-        nextPageToken: null,
+      DocstoreManager.promises.getDoc.mockResolvedValue({
+        lines: ['still in overleaf'],
+        rev: 1,
       })
-
-      EditorController.promises.deleteEntityWithPath.mockResolvedValue(true)
+      GoogleDriveClient.uploadFile.mockResolvedValue({ id: 'drive-deleted-new', md5Checksum: 'chk' })
+      // Removed in Drive: listFiles returns empty
+      GoogleDriveClient.listFiles.mockResolvedValue({ files: [], nextPageToken: null })
 
       const res = await GoogleDriveSyncManager.syncProject(projectId, userId)
 
       expect(res.success).toBe(true)
-      expect(
-        EditorController.promises.deleteEntityWithPath
-      ).toHaveBeenCalledWith(projectId, '/deleted.tex', 'google-drive', userId)
+      // Must NOT delete from Overleaf; pushes instead
+      expect(EditorController.promises.deleteEntityWithPath).not.toHaveBeenCalled()
     })
   })
 

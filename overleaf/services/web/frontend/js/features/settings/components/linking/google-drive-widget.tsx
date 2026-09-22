@@ -1,3 +1,8 @@
+import {
+  GoogleDriveImportPanel,
+  useGoogleDriveImport,
+  type ImportJob,
+} from './google-drive-import-panel'
 import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
@@ -75,8 +80,22 @@ export function GoogleDriveLinkingWidget({
       const res = await fetch('/auth/google-drive/status')
       if (res.ok) {
         const data = await res.json()
-        if (typeof data.isLinked === 'boolean') {
+        if (data.needsReauth || data.error === 'token_decryption_failed') {
+          setIsLinked(false)
+          setErrorMessage(
+            t(
+              'google_drive_reauth_required',
+              'Your Google Drive authorization has expired or the server encryption key has changed. Please link your account again.'
+            )
+          )
+          if (data.googleEmail) {
+            setGoogleEmail(data.googleEmail)
+          }
+        } else if (typeof data.isLinked === 'boolean') {
           setIsLinked(data.isLinked)
+          if (data.isLinked) {
+            setErrorMessage('')
+          }
           if (data.googleEmail) {
             setGoogleEmail(data.googleEmail)
           }
@@ -88,7 +107,7 @@ export function GoogleDriveLinkingWidget({
     } catch {
       // Endpoint may not be present or network error; keep current state
     }
-  }, [])
+  }, [t])
 
   useEffect(() => {
     // Only attempt fetch if initial props were not explicitly provided
@@ -190,92 +209,16 @@ export function GoogleDriveLinkingWidget({
     }, 1000)
   }, [fetchStatus])
 
-  const handleScanClick = useCallback(async () => {
-    setScanInflight(true)
+  const handleScanClick = useCallback(() => {
     setErrorMessage('')
     setScanMessage('')
+    setShowBulkSync(false)
+    setShowScanImport(prev => !prev)
+  }, [])
 
-    try {
-      const csrfToken =
-        (typeof window !== 'undefined' && (window as any).csrfToken) ||
-        getMeta('ol-csrfToken') ||
-        ''
-
-      const res = await fetch('/auth/google-drive/scan-existing-projects', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Csrf-Token': csrfToken,
-        },
-      })
-
-      if (res.ok) {
-        const data = await res.json()
-        const createdCount = data.createdCount || 0
-        const syncedCount = data.syncedCount || 0
-        const scannedCount = data.scannedCount || 0
-
-        if (createdCount > 0 && syncedCount > 0) {
-          setScanMessage(
-            `${t('imported', 'Imported')} ${createdCount} ${t(
-              'new_and_synced',
-              'new project(s) and synchronized'
-            )} ${syncedCount} ${t(
-              'existing_projects_from_google_drive',
-              'existing project(s) from Google Drive.'
-            )}`
-          )
-        } else if (createdCount > 0) {
-          setScanMessage(
-            `${t('imported', 'Imported')} ${createdCount} ${t(
-              'projects_from_google_drive',
-              'project(s) from Google Drive.'
-            )}`
-          )
-        } else if (syncedCount > 0) {
-          setScanMessage(
-            `${t('synchronized', 'Synchronized')} ${syncedCount} ${t(
-              'existing_projects_from_google_drive',
-              'existing project(s) from Google Drive.'
-            )}`
-          )
-        } else if (scannedCount > 0) {
-          setScanMessage(
-            t(
-              'all_google_drive_projects_synced',
-              `Found ${scannedCount} project(s) in Google Drive. All are linked and up to date.`
-            )
-          )
-        } else {
-          setScanMessage(
-            t(
-              'no_existing_google_drive_projects_found',
-              'No existing projects found in your Google Drive folder.'
-            )
-          )
-        }
-      } else {
-        const errorData = await res.json().catch(() => ({}))
-        setErrorMessage(
-          errorData.message ||
-            t(
-              'scan_existing_projects_failed',
-              'Failed to scan for existing Google Drive projects'
-            )
-        )
-      }
-    } catch (err: any) {
-      setErrorMessage(
-        err?.message ||
-          t(
-            'scan_existing_projects_failed',
-            'Failed to scan for existing Google Drive projects'
-          )
-      )
-    } finally {
-      setScanInflight(false)
-    }
-  }, [t])
+  const handleScanImportClose = useCallback(() => {
+    setShowScanImport(false)
+  }, [])
 
   const handleBulkSyncFinished = useCallback(
     (job: BulkSyncJob) => {
@@ -303,6 +246,38 @@ export function GoogleDriveLinkingWidget({
     },
     [t]
   )
+
+  const [showScanImport, setShowScanImport] = useState<boolean>(false)
+
+  const handleImportFinished = useCallback(
+    (job: ImportJob) => {
+      if (job.status !== 'completed') {
+        return
+      }
+      if (job.failedCount > 0) {
+        setErrorMessage(
+          t(
+            'google_drive_import_some_failed',
+            `${job.failedCount} project(s) failed to import from Google Drive.`
+          )
+        )
+      } else if (job.importedCount > 0) {
+        setScanMessage(
+          t(
+            'google_drive_import_success',
+            `Successfully imported or synced ${job.importedCount} project(s) from Google Drive.`
+          )
+        )
+      }
+    },
+    [t]
+  )
+
+  const {
+    job: importJob,
+    active: importActive,
+    applyJob: applyImportJob,
+  } = useGoogleDriveImport(isLinked, handleImportFinished)
 
   const {
     job: bulkSyncJob,
@@ -467,9 +442,10 @@ export function GoogleDriveLinkingWidget({
               variant="secondary"
               className="google-drive-scan-btn"
               onClick={handleScanClick}
-              disabled={scanInflight}
-              isLoading={scanInflight}
+              disabled={unlinkInflight}
+              isLoading={importActive}
               loadingLabel={t('scanning', 'Scanning...')}
+              data-testid="google-drive-scan-button"
             >
               {t('scan_for_existing_projects', 'Scan for existing projects')}
             </OLButton>
@@ -489,6 +465,14 @@ export function GoogleDriveLinkingWidget({
           </div>
         )}
       </div>
+
+      {isLinked && showScanImport ? (
+        <GoogleDriveImportPanel
+          job={importJob}
+          onJobChange={applyImportJob}
+          onClose={handleScanImportClose}
+        />
+      ) : null}
 
       {isLinked && showBulkSync ? (
         <GoogleDriveBulkSyncPanel

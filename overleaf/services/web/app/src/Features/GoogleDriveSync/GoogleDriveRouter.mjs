@@ -84,6 +84,26 @@ const GoogleDriveRouter = {
       AuthenticationController.requireLogin(),
       GoogleDriveController.cancelBulkSync
     )
+    webRouter.get(
+      '/auth/google-drive/import-folders',
+      AuthenticationController.requireLogin(),
+      GoogleDriveController.listImportableFolders
+    )
+    webRouter.get(
+      '/auth/google-drive/import-job',
+      AuthenticationController.requireLogin(),
+      GoogleDriveController.getImportJob
+    )
+    webRouter.post(
+      '/auth/google-drive/import-job',
+      AuthenticationController.requireLogin(),
+      GoogleDriveController.startImportJob
+    )
+    webRouter.post(
+      '/auth/google-drive/import-job/cancel',
+      AuthenticationController.requireLogin(),
+      GoogleDriveController.cancelImportJob
+    )
 
     // 2. Per-project synchronization
     webRouter.get(

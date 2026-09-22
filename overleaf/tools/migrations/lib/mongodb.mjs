@@ -39,6 +39,7 @@ export const db = {
   githubSyncUserCredentials: internalDb.collection('githubSyncUserCredentials'),
   globalMetrics: internalDb.collection('globalMetrics'),
   googleDriveBulkSyncJobs: internalDb.collection('googleDriveBulkSyncJobs'),
+  googleDriveImportJobs: internalDb.collection('googleDriveImportJobs'),
   googleDriveProjectStates: internalDb.collection('googleDriveProjectStates'),
   googleDriveUserCredentials: internalDb.collection(
     'googleDriveUserCredentials'

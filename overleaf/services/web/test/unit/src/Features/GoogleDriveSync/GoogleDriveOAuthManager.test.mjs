@@ -711,7 +711,7 @@ describe('GoogleDriveOAuthManager', function () {
         user_id: userId,
         googleEmail: 'user@example.com',
         googleUserId: 'google-uid-123',
-        encryptedAccessToken: 'some-enc-token',
+        encryptedAccessToken: GoogleDriveOAuthManager.encryptToken('valid-token'),
         linkedAt,
       })
 
@@ -755,7 +755,7 @@ describe('GoogleDriveOAuthManager', function () {
         user_id: objId,
         googleEmail: 'user@example.com',
         googleUserId: 'google-uid-123',
-        encryptedAccessToken: 'some-enc-token',
+        encryptedAccessToken: GoogleDriveOAuthManager.encryptToken('valid-token'),
         linkedAt,
       })
 
@@ -767,6 +767,46 @@ describe('GoogleDriveOAuthManager', function () {
         googleUserId: 'google-uid-123',
         linkedAt,
       })
+    })
+
+    it('returns isLinked: false and needsReauth: true when token cannot be decrypted', async function () {
+      const linkedAt = new Date('2026-08-30T10:00:00Z')
+      // Token encrypted with a different secret that is not configured
+      const foreignEncryptedToken = GoogleDriveOAuthManager.encryptToken(
+        'some-token',
+        'completely-different-unknown-secret-123456'
+      )
+      db.googleDriveUserCredentials.findOne.mockResolvedValue({
+        user_id: userId,
+        googleEmail: 'user@example.com',
+        googleUserId: 'google-uid-123',
+        encryptedAccessToken: foreignEncryptedToken,
+        linkedAt,
+      })
+
+      const status = await GoogleDriveOAuthManager.isLinked(userId)
+
+      expect(status).toEqual({
+        isLinked: false,
+        needsReauth: true,
+        error: 'token_decryption_failed',
+        googleEmail: 'user@example.com',
+        googleUserId: 'google-uid-123',
+        linkedAt,
+      })
+    })
+
+    it('decrypts token successfully using fallback session secret', async function () {
+      const oldSecret = 'old-session-secret-that-was-rotated-123'
+      const encryptedWithOldSecret = GoogleDriveOAuthManager.encryptToken(
+        'token-encrypted-under-old-secret',
+        oldSecret
+      )
+      // Configure oldSecret as fallback
+      Settings.security.sessionSecretFallback = oldSecret
+
+      const decrypted = GoogleDriveOAuthManager.decryptToken(encryptedWithOldSecret)
+      expect(decrypted).toBe('token-encrypted-under-old-secret')
     })
   })
 

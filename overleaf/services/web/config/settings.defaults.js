@@ -3,7 +3,7 @@ const { merge } = require('@overleaf/settings/merge')
 const {
   DEFAULT_TEXT_EXTENSIONS,
   DEFAULT_EDITABLE_FILENAMES,
-} = require('overleaf-editor-core/lib/text_file_defaults')
+} = require('overleaf-editor-core/lib/text_file_defaults.js')
 
 let defaultFeatures, siteUrl
 
@@ -1215,6 +1215,10 @@ module.exports = {
   enableGoogleDriveSync: process.env.GOOGLE_DRIVE_ENABLED === 'true',
   googleDrive: {
     clientId: process.env.GOOGLE_DRIVE_CLIENT_ID || '',
+    tokenEncryptionSecret:
+      process.env.GOOGLE_DRIVE_TOKEN_ENCRYPTION_SECRET ||
+      process.env.GOOGLE_DRIVE_TOKEN_SECRET ||
+      '',
     clientSecret: process.env.GOOGLE_DRIVE_CLIENT_SECRET || '',
     // Auto-derived from siteUrl with optional environment override
     redirectUri:

@@ -267,153 +267,7 @@ describe('<GoogleDriveLinkingWidget />', function () {
         .to.exist
     })
 
-    it('shows the number of imported projects after a successful scan with new projects', async function () {
-      fetchMock.post('/auth/google-drive/scan-existing-projects', {
-        status: 200,
-        body: {
-          success: true,
-          scannedCount: 3,
-          createdCount: 2,
-          createdProjects: [
-            { projectId: 'p1', name: 'Paper A' },
-            { projectId: 'p2', name: 'Paper B' },
-          ],
-        },
-      })
 
-      render(
-        <GoogleDriveLinkingWidget
-          initialIsLinked={true}
-          initialGoogleEmail="researcher@gmail.com"
-        />
-      )
-
-      fireEvent.click(
-        screen.getByRole('button', { name: 'Scan for existing projects' })
-      )
-
-      await waitFor(() => {
-        expect(screen.getByText(/Imported 2 project/)).to.exist
-      })
-    })
-
-    it('shows synchronized message when scan synchronizes already-linked projects', async function () {
-      fetchMock.post('/auth/google-drive/scan-existing-projects', {
-        status: 200,
-        body: {
-          success: true,
-          scannedCount: 2,
-          createdCount: 0,
-          createdProjects: [],
-          syncedCount: 2,
-          syncedProjects: [
-            { projectId: 'p1', name: 'Paper A' },
-            { projectId: 'p2', name: 'Paper B' },
-          ],
-        },
-      })
-
-      render(
-        <GoogleDriveLinkingWidget
-          initialIsLinked={true}
-          initialGoogleEmail="researcher@gmail.com"
-        />
-      )
-
-      fireEvent.click(
-        screen.getByRole('button', { name: 'Scan for existing projects' })
-      )
-
-      await waitFor(() => {
-        expect(screen.getByText(/Synchronized 2 existing project/)).to.exist
-      })
-    })
-
-    it('shows all projects synced message when all scanned projects are already up to date', async function () {
-      fetchMock.post('/auth/google-drive/scan-existing-projects', {
-        status: 200,
-        body: {
-          success: true,
-          scannedCount: 2,
-          createdCount: 0,
-          createdProjects: [],
-          syncedCount: 0,
-          syncedProjects: [],
-        },
-      })
-
-      render(
-        <GoogleDriveLinkingWidget
-          initialIsLinked={true}
-          initialGoogleEmail="researcher@gmail.com"
-        />
-      )
-
-      fireEvent.click(
-        screen.getByRole('button', { name: 'Scan for existing projects' })
-      )
-
-      await waitFor(() => {
-        expect(
-          screen.getByText(
-            /Found 2 project\(s\) in Google Drive\. All are linked and up to date\./
-          )
-        ).to.exist
-      })
-    })
-
-    it('shows a "no existing projects found" message when the scan finds 0 folders', async function () {
-      fetchMock.post('/auth/google-drive/scan-existing-projects', {
-        status: 200,
-        body: {
-          success: true,
-          scannedCount: 0,
-          createdCount: 0,
-          createdProjects: [],
-        },
-      })
-
-      render(
-        <GoogleDriveLinkingWidget
-          initialIsLinked={true}
-          initialGoogleEmail="researcher@gmail.com"
-        />
-      )
-
-      fireEvent.click(
-        screen.getByRole('button', { name: 'Scan for existing projects' })
-      )
-
-      await waitFor(() => {
-        expect(
-          screen.getByText(
-            'No existing projects found in your Google Drive folder.'
-          )
-        ).to.exist
-      })
-    })
-
-    it('shows an error message when the scan request fails', async function () {
-      fetchMock.post('/auth/google-drive/scan-existing-projects', {
-        status: 500,
-        body: { message: 'Drive API error' },
-      })
-
-      render(
-        <GoogleDriveLinkingWidget
-          initialIsLinked={true}
-          initialGoogleEmail="researcher@gmail.com"
-        />
-      )
-
-      fireEvent.click(
-        screen.getByRole('button', { name: 'Scan for existing projects' })
-      )
-
-      await waitFor(() => {
-        expect(screen.getByText('Drive API error')).to.exist
-      })
-    })
 
     it('handles unlink error and displays user-facing error message', async function () {
       fetchMock.post('/auth/google-drive/unlink', {
@@ -623,6 +477,125 @@ describe('<GoogleDriveLinkingWidget />', function () {
     })
   })
 
+
+  describe('Scan for existing projects (Import table)', function () {
+    const folders = [
+      {
+        folderId: 'f-1',
+        name: 'Drive Thesis',
+        linked: false,
+        projectId: null,
+        lastSyncedAt: null,
+      },
+      {
+        folderId: 'f-2',
+        name: 'Drive Paper',
+        linked: true,
+        projectId: 'p-2',
+        lastSyncedAt: '2026-09-01T10:00:00.000Z',
+      },
+    ]
+
+    function runningImportJob(status = 'running') {
+      return {
+        id: 'import-job-1',
+        status,
+        total: 2,
+        importedCount: 0,
+        failedCount: 0,
+        folders: [
+          {
+            folderId: 'f-1',
+            name: 'Drive Thesis',
+            status: 'importing',
+            error: null,
+            projectId: null,
+          },
+          {
+            folderId: 'f-2',
+            name: 'Drive Paper',
+            status: 'queued',
+            error: null,
+            projectId: 'p-2',
+          },
+        ],
+      }
+    }
+
+    it('lists folders from Drive and queues import job when Import now is clicked', async function () {
+      fetchMock.get('/auth/google-drive/import-job', { job: null })
+      fetchMock.get('/auth/google-drive/import-folders', { folders })
+      fetchMock.post('/auth/google-drive/import-job', {
+        status: 202,
+        body: { job: runningImportJob() },
+      })
+
+      render(
+        <GoogleDriveLinkingWidget
+          initialIsLinked={true}
+          initialGoogleEmail="researcher@gmail.com"
+        />
+      )
+
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Scan for existing projects' })
+      )
+
+      await screen.findByText('Drive Thesis')
+      expect(screen.getByText('Drive Paper')).to.exist
+      expect(screen.getByText('New in Google Drive')).to.exist
+      expect(screen.getByText(/Already linked/)).to.exist
+
+      // Click import now
+      fireEvent.click(screen.getByTestId('google-drive-import-now'))
+
+      await waitFor(() => {
+        expect(isFetchCalled('/auth/google-drive/import-job')).to.be.true
+      })
+    })
+
+    it('shows scan button loading when an import job is active', async function () {
+      fetchMock.get('/auth/google-drive/import-job', { job: runningImportJob() })
+      render(
+        <GoogleDriveLinkingWidget
+          initialIsLinked={true}
+          initialGoogleEmail="researcher@gmail.com"
+        />
+      )
+
+      await waitFor(() => {
+        expect(
+          screen
+            .getByTestId('google-drive-scan-button')
+            .getAttribute('data-ol-loading')
+        ).to.equal('true')
+      })
+    })
+
+    it('cancel closes the import table', async function () {
+      fetchMock.get('/auth/google-drive/import-job', { job: null })
+      fetchMock.get('/auth/google-drive/import-folders', { folders })
+
+      render(
+        <GoogleDriveLinkingWidget
+          initialIsLinked={true}
+          initialGoogleEmail="researcher@gmail.com"
+        />
+      )
+
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Scan for existing projects' })
+      )
+
+      await screen.findByText('Drive Thesis')
+      fireEvent.click(screen.getByTestId('google-drive-import-cancel'))
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('google-drive-import-panel')).to.be.null
+      })
+    })
+  })
+
   describe('Status Fetch on Mount', function () {
     it('fetches status from endpoint on mount when not supplied via props/meta', async function () {
       fetchMock.get('/auth/google-drive/status', {
@@ -636,6 +609,27 @@ describe('<GoogleDriveLinkingWidget />', function () {
       await waitFor(() => {
         expect(isFetchCalled('/auth/google-drive/status')).to.be.true
         expect(screen.getByText('auto-fetched@example.com')).to.exist
+      })
+    })
+
+    it('displays reauth message and switches to unlinked state when token decryption fails', async function () {
+      fetchMock.get('/auth/google-drive/status', {
+        isLinked: false,
+        needsReauth: true,
+        error: 'token_decryption_failed',
+        googleEmail: 'user@example.com',
+      })
+
+      render(<GoogleDriveLinkingWidget />)
+
+      await waitFor(() => {
+        expect(isFetchCalled('/auth/google-drive/status')).to.be.true
+        expect(
+          screen.getByText(
+            'Your Google Drive authorization has expired or the server encryption key has changed. Please link your account again.'
+          )
+        ).to.exist
+        expect(screen.getByRole('button', { name: /Link/ })).to.exist
       })
     })
   })

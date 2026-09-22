@@ -5,6 +5,8 @@ import GoogleDriveOAuthManager from './GoogleDriveOAuthManager.mjs'
 import GoogleDriveSyncManager from './GoogleDriveSyncManager.mjs'
 import GoogleDriveBulkSyncManager from './GoogleDriveBulkSyncManager.mjs'
 import GoogleDriveBulkSyncWorker from './GoogleDriveBulkSyncWorker.mjs'
+import GoogleDriveImportManager from './GoogleDriveImportManager.mjs'
+import GoogleDriveImportWorker from './GoogleDriveImportWorker.mjs'
 import { db, ObjectId } from '../../infrastructure/mongodb.mjs'
 import { removeCSPHeaders } from '../../infrastructure/CSP.mjs'
 
@@ -656,6 +658,110 @@ const GoogleDriveController = {
         { err, projectId },
         'error dismissing google drive conflicts'
       )
+      return res.status(500).json({ code: 'error', message: err.message })
+    }
+  },
+
+  /**
+   * Fast-lists top-level folders in Google Drive available for import.
+   *
+   * @param {import('express').Request} req
+   * @param {import('express').Response} res
+   */
+  async listImportableFolders(req, res) {
+    const userId = SessionManager.getLoggedInUserId(req.session)
+
+    try {
+      const folders =
+        await GoogleDriveImportManager.listImportableFolders(userId)
+      return res.json({ folders })
+    } catch (err) {
+      logger.error(
+        { err, userId },
+        'error listing importable folders from google drive'
+      )
+      return res.status(500).json({ code: 'error', message: err.message })
+    }
+  },
+
+  /**
+   * Retrieves the user's active or latest import job.
+   *
+   * @param {import('express').Request} req
+   * @param {import('express').Response} res
+   */
+  async getImportJob(req, res) {
+    const userId = SessionManager.getLoggedInUserId(req.session)
+
+    try {
+      const job = await GoogleDriveImportManager.getLatestJob(userId)
+      return res.json({ job: GoogleDriveImportManager.serializeJob(job) })
+    } catch (err) {
+      logger.error(
+        { err, userId },
+        'error retrieving google drive import job status'
+      )
+      return res.status(500).json({ code: 'error', message: err.message })
+    }
+  },
+
+  /**
+   * Queues an asynchronous import of selected Google Drive folders.
+   *
+   * @param {import('express').Request} req
+   * @param {import('express').Response} res
+   */
+  async startImportJob(req, res) {
+    const userId = SessionManager.getLoggedInUserId(req.session)
+
+    try {
+      const { isLinked } = await GoogleDriveOAuthManager.isLinked(userId)
+      if (!isLinked) {
+        return res.status(400).json({
+          code: 'not_linked',
+          message: 'Google Drive account is not linked',
+        })
+      }
+
+      const job = await GoogleDriveImportManager.createImportJob(
+        userId,
+        req.body?.folderIds
+      )
+      GoogleDriveImportWorker.kick()
+      return res.status(202).json({
+        job: GoogleDriveImportManager.serializeJob(job),
+      })
+    } catch (err) {
+      if (err instanceof GoogleDriveImportManager.ImportJobAlreadyRunningError) {
+        return res
+          .status(409)
+          .json({ code: 'already_running', message: err.message })
+      }
+      if (err instanceof GoogleDriveImportManager.InvalidImportRequestError) {
+        return res
+          .status(400)
+          .json({ code: 'bad_request', message: err.message })
+      }
+      logger.error({ err, userId }, 'error starting google drive import job')
+      return res.status(500).json({ code: 'error', message: err.message })
+    }
+  },
+
+  /**
+   * Cancels any active import job for the user.
+   *
+   * @param {import('express').Request} req
+   * @param {import('express').Response} res
+   */
+  async cancelImportJob(req, res) {
+    const userId = SessionManager.getLoggedInUserId(req.session)
+
+    try {
+      await GoogleDriveImportManager.cancelActiveJobs(userId)
+      const job = await GoogleDriveImportManager.getLatestJob(userId)
+      return res.json({ job: GoogleDriveImportManager.serializeJob(job) })
+    } catch (err) {
+      logger.error({ err, userId }, 'error cancelling google drive import job')
       return res.status(500).json({ code: 'error', message: err.message })
     }
   },
