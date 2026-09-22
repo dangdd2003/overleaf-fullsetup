@@ -1,10 +1,11 @@
 import { expect } from 'chai'
 import sinon from 'sinon'
-import { fireEvent, render } from '@testing-library/react'
+import { fireEvent, render, waitFor } from '@testing-library/react'
 import {
   MarkdownContent,
   copyTextToClipboard,
 } from '../../../../../frontend/js/features/ai-assist/components/agent/markdown-content'
+import { holdBackIncomplete } from '../../../../../frontend/js/features/ai-assist/hooks/use-stream-reveal'
 
 describe('MarkdownContent', function () {
   it('renders bold, italic, and paragraphs', function () {
@@ -346,27 +347,98 @@ describe('MarkdownContent', function () {
     expect(fileMentions[1].textContent).to.equal('src/table.tex:15')
   })
 
-  it('renders streaming word spans without cursor when isLive is true', function () {
+  it('reveals live text progressively, fading in the new words', async function () {
     const { container } = render(
-      <MarkdownContent content="Streaming response in progress" isLive={true} />
+      <MarkdownContent
+        content="First clause, second clause. Still arriving"
+        isLive={true}
+      />
     )
 
-    const cursor = container.querySelector('.ai-assist-streaming-cursor')
-    expect(cursor).to.not.exist
-    const streamWords = container.querySelectorAll('.ai-assist-stream-word')
-    expect(streamWords.length).to.be.greaterThan(0)
-    expect(container.querySelector('.ai-assist-markdown')?.classList.contains('is-streaming')).to.be.true
+    expect(container.textContent).to.not.contain('Still')
+    await waitFor(() =>
+      expect(container.textContent).to.contain('second clause.')
+    )
+    const markdown = container.querySelector('.ai-assist-markdown')
+    expect(markdown?.classList.contains('is-streaming')).to.be.true
+    expect(container.querySelectorAll('.ai-assist-stream-fade').length).to.be
+      .greaterThan(0)
+    expect(container.querySelector('.ai-assist-stream-word')).to.not.exist
+    expect(container.querySelector('.ai-assist-streaming-cursor')).to.not.exist
   })
 
-  it('does not render streaming words or cursor when isLive is false', function () {
+  it('renders tables as real tables while streaming', async function () {
+    const md = 'Results:\n\n| a | b |\n|---|---|\n| 1 | 2 |\n'
+    const { container } = render(<MarkdownContent content={md} isLive />)
+
+    await waitFor(() =>
+      expect(container.querySelectorAll('.ai-assist-table tr')).to.have.length(2)
+    )
+    expect(container.textContent).to.not.contain('|')
+  })
+
+  it('shows the rest and stops animating once the stream ends', async function () {
+    const { container, rerender } = render(
+      <MarkdownContent content="Done here. Last word" isLive />
+    )
+    rerender(<MarkdownContent content="Done here. Last word" isLive={false} />)
+
+    await waitFor(
+      () => {
+        expect(container.textContent).to.contain('Last word')
+        expect(
+          container.querySelector('.ai-assist-markdown')?.classList.contains(
+            'is-streaming'
+          )
+        ).to.be.false
+      },
+      { timeout: 2000 }
+    )
+  })
+
+  it('does not animate a message that is not live', function () {
     const { container } = render(
       <MarkdownContent content="Completed response" isLive={false} />
     )
 
-    const cursor = container.querySelector('.ai-assist-streaming-cursor')
-    expect(cursor).to.not.exist
-    const streamWords = container.querySelectorAll('.ai-assist-stream-word')
-    expect(streamWords.length).to.equal(0)
+    expect(container.textContent).to.contain('Completed response')
+    expect(container.querySelectorAll('.ai-assist-stream-fade')).to.have.length(0)
     expect(container.querySelector('.ai-assist-markdown')?.classList.contains('is-streaming')).to.be.false
+  })
+})
+
+describe('holdBackIncomplete', function () {
+  it('holds a table header until its delimiter row arrives', function () {
+    const text = 'Intro.\n| a | b |\n'
+    expect(holdBackIncomplete(text, text.length)).to.equal('Intro.\n'.length)
+    const partialDelimiter = `${text}|--`
+    expect(holdBackIncomplete(partialDelimiter, partialDelimiter.length)).to.equal(
+      'Intro.\n'.length
+    )
+    const withDelimiter = `${text}|---|---|\n| 1 | 2`
+    expect(holdBackIncomplete(withDelimiter, withDelimiter.length)).to.equal(
+      withDelimiter.length
+    )
+  })
+
+  it('holds an unclosed display-math block', function () {
+    const text = 'See:\n$$\n\\frac{a}{b'
+    expect(holdBackIncomplete(text, text.length)).to.equal('See:\n'.length)
+  })
+
+  it('streams code freely but holds a partial fence line', function () {
+    const text = '```latex\n\\begin{equation}\nx = 1\n\\end{equ'
+    expect(holdBackIncomplete(text, text.length)).to.equal(text.length)
+    const closing = '```latex\nx = 1\n``'
+    expect(holdBackIncomplete(closing, closing.length)).to.equal(
+      closing.lastIndexOf('\n') + 1
+    )
+    const opening = 'Code:\n```la'
+    expect(holdBackIncomplete(opening, opening.length)).to.equal('Code:\n'.length)
+  })
+
+  it('holds an unclosed inline marker', function () {
+    const text = 'This is **very imp'
+    expect(holdBackIncomplete(text, text.length)).to.equal('This is '.length)
   })
 })

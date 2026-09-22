@@ -757,7 +757,10 @@ export class AiAssistRunManager {
 
         let streamSucceeded = false
         let streamAttempts = 0
-        const MAX_STREAM_ATTEMPTS = 3
+        // Hosted providers shed load with 5xx errors and dropped streams for
+        // tens of seconds at a time, so a step keeps retrying for about a
+        // minute (2s, 4s, 8s, 16s, 20s) before the run gives up.
+        const MAX_STREAM_ATTEMPTS = 6
 
         while (!streamSucceeded && streamAttempts < MAX_STREAM_ATTEMPTS) {
           if (controller.signal.aborted || shouldStop) break
@@ -822,7 +825,7 @@ export class AiAssistRunManager {
               },
               '[AiAssist] Transient error from provider during tool run, auto-retrying'
             )
-            const delay = Math.min(1000 * Math.pow(2, streamAttempts - 1) + Math.random() * 300, 5000)
+            const delay = Math.min(2000 * Math.pow(2, streamAttempts - 1) + Math.random() * 300, 20000)
             await new Promise(resolve => {
               const timer = setTimeout(resolve, delay)
               const onAbort = () => {

@@ -142,6 +142,71 @@ describe('AiAssistRunManager', function () {
     expect(mockStore.updateStatus.calledWith('run-1', 'done')).to.be.true
   })
 
+  describe('provider 5xx errors', function () {
+    let clock
+
+    beforeEach(function () {
+      clock = sinon.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    })
+
+    afterEach(function () {
+      clock.restore()
+    })
+
+    // Moves the fake clock forward a second at a time, letting the run's
+    // promises settle in between
+    async function advance(ms) {
+      for (let t = 0; t < ms; t += 1000) {
+        clock.tick(1000)
+        await new Promise(resolve => setImmediate(resolve))
+      }
+    }
+
+    const serverError = () =>
+      Object.assign(new Error('Internal Server Error (ref: abc)'), { status: 500 })
+
+    it('keeps retrying a step through five failures in a row', async function () {
+      let calls = 0
+      mockClient.streamChat.callsFake(async function* () {
+        calls++
+        if (calls <= 5) throw serverError()
+        yield { type: 'text', text: 'Recovered' }
+      })
+
+      const runPromise = manager.startRun({
+        runId: 'run-retry',
+        projectId: 'p1',
+        userId: 'u1',
+        transcript: [{ role: 'user', content: 'hi' }],
+        providerSettings: { type: 'ollama', model: 'm' },
+      })
+      await advance(60000)
+      await runPromise
+
+      expect(mockClient.streamChat.callCount).to.equal(6)
+      expect(mockStore.updateStatus.calledWith('run-retry', 'done')).to.be.true
+    })
+
+    it('gives up after six failed attempts', async function () {
+      mockClient.streamChat.callsFake(async function* () {
+        throw serverError()
+      })
+
+      const runPromise = manager.startRun({
+        runId: 'run-give-up',
+        projectId: 'p1',
+        userId: 'u1',
+        transcript: [{ role: 'user', content: 'hi' }],
+        providerSettings: { type: 'ollama', model: 'm' },
+      })
+      await advance(60000)
+      await runPromise
+
+      expect(mockClient.streamChat.callCount).to.equal(6)
+      expect(mockStore.updateStatus.calledWith('run-give-up', 'error')).to.be.true
+    })
+  })
+
   it('suspends on edit_file and resumes when approveEdit is called', async function () {
     let callCount = 0
     mockClient.streamChat.callsFake(async function* () {

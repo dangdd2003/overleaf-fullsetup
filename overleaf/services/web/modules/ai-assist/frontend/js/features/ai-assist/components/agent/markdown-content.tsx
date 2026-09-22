@@ -1,9 +1,13 @@
-import { FC, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { FC, useCallback, useLayoutEffect, useMemo, useRef } from 'react'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
 import { useOpenFileInEditor } from '../../hooks/use-open-file'
+import {
+  STREAM_FADE_MS,
+  useStreamReveal,
+} from '../../hooks/use-stream-reveal'
 
 export function insertSnippetIntoEditor(text: string): boolean {
   if (!text || typeof window === 'undefined') return false
@@ -157,6 +161,19 @@ const inlineEnvRegex = new RegExp(
   `^(\\\\begin\\{(${MATH_ENVIRONMENTS}\\*?)\\}[\\s\\S]+?\\\\end\\{\\2\\})`
 )
 
+// A streaming reply is re-rendered on every chunk; don't re-typeset its math
+const katexCache = new Map<string, string>()
+function renderKatex(text: string, displayMode: boolean): string {
+  const key = `${displayMode ? 'D' : 'I'}${text}`
+  let html = katexCache.get(key)
+  if (html === undefined) {
+    html = katex.renderToString(text, { displayMode, throwOnError: false })
+    if (katexCache.size >= 500) katexCache.clear()
+    katexCache.set(key, html)
+  }
+  return html
+}
+
 const blockMath = {
   name: 'blockMath',
   level: 'block' as const,
@@ -183,10 +200,7 @@ const blockMath = {
   },
   renderer(token: any) {
     try {
-      return katex.renderToString(token.text, {
-        displayMode: token.display,
-        throwOnError: false,
-      })
+      return renderKatex(token.text, token.display)
     } catch {
       return `<div class="katex-error">${escapeHtml(token.text)}</div>`
     }
@@ -232,10 +246,7 @@ const inlineMath = {
   },
   renderer(token: any) {
     try {
-      return katex.renderToString(token.text, {
-        displayMode: token.display,
-        throwOnError: false,
-      })
+      return renderKatex(token.text, token.display)
     } catch {
       return `<span class="katex-error">${escapeHtml(token.text)}</span>`
     }
@@ -409,22 +420,7 @@ marked.use({
   },
 })
 
-/**
- * Backward-compatible passthrough alias for typewriter/smooth stream.
- */
-export function useTypewriter(targetText: string, _isLive?: boolean): string {
-  return targetText
-}
-
-export function useSmoothStream(targetText: string, _isLive?: boolean): string {
-  return targetText
-}
-
-export function decorateStreamingTail(html: string): string {
-  return html
-}
-
-export function renderMarkdown(content: string, _isLive: boolean = false): string {
+export function renderMarkdown(content: string): string {
   if (!content) {
     return ''
   }
@@ -444,161 +440,100 @@ export function renderMarkdown(content: string, _isLive: boolean = false): strin
   }
 }
 
+type FadeChunk = { start: number; at: number }
+type FadeState = { text: string; chunks: FadeChunk[] }
+
+/** Structures that fade in as a whole when they first appear. */
+const FADE_UNIT_SELECTOR =
+  '.ai-assist-table-wrapper, .ai-assist-code-block, tr, li, .katex'
+/** Structures whose text must not be split into spans. */
+const ATOMIC_SELECTOR = '.katex, button, svg'
+
+function fadeElement(el: Element, ageMs: number) {
+  el.classList.add('ai-assist-stream-fade')
+  ;(el as HTMLElement).style.animationDelay = `-${Math.round(ageMs)}ms`
+}
+
 /**
- * Renders live streaming Markdown token by token.
- * Words are mapped to stable keys so previously mounted <span> elements
- * never re-render or re-fade, matching Claude.ai streaming animation.
+ * Fades in the text a streaming render added since the previous one. The
+ * rendered text is compared with what was on screen before: everything after
+ * the common prefix is a new chunk. Chunks still inside their fade window are
+ * re-applied after every render with a negative animation delay, so replacing
+ * the markup never restarts a fade that is already under way.
  */
-export function LiveStreamingMarkdown({
-  content,
-}: {
-  content: string
-}) {
-  const tokens = useMemo(() => {
-    try {
-      return marked.lexer(content)
-    } catch {
-      return []
+function applyChunkFades(container: HTMLElement, state: FadeState) {
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT)
+  const nodes: Text[] = []
+  while (walker.nextNode()) nodes.push(walker.currentNode as Text)
+
+  const text = nodes.map(node => node.data).join('')
+  const now = performance.now()
+  let kept = 0
+  const max = Math.min(text.length, state.text.length)
+  while (kept < max && text[kept] === state.text[kept]) kept++
+
+  const chunks = state.chunks.filter(
+    chunk => chunk.start < kept && now - chunk.at < STREAM_FADE_MS
+  )
+  if (text.length > kept) chunks.push({ start: kept, at: now })
+  state.text = text
+  state.chunks = chunks
+  if (chunks.length === 0) return
+
+  const chunkAt = (offset: number) => {
+    for (let i = chunks.length - 1; i >= 0; i--) {
+      if (offset >= chunks[i].start) return chunks[i]
     }
-  }, [content])
-
-  function renderInline(inlineTokens: any[], bIdx: number): React.ReactNode[] {
-    let blockWordIdx = 0
-    function walk(tokens: any[]): React.ReactNode[] {
-      const nodes: React.ReactNode[] = []
-      for (let i = 0; i < tokens.length; i++) {
-        const t = tokens[i]
-        if (t.type === 'text') {
-          let remaining = t.text
-          const leading = remaining.match(/^\s+/)
-          if (leading) {
-            nodes.push(
-              <span key={`space-${bIdx}-${i}`}>
-                {leading[0]}
-              </span>
-            )
-            remaining = remaining.slice(leading[0].length)
-          }
-          const words = remaining.match(/\S+\s*/g) || []
-          for (let wIdx = 0; wIdx < words.length; wIdx++) {
-            const currentId = `w-${bIdx}-${blockWordIdx++}`
-            nodes.push(
-              <span key={currentId} className="ai-assist-stream-word">
-                {words[wIdx]}
-              </span>
-            )
-          }
-        } else if (t.type === 'strong') {
-          nodes.push(
-            <strong key={`strong-${bIdx}-${i}`}>
-              {walk(t.tokens || [{ type: 'text', text: t.text }])}
-            </strong>
-          )
-        } else if (t.type === 'em') {
-          nodes.push(
-            <em key={`em-${bIdx}-${i}`}>
-              {walk(t.tokens || [{ type: 'text', text: t.text }])}
-            </em>
-          )
-        } else if (t.type === 'codespan') {
-          nodes.push(<code key={`code-${bIdx}-${i}`}>{t.text}</code>)
-        } else if (t.type === 'inlineMath') {
-          try {
-            const mathHtml = katex.renderToString(t.text, {
-              displayMode: false,
-              throwOnError: false,
-            })
-            nodes.push(
-              <span
-                key={`math-${bIdx}-${i}`}
-                dangerouslySetInnerHTML={{ __html: mathHtml }}
-              />
-            )
-          } catch {
-            nodes.push(<span key={`math-${bIdx}-${i}`}>{t.raw}</span>)
-          }
-        } else {
-          nodes.push(t.raw)
-        }
-      }
-      return nodes
-    }
-    return walk(inlineTokens)
-  }
-
-  const blocks: React.ReactNode[] = []
-  for (let bIdx = 0; bIdx < tokens.length; bIdx++) {
-    const b = tokens[bIdx]
-
-    if (b.type === 'paragraph') {
-      blocks.push(
-        <p key={`p-${bIdx}`}>
-          {renderInline(b.tokens || [{ type: 'text', text: b.text }], bIdx)}
-        </p>
-      )
-    } else if (b.type === 'heading') {
-      const Tag = `h${b.depth}` as keyof JSX.IntrinsicElements
-      blocks.push(
-        <Tag key={`h-${bIdx}`}>
-          {renderInline(b.tokens || [{ type: 'text', text: b.text }], bIdx)}
-        </Tag>
-      )
-    } else if (b.type === 'code') {
-      blocks.push(
-        <div className="ai-assist-code-block" key={`code-${bIdx}`}>
-          <div className="ai-assist-code-header">
-            <span className="ai-assist-code-lang">{b.lang || 'code'}</span>
-          </div>
-          <pre>
-            <code className={b.lang ? `language-${b.lang}` : ''}>
-              {b.text}
-            </code>
-          </pre>
-        </div>
-      )
-    } else if (b.type === 'list') {
-      const ListTag = b.ordered ? 'ol' : 'ul'
-      blocks.push(
-        <ListTag key={`list-${bIdx}`}>
-          {b.items.map((item: any, itemIdx: number) => (
-            <li key={`item-${bIdx}-${itemIdx}`}>
-              {renderInline(
-                item.tokens || [{ type: 'text', text: item.text }],
-                bIdx * 1000 + itemIdx
-              )}
-            </li>
-          ))}
-        </ListTag>
-      )
-    } else if (b.type === 'blockMath') {
-      try {
-        const mathHtml = katex.renderToString(b.text, {
-          displayMode: true,
-          throwOnError: false,
-        })
-        blocks.push(
-          <div
-            key={`blockMath-${bIdx}`}
-            dangerouslySetInnerHTML={{ __html: mathHtml }}
-          />
-        )
-      } catch {
-        blocks.push(<div key={`blockMath-${bIdx}`}>{b.raw}</div>)
-      }
-    } else if (b.type !== 'space') {
-      blocks.push(
-        <div key={`block-${bIdx}`}>
-          {b.raw}
-        </div>
-      )
-    }
-  }
-
-  if (blocks.length === 0) {
     return null
   }
 
-  return <div className="ai-assist-markdown is-streaming">{blocks}</div>
+  const unitChunks = new Map<Element, FadeChunk | null>()
+  let offset = 0
+  for (const node of nodes) {
+    const nodeStart = offset
+    offset += node.data.length
+
+    // A structure whose first text is new fades in whole, borders included
+    let covered: FadeChunk | null = null
+    let el = node.parentElement
+    while (el && el !== container) {
+      if (el.matches(FADE_UNIT_SELECTOR)) {
+        if (!unitChunks.has(el)) {
+          const chunk = chunkAt(nodeStart)
+          unitChunks.set(el, chunk)
+          if (chunk) fadeElement(el, now - chunk.at)
+        }
+        covered ??= unitChunks.get(el) ?? null
+      }
+      el = el.parentElement
+    }
+
+    if (offset <= chunks[0].start || !node.data.trim()) continue
+    if (node.parentElement?.closest(ATOMIC_SELECTOR)) continue
+
+    // Wrap each part of the node that belongs to a chunk still fading, unless
+    // an enclosing structure is already fading it
+    let current: Text = node
+    let currentStart = nodeStart
+    for (let i = 0; i < chunks.length; i++) {
+      if (covered && chunks[i].start <= covered.start) continue
+      const start = Math.max(chunks[i].start, currentStart)
+      const end = Math.min(chunks[i + 1]?.start ?? Infinity, offset)
+      if (end <= start) continue
+      if (start > currentStart) {
+        current = current.splitText(start - currentStart)
+        currentStart = start
+      }
+      const rest = end < offset ? current.splitText(end - currentStart) : null
+      const span = document.createElement('span')
+      fadeElement(span, now - chunks[i].at)
+      current.parentNode!.insertBefore(span, current)
+      span.appendChild(current)
+      if (!rest) break
+      current = rest
+      currentStart = end
+    }
+  }
 }
 
 export const MarkdownContent: FC<{
@@ -609,10 +544,30 @@ export const MarkdownContent: FC<{
   const defaultOpenFile = useOpenFileInEditor()
   const openFile = onOpenFile ?? defaultOpenFile
 
-  const html = useMemo(
-    () => (isLive ? '' : renderMarkdown(content, false)),
-    [content, isLive]
+  const { text, animating } = useStreamReveal(content, isLive)
+  const html = useMemo(() => renderMarkdown(text), [text])
+
+  const containerRef = useRef<HTMLDivElement>(null)
+  const fadeState = useRef<FadeState | null>(
+    isLive ? { text: '', chunks: [] } : null
   )
+
+  // Runs after React swaps in the new markup and before it is painted
+  useLayoutEffect(() => {
+    if (!animating) {
+      fadeState.current = null
+      return
+    }
+    const container = containerRef.current
+    if (!container) return
+    // Resuming a finished message: what is already on screen stays put
+    fadeState.current ??= {
+      text: container.textContent ?? '',
+      chunks: [],
+    }
+    applyChunkFades(container, fadeState.current)
+    window.dispatchEvent(new CustomEvent('aiAssist:stickToBottom'))
+  }, [html, animating])
 
   const handleClick = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
@@ -763,16 +718,13 @@ export const MarkdownContent: FC<{
     [openFile]
   )
 
-  if (isLive) {
-    return <LiveStreamingMarkdown content={content} />
-  }
-
   if (!html) return null
 
   return (
     /* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions */
     <div
-      className="ai-assist-markdown"
+      ref={containerRef}
+      className={animating ? 'ai-assist-markdown is-streaming' : 'ai-assist-markdown'}
       onClick={handleClick}
       onKeyDown={handleKeyDown}
       dangerouslySetInnerHTML={{ __html: html }}

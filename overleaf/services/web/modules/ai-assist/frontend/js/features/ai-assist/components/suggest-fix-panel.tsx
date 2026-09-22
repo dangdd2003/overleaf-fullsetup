@@ -655,15 +655,19 @@ export default function SuggestFixPanel({
             return (
               <div key={entry.id || `entry-${entryIdx}`} className="ai-suggest-entry">
                 {segments.map((segment, idx) => {
+                  const isLastSegment = isLastEntry && idx === segments.length - 1
+
                   if (segment.type === 'text') {
                     return (
                       <div key={`text-${idx}`} className="ai-suggest-explanation">
-                        <MarkdownContent content={segment.text} />
+                        <MarkdownContent
+                          content={segment.text}
+                          isLive={running && isLastSegment}
+                        />
                       </div>
                     )
                   }
 
-                  const isLastSegment = isLastEntry && idx === segments.length - 1
                   const editCalls = segment.items.filter(
                     (item): item is Extract<AssistantBlock, { type: 'tool_call' }> =>
                       item.type === 'tool_call' &&
