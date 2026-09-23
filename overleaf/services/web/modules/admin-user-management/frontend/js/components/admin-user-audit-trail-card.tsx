@@ -13,6 +13,7 @@ export interface AuditLogEntry {
   userId: string
   operation: string
   initiatorId?: string
+  initiator?: { name: string; email: string } | null
   ipAddress?: string
   info?: Record<string, any>
   timestamp?: string | Date
@@ -40,39 +41,108 @@ export interface AdminUserAuditTrailCardProps {
   userId: string
 }
 
-function renderBadge(operation: string) {
-  switch (operation) {
-    case 'admin-set-admin-status':
-      return <OLBadge bg="primary">Admin Access</OLBadge>
-    case 'admin-revoked-sessions':
-    case 'admin-revoke-sessions':
-      return <OLBadge bg="danger">Sessions Revoked</OLBadge>
-    case 'admin-added-email':
-      return <OLBadge bg="info">Email Added</OLBadge>
-    case 'admin-removed-email':
-      return <OLBadge bg="warning">Email Removed</OLBadge>
-    case 'admin-set-primary-email':
-      return <OLBadge bg="info">Primary Email Changed</OLBadge>
-    case 'admin-register':
-    case 'register':
-      return <OLBadge bg="success">Account Created</OLBadge>
-    case 'transfer-project':
-      return <OLBadge bg="info">Project Transferred</OLBadge>
-    case 'delete-account':
-      return <OLBadge bg="danger">Account Deleted</OLBadge>
-    case 'restore-account':
-      return <OLBadge bg="success">Account Restored</OLBadge>
-    case 'admin-update-user':
-      return <OLBadge bg="info">Profile Updated</OLBadge>
-    case 'admin-generate-password-reset':
-      return <OLBadge bg="primary">Password Reset Link</OLBadge>
-    default:
-      return (
-        <OLBadge bg="light" text="dark" className="border">
-          {operation}
-        </OLBadge>
-      )
+const OPERATION_BADGES: Record<string, { label: string; bg: string }> = {
+  login: { label: 'Login', bg: 'success' },
+  logout: { label: 'Logout', bg: 'dark' },
+  'failed-password-match': { label: 'Failed Login', bg: 'danger' },
+  'reset-password': { label: 'Password Reset', bg: 'warning' },
+  'update-password': { label: 'Password Changed', bg: 'warning' },
+  'must-reset-password-unset': { label: 'Reset Flag Cleared', bg: 'info' },
+  'add-email': { label: 'Email Added', bg: 'info' },
+  'add-email-auto-confirmed': { label: 'Email Added', bg: 'info' },
+  'add-email-via-code': { label: 'Email Added', bg: 'info' },
+  'request-add-email-code': { label: 'Email Code Requested', bg: 'info' },
+  'confirm-email': { label: 'Email Confirmed', bg: 'success' },
+  'confirm-email-via-code': { label: 'Email Confirmed', bg: 'success' },
+  'remove-email': { label: 'Email Removed', bg: 'warning' },
+  'change-primary-email': { label: 'Primary Email Changed', bg: 'info' },
+  'set-default-email': { label: 'Primary Email Changed', bg: 'info' },
+  'migrate-default-email': { label: 'Primary Email Migrated', bg: 'info' },
+  'clear-sessions': { label: 'Sessions Cleared', bg: 'danger' },
+  'link-sso': { label: 'SSO Linked', bg: 'info' },
+  'unlink-sso': { label: 'SSO Unlinked', bg: 'warning' },
+  'link-github': { label: 'GitHub Linked', bg: 'info' },
+  'unlink-github': { label: 'GitHub Unlinked', bg: 'warning' },
+  'clear-institution-sso-data': { label: 'SSO Data Cleared', bg: 'warning' },
+  'clear-third-party-identifiers': {
+    label: 'Identities Cleared',
+    bg: 'warning',
+  },
+  'accept-group-invitation': {
+    label: 'Group Invite Accepted',
+    bg: 'success',
+  },
+  'join-group-subscription': { label: 'Joined Group', bg: 'success' },
+  'leave-group-subscription': { label: 'Left Group', bg: 'warning' },
+  'remove-from-group-subscription': {
+    label: 'Removed From Group',
+    bg: 'warning',
+  },
+  'account-suspension': { label: 'Account Suspended', bg: 'danger' },
+  'ai-quota-breach': { label: 'AI Quota Exceeded', bg: 'warning' },
+  'admin-set-admin-status': { label: 'Admin Access', bg: 'primary' },
+  'admin-revoked-sessions': { label: 'Sessions Revoked', bg: 'danger' },
+  'admin-revoke-sessions': { label: 'Sessions Revoked', bg: 'danger' },
+  'admin-added-email': { label: 'Email Added', bg: 'info' },
+  'admin-removed-email': { label: 'Email Removed', bg: 'warning' },
+  'admin-set-primary-email': { label: 'Primary Email Changed', bg: 'info' },
+  'admin-register': { label: 'Account Created', bg: 'success' },
+  register: { label: 'Account Created', bg: 'success' },
+  'transfer-project': { label: 'Project Transferred', bg: 'info' },
+  'delete-account': { label: 'Account Deleted', bg: 'danger' },
+  'restore-account': { label: 'Account Restored', bg: 'success' },
+  'admin-restore-user': { label: 'Account Restored', bg: 'success' },
+  'admin-update-user': { label: 'Profile Updated', bg: 'info' },
+  'admin-generate-password-reset': {
+    label: 'Password Reset Link',
+    bg: 'primary',
+  },
+}
+
+function humanize(key: string) {
+  const text = key
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/[-_]+/g, ' ')
+    .trim()
+    .toLowerCase()
+  return text.charAt(0).toUpperCase() + text.slice(1)
+}
+
+// Fields that carry no meaning for an admin reading the trail
+const HIDDEN_INFO_KEYS = new Set(['captcha', 'token', 'script'])
+
+function getVisibleInfo(info: AuditLogEntry['info']): [string, unknown][] {
+  if (!info || typeof info !== 'object') return []
+  return Object.entries(info).filter(
+    ([key, value]) =>
+      !HIDDEN_INFO_KEYS.has(key) &&
+      !(key === 'method' && value === 'Password login')
+  )
+}
+
+function formatInfoValue(value: unknown): string {
+  if (value === null || value === undefined || value === '') return '—'
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No'
+  if (Array.isArray(value)) {
+    return value.some(item => item && typeof item === 'object')
+      ? String(value.length)
+      : value.map(formatInfoValue).join(', ')
   }
+  if (typeof value === 'object') {
+    return Object.entries(value)
+      .map(([k, v]) => `${humanize(k)}: ${formatInfoValue(v)}`)
+      .join(', ')
+  }
+  return String(value)
+}
+
+function renderBadge(operation: string) {
+  const badge = OPERATION_BADGES[operation]
+  return (
+    <OLBadge bg={badge?.bg ?? 'dark'} title={operation}>
+      {badge?.label ?? humanize(operation)}
+    </OLBadge>
+  )
 }
 
 export default function AdminUserAuditTrailCard({
@@ -133,20 +203,18 @@ export default function AdminUserAuditTrailCard({
 
   return (
     <OLCard className="mb-4">
-      <div className="card-header bg-transparent py-3 px-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
-        <div className="d-flex align-items-center gap-2">
-          <h2 className="h4 mb-0">Security Audit Trail</h2>
-          {total > 0 ? (
-            <OLBadge bg="info">{total} Events</OLBadge>
-          ) : (
-            <OLBadge bg="light" text="dark" className="border">
-              0 Events
-            </OLBadge>
-          )}
-        </div>
+      <div className="d-flex align-items-center gap-2 mb-3">
+        <h2 className="h4 my-0">Security Audit Trail</h2>
+        {total > 0 ? (
+          <OLBadge bg="info">{total} Events</OLBadge>
+        ) : (
+          <OLBadge bg="light" text="dark" className="border">
+            0 Events
+          </OLBadge>
+        )}
       </div>
 
-      <div className="card-body">
+      <div>
         {error ? (
           <Notification type="error" content={error} className="mb-3" />
         ) : null}
@@ -163,40 +231,56 @@ export default function AdminUserAuditTrailCard({
           <>
             <ul className="list-group list-group-flush border rounded mb-0">
               {logs.map(log => {
-                const hasInfo =
-                  log.info &&
-                  typeof log.info === 'object' &&
-                  Object.keys(log.info).length > 0
+                const infoEntries = getVisibleInfo(log.info)
+                const showInitiator =
+                  log.initiatorId && log.initiatorId !== userId
 
                 const logDate = getEntryDate(log)
 
                 return (
-                  <li key={log._id} className="list-group-item py-3">
-                    <div className="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
-                      <div className="d-flex align-items-center gap-2 flex-wrap">
+                  <li
+                    key={log._id}
+                    className="list-group-item flex-column align-items-stretch gap-1 py-2 px-3"
+                  >
+                    <div className="d-flex justify-content-between align-items-center flex-wrap gap-2">
+                      <div className="d-flex align-items-center gap-3 flex-wrap">
                         {renderBadge(log.operation)}
-                        <span className="font-monospace small text-muted d-inline-flex align-items-center">
+                        <span
+                          className="small text-muted d-inline-flex align-items-center"
+                          title="IP address"
+                        >
                           <MaterialIcon
                             type="public"
                             className="me-1"
                             style={{ fontSize: '14px' }}
                           />
-                          {log.ipAddress || '—'}
+                          <span className="font-monospace">
+                            {log.ipAddress || '—'}
+                          </span>
                         </span>
-                        {log.initiatorId ? (
-                          <span className="text-muted small">
-                            (Initiator: <code>{log.initiatorId}</code>)
+                        {showInitiator ? (
+                          <span
+                            className="small text-muted d-inline-flex align-items-center"
+                            title={log.initiator?.email ?? log.initiatorId}
+                          >
+                            <MaterialIcon
+                              type="person"
+                              className="me-1"
+                              style={{ fontSize: '14px' }}
+                            />
+                            by{' '}
+                            {log.initiator?.name ||
+                              log.initiator?.email ||
+                              'Deleted user'}
                           </span>
                         ) : null}
                       </div>
 
-                      <div className="text-muted small">
+                      <div className="text-muted small text-nowrap">
                         {logDate ? (
-                          <span
-                            title={logDate.toLocaleString()}
-                          >
-                            {logDate.toLocaleString()} (
-                            {fromNowDate(logDate)})
+                          <span title={logDate.toLocaleString()}>
+                            {logDate.toLocaleString()} ·{' '}
+                            {fromNowDate(logDate)}
                           </span>
                         ) : (
                           '—'
@@ -204,11 +288,16 @@ export default function AdminUserAuditTrailCard({
                       </div>
                     </div>
 
-                    {hasInfo ? (
-                      <div className="mt-2">
-                        <pre className="bg-light p-2 rounded small mb-0 font-monospace text-dark border">
-                          {JSON.stringify(log.info, null, 2)}
-                        </pre>
+                    {infoEntries.length > 0 ? (
+                      <div className="d-flex flex-wrap column-gap-3 small">
+                        {infoEntries.map(([key, value]) => (
+                          <span key={key}>
+                            <span className="text-muted">
+                              {humanize(key)}:
+                            </span>{' '}
+                            {formatInfoValue(value)}
+                          </span>
+                        ))}
                       </div>
                     ) : null}
                   </li>

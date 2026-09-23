@@ -768,14 +768,45 @@ export const AdminUserManagementController = {
       const matchQuery = { userId: new ObjectId(userId) }
       const [entries, total] = await Promise.all([
         UserAuditLogEntry.find(matchQuery)
-          .sort({ createdAt: -1 })
+          .sort({ timestamp: -1, _id: -1 })
           .skip((page - 1) * limit)
-          .limit(limit),
+          .limit(limit)
+          .lean(),
         UserAuditLogEntry.countDocuments(matchQuery),
       ])
 
+      const initiatorIds = [
+        ...new Set(
+          (entries || [])
+            .filter(entry => entry.initiatorId)
+            .map(entry => entry.initiatorId.toString())
+        ),
+      ]
+      const initiators = initiatorIds.length
+        ? await User.find(
+            { _id: { $in: initiatorIds.map(id => new ObjectId(id)) } },
+            { email: 1, first_name: 1, last_name: 1 }
+          ).lean()
+        : []
+      const initiatorsById = new Map(
+        initiators.map(user => [
+          user._id.toString(),
+          {
+            name: [user.first_name, user.last_name]
+              .filter(Boolean)
+              .join(' '),
+            email: user.email,
+          },
+        ])
+      )
+
       return res.json({
-        auditLogs: entries || [],
+        auditLogs: (entries || []).map(entry => ({
+          ...entry,
+          initiator: entry.initiatorId
+            ? initiatorsById.get(entry.initiatorId.toString()) || null
+            : null,
+        })),
         total,
         page,
         totalPages: Math.ceil(total / limit) || 1,

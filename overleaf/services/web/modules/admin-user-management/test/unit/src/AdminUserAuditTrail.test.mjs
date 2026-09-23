@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { UserAuditLogEntry } from '../../../../../app/src/models/UserAuditLogEntry.mjs'
+import { User } from '../../../../../app/src/models/User.mjs'
 import { ObjectId } from '../../../../../app/src/infrastructure/mongodb.mjs'
 
 vi.mock('@overleaf/settings', () => ({
@@ -207,15 +208,27 @@ describe('AdminUserAuditTrail Controller', () => {
           initiatorId: 'admin1',
           ipAddress: '127.0.0.1',
           info: { isAdmin: true },
-          createdAt: new Date('2026-08-29T10:00:00Z'),
+          timestamp: new Date('2026-08-29T10:00:00Z'),
         },
       ]
 
-      const mockLimit = vi.fn().mockResolvedValue(mockEntries)
+      const mockLimit = vi.fn().mockReturnValue({
+        lean: vi.fn().mockResolvedValue(mockEntries),
+      })
       const mockSkip = vi.fn().mockReturnValue({ limit: mockLimit })
       const mockSort = vi.fn().mockReturnValue({ skip: mockSkip })
       UserAuditLogEntry.find.mockReturnValue({ sort: mockSort })
       UserAuditLogEntry.countDocuments.mockResolvedValue(1)
+      User.find.mockReturnValue({
+        lean: vi.fn().mockResolvedValue([
+          {
+            _id: 'admin1',
+            email: 'admin@example.com',
+            first_name: 'Ada',
+            last_name: 'Admin',
+          },
+        ]),
+      })
 
       req.query = { page: '1', limit: '10' }
 
@@ -224,11 +237,16 @@ describe('AdminUserAuditTrail Controller', () => {
       expect(UserAuditLogEntry.find).toHaveBeenCalledWith({
         userId: expect.any(ObjectId),
       })
-      expect(mockSort).toHaveBeenCalledWith({ createdAt: -1 })
+      expect(mockSort).toHaveBeenCalledWith({ timestamp: -1, _id: -1 })
       expect(mockSkip).toHaveBeenCalledWith(0)
       expect(mockLimit).toHaveBeenCalledWith(10)
       expect(res.json).toHaveBeenCalledWith({
-        auditLogs: mockEntries,
+        auditLogs: [
+          {
+            ...mockEntries[0],
+            initiator: { name: 'Ada Admin', email: 'admin@example.com' },
+          },
+        ],
         total: 1,
         page: 1,
         totalPages: 1,
@@ -244,25 +262,28 @@ describe('AdminUserAuditTrail Controller', () => {
           initiatorId: 'admin1',
           ipAddress: '127.0.0.1',
           info: { revokedCount: 2 },
-          createdAt: new Date('2026-08-29T11:00:00Z'),
+          timestamp: new Date('2026-08-29T11:00:00Z'),
         },
       ]
 
-      const mockLimit = vi.fn().mockResolvedValue(mockEntries)
+      const mockLimit = vi.fn().mockReturnValue({
+        lean: vi.fn().mockResolvedValue(mockEntries),
+      })
       const mockSkip = vi.fn().mockReturnValue({ limit: mockLimit })
       const mockSort = vi.fn().mockReturnValue({ skip: mockSkip })
       UserAuditLogEntry.find.mockReturnValue({ sort: mockSort })
       UserAuditLogEntry.countDocuments.mockResolvedValue(25)
+      User.find.mockReturnValue({ lean: vi.fn().mockResolvedValue([]) })
 
       req.query = { page: '3', limit: '10' }
 
       await AdminUserManagementController.getUserAuditLogs(req, res)
 
-      expect(mockSort).toHaveBeenCalledWith({ createdAt: -1 })
+      expect(mockSort).toHaveBeenCalledWith({ timestamp: -1, _id: -1 })
       expect(mockSkip).toHaveBeenCalledWith(20)
       expect(mockLimit).toHaveBeenCalledWith(10)
       expect(res.json).toHaveBeenCalledWith({
-        auditLogs: mockEntries,
+        auditLogs: [{ ...mockEntries[0], initiator: null }],
         total: 25,
         page: 3,
         totalPages: 3,
@@ -270,7 +291,9 @@ describe('AdminUserAuditTrail Controller', () => {
     })
 
     it('handles empty audit logs gracefully with totalPages: 1', async () => {
-      const mockLimit = vi.fn().mockResolvedValue([])
+      const mockLimit = vi.fn().mockReturnValue({
+        lean: vi.fn().mockResolvedValue([]),
+      })
       const mockSkip = vi.fn().mockReturnValue({ limit: mockLimit })
       const mockSort = vi.fn().mockReturnValue({ skip: mockSkip })
       UserAuditLogEntry.find.mockReturnValue({ sort: mockSort })
@@ -290,7 +313,9 @@ describe('AdminUserAuditTrail Controller', () => {
       UserAuditLogEntry.find.mockReturnValue({
         sort: vi.fn().mockReturnValue({
           skip: vi.fn().mockReturnValue({
-            limit: vi.fn().mockRejectedValue(new Error('Database error')),
+            limit: vi.fn().mockReturnValue({
+              lean: vi.fn().mockRejectedValue(new Error('Database error')),
+            }),
           }),
         }),
       })
@@ -305,7 +330,9 @@ describe('AdminUserAuditTrail Controller', () => {
     })
 
     it('returns 500 when UserAuditLogEntry.countDocuments throws an error', async () => {
-      const mockLimit = vi.fn().mockResolvedValue([])
+      const mockLimit = vi.fn().mockReturnValue({
+        lean: vi.fn().mockResolvedValue([]),
+      })
       const mockSkip = vi.fn().mockReturnValue({ limit: mockLimit })
       const mockSort = vi.fn().mockReturnValue({ skip: mockSkip })
       UserAuditLogEntry.find.mockReturnValue({ sort: mockSort })

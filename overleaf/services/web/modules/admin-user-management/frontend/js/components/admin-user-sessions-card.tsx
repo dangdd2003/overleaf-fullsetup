@@ -65,19 +65,17 @@ export default function AdminUserSessionsCard({
 
   return (
     <OLCard className="mb-4">
-      <div className="card-header bg-transparent py-3 px-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
-        <div className="d-flex align-items-center gap-2">
-          <h2 className="h4 mb-0">Active Sessions</h2>
-          {count > 0 ? (
-            <OLBadge bg="info">{count} Active</OLBadge>
-          ) : (
-            <OLBadge bg="light" text="dark" className="border">
-              0 Active
-            </OLBadge>
-          )}
-        </div>
+      <div className="d-flex align-items-center gap-2 mb-3">
+        <h2 className="h4 my-0">Active Sessions</h2>
+        {count > 0 ? (
+          <OLBadge bg="info">{count} Active</OLBadge>
+        ) : (
+          <OLBadge bg="light" text="dark" className="border">
+            0 Active
+          </OLBadge>
+        )}
       </div>
-      <div className="card-body">
+      <div>
         {isLoading && sessions.length === 0 ? (
           <div className="py-3 text-center">
             <OLSpinner />
@@ -97,23 +95,23 @@ export default function AdminUserSessionsCard({
                   {sessions.map((session, idx) => (
                     <li
                       key={idx}
-                      className="list-group-item d-flex justify-content-between align-items-center flex-wrap gap-2"
+                      className="list-group-item d-flex justify-content-between align-items-center flex-wrap gap-2 py-2 px-3"
                     >
-                      <div>
-                        <div className="fw-semibold font-monospace small d-inline-flex align-items-center">
-                          <MaterialIcon
-                            type="devices"
-                            className="me-2 text-muted"
-                            style={{ fontSize: '15px' }}
-                          />
+                      <span className="small d-inline-flex align-items-center">
+                        <MaterialIcon
+                          type="devices"
+                          className="me-2 text-muted"
+                          style={{ fontSize: '16px' }}
+                        />
+                        <span className="fw-semibold font-monospace">
                           {session.ip_address || 'Unknown IP'}
-                        </div>
-                        {session.session_created ? (
-                          <small className="text-muted">
-                            Started {fromNowDate(session.session_created)}
-                          </small>
-                        ) : null}
-                      </div>
+                        </span>
+                      </span>
+                      {session.session_created ? (
+                        <span className="small text-muted">
+                          Started {fromNowDate(session.session_created)}
+                        </span>
+                      ) : null}
                     </li>
                   ))}
                 </ul>

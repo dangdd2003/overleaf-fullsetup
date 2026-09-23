@@ -288,7 +288,8 @@ export function GoogleDriveLinkingWidget({
   const handleBulkSyncClick = useCallback(() => {
     setErrorMessage('')
     setScanMessage('')
-    setShowBulkSync(true)
+    setShowScanImport(false)
+    setShowBulkSync(prev => !prev)
   }, [])
 
   const handleBulkSyncClose = useCallback(() => {

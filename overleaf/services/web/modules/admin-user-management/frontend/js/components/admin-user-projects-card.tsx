@@ -103,9 +103,9 @@ export default function AdminUserProjectsCard({
 
   return (
     <OLCard className="mb-4">
-      <div className="card-header bg-transparent py-3 px-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
+      <div className="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
         <div className="d-flex align-items-center gap-2">
-          <h2 className="h4 mb-0">Owned Projects</h2>
+          <h2 className="h4 my-0">Owned Projects</h2>
           {total > 0 ? (
             <OLBadge bg="info">{total} Projects</OLBadge>
           ) : (
@@ -130,7 +130,7 @@ export default function AdminUserProjectsCard({
         ) : null}
       </div>
 
-      <div className="card-body">
+      <div>
         <div className="mb-3">
           <OLRow className="g-3 align-items-center">
             <OLCol md={6}>
