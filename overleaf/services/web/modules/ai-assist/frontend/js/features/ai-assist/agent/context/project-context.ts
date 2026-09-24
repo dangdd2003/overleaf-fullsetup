@@ -13,6 +13,14 @@ function plural(count: number, noun: string) {
 
 const MAX_EXPLICIT_FILES = 50
 
+/** The local date as "2026-09-24 (Thursday)". */
+export function formatToday(now: Date = new Date()): string {
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  const weekday = now.toLocaleDateString('en-US', { weekday: 'long' })
+  return `${now.getFullYear()}-${month}-${day} (${weekday})`
+}
+
 function renderFiles(snapshot: ContextSnapshot, previous: EnvelopeState | null) {
   const fingerprint = fingerprintFiles(snapshot.files)
 
@@ -138,7 +146,9 @@ export function renderEnvelope({
 
   // Stable first, volatile last, so the selection and attachments end up
   // adjacent to the user's own words.
-  const sections: string[] = [files.text]
+  const sections: string[] = []
+  if (snapshot.today) sections.push(`<date>${escapeAttribute(snapshot.today)}</date>`)
+  sections.push(files.text)
   if (outline) sections.push(outline.text)
   sections.push(renderCompile(snapshot))
 

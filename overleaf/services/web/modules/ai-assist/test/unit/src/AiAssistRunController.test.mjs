@@ -1,5 +1,7 @@
+import { describe, it, beforeEach, afterEach } from 'vitest'
 import { expect } from 'chai'
 import sinon from 'sinon'
+import Settings from '@overleaf/settings'
 import { AiAssistRunController } from '../../../app/src/AiAssistRunController.mjs'
 
 describe('AiAssistRunController', function () {
@@ -414,5 +416,53 @@ describe('AiAssistRunController', function () {
       clock.restore()
     }
   })
-})
 
+  describe('web search settings', function () {
+    const request = webSearchSettings => ({
+      params: { Project_id: 'proj-1' },
+      session: { user: { _id: 'user-1' } },
+      body: {
+        transcript: [{ role: 'user', content: 'test' }],
+        providerSettings: { type: 'openai', apiKey: 'key', model: 'gpt-4o' },
+        webSearchSettings,
+      },
+    })
+    const response = () => ({ json: sinon.stub(), status: sinon.stub().returnsThis() })
+    let original
+
+    beforeEach(function () {
+      original = Settings.aiAssist.webToolsEnabled
+    })
+
+    afterEach(function () {
+      Settings.aiAssist.webToolsEnabled = original
+    })
+
+    it('ignores them while the instance has web tools switched off', async function () {
+      Settings.aiAssist.webToolsEnabled = false
+      await controller.createRun(request({ type: 'ollama', apiKey: 'k' }), response())
+      expect(mockManager.startRun.firstCall.args[0].webSearchSettings).to.equal(null)
+    })
+
+    it('validates them and hands them to the run when switched on', async function () {
+      Settings.aiAssist.webToolsEnabled = true
+      await controller.createRun(
+        request({ type: 'searxng', baseUrl: 'searxng:8080/search' }),
+        response()
+      )
+      expect(mockManager.startRun.firstCall.args[0].webSearchSettings).to.deep.equal({
+        type: 'searxng',
+        baseUrl: 'http://searxng:8080',
+        cacheHours: 24,
+        maxCachedSearches: 256,
+        maxCachedPages: 64,
+        resultsPerSearch: 10,
+      })
+
+      const res = response()
+      await controller.createRun(request({ type: 'searxng', baseUrl: 'http://mongo:27017' }), res)
+      expect(res.status.calledWith(400)).to.be.true
+      expect(mockManager.startRun.calledOnce).to.be.true
+    })
+  })
+})

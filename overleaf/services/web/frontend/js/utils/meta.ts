@@ -81,6 +81,7 @@ export interface Meta {
   'ol-aiToggling': boolean
   'ol-algolia': AlgoliaConfig | undefined
   'ol-aiAssistEnabled': boolean
+  'ol-aiAssistWebToolsEnabled': boolean
   'ol-allInReconfirmNotificationPeriods': UserEmailData[]
   'ol-allowedExperiments': string[]
   'ol-anonymous': boolean

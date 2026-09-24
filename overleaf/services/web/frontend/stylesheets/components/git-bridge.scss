@@ -17,9 +17,11 @@
     color: var(--content-primary, #1b222c) !important;
   }
 
+  // Never inside a button: OLButton wraps its label in a span, and this
+  // would override the button's own text colour
   p,
   li,
-  span {
+  span:not(.btn *) {
     color: var(--content-secondary, #495365);
   }
 
@@ -36,18 +38,6 @@
 
     & code {
       color: var(--content-primary, #1b222c) !important;
-    }
-  }
-
-  .git-copy-pill-btn {
-    background: var(--bg-light-primary, #ffffff) !important;
-    color: var(--content-primary, #1b222c) !important;
-    border: 1px solid var(--content-primary, #1b222c) !important;
-
-    &:hover {
-      background: var(--bg-light-secondary, #f4f5f6) !important;
-      border-color: #000000 !important;
-      color: #000000 !important;
     }
   }
 }
@@ -76,73 +66,6 @@
   }
 }
 
-.git-copy-pill-btn {
-  background: #ffffff !important;
-  color: #1b222c !important;
-  border: 1px solid #1b222c !important;
-  border-radius: 9999px !important;
-  padding: 4px 18px !important;
-  font-size: 14px !important;
-  font-weight: 500 !important;
-  line-height: 1.5 !important;
-  cursor: pointer !important;
-  white-space: nowrap !important;
-  transition: all 0.15s ease-in-out !important;
-  display: inline-flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05) !important;
-  text-decoration: none !important;
-
-  &:hover {
-    background: #f4f5f6 !important;
-    border-color: #000000 !important;
-    color: #000000 !important;
-  }
-
-  &:active {
-    background: #e2e8f0 !important;
-    transform: scale(0.98);
-  }
-}
-
-.git-token-delete-btn {
-  background: #ffffff !important;
-  color: #1b222c !important;
-  border: 1px solid #1b222c !important;
-  border-radius: 50% !important;
-  width: 28px !important;
-  height: 28px !important;
-  padding: 0 !important;
-  display: inline-flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  cursor: pointer !important;
-  transition: all 0.15s ease-in-out !important;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05) !important;
-
-  .material-symbols {
-    font-size: 16px !important;
-    color: #1b222c !important;
-    line-height: 1 !important;
-  }
-
-  &:hover {
-    background: #f4f5f6 !important;
-    border-color: #000000 !important;
-    color: #000000 !important;
-
-    .material-symbols {
-      color: #000000 !important;
-    }
-  }
-
-  &:active {
-    background: #e2e8f0 !important;
-    transform: scale(0.95);
-  }
-}
-
 .git-bridge-optional-tokens {
   border: 1px solid var(--neutral-30, #d0d5dd);
   border-radius: var(--border-radius-base);
@@ -159,7 +82,7 @@
   }
 
   p,
-  span,
+  span:not(.btn *),
   strong {
     color: var(--neutral-90, #1b222c);
   }
@@ -176,17 +99,29 @@
 }
 
 .linking-git-bridge {
-  padding: var(--spacing-05);
   color: var(--content-primary, #1b222c);
 
-  // The icon + content row above is a flex container, and flex items default
-  // to `min-width: auto`, which stops them shrinking below their content's
-  // intrinsic width. Without this, the "Your Git authentication tokens"
-  // heading and "Generate token" button (also a flex row) can force this
-  // whole column wider than the viewport on narrow/mobile screens, pushing
-  // the button off-frame and clipping the paragraph text above it.
+  // The widget sits on the shared `settings-widget-container` grid. Its
+  // actions live inside the content (next to the tokens heading and in the
+  // table), so the content takes the action column too and its buttons line
+  // up with the other widgets' right-hand buttons. `min-width: 0` lets the
+  // heading row and table shrink on narrow screens instead of pushing the
+  // button off-frame.
   .linking-git-bridge-content {
+    grid-column: 2 / -1;
     min-width: 0;
+
+    @include media-breakpoint-down(md) {
+      grid-column: auto;
+    }
+  }
+
+  .git-tokens-hints {
+    margin-bottom: var(--spacing-05);
+
+    &:last-child {
+      margin-bottom: var(--spacing-00);
+    }
   }
 
   // Keep "Generate token" in place next to the heading at desktop widths
@@ -267,18 +202,5 @@
     background-color: var(--bg-light-secondary, #f4f5f6);
     border-top: 1px solid var(--border-divider, #e2e8f0);
     padding: var(--spacing-04);
-
-    .btn-inline-link,
-    .btn-link {
-      color: var(--link-color, #1a73e8);
-      font-size: var(--font-size-02, 14px);
-      text-decoration: underline;
-
-      &:hover,
-      &:focus {
-        color: var(--link-hover-color, #1557b0);
-        text-decoration: none;
-      }
-    }
   }
 }

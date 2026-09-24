@@ -10,6 +10,8 @@ import {
 import OLButton from '@/shared/components/ol/ol-button'
 import { useLocation } from '@/shared/hooks/use-location'
 import getMeta from '@/utils/meta'
+import GithubLogoBlack from '@/shared/svgs/github-logo-black'
+import LinkingStatus from '@/features/settings/components/linking/status'
 
 export default function GithubSettingsWidget() {
   if (!getMeta('ol-githubSyncEnabled')) return null
@@ -61,32 +63,46 @@ function GithubSettingsWidgetInner() {
 
   if (loading) return null
 
-  if (!linked) {
-    return (
-      <div className="settings-widget">
-        <div className="settings-widget-header">
+  // Laid out like the other linking widgets: logo, title and description,
+  // the action on the right
+  const logoAndDescription = (
+    <>
+      <div>
+        <GithubLogoBlack size={40} />
+      </div>
+      <div className="description-container">
+        <div className="title-row">
           <h4>GitHub</h4>
         </div>
-        <div className="settings-widget-body">
-          <p>{t('github_sync_description')}</p>
-          <a href="/auth/github/oauth" className="btn btn-primary">
+        <p className="small">{t('github_sync_description')}</p>
+        {linked && username ? (
+          <LinkingStatus status="success" description={`@${username}`} />
+        ) : null}
+      </div>
+    </>
+  )
+
+  if (!linked) {
+    return (
+      <div className="settings-widget-container">
+        {logoAndDescription}
+        <div>
+          <OLButton variant="secondary" href="/auth/github/oauth">
             {t('link_to_github')}
-          </a>
+          </OLButton>
         </div>
       </div>
     )
   }
 
   return (
-    <div className="settings-widget">
-      <div className="settings-widget-header">
-        <h4>GitHub</h4>
-      </div>
-      <div className="settings-widget-body">
-        <p>
-          @{username} — {t('github_sync_description')}
-        </p>
-        <OLButton variant="danger" onClick={() => setShowUnlinkModal(true)}>
+    <div className="settings-widget-container">
+      {logoAndDescription}
+      <div>
+        <OLButton
+          variant="danger-ghost"
+          onClick={() => setShowUnlinkModal(true)}
+        >
           {t('unlink_github_repository')}
         </OLButton>
       </div>
@@ -101,7 +117,11 @@ function GithubSettingsWidgetInner() {
           <OLButton variant="secondary" onClick={() => setShowUnlinkModal(false)}>
             {t('cancel')}
           </OLButton>
-          <OLButton variant="danger" onClick={handleUnlink} disabled={working}>
+          <OLButton
+            variant="danger-ghost"
+            onClick={handleUnlink}
+            disabled={working}
+          >
             {t('unlink_github_repository')}
           </OLButton>
         </OLModalFooter>

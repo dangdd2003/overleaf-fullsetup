@@ -28,6 +28,8 @@ export const READ_ONLY_TOOLS = new Set([
   'get_compile_result',
   'get_project_settings',
   'list_available_settings',
+  'web_search',
+  'web_fetch',
 ])
 
 /**

@@ -1,7 +1,9 @@
+import { describe, it, beforeEach } from 'vitest'
 import { expect } from 'chai'
 import {
   SYSTEM_PROMPT,
   MODE_PROMPTS,
+  WEB_TOOLS_PROMPT,
   systemPromptFor,
 } from '../../../app/src/AiAssistSystemPrompt.mjs'
 
@@ -31,5 +33,11 @@ describe('AiAssistSystemPrompt', () => {
 
     // Defaults to manual on unknown
     expect(systemPromptFor('invalid')).to.equal(manualPrompt)
+  })
+
+  it('adds the web research section before the mode only when web tools are on', () => {
+    expect(systemPromptFor('manual', { webTools: false })).to.equal(systemPromptFor('manual'))
+    const withWeb = systemPromptFor('plan', { webTools: true })
+    expect(withWeb).to.equal(`${SYSTEM_PROMPT}\n\n${WEB_TOOLS_PROMPT}\n\n${MODE_PROMPTS.plan}`)
   })
 })

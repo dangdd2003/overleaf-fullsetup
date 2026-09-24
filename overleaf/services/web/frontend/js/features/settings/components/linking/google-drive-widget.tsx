@@ -229,7 +229,7 @@ export function GoogleDriveLinkingWidget({
         setErrorMessage(
           t(
             'google_drive_bulk_sync_partial',
-            '{{failedCount}} of {{total}} project(s) failed to sync to Google Drive.',
+            '__failedCount__ of __total__ project(s) failed to sync to Google Drive.',
             { failedCount: job.failedCount, total: job.total }
           )
         )
@@ -238,7 +238,7 @@ export function GoogleDriveLinkingWidget({
         setScanMessage(
           t(
             'google_drive_bulk_sync_done',
-            'Synced {{syncedCount}} project(s) to Google Drive.',
+            'Synced __syncedCount__ project(s) to Google Drive.',
             { syncedCount: job.syncedCount }
           )
         )

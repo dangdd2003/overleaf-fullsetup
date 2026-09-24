@@ -387,12 +387,16 @@ export function useEditorThemeStyles() {
   }, [fontFamily, fontSize, lineHeight])
 
   const palette: EditorThemePalette = useMemo(() => {
-    if (EDITOR_THEME_PALETTES[editorTheme]) {
+    if (activeOverallTheme === 'dark') {
+      if (EDITOR_THEME_PALETTES[editorTheme]?.dark) {
+        return EDITOR_THEME_PALETTES[editorTheme]
+      }
+      return EDITOR_THEME_PALETTES.overleaf_dark
+    }
+    if (EDITOR_THEME_PALETTES[editorTheme] && !EDITOR_THEME_PALETTES[editorTheme].dark) {
       return EDITOR_THEME_PALETTES[editorTheme]
     }
-    return activeOverallTheme === 'dark'
-      ? EDITOR_THEME_PALETTES.overleaf_dark
-      : EDITOR_THEME_PALETTES.textmate
+    return EDITOR_THEME_PALETTES.textmate
   }, [editorTheme, activeOverallTheme])
 
   const isDark = Boolean(palette.dark || activeOverallTheme === 'dark')
@@ -437,6 +441,29 @@ export function useEditorThemeStyles() {
     [palette, isDark]
   )
 
+  // Custom properties only, so a chat surface can take the editor's font and
+  // colours for its code without the whole surface turning into an editor
+  const editorVars = useMemo(
+    () =>
+      ({
+        '--ai-editor-font-family': styles.fontFamily,
+        '--ai-editor-font-size': styles.fontSize,
+        '--ai-editor-line-height': String(styles.lineHeight),
+        '--ai-editor-bg': palette.bg,
+        '--ai-editor-fg': palette.fg,
+        '--ai-editor-gutter-bg': palette.gutterBg,
+        '--ai-editor-gutter-fg': palette.gutterFg,
+        '--ai-editor-border': palette.dark
+          ? 'rgba(255, 255, 255, 0.12)'
+          : 'rgba(0, 0, 0, 0.12)',
+        '--editor-bg': palette.bg,
+        '--editor-fg': palette.fg,
+        '--gutter-bg': palette.gutterBg,
+        '--gutter-fg': palette.gutterFg,
+      } as React.CSSProperties),
+    [styles, palette]
+  )
+
   return {
     editorTheme,
     activeOverallTheme,
@@ -445,5 +472,6 @@ export function useEditorThemeStyles() {
     styles,
     editorStyle,
     gutterStyle,
+    editorVars,
   }
 }

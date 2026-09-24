@@ -10,7 +10,7 @@ import { AiAssistant } from '../../assistant'
 import { TranscriptEntry } from '../../agent/agent-messages'
 import { ProjectFile, ProjectHandle } from '../../agent/project-handle'
 import { TOOLS } from '../../agent/tools/registry'
-import { renderEnvelope } from '../../agent/context/project-context'
+import { formatToday, renderEnvelope } from '../../agent/context/project-context'
 import { Attachment, AttachmentRef, ContextSnapshot } from '../../agent/context/types'
 import { resolveAttachments } from '../../agent/context/attachments'
 import {
@@ -29,6 +29,7 @@ import {
 } from '../../agent/chat-history-client'
 import { ChatHistoryMenu } from './chat-history-menu'
 import { AgentMessageView } from './agent-message'
+import { collectWebSources, WebSources } from '../../agent/web-sources'
 import { AgentEmptyState, PickedStarter } from './agent-empty-state'
 import { AgentComposer, AttachedSelection } from './agent-composer'
 import { AgentStatusLine } from './agent-status-line'
@@ -105,6 +106,7 @@ export async function buildUserEntry({
       openFile: handle.openFile(),
       selection: activeSel,
       outline: index?.outline ?? null,
+      today: formatToday(),
       compile: compile
         ? {
             status: compile.status,
@@ -301,6 +303,23 @@ function AgentPanelInner({
         .map(entry => entry.text.trim()),
     [state.transcript]
   )
+
+  // The transcript changes on every streamed token; the sources rarely do.
+  // Keeping the same Map until they change stops every message re-rendering
+  // its Markdown for each token.
+  const webSourcesRef = useRef<WebSources>(new Map())
+  const webSources = useMemo(() => {
+    const next = collectWebSources(state.transcript)
+    const prev = webSourcesRef.current
+    const unchanged =
+      next.size === prev.size &&
+      [...next].every(
+        ([n, source]) =>
+          prev.get(n)?.url === source.url && prev.get(n)?.title === source.title
+      )
+    if (!unchanged) webSourcesRef.current = next
+    return webSourcesRef.current
+  }, [state.transcript])
 
   useEffect(() => {
     saveConversation(projectId, state.transcript)
@@ -746,6 +765,7 @@ function AgentPanelInner({
               isRunning={
                 state.running && entryIndex === state.transcript.length - 1
               }
+              webSources={webSources}
             />
           ))
         )}

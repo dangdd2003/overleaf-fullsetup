@@ -854,7 +854,9 @@ export class AiAssistTools {
         if (!doc) {
           return { result: { status: 'error', error: `File not found: ${args.path}. Use list_files to see the project's paths.` } }
         }
-        if (from < 1 || from > to) {
+        // startLine one past the last line appends: the range is empty and
+        // newText lands after the file's last line.
+        if (from < 1 || until < from || from > docLines.length + 1) {
           return {
             result: {
               status: 'error',

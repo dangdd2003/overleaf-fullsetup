@@ -478,7 +478,11 @@ export function AgentComposer({
                 as="button"
                 className="ai-assist-mode-selector-btn"
                 aria-label={t('ai_assist_select_mode', 'Select mode (Shift+Tab to cycle)')}
-                title={t('ai_assist_select_mode_tooltip', 'Mode: {{label}} (Shift+Tab to cycle)', { label: currentModeConfig.label })}
+                title={t(
+                  'ai_assist_select_mode_tooltip',
+                  'Mode: __label__ (Shift+Tab to cycle)',
+                  { label: currentModeConfig.label }
+                )}
               >
                 <span className="ai-assist-mode-icon">{currentModeConfig.icon}</span>
                 <span className="ai-assist-mode-label">{currentModeConfig.label}</span>

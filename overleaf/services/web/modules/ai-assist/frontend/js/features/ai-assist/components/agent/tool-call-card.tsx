@@ -15,13 +15,16 @@ import {
   SlidersHorizontal,
   ListChecks,
   Wrench,
+  Globe,
+  Article,
 } from '@phosphor-icons/react'
 import { ToolCallRecord } from '../../agent/agent-messages'
 import { wantsCleanCompile } from '../../agent/tools/compile-args'
 import { diffStatsForCall } from './diff-stats'
 import { DiffStatBadge } from './diff-stat-badge'
 import { useOpenFileInEditor } from '../../hooks/use-open-file'
-import { ToolCallDetailView } from './tool-call-detail'
+import { SiteIcon, ToolCallDetailView, WEB_TOOLS } from './tool-call-detail'
+import { hostOf } from '../../agent/web-sources'
 
 export function getToolIcon(name: string, size = 13) {
   switch (name) {
@@ -59,6 +62,10 @@ export function getToolIcon(name: string, size = 13) {
       return <SlidersHorizontal size={size} />
     case 'list_available_settings':
       return <ListChecks size={size} />
+    case 'web_search':
+      return <Globe size={size} />
+    case 'web_fetch':
+      return <Article size={size} />
     default:
       return <Wrench size={size} />
   }
@@ -70,6 +77,8 @@ export type ToolSummary = {
   isFile?: boolean
   fileLine?: number
   lineRange?: string
+  /** Quiet trailing detail, like a result count. */
+  meta?: string
 }
 
 export function formatLineRanges(args: any, result: any): string | null {
@@ -154,6 +163,10 @@ export function summarise(
         return t('ai_assist_tool_configure_editor_settings', 'Configured editor settings')
       case 'list_available_settings':
         return t('ai_assist_tool_list_available_settings', 'Checked available settings')
+      case 'web_search':
+        return t('ai_assist_tool_web_search', 'Searched the web')
+      case 'web_fetch':
+        return t('ai_assist_tool_web_fetch', 'Fetched')
       default:
         // A call stored before a rename. Its name is the only honest thing we
         // can say about it, so say that rather than mislabelling it.
@@ -184,6 +197,21 @@ export function summarise(
 
   if (!('result' in call)) {
     return { action: t('ai_assist_tool_running', 'Running…') }
+  }
+
+  // A web tool that failed still names what it was after
+  if (call.name === 'web_search' && (call.isError || result?.error)) {
+    return {
+      action: t('ai_assist_tool_web_search_failed', 'Web search failed'),
+      target: typeof args.query === 'string' ? args.query : undefined,
+    }
+  }
+  if (call.name === 'web_fetch' && (call.isError || result?.error)) {
+    const where = result?.title || hostOf(result?.url ?? args.url)
+    return {
+      action: t('ai_assist_tool_web_fetch_failed', "Couldn't fetch"),
+      target: where || undefined,
+    }
   }
 
   if (call.isError) {
@@ -302,6 +330,21 @@ export function summarise(
       return {
         action: t('ai_assist_tool_list_available_settings', 'Checked available settings'),
       }
+    case 'web_search': {
+      return {
+        action: t('ai_assist_tool_web_search', 'Searched the web'),
+        target: typeof args.query === 'string' ? args.query : undefined,
+      }
+    }
+    // Claude.ai-style: "Fetched" and the page's title. Which part of the
+    // page was read is in the expanded detail, not the row.
+    case 'web_fetch': {
+      const where = result?.title || hostOf(result?.url ?? args.url)
+      return {
+        action: t('ai_assist_tool_web_fetch', 'Fetched'),
+        target: where || undefined,
+      }
+    }
     default:
       return {
         action: getToolBaseAction(),
@@ -322,11 +365,20 @@ export function ToolCallSummaryLine({ call }: { call: ToolCallRecord }) {
   if (!call) return null
   const summary = summarise(call, t)
   const diffStats = diffStatsForCall(call)
+  // A fetched page is shown with its site's icon, as Claude.ai does
+  const pageUrl =
+    call.name === 'web_fetch'
+      ? ((call.result as any)?.url ?? (call.args as any)?.url)
+      : undefined
 
   return (
     <>
       <span className="ai-assist-tool-call-icon" aria-hidden="true">
-        {getToolIcon(call.name || '')}
+        {typeof pageUrl === 'string' && pageUrl ? (
+          <SiteIcon url={pageUrl} />
+        ) : (
+          getToolIcon(call.name || '')
+        )}
       </span>
       <span className="ai-assist-tool-call-action">{summary.action}</span>
       {summary.target && ' '}
@@ -354,7 +406,7 @@ export function ToolCallSummaryLine({ call }: { call: ToolCallRecord }) {
             {summary.target}
           </span>
         ) : (
-          <span className="ai-assist-tool-call-target">
+          <span className="ai-assist-tool-call-target" title={summary.target}>
             {summary.target}
           </span>
         ))}
@@ -365,9 +417,26 @@ export function ToolCallSummaryLine({ call }: { call: ToolCallRecord }) {
         </span>
       )}
 
+      {summary.meta && (
+        <span className="ai-assist-tool-call-meta" title={summary.meta}>
+          {summary.meta}
+        </span>
+      )}
+
       {diffStats && <DiffStatBadge stats={diffStats} />}
     </>
   )
+}
+
+/** Web results read as a list of pages, not as a log of tool output. */
+export function toolCallDetailClass(call: ToolCallRecord, extra = '') {
+  return [
+    'ai-assist-tool-call-detail',
+    extra,
+    WEB_TOOLS.has(call?.name) ? 'is-web' : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
 }
 
 export const toolCallExpansionStore = new Map<string, boolean>()
@@ -426,7 +495,7 @@ export function ToolCallCard({ call }: { call: ToolCallRecord }) {
         className={`ai-assist-tool-call-body ${expanded ? 'is-expanded' : ''}`}
         aria-hidden={!expanded}
       >
-        <div className="ai-assist-tool-call-detail">
+        <div className={toolCallDetailClass(call)}>
           <ToolCallDetailView call={call} />
         </div>
       </div>

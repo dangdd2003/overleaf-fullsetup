@@ -6,8 +6,27 @@ import 'katex/dist/katex.min.css'
 import { useOpenFileInEditor } from '../../hooks/use-open-file'
 import {
   STREAM_FADE_MS,
+  MAX_FADE_LEAD_MS,
   useStreamReveal,
 } from '../../hooks/use-stream-reveal'
+import {
+  highlightCodeHtml,
+  useEditorHighlightStyle,
+  EDITOR_CODE_CLASS,
+} from '../../hooks/use-editor-code-highlight'
+import { useEditorThemeStyles } from '../../hooks/use-editor-theme-styles'
+import {
+  ensureTableSeparation,
+  extractFootnotes,
+  normalizeMarkdown,
+} from './markdown-repair'
+import {
+  faviconUrl,
+  hostOf,
+  siteName,
+  WebSource,
+  WebSources,
+} from '../../agent/web-sources'
 
 export function insertSnippetIntoEditor(text: string): boolean {
   if (!text || typeof window === 'undefined') return false
@@ -282,6 +301,92 @@ const MATHML_TAGS = [
   'munderover',
 ]
 
+/**
+ * Web citations. The model cites a source by the number the web tools gave
+ * it, `[2]` or `[2][5]`. Models trained on OpenAI's browsing tool write
+ * `【2†L4-L9】` instead, whatever they are told, so that spelling is read too.
+ * The reply is rendered Claude.ai-style: one pill naming the site after the
+ * claim, "+N" when several sources back it, and a card listing them on hover.
+ */
+const CITATION_UNIT = String.raw`(?:\[\d+(?:\s*,\s*\d+)*\](?![(:])|【\d+(?:†[^】\n]*)?】)`
+const CITATION_RUN = new RegExp(`^${CITATION_UNIT}(?:[ \t]?${CITATION_UNIT})*`)
+
+// Set only for the duration of one synchronous renderMarkdown call
+let activeSources: WebSources | null = null
+
+/** The nearest ancestor that clips its content, which a card must stay inside. */
+function clippingAncestor(el: HTMLElement): HTMLElement | null {
+  for (let node = el.parentElement; node; node = node.parentElement) {
+    if (getComputedStyle(node).overflowY !== 'visible') return node
+  }
+  return null
+}
+
+function renderCitation(sources: WebSource[]): string {
+  const [first] = sources
+  const more =
+    sources.length > 1
+      ? `<span class="ai-assist-citation-more">+${sources.length - 1}</span>`
+      : ''
+  // Laid out like the mode menu's rows: an icon, then a title over a detail
+  // line. The icon is a background image, so a site without one shows the
+  // plain tile rather than a broken image.
+  const rows = sources
+    .map(source => {
+      const icon = faviconUrl(source.url)
+      return (
+        `<a class="ai-assist-citation-source" href="${escapeHtml(source.url)}">` +
+        `<span class="ai-assist-citation-icon" aria-hidden="true"${icon ? ` style="background-image: url('${escapeHtml(icon)}')"` : ''}></span>` +
+        '<span class="ai-assist-citation-text">' +
+        `<span class="ai-assist-citation-title">${escapeHtml(source.title || source.url)}</span>` +
+        `<span class="ai-assist-citation-site">${escapeHtml(hostOf(source.url))}${source.published ? ` · ${escapeHtml(source.published)}` : ''}</span>` +
+        '</span>' +
+        '</a>'
+      )
+    })
+    .join('')
+  const header = sources.length === 1 ? 'Source' : `${sources.length} sources`
+  return (
+    '<span class="ai-assist-citation">' +
+    `<a class="ai-assist-citation-chip" href="${escapeHtml(first.url)}">${escapeHtml(siteName(first.url))}${more}</a>` +
+    '<span class="ai-assist-citation-card" role="tooltip"><span class="ai-assist-citation-card-inner">' +
+    `<span class="ai-assist-citation-header">${header}</span>${rows}` +
+    '</span></span>' +
+    '</span>'
+  )
+}
+
+const citation = {
+  name: 'citation',
+  level: 'inline' as const,
+  start(src: string) {
+    const m = src.match(/\[\d|【\d/)
+    return m ? m.index : -1
+  },
+  tokenizer(src: string) {
+    const m = src.match(CITATION_RUN)
+    if (!m) return
+    const numbers = [...m[0].matchAll(/\d+(?![^【]*】)|【(\d+)/g)]
+      .map(n => Number(n[1] ?? n[0]))
+    const seen = new Set<number>()
+    const sources: WebSource[] = []
+    for (const n of numbers) {
+      const source = activeSources?.get(n)
+      if (source && !seen.has(n)) {
+        seen.add(n)
+        sources.push(source)
+      }
+    }
+    // A bracketed number that names no source is ordinary text, "[3]" in a
+    // sentence about arrays, say. The 【†】 spelling is never ordinary text.
+    if (sources.length === 0 && !m[0].includes('【')) return
+    return { type: 'citation', raw: m[0], sources }
+  },
+  renderer(token: any) {
+    return token.sources.length > 0 ? renderCitation(token.sources) : ''
+  },
+}
+
 const PURIFY_CONFIG = {
   ALLOWED_TAGS: [
     'h1',
@@ -320,6 +425,14 @@ const PURIFY_CONFIG = {
     'svg',
     'path',
     'input',
+    'kbd',
+    'mark',
+    'details',
+    'summary',
+    'ins',
+    'u',
+    'small',
+    'abbr',
     ...MATHML_TAGS,
   ],
   ALLOWED_ATTR: [
@@ -351,8 +464,55 @@ const PURIFY_CONFIG = {
     'data-code',
     'role',
     'tabindex',
+    'start',
+    'open',
   ],
 }
+
+// Raw HTML in a reply passes only when every tag in it is one the chat renders.
+// Anything else is text the model meant literally, like `<tabular>` or `<name>`.
+const RAW_HTML_TAGS = new Set(
+  PURIFY_CONFIG.ALLOWED_TAGS.filter(
+    tag => !['button', 'svg', 'path', 'input', ...MATHML_TAGS].includes(tag)
+  )
+)
+
+// Footnotes, the way GitHub shows them: `[^id]` becomes a small number, and
+// the `[^id]: note` lines are listed under the reply
+let activeFootnotes: { notes: Map<string, string>; order: string[] } | null =
+  null
+
+const footnoteRef = {
+  name: 'footnoteRef',
+  level: 'inline' as const,
+  start(src: string) {
+    return src.indexOf('[^')
+  },
+  tokenizer(src: string) {
+    const m = src.match(/^\[\^([^\]\s]+)\]/)
+    const note = m && activeFootnotes?.notes.get(m[1])
+    if (!m || note === undefined || !activeFootnotes) return
+    const { order } = activeFootnotes
+    if (!order.includes(m[1])) order.push(m[1])
+    return { type: 'footnoteRef', raw: m[0], n: order.indexOf(m[1]) + 1, note }
+  },
+  renderer(token: any) {
+    return `<sup class="ai-assist-footnote-ref" title="${escapeHtml(token.note)}">${token.n}</sup>`
+  },
+}
+
+function renderFootnotes(): string {
+  if (!activeFootnotes?.notes.size) return ''
+  const { notes, order } = activeFootnotes
+  const ids = [...order, ...[...notes.keys()].filter(id => !order.includes(id))]
+  const items = ids.map(id => `<li>${marked.parseInline(notes.get(id)!)}</li>`)
+  return `<ol class="ai-assist-footnotes">${items.join('')}</ol>`
+}
+
+// A list item with nothing in it, and a list left with no items
+const EMPTY_LIST_ITEM =
+  /<li>(?:\s|<p>\s*(?:<br\s*\/?>)?\s*<\/p>|<br\s*\/?>)*<\/li>\s*/gi
+const EMPTY_LIST = /<(ul|ol)(?:\s[^>]*)?>\s*<\/\1>\s*/gi
 
 marked.setOptions({
   gfm: true,
@@ -360,7 +520,7 @@ marked.setOptions({
 })
 
 marked.use({
-  extensions: [blockMath, inlineMath],
+  extensions: [blockMath, inlineMath, citation, footnoteRef],
   renderer: {
     table(header: string, body: string) {
       return `<div class="ai-assist-table-wrapper">
@@ -380,7 +540,9 @@ marked.use({
     code(code: string, infostring: string | undefined) {
       const lang = (infostring || '').match(/\S*/)?.[0] || ''
       const langLabel = `<span class="ai-assist-code-lang">${escapeHtml(lang || 'code')}</span>`
-      const escapedCode = escapeHtml(code)
+      const highlighted = lang ? highlightCodeHtml(code, lang) : null
+      const escapedCode = highlighted !== null ? highlighted : escapeHtml(code)
+      const editorCodeClass = highlighted !== null ? ` ${EDITOR_CODE_CLASS}` : ''
 
       return `<div class="ai-assist-code-block">
   <div class="ai-assist-code-header">
@@ -398,7 +560,7 @@ marked.use({
       </button>
     </div>
   </div>
-  <pre><code class="${lang ? `language-${escapeHtml(lang)}` : ''}">${escapedCode}</code></pre>
+  <pre class="${editorCodeClass}"><code class="${lang ? `language-${escapeHtml(lang)}` : ''}">${escapedCode}</code></pre>
 </div>`
     },
     codespan(code: string) {
@@ -417,13 +579,29 @@ marked.use({
       const cleanText = text.replace(/<button[^>]*>([\s\S]*?)<\/button>/gi, '$1')
       return `<a href="${href}"${title ? ` title="${escapeHtml(title)}"` : ''}>${cleanText}</a>`
     },
+    // Remote images are not loaded into the chat; the image is a link to it
+    image(href: string | null, title: string | null, text: string) {
+      if (!href) return text
+      return `<a href="${href}"${title ? ` title="${escapeHtml(title)}"` : ''}>${text || escapeHtml(href)}</a>`
+    },
+    html(html: string) {
+      const tags = [...html.matchAll(/<\/?([a-zA-Z][a-zA-Z0-9-]*)/g)]
+      return tags.every(([, tag]) => RAW_HTML_TAGS.has(tag.toLowerCase()))
+        ? html
+        : escapeHtml(html)
+    },
   },
 })
 
-export function renderMarkdown(content: string): string {
+export function renderMarkdown(content: string, sources?: WebSources): string {
   if (!content) {
     return ''
   }
+  // A citation still streaming in shows up once it is complete
+  const text = ensureTableSeparation(
+    normalizeMarkdown(content.replace(/【[^】\n]*$/, ''))
+  )
+  const footnotes = extractFootnotes(text)
 
   DOMPurify.addHook('afterSanitizeAttributes', node => {
     if (node.nodeName === 'A') {
@@ -432,10 +610,16 @@ export function renderMarkdown(content: string): string {
     }
   })
 
+  activeSources = sources ?? null
+  activeFootnotes = { notes: footnotes.notes, order: [] }
   try {
-    const rawHtml = marked.parse(content) as string
+    const rawHtml = (marked.parse(footnotes.text) as string) + renderFootnotes()
     return DOMPurify.sanitize(rawHtml, PURIFY_CONFIG)
+      .replace(EMPTY_LIST_ITEM, '')
+      .replace(EMPTY_LIST, '')
   } finally {
+    activeSources = null
+    activeFootnotes = null
     DOMPurify.removeHook('afterSanitizeAttributes')
   }
 }
@@ -445,13 +629,14 @@ type FadeState = { text: string; chunks: FadeChunk[] }
 
 /** Structures that fade in as a whole when they first appear. */
 const FADE_UNIT_SELECTOR =
-  '.ai-assist-table-wrapper, .ai-assist-code-block, tr, li, .katex'
+  '.ai-assist-table-wrapper, .ai-assist-code-block, tr, li, .katex, .ai-assist-citation'
 /** Structures whose text must not be split into spans. */
-const ATOMIC_SELECTOR = '.katex, button, svg'
+const ATOMIC_SELECTOR = '.katex, button, svg, .ai-assist-citation'
 
 function fadeElement(el: Element, ageMs: number) {
   el.classList.add('ai-assist-stream-fade')
-  ;(el as HTMLElement).style.animationDelay = `-${Math.round(ageMs)}ms`
+  const delayMs = Math.round(-ageMs)
+  ;(el as HTMLElement).style.animationDelay = `${delayMs}ms`
 }
 
 /**
@@ -473,9 +658,25 @@ function applyChunkFades(container: HTMLElement, state: FadeState) {
   while (kept < max && text[kept] === state.text[kept]) kept++
 
   const chunks = state.chunks.filter(
-    chunk => chunk.start < kept && now - chunk.at < STREAM_FADE_MS
+    chunk => chunk.start < kept && now - chunk.at < STREAM_FADE_MS + MAX_FADE_LEAD_MS
   )
-  if (text.length > kept) chunks.push({ start: kept, at: now })
+  if (text.length > kept) {
+    const newText = text.slice(kept)
+    const tokenRegex = /\S+\s*/g
+    let match: RegExpExecArray | null
+    let tokenIndex = 0
+    let addedAny = false
+    while ((match = tokenRegex.exec(newText)) !== null) {
+      const start = kept + match.index
+      const stagger = Math.min(tokenIndex * 24, MAX_FADE_LEAD_MS)
+      chunks.push({ start, at: now + stagger })
+      tokenIndex++
+      addedAny = true
+    }
+    if (!addedAny) {
+      chunks.push({ start: kept, at: now })
+    }
+  }
   state.text = text
   state.chunks = chunks
   if (chunks.length === 0) return
@@ -516,7 +717,7 @@ function applyChunkFades(container: HTMLElement, state: FadeState) {
     let current: Text = node
     let currentStart = nodeStart
     for (let i = 0; i < chunks.length; i++) {
-      if (covered && chunks[i].start <= covered.start) continue
+      if (covered) continue
       const start = Math.max(chunks[i].start, currentStart)
       const end = Math.min(chunks[i + 1]?.start ?? Infinity, offset)
       if (end <= start) continue
@@ -540,12 +741,16 @@ export const MarkdownContent: FC<{
   content: string
   onOpenFile?: (path: string, line?: number) => void
   isLive?: boolean
-}> = ({ content, onOpenFile, isLive = false }) => {
+  /** Web pages the model may cite by number. */
+  sources?: WebSources
+}> = ({ content, onOpenFile, isLive = false, sources }) => {
   const defaultOpenFile = useOpenFileInEditor()
   const openFile = onOpenFile ?? defaultOpenFile
+  const { editorTheme } = useEditorThemeStyles()
+  useEditorHighlightStyle(editorTheme)
 
   const { text, animating } = useStreamReveal(content, isLive)
-  const html = useMemo(() => renderMarkdown(text), [text])
+  const html = useMemo(() => renderMarkdown(text, sources), [text, sources])
 
   const containerRef = useRef<HTMLDivElement>(null)
   const fadeState = useRef<FadeState | null>(
@@ -718,15 +923,35 @@ export const MarkdownContent: FC<{
     [openFile]
   )
 
+  // A citation card stays inside the panel: it opens leftwards when it would
+  // run past the right edge, and upwards when the scrolling area it sits in
+  // (the transcript, above the composer) has more room there than below
+  const handleMouseOver = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const citation = (e.target as HTMLElement).closest<HTMLElement>('.ai-assist-citation')
+    const card = citation?.querySelector<HTMLElement>('.ai-assist-citation-card')
+    const bounds = containerRef.current?.getBoundingClientRect()
+    if (!citation || !card || !bounds) return
+    const chip = citation.getBoundingClientRect()
+    card.classList.toggle('is-flipped', chip.left + card.offsetWidth > bounds.right)
+    const view = clippingAncestor(citation)?.getBoundingClientRect()
+    const roomBelow = (view ? view.bottom : window.innerHeight) - chip.bottom
+    const roomAbove = chip.top - (view ? view.top : 0)
+    card.classList.toggle(
+      'is-above',
+      card.offsetHeight > roomBelow && roomAbove > roomBelow
+    )
+  }, [])
+
   if (!html) return null
 
   return (
-    /* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions */
+    /* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions, jsx-a11y/mouse-events-have-key-events */
     <div
       ref={containerRef}
       className={animating ? 'ai-assist-markdown is-streaming' : 'ai-assist-markdown'}
       onClick={handleClick}
       onKeyDown={handleKeyDown}
+      onMouseOver={handleMouseOver}
       dangerouslySetInnerHTML={{ __html: html }}
     />
   )

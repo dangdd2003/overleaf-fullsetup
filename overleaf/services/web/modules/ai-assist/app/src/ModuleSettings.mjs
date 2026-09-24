@@ -12,6 +12,7 @@ function intFromEnv(name, fallback) {
 if (Settings.aiAssist === undefined) {
   Settings.aiAssist = {
     enabled: process.env.AI_ASSIST_ENABLED === 'true',
+    webToolsEnabled: process.env.AI_ASSIST_WEB_TOOLS_ENABLED === 'true',
     orphanGraceSeconds: intFromEnv('AI_ASSIST_ORPHAN_GRACE_SECONDS', 300),
     approvalTimeoutSeconds: intFromEnv('AI_ASSIST_APPROVAL_TIMEOUT_SECONDS', 600),
     heartbeatStaleSeconds: intFromEnv('AI_ASSIST_HEARTBEAT_STALE_SECONDS', 1800),

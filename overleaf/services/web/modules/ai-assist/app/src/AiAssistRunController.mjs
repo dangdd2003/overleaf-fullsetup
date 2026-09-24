@@ -6,6 +6,7 @@ import defaultManager from './AiAssistRunManager.mjs'
 import defaultStore, { TERMINAL_STATUSES } from './AiAssistRunStore.mjs'
 import defaultSubscriber from './AiAssistRunSubscriber.mjs'
 import { validateSafeProviderBaseUrl } from './AiAssistProviders.mjs'
+import { normalizeWebSearchSettings } from './AiAssistWebTools.mjs'
 import { MODES } from './AiAssistModePolicy.mjs'
 import SessionManager from '../../../../app/src/Features/Authentication/SessionManager.mjs'
 
@@ -51,6 +52,17 @@ export class AiAssistRunController {
       }
     }
 
+    // Ignored unless the instance turned the web tools on, so a client cannot
+    // switch them on by sending settings.
+    let webSearchSettings = null
+    if (Settings.aiAssist?.webToolsEnabled) {
+      try {
+        webSearchSettings = normalizeWebSearchSettings(req.body?.webSearchSettings)
+      } catch (err) {
+        return res.status(400).json({ error: err.message })
+      }
+    }
+
     const runId = `run_${Date.now()}_${crypto.randomBytes(16).toString('hex')}`
 
     // Start background promise without awaiting completion
@@ -63,6 +75,7 @@ export class AiAssistRunController {
         providerSettings,
         mode,
         chatId,
+        webSearchSettings,
       })
       .catch(err => {
         logger.error({ err, runId }, '[AiAssist] Run background failed')

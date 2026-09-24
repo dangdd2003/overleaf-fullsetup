@@ -1,10 +1,103 @@
-import { FC } from 'react'
+import { FC, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { Globe } from '@phosphor-icons/react'
 import { ToolCallRecord } from '../../agent/agent-messages'
 import { cleanStoredResult } from '../../agent/conversation-store'
 import { useOpenFileInEditor } from '../../hooks/use-open-file'
 import DiffView from './diff-view'
 import CodeView from './code-view'
+import { faviconUrl, hostOf } from '../../agent/web-sources'
+
+export const WEB_TOOLS = new Set(['web_search', 'web_fetch'])
+
+/**
+ * The site's own favicon, found by the server (most sites name it only in
+ * their home page's HTML) and served from Overleaf's origin, so no
+ * third-party icon service learns what the agent looked up. Sites without
+ * any icon get a globe.
+ */
+export function SiteIcon({ url }: { url: string }) {
+  const [failed, setFailed] = useState(false)
+  const src = faviconUrl(url)
+  if (failed || !src) {
+    return (
+      <span className="ai-assist-web-favicon is-fallback" aria-hidden="true">
+        <Globe size={12} />
+      </span>
+    )
+  }
+  return (
+    <img
+      className="ai-assist-web-favicon"
+      src={src}
+      alt=""
+      width={16}
+      height={16}
+      loading="lazy"
+      onError={() => setFailed(true)}
+    />
+  )
+}
+
+/**
+ * One web page as a row, the way Claude.ai lists search results: the site's
+ * icon, the page title, and the domain on the right, the whole row a link.
+ */
+function WebPageRow({
+  url,
+  title,
+  hint,
+}: {
+  url: string
+  title?: string
+  hint?: string
+}) {
+  return (
+    <a
+      className="ai-assist-web-row"
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      title={hint || title || url}
+    >
+      <SiteIcon url={url} />
+      <span className="ai-assist-web-row-title">{title || hostOf(url)}</span>
+      <span className="ai-assist-web-row-meta">{hostOf(url)}</span>
+    </a>
+  )
+}
+
+/**
+ * The part of a web tool error meant for the user. The server writes it for
+ * the model: it names the URL the row already shows, and ends with advice on
+ * what to try next.
+ */
+function webErrorText(error: string, url?: string) {
+  let text = error
+  if (url) text = text.split(url).join('The page')
+  return text.replace(/\s+(Its search snippet|Read another result)[\s\S]*$/, '').trim()
+}
+
+function WebToolError({ call, result }: { call: ToolCallRecord; result: any }) {
+  const args = (call.args ?? {}) as any
+  const url = typeof result?.url === 'string' ? result.url : args.url
+  const message = webErrorText(
+    typeof result?.error === 'string'
+      ? result.error
+      : typeof result === 'string'
+        ? result
+        : 'The request failed.',
+    url
+  )
+  return (
+    <div className="ai-assist-web-detail">
+      {call.name === 'web_fetch' && typeof url === 'string' && url && (
+        <WebPageRow url={url} title={result?.title} />
+      )}
+      <div className="ai-assist-web-note is-error">{message}</div>
+    </div>
+  )
+}
 
 export const ToolCallDetailView: FC<{ call: ToolCallRecord }> = ({ call }) => {
   const { t } = useTranslation()
@@ -12,6 +105,13 @@ export const ToolCallDetailView: FC<{ call: ToolCallRecord }> = ({ call }) => {
   const rawResult = cleanStoredResult(call.result)
   const result = rawResult as any
   const openFile = useOpenFileInEditor()
+
+  if (
+    (call.name === 'web_search' || call.name === 'web_fetch') &&
+    (call.isError || result?.error)
+  ) {
+    return <WebToolError call={call} result={result} />
+  }
 
   if (call.isError || result?.error) {
     const errorMsg =
@@ -385,6 +485,68 @@ export const ToolCallDetailView: FC<{ call: ToolCallRecord }> = ({ call }) => {
               Duplicate labels: {result.duplicateLabels.join(', ')}
             </div>
           )}
+      </div>
+    )
+  }
+
+  // 9. web_search: the results as rows, like Claude.ai's search card
+  if (call.name === 'web_search' && Array.isArray(result?.results)) {
+    return (
+      <div className="ai-assist-web-detail">
+        {result.relaxed && (
+          <div className="ai-assist-web-note">
+            {t(
+              'ai_assist_web_search_relaxed',
+              'Nothing matched the date or news filter, so these are unfiltered results.'
+            )}
+          </div>
+        )}
+        {result.results.length === 0 ? (
+          <div className="ai-assist-web-note">
+            {t('ai_assist_web_search_empty', 'No results.')}
+          </div>
+        ) : (
+          result.results.map((entry: any, idx: number) => (
+            <WebPageRow
+              key={`${entry.url}-${idx}`}
+              url={entry.url}
+              title={entry.title}
+              hint={
+                [entry.title, entry.published].filter(Boolean).join(' · ') ||
+                undefined
+              }
+            />
+          ))
+        )}
+      </div>
+    )
+  }
+
+  // 10. web_fetch: the page read, and which part of it
+  if (call.name === 'web_fetch' && result?.url) {
+    const notes: string[] = []
+    if (typeof result.find === 'string') {
+      const count = result.totalMatches ?? 0
+      notes.push(
+        count === 0
+          ? `No passage mentions "${result.find}"`
+          : `${count} passage${count === 1 ? '' : 's'} mention "${result.find}"`
+      )
+    } else if (result.totalPages > 1) {
+      notes.push(`Page ${result.page ?? 1} of ${result.totalPages}`)
+    }
+    if (result.published) {
+      notes.push(`Published ${result.published}`)
+    }
+    if (result.archived) {
+      notes.push(`Read from the Internet Archive copy of ${result.archived}`)
+    }
+    return (
+      <div className="ai-assist-web-detail">
+        <WebPageRow url={result.url} title={result.title} />
+        {notes.length > 0 && (
+          <div className="ai-assist-web-note">{notes.join(' · ')}</div>
+        )}
       </div>
     )
   }

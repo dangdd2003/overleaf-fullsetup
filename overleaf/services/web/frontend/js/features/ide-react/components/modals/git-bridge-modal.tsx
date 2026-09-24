@@ -7,6 +7,7 @@ import {
   OLModalHeader,
   OLModalTitle,
 } from '@/shared/components/ol/ol-modal'
+import OLButton from '@/shared/components/ol/ol-button'
 import { useProjectContext } from '@/shared/context/project-context'
 import { useRailContext } from '@/features/ide-react/context/rail-context'
 import getMeta from '@/utils/meta'
@@ -193,14 +194,14 @@ export default function GitBridgeModal({ show, onHide }: GitBridgeModalProps) {
 
         <div className="git-bridge-copy">
           <code aria-label="Git clone project command">{cloneCommand}</code>
-          <button
-            type="button"
-            className="git-copy-pill-btn"
+          <OLButton
+            variant="secondary"
+            size="sm"
             onClick={copyCloneCommand}
             aria-label="Git clone project command"
           >
             {copied ? t('copied', 'Copied') : t('copy', 'Copy')}
-          </button>
+          </OLButton>
         </div>
 
         <div className="mt-4">
@@ -254,14 +255,14 @@ export default function GitBridgeModal({ show, onHide }: GitBridgeModalProps) {
             </p>
             <div className="git-bridge-copy">
               <code aria-label="Git authentication token">{token}</code>
-              <button
-                type="button"
-                className="git-copy-pill-btn"
+              <OLButton
+                variant="secondary"
+                size="sm"
                 onClick={copyToken}
                 aria-label="Copy authentication token"
               >
                 {tokenCopied ? t('copied', 'Copied') : t('copy', 'Copy')}
-              </button>
+              </OLButton>
             </div>
             <p className="git-bridge-secondary-text small mt-2 mb-0">
               <strong>

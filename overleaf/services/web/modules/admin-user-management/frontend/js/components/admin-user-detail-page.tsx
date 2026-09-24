@@ -421,20 +421,15 @@ export default function AdminUserDetailPage() {
                     >
                       {resetLink}
                     </code>
-                    <button
-                      type="button"
-                      className="git-copy-pill-btn"
-                      style={{
-                        minWidth: '78px',
-                        width: '78px',
-                        flexShrink: 0,
-                        textAlign: 'center',
-                      }}
+                    <OLButton
+                      variant="secondary"
+                      size="sm"
+                      style={{ minWidth: '78px', flexShrink: 0 }}
                       onClick={handleCopyLink}
                       aria-label={copiedLink ? 'Copied' : 'Copy'}
                     >
                       {copiedLink ? 'Copied' : 'Copy'}
-                    </button>
+                    </OLButton>
                   </div>
                   {resetLinkExpiresAt ? (
                     <small className="text-muted d-block mt-1">

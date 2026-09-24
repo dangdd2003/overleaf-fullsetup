@@ -7,11 +7,13 @@ import OLButton from '@/shared/components/ol/ol-button'
 import Notification from '@/shared/components/notification'
 import ProviderForm from './provider-form'
 import ProviderIcon from './provider-icon'
+import WebSearchWidget from './web-search-widget'
 import { ProviderSettings } from '../providers/types'
 import {
   clearSettings,
   hasConsented,
   isAiAssistEnabled,
+  isWebToolsAvailable,
   readSettings,
   setAiAssistEnabled,
   writeSettings,
@@ -72,20 +74,19 @@ export default function AiProvidersWidget() {
   if (!enabled) return null
 
   return (
-    <div className="linking-ai-assist mb-4">
-      <div className="unboxed-setting-row align-items-center mb-3">
+    <div className="linking-ai-assist">
+      <div className="unboxed-setting-row">
         <div className="unboxed-setting-description">
-          <p className="linking-ai-assist-description mb-0">
+          <p>
             Our AI features explain compile errors and propose fixes directly
-            from your browser. Your API key is stored in this browser only and is
-            never sent to this Overleaf server.
+            from your browser. Your API key is stored in this browser only and
+            is never sent to this Overleaf server.
           </p>
         </div>
-        <div className="d-flex align-items-center gap-2">
+        <div>
           {aiEnabled ? (
             <OLButton
-              variant="secondary"
-              className="btn-ai-disable"
+              variant="danger-ghost"
               type="button"
               onClick={toggleAiEnabled}
             >
@@ -127,20 +128,14 @@ export default function AiProvidersWidget() {
               {!aiEnabled ? 'Disabled' : consented ? 'Ready' : 'Consent pending'}
             </OLBadge>
             <OLButton
-              variant="link"
-              size="sm"
+              variant="secondary"
               type="button"
               aria-label="Change provider"
               onClick={() => setEditing(true)}
             >
               Edit
             </OLButton>
-            <OLButton
-              variant="link"
-              size="sm"
-              type="button"
-              onClick={remove}
-            >
+            <OLButton variant="danger-ghost" type="button" onClick={remove}>
               Remove
             </OLButton>
           </div>
@@ -180,7 +175,15 @@ export default function AiProvidersWidget() {
           onCancel={() => setEditing(false)}
         />
       ) : null}
+
+      {/* Web search is the one addition to the upstream AI features
+          section, so it gets its own bordered box like the other
+          linking widgets. */}
+      {isWebToolsAvailable() ? (
+        <div className="settings-widgets-container linking-ai-assist-web-search">
+          <WebSearchWidget />
+        </div>
+      ) : null}
     </div>
   )
 }
-

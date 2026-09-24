@@ -7,6 +7,7 @@ import {
   ProviderErrorCode,
   ProviderModel,
   ProviderSettings,
+  WebSearchSettings,
 } from './types'
 
 type ErrorBody = { code?: string; message?: string; hint?: string }
@@ -55,6 +56,16 @@ async function post(
     )
   }
   return response
+}
+
+/** Runs one small search through the server, for the settings form. */
+export async function testWebSearch(
+  webSearchSettings: WebSearchSettings
+): Promise<{ latencyMs: number; resultCount: number }> {
+  const response = await post('/ai-assist/web-search/test', {
+    webSearchSettings,
+  })
+  return await response.json()
 }
 
 /**

@@ -1,3 +1,4 @@
+import { describe, it, beforeEach, afterEach } from 'vitest'
 import { expect } from 'chai'
 import sinon from 'sinon'
 import {
@@ -1541,6 +1542,83 @@ describe('AiAssistRunManager', function () {
 
       expect(mockStore.appendEvent.calledWith('run-cut-text', sinon.match({ type: 'error', code: 'outputTruncated' }))).to.be.true
       expect(mockStore.updateStatus.calledWith('run-cut-text', 'done')).to.be.true
+    })
+  })
+
+  describe('web tools', function () {
+    const start = (runId, extra = {}) =>
+      manager.startRun({
+        runId,
+        projectId: 'p1',
+        userId: 'u1',
+        transcript: [{ role: 'user', content: 'which siunitx option sets the range word?' }],
+        providerSettings: { type: 'openai', apiKey: 'k', model: 'gpt-4o' },
+        ...extra,
+      })
+
+    it('offers web_search and web_fetch only to runs with web search settings', async function () {
+      const webTools = {
+        getToolSpecs: () => [{ name: 'web_search', description: 'd', parameters: { type: 'object', properties: {} } }],
+        execute: sinon.stub(),
+      }
+      const webToolsFactory = sinon.stub().returns(webTools)
+      manager = new AiAssistRunManager({
+        store: mockStore,
+        tools: mockTools,
+        clientFactory: () => mockClient,
+        webToolsFactory,
+      })
+      mockClient.streamChat.callsFake(async function* () {
+        yield { type: 'text', text: 'ok' }
+      })
+
+      await start('run-no-web')
+      const withoutWeb = mockClient.streamChat.firstCall.args[0]
+      expect(withoutWeb.tools.map(t => t.name)).not.to.include('web_search')
+      expect(withoutWeb.system).not.to.include('# Web research')
+      expect(webToolsFactory.called).to.be.false
+
+      await start('run-web', { webSearchSettings: { type: 'searxng', baseUrl: 'http://searxng:8080' } })
+      const withWeb = mockClient.streamChat.secondCall.args[0]
+      expect(webToolsFactory.calledOnceWith({ type: 'searxng', baseUrl: 'http://searxng:8080' })).to.be.true
+      expect(withWeb.tools.map(t => t.name)).to.include('web_search')
+      expect(withWeb.system).to.include('# Web research')
+    })
+
+    it('runs web calls through the web tools, in parallel with project reads', async function () {
+      const webTools = {
+        getToolSpecs: () => [
+          { name: 'web_search', description: 'd', parameters: { type: 'object', properties: { query: { type: 'string' } } } },
+        ],
+        execute: sinon.stub().resolves({ query: 'siunitx', results: [{ title: 'T', url: 'https://ctan.org', snippet: 's' }] }),
+      }
+      manager = new AiAssistRunManager({
+        store: mockStore,
+        tools: mockTools,
+        clientFactory: () => mockClient,
+        webToolsFactory: () => webTools,
+      })
+      let secondRequest = null
+      let turn = 0
+      mockClient.streamChat.callsFake(async function* (opts) {
+        turn++
+        if (turn === 1) {
+          yield { type: 'tool_call', id: 'w1', name: 'web_search', args: { query: 'siunitx' } }
+          yield { type: 'tool_call', id: 'g1', name: 'get_packages', args: {} }
+        } else {
+          secondRequest = opts
+          yield { type: 'text', text: 'Use range-phrase.' }
+        }
+      })
+
+      await start('run-web-call', { webSearchSettings: { type: 'ollama', apiKey: 'k' } })
+
+      expect(webTools.execute.calledOnceWith('web_search', { query: 'siunitx' })).to.be.true
+      expect(webTools.execute.firstCall.args[2].signal).to.be.an.instanceOf(AbortSignal)
+      expect(mockTools.execute.calledWith('web_search')).to.be.false
+      expect(mockTools.execute.calledWith('get_packages')).to.be.true
+      const toolMessage = secondRequest.messages.find(m => m.role === 'tool' && m.name === 'web_search')
+      expect(toolMessage.content).to.include('<web_results query="siunitx">')
     })
   })
 })

@@ -3,70 +3,61 @@
 // Mirror the one token we use here so the file is self-contained like the other
 // CE modules; `!default` keeps it from clobbering the app value if ever bundled.
 $font-family-monospace: 'DM Mono', monospace !default;
+$code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$font-family-monospace}, monospace));
+
+// Every floating box in the panel (the mode menu, chat history, @-mentions,
+// citation cards) shares the mode menu's look. Dropdown menus pass
+// $important to win over Bootstrap's .dropdown-menu rules.
+@mixin ai-assist-floating-box($important: false) {
+  $imp: null;
+  @if $important {
+    $imp: !important;
+  }
+  padding: 4px $imp;
+  border-radius: var(--border-radius-medium, 8px) $imp;
+  background-color: var(--dropdown-background, var(--bg-dark-primary, #1b222c)) $imp;
+  border: 1px solid var(--border-divider-themed, rgba(255, 255, 255, 0.12)) $imp;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45) $imp;
+}
+
+// The activity timeline's boxes: the group of steps, and each step's output
+// as a box inside it, nested the way Claude.ai and Claude Code nest them
+@mixin ai-assist-activity-box {
+  border: 1px solid var(--border-divider-themed);
+  border-radius: 6px;
+  background: transparent;
+}
+
+@mixin ai-assist-floating-box-header {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--content-secondary-themed, #94a3b8);
+  padding: 3px 8px 5px;
+  user-select: none;
+  letter-spacing: 0.02em;
+}
+
+@mixin ai-assist-floating-box-row-hover($important: false) {
+  $imp: null;
+  @if $important {
+    $imp: !important;
+  }
+  background-color: var(--file-tree-item-hover-bg, var(--bg-dark-secondary, rgba(255, 255, 255, 0.08))) $imp;
+  color: var(--content-primary-themed, #ffffff) $imp;
+}
 
 // AI Assist provider widget — settings page.
 // The settings page is not themed, so it uses the plain (light) tokens.
 
 .linking-ai-assist {
   color: var(--content-primary);
-
-  .unboxed-setting-row {
-    align-items: center;
-
-    @media (max-width: 767.98px) {
-      flex-direction: column;
-      align-items: flex-start;
-      gap: var(--spacing-03);
-    }
-  }
-
-  .unboxed-setting-description {
-    flex: 1 1 auto;
-    max-width: 680px;
-  }
-}
-
-.linking-ai-assist-description {
-  font-size: var(--font-size-03);
-  line-height: var(--line-height-03);
-  color: var(--content-secondary) !important;
 }
 
 .linking-ai-assist-secondary-text {
   color: var(--content-secondary) !important;
 }
 
-// Upstream Overleaf "Disable AI features" button style:
-// Soft light-red background with dark red text, rounded pill, matching upstream Overleaf.
-.btn.btn-ai-disable {
-  --bs-btn-color: var(--content-danger, #b83a33);
-  --bs-btn-bg: var(--bg-danger-03, #f9f1f1);
-  --bs-btn-border-color: transparent;
-  --bs-btn-hover-color: var(--bg-danger-02, #942f2a);
-  --bs-btn-hover-bg: #fee2e2;
-  --bs-btn-hover-border-color: transparent;
-  --bs-btn-active-color: var(--bg-danger-02, #942f2a);
-  --bs-btn-active-bg: #fecaca;
-  --bs-btn-active-border-color: transparent;
-
-  color: var(--content-danger, #b83a33) !important;
-  background-color: var(--bg-danger-03, #f9f1f1) !important;
-  border: 1px solid transparent !important;
-
-  &:hover,
-  &:focus {
-    color: var(--bg-danger-02, #942f2a) !important;
-    background-color: #fee2e2 !important;
-    border-color: transparent !important;
-  }
-
-  &:active {
-    color: var(--bg-danger-02, #942f2a) !important;
-    background-color: #fecaca !important;
-    border-color: transparent !important;
-  }
-}
-
+// The configured provider, under the section description
 .linking-ai-assist-provider-card {
   display: flex;
   align-items: center;
@@ -77,6 +68,13 @@ $font-family-monospace: 'DM Mono', monospace !default;
   border: 1px solid var(--border-divider);
   border-radius: var(--border-radius-base);
   background: var(--bg-light-secondary);
+
+  // The borderless Remove button sits on the card's colour, not white; its
+  // border is drawn in the background colour, so it follows too
+  .btn.btn-danger-ghost {
+    --btn-danger-ghost-background: var(--bg-light-secondary);
+    --btn-danger-ghost-border: var(--bg-light-secondary);
+  }
 
   @media (max-width: 767.98px) {
     flex-direction: column;
@@ -99,6 +97,11 @@ $font-family-monospace: 'DM Mono', monospace !default;
   flex-shrink: 0;
 }
 
+// Web search is boxed like the linking widgets below the AI features section
+.linking-ai-assist-web-search {
+  margin-top: var(--spacing-06);
+}
+
 .linking-ai-assist-form {
   margin-top: var(--spacing-04);
   padding: var(--spacing-05);
@@ -118,7 +121,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
 // "Enter manually" on every click, and without a fixed width the whole
 // button row resizes and reflows each time.
 .ai-provider-toggle-model-mode {
-  width: 10.5rem;
+  width: 11.5rem;
 }
 
 // AI Assist rail tab icon.
@@ -222,8 +225,27 @@ $font-family-monospace: 'DM Mono', monospace !default;
   line-height: var(--line-height-03, 1.5);
 }
 
+// The message the user just sent pops into the transcript the way it does in
+// Claude: a short rise and settle, anchored to the bubble's bottom-right corner
+// so it grows out of the composer. Only opacity and transform are animated, so
+// the bubble's layout box is final on the first frame and stick-to-bottom still
+// measures the transcript correctly.
+@keyframes ai-assist-message-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.97);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 .ai-assist-message-user {
   align-self: flex-end;
+  transform-origin: bottom right;
+  animation: ai-assist-message-in 0.24s cubic-bezier(0.22, 1, 0.36, 1) both;
   background: var(--bg-secondary-themed);
   color: var(--content-primary-themed);
   padding: var(--spacing-05) var(--spacing-06);
@@ -249,7 +271,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    font-size: 11px;
+    font-size: 0.6875rem;
     font-family: $font-family-monospace;
     padding: 2px 8px;
     border-radius: 10px;
@@ -261,6 +283,12 @@ $font-family-monospace: 'DM Mono', monospace !default;
 
   .ai-assist-message-user-text {
     line-height: var(--line-height-03, 1.5);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-assist-message-user {
+    animation: none;
   }
 }
 
@@ -290,7 +318,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
   border: none;
   border-radius: 0;
   color: var(--content-secondary-themed);
-  font-size: 12px;
+  font-size: var(--font-size-01);
   line-height: 1.4;
   cursor: pointer;
   transition: color 0.15s ease;
@@ -334,7 +362,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
 .ai-assist-subresult-group-title {
   flex-shrink: 0;
   font-weight: 400;
-  font-size: 12px;
+  font-size: var(--font-size-01);
   color: var(--content-secondary-themed);
   opacity: 0.72;
   transition: opacity 0.15s ease, color 0.15s ease;
@@ -347,7 +375,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
-  font-size: 12px;
+  font-size: var(--font-size-01);
   font-family: $font-family-monospace;
   font-weight: 600;
 }
@@ -375,12 +403,12 @@ $font-family-monospace: 'DM Mono', monospace !default;
   }
 }
 
+// Claude.ai-style activity list: the steps sit under the header as plain
+// rows, no box and no dividers; only an expanded step's output is carded
 .ai-assist-subresult-group-dropdown {
+  @include ai-assist-activity-box;
   margin: 8px 0 var(--spacing-03) 0;
   padding: 0;
-  border: 1px solid var(--border-divider-themed);
-  border-radius: 6px;
-  background: transparent;
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -405,6 +433,11 @@ $font-family-monospace: 'DM Mono', monospace !default;
   &:last-child {
     border-bottom: none;
   }
+
+  // A box inside the box, lined up with the row's text
+  .ai-assist-tool-call-detail {
+    margin: 0 12px 10px;
+  }
 }
 
 // Inside the dropdown: rows take full width, hover only makes text lighter with no background change
@@ -418,13 +451,16 @@ $font-family-monospace: 'DM Mono', monospace !default;
   align-items: center;
   gap: 6px;
   width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
   padding: 7px 12px;
   margin: 0;
   border-radius: 0;
   border: none;
   background: transparent;
   color: var(--content-secondary-themed);
-  font-size: 12px;
+  font-size: var(--font-size-01);
   line-height: 1.4;
   cursor: pointer;
   transition: color 0.15s ease;
@@ -458,6 +494,17 @@ $font-family-monospace: 'DM Mono', monospace !default;
   transition: color 0.15s ease, opacity 0.15s ease;
 }
 
+// A fetched page's site icon, in the row's icon slot
+.ai-assist-tool-call-icon .ai-assist-web-favicon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  object-fit: contain;
+}
+
 .ai-assist-subresult-item:hover .ai-assist-tool-call-icon,
 .ai-assist-subresult-item:hover .ai-assist-thinking-icon {
   color: var(--content-primary-themed);
@@ -465,25 +512,37 @@ $font-family-monospace: 'DM Mono', monospace !default;
 }
 
 .ai-assist-tool-call-action {
+  flex-shrink: 0;
+  white-space: nowrap;
   color: var(--content-secondary-themed);
   font-weight: 400;
-  font-size: 12px;
+  font-size: var(--font-size-01);
   opacity: 0.72;
   transition: opacity 0.15s ease, color 0.15s ease;
   margin-right: 5px;
 }
 
+// Activity rows stay on one line: the verb keeps its width and the title,
+// path or query after it is cut off with an ellipsis
+.ai-assist-tool-call-target,
+.ai-assist-tool-call-summary .ai-assist-file-link {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .ai-assist-tool-call-target {
   color: var(--content-primary-themed);
   font-weight: 500;
-  font-size: 12px;
+  font-size: var(--font-size-01);
   opacity: 0.95;
 }
 
 .ai-assist-file-link {
   color: var(--content-primary-themed);
   font-weight: 500;
-  font-size: 12px;
+  font-size: var(--font-size-01);
   cursor: pointer;
   text-decoration: none;
   transition: color 0.15s ease, text-decoration 0.15s ease;
@@ -495,11 +554,24 @@ $font-family-monospace: 'DM Mono', monospace !default;
 }
 
 .ai-assist-tool-call-range {
+  flex-shrink: 0;
+  white-space: nowrap;
   color: var(--content-secondary-themed);
-  font-size: 11px;
+  font-size: 0.6875rem;
   opacity: 0.72;
   font-family: $font-family-monospace;
   margin-right: 2px;
+}
+
+.ai-assist-tool-call-meta {
+  flex-shrink: 3;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--content-secondary-themed);
+  font-size: 0.6875rem;
+  opacity: 0.72;
+  white-space: nowrap;
 }
 
 .ai-assist-tool-call-chevron,
@@ -528,6 +600,8 @@ $font-family-monospace: 'DM Mono', monospace !default;
   overflow-y: auto;
 }
 
+// The body only animates open; the card inside it does the scrolling, so
+// its border stays put while its contents scroll
 .ai-assist-tool-call-body {
   max-height: 0;
   opacity: 0;
@@ -535,21 +609,32 @@ $font-family-monospace: 'DM Mono', monospace !default;
   transition: max-height 0.25s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s ease;
 
   &.is-expanded {
-    max-height: 350px;
+    max-height: 400px;
     opacity: 1;
+  }
+
+  .ai-assist-tool-call-detail {
+    max-height: 380px;
     overflow-y: auto;
   }
 }
 
-.ai-assist-tool-call-detail {
-  margin: 0;
-  padding: 8px 12px;
+// Output that already draws its own box (a code or diff preview) is shown
+// as-is, not boxed again, and scrolls by itself
+.ai-assist-tool-call-detail:has(.ai-suggest-code-diff) {
   border: none;
-  border-top: 1px solid var(--border-divider-themed);
-  border-radius: 0;
-  background: var(--bg-primary-themed);
+  padding: 0;
+  max-height: none;
+  overflow: visible;
+}
+
+// A step's output, as a box of its own under the step
+.ai-assist-tool-call-detail {
+  @include ai-assist-activity-box;
+  margin: 2px 0 6px;
+  padding: 8px 12px;
   font-family: $font-family-monospace;
-  font-size: 11px;
+  font-size: 0.6875rem;
   line-height: 1.5;
   color: var(--content-secondary-themed);
   white-space: pre-wrap;
@@ -612,7 +697,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
         padding: 4px 8px;
         background: var(--bg-secondary-themed);
         border-left: 2px solid var(--border-divider-themed);
-        font-size: 11px;
+        font-size: 0.6875rem;
         color: var(--content-secondary-themed);
       }
     }
@@ -635,6 +720,92 @@ $font-family-monospace: 'DM Mono', monospace !default;
       .ai-assist-search-text {
         color: var(--content-primary-themed);
       }
+    }
+  }
+
+  // Web results, as Claude.ai lists them: one row per page with the site's
+  // icon, the title in quiet text, and the domain on the right
+  &.is-web {
+    padding: 4px;
+    font-family: var(--font-sans);
+    font-size: var(--font-size-01);
+    white-space: normal;
+    word-break: normal;
+    background: transparent;
+  }
+
+  .ai-assist-web-detail {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .ai-assist-web-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    padding: 6px 8px;
+    border-radius: 6px;
+    color: var(--content-secondary-themed);
+    text-decoration: none;
+    transition: background-color 0.15s ease, color 0.15s ease;
+
+    &:hover,
+    &:focus-visible {
+      background-color: var(--bg-tertiary-themed);
+      color: var(--content-primary-themed);
+      text-decoration: none;
+    }
+  }
+
+  .ai-assist-web-favicon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    border-radius: 3px;
+    object-fit: contain;
+
+    &.is-fallback {
+      color: var(--content-secondary-themed);
+      background-color: var(--bg-tertiary-themed);
+    }
+  }
+
+  .ai-assist-web-row-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    opacity: 0.85;
+  }
+
+  .ai-assist-web-row-meta {
+    flex-shrink: 0;
+    max-width: 45%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    opacity: 0.6;
+  }
+
+  .ai-assist-web-row:hover .ai-assist-web-row-title,
+  .ai-assist-web-row:focus-visible .ai-assist-web-row-title {
+    opacity: 1;
+  }
+
+  .ai-assist-web-note {
+    padding: 4px 8px 6px;
+    color: var(--content-secondary-themed);
+    font-size: 0.6875rem;
+    line-height: 1.45;
+
+    &.is-error {
+      color: var(--content-primary-themed);
+      opacity: 0.8;
     }
   }
 
@@ -682,7 +853,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
 
     .ai-assist-outline-packages {
       margin-top: 4px;
-      font-size: 10px;
+      font-size: 0.625rem;
       color: var(--content-secondary-themed);
       opacity: 0.7;
     }
@@ -712,7 +883,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
 
   .ai-assist-tool-detail-note {
     margin-top: 4px;
-    font-size: 11px;
+    font-size: 0.6875rem;
     font-style: italic;
     color: var(--content-secondary-themed);
     opacity: 0.8;
@@ -730,7 +901,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
     .ai-assist-tool-detail-badge {
       display: inline-block;
       padding: 1px 6px;
-      font-size: 10px;
+      font-size: 0.625rem;
       font-weight: 700;
       text-transform: uppercase;
       border-radius: 3px;
@@ -742,7 +913,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
   .ai-assist-tool-detail-badge.rejected {
     display: inline-block;
     padding: 1px 6px;
-    font-size: 10px;
+    font-size: 0.625rem;
     font-weight: 700;
     text-transform: uppercase;
     border-radius: 3px;
@@ -754,7 +925,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
   .ai-assist-tool-detail-badge.cancelled {
     display: inline-block;
     padding: 1px 6px;
-    font-size: 10px;
+    font-size: 0.625rem;
     font-weight: 700;
     text-transform: uppercase;
     border-radius: 3px;
@@ -765,7 +936,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
 
   .ai-assist-tool-detail-rejection {
     color: var(--content-danger-themed, #ef4444);
-    font-size: 11px;
+    font-size: 0.6875rem;
     margin-top: 4px;
   }
 
@@ -793,7 +964,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
   border-radius: 0;
   background: transparent;
   color: var(--content-secondary-themed);
-  font-size: 12px;
+  font-size: var(--font-size-01);
   line-height: 1.4;
   cursor: pointer;
   transition: color 0.15s ease;
@@ -821,7 +992,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
   border: none !important;
   background-color: transparent !important;
   color: var(--content-secondary-themed);
-  font-size: 12px;
+  font-size: var(--font-size-01);
   font-weight: 500;
   cursor: pointer;
   outline: none;
@@ -860,22 +1031,13 @@ $font-family-monospace: 'DM Mono', monospace !default;
 }
 
 .ai-assist-mode-menu {
+  @include ai-assist-floating-box(true);
   width: 220px;
   max-width: calc(100vw - 32px);
-  padding: 4px !important;
-  border-radius: var(--border-radius-medium, 8px) !important;
-  background-color: var(--dropdown-background, var(--bg-dark-primary, #1b222c)) !important;
-  border: 1px solid var(--border-divider-themed, rgba(255, 255, 255, 0.12)) !important;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45) !important;
   margin-bottom: 6px !important;
 
   .ai-assist-mode-menu-header {
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--content-secondary-themed, #94a3b8);
-    padding: 3px 8px 5px;
-    user-select: none;
-    letter-spacing: 0.02em;
+    @include ai-assist-floating-box-header;
   }
 
   .dropdown-item,
@@ -898,8 +1060,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
 
     &:hover,
     &:focus-visible {
-      background-color: var(--file-tree-item-hover-bg, var(--bg-dark-secondary, rgba(255, 255, 255, 0.08))) !important;
-      color: var(--content-primary-themed, #ffffff) !important;
+      @include ai-assist-floating-box-row-hover(true);
     }
 
     &.active,
@@ -910,7 +1071,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
 
       &:hover,
       &:focus-visible {
-        background-color: var(--file-tree-item-hover-bg, var(--bg-dark-secondary, rgba(255, 255, 255, 0.08))) !important;
+        @include ai-assist-floating-box-row-hover(true);
       }
     }
   }
@@ -934,7 +1095,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
   }
 
   .ai-assist-mode-item-title {
-    font-size: 13px;
+    font-size: 0.8125rem;
     font-weight: 600;
     line-height: 1.3;
     color: var(--content-primary-themed, #ffffff);
@@ -942,7 +1103,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
   }
 
   .ai-assist-mode-item-desc {
-    font-size: 11px;
+    font-size: 0.6875rem;
     line-height: 1.35;
     color: var(--content-secondary-themed, #94a3b8);
     margin-top: 2px;
@@ -950,7 +1111,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
   }
 
   .ai-assist-mode-item-num {
-    font-size: 12px;
+    font-size: var(--font-size-01);
     font-weight: 500;
     color: var(--content-secondary-themed, #94a3b8);
     opacity: 0.45;
@@ -968,7 +1129,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
   border: 1px solid var(--border-divider-themed);
   border-radius: var(--border-radius-base, 4px);
   color: var(--content-primary-themed);
-  font-size: 12px;
+  font-size: var(--font-size-01);
   line-height: 1.45;
 
   p:last-child {
@@ -982,13 +1143,13 @@ $font-family-monospace: 'DM Mono', monospace !default;
   background: var(--bg-primary-themed);
   border: 1px solid var(--border-divider-themed);
   border-radius: var(--border-radius-base, 4px);
-  font-family: $font-family-monospace;
-  font-size: var(--font-size-01, 11px);
+  font-family: $code-font-family;
+  font-size: var(--font-size-01);
   color: var(--content-primary-themed);
 
   .ai-assist-settings-tool-name {
     color: var(--content-secondary-themed);
-    font-size: 10px;
+    font-size: 0.625rem;
     text-transform: uppercase;
     letter-spacing: 0.05em;
     margin-bottom: 6px;
@@ -1020,16 +1181,16 @@ $font-family-monospace: 'DM Mono', monospace !default;
 .ai-assist-thinking-title {
   color: var(--content-secondary-themed);
   font-weight: 400;
-  font-size: 12px;
+  font-size: var(--font-size-01);
   opacity: 0.72;
   transition: opacity 0.15s ease, color 0.15s ease;
 }
 
 .ai-assist-subresult-item .ai-assist-thinking-content {
-  margin: 0;
-  padding: 8px 12px;
+  margin: 0 12px 8px 18px;
+  padding: 2px 0 2px 12px;
   border: none;
-  border-top: 1px solid var(--border-divider-themed);
+  border-left: 2px solid var(--border-divider-themed);
   border-radius: 0;
   background: transparent;
 }
@@ -1052,7 +1213,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
   border: none;
   border-radius: 0;
   color: var(--content-secondary-themed);
-  font-size: 12px;
+  font-size: var(--font-size-01);
   line-height: 1.4;
   cursor: pointer;
   transition: color 0.15s ease;
@@ -1108,7 +1269,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
 .ai-assist-thinking-title {
   flex-shrink: 0;
   font-weight: 400;
-  font-size: 12px;
+  font-size: var(--font-size-01);
   color: var(--content-secondary-themed);
   opacity: 0.72;
   transition: opacity 0.15s ease, color 0.15s ease;
@@ -1125,8 +1286,8 @@ $font-family-monospace: 'DM Mono', monospace !default;
   align-items: center;
   gap: 8px;
   padding: 6px 0;
-  font-size: 12.5px;
-  color: var(--green-50, #138a07);
+  font-size: 0.78125rem;
+  color: var(--content-secondary-themed, #71717a);
 
   &.is-completed {
     color: var(--content-secondary-themed, #71717a);
@@ -1211,7 +1372,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
 
 .ai-assist-status-text {
   font-variant-numeric: tabular-nums;
-  color: var(--green-50, #138a07);
+  color: var(--content-secondary-themed, #71717a);
 }
 
 .ai-assist-thinking-pulse {
@@ -1255,7 +1416,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
   background: var(--bg-secondary-themed);
   border-left: 2px solid var(--border-divider-themed);
   border-radius: 0 var(--border-radius-base, 4px) var(--border-radius-base, 4px) 0;
-  font-size: 12px;
+  font-size: var(--font-size-01);
   line-height: 1.5;
   color: var(--content-secondary-themed);
   white-space: pre-wrap;
@@ -1273,7 +1434,8 @@ $font-family-monospace: 'DM Mono', monospace !default;
   word-break: break-word;
 
   p {
-    margin: 0 0 var(--spacing-03) 0;
+    margin: 0 0 var(--spacing-02, 8px) 0;
+    line-height: 1.55;
 
     &:last-child {
       margin-bottom: 0;
@@ -1282,15 +1444,42 @@ $font-family-monospace: 'DM Mono', monospace !default;
 
   ul,
   ol {
-    margin: 0 0 var(--spacing-03) 0;
-    padding-left: var(--spacing-04);
+    margin: 0 0 var(--spacing-02, 8px) 0;
+    padding-left: 1.25rem;
 
     &:last-child {
       margin-bottom: 0;
     }
 
     li {
-      margin-bottom: var(--spacing-01);
+      margin-bottom: 2px;
+      line-height: 1.5;
+
+      &::marker {
+        color: var(--content-secondary-themed);
+      }
+
+      &:empty,
+      &:has(> p:only-child:empty) {
+        display: none !important;
+      }
+
+      > p {
+        margin: 0;
+        display: inline;
+      }
+
+      > p + p {
+        display: block;
+        margin-top: 4px;
+      }
+    }
+
+    ul,
+    ol {
+      margin-top: 2px;
+      margin-bottom: 2px;
+      padding-left: 1.1rem;
     }
   }
 
@@ -1301,32 +1490,54 @@ $font-family-monospace: 'DM Mono', monospace !default;
   h5,
   h6 {
     color: var(--content-primary-themed);
-    font-weight: 600;
-    margin: var(--spacing-04) 0 var(--spacing-02) 0;
-    line-height: 1.3;
+    line-height: 1.35;
+    margin: var(--spacing-03, 10px) 0 var(--spacing-01, 4px) 0;
 
     &:first-child {
       margin-top: 0;
     }
   }
 
-  h1 { font-size: var(--font-size-05); }
-  h2 { font-size: var(--font-size-04); }
-  h3 { font-size: var(--font-size-03); }
-  h4 { font-size: var(--font-size-02); }
+  h1 {
+    font-size: 1.0625rem;
+    font-weight: 650;
+    letter-spacing: -0.015em;
+  }
+  h2 {
+    font-size: 0.9375rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  h3 {
+    font-size: 0.875rem;
+    font-weight: 600;
+  }
+  h4 {
+    font-size: 0.8125rem;
+    font-weight: 600;
+  }
+  h5,
+  h6 {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--content-secondary-themed);
+  }
 
   code {
-    font-family: $font-family-monospace;
-    font-size: 0.9em;
-    padding: 2px 6px;
+    font-family: $code-font-family;
+    font-size: 0.85em;
+    padding: 1.5px 5px;
     border-radius: var(--border-radius-base, 4px);
     background: var(--bg-secondary-themed);
     color: var(--content-primary-themed);
     border: 1px solid var(--border-divider-themed);
+    word-break: break-word;
   }
 
   .ai-assist-code-block {
-    margin: var(--spacing-02) 0 var(--spacing-03) 0;
+    margin: var(--spacing-02, 8px) 0;
     border: 1px solid var(--border-divider-themed);
     border-radius: var(--border-radius-base, 6px);
     background: var(--bg-secondary-themed);
@@ -1343,13 +1554,13 @@ $font-family-monospace: 'DM Mono', monospace !default;
       padding: 4px 8px 4px 12px;
       background: var(--bg-tertiary-themed);
       border-bottom: 1px solid var(--border-divider-themed);
-      font-size: 11px;
+      font-size: 0.6875rem;
       color: var(--content-secondary-themed);
       user-select: none;
 
       .ai-assist-code-lang {
-        font-family: $font-family-monospace;
-        font-size: 11px;
+        font-family: $code-font-family;
+        font-size: 0.6875rem;
         text-transform: lowercase;
         opacity: 0.8;
       }
@@ -1370,7 +1581,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
         border-radius: var(--border-radius-base, 4px);
         background: transparent;
         color: var(--content-secondary-themed);
-        font-size: 11px;
+        font-size: 0.6875rem;
         line-height: 1.2;
         cursor: pointer;
         transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
@@ -1422,7 +1633,8 @@ $font-family-monospace: 'DM Mono', monospace !default;
         background: transparent;
         border: 0;
         border-radius: 0;
-        font-size: 13px;
+        font-family: $code-font-family;
+        font-size: 0.8125rem;
         line-height: 1.45;
         color: inherit;
         white-space: pre;
@@ -1431,14 +1643,14 @@ $font-family-monospace: 'DM Mono', monospace !default;
   }
 
   pre {
-    margin: var(--spacing-02) 0 var(--spacing-03) 0;
+    margin: var(--spacing-02, 8px) 0;
     padding: var(--spacing-03);
     background: var(--bg-secondary-themed);
     border: 1px solid var(--border-divider-themed);
     border-radius: var(--border-radius-base, 4px);
     overflow-x: auto;
-    font-family: $font-family-monospace;
-    font-size: 13px;
+    font-family: $code-font-family;
+    font-size: 0.8125rem;
     line-height: 1.45;
 
     code {
@@ -1446,6 +1658,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
       background: transparent;
       border: 0;
       border-radius: 0;
+      font-family: $code-font-family;
       font-size: inherit;
       color: inherit;
       white-space: pre;
@@ -1457,9 +1670,84 @@ $font-family-monospace: 'DM Mono', monospace !default;
   }
 
   blockquote {
-    margin: 0 0 var(--spacing-03) 0;
-    padding: var(--spacing-01) var(--spacing-03);
+    margin: var(--spacing-02, 8px) 0;
+    padding: var(--spacing-02, 6px) var(--spacing-03, 12px);
     border-left: 3px solid var(--border-primary-themed);
+    border-radius: 0 var(--border-radius-base, 4px) var(--border-radius-base, 4px) 0;
+    background: var(--bg-secondary-themed);
+    color: var(--content-secondary-themed);
+
+    p:last-child {
+      margin-bottom: 0;
+    }
+  }
+
+  sub,
+  sup {
+    font-size: 0.75em;
+    line-height: 0;
+    position: relative;
+    vertical-align: baseline;
+  }
+
+  sup {
+    top: -0.5em;
+  }
+
+  sub {
+    bottom: -0.25em;
+  }
+
+  hr {
+    margin: var(--spacing-04, 12px) 0;
+    border: 0;
+    border-top: 1px solid var(--border-divider-themed);
+    opacity: 1;
+  }
+
+  kbd {
+    font-family: $code-font-family;
+    font-size: 0.8em;
+    padding: 1px 5px;
+    border: 1px solid var(--border-divider-themed);
+    border-bottom-width: 2px;
+    border-radius: var(--border-radius-base, 4px);
+    background: var(--bg-secondary-themed);
+    color: var(--content-primary-themed);
+    box-shadow: none;
+  }
+
+  mark {
+    padding: 0 2px;
+    border-radius: 2px;
+    background: rgba(250, 204, 21, 0.3);
+    color: inherit;
+  }
+
+  details {
+    margin: var(--spacing-02, 8px) 0;
+  }
+
+  summary {
+    cursor: pointer;
+    color: var(--content-secondary-themed);
+
+    &:hover {
+      color: var(--content-primary-themed);
+    }
+  }
+
+  // Footnotes: the number in the text, and the notes under the reply
+  .ai-assist-footnote-ref {
+    color: var(--link-ui-themed);
+    cursor: help;
+  }
+
+  .ai-assist-footnotes {
+    margin-top: var(--spacing-04, 12px);
+    padding-top: var(--spacing-02, 8px);
+    border-top: 1px solid var(--border-divider-themed);
+    font-size: 0.8125rem;
     color: var(--content-secondary-themed);
   }
 
@@ -1471,6 +1759,162 @@ $font-family-monospace: 'DM Mono', monospace !default;
       color: var(--link-ui-hover-themed);
       text-decoration: var(--link-hover-text-decoration, none);
     }
+  }
+
+  // Web citations, Claude.ai-style: a pill naming the site right after the
+  // claim, and a card listing every source behind it on hover or focus
+  .ai-assist-citation {
+    position: relative;
+    display: inline-block;
+    margin: 0 2px;
+    line-height: 1;
+    vertical-align: baseline;
+
+    &:hover .ai-assist-citation-card,
+    &:focus-within .ai-assist-citation-card {
+      visibility: visible;
+      opacity: 1;
+    }
+
+    // The open card sits above the text and messages that follow it
+    &:hover,
+    &:focus-within {
+      z-index: 30;
+    }
+  }
+
+  .ai-assist-citation-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    max-width: 150px;
+    padding: 2px 7px;
+    border-radius: 999px;
+    background-color: var(--bg-secondary-themed);
+    color: var(--content-secondary-themed);
+    font-size: 0.6875rem;
+    font-weight: 500;
+    line-height: 1.3;
+    text-decoration: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: background-color 0.15s ease, color 0.15s ease;
+
+    &:hover,
+    &:focus-visible {
+      background-color: var(--bg-tertiary-themed);
+      color: var(--content-primary-themed);
+      text-decoration: none;
+    }
+  }
+
+  .ai-assist-citation-more {
+    opacity: 0.75;
+  }
+
+  // Padding rather than a margin above the card, so the pointer can cross
+  // from the pill to the card without the card closing
+  .ai-assist-citation-card {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    z-index: 20;
+    padding-top: 4px;
+    visibility: hidden;
+    opacity: 0;
+    transition: opacity 0.12s ease, visibility 0.12s ease;
+
+    &.is-flipped {
+      left: auto;
+      right: 0;
+    }
+
+    &.is-above {
+      top: auto;
+      bottom: 100%;
+      padding-top: 0;
+      padding-bottom: 4px;
+    }
+  }
+
+  // The mode menu's box and rows: icon, then title over a detail line
+  .ai-assist-citation-card-inner {
+    @include ai-assist-floating-box;
+    display: flex;
+    flex-direction: column;
+    width: 280px;
+    max-width: 80vw;
+    line-height: normal;
+  }
+
+  .ai-assist-citation-header {
+    @include ai-assist-floating-box-header;
+  }
+
+  .ai-assist-citation-source {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    min-height: 44px;
+    padding: 4px 8px;
+    margin: 1px 0;
+    border-radius: var(--border-radius-base, 4px);
+    color: var(--content-primary-themed, #ffffff);
+    text-decoration: none;
+    transition: background-color 0.15s ease;
+
+    &:hover,
+    &:focus-visible {
+      @include ai-assist-floating-box-row-hover;
+      text-decoration: none;
+    }
+  }
+
+  .ai-assist-citation-icon {
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    margin: 0 12px 0 2px;
+    border-radius: 3px;
+    background-color: var(--bg-tertiary-themed);
+    background-position: center;
+    background-repeat: no-repeat;
+    background-size: contain;
+
+    &[style] {
+      background-color: transparent;
+    }
+  }
+
+  .ai-assist-citation-text {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .ai-assist-citation-title {
+    font-size: 0.8125rem;
+    font-weight: 600;
+    line-height: 1.3;
+    color: var(--content-primary-themed, #ffffff);
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .ai-assist-citation-site {
+    margin-top: 2px;
+    font-size: 0.6875rem;
+    line-height: 1.35;
+    color: var(--content-secondary-themed, #94a3b8);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .ai-assist-file-mention {
@@ -1524,7 +1968,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
   .ai-assist-table-wrapper {
     width: 100%;
     overflow-x: auto;
-    margin: var(--spacing-03) 0;
+    margin: var(--spacing-02, 8px) 0;
     border: 1px solid var(--border-divider-themed);
     border-radius: 6px;
     background-color: var(--bg-secondary-themed);
@@ -1541,13 +1985,13 @@ $font-family-monospace: 'DM Mono', monospace !default;
       padding: 4px 8px 4px 12px;
       background: var(--bg-tertiary-themed);
       border-bottom: 1px solid var(--border-divider-themed);
-      font-size: 11px;
+      font-size: 0.6875rem;
       color: var(--content-secondary-themed);
       user-select: none;
 
       .ai-assist-table-label {
         font-family: $font-family-monospace;
-        font-size: 11px;
+        font-size: 0.6875rem;
         text-transform: uppercase;
         letter-spacing: 0.5px;
         opacity: 0.8;
@@ -1568,7 +2012,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
         border-radius: var(--border-radius-base, 4px);
         background: transparent;
         color: var(--content-secondary-themed);
-        font-size: 11px;
+        font-size: 0.6875rem;
         line-height: 1.2;
         cursor: pointer;
         transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
@@ -1611,7 +2055,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
     min-width: 100%;
     border-collapse: collapse;
     border-spacing: 0;
-    font-size: 12px;
+    font-size: var(--font-size-01);
     line-height: 1.5;
     text-align: left;
     color: var(--content-primary-themed);
@@ -1624,7 +2068,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
     th {
       padding: 8px 12px;
       font-weight: 600;
-      font-size: 12px;
+      font-size: var(--font-size-01);
       color: var(--content-primary-themed);
       border-bottom: 2px solid var(--border-divider-themed);
       border-right: 1px solid var(--border-divider-themed);
@@ -1641,7 +2085,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
         transition: background-color 0.15s ease;
 
         &:nth-child(even) {
-          background-color: rgba(255, 255, 255, 0.02);
+          background-color: var(--bg-secondary-themed);
         }
 
         &:hover {
@@ -1675,7 +2119,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
 
       code {
         padding: 1px 4px;
-        font-size: 11px;
+        font-size: 0.6875rem;
         background: var(--bg-primary-themed);
         border: 1px solid var(--border-divider-themed);
         border-radius: 3px;
@@ -1737,7 +2181,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
     display: inline-block;
     color: var(--content-danger, #ef4444);
     font-family: $font-family-monospace;
-    font-size: 12px;
+    font-size: var(--font-size-01);
     background: rgba(239, 68, 68, 0.08);
     border: 1px solid rgba(239, 68, 68, 0.2);
     border-radius: 4px;
@@ -1766,9 +2210,11 @@ $font-family-monospace: 'DM Mono', monospace !default;
 
   // Streaming: newly revealed words (and new rows, code blocks and formulas as
   // a whole) fade in. The duration must match STREAM_FADE_MS in
-  // use-stream-reveal.ts.
+  // use-stream-reveal.ts. No forwards fill: an opacity animation that stays
+  // applied keeps every faded span its own stacking context, and later text
+  // then paints over an open citation card.
   .ai-assist-stream-fade {
-    animation: ai-assist-stream-fade 400ms ease-out both;
+    animation: ai-assist-stream-fade 400ms ease-out backwards;
   }
 }
 
@@ -1822,7 +2268,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
   margin-top: auto;
 
   h5 {
-    font-size: 13px;
+    font-size: 0.8125rem;
     line-height: 1.4;
     font-weight: 500;
     color: var(--content-secondary-themed);
@@ -1882,7 +2328,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
 .ai-assist-starter {
   min-height: 42px;
   padding: 10px 14px !important;
-  font-size: 13px !important;
+  font-size: 0.8125rem !important;
   font-weight: 400 !important;
 
   .button-content {
@@ -1896,7 +2342,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
     white-space: nowrap;
     min-width: 0;
     color: var(--content-secondary-themed);
-    font-size: 13px;
+    font-size: 0.8125rem;
     font-weight: 400;
   }
 
@@ -1914,7 +2360,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
 
   strong {
     color: var(--content-secondary-themed);
-    font-size: 13px;
+    font-size: 0.8125rem;
     font-weight: 500;
     transition: color 0.15s ease;
   }
@@ -1925,7 +2371,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
 }
 
 .ai-assist-advanced-tool-description {
-  font-size: 12px;
+  font-size: var(--font-size-01);
   line-height: 1.4;
   color: var(--content-secondary-themed);
   opacity: 0.72;
@@ -1966,7 +2412,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
     padding: 0;
     background: transparent;
     color: var(--content-primary-themed);
-    font-size: 13px;
+    font-size: 0.8125rem;
     line-height: 1.45;
     font-family: inherit;
 
@@ -1977,23 +2423,19 @@ $font-family-monospace: 'DM Mono', monospace !default;
     &::placeholder {
       color: var(--content-placeholder-themed, var(--content-secondary-themed));
       opacity: 0.6;
-      font-size: 13px;
+      font-size: 0.8125rem;
     }
   }
 }
 
 .ai-assist-mention-menu {
+  @include ai-assist-floating-box;
   position: absolute;
   bottom: 100%;
   left: 0;
   right: 0;
   margin: 0 0 8px 0;
-  padding: 6px;
   list-style: none;
-  background: var(--bg-primary-themed);
-  border: 1px solid var(--border-divider-themed);
-  border-radius: 8px;
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.25);
   max-height: 220px;
   overflow-y: auto;
   z-index: 10;
@@ -2015,15 +2457,16 @@ $font-family-monospace: 'DM Mono', monospace !default;
     text-align: left;
     background: transparent;
     border: none;
-    border-radius: 6px;
+    border-radius: var(--border-radius-base, 4px);
     padding: 7px 8px;
-    font-size: 13px;
+    font-size: 0.8125rem;
     color: var(--content-primary-themed);
     cursor: pointer;
+    transition: background-color 0.15s ease;
 
     &:hover,
     &:focus {
-      background: var(--bg-secondary-themed);
+      @include ai-assist-floating-box-row-hover;
       outline: none;
     }
   }
@@ -2046,7 +2489,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: $font-family-monospace;
-  font-size: 11.5px;
+  font-size: 0.71875rem;
   color: var(--content-secondary-themed);
   opacity: 0.8;
 }
@@ -2063,7 +2506,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
   background: var(--bg-tertiary-themed);
   border: 1px solid var(--border-divider-themed);
   border-radius: var(--border-radius-base, 4px);
-  font-size: 11px;
+  font-size: 0.6875rem;
   font-family: $font-family-monospace;
   color: var(--content-secondary-themed);
   max-width: 100%;
@@ -2071,7 +2514,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
 
 .ai-assist-selection-chip-icon {
   font-weight: 700;
-  font-size: 11px;
+  font-size: 0.6875rem;
   color: var(--content-primary-themed);
 }
 
@@ -2199,7 +2642,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
 }
 
 .ai-assist-disclaimer {
-  font-size: 11px;
+  font-size: 0.6875rem;
   line-height: 1.3;
   color: var(--content-secondary-themed);
   opacity: 0.65;
@@ -2219,13 +2662,16 @@ $font-family-monospace: 'DM Mono', monospace !default;
   gap: 6px;
   width: fit-content;
   max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
   text-align: left;
   padding: 2px 0;
   margin: 0;
   background: transparent;
   border: none;
   border-radius: 0;
-  font-size: 12px;
+  font-size: var(--font-size-01);
   line-height: 1.4;
   color: var(--content-secondary-themed);
   cursor: pointer;
@@ -2254,8 +2700,9 @@ $font-family-monospace: 'DM Mono', monospace !default;
   gap: var(--spacing-02);
   padding: var(--spacing-03);
   border: 1px solid var(--border-divider-themed);
-  border-radius: var(--border-radius-base, 4px);
+  border-radius: var(--border-radius-base, 6px);
   background: var(--bg-secondary-themed);
+  color: var(--content-primary-themed);
   margin: var(--spacing-02) 0;
 
   .ai-assist-edit-approval-header {
@@ -2266,13 +2713,13 @@ $font-family-monospace: 'DM Mono', monospace !default;
     margin-bottom: 2px;
 
     .ai-assist-edit-approval-prompt {
-      font-size: 12px;
+      font-size: var(--font-size-01);
       font-weight: 600;
       color: var(--content-primary-themed);
     }
 
     .ai-assist-edit-decision-badge {
-      font-size: 11px;
+      font-size: 0.6875rem;
       font-weight: 600;
       padding: 1px 6px;
       border-radius: 4px;
@@ -2288,22 +2735,47 @@ $font-family-monospace: 'DM Mono', monospace !default;
       }
     }
   }
-}
 
-.ai-assist-edit-approval-path {
-  font-weight: 600;
-  font-size: var(--font-size-01);
-  line-height: var(--line-height-01);
-  color: var(--content-primary-themed);
+  .ai-assist-edit-approval-path {
+    font-family: $code-font-family;
+    font-weight: 600;
+    font-size: var(--font-size-01);
+    line-height: var(--line-height-01);
+    color: var(--content-primary-themed);
 
-  .ai-assist-file-link {
-    cursor: pointer;
-    color: var(--content-accent-themed, #38bdf8);
-    text-decoration: none;
+    .ai-assist-file-link {
+      cursor: pointer;
+      color: var(--content-accent-themed, #38bdf8);
+      text-decoration: none;
 
-    &:hover {
-      text-decoration: underline;
+      &:hover {
+        text-decoration: underline;
+      }
     }
+  }
+
+  .form-control {
+    background-color: var(--bg-primary-themed);
+    color: var(--content-primary-themed);
+    border-color: var(--border-divider-themed);
+
+    &::placeholder {
+      color: var(--content-secondary-themed);
+      opacity: 0.7;
+    }
+
+    &:focus {
+      background-color: var(--bg-primary-themed);
+      color: var(--content-primary-themed);
+      border-color: var(--interactive-primary-themed, #38bdf8);
+      box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2);
+    }
+  }
+
+  .ai-assist-edit-approval-actions {
+    display: flex;
+    gap: var(--spacing-02);
+    justify-content: flex-end;
   }
 }
 
@@ -2324,7 +2796,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
   background: var(--bg-primary-themed);
   border: 1px solid var(--border-divider-themed);
   border-radius: var(--border-radius-base, 4px);
-  font-family: $font-family-monospace;
+  font-family: $code-font-family;
   font-size: var(--font-size-01);
   white-space: pre-wrap;
   word-break: break-all;
@@ -2333,24 +2805,20 @@ $font-family-monospace: 'DM Mono', monospace !default;
   ins {
     display: block;
     text-decoration: none;
-    padding: 1px 4px;
+    padding: 2px 6px;
+    border-radius: 2px;
+    font-weight: 500;
   }
 
   del {
-    background: var(--bg-danger-03);
-    color: var(--content-danger);
+    background: rgba(239, 68, 68, 0.2);
+    color: #ff9492;
   }
 
   ins {
-    background: var(--bg-accent-03);
-    color: var(--content-positive);
+    background: rgba(34, 197, 94, 0.2);
+    color: #56d364;
   }
-}
-
-.ai-assist-edit-approval-actions {
-  display: flex;
-  gap: var(--spacing-02);
-  justify-content: flex-end;
 }
 
 // Errors & consent
@@ -2384,7 +2852,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
   }
 
   .ai-assist-error-badge {
-    font-size: 11px;
+    font-size: 0.6875rem;
     font-family: $font-family-monospace;
     padding: 1px 6px;
     border-radius: 4px;
@@ -2405,7 +2873,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
 
   .ai-assist-error-hint {
     margin: 0;
-    font-size: 12px;
+    font-size: var(--font-size-01);
     opacity: 0.88;
     word-break: break-word;
   }
@@ -2440,7 +2908,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
   display: block;
   padding: 4px 0;
   margin: 0 0 var(--spacing-02) 0;
-  font-size: 12px;
+  font-size: var(--font-size-01);
   line-height: 1.4;
   font-style: italic;
   color: var(--content-secondary-themed);
@@ -2557,7 +3025,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
 }
 
 .ai-suggest-fix-icon {
-  font-size: 16px;
+  font-size: var(--font-size-03);
   color: var(--content-accent-themed, #38bdf8);
   flex-shrink: 0;
 
@@ -2567,7 +3035,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
 }
 
 .ai-suggest-fix-title {
-  font-size: 13.5px;
+  font-size: 0.84375rem;
   font-weight: 600;
   line-height: var(--line-height-01, 1.4);
   color: var(--content-primary-themed);
@@ -2621,7 +3089,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
   border-radius: 50%;
   background-color: var(--bg-tertiary-themed);
   color: var(--content-secondary-themed);
-  font-size: 16px;
+  font-size: var(--font-size-03);
 }
 
 .ai-suggest-fix-folded-text {
@@ -2630,14 +3098,14 @@ $font-family-monospace: 'DM Mono', monospace !default;
 }
 
 .ai-suggest-fix-folded-title {
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-weight: 600;
   color: var(--content-primary-themed);
   line-height: 1.3;
 }
 
 .ai-suggest-fix-folded-subtitle {
-  font-size: 12px;
+  font-size: var(--font-size-01);
   color: var(--content-secondary-themed);
   line-height: 1.3;
   font-family: $font-family-monospace, monospace;
@@ -2656,7 +3124,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
   align-items: center;
   gap: 6px;
   font-family: $font-family-monospace, monospace;
-  font-size: 11.5px;
+  font-size: 0.71875rem;
   color: var(--content-secondary-themed);
   margin: 6px 0 10px 0;
   padding: 3px 8px;
@@ -2731,7 +3199,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
 .ai-thinking-label {
   flex-shrink: 0;
   font-weight: 500;
-  font-size: 12px;
+  font-size: var(--font-size-01);
   color: var(--content-secondary-themed);
   transition: color 0.15s ease;
 }
@@ -2759,7 +3227,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
   background-color: var(--bg-tertiary-themed);
   border-left: 2px solid var(--border-divider-themed);
   border-radius: 0 var(--border-radius-base, 4px) var(--border-radius-base, 4px) 0;
-  font-size: 12px;
+  font-size: var(--font-size-01);
   line-height: 1.5;
   color: var(--content-secondary-themed);
   transition: max-height 0.25s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s ease,
@@ -2790,7 +3258,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
   display: flex;
   align-items: center;
   gap: var(--spacing-02, 8px);
-  font-size: 12px;
+  font-size: var(--font-size-01);
   color: var(--content-secondary-themed);
   margin-bottom: var(--spacing-02);
 }
@@ -2824,7 +3292,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
 
 .ai-suggest-explanation {
   margin: var(--spacing-02) 0;
-  font-size: 12.5px;
+  font-size: 0.78125rem;
   line-height: 1.5;
   color: var(--content-primary-themed);
 
@@ -2852,12 +3320,12 @@ $font-family-monospace: 'DM Mono', monospace !default;
   justify-content: space-between;
   padding: var(--spacing-01) var(--spacing-02);
   border-bottom: 1px solid var(--border-divider-themed);
-  font-size: 12px;
+  font-size: var(--font-size-01);
   color: var(--content-primary-themed);
 }
 
 .ai-suggest-sparkle-icon {
-  font-size: 14px;
+  font-size: var(--font-size-02);
   color: var(--content-accent-themed, #38bdf8);
   flex-shrink: 0;
 }
@@ -2866,7 +3334,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
   background: transparent;
   border: none;
   color: var(--content-secondary-themed);
-  font-size: 12px;
+  font-size: var(--font-size-01);
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -2876,7 +3344,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
   transition: color 0.15s ease, background-color 0.15s ease;
 
   .material-symbols {
-    font-size: 14px;
+    font-size: var(--font-size-02);
   }
 
   &:hover {
@@ -2920,15 +3388,18 @@ $font-family-monospace: 'DM Mono', monospace !default;
     box-sizing: border-box;
 
     &.diff-line-del {
-      background-color: rgba(239, 68, 68, 0.14);
+      background-color: rgba(239, 68, 68, 0.18);
+      color: #ff9492;
     }
 
     &.diff-line-ins {
-      background-color: rgba(34, 197, 94, 0.14);
+      background-color: rgba(34, 197, 94, 0.18);
+      color: #56d364;
     }
 
     &.diff-line-context {
       background-color: transparent;
+      color: inherit;
     }
 
     &.diff-line-fold {
@@ -2970,11 +3441,13 @@ $font-family-monospace: 'DM Mono', monospace !default;
   }
 
   .diff-line-del .diff-gutter {
-    color: #ef4444;
+    color: #ff7b72;
+    background-color: rgba(239, 68, 68, 0.12);
   }
 
   .diff-line-ins .diff-gutter {
-    color: #22c55e;
+    color: #3fb950;
+    background-color: rgba(34, 197, 94, 0.12);
   }
 
   .diff-line-context .diff-gutter {
@@ -2993,55 +3466,87 @@ $font-family-monospace: 'DM Mono', monospace !default;
     align-self: center;
   }
 
+  mark.diff-del,
   .diff-del {
-    background-color: rgba(239, 68, 68, 0.28);
-    color: #fca5a5;
-    padding: 1px 3px;
-    border-radius: 2px;
+    background-color: rgba(239, 68, 68, 0.4);
+    color: #ffffff !important;
+    font-weight: 600;
+    padding: 1px 4px;
+    border-radius: 3px;
     text-decoration: none;
   }
 
+  mark.diff-ins,
   .diff-ins {
-    background-color: rgba(34, 197, 94, 0.28);
-    color: #86efac;
-    padding: 1px 3px;
-    border-radius: 2px;
+    background-color: rgba(34, 197, 94, 0.4);
+    color: #ffffff !important;
+    font-weight: 600;
+    padding: 1px 4px;
+    border-radius: 3px;
     text-decoration: none;
   }
 
   &.overall-theme-light,
   .overall-theme-light & {
-    .diff-del {
-      background-color: rgba(239, 68, 68, 0.22);
-      color: #b91c1c;
+    .diff-line-del {
+      background-color: rgba(239, 68, 68, 0.12);
+      color: #991b1b;
     }
-    .diff-ins {
-      background-color: rgba(34, 197, 94, 0.22);
-      color: #15803d;
+    .diff-line-ins {
+      background-color: rgba(34, 197, 94, 0.12);
+      color: #166534;
     }
     .diff-line-del .diff-gutter {
       color: #dc2626;
+      background-color: rgba(239, 68, 68, 0.08);
     }
     .diff-line-ins .diff-gutter {
       color: #16a34a;
+      background-color: rgba(34, 197, 94, 0.08);
+    }
+    mark.diff-del,
+    .diff-del {
+      background-color: rgba(239, 68, 68, 0.3);
+      color: #7f1d1d !important;
+      font-weight: 600;
+    }
+    mark.diff-ins,
+    .diff-ins {
+      background-color: rgba(34, 197, 94, 0.3);
+      color: #14532d !important;
+      font-weight: 600;
     }
   }
 
   &.overall-theme-dark,
   .overall-theme-dark & {
-    .diff-del {
-      background-color: rgba(239, 68, 68, 0.32);
-      color: #fca5a5;
+    .diff-line-del {
+      background-color: rgba(239, 68, 68, 0.22);
+      color: #ff9492;
     }
-    .diff-ins {
-      background-color: rgba(34, 197, 94, 0.32);
-      color: #86efac;
+    .diff-line-ins {
+      background-color: rgba(34, 197, 94, 0.22);
+      color: #56d364;
     }
     .diff-line-del .diff-gutter {
-      color: #f87171;
+      color: #ff7b72;
+      background-color: rgba(239, 68, 68, 0.15);
     }
     .diff-line-ins .diff-gutter {
-      color: #4ade80;
+      color: #3fb950;
+      background-color: rgba(34, 197, 94, 0.15);
+    }
+    mark.diff-del,
+    .diff-del {
+      background-color: rgba(239, 68, 68, 0.5);
+      color: #ffffff !important;
+      font-weight: 600;
+    }
+    mark.diff-ins,
+    .diff-ins {
+      background-color: rgba(34, 197, 94, 0.5);
+      color: #ffffff !important;
+      font-weight: 600;
     }
   }
 }
@@ -3052,7 +3557,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
 }
 
 .ai-suggest-mistake-disclaimer {
-  font-size: 11px;
+  font-size: 0.6875rem;
   color: var(--content-secondary-themed);
   margin: 0 0 var(--spacing-02) 0;
 }
@@ -3081,7 +3586,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
     justify-content: center;
 
     .material-symbols {
-      font-size: 16px;
+      font-size: var(--font-size-03);
     }
 
     &:hover {
@@ -3102,7 +3607,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
   justify-content: center;
   border-radius: 9999px;
   padding: 5px 16px;
-  font-size: 12px;
+  font-size: var(--font-size-01);
   font-weight: 500;
   line-height: 1.4;
   background-color: transparent;
@@ -3138,7 +3643,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
 // the moment it frees up, so it costs no height in the resting panel.
 .ai-suggest-chat-busy {
   margin: 6px 0 0;
-  font-size: 11px;
+  font-size: 0.6875rem;
   line-height: 1.4;
   color: var(--content-secondary-themed);
 }
@@ -3157,16 +3662,16 @@ $font-family-monospace: 'DM Mono', monospace !default;
   align-items: center;
   gap: 4px;
   color: var(--content-positive-themed, #22c55e);
-  font-size: 12px;
+  font-size: var(--font-size-01);
   font-weight: 500;
 
   .material-symbols {
-    font-size: 15px;
+    font-size: 0.9375rem;
   }
 }
 
 .ai-suggest-apply-error {
-  font-size: 11px;
+  font-size: 0.6875rem;
   color: var(--content-danger-themed, #ef4444);
 }
 
@@ -3177,28 +3682,24 @@ $font-family-monospace: 'DM Mono', monospace !default;
 }
 
 .ai-assist-history-menu {
+  @include ai-assist-floating-box(true);
   width: 340px;
   max-height: 380px;
   overflow-y: auto;
-  padding: 4px;
-  border-radius: 8px;
-  background-color: var(--dropdown-background, var(--bg-primary-themed, #18191e));
-  border: 1px solid var(--border-divider-themed, rgba(255, 255, 255, 0.12));
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
 }
 
 .ai-assist-history-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  border-radius: 6px;
+  border-radius: var(--border-radius-base, 4px);
   margin-bottom: 2px;
   padding: 2px 4px 2px 8px;
   border-left: 3px solid transparent;
   transition: background-color 0.15s ease, border-color 0.15s ease;
 
   &:hover {
-    background-color: var(--dropdown-background-hover, rgba(255, 255, 255, 0.08));
+    @include ai-assist-floating-box-row-hover;
 
     .ai-assist-history-when {
       color: var(--content-primary-themed, #ffffff);
@@ -3253,7 +3754,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 13px;
+  font-size: 0.8125rem;
   line-height: 1.4;
   color: var(--content-primary-themed, #e4e4e7);
   font-weight: 400;
@@ -3261,7 +3762,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
 
 .ai-assist-history-when {
   flex-shrink: 0;
-  font-size: 11px;
+  font-size: 0.6875rem;
   font-weight: 500;
   color: var(--content-secondary-themed, #9ca3af);
   letter-spacing: 0.2px;
@@ -3296,7 +3797,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
 
 .ai-assist-history-empty {
   padding: 16px 12px;
-  font-size: 12px;
+  font-size: var(--font-size-01);
   text-align: center;
   color: var(--content-secondary-themed, #9ca3af);
 }
@@ -3340,7 +3841,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 14px;
+  font-size: var(--font-size-02);
   font-weight: 600;
   color: var(--content-primary-themed, #ffffff);
 
@@ -3393,7 +3894,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
   min-width: 0;
   height: 26px;
   padding: 2px 8px;
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-weight: 600;
   color: var(--content-primary-themed, #ffffff);
   background-color: var(--bg-secondary-themed, #24262e);
@@ -3476,7 +3977,7 @@ $font-family-monospace: 'DM Mono', monospace !default;
   min-width: 0;
   height: 26px;
   padding: 2px 6px;
-  font-size: 12px;
+  font-size: var(--font-size-01);
   color: var(--content-primary-themed, #ffffff);
   background-color: var(--bg-secondary-themed, #24262e);
   border: 1px solid #0284c7;

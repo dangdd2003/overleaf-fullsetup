@@ -1,6 +1,6 @@
 import { AgentEvent } from '../agent-events'
 import { TranscriptEntry } from '../agent-messages'
-import { ProviderSettings } from '../../providers/types'
+import { ProviderSettings, WebSearchSettings } from '../../providers/types'
 import { prepareTranscriptForRun } from '../conversation-store'
 import { AgentMode } from '../agent-mode'
 import customLocalStorage from '@/infrastructure/local-storage'
@@ -47,12 +47,14 @@ export async function startBackgroundRun({
   providerSettings,
   mode = 'manual',
   chatId,
+  webSearchSettings,
 }: {
   projectId: string
   transcript: TranscriptEntry[]
   providerSettings: ProviderSettings
   mode?: AgentMode
   chatId?: string
+  webSearchSettings?: WebSearchSettings | null
 }): Promise<string> {
   const preparedTranscript = prepareTranscriptForRun(transcript)
   const res = await fetch(`/ai-assist/projects/${projectId}/runs`, {
@@ -61,7 +63,13 @@ export async function startBackgroundRun({
       'Content-Type': 'application/json',
       ...getCsrfHeaders(),
     },
-    body: JSON.stringify({ transcript: preparedTranscript, providerSettings, mode, ...(chatId ? { chatId } : {}) }),
+    body: JSON.stringify({
+      transcript: preparedTranscript,
+      providerSettings,
+      mode,
+      ...(chatId ? { chatId } : {}),
+      ...(webSearchSettings ? { webSearchSettings } : {}),
+    }),
   })
   if (!res.ok) {
     let errorMsg = `Failed to start AI run (${res.status})`

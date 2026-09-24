@@ -223,6 +223,15 @@ export const TOOL_ACTION_LABELS: Record<string, (args: any) => string> = {
   get_packages: () => 'Checking packages…',
   list_files: () => 'Listing project files…',
   project_map: () => 'Mapping project…',
+  web_search: args =>
+    args?.query ? `Searching the web for "${args.query}"…` : 'Searching the web…',
+  web_fetch: args => {
+    try {
+      return `Reading ${new URL(args?.url).hostname.replace(/^www\./, '')}…`
+    } catch {
+      return 'Reading web page…'
+    }
+  },
 }
 
 export function getToolStatusText(call: ToolCallRecord): string {

@@ -4,12 +4,15 @@ import { render, screen, fireEvent } from '@testing-library/react'
 import fetchMock from 'fetch-mock'
 import AiProvidersWidget from '../../../../frontend/js/features/ai-assist/components/ai-providers-widget'
 
-function setMeta({ enabled = true } = {}) {
+function setMeta({ enabled = true, webTools = false } = {}) {
   window.metaAttributesCache?.clear()
   document.head.innerHTML =
     '<meta name="ol-csrfToken" content="csrf-token-123">' +
     (enabled
       ? '<meta name="ol-aiAssistEnabled" data-type="boolean" content="">'
+      : '') +
+    (webTools
+      ? '<meta name="ol-aiAssistWebToolsEnabled" data-type="boolean" content="">'
       : '')
 }
 
@@ -125,7 +128,7 @@ describe('AiProvidersWidget', function () {
       name: /disable ai features/i,
     })
     expect(disableButton).to.exist
-    expect(disableButton.className).to.contain('btn-ai-disable')
+    expect(disableButton.className).to.contain('btn-danger-ghost')
     expect(disableButton.className).to.not.contain('btn-sm')
   })
 
@@ -170,5 +173,67 @@ describe('AiProvidersWidget', function () {
 
     expect(screen.getByRole('button', { name: /enable ai features/i })).to.exist
     expect(screen.getByText('Disabled')).to.exist
+  })
+
+  describe('web search', function () {
+    it('is not offered unless the instance enables web tools', function () {
+      render(<AiProvidersWidget />)
+      expect(screen.queryByTestId('web-search-settings')).to.equal(null)
+    })
+
+    it('saves a SearXNG instance in this browser and shows it', function () {
+      setMeta({ webTools: true })
+      render(<AiProvidersWidget />)
+
+      fireEvent.click(screen.getByRole('button', { name: 'Set up web search' }))
+      fireEvent.change(screen.getByLabelText('Search provider'), {
+        target: { value: 'searxng' },
+      })
+      fireEvent.change(screen.getByLabelText('SearXNG URL'), {
+        target: { value: 'http://searxng:8080' },
+      })
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+      expect(customLocalStorage.getItem('ai-assist:web-search')).to.deep.equal({
+        type: 'searxng',
+        baseUrl: 'http://searxng:8080',
+      })
+      expect(screen.getByText(/Using SearXNG at http:\/\/searxng:8080/)).to.exist
+    })
+
+    it('tests the search through the Overleaf server', async function () {
+      setMeta({ webTools: true })
+      fetchMock.post('/ai-assist/web-search/test', { latencyMs: 42, resultCount: 1 })
+      render(<AiProvidersWidget />)
+
+      fireEvent.click(screen.getByRole('button', { name: 'Set up web search' }))
+      fireEvent.change(screen.getByLabelText('Ollama API key'), {
+        target: { value: 'key-1' },
+      })
+      fireEvent.click(screen.getByRole('button', { name: 'Test search' }))
+
+      expect(await screen.findByText('Search answered in 42 ms.')).to.exist
+      const body = JSON.parse(
+        fetchMock.callHistory.lastCall('/ai-assist/web-search/test')?.options
+          .body as string
+      )
+      expect(body).to.deep.equal({
+        webSearchSettings: { type: 'ollama', apiKey: 'key-1' },
+      })
+    })
+
+    it('removes the stored web search', function () {
+      setMeta({ webTools: true })
+      customLocalStorage.setItem('ai-assist:web-search', {
+        type: 'ollama',
+        apiKey: 'k',
+      })
+      render(<AiProvidersWidget />)
+
+      fireEvent.click(screen.getByRole('button', { name: 'Remove' }))
+
+      expect(customLocalStorage.getItem('ai-assist:web-search')).to.equal(null)
+      expect(screen.getByRole('button', { name: 'Set up web search' })).to.exist
+    })
   })
 })

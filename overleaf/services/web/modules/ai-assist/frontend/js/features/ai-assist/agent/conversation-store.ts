@@ -75,6 +75,52 @@ export function shrinkCall(call: ToolCallRecord): ToolCallRecord {
     return { ...call, result: { ...res, _shrunk: true } }
   }
 
+  // Handle web_fetch: the page text is what makes it large, and the panel
+  // only shows where it came from
+  if (call.name === 'web_fetch' && typeof call.result === 'object') {
+    const res = call.result as any
+    const { content, matches, ...rest } = res
+    return {
+      ...call,
+      result: {
+        ...rest,
+        ...(typeof content === 'string'
+          ? {
+              content:
+                content.length > MAX_RESULT_CHARS
+                  ? content.slice(0, MAX_RESULT_CHARS) + '\n... (truncated)'
+                  : content,
+            }
+          : {}),
+        ...(Array.isArray(matches) ? { matches: matches.slice(0, 3) } : {}),
+        _shrunk: true,
+      },
+    }
+  }
+
+  // Handle web_search: five full snippets outgrow the generic cap, and
+  // dropping the results would lose the source numbers replies cite
+  if (
+    call.name === 'web_search' &&
+    typeof call.result === 'object' &&
+    Array.isArray((call.result as any).results)
+  ) {
+    const res = call.result as any
+    return {
+      ...call,
+      result: {
+        ...res,
+        results: res.results.map((entry: any) => ({
+          ...entry,
+          ...(typeof entry?.snippet === 'string' && entry.snippet.length > 300
+            ? { snippet: `${entry.snippet.slice(0, 299)}…` }
+            : {}),
+        })),
+        _shrunk: true,
+      },
+    }
+  }
+
   // Handle list_files: keep file paths and lines, avoid raw blob
   if (call.name === 'list_files' && typeof call.result === 'object') {
     const res = call.result as any

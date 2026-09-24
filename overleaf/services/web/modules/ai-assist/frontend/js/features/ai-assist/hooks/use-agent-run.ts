@@ -4,7 +4,12 @@ import { ProjectContext } from '@/shared/context/project-context'
 import { applyLiveSettingsUpdate } from '../agent/live-settings-updater'
 import { useTranslation } from 'react-i18next'
 import { AiAssistant } from '../assistant'
-import { hasConsented, recordConsent } from '../provider-store'
+import {
+  hasConsented,
+  isWebToolsAvailable,
+  readWebSearchSettings,
+  recordConsent,
+} from '../provider-store'
 import { runAgent } from '../agent/run-agent'
 import { resolveLimits } from '../providers/types'
 import { useProjectHandle } from '../agent/use-project-handle'
@@ -404,6 +409,7 @@ export function useAgentRun({
           providerSettings: assistant.settings,
           mode: modeRef.current,
           chatId: chatIdRef.current,
+          webSearchSettings: isWebToolsAvailable() ? readWebSearchSettings() : null,
         })
         currentRunIdRef.current = runId
 

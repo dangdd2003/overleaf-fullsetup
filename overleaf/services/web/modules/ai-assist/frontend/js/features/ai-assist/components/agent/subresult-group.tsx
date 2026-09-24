@@ -1,7 +1,11 @@
 import { FC, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AssistantBlock } from '../../agent/agent-messages'
-import { ToolCallCard, ToolCallSummaryLine } from './tool-call-card'
+import {
+  ToolCallCard,
+  ToolCallSummaryLine,
+  toolCallDetailClass,
+} from './tool-call-card'
 import { ToolCallDetailView } from './tool-call-detail'
 import { ThinkingBlock } from './thinking-block'
 import { EditApprovalCard } from './edit-approval-card'
@@ -123,6 +127,14 @@ export function summariseToolCallActions(
   const searchCount = (counts['search_text'] ?? 0) + (counts['search_project'] ?? 0)
   if (searchCount > 0) {
     parts.push(`searched project${searchCount > 1 ? ` (${searchCount})` : ''}`)
+  }
+  if (counts['web_search']) {
+    const n = counts['web_search']
+    parts.push(`searched the web${n > 1 ? ` (${n})` : ''}`)
+  }
+  if (counts['web_fetch']) {
+    const n = counts['web_fetch']
+    parts.push(`fetched ${n} page${n > 1 ? 's' : ''}`)
   }
   const compileCount =
     (counts['compile_project'] ?? 0) +
@@ -455,7 +467,12 @@ export const SubresultGroup: FC<{
                       <div className="ai-assist-tool-call-summary ai-assist-tool-call-summary-static">
                         <ToolCallSummaryLine call={call} />
                       </div>
-                      <div className="ai-assist-tool-call-detail ai-assist-tool-call-detail-standalone">
+                      <div
+                        className={toolCallDetailClass(
+                          call,
+                          'ai-assist-tool-call-detail-standalone'
+                        )}
+                      >
                         <ToolCallDetailView call={call} />
                       </div>
                     </div>

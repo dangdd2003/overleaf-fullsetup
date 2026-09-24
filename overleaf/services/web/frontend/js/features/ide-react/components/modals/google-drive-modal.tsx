@@ -507,7 +507,6 @@ export default function GoogleDriveModal({
         <OLButton
           variant="primary"
           className="google-drive-sync-btn"
-          style={{ color: '#ffffff' }}
           onClick={handleSyncNow}
           disabled={
             syncing ||

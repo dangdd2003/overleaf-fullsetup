@@ -30,6 +30,23 @@ export default {
       AiAssistProviderController.chat
     )
 
+    if (Settings.aiAssist?.webToolsEnabled) {
+      webRouter.post(
+        '/ai-assist/web-search/test',
+        AuthenticationController.requireLogin(),
+        AiAssistProviderController.testWebSearch
+      )
+
+      // Site icons for web result rows, fetched here because most sites only
+      // name theirs in the home page's HTML.
+      const { default: AiAssistFavicon } = await import('./AiAssistFavicon.mjs')
+      webRouter.get(
+        '/ai-assist/favicon',
+        AuthenticationController.requireLogin(),
+        AiAssistFavicon.serve
+      )
+    }
+
     // 1. Primary project-scoped routes with strict authorization
     webRouter.post(
       '/ai-assist/projects/:Project_id/runs',

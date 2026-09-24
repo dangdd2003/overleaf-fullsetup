@@ -2,6 +2,7 @@ import logger from '@overleaf/logger'
 import Settings from '@overleaf/settings'
 import './ModuleSettings.mjs'
 import { createProviderClient, ProviderError } from './AiAssistProviders.mjs'
+import { normalizeWebSearchSettings, testWebSearch } from './AiAssistWebTools.mjs'
 
 /**
  * Every request to an LLM provider leaves from this server, never from the
@@ -19,7 +20,11 @@ function errorPayload(err) {
 }
 
 function httpStatusFor(err) {
-  if (err?.code === 'invalidProviderUrl' || err?.code === 'restrictedProviderUrl') {
+  if (
+    err?.code === 'invalidProviderUrl' ||
+    err?.code === 'restrictedProviderUrl' ||
+    err?.code === 'invalidWebSearchSettings'
+  ) {
     return 400
   }
   // Upstream auth failures must not surface as 401/403 from Overleaf itself.
@@ -44,8 +49,34 @@ function abortOnDisconnect(req, res) {
 }
 
 export class AiAssistProviderController {
-  constructor({ clientFactory = createProviderClient } = {}) {
+  constructor({ clientFactory = createProviderClient, webSearchTester = testWebSearch } = {}) {
     this.clientFactory = clientFactory
+    this.webSearchTester = webSearchTester
+  }
+
+  /** One small search through the configured web search backend. */
+  testWebSearch = async (req, res) => {
+    let settings
+    try {
+      settings = normalizeWebSearchSettings(req.body?.webSearchSettings)
+      if (!settings) {
+        throw new ProviderError('Missing webSearchSettings', {
+          code: 'invalidWebSearchSettings',
+          status: 400,
+        })
+      }
+    } catch (err) {
+      return res.status(400).json({ error: errorPayload(err) })
+    }
+    const controller = abortOnDisconnect(req, res)
+    try {
+      const outcome = await this.webSearchTester(settings, { signal: controller.signal })
+      res.json(outcome)
+    } catch (err) {
+      if (controller.signal.aborted) return
+      logger.debug({ err, type: settings.type }, '[AiAssist] web search test failed')
+      res.status(httpStatusFor(err)).json({ error: errorPayload(err) })
+    }
   }
 
   listModels = async (req, res) => {

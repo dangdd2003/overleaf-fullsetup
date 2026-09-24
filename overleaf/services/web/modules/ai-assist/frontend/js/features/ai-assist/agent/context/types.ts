@@ -21,6 +21,11 @@ export type ContextSnapshot = {
       })
     | null
   outline?: Outline | null
+  /**
+   * The user's local date, e.g. "2026-09-24 (Thursday)". The model has no
+   * other way to know it, and needs it for anything about the present.
+   */
+  today?: string
 }
 
 /** Carried on a user entry so the next turn can delta-encode against it. */

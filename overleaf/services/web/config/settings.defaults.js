@@ -1208,6 +1208,8 @@ module.exports = {
 
   aiAssist: {
     enabled: process.env.AI_ASSIST_ENABLED === 'true',
+    // web_search / web_fetch for the agent; each user picks Ollama or SearXNG.
+    webToolsEnabled: process.env.AI_ASSIST_WEB_TOOLS_ENABLED === 'true',
   },
 
   enablePandocConversions: process.env.ENABLE_PANDOC_CONVERSIONS === 'true',

@@ -1049,6 +1049,12 @@ describe('AiAssistTools', function () {
       expect(res.error).to.include('3 lines')
     })
 
+    it('edit_file appends when the line range starts one past the last line', async function () {
+      const res = await tools.execute('edit_file', { path: 'main.tex', startLine: 4, endLine: 4, newText: 'line 4' }, ctx)
+      expect(res.status).to.equal('applied')
+      expect(mockDocUpdater.setDocument.firstCall.args[3]).to.deep.equal(['line 1', 'line 2: target text', 'line 3', 'line 4'])
+    })
+
     it('edit_file schema lets a line range stand in for oldText', function () {
       const editSpec = tools.getToolSpecs().find(s => s.name === 'edit_file')
       expect(editSpec.parameters.required).to.deep.equal(['path', 'newText'])

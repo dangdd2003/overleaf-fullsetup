@@ -86,6 +86,11 @@ html(
 				content=settings.aiAssist && settings.aiAssist.enabled
 			)
 			meta(
+				name='ol-aiAssistWebToolsEnabled'
+				data-type='boolean'
+				content=settings.aiAssist && settings.aiAssist.enabled && settings.aiAssist.webToolsEnabled
+			)
+			meta(
 				name='ol-splitTestVariants'
 				data-type='json'
 				content=splitTestVariants || {}

@@ -19,6 +19,43 @@ export type ProviderSettings = {
   maxOutputTokens?: number
 }
 
+/**
+ * Where the agent's web_search and web_fetch go. Ollama's hosted API answers
+ * both; with SearXNG the Overleaf server searches through the instance and
+ * reads pages itself.
+ */
+export type WebSearchSettings = (
+  | { type: 'ollama'; apiKey: string }
+  | { type: 'searxng'; baseUrl: string }
+) &
+  WebSearchPreferences
+
+/**
+ * How the server caches and sizes web research for this user. Every field is
+ * optional: a missing one means the recommended value in WEB_SEARCH_DEFAULTS.
+ */
+export type WebSearchPreferences = {
+  /** How long searches and pages are reused; 0 turns caching off. */
+  cacheHours?: number
+  maxCachedSearches?: number
+  maxCachedPages?: number
+  /** The most results the model may ask for in one search. */
+  resultsPerSearch?: number
+}
+
+/** The recommended values, and the range the server accepts for each. */
+export const WEB_SEARCH_DEFAULTS = {
+  cacheHours: { value: 24, min: 0, max: 168 },
+  maxCachedSearches: { value: 256, min: 0, max: 1000 },
+  maxCachedPages: { value: 64, min: 0, max: 200 },
+  resultsPerSearch: { value: 10, min: 1, max: 10 },
+} as const satisfies Record<
+  keyof WebSearchPreferences,
+  { value: number; min: number; max: number }
+>
+
+export type WebSearchProviderType = WebSearchSettings['type']
+
 export type Limits = {
   contextWindow: number
   maxOutputTokens: number

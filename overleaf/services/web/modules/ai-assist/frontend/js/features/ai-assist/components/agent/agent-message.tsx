@@ -1,4 +1,5 @@
 import { TranscriptEntry, AssistantBlock } from '../../agent/agent-messages'
+import { WebSources } from '../../agent/web-sources'
 import { MarkdownContent } from './markdown-content'
 import { SubresultGroup, SubresultItem } from './subresult-group'
 import { ThinkingBlock } from './thinking-block'
@@ -38,12 +39,15 @@ export function AgentMessageView({
   approvalContext,
   onDecision,
   isRunning = false,
+  webSources,
 }: {
   entry: TranscriptEntry
   pendingApprovalId: string | null
   approvalContext?: { startLine: number } | null
   onDecision: (decision: { accepted: boolean; note?: string }) => void
   isRunning?: boolean
+  /** Web pages cited anywhere in the conversation, by source number. */
+  webSources?: WebSources
 }) {
   if (entry.role === 'user') {
     return (
@@ -103,6 +107,7 @@ export function AgentMessageView({
               key={`text-${idx}`}
               content={segment.text}
               isLive={isSegmentLive}
+              sources={webSources}
             />
           )
         }

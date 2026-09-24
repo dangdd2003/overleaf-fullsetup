@@ -4,9 +4,13 @@ import {
   DEFAULT_BASE_URLS,
   ProviderSettings,
   ProviderType,
+  WEB_SEARCH_DEFAULTS,
+  WebSearchPreferences,
+  WebSearchSettings,
 } from './providers/types'
 
 const SETTINGS_KEY = 'ai-assist:provider'
+const WEB_SEARCH_KEY = 'ai-assist:web-search'
 const CONSENT_KEY = 'ai-assist:consent'
 const AI_ENABLED_KEY = 'ai-assist:enabled'
 
@@ -49,6 +53,52 @@ export function writeSettings(settings: ProviderSettings) {
 
 export function clearSettings() {
   customLocalStorage.removeItem(SETTINGS_KEY)
+}
+
+/** Whether this instance offers web_search and web_fetch at all. */
+export function isWebToolsAvailable(): boolean {
+  return Boolean(getMeta('ol-aiAssistWebToolsEnabled'))
+}
+
+/**
+ * The web search backend, stored beside the provider in this browser and sent
+ * with each run. A stored entry that is incomplete reads as none.
+ */
+export function readWebSearchSettings(): WebSearchSettings | null {
+  const parsed = customLocalStorage.getItem(WEB_SEARCH_KEY)
+  const preferences = readWebSearchPreferences(parsed)
+  if (parsed?.type === 'ollama') {
+    const apiKey = String(parsed.apiKey ?? '').trim()
+    return apiKey ? { type: 'ollama', apiKey, ...preferences } : null
+  }
+  if (parsed?.type === 'searxng') {
+    const baseUrl = String(parsed.baseUrl ?? '').trim()
+    return baseUrl ? { type: 'searxng', baseUrl, ...preferences } : null
+  }
+  return null
+}
+
+/** The stored cache and result-count choices that are whole numbers in range. */
+function readWebSearchPreferences(parsed: any): WebSearchPreferences {
+  const preferences: WebSearchPreferences = {}
+  for (const key of Object.keys(WEB_SEARCH_DEFAULTS) as Array<
+    keyof WebSearchPreferences
+  >) {
+    const value = parsed?.[key]
+    const { min, max } = WEB_SEARCH_DEFAULTS[key]
+    if (Number.isInteger(value) && value >= min && value <= max) {
+      preferences[key] = value
+    }
+  }
+  return preferences
+}
+
+export function writeWebSearchSettings(settings: WebSearchSettings) {
+  customLocalStorage.setItem(WEB_SEARCH_KEY, settings)
+}
+
+export function clearWebSearchSettings() {
+  customLocalStorage.removeItem(WEB_SEARCH_KEY)
 }
 
 /**

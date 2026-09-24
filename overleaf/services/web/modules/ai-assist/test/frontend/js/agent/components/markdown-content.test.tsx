@@ -440,5 +440,78 @@ describe('holdBackIncomplete', function () {
   it('holds an unclosed inline marker', function () {
     const text = 'This is **very imp'
     expect(holdBackIncomplete(text, text.length)).to.equal('This is '.length)
+    const italic = 'This is *very imp'
+    expect(holdBackIncomplete(italic, italic.length)).to.equal('This is '.length)
+    const strike = 'This is ~~very imp'
+    expect(holdBackIncomplete(strike, strike.length)).to.equal('This is '.length)
+    const link = 'See [Overleaf Docs'
+    expect(holdBackIncomplete(link, link.length)).to.equal('See '.length)
+  })
+
+  it('suppresses empty list items and trailing bullet markers', function () {
+    const md = ['* first item', '* second item', '* '].join('\n')
+    const { container } = render(<MarkdownContent content={md} />)
+    const items = container.querySelectorAll('li')
+    expect(items).to.have.length(2)
+    expect(items[0].textContent?.trim()).to.equal('first item')
+    expect(items[1].textContent?.trim()).to.equal('second item')
+  })
+
+  it('normalizes non-breaking and Unicode spaces after list markers into valid lists', function () {
+    const md = [
+      'Here are facts:',
+      '* During his U.S. trip',
+      '* He met UN Secretary-General',
+      '- Third item with NBSP',
+    ].join('\n')
+    const { container } = render(<MarkdownContent content={md} />)
+    const items = container.querySelectorAll('li')
+    expect(items).to.have.length(3)
+    expect(items[0].textContent).to.contain('During his U.S. trip')
+    expect(items[1].textContent).to.contain('He met UN Secretary-General')
+    expect(items[2].textContent).to.contain('Third item with NBSP')
+  })
+
+  it('converts Unicode bullets and CJK ordered list numbers to standard HTML lists', function () {
+    const md = [
+      '• bullet dot',
+      '◦ hollow bullet',
+      '▪ small square',
+      '',
+      '１． First CJK item',
+      '２． Second CJK item',
+    ].join('\n')
+    const { container } = render(<MarkdownContent content={md} />)
+    const ulItems = container.querySelectorAll('ul li')
+    expect(ulItems).to.have.length(3)
+    expect(ulItems[0].textContent).to.equal('bullet dot')
+
+    const olItems = container.querySelectorAll('ol li')
+    expect(olItems).to.have.length(2)
+    expect(olItems[0].textContent).to.equal('First CJK item')
+  })
+
+  it('separates tables immediately following prose without a blank line', function () {
+    const md = ['Summary table:', '| Col 1 | Col 2 |', '|---|---|', '| val 1 | val 2 |'].join('\n')
+    const { container } = render(<MarkdownContent content={md} />)
+    expect(container.querySelectorAll('.ai-assist-table')).to.have.length(1)
+    expect(container.querySelectorAll('.ai-assist-table tbody tr')).to.have.length(1)
+  })
+
+  it('escapes math pipes inside table cells so columns do not split', function () {
+    const md = ['| Expression | Note |', '|---|---|', '| $a | b$ | logic |'].join('\n')
+    const { container } = render(<MarkdownContent content={md} />)
+    const row = container.querySelector('.ai-assist-table tbody tr')
+    expect(row?.querySelectorAll('td')).to.have.length(2)
+  })
+
+  it('renders safe HTML tags and escapes unknown pseudo-tags', function () {
+    const md = 'Press <kbd>Ctrl</kbd>+<kbd>S</kbd>, <mark>highlight</mark>, H<sub>2</sub>O and <tabular>tag</tabular>'
+    const { container } = render(<MarkdownContent content={md} />)
+    expect(container.querySelector('kbd')).to.exist
+    expect(container.querySelector('mark')).to.exist
+    expect(container.querySelector('sub')).to.exist
+    expect(container.textContent).to.contain('<tabular>')
+    expect(container.querySelector('tabular')).to.not.exist
   })
 })

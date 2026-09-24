@@ -503,23 +503,17 @@ export default function CreateUsersModal({
                                   >
                                     {u.setupUrl}
                                   </code>
-                                  <button
-                                    type="button"
-                                    className="git-copy-pill-btn"
-                                    style={{
-                                      minWidth: '78px',
-                                      width: '78px',
-                                      flexShrink: 0,
-                                      textAlign: 'center',
-                                      padding: '2px 8px',
-                                    }}
+                                  <OLButton
+                                    variant="secondary"
+                                    size="sm"
+                                    style={{ minWidth: '78px', flexShrink: 0 }}
                                     onClick={() =>
                                       handleCopySetupUrl(u.setupUrl!, itemKey)
                                     }
                                     aria-label={isCopied ? 'Copied' : 'Copy'}
                                   >
                                     {isCopied ? 'Copied' : 'Copy'}
-                                  </button>
+                                  </OLButton>
                                 </div>
                               ) : (
                                 <OLBadge bg="success">

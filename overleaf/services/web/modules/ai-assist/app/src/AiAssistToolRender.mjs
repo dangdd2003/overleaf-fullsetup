@@ -21,7 +21,98 @@ function diagnosticLines(result) {
   return lines
 }
 
+function attributeValue(value) {
+  return String(value ?? '').replace(/"/g, "'").replace(/\s+/g, ' ')
+}
+
+/**
+ * Web text is fenced so the model can tell where the page ends and the
+ * harness resumes. A page must not be able to close the fence itself.
+ */
+function webText(text) {
+  return String(text ?? '').replace(/<(\/?)(web_page|web_results)\b/gi, '&lt;$1$2')
+}
+
+const RECENCY_WORDS = { day: 'past day', week: 'past week', month: 'past month', year: 'past year' }
+
+/** One search result, as the numbered source the model cites it by. */
+function sourceLines(entry, index) {
+  const number = Number.isInteger(entry.source) ? entry.source : index + 1
+  const lines = [`[${number}] ${webText(entry.title)}`, `    ${entry.url}`]
+  if (entry.published) lines.push(`    published ${entry.published}`)
+  if (entry.snippet) lines.push(`    ${webText(entry.snippet)}`)
+  return lines
+}
+
+function webPageAttributes(result) {
+  return [
+    Number.isInteger(result.source) ? ` source="${result.source}"` : '',
+    ` url="${attributeValue(result.url)}"`,
+    result.title ? ` title="${attributeValue(result.title)}"` : '',
+    result.published ? ` published="${result.published}"` : '',
+    result.modified ? ` updated="${result.modified}"` : '',
+    result.archived ? ` archived="${result.archived}"` : '',
+  ].join('')
+}
+
 const RENDERERS = {
+  web_search(result) {
+    if (!Array.isArray(result.results)) return JSON.stringify(result)
+    const filters = [
+      result.recency ? RECENCY_WORDS[result.recency] : '',
+      result.topic === 'news' ? 'news' : '',
+    ].filter(Boolean)
+    const lines = [
+      `<web_results query="${attributeValue(result.query)}"${filters.length ? ` filter="${filters.join(', ')}"` : ''}>`,
+    ]
+    if (result.relaxed) {
+      lines.push('Nothing matched the filter, so these results are from an unfiltered search.')
+    }
+    for (const answer of result.answers ?? []) {
+      lines.push(`Answer: ${webText(answer)}`)
+    }
+    if (result.results.length === 0) {
+      lines.push('No results. Try fewer or different words.')
+    }
+    result.results.forEach((entry, index) => lines.push(...sourceLines(entry, index)))
+    lines.push('</web_results>')
+    return lines.join('\n')
+  },
+
+  web_fetch(result) {
+    const open = `<web_page${webPageAttributes(result)}>`
+    const archived = result.archived
+      ? `The site refused a direct read; this is the Internet Archive copy captured ${result.archived}. Anything newer than that is not in it.`
+      : ''
+
+    if (Array.isArray(result.matches)) {
+      const body =
+        result.matches.length === 0
+          ? `No passage mentions "${result.find}".`
+          : result.matches
+              .map(
+                match =>
+                  `[page ${match.page}]${match.heading ? ` ${webText(match.heading)}` : ''}\n${webText(match.text)}`
+              )
+              .join('\n\n')
+      const hidden = (result.totalMatches ?? 0) - result.matches.length
+      const summary =
+        result.matches.length === 0
+          ? `The document has ${result.totalPages} page(s); read one, or try another term.`
+          : `${result.totalMatches} passage(s) mention "${result.find}" across ${result.totalPages} page(s).${hidden > 0 ? ` ${hidden} not shown; narrow find to see them.` : ''}`
+      return [open, body, '</web_page>', summary, archived].filter(Boolean).join('\n')
+    }
+
+    let footer = ''
+    if (result.page < result.totalPages) {
+      footer = `Page ${result.page} of ${result.totalPages}. Call web_fetch with page=${result.page + 1} for more, or with find to go straight to a term.`
+    } else if (result.totalPages > 1) {
+      footer = `Page ${result.page} of ${result.totalPages} (last).`
+    }
+    if (result.truncated) footer += `${footer ? ' ' : ''}The document was cut short because it is very large.`
+    return [open, webText(result.content), '</web_page>', footer, archived].filter(Boolean).join('\n')
+  },
+
   compile_project(result) {
     if (typeof result.errorCount !== 'number') return JSON.stringify(result)
     const lines = [
@@ -163,7 +254,23 @@ const RENDERERS = {
   },
 }
 
+/**
+ * A page that could not be read, with what its search result said about it.
+ * The snippet is still web text, so it stays inside the fence.
+ */
+function renderFetchFailure(result) {
+  return [
+    `Error: ${result.error}`,
+    '<web_results>',
+    ...sourceLines(result, 0),
+    '</web_results>',
+  ].join('\n')
+}
+
 export function renderToolResult(name, result) {
+  if (name === 'web_fetch' && result?.error && result.snippet && result.url) {
+    return renderFetchFailure(result)
+  }
   const renderer = RENDERERS[name]
   if (!renderer || result === null || typeof result !== 'object' || result.error) {
     return JSON.stringify(result)

@@ -10,10 +10,20 @@ const TARGET_LAG_SEC = 0.4
 const MIN_LIVE_CHARS_PER_SEC = 40
 /** Once the stream has ended, whatever is left drains at least this fast. */
 const MIN_DRAIN_CHARS_PER_SEC = 300
+/**
+ * How long the reveal takes to speed up to a burst. Slowing down is
+ * immediate, so the reveal never overshoots and stalls.
+ */
+const RATE_RISE_SEC = 0.3
 /** A run of text without whitespace longer than this is revealed mid-word. */
 const MAX_WORD_CHARS = 24
 /** Must match the duration of the `ai-assist-stream-fade` animation. */
 export const STREAM_FADE_MS = 400
+/**
+ * Words revealed together are faded in one after another; this bounds how far
+ * that schedule may run ahead of the revealed text.
+ */
+export const MAX_FADE_LEAD_MS = 250
 
 const FENCE_LINE = /^\s{0,3}(```|~~~)/
 const PARTIAL_FENCE_CLOSE = /^\s{0,3}[`~]{1,3}$/
@@ -21,7 +31,7 @@ const TABLE_LINE = /^\s*\|/
 const MARKER_ONLY_LINE = /^\s*(?:[-*+>]|\d+[.)]|#{1,6})?\s*$/
 // Same environments the markdown renderer draws as display math
 const DISPLAY_MATH_OPEN =
-  /\$\$|\\\[|\\begin\{((?:equation|align|alignat|gather|multline|matrix|pmatrix|bmatrix|vmatrix|Vmatrix|cases|aligned|gathered)\*?)\}/g
+  /\$\$|\\\[|\\begin\{((?:equation|align|alignat|gather|multline|matrix|pmatrix|bmatrix|vmatrix|Vmatrix|cases|aligned|gathered)\*?)\}(?:\[[^\]]*\])?(?:\{[^\}]*\})?/g
 
 function lineStartBefore(text: string, pos: number) {
   return text.lastIndexOf('\n', pos - 1) + 1
@@ -72,11 +82,15 @@ function openDisplayMathStart(head: string, fenced: [number, number][]) {
 /** Offset of an inline marker left unclosed in `line`, or -1. */
 function unclosedInlineStart(line: string) {
   let cut = -1
-  for (const marker of ['**', '`', '$']) {
+  for (const marker of ['**', '~~', '`', '$']) {
     const positions: number[] = []
     for (let i = 0; i < line.length; i++) {
       if (line[i - 1] === '\\' || !line.startsWith(marker, i)) continue
-      if (marker !== '**' && (line[i + 1] === marker || line[i - 1] === marker))
+      if (
+        marker !== '**' &&
+        marker !== '~~' &&
+        (line[i + 1] === marker || line[i - 1] === marker)
+      )
         continue
       positions.push(i)
       i += marker.length - 1
@@ -87,6 +101,31 @@ function unclosedInlineStart(line: string) {
     if (marker === '$' && /^\$\d/.test(line.slice(last))) continue
     cut = cut === -1 ? last : Math.min(cut, last)
   }
+
+  // Single asterisk for italics: count asterisks that are not part of **
+  const singleAsts: number[] = []
+  for (let i = 0; i < line.length; i++) {
+    if (line[i] === '*' && line[i - 1] !== '\\') {
+      if (line[i - 1] === '*' || line[i + 1] === '*') continue
+      singleAsts.push(i)
+    }
+  }
+  if (singleAsts.length % 2 === 1) {
+    const last = singleAsts[singleAsts.length - 1]
+    // Don't cut if it's a list marker at the start of line (e.g. "* item")
+    if (!/^\s*\*\s+/.test(line.slice(0, last + 2))) {
+      cut = cut === -1 ? last : Math.min(cut, last)
+    }
+  }
+
+  // Unclosed link or citation bracket (e.g. "[Overleaf Docs" or "[1")
+  const openBracket = line.lastIndexOf('[')
+  if (openBracket !== -1 && openBracket > line.lastIndexOf(']')) {
+    if (line[openBracket - 1] !== '\\') {
+      cut = cut === -1 ? openBracket : Math.min(cut, openBracket)
+    }
+  }
+
   return cut
 }
 
@@ -139,7 +178,11 @@ export function holdBackIncomplete(text: string, end: number) {
   return end
 }
 
-function lastWordBreak(text: string, from: number, limit: number) {
+/**
+ * Finds the end offset for the next word/token step. When text streams in fast,
+ * pacing by word/token boundaries ensures text never lands in rigid chunks.
+ */
+export function lastWordBreak(text: string, from: number, limit: number) {
   for (let i = limit; i > from; i--) {
     if (/\s/.test(text[i - 1])) return i
   }
@@ -156,9 +199,10 @@ function commonPrefixLength(a: string, b: string) {
 /**
  * Decouples what is on screen from how the stream arrives. Incoming text is
  * buffered and revealed a word at a time on every animation frame, at a speed
- * proportional to the backlog, so network bursts and pauses come out as one
- * even flow a fraction of a second behind the stream. Text is only revealed
- * once the markdown around it renders in its final shape.
+ * proportional to the backlog that ramps up rather than jumps, so network
+ * bursts and pauses come out as one even flow a fraction of a second behind
+ * the stream. Text is only revealed once the markdown around it renders in its
+ * final shape.
  *
  * A message that is not live when it mounts (history) is never animated.
  */
@@ -171,6 +215,8 @@ export function useStreamReveal(content: string, isLive: boolean) {
   const liveRef = useRef(isLive)
   liveRef.current = isLive
   const shownRef = useRef(shown)
+  // Current reveal speed in chars/sec, used to pace the per-word fades
+  const rateRef = useRef(MIN_LIVE_CHARS_PER_SEC)
 
   // A finished message that starts streaming again only animates what's new
   useEffect(() => {
@@ -207,7 +253,7 @@ export function useStreamReveal(content: string, isLive: boolean) {
           window.cancelAnimationFrame(frame)
           settleTimer = window.setTimeout(
             () => setSettled(true),
-            STREAM_FADE_MS
+            STREAM_FADE_MS + MAX_FADE_LEAD_MS
           )
         }
         return
@@ -215,10 +261,17 @@ export function useStreamReveal(content: string, isLive: boolean) {
 
       const dt = last ? Math.min(now - last, 100) : 16
       last = now
-      const rate = Math.max(
+      const targetRate = Math.max(
         done ? MIN_DRAIN_CHARS_PER_SEC : MIN_LIVE_CHARS_PER_SEC,
         backlog / TARGET_LAG_SEC
       )
+      const rate =
+        targetRate > rateRef.current
+          ? rateRef.current +
+            (targetRate - rateRef.current) *
+              (1 - Math.exp(-dt / 1000 / RATE_RISE_SEC))
+          : targetRate
+      rateRef.current = rate
       budget = Math.min(budget + (rate * dt) / 1000, backlog)
 
       const limit = from + Math.floor(budget)
@@ -246,6 +299,6 @@ export function useStreamReveal(content: string, isLive: boolean) {
   }, [settled, isLive])
 
   return settled
-    ? { text: content, animating: false }
-    : { text: shown, animating: true }
+    ? { text: content, animating: false, rateRef }
+    : { text: shown, animating: true, rateRef }
 }

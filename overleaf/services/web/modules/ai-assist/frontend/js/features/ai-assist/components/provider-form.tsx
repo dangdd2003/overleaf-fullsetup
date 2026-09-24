@@ -280,7 +280,6 @@ export default function ProviderForm({
         <div className="linking-ai-assist-form-actions">
           <OLButton
             variant="secondary"
-            size="sm"
             type="button"
             onClick={onLoadModels}
             isLoading={loadingModels}
@@ -293,7 +292,6 @@ export default function ProviderForm({
           {models.length > 0 ? (
             <OLButton
               variant="secondary"
-              size="sm"
               type="button"
               className="ai-provider-toggle-model-mode"
               onClick={() => setManualModel(current => !current)}
@@ -304,7 +302,6 @@ export default function ProviderForm({
 
           <OLButton
             variant="secondary"
-            size="sm"
             type="button"
             onClick={onTest}
             isLoading={probe.state === 'busy'}

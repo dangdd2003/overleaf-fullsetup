@@ -9,6 +9,7 @@ import { createProviderClient } from './AiAssistProviders.mjs'
 import { renderToolResult } from './AiAssistToolRender.mjs'
 import { SYSTEM_PROMPT, systemPromptFor } from './AiAssistSystemPrompt.mjs'
 import { coerceToolArgs } from './AiAssistToolSchema.mjs'
+import { AiAssistWebTools, WEB_TOOL_NAMES } from './AiAssistWebTools.mjs'
 import {
   decide,
   toolSpecsFor,
@@ -432,9 +433,11 @@ export class AiAssistRunManager {
     chatHistoryStore = defaultChatHistoryStore,
     approvalTimeoutMs = null,
     compileTimeoutMs = null,
+    webToolsFactory = (settings, { userId } = {}) => new AiAssistWebTools(settings, { cacheOwner: userId }),
   } = {}) {
     this.store = store
     this.tools = tools
+    this.webToolsFactory = webToolsFactory
     this.clientFactory = clientFactory
     this.chatHistoryStore = chatHistoryStore
     this.activeRuns = new Map()
@@ -451,7 +454,16 @@ export class AiAssistRunManager {
     this.control = control
   }
 
-  async startRun({ runId, projectId, userId, transcript, providerSettings, mode = 'manual', chatId = null }) {
+  async startRun({
+    runId,
+    projectId,
+    userId,
+    transcript,
+    providerSettings,
+    mode = 'manual',
+    chatId = null,
+    webSearchSettings = null,
+  }) {
     const controller = new AbortController()
     const approvalPromiseResolvers = { resolve: null }
     const compileResolvers = new Map()
@@ -474,6 +486,11 @@ export class AiAssistRunManager {
     await this.store.createRun({ runId, projectId, userId, mode: initialMode })
 
     const client = this.clientFactory(providerSettings)
+    // Only runs whose user configured web search get the web tools, and the
+    // prompt section describing them.
+    const webTools = webSearchSettings ? this.webToolsFactory(webSearchSettings, { userId }) : null
+    // Sources cited in earlier turns keep their numbers in this one
+    webTools?.rememberSources?.(transcript)
     let messages = toAgentMessages(transcript)
 
     const DEFAULT_LIMITS = {
@@ -631,6 +648,10 @@ export class AiAssistRunManager {
       return outcome
     }
     const toolContext = call => ({ projectId, userId, callId: call.id, compileInEditor })
+    const runTool = call =>
+      webTools && WEB_TOOL_NAMES.has(call.name)
+        ? webTools.execute(call.name, call.args, { signal: controller.signal })
+        : this.tools.execute(call.name, call.args, toolContext(call))
 
     const awaitUserApproval = async approvalData => {
       await this.store.setPendingApproval(runId, approvalData)
@@ -724,9 +745,12 @@ export class AiAssistRunManager {
         let truncated = false
 
         const currentMode = this.activeRuns.get(runId)?.mode || 'manual'
-        const currentSystemPrompt = systemPromptFor(currentMode)
+        const currentSystemPrompt = systemPromptFor(currentMode, { webTools: Boolean(webTools) })
 
-        const allToolSpecs = this.tools?.getToolSpecs ? this.tools.getToolSpecs() : []
+        const allToolSpecs = [
+          ...(this.tools?.getToolSpecs ? this.tools.getToolSpecs() : []),
+          ...(webTools ? webTools.getToolSpecs() : []),
+        ]
         const modeToolSpecs = toolSpecsFor(currentMode, allToolSpecs)
 
         const budgeted = applyContextBudget({
@@ -890,7 +914,7 @@ export class AiAssistRunManager {
           await Promise.all(
             leadingReads.map(async call => {
               try {
-                const value = await this.tools.execute(call.name, call.args, toolContext(call))
+                const value = await runTool(call)
                 prefetched.set(call, { result: value, isError: false })
               } catch (err) {
                 prefetched.set(call, {
@@ -1078,7 +1102,7 @@ export class AiAssistRunManager {
             isError = done.isError
           } else {
             try {
-              result = await this.tools.execute(call.name, call.args, toolContext(call))
+              result = await runTool(call)
             } catch (err) {
               result = { error: err.message || 'Tool execution failed' }
               isError = true
