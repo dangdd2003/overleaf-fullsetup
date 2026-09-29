@@ -91,6 +91,17 @@ html(
 				content=settings.aiAssist && settings.aiAssist.enabled && settings.aiAssist.webToolsEnabled
 			)
 			meta(
+				name='ol-aiAssistServerWebSearchEnabled'
+				data-type='boolean'
+				content=settings.aiAssist && settings.aiAssist.enabled && settings.aiAssist.webToolsEnabled && settings.aiAssist.serverWebSearch && settings.aiAssist.serverWebSearch.enabled
+			)
+			if settings.aiAssist && settings.aiAssist.enabled && settings.aiAssist.webToolsEnabled && settings.aiAssist.serverWebSearch && settings.aiAssist.serverWebSearch.enabled
+				meta(
+					name='ol-aiAssistServerWebSearchCache'
+					data-type='json'
+					content={ cacheHours: settings.aiAssist.serverWebSearch.cacheHours, maxCachedSearches: settings.aiAssist.serverWebSearch.maxCachedSearches, maxCachedPages: settings.aiAssist.serverWebSearch.maxCachedPages }
+				)
+			meta(
 				name='ol-splitTestVariants'
 				data-type='json'
 				content=splitTestVariants || {}

@@ -114,7 +114,10 @@ function GithubSettingsWidgetInner() {
           <p>{t('unlink_github_warning')}</p>
         </OLModalBody>
         <OLModalFooter>
-          <OLButton variant="secondary" onClick={() => setShowUnlinkModal(false)}>
+          <OLButton
+            variant="secondary"
+            onClick={() => setShowUnlinkModal(false)}
+          >
             {t('cancel')}
           </OLButton>
           <OLButton

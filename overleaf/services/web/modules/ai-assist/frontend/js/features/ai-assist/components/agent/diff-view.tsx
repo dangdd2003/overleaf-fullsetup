@@ -1,6 +1,13 @@
-import React from 'react'
-import { diffLines, diffWordsWithSpace } from 'diff'
+import React, { useMemo } from 'react'
+import { diffLines, diffWordsWithSpace, type Change } from 'diff'
 import { useEditorThemeStyles } from '../../hooks/use-editor-theme-styles'
+import {
+  canHighlightCode,
+  CodeSegment,
+  EDITOR_CODE_CLASS,
+  highlightCodeLines,
+  useEditorHighlightStyle,
+} from '../../hooks/use-editor-code-highlight'
 
 const MAX_ROWS = 12
 
@@ -12,9 +19,14 @@ const MAX_ROWS = 12
 // "title" and "titlesec" as different tokens, so the whole changed phrase is
 // grouped into one deleted/inserted span instead of being split around a
 // coincidental character match.
-export function computeInlineDiff(original: unknown = '', replacement: unknown = '') {
-  const safeOrig = typeof original === 'string' ? original : String(original ?? '')
-  const safeRepl = typeof replacement === 'string' ? replacement : String(replacement ?? '')
+export function computeInlineDiff(
+  original: unknown = '',
+  replacement: unknown = ''
+) {
+  const safeOrig =
+    typeof original === 'string' ? original : String(original ?? '')
+  const safeRepl =
+    typeof replacement === 'string' ? replacement : String(replacement ?? '')
   try {
     const parts = diffWordsWithSpace(safeOrig, safeRepl)
 
@@ -50,53 +62,144 @@ export function computeInlineDiff(original: unknown = '', replacement: unknown =
 
     return { prefix, origMiddle, replMiddle, suffix }
   } catch {
-    return { prefix: '', origMiddle: safeOrig, replMiddle: safeRepl, suffix: '' }
+    return {
+      prefix: '',
+      origMiddle: safeOrig,
+      replMiddle: safeRepl,
+      suffix: '',
+    }
   }
 }
+
+// Only the part of a line's segments between two character offsets
+function sliceSegments(segments: CodeSegment[], from: number, to: number) {
+  const out: CodeSegment[] = []
+  let pos = 0
+  for (const segment of segments) {
+    const end = pos + segment.text.length
+    if (end > from && pos < to) {
+      out.push({
+        text: segment.text.slice(Math.max(0, from - pos), to - pos),
+        className: segment.className,
+      })
+    }
+    pos = end
+  }
+  return out
+}
+
+function plainLines(text: string): CodeSegment[][] {
+  return text.split('\n').map(line => (line ? [{ text: line }] : []))
+}
+
+function renderSegments(segments: CodeSegment[] = []) {
+  return segments.map((segment, index) =>
+    segment.className ? (
+      <span key={index} className={segment.className}>
+        {segment.text}
+      </span>
+    ) : (
+      <React.Fragment key={index}>{segment.text}</React.Fragment>
+    )
+  )
+}
+
+type RowKind = 'del' | 'ins' | 'context'
+
+const SIGNS: Record<RowKind, string> = { del: '-', ins: '+', context: '' }
 
 export default function DiffView({
   oldText = '',
   newText = '',
   startLine = 1,
+  path,
   onLineClick,
   foldLongHunks = false,
 }: {
   oldText?: string
   newText?: string
   startLine?: number
+  /** The file's name, for highlighting its code the way the editor does. */
+  path?: string
   onLineClick?: (line: number) => void
   foldLongHunks?: boolean
 }) {
-  const { editorStyle, gutterStyle, isDark } = useEditorThemeStyles()
-  const safeOldText = typeof oldText === 'string' ? oldText : String(oldText ?? '')
-  const safeNewText = typeof newText === 'string' ? newText : String(newText ?? '')
+  const { editorStyle, editorTheme, isDark } = useEditorThemeStyles()
+  useEditorHighlightStyle(editorTheme)
+  const safeOldText =
+    typeof oldText === 'string' ? oldText : String(oldText ?? '')
+  const safeNewText =
+    typeof newText === 'string' ? newText : String(newText ?? '')
   const safeStartLine =
     typeof startLine === 'number' && Number.isFinite(startLine) && startLine > 0
       ? startLine
       : 1
 
-  const renderGutter = (prefix: string, lineNo: number) => (
+  const extension = typeof path === 'string' ? path.split('.').pop() : ''
+  const highlighted = Boolean(extension && canHighlightCode(extension))
+  const oldSegments = useMemo(
+    () =>
+      highlighted
+        ? highlightCodeLines(safeOldText, extension!)!
+        : plainLines(safeOldText),
+    [safeOldText, extension, highlighted]
+  )
+  const newSegments = useMemo(
+    () =>
+      highlighted
+        ? highlightCodeLines(safeNewText, extension!)!
+        : plainLines(safeNewText),
+    [safeNewText, extension, highlighted]
+  )
+
+  const renderGutter = (kind: RowKind, lineNo: number) => (
     <span
       role={onLineClick ? 'button' : undefined}
       tabIndex={onLineClick ? 0 : undefined}
       className={`diff-gutter ${onLineClick ? 'diff-gutter-clickable' : ''}`}
-      style={gutterStyle}
       onClick={onLineClick ? () => onLineClick(lineNo) : undefined}
       onKeyDown={
         onLineClick ? e => e.key === 'Enter' && onLineClick(lineNo) : undefined
       }
       title={onLineClick ? `Jump to line ${lineNo}` : undefined}
     >
-      {prefix ? `${prefix} ` : ''}{lineNo}
+      <span className="diff-line-no">{lineNo}</span>
+      <span className="diff-sign" aria-hidden="true">
+        {SIGNS[kind]}
+      </span>
     </span>
+  )
+
+  // The row keeps diff-del/diff-ins so a whole changed line can be found as one
+  const renderRow = (
+    key: string,
+    kind: RowKind,
+    lineNo: number,
+    content: React.ReactNode
+  ) => (
+    <div
+      key={key}
+      className={`diff-line diff-line-${kind}${kind === 'context' ? '' : ` diff-${kind}`}`}
+    >
+      {renderGutter(kind, lineNo)}
+      <span className="diff-content">{content}</span>
+    </div>
   )
 
   const renderContainer = (children: React.ReactNode) => (
     <div
       className={`cm-editor cm-editor-preview ${
         isDark ? 'overall-theme-dark' : 'overall-theme-light'
-      } ai-suggest-code-diff`}
-      style={editorStyle}
+      } ai-suggest-code-diff is-diff${highlighted ? ` ${EDITOR_CODE_CLASS}` : ''}`}
+      style={
+        {
+          ...editorStyle,
+          // Every row's number column is as wide as the longest number
+          '--diff-line-no-chars': String(
+            safeStartLine + Math.max(oldSegments.length, newSegments.length)
+          ).length,
+        } as React.CSSProperties
+      }
     >
       <div className="cm-scroller">
         <div className="cm-content">{children}</div>
@@ -109,47 +212,67 @@ export default function DiffView({
   // line, so creations render as pure insertion.
   if (safeOldText === '') {
     return renderContainer(
-      safeNewText.split('\n').map((line, index) => {
-        const lineNo = safeStartLine + index
-        return (
-          <div key={index} className="diff-line diff-line-ins diff-ins">
-            {renderGutter('+', lineNo)}
-            <span className="diff-content">
-              <mark className="diff-ins">{line}</mark>
-            </span>
-          </div>
+      newSegments.map((segments, index) =>
+        renderRow(
+          String(index),
+          'ins',
+          safeStartLine + index,
+          renderSegments(segments)
         )
-      })
+      )
     )
   }
 
   const origLines = safeOldText.split('\n')
   const replLines = safeNewText.split('\n')
 
+  // A one-line change also marks the words that changed within the line
   if (origLines.length === 1 && replLines.length === 1) {
     const diff = computeInlineDiff(origLines[0], replLines[0])
+    const renderLine = (
+      segments: CodeSegment[],
+      length: number,
+      middle: string,
+      kind: 'del' | 'ins'
+    ) => {
+      const from = diff.prefix.length
+      const to = from + middle.length
+      return (
+        <>
+          {renderSegments(sliceSegments(segments, 0, from))}
+          {middle && (
+            <mark className={`diff-${kind}`}>
+              {renderSegments(sliceSegments(segments, from, to))}
+            </mark>
+          )}
+          {renderSegments(sliceSegments(segments, to, length))}
+        </>
+      )
+    }
     return renderContainer(
       <>
-        <div className="diff-line diff-line-del diff-del">
-          {renderGutter('-', safeStartLine)}
-          <span className="diff-content">
-            {diff.prefix}
-            {diff.origMiddle && (
-              <mark className="diff-del">{diff.origMiddle}</mark>
-            )}
-            {diff.suffix}
-          </span>
-        </div>
-        <div className="diff-line diff-line-ins diff-ins">
-          {renderGutter('+', safeStartLine)}
-          <span className="diff-content">
-            {diff.prefix}
-            {diff.replMiddle && (
-              <mark className="diff-ins">{diff.replMiddle}</mark>
-            )}
-            {diff.suffix}
-          </span>
-        </div>
+        {renderRow(
+          'del',
+          'del',
+          safeStartLine,
+          renderLine(
+            oldSegments[0] ?? [],
+            origLines[0].length,
+            diff.origMiddle,
+            'del'
+          )
+        )}
+        {renderRow(
+          'ins',
+          'ins',
+          safeStartLine,
+          renderLine(
+            newSegments[0] ?? [],
+            replLines[0].length,
+            diff.replMiddle,
+            'ins'
+          )
+        )}
       </>
     )
   }
@@ -158,7 +281,7 @@ export default function DiffView({
   // newline as part of its identity, so without it the last line of one side
   // never matches the same text mid-string on the other, and the whole block
   // degrades to a full delete plus insert.
-  let chunks: any[] = []
+  let chunks: Change[]
   try {
     chunks = diffLines(origLines.join('\n') + '\n', replLines.join('\n') + '\n')
   } catch {
@@ -167,8 +290,8 @@ export default function DiffView({
       { value: safeNewText + '\n', added: true },
     ]
   }
-  let origLineNo = safeStartLine
-  let replLineNo = safeStartLine
+  let origIndex = 0
+  let replIndex = 0
   const rows: React.ReactNode[] = []
 
   chunks.forEach((chunk, chunkIndex) => {
@@ -177,37 +300,36 @@ export default function DiffView({
 
     lines.forEach((line: string, idx: number) => {
       if (chunk.removed) {
-        const lineNo = origLineNo
         rows.push(
-          <div key={`del-${chunkIndex}-${idx}`} className="diff-line diff-line-del diff-del">
-            {renderGutter('-', lineNo)}
-            <span className="diff-content">
-              <mark className="diff-del">{line}</mark>
-            </span>
-          </div>
+          renderRow(
+            `del-${chunkIndex}-${idx}`,
+            'del',
+            safeStartLine + origIndex,
+            renderSegments(oldSegments[origIndex] ?? [{ text: line }])
+          )
         )
-        origLineNo++
+        origIndex++
       } else if (chunk.added) {
-        const lineNo = replLineNo
         rows.push(
-          <div key={`ins-${chunkIndex}-${idx}`} className="diff-line diff-line-ins diff-ins">
-            {renderGutter('+', lineNo)}
-            <span className="diff-content">
-              <mark className="diff-ins">{line}</mark>
-            </span>
-          </div>
+          renderRow(
+            `ins-${chunkIndex}-${idx}`,
+            'ins',
+            safeStartLine + replIndex,
+            renderSegments(newSegments[replIndex] ?? [{ text: line }])
+          )
         )
-        replLineNo++
+        replIndex++
       } else {
-        const lineNo = replLineNo
         rows.push(
-          <div key={`ctx-${chunkIndex}-${idx}`} className="diff-line diff-line-context">
-            {renderGutter('', lineNo)}
-            <span className="diff-content">{line}</span>
-          </div>
+          renderRow(
+            `ctx-${chunkIndex}-${idx}`,
+            'context',
+            safeStartLine + replIndex,
+            renderSegments(newSegments[replIndex] ?? [{ text: line }])
+          )
         )
-        origLineNo++
-        replLineNo++
+        origIndex++
+        replIndex++
       }
     })
   })
@@ -222,7 +344,7 @@ export default function DiffView({
       <>
         {head}
         <div className="diff-line diff-line-fold">
-          <span className="diff-gutter" style={gutterStyle} />
+          <span className="diff-gutter" />
           <span className="diff-content">… {hidden} more lines</span>
         </div>
         {tail}

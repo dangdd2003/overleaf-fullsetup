@@ -17,7 +17,7 @@ export function isValidChatId(chatId) {
   return typeof chatId === 'string' && CHAT_ID.test(chatId)
 }
 
-function baseDir() {
+export function baseDir() {
   return Settings.aiAssist?.chatHistoryDir || '/var/lib/overleaf/data/ai-assist'
 }
 
@@ -36,7 +36,10 @@ function fileFor(projectId, userId, chatId) {
 export function sanitizeChatTitle(raw) {
   if (typeof raw !== 'string') return ''
   // 1. Take first non-empty line
-  const lines = raw.split(/\r?\n/).map(l => l.trim()).filter(Boolean)
+  const lines = raw
+    .split(/\r?\n/)
+    .map(l => l.trim())
+    .filter(Boolean)
   if (lines.length === 0) return ''
   let title = lines[0]
 
@@ -44,7 +47,9 @@ export function sanitizeChatTitle(raw) {
   title = title.replace(/^["'`“”‘’*#_`]+|["'`“”‘’*#_`]+$/g, '').trim()
 
   // 3. Strip common AI prefix labels like "Title:", "Chat title:", "Topic:", "Name:"
-  title = title.replace(/^(?:chat\s+)?(?:title|topic|summary|name)\s*:\s*/i, '').trim()
+  title = title
+    .replace(/^(?:chat\s+)?(?:title|topic|summary|name)\s*:\s*/i, '')
+    .trim()
 
   // 4. Strip surrounding quotes or markdown again if they were inside the label
   title = title.replace(/^["'`“”‘’*#_`]+|["'`“”‘’*#_`]+$/g, '').trim()
@@ -66,7 +71,10 @@ export function sanitizeChatTitle(raw) {
 }
 
 function toTitleCase(str) {
-  return str.replace(/\w\S*/g, txt => txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase())
+  return str.replace(
+    /\w\S*/g,
+    txt => txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase()
+  )
 }
 
 export function reorganizePromptToTitle(rawText) {
@@ -77,19 +85,28 @@ export function reorganizePromptToTitle(rawText) {
   const editMatch = text.match(/^Edit\s+([^\s,]+)\s+to\s+([^,.;]+)/i)
   if (editMatch) {
     const file = editMatch[1]
-    const action = editMatch[2].replace(/\b(and fix grammar|with minimal.*)\b/ig, '').trim()
+    const action = editMatch[2]
+      .replace(/\b(and fix grammar|with minimal.*)\b/gi, '')
+      .trim()
     return sanitizeChatTitle(`${toTitleCase(action)} in ${file}`)
   }
 
   // 2. "Scan (this project|...) for <target>..." -> "Scan for <Target>"
   const scanMatch = text.match(/^Scan(?:\s+this\s+project)?\s+for\s+([^,.;]+)/i)
   if (scanMatch) {
-    const target = scanMatch[1].replace(/\b(that lack.*|statements, claims, or assertions)\b/ig, 'Unsupported Statements').trim()
+    const target = scanMatch[1]
+      .replace(
+        /\b(that lack.*|statements, claims, or assertions)\b/gi,
+        'Unsupported Statements'
+      )
+      .trim()
     return sanitizeChatTitle(`Scan for ${toTitleCase(target)}`)
   }
 
   // 3. "Inspect (the )?compile log and (resolve|fix) (the )?(.*)" -> "Resolve Compile Errors"
-  const inspectCompileMatch = text.match(/^Inspect\s+(?:the\s+)?compile\s+log\s+and\s+(?:resolve|fix)/i)
+  const inspectCompileMatch = text.match(
+    /^Inspect\s+(?:the\s+)?compile\s+log\s+and\s+(?:resolve|fix)/i
+  )
   if (inspectCompileMatch) {
     return 'Resolve Compile Errors'
   }
@@ -101,7 +118,9 @@ export function reorganizePromptToTitle(rawText) {
   }
 
   // 5. "Draft (and append )?(a )?(concise )?(\d+-word )?([^\s,]+)(?:.*?)of\s+([^\s,]+)" -> "Draft <Section> in <File>"
-  const draftMatch = text.match(/^Draft(?:\s+and\s+append)?(?:\s+a)?(?:\s+concise)?(?:\s+\d+-word)?\s+([^\s,]+)(?:.*?)(?:in\s+the\s+[^\s,]+\s+environment\s+of|of|in|to)\s+([^\s,]+)/i)
+  const draftMatch = text.match(
+    /^Draft(?:\s+and\s+append)?(?:\s+a)?(?:\s+concise)?(?:\s+\d+-word)?\s+([^\s,]+)(?:.*?)(?:in\s+the\s+[^\s,]+\s+environment\s+of|of|in|to)\s+([^\s,]+)/i
+  )
   if (draftMatch) {
     const section = draftMatch[1]
     const file = draftMatch[2]
@@ -118,8 +137,14 @@ export function reorganizePromptToTitle(rawText) {
   // 5-word slice never ends on a dangling comma, then take a clean title.
   const cleaned = text
     .replace(/^(?:please\s+)?(?:can\s+you\s+)?(?:help\s+me\s+)?(?:to\s+)?/i, '')
-    .replace(/^(?:could\s+you\s+)?(?:i\s+want\s+to\s+)?(?:i\s+need\s+to\s+)?/i, '')
-    .replace(/\b(highlighting how you can help.*|with minimal.*|preserving all.*)\b/ig, '')
+    .replace(
+      /^(?:could\s+you\s+)?(?:i\s+want\s+to\s+)?(?:i\s+need\s+to\s+)?/i,
+      ''
+    )
+    .replace(
+      /\b(highlighting how you can help.*|with minimal.*|preserving all.*)\b/gi,
+      ''
+    )
     .replace(/[,:;]/g, '')
     .trim()
 
@@ -249,7 +274,13 @@ async function saveChat(
   return { ...summary, messageCount: transcript.length }
 }
 
-async function saveChatTitle(projectId, userId, chatId, title, isGenerated = true) {
+async function saveChatTitle(
+  projectId,
+  userId,
+  chatId,
+  title,
+  isGenerated = true
+) {
   const cleanTitle = sanitizeChatTitle(title) || 'New chat'
   const file = fileFor(projectId, userId, chatId)
   const existing = await readChat(file).catch(() => null)
@@ -282,7 +313,9 @@ async function saveChatTitle(projectId, userId, chatId, title, isGenerated = tru
   const { transcript: _omit, ...summary } = existing
   return {
     ...summary,
-    messageCount: Array.isArray(existing.transcript) ? existing.transcript.length : 0,
+    messageCount: Array.isArray(existing.transcript)
+      ? existing.transcript.length
+      : 0,
   }
 }
 

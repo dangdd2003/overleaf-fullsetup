@@ -44,20 +44,26 @@ vi.mock('../../../../../app/src/infrastructure/mongodb.mjs', () => {
   }
 })
 
-vi.mock('../../../../../app/src/Features/Authentication/SessionManager.mjs', () => ({
-  default: {
-    getLoggedInUserId: vi.fn(),
-  },
-}))
-
-vi.mock('../../../../../app/src/Features/Collaborators/OwnershipTransferHandler.mjs', () => ({
-  default: {
-    promises: {
-      transferOwnership: vi.fn(),
-      transferAllProjectsToUser: vi.fn(),
+vi.mock(
+  '../../../../../app/src/Features/Authentication/SessionManager.mjs',
+  () => ({
+    default: {
+      getLoggedInUserId: vi.fn(),
     },
-  },
-}))
+  })
+)
+
+vi.mock(
+  '../../../../../app/src/Features/Collaborators/OwnershipTransferHandler.mjs',
+  () => ({
+    default: {
+      promises: {
+        transferOwnership: vi.fn(),
+        transferAllProjectsToUser: vi.fn(),
+      },
+    },
+  })
+)
 
 vi.mock('../../../../../app/src/Features/User/UserSessionsManager.mjs', () => ({
   default: {
@@ -84,13 +90,16 @@ vi.mock('../../../../../app/src/Features/User/UserAuditLogHandler.mjs', () => ({
   },
 }))
 
-vi.mock('../../../../../app/src/Features/Security/OneTimeTokenHandler.mjs', () => ({
-  default: {
-    promises: {
-      getNewToken: vi.fn(),
+vi.mock(
+  '../../../../../app/src/Features/Security/OneTimeTokenHandler.mjs',
+  () => ({
+    default: {
+      promises: {
+        getNewToken: vi.fn(),
+      },
     },
-  },
-}))
+  })
+)
 
 vi.mock('../../../../../app/src/Features/User/UserGetter.mjs', () => ({
   default: {
@@ -156,11 +165,14 @@ vi.mock('../../../../../app/src/Features/User/UserCreator.mjs', () => ({
   },
 }))
 
-vi.mock('../../../../../app/src/Features/Authentication/AuthenticationManager.mjs', () => ({
-  default: {
-    hashPassword: vi.fn(),
-  },
-}))
+vi.mock(
+  '../../../../../app/src/Features/Authentication/AuthenticationManager.mjs',
+  () => ({
+    default: {
+      hashPassword: vi.fn(),
+    },
+  })
+)
 
 import AdminUserManagementController from '../../../app/src/AdminUserManagementController.mjs'
 
@@ -203,8 +215,12 @@ describe('AdminUserProjectsTransfer Controller', () => {
       await AdminUserManagementController.transferProject(req, res)
 
       expect(res.status).toHaveBeenCalledWith(400)
-      expect(res.json).toHaveBeenCalledWith({ error: 'cannot_transfer_to_self' })
-      expect(OwnershipTransferHandler.promises.transferOwnership).not.toHaveBeenCalled()
+      expect(res.json).toHaveBeenCalledWith({
+        error: 'cannot_transfer_to_self',
+      })
+      expect(
+        OwnershipTransferHandler.promises.transferOwnership
+      ).not.toHaveBeenCalled()
     })
 
     it('rejects invalid userId (400)', async () => {
@@ -213,7 +229,9 @@ describe('AdminUserProjectsTransfer Controller', () => {
       await AdminUserManagementController.transferProject(req, res)
 
       expect(res.status).toHaveBeenCalledWith(400)
-      expect(OwnershipTransferHandler.promises.transferOwnership).not.toHaveBeenCalled()
+      expect(
+        OwnershipTransferHandler.promises.transferOwnership
+      ).not.toHaveBeenCalled()
     })
 
     it('rejects invalid projectId (400)', async () => {
@@ -222,7 +240,9 @@ describe('AdminUserProjectsTransfer Controller', () => {
       await AdminUserManagementController.transferProject(req, res)
 
       expect(res.status).toHaveBeenCalledWith(400)
-      expect(OwnershipTransferHandler.promises.transferOwnership).not.toHaveBeenCalled()
+      expect(
+        OwnershipTransferHandler.promises.transferOwnership
+      ).not.toHaveBeenCalled()
     })
 
     it('rejects invalid destination user ID (400)', async () => {
@@ -231,7 +251,9 @@ describe('AdminUserProjectsTransfer Controller', () => {
       await AdminUserManagementController.transferProject(req, res)
 
       expect(res.status).toHaveBeenCalledWith(400)
-      expect(OwnershipTransferHandler.promises.transferOwnership).not.toHaveBeenCalled()
+      expect(
+        OwnershipTransferHandler.promises.transferOwnership
+      ).not.toHaveBeenCalled()
     })
 
     it('returns 404 when destination user is not found', async () => {
@@ -241,7 +263,9 @@ describe('AdminUserProjectsTransfer Controller', () => {
 
       expect(res.status).toHaveBeenCalledWith(404)
       expect(res.json).toHaveBeenCalledWith({ error: 'user_not_found' })
-      expect(OwnershipTransferHandler.promises.transferOwnership).not.toHaveBeenCalled()
+      expect(
+        OwnershipTransferHandler.promises.transferOwnership
+      ).not.toHaveBeenCalled()
     })
 
     it('calls OwnershipTransferHandler.promises.transferOwnership and returns { success: true, projectId, newOwnerId }', async () => {
@@ -253,15 +277,13 @@ describe('AdminUserProjectsTransfer Controller', () => {
 
       await AdminUserManagementController.transferProject(req, res)
 
-      expect(OwnershipTransferHandler.promises.transferOwnership).toHaveBeenCalledWith(
-        projectId,
-        toUserId,
-        {
-          fromUserId,
-          allowTransferToNonCollaborators: true,
-          ipAddress: '127.0.0.1',
-        }
-      )
+      expect(
+        OwnershipTransferHandler.promises.transferOwnership
+      ).toHaveBeenCalledWith(projectId, toUserId, {
+        fromUserId,
+        allowTransferToNonCollaborators: true,
+        ipAddress: '127.0.0.1',
+      })
       expect(res.json).toHaveBeenCalledWith({
         success: true,
         projectId,
@@ -279,15 +301,13 @@ describe('AdminUserProjectsTransfer Controller', () => {
 
       await AdminUserManagementController.transferProject(req, res)
 
-      expect(OwnershipTransferHandler.promises.transferOwnership).toHaveBeenCalledWith(
-        projectId,
-        toUserId,
-        {
-          fromUserId,
-          allowTransferToNonCollaborators: true,
-          ipAddress: '127.0.0.1',
-        }
-      )
+      expect(
+        OwnershipTransferHandler.promises.transferOwnership
+      ).toHaveBeenCalledWith(projectId, toUserId, {
+        fromUserId,
+        allowTransferToNonCollaborators: true,
+        ipAddress: '127.0.0.1',
+      })
       expect(res.json).toHaveBeenCalledWith({
         success: true,
         projectId,
@@ -307,7 +327,9 @@ describe('AdminUserProjectsTransfer Controller', () => {
       await AdminUserManagementController.transferProject(req, res)
 
       expect(res.status).toHaveBeenCalledWith(500)
-      expect(res.json).toHaveBeenCalledWith({ error: 'failed_to_transfer_project' })
+      expect(res.json).toHaveBeenCalledWith({
+        error: 'failed_to_transfer_project',
+      })
     })
   })
 
@@ -324,8 +346,12 @@ describe('AdminUserProjectsTransfer Controller', () => {
       await AdminUserManagementController.transferAllProjects(req, res)
 
       expect(res.status).toHaveBeenCalledWith(400)
-      expect(res.json).toHaveBeenCalledWith({ error: 'cannot_transfer_to_self' })
-      expect(OwnershipTransferHandler.promises.transferAllProjectsToUser).not.toHaveBeenCalled()
+      expect(res.json).toHaveBeenCalledWith({
+        error: 'cannot_transfer_to_self',
+      })
+      expect(
+        OwnershipTransferHandler.promises.transferAllProjectsToUser
+      ).not.toHaveBeenCalled()
     })
 
     it('rejects invalid userId (400)', async () => {
@@ -334,7 +360,9 @@ describe('AdminUserProjectsTransfer Controller', () => {
       await AdminUserManagementController.transferAllProjects(req, res)
 
       expect(res.status).toHaveBeenCalledWith(400)
-      expect(OwnershipTransferHandler.promises.transferAllProjectsToUser).not.toHaveBeenCalled()
+      expect(
+        OwnershipTransferHandler.promises.transferAllProjectsToUser
+      ).not.toHaveBeenCalled()
     })
 
     it('rejects invalid toUserId (400)', async () => {
@@ -343,7 +371,9 @@ describe('AdminUserProjectsTransfer Controller', () => {
       await AdminUserManagementController.transferAllProjects(req, res)
 
       expect(res.status).toHaveBeenCalledWith(400)
-      expect(OwnershipTransferHandler.promises.transferAllProjectsToUser).not.toHaveBeenCalled()
+      expect(
+        OwnershipTransferHandler.promises.transferAllProjectsToUser
+      ).not.toHaveBeenCalled()
     })
 
     it('returns 404 when destination user is not found', async () => {
@@ -353,7 +383,9 @@ describe('AdminUserProjectsTransfer Controller', () => {
 
       expect(res.status).toHaveBeenCalledWith(404)
       expect(res.json).toHaveBeenCalledWith({ error: 'user_not_found' })
-      expect(OwnershipTransferHandler.promises.transferAllProjectsToUser).not.toHaveBeenCalled()
+      expect(
+        OwnershipTransferHandler.promises.transferAllProjectsToUser
+      ).not.toHaveBeenCalled()
     })
 
     it('calls OwnershipTransferHandler.promises.transferAllProjectsToUser and returns { success: true, transferredCount, newTagName }', async () => {
@@ -361,14 +393,18 @@ describe('AdminUserProjectsTransfer Controller', () => {
         _id: toUserId,
         email: 'dest@example.com',
       })
-      OwnershipTransferHandler.promises.transferAllProjectsToUser.mockResolvedValue({
-        projectCount: 5,
-        newTagName: 'transferred-from-src@example.com',
-      })
+      OwnershipTransferHandler.promises.transferAllProjectsToUser.mockResolvedValue(
+        {
+          projectCount: 5,
+          newTagName: 'transferred-from-src@example.com',
+        }
+      )
 
       await AdminUserManagementController.transferAllProjects(req, res)
 
-      expect(OwnershipTransferHandler.promises.transferAllProjectsToUser).toHaveBeenCalledWith({
+      expect(
+        OwnershipTransferHandler.promises.transferAllProjectsToUser
+      ).toHaveBeenCalledWith({
         fromUserId,
         toUserId,
         ipAddress: '127.0.0.1',
@@ -386,14 +422,18 @@ describe('AdminUserProjectsTransfer Controller', () => {
         _id: toUserId,
         email: 'dest@example.com',
       })
-      OwnershipTransferHandler.promises.transferAllProjectsToUser.mockResolvedValue({
-        projectCount: 3,
-        newTagName: 'transferred-from-src@example.com',
-      })
+      OwnershipTransferHandler.promises.transferAllProjectsToUser.mockResolvedValue(
+        {
+          projectCount: 3,
+          newTagName: 'transferred-from-src@example.com',
+        }
+      )
 
       await AdminUserManagementController.transferAllProjects(req, res)
 
-      expect(OwnershipTransferHandler.promises.transferAllProjectsToUser).toHaveBeenCalledWith({
+      expect(
+        OwnershipTransferHandler.promises.transferAllProjectsToUser
+      ).toHaveBeenCalledWith({
         fromUserId,
         toUserId,
         ipAddress: '127.0.0.1',
@@ -417,7 +457,9 @@ describe('AdminUserProjectsTransfer Controller', () => {
       await AdminUserManagementController.transferAllProjects(req, res)
 
       expect(res.status).toHaveBeenCalledWith(500)
-      expect(res.json).toHaveBeenCalledWith({ error: 'failed_to_transfer_projects' })
+      expect(res.json).toHaveBeenCalledWith({
+        error: 'failed_to_transfer_projects',
+      })
     })
   })
 })

@@ -45,7 +45,12 @@ import McpErrors from './McpErrors.mjs'
 import McpUrlFetcher from './McpUrlFetcher.mjs'
 
 function normalise(p) {
-  return '/' + String(p || '').replace(/^\/+/, '').replace(/\/+$/, '')
+  return (
+    '/' +
+    String(p || '')
+      .replace(/^\/+/, '')
+      .replace(/\/+$/, '')
+  )
 }
 
 async function getTree(req, res) {
@@ -53,7 +58,10 @@ async function getTree(req, res) {
     req.params.projectId
   )
   res.json({
-    docs: docs.map(d => ({ path: normalise(d.path), id: d.doc._id.toString() })),
+    docs: docs.map(d => ({
+      path: normalise(d.path),
+      id: d.doc._id.toString(),
+    })),
     files: files.map(f => ({
       path: normalise(f.path),
       id: f.file._id.toString(),
@@ -142,7 +150,11 @@ async function moveEntity(req, res) {
     return res.json({ status: 'ok' })
   }
   if (to.split('/').some(seg => seg === '..' || seg === '.')) {
-    return McpErrors.send(res, McpErrors.CODES.VALIDATION, 'invalid target path')
+    return McpErrors.send(
+      res,
+      McpErrors.CODES.VALIDATION,
+      'invalid target path'
+    )
   }
 
   const { docs, files, folders } =
@@ -279,7 +291,9 @@ async function uploadFile(req, res) {
     buffer = Buffer.from(String(contentBase64), 'base64')
   } else if (url != null) {
     try {
-      ;({ buffer } = await McpUrlFetcher.fetchToBuffer(String(url), { maxBytes }))
+      ;({ buffer } = await McpUrlFetcher.fetchToBuffer(String(url), {
+        maxBytes,
+      }))
     } catch (err) {
       return McpErrors.send(
         res,
@@ -321,7 +335,9 @@ async function uploadFile(req, res) {
 
 async function downloadProjectZip(req, res) {
   const { projectId } = req.params
-  const project = await ProjectGetter.promises.getProject(projectId, { name: 1 })
+  const project = await ProjectGetter.promises.getProject(projectId, {
+    name: 1,
+  })
   if (!project) {
     return McpErrors.send(res, McpErrors.CODES.NOT_FOUND)
   }
@@ -329,10 +345,13 @@ async function downloadProjectZip(req, res) {
   try {
     await DocumentUpdaterHandler.promises.flushProjectToMongo(projectId)
   } catch (err) {
-    logger.warn({ err, projectId }, 'failed to flush project before zip download')
+    logger.warn(
+      { err, projectId },
+      'failed to flush project before zip download'
+    )
   }
 
-  const safeName = (project.name || 'project').replace(/[^a-zA-Z0-9_\-\.]/g, '_')
+  const safeName = (project.name || 'project').replace(/[^a-zA-Z0-9_\-.]/g, '_')
   ProjectZipStreamManager.createZipStreamForProject(
     projectId,
     false,
@@ -342,7 +361,10 @@ async function downloadProjectZip(req, res) {
         return McpErrors.send(res, McpErrors.CODES.UPSTREAM, error.message)
       }
       res.contentType('application/zip')
-      res.setHeader('Content-Disposition', `attachment; filename="${safeName}.zip"`)
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="${safeName}.zip"`
+      )
       stream.pipe(res)
     }
   )
@@ -361,7 +383,10 @@ async function downloadProjectZip(req, res) {
  * e.g. Overleaf Projects 2026-09-21 14-25-30 UTC (3 projects).zip
  */
 function bundleFilename(count, now = new Date()) {
-  const [date, clock] = now.toISOString().replace(/\.\d+Z$/, '').split('T')
+  const [date, clock] = now
+    .toISOString()
+    .replace(/\.\d+Z$/, '')
+    .split('T')
   return `Overleaf Projects ${date} ${clock.replace(/:/g, '-')} UTC (${count} project${count === 1 ? '' : 's'}).zip`
 }
 
@@ -404,7 +429,9 @@ async function downloadMultipleProjectsZip(req, res) {
   }
 
   await Promise.allSettled(
-    projectIds.map(pid => DocumentUpdaterHandler.promises.flushProjectToMongo(pid))
+    projectIds.map(pid =>
+      DocumentUpdaterHandler.promises.flushProjectToMongo(pid)
+    )
   )
 
   ProjectZipStreamManager.createZipStreamForMultipleProjects(
@@ -431,9 +458,8 @@ async function downloadFile(req, res) {
     return McpErrors.send(res, McpErrors.CODES.VALIDATION, 'path is required')
   }
 
-  const { docs, files } = await ProjectEntityHandler.promises.getAllEntities(
-    projectId
-  )
+  const { docs, files } =
+    await ProjectEntityHandler.promises.getAllEntities(projectId)
 
   // 1. Check if it is a binary file in FileStore / History
   const fileMatch = files.find(f => normalise(f.path) === target)
@@ -460,10 +486,7 @@ async function downloadFile(req, res) {
     const filename = path.basename(target)
     const contentType = lookupMimeType(filename) || 'application/octet-stream'
     res.contentType(contentType)
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename="${filename}"`
-    )
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`)
     if (contentLength) {
       res.setHeader('Content-Length', contentLength)
     }
@@ -479,13 +502,9 @@ async function downloadFile(req, res) {
     )
     const content = (lines || []).join('\n')
     const filename = path.basename(target)
-    const contentType =
-      lookupMimeType(filename) || 'text/plain; charset=utf-8'
+    const contentType = lookupMimeType(filename) || 'text/plain; charset=utf-8'
     res.contentType(contentType)
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename="${filename}"`
-    )
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`)
     return res.send(content)
   }
 

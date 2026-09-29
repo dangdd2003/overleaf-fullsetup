@@ -90,13 +90,12 @@ export function scanEnvironments(content: string): EnvironmentCount[] {
     .sort((a, b) => a.name.localeCompare(b.name))
 }
 
-export function scanPackages(
-  content: string
-): Array<Omit<PackageUse, 'path'>> {
+export function scanPackages(content: string): Array<Omit<PackageUse, 'path'>> {
   const uses: Array<Omit<PackageUse, 'path'>> = []
   content.split('\n').forEach((rawLine, index) => {
     const line = rawLine.replace(/(?<!\\)%.*/, '')
-    const re = /\\(?:usepackage|RequirePackage)\s*(?:\[([^\]]*)\])?\s*\{([^}]*)\}/g
+    const re =
+      /\\(?:usepackage|RequirePackage)\s*(?:\[([^\]]*)\])?\s*\{([^}]*)\}/g
     let match = re.exec(line)
     while (match) {
       const options = match[1]?.trim() || undefined
@@ -159,10 +158,7 @@ function packagesFor(path: string, content: string): PackageUse[] {
  * short-circuit, and the per-file environment cache above.
  */
 export function buildProjectIndex(
-  {
-    docs,
-    rootPath,
-  }: { docs: Record<string, string>; rootPath: string | null },
+  { docs, rootPath }: { docs: Record<string, string>; rootPath: string | null },
   previous?: ProjectIndex | null
 ): ProjectIndex {
   const entries = Object.entries(docs)
@@ -235,12 +231,16 @@ export function matchSection(outline: Outline, query: string): SectionMatch {
 
   // Exact phase: equal titles win first (even if that title is a prefix of another).
   const exactHits = normalised.filter(e => e.title === wanted)
-  if (exactHits.length === 1) return { kind: 'exact', section: exactHits[0].section }
-  if (exactHits.length > 1) return { kind: 'ambiguous', candidates: exactHits.map(e => e.section) }
+  if (exactHits.length === 1)
+    return { kind: 'exact', section: exactHits[0].section }
+  if (exactHits.length > 1)
+    return { kind: 'ambiguous', candidates: exactHits.map(e => e.section) }
 
   // Prefix phase: unique prefix wins; multiple prefixes are ambiguous.
   const prefixes = normalised.filter(e => e.title.startsWith(wanted))
-  if (prefixes.length === 1) return { kind: 'exact', section: prefixes[0].section }
-  if (prefixes.length > 1) return { kind: 'ambiguous', candidates: prefixes.map(e => e.section) }
+  if (prefixes.length === 1)
+    return { kind: 'exact', section: prefixes[0].section }
+  if (prefixes.length > 1)
+    return { kind: 'ambiguous', candidates: prefixes.map(e => e.section) }
   return { kind: 'none' }
 }

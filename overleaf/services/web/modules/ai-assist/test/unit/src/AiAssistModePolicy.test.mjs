@@ -1,3 +1,4 @@
+import { describe, it } from 'vitest'
 import { expect } from 'chai'
 import {
   MODES,
@@ -53,7 +54,9 @@ describe('AiAssistModePolicy', () => {
     it('applies project settings without asking in acceptEdits mode', () => {
       // The compiler engine and root document are project state, exactly like a
       // file is, so the mode that accepts file edits accepts them too.
-      expect(decide('acceptEdits', 'configure_compiler_settings')).to.equal('allow')
+      expect(decide('acceptEdits', 'configure_compiler_settings')).to.equal(
+        'allow'
+      )
       expect(decide('manual', 'configure_compiler_settings')).to.equal('ask')
     })
 
@@ -110,25 +113,43 @@ describe('AiAssistModePolicy', () => {
     it('returns all specs and excludes present_plan for manual mode', () => {
       const specs = toolSpecsFor('manual', sampleSpecs)
       const names = specs.map(s => s.name)
-      expect(names).to.include.members(['read_file', 'edit_file', 'create_file', 'configure_editor_settings', 'compile_project'])
+      expect(names).to.include.members([
+        'read_file',
+        'edit_file',
+        'create_file',
+        'configure_editor_settings',
+        'compile_project',
+      ])
       expect(names).to.not.include('present_plan')
     })
 
     it('returns all specs and excludes present_plan for acceptEdits mode', () => {
       const specs = toolSpecsFor('acceptEdits', sampleSpecs)
       const names = specs.map(s => s.name)
-      expect(names).to.include.members(['read_file', 'edit_file', 'create_file', 'configure_editor_settings', 'compile_project'])
+      expect(names).to.include.members([
+        'read_file',
+        'edit_file',
+        'create_file',
+        'configure_editor_settings',
+        'compile_project',
+      ])
       expect(names).to.not.include('present_plan')
     })
 
     it('excludes edit and settings tools and includes present_plan for plan mode', () => {
       const specs = toolSpecsFor('plan', sampleSpecs)
       const names = specs.map(s => s.name)
-      expect(names).to.include.members(['read_file', 'compile_project', 'present_plan'])
+      expect(names).to.include.members([
+        'read_file',
+        'compile_project',
+        'present_plan',
+      ])
       expect(names).to.not.include('edit_file')
       expect(names).to.not.include('create_file')
       expect(names).to.not.include('configure_editor_settings')
-      expect(specs.find(s => s.name === 'present_plan')).to.deep.equal(PRESENT_PLAN_SPEC)
+      expect(specs.find(s => s.name === 'present_plan')).to.deep.equal(
+        PRESENT_PLAN_SPEC
+      )
     })
   })
 })

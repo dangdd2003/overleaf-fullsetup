@@ -8,7 +8,10 @@ const DocstoreManager = {
   promises: { getDoc: vi.fn() },
 }
 const DocumentUpdaterHandler = {
-  promises: { setDocument: vi.fn(), flushProjectToMongo: vi.fn().mockResolvedValue() },
+  promises: {
+    setDocument: vi.fn(),
+    flushProjectToMongo: vi.fn().mockResolvedValue(),
+  },
 }
 const ProjectGetter = {
   promises: { getProject: vi.fn() },
@@ -49,10 +52,9 @@ vi.mock(
   '../../../../../app/src/Features/Downloads/ProjectZipStreamManager.mjs',
   () => ({ default: ProjectZipStreamManager })
 )
-vi.mock(
-  '../../../../../app/src/Features/History/HistoryManager.mjs',
-  () => ({ default: HistoryManager })
-)
+vi.mock('../../../../../app/src/Features/History/HistoryManager.mjs', () => ({
+  default: HistoryManager,
+}))
 vi.mock(
   '../../../../../app/src/Features/Authorization/AuthorizationManager.mjs',
   () => ({ default: AuthorizationManager })
@@ -72,9 +74,8 @@ vi.mock('../../../../../app/src/Features/Mcp/McpUrlFetcher.mjs', () => ({
 }))
 vi.mock('node:fs/promises', () => ({ default: fsPromises, ...fsPromises }))
 
-const { default: McpFilesController } = await import(
-  '../../../../../app/src/Features/Mcp/McpFilesController.mjs'
-)
+const { default: McpFilesController } =
+  await import('../../../../../app/src/Features/Mcp/McpFilesController.mjs')
 
 function res() {
   return {
@@ -212,7 +213,9 @@ describe('McpFilesController.createFolder', () => {
   })
 
   it('calls mkdirp with the normalised path', async () => {
-    EditorController.promises.mkdirp.mockResolvedValue({ lastFolder: { _id: 'x' } })
+    EditorController.promises.mkdirp.mockResolvedValue({
+      lastFolder: { _id: 'x' },
+    })
     const req = {
       mcpUserId: 'u1',
       params: { projectId: 'p1' },
@@ -546,7 +549,9 @@ describe('McpFilesController.downloadProjectZip', () => {
     await McpFilesController.downloadProjectZip(req, r)
 
     expect(r.headers['content-type']).toBe('application/zip')
-    expect(r.headers['content-disposition']).toBe('attachment; filename="My_Thesis.zip"')
+    expect(r.headers['content-disposition']).toBe(
+      'attachment; filename="My_Thesis.zip"'
+    )
     expect(mockStream.pipe).toHaveBeenCalledWith(r)
   })
 })
@@ -652,7 +657,9 @@ describe('McpFilesController.downloadFile', () => {
     await downloadPromise
 
     expect(r.headers['content-type']).toBe('image/png')
-    expect(r.headers['content-disposition']).toBe('attachment; filename="plot.png"')
+    expect(r.headers['content-disposition']).toBe(
+      'attachment; filename="plot.png"'
+    )
     expect(r.headers['content-length']).toBe(1234)
   })
 
@@ -668,7 +675,11 @@ describe('McpFilesController.downloadFile', () => {
       folders: [],
     })
     DocstoreManager.promises.getDoc.mockResolvedValue({
-      lines: ['\\documentclass{article}', '\\begin{document}', '\\end{document}'],
+      lines: [
+        '\\documentclass{article}',
+        '\\begin{document}',
+        '\\end{document}',
+      ],
     })
 
     const req = {
@@ -684,8 +695,12 @@ describe('McpFilesController.downloadFile', () => {
 
     await McpFilesController.downloadFile(req, r)
 
-    expect(r.headers['content-disposition']).toBe('attachment; filename="main.tex"')
-    expect(r.body).toBe('\\documentclass{article}\n\\begin{document}\n\\end{document}')
+    expect(r.headers['content-disposition']).toBe(
+      'attachment; filename="main.tex"'
+    )
+    expect(r.body).toBe(
+      '\\documentclass{article}\n\\begin{document}\n\\end{document}'
+    )
   })
 
   it('returns not_found if path does not match any doc or file', async () => {
@@ -728,12 +743,20 @@ describe('McpFilesController.searchFiles', () => {
     DocstoreManager.promises.getDoc.mockImplementation((pid, did) => {
       if (did === 'd1') {
         return Promise.resolve({
-          lines: ['\\documentclass{article}', '\\input{chapters/intro}', '\\end{document}'],
+          lines: [
+            '\\documentclass{article}',
+            '\\input{chapters/intro}',
+            '\\end{document}',
+          ],
         })
       }
       if (did === 'd2') {
         return Promise.resolve({
-          lines: ['\\section{Intro}', 'Theorem 1 is important.', '\\label{thm:one}'],
+          lines: [
+            '\\section{Intro}',
+            'Theorem 1 is important.',
+            '\\label{thm:one}',
+          ],
         })
       }
       return Promise.resolve({ lines: [] })

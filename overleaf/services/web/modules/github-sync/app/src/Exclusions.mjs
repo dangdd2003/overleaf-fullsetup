@@ -4,12 +4,32 @@ import path from 'node:path'
 export const MAX_SYNC_FILE_SIZE = 50 * 1024 * 1024
 
 const DEFAULT_TEXT_EXTENSIONS = [
-  'tex', 'latex', 'sty', 'cls', 'bst', 'bib', 'bibtex', 'txt', 'tikz',
-  'mtx', 'rtex', 'md', 'asy', 'dtx', 'ins', 'csv',
+  'tex',
+  'latex',
+  'sty',
+  'cls',
+  'bst',
+  'bib',
+  'bibtex',
+  'txt',
+  'tikz',
+  'mtx',
+  'rtex',
+  'md',
+  'asy',
+  'dtx',
+  'ins',
+  'csv',
 ]
 const KNOWN_TEXT_BASENAMES = [
-  'makefile', 'dockerfile', 'licence', 'license', 'readme', '.gitignore',
-  '.latexmkrc', 'latexmkrc',
+  'makefile',
+  'dockerfile',
+  'licence',
+  'license',
+  'readme',
+  '.gitignore',
+  '.latexmkrc',
+  'latexmkrc',
 ]
 
 export function classifyText(relPath) {

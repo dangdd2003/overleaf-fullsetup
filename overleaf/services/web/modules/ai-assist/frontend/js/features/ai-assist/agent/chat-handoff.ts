@@ -60,7 +60,7 @@ export function requestChatHandoff(
 
 /** Reads and clears the pending handoff, or returns null if there is none. */
 export function takePendingHandoff(projectId: string): ChatHandoff | null {
-  let stored: ChatHandoff | null = null
+  let stored: ChatHandoff | null
   try {
     stored = customLocalStorage.getItem(keyFor(projectId)) as ChatHandoff | null
   } catch {

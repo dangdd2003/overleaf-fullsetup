@@ -23,9 +23,7 @@ describe('CodeView', function () {
 
   it('correctly parses line prefix when lines already contain line numbers', function () {
     const { container } = render(
-      <CodeView
-        content={'25: \\section{Introduction}\n26: This is text.'}
-      />
+      <CodeView content={'25: \\section{Introduction}\n26: This is text.'} />
     )
 
     const gutters = container.querySelectorAll('.diff-gutter')
@@ -38,9 +36,7 @@ describe('CodeView', function () {
   })
 
   it('renders editor clone container with cm-editor and preview classes', function () {
-    const { container } = render(
-      <CodeView content={'line 1\nline 2'} />
-    )
+    const { container } = render(<CodeView content={'line 1\nline 2'} />)
 
     const editorEl = container.querySelector('.cm-editor.cm-editor-preview')
     expect(editorEl).to.exist
@@ -59,7 +55,9 @@ describe('CodeView', function () {
       />
     )
 
-    const gutter = container.querySelectorAll('.diff-gutter.diff-gutter-clickable')[0] as HTMLElement
+    const gutter = container.querySelectorAll(
+      '.diff-gutter.diff-gutter-clickable'
+    )[0] as HTMLElement
     expect(gutter).to.exist
     gutter.click()
     expect(clickedLine).to.equal(42)

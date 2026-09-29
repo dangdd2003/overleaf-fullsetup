@@ -14,7 +14,9 @@ const __dirname = Path.dirname(fileURLToPath(import.meta.url))
 // (e.g. https://example.com/project/<id>) and pulls the id out of it.
 function extractProjectId(input) {
   if (!input) return null
-  const match = String(input).trim().match(/[0-9a-f]{24}/i)
+  const match = String(input)
+    .trim()
+    .match(/[0-9a-f]{24}/i)
   return match ? match[0] : null
 }
 
@@ -86,9 +88,7 @@ export const AdminProjectManagementController = {
         { _id: 1 }
       )
       if (!newOwner) {
-        return res.redirect(
-          `/admin/project/${projectId}?error=user_not_found`
-        )
+        return res.redirect(`/admin/project/${projectId}?error=user_not_found`)
       }
 
       const sessionUser = SessionManager.getSessionUser(req.session)

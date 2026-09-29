@@ -41,10 +41,12 @@ function sse(body: string) {
 
 /** The request bodies the panel actually sent to the provider. */
 function sentBodies() {
-  return fetchMock
-    .callHistory
+  return fetchMock.callHistory
     .calls()
-    .filter(call => call.url.includes('/runs') || call.url.includes('chat/completions'))
+    .filter(
+      call =>
+        call.url.includes('/runs') || call.url.includes('chat/completions')
+    )
     .map(call => JSON.parse(String(call.options?.body ?? '{}')))
 }
 
@@ -93,7 +95,9 @@ describe('AgentPanel receiving a compile-error handoff', function () {
 
     sinon.stub(ProjectSnapshot.prototype, 'refresh').resolves()
     sinon.stub(ProjectSnapshot.prototype, 'getDocPaths').returns(['main.tex'])
-    sinon.stub(ProjectSnapshot.prototype, 'getDocContents').callsFake(() => 'hi')
+    sinon
+      .stub(ProjectSnapshot.prototype, 'getDocContents')
+      .callsFake(() => 'hi')
     sinon
       .stub(ProjectSnapshot.prototype, 'getBinaryFilePathsWithHash')
       .returns([])
@@ -105,7 +109,9 @@ describe('AgentPanel receiving a compile-error handoff', function () {
           'data: [DONE]\n\n'
       )
     )
-    fetchMock.post(new RegExp('/ai-assist/projects/.*/runs'), { runId: 'run-1' })
+    fetchMock.post(new RegExp('/ai-assist/projects/.*/runs'), {
+      runId: 'run-1',
+    })
   })
 
   afterEach(function () {
@@ -146,9 +152,13 @@ describe('AgentPanel receiving a compile-error handoff', function () {
 
     const sent = sentBodies()[0]
     const lastUser = sent.messages
-      ? [...sent.messages].reverse().find((m: any) => m.role === 'user')?.content
+      ? [...sent.messages].reverse().find((m: any) => m.role === 'user')
+          ?.content
       : [...sent.transcript].reverse().find((m: any) => m.role === 'user')
-    const content = typeof lastUser === 'string' ? lastUser : `${lastUser?.contextText}\n${lastUser?.text}`
+    const content =
+      typeof lastUser === 'string'
+        ? lastUser
+        : `${lastUser?.contextText}\n${lastUser?.text}`
     expect(content).to.contain('the earlier run said graphicx')
     expect(content).to.contain(HANDOFF.text)
   })
@@ -156,7 +166,12 @@ describe('AgentPanel receiving a compile-error handoff', function () {
   it('adds to the conversation already in progress instead of replacing it', async function () {
     saveConversation(PROJECT_ID, [
       { id: 'u0', role: 'user', text: 'what were we discussing?' },
-      { id: 'a0', role: 'assistant', text: 'Your bibliography.', toolCalls: [] },
+      {
+        id: 'a0',
+        role: 'assistant',
+        text: 'Your bibliography.',
+        toolCalls: [],
+      },
     ])
     requestChatHandoff(PROJECT_ID, HANDOFF)
 
@@ -172,7 +187,12 @@ describe('AgentPanel receiving a compile-error handoff', function () {
   it('appends the handoff last, keeping the cached prefix intact', async function () {
     saveConversation(PROJECT_ID, [
       { id: 'u0', role: 'user', text: 'what were we discussing?' },
-      { id: 'a0', role: 'assistant', text: 'Your bibliography.', toolCalls: [] },
+      {
+        id: 'a0',
+        role: 'assistant',
+        text: 'Your bibliography.',
+        toolCalls: [],
+      },
     ])
     requestChatHandoff(PROJECT_ID, HANDOFF)
 

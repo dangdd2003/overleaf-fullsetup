@@ -10,7 +10,6 @@ import {
   formatAmbiguousOccurrences,
   locateAnchorInText,
   nearestLines,
-  normalizeLines,
 } from '../latex-matcher'
 
 // Re-export matching utilities for external callers and backwards compatibility
@@ -90,7 +89,10 @@ export const editFileTool: AgentTool = {
 
   async execute({ path, oldText, newText, startLine, endLine }, handle) {
     if (typeof newText !== 'string') {
-      return { error: 'Parameter \'newText\' must be a string containing the replacement or appended text (pass "" to delete).' }
+      return {
+        error:
+          'Parameter \'newText\' must be a string containing the replacement or appended text (pass "" to delete).',
+      }
     }
 
     if (typeof oldText !== 'string') {
@@ -111,7 +113,10 @@ export const editFileTool: AgentTool = {
     const oldTextWasStripped = strippedOld !== oldText && strippedOld.length > 0
 
     // Sanitize newText to prevent raw line-number prefix contamination
-    const sanitizedNewText = cleanLineNumberPrefixes(newText, oldTextWasStripped)
+    const sanitizedNewText = cleanLineNumberPrefixes(
+      newText,
+      oldTextWasStripped
+    )
 
     // Append mode: when oldText is explicitly empty string ""
     const isAppend = oldText.length === 0
@@ -123,7 +128,11 @@ export const editFileTool: AgentTool = {
           error: `Appending to ${path} would put the text after \\end{document} on line ${endLine}, where LaTeX ignores it. Insert it where it belongs instead: give an oldText anchor from the passage it follows.`,
         }
       }
-      const outcome = await handle.proposeEdit({ path, oldText: '', newText: sanitizedNewText })
+      const outcome = await handle.proposeEdit({
+        path,
+        oldText: '',
+        newText: sanitizedNewText,
+      })
       switch (outcome.status) {
         case 'applied':
           return {
@@ -173,7 +182,10 @@ export const editFileTool: AgentTool = {
       const anchorLineCount = oldText.split('\n').length
       // If endLine is omitted, prefer a tight local window around startLine first
       const windowRadius = Math.max(2, anchorLineCount + 1)
-      const localEndIdx = typeof endLine === 'number' && endLine >= startLine ? endLine : Math.min(lines.length, startIdx + windowRadius)
+      const localEndIdx =
+        typeof endLine === 'number' && endLine >= startLine
+          ? endLine
+          : Math.min(lines.length, startIdx + windowRadius)
       const localSearchText = lines.slice(startIdx, localEndIdx).join('\n')
       const localMatch = locateAnchorInText(localSearchText, oldText)
 
@@ -181,7 +193,10 @@ export const editFileTool: AgentTool = {
         searchDocText = localSearchText
         lineOffset = startIdx
       } else {
-        const endIdx = typeof endLine === 'number' && endLine >= startLine ? endLine : lines.length
+        const endIdx =
+          typeof endLine === 'number' && endLine >= startLine
+            ? endLine
+            : lines.length
         searchDocText = lines.slice(startIdx, endIdx).join('\n')
         lineOffset = startIdx
       }
@@ -189,19 +204,25 @@ export const editFileTool: AgentTool = {
 
     const match = locateAnchorInText(searchDocText, oldText)
     const cleanedOld = cleanOldText(oldText)
-    let targetAnchor = match ? match.anchor : (countOccurrences(searchDocText, cleanedOld) > 0 ? cleanedOld : oldText)
-    let matches = countOccurrences(searchDocText, targetAnchor)
+    const targetAnchor = match
+      ? match.anchor
+      : countOccurrences(searchDocText, cleanedOld) > 0
+        ? cleanedOld
+        : oldText
+    const matches = countOccurrences(searchDocText, targetAnchor)
 
     if (!match && matches === 0) {
       const candidateLines = findMatchingLines(fullDocText, oldText)
       const hints = nearestLines(fullDocText, oldText)
-      let candidateHint = ''
+      let candidateHint: string
       if (candidateLines.length > 0) {
         candidateHint = ` (Found similar line around line(s) ${candidateLines.join(', ')}). Use read_file to inspect the file around those lines.`
       } else if (hints.length > 0) {
         candidateHint = ` The closest lines in ${path} right now are:\n${hints
           .map(h => `${h.line}: ${h.text}`)
-          .join('\n')}\nCopy the anchor from those exact lines (without line-number prefixes), or call read_file on ${path} first.`
+          .join(
+            '\n'
+          )}\nCopy the anchor from those exact lines (without line-number prefixes), or call read_file on ${path} first.`
       } else {
         candidateHint = ` Use read_file to inspect ${path} and copy the exact lines to replace.`
       }
@@ -213,11 +234,17 @@ export const editFileTool: AgentTool = {
     }
 
     if (matches > 1) {
-      const candidateLines = findMatchingLines(searchDocText, targetAnchor).map(l => l + lineOffset)
-      const lineList = candidateLines.length > 0 ? ` (around line(s) ${candidateLines.join(', ')})` : ''
-      const contextPreviews = candidateLines.length > 0
-        ? `:\n${formatAmbiguousOccurrences(fullDocText, candidateLines)}\n\nTo disambiguate, include more context (surrounding lines) in oldText, or pass startLine to target a specific line (e.g. startLine: ${candidateLines[0]}).`
-        : '. Include more context (surrounding lines) or use startLine/endLine to disambiguate.'
+      const candidateLines = findMatchingLines(searchDocText, targetAnchor).map(
+        l => l + lineOffset
+      )
+      const lineList =
+        candidateLines.length > 0
+          ? ` (around line(s) ${candidateLines.join(', ')})`
+          : ''
+      const contextPreviews =
+        candidateLines.length > 0
+          ? `:\n${formatAmbiguousOccurrences(fullDocText, candidateLines)}\n\nTo disambiguate, include more context (surrounding lines) in oldText, or pass startLine to target a specific line (e.g. startLine: ${candidateLines[0]}).`
+          : '. Include more context (surrounding lines) or use startLine/endLine to disambiguate.'
       return {
         status: 'ambiguous',
         matches,

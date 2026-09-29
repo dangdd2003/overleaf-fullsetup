@@ -1,3 +1,4 @@
+import { describe, it } from 'vitest'
 import { expect } from 'chai'
 import * as server from '../../../app/src/AiAssistProjectIndex.mjs'
 // Vitest loads TypeScript directly. These are the browser originals the server
@@ -36,7 +37,12 @@ const PROJECT = {
       '\\citep[p.~3]{knuth84}',
       '50\\% of \\ref{undefined:key}',
     ].join('\n'),
-    'refs.bib': ['@book{knuth84,', '  title={TAOCP}', '}', '@article{ other , x}'].join('\n'),
+    'refs.bib': [
+      '@book{knuth84,',
+      '  title={TAOCP}',
+      '}',
+      '@article{ other , x}',
+    ].join('\n'),
     'appendix.tex': [
       '\\chapter{Appendix}',
       '\\begin{thebibliography}{9}\\end{thebibliography}',
@@ -70,7 +76,16 @@ describe('AiAssistProjectIndex (server port)', function () {
 
   it('matches sections identically', function () {
     const outline = browserOutline.parseOutline(PROJECT)
-    for (const query of ['Introduction', 'intro', 'method', 'Setup', 'Acknowledgements', 'nothing', '', 'A']) {
+    for (const query of [
+      'Introduction',
+      'intro',
+      'method',
+      'Setup',
+      'Acknowledgements',
+      'nothing',
+      '',
+      'A',
+    ]) {
       expect(
         JSON.stringify(server.matchSection(outline, query)),
         `matchSection(${JSON.stringify(query)})`
@@ -85,7 +100,13 @@ describe('AiAssistProjectIndex (server port)', function () {
   })
 
   it('skips files above MAX_INDEXED_BYTES like the browser', function () {
-    const big = { rootPath: null, docs: { 'big.tex': '\\usepackage{x}\n' + 'a'.repeat(server.MAX_INDEXED_BYTES + 1) } }
+    const big = {
+      rootPath: null,
+      docs: {
+        'big.tex':
+          '\\usepackage{x}\n' + 'a'.repeat(server.MAX_INDEXED_BYTES + 1),
+      },
+    }
     expect(JSON.stringify(server.buildProjectIndex(big))).to.equal(
       JSON.stringify(browserIndex.buildProjectIndex(big))
     )

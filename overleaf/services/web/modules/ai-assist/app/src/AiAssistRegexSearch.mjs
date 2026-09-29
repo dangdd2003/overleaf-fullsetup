@@ -26,7 +26,13 @@ parentPort.postMessage({ hits, total })
  * a catastrophic pattern such as (a+)+$ would freeze the web process for every
  * user. A worker can be terminated when it overruns.
  */
-export function regexSearch({ query, caseSensitive, docs, limit, timeoutMs = 2000 }) {
+export function regexSearch({
+  query,
+  caseSensitive,
+  docs,
+  limit,
+  timeoutMs = 2000,
+}) {
   const flags = caseSensitive ? '' : 'i'
   // Compile once here so an invalid pattern fails fast, without a thread.
   // eslint-disable-next-line no-new

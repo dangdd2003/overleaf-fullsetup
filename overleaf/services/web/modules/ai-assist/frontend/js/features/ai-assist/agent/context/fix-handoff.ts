@@ -6,7 +6,11 @@ import {
 } from '../agent-messages'
 import { escapeAttribute, neutraliseClosingTags } from './escape'
 
-export type EditDecision = { path: string; startLine: number; accepted: boolean }
+export type EditDecision = {
+  path: string
+  startLine: number
+  accepted: boolean
+}
 
 export type FixHandoffInput = {
   /** The finished fix run, exactly as the compile-log panel stored it. */
@@ -62,7 +66,8 @@ function editStatus(
   const result = call.result as { status?: string } | undefined
   const decided = decidedEdits[call.id]
 
-  if (result?.status === 'applied' || decided?.accepted === true) return 'applied'
+  if (result?.status === 'applied' || decided?.accepted === true)
+    return 'applied'
   if (result?.status === 'rejected' || decided?.accepted === false) {
     return 'rejected'
   }
@@ -85,7 +90,9 @@ function renderToolCall(
   // than as an empty result, so the model does not read silence as success.
   lines.push(
     '<result>',
-    'result' in call ? safeJson(call.result) : 'This tool call did not complete.',
+    'result' in call
+      ? safeJson(call.result)
+      : 'This tool call did not complete.',
     '</result>'
   )
   lines.push('</step>')

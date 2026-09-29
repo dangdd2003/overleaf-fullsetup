@@ -4,6 +4,24 @@ import chaiAsPromised from 'chai-as-promised'
 
 // Setup chai
 chai.should()
+Object.defineProperty(Boolean.prototype, 'should', {
+  get() {
+    return chai.expect(this.valueOf())
+  },
+  configurable: true,
+})
+Object.defineProperty(Number.prototype, 'should', {
+  get() {
+    return chai.expect(this.valueOf())
+  },
+  configurable: true,
+})
+Object.defineProperty(String.prototype, 'should', {
+  get() {
+    return chai.expect(this.valueOf())
+  },
+  configurable: true,
+})
 
 // Workaround: vitest's built-in chai plugins register spy-related properties
 // (e.g. callCount) as getter-only via addChainableMethod. sinon-chai then tries

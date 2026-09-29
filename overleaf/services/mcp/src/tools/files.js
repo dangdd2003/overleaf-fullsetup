@@ -10,7 +10,10 @@ import {
   WRITES,
 } from '../schemas.js'
 
-const docPath = z.string().min(1).describe('Path within the project, e.g. /main.tex')
+const docPath = z
+  .string()
+  .min(1)
+  .describe('Path within the project, e.g. /main.tex')
 
 const treeEntry = looseObject({
   path: z.string().describe('Absolute path within the project, e.g. /main.tex'),
@@ -34,7 +37,10 @@ function countOccurrences(haystack, needle) {
  * @param {object} server an McpServer
  * @param {{ client: object, staticToken: string, maxUploadBytes: number }} deps
  */
-export function registerFileTools(server, { client, staticToken, maxUploadBytes }) {
+export function registerFileTools(
+  server,
+  { client, staticToken, maxUploadBytes }
+) {
   server.registerTool(
     'list_files',
     {
@@ -49,7 +55,9 @@ export function registerFileTools(server, { client, staticToken, maxUploadBytes 
       }),
     },
     runTool(async ({ projectId: id }, ctx) =>
-      textResult(await client.get(tokenFrom(ctx, staticToken), `/projects/${id}/tree`))
+      textResult(
+        await client.get(tokenFrom(ctx, staticToken), `/projects/${id}/tree`)
+      )
     )
   )
 
@@ -58,15 +66,20 @@ export function registerFileTools(server, { client, staticToken, maxUploadBytes 
     {
       title: 'Search project files',
       description:
-        'Find a literal string across the project\'s documents and return the matching lines with their paths and line numbers. Use it to locate a theorem, macro definition or citation before reading a file, so only the relevant line range needs fetching.',
+        "Find a literal string across the project's documents and return the matching lines with their paths and line numbers. Use it to locate a theorem, macro definition or citation before reading a file, so only the relevant line range needs fetching.",
       annotations: READ_ONLY,
       inputSchema: z.object({
         projectId,
-        query: z.string().min(1).describe('Text string to search for across project files'),
+        query: z
+          .string()
+          .min(1)
+          .describe('Text string to search for across project files'),
         path: z
           .string()
           .optional()
-          .describe('Optional folder path prefix filter, e.g. /chapters or /src'),
+          .describe(
+            'Optional folder path prefix filter, e.g. /chapters or /src'
+          ),
         fileTypes: z
           .array(z.string())
           .optional()
@@ -86,28 +99,42 @@ export function registerFileTools(server, { client, staticToken, maxUploadBytes 
       }),
       outputSchema: looseObject({
         query: z.string().describe('The string that was searched for'),
-        totalMatches: z.number().int().describe('How many matching lines are returned'),
+        totalMatches: z
+          .number()
+          .int()
+          .describe('How many matching lines are returned'),
         matches: z
           .array(
             looseObject({
               path: z.string().describe('Document containing the match'),
-              line: z.number().int().describe('1-based line number of the match'),
+              line: z
+                .number()
+                .int()
+                .describe('1-based line number of the match'),
               preview: z.string().describe('The matching line, trimmed'),
             })
           )
           .describe('The matching lines, capped at maxMatches'),
       }),
     },
-    runTool(async ({ projectId: id, query, path, fileTypes, caseSensitive, maxMatches }, ctx) =>
-      textResult(
-        await client.get(tokenFrom(ctx, staticToken), `/projects/${id}/search`, {
-          query,
-          path,
-          fileTypes,
-          caseSensitive,
-          maxMatches,
-        })
-      )
+    runTool(
+      async (
+        { projectId: id, query, path, fileTypes, caseSensitive, maxMatches },
+        ctx
+      ) =>
+        textResult(
+          await client.get(
+            tokenFrom(ctx, staticToken),
+            `/projects/${id}/search`,
+            {
+              query,
+              path,
+              fileTypes,
+              caseSensitive,
+              maxMatches,
+            }
+          )
+        )
     )
   )
 
@@ -121,8 +148,18 @@ export function registerFileTools(server, { client, staticToken, maxUploadBytes 
       inputSchema: z.object({
         projectId,
         path: docPath,
-        startLine: z.number().int().positive().optional().describe('First line to return'),
-        endLine: z.number().int().positive().optional().describe('Last line to return'),
+        startLine: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe('First line to return'),
+        endLine: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe('Last line to return'),
       }),
       outputSchema: looseObject({
         path: z.string().describe('The document that was read'),
@@ -152,7 +189,9 @@ export function registerFileTools(server, { client, staticToken, maxUploadBytes 
       inputSchema: z.object({
         projectId,
         path: docPath,
-        content: z.string().describe('The complete new contents of the document'),
+        content: z
+          .string()
+          .describe('The complete new contents of the document'),
       }),
       outputSchema: looseObject(writeAck),
     },
@@ -181,7 +220,9 @@ export function registerFileTools(server, { client, staticToken, maxUploadBytes 
         replaceAll: z
           .boolean()
           .optional()
-          .describe('Replace every occurrence instead of requiring a unique match'),
+          .describe(
+            'Replace every occurrence instead of requiring a unique match'
+          ),
       }),
       outputSchema: looseObject({
         ...writeAck,
@@ -191,37 +232,47 @@ export function registerFileTools(server, { client, staticToken, maxUploadBytes 
           .describe('How many occurrences were replaced'),
       }),
     },
-    runTool(async ({ projectId: id, path, oldString, newString, replaceAll }, ctx) => {
-      const token = tokenFrom(ctx, staticToken)
-      // Deliberately unsliced: a line-range read would truncate the write-back.
-      const { content } = await client.get(token, `/projects/${id}/doc`, { path })
-      const occurrences = countOccurrences(content, oldString)
+    runTool(
+      async (
+        { projectId: id, path, oldString, newString, replaceAll },
+        ctx
+      ) => {
+        const token = tokenFrom(ctx, staticToken)
+        // Deliberately unsliced: a line-range read would truncate the write-back.
+        const { content } = await client.get(token, `/projects/${id}/doc`, {
+          path,
+        })
+        const occurrences = countOccurrences(content, oldString)
 
-      if (occurrences === 0) {
-        throw new OverleafApiError(
-          CODES.VALIDATION_ERROR,
-          `the text to replace was not found in ${path}`,
-          400
-        )
-      }
-      if (occurrences > 1 && !replaceAll) {
-        throw new OverleafApiError(
-          CODES.VALIDATION_ERROR,
-          `the text to replace appears ${occurrences} times in ${path}; ` +
-            'supply more surrounding context or set replaceAll',
-          400
-        )
-      }
+        if (occurrences === 0) {
+          throw new OverleafApiError(
+            CODES.VALIDATION_ERROR,
+            `the text to replace was not found in ${path}`,
+            400
+          )
+        }
+        if (occurrences > 1 && !replaceAll) {
+          throw new OverleafApiError(
+            CODES.VALIDATION_ERROR,
+            `the text to replace appears ${occurrences} times in ${path}; ` +
+              'supply more surrounding context or set replaceAll',
+            400
+          )
+        }
 
-      const updated = replaceAll
-        ? content.split(oldString).join(newString)
-        : content.replace(oldString, () => newString)
-      const response = await client.post(token, `/projects/${id}/doc`, {
-        path,
-        content: updated,
-      })
-      return textResult({ ...response, replacements: replaceAll ? occurrences : 1 })
-    })
+        const updated = replaceAll
+          ? content.split(oldString).join(newString)
+          : content.replace(oldString, () => newString)
+        const response = await client.post(token, `/projects/${id}/doc`, {
+          path,
+          content: updated,
+        })
+        return textResult({
+          ...response,
+          replacements: replaceAll ? occurrences : 1,
+        })
+      }
+    )
   )
 
   server.registerTool(
@@ -263,9 +314,19 @@ export function registerFileTools(server, { client, staticToken, maxUploadBytes 
       },
       inputSchema: z.object({
         projectId,
-        path: z.string().min(1).describe('Destination path, e.g. /figures/plot.png'),
-        contentBase64: z.string().optional().describe('Base64-encoded file contents'),
-        url: z.string().url().optional().describe('URL for Overleaf to fetch server-side'),
+        path: z
+          .string()
+          .min(1)
+          .describe('Destination path, e.g. /figures/plot.png'),
+        contentBase64: z
+          .string()
+          .optional()
+          .describe('Base64-encoded file contents'),
+        url: z
+          .string()
+          .url()
+          .optional()
+          .describe('URL for Overleaf to fetch server-side'),
       }),
       outputSchema: looseObject({
         status: okStatus,

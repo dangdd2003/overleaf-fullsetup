@@ -21,7 +21,10 @@ async function runGit(repoDir, args, opts = {}) {
       (error, stdout, stderr) => {
         if (error) {
           const message = (stderr || stdout || error.message || '').trim()
-          logger.warn({ args: args[0], repoDir, stderr: message }, 'git command failed')
+          logger.warn(
+            { args: args[0], repoDir, stderr: message },
+            'git command failed'
+          )
           const err = new Error(message || `git ${args[0]} failed`)
           err.stdout = stdout
           err.stderr = stderr
@@ -35,7 +38,8 @@ async function runGit(repoDir, args, opts = {}) {
 }
 
 async function writeAskpassScript(dir) {
-  const targetDir = dir || (await fs.mkdtemp(path.join(os.tmpdir(), 'ghsync-askpass-')))
+  const targetDir =
+    dir || (await fs.mkdtemp(path.join(os.tmpdir(), 'ghsync-askpass-')))
   const scriptPath = path.join(targetDir, 'gh-askpass.sh')
   await fs.writeFile(scriptPath, '#!/bin/sh\nprintf "%s" "$GH_SYNC_TOKEN"\n', {
     mode: 0o700,
@@ -143,7 +147,9 @@ async function mergeOrigin(repoDir, branch) {
 
 async function pushRef(repoDir, localRef, remoteRef, token) {
   await _withAuth(token, async env => {
-    await runGit(repoDir, ['push', 'origin', `${localRef}:${remoteRef}`], { env })
+    await runGit(repoDir, ['push', 'origin', `${localRef}:${remoteRef}`], {
+      env,
+    })
   })
 }
 

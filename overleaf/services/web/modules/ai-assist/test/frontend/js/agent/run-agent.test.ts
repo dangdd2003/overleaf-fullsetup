@@ -90,7 +90,9 @@ describe('runAgent', function () {
       expect(nudge.role).to.equal('user')
       expect(nudge.content).to.match(/without replying/i)
       const texts = events.filter(e => e.type === 'text') as any[]
-      expect(texts.map(e => e.text).join('')).to.contain('nothing needed changing')
+      expect(texts.map(e => e.text).join('')).to.contain(
+        'nothing needed changing'
+      )
     })
 
     it('asks only once, so a second silent turn ends the run', async function () {
@@ -114,7 +116,10 @@ describe('runAgent', function () {
       )
 
       expect(requests).to.have.length(3)
-      expect(events.at(-1)).to.deep.equal({ type: 'turnFinished', reason: 'stop' })
+      expect(events.at(-1)).to.deep.equal({
+        type: 'turnFinished',
+        reason: 'stop',
+      })
     })
 
     it('does not ask when the model already replied', async function () {
@@ -143,7 +148,9 @@ describe('runAgent', function () {
     })
 
     it('does not ask when the turn ran no tools at all', async function () {
-      const { client, requests } = fakeClient([[{ type: 'done', stopReason: 'stop' }]])
+      const { client, requests } = fakeClient([
+        [{ type: 'done', stopReason: 'stop' }],
+      ])
       const { handle } = createFakeHandle()
 
       await collect(
@@ -192,7 +199,10 @@ describe('runAgent', function () {
       expect(nudge.role).to.equal('user')
       expect(nudge.content).to.contain('echo')
       expect(events.filter(e => e.type === 'toolCallStarted')).to.have.length(1)
-      expect(events.at(-1)).to.deep.equal({ type: 'turnFinished', reason: 'stop' })
+      expect(events.at(-1)).to.deep.equal({
+        type: 'turnFinished',
+        reason: 'stop',
+      })
     })
 
     it('nudges only once, then lets the run finish', async function () {
@@ -219,7 +229,10 @@ describe('runAgent', function () {
       )
 
       expect(requests).to.have.length(2)
-      expect(events.at(-1)).to.deep.equal({ type: 'turnFinished', reason: 'stop' })
+      expect(events.at(-1)).to.deep.equal({
+        type: 'turnFinished',
+        reason: 'stop',
+      })
     })
 
     it('does not nudge once the required tool was called', async function () {
@@ -274,7 +287,10 @@ describe('runAgent', function () {
         .map((e: any) => e.text)
         .join('')
     ).to.equal('Hello there')
-    expect(events.at(-1)).to.deep.equal({ type: 'turnFinished', reason: 'stop' })
+    expect(events.at(-1)).to.deep.equal({
+      type: 'turnFinished',
+      reason: 'stop',
+    })
   })
 
   it('executes a tool call and feeds the result into the next turn', async function () {
@@ -359,7 +375,10 @@ describe('runAgent', function () {
     const finished: any = events.find(e => e.type === 'toolCallFinished')
     expect(finished.isError).to.equal(true)
     expect(JSON.stringify(finished.result)).to.match(/tool exploded/)
-    expect(events.at(-1)).to.deep.equal({ type: 'turnFinished', reason: 'stop' })
+    expect(events.at(-1)).to.deep.equal({
+      type: 'turnFinished',
+      reason: 'stop',
+    })
   })
 
   it('emits an unknown-tool error result when the model invents a name', async function () {
@@ -387,7 +406,7 @@ describe('runAgent', function () {
   })
 
   it('runs an unlimited number of tool calls', async function () {
-    const looping = Array.from({ length: 35 }, () => [
+    const looping: any[][] = Array.from({ length: 35 }, () => [
       { type: 'tool_call', id: 'c', name: 'echo', args: {} },
       { type: 'done', stopReason: 'tool_calls' },
     ])
@@ -408,7 +427,10 @@ describe('runAgent', function () {
     )
 
     expect(events.filter(e => e.type === 'toolCallStarted')).to.have.length(35)
-    expect(events.at(-1)).to.deep.equal({ type: 'turnFinished', reason: 'stop' })
+    expect(events.at(-1)).to.deep.equal({
+      type: 'turnFinished',
+      reason: 'stop',
+    })
     expect(requests).to.have.length(36)
   })
 
@@ -523,9 +545,7 @@ describe('runAgent', function () {
     await new Promise(resolve => setTimeout(resolve, 10))
 
     expect(started).to.deep.equal(['first'])
-    expect(
-      events.filter(e => e.type === 'awaitingApproval')
-    ).to.have.length(1)
+    expect(events.filter(e => e.type === 'awaitingApproval')).to.have.length(1)
     expect(resolvers).to.have.length(1)
 
     // Resolving the first decision must not touch the second at all.
@@ -543,9 +563,7 @@ describe('runAgent', function () {
     await drain
 
     expect(finished).to.deep.equal(['first', 'second'])
-    expect(
-      events.filter(e => e.type === 'awaitingApproval')
-    ).to.have.length(2)
+    expect(events.filter(e => e.type === 'awaitingApproval')).to.have.length(2)
   })
 
   it('reports a provider failure as an error event and stops', async function () {
@@ -572,7 +590,10 @@ describe('runAgent', function () {
     )
 
     expect(events[0]).to.deep.include({ type: 'error', code: 'providerAuth' })
-    expect(events.at(-1)).to.deep.equal({ type: 'turnFinished', reason: 'stop' })
+    expect(events.at(-1)).to.deep.equal({
+      type: 'turnFinished',
+      reason: 'stop',
+    })
   })
 
   it('finishes with reason aborted when the signal fires', async function () {
@@ -628,7 +649,9 @@ describe('runAgent', function () {
     )
 
     const request = client.requests[0]
-    expect(request.system).to.include('You are an AI assistant embedded in the Overleaf')
+    expect(request.system).to.include(
+      'You are an AI assistant embedded in the Overleaf'
+    )
     expect(request.system).to.not.include('<project-context turn=')
     expect(request.system).to.not.include('main.tex')
     expect(request.messages[0].content).to.include('<project-context turn="1">')
@@ -679,14 +702,16 @@ describe('runAgent', function () {
         client,
         handle,
         tools: {},
-        transcript: [
-          { id: 'u1', role: 'user', text: 'x'.repeat(200000) },
-        ],
+        transcript: [{ id: 'u1', role: 'user', text: 'x'.repeat(200000) }],
         limits: { contextWindow: 1000, maxOutputTokens: 500 },
       })
     )
 
-    expect(events.some(event => event.type === 'error' && event.code === 'contextExhausted')).to.equal(true)
+    expect(
+      events.some(
+        event => event.type === 'error' && event.code === 'contextExhausted'
+      )
+    ).to.equal(true)
     expect(client.requests).to.have.length(0)
   })
 
@@ -694,11 +719,18 @@ describe('runAgent', function () {
     const docs: Record<string, string> = { 'main.tex': 'hello' }
     const { handle } = createFakeHandle({ docs })
     const client = fakeClient([
-      [{ type: 'text', text: 'reply 1' }, { type: 'done', stopReason: 'stop' }],
-      [{ type: 'text', text: 'reply 2' }, { type: 'done', stopReason: 'stop' }],
+      [
+        { type: 'text', text: 'reply 1' },
+        { type: 'done', stopReason: 'stop' },
+      ],
+      [
+        { type: 'text', text: 'reply 2' },
+        { type: 'done', stopReason: 'stop' },
+      ],
     ])
 
-    const turn1Context = '<project-context turn="1">\n<file path="main.tex" lines="1">\n</project-context>'
+    const turn1Context =
+      '<project-context turn="1">\n<file path="main.tex" lines="1">\n</project-context>'
     const transcript: any[] = [
       {
         id: 'u1',
@@ -738,7 +770,8 @@ describe('runAgent', function () {
         id: 'u2',
         role: 'user',
         text: 'second message',
-        contextText: '<project-context turn="2">\n<file path="new-chapter.tex" lines="1">\n</project-context>',
+        contextText:
+          '<project-context turn="2">\n<file path="new-chapter.tex" lines="1">\n</project-context>',
       }
     )
 
@@ -824,7 +857,10 @@ describe('runAgent', function () {
     // The second identical failure carried a warning; the third stopped the run.
     expect(requests).to.have.length(3)
     expect(requests[2].messages.at(-1).content).to.include('failed 2 times')
-    expect(events.at(-1)).to.deep.equal({ type: 'turnFinished', reason: 'stop' })
+    expect(events.at(-1)).to.deep.equal({
+      type: 'turnFinished',
+      reason: 'stop',
+    })
   })
 
   it('stops with consecutiveToolFailures after 4 turns in which every call failed', async function () {
@@ -899,7 +935,10 @@ describe('runAgent', function () {
     )
     expect(consecutiveError).to.not.be.undefined
     expect(consecutiveError.message).to.match(/4 turns in a row/i)
-    expect(events.at(-1)).to.deep.equal({ type: 'turnFinished', reason: 'stop' })
+    expect(events.at(-1)).to.deep.equal({
+      type: 'turnFinished',
+      reason: 'stop',
+    })
   })
 
   it('continues turn when user rejects an edit and delivers rejection to model to act on', async function () {
@@ -960,7 +999,10 @@ describe('runAgent', function () {
     // Model was given the tool result and produced its response
     const textEvent: any = events.find(e => e.type === 'text')
     expect(textEvent.text).to.include('original table format')
-    expect(events.at(-1)).to.deep.equal({ type: 'turnFinished', reason: 'stop' })
+    expect(events.at(-1)).to.deep.equal({
+      type: 'turnFinished',
+      reason: 'stop',
+    })
   })
 
   describe('after the user rejects an edit', function () {
@@ -1013,7 +1055,9 @@ describe('runAgent', function () {
       )
 
       expect(proposals).to.equal(1)
-      expect(events.filter(e => e.type === 'awaitingApproval')).to.have.length(1)
+      expect(events.filter(e => e.type === 'awaitingApproval')).to.have.length(
+        1
+      )
       const blocked: any = requests[2].messages.at(-1)
       expect(blocked.role).to.equal('tool')
       expect(blocked.content).to.match(/nothing was changed/i)
@@ -1049,7 +1093,11 @@ describe('runAgent', function () {
     const bigTool: AgentTool = {
       suspends: false,
       mutates: false,
-      spec: { name: 'big', description: 'big', parameters: { type: 'object', properties: {} } },
+      spec: {
+        name: 'big',
+        description: 'big',
+        parameters: { type: 'object', properties: {} },
+      },
       async execute() {
         return { text: 'x'.repeat(40000) }
       },
@@ -1071,7 +1119,11 @@ describe('runAgent', function () {
     )
 
     expect(requests).to.have.length(1)
-    expect(events.some(e => e.type === 'error' && (e as any).code === 'contextExhausted')).to.equal(true)
+    expect(
+      events.some(
+        e => e.type === 'error' && (e as any).code === 'contextExhausted'
+      )
+    ).to.equal(true)
   })
 
   it('stops an alternating loop whose calls repeat exactly', async function () {
@@ -1101,7 +1153,11 @@ describe('runAgent', function () {
     const editTool: AgentTool = {
       suspends: false,
       mutates: true,
-      spec: { name: 'edit_file', description: 'edit', parameters: { type: 'object', properties: {} } },
+      spec: {
+        name: 'edit_file',
+        description: 'edit',
+        parameters: { type: 'object', properties: {} },
+      },
       async execute() {
         executed = true
         return { status: 'applied' }
@@ -1109,7 +1165,12 @@ describe('runAgent', function () {
     }
     const { client, requests } = fakeClient([
       [
-        { type: 'tool_call', id: 'c1', name: 'edit_file', args: { path: 'main.tex', newText: 'half', _repaired: true } },
+        {
+          type: 'tool_call',
+          id: 'c1',
+          name: 'edit_file',
+          args: { path: 'main.tex', newText: 'half', _repaired: true },
+        },
         { type: 'stop', reason: 'max_tokens' },
       ],
       [{ type: 'text', text: 'ok' }],
@@ -1128,7 +1189,9 @@ describe('runAgent', function () {
 
     expect(executed).to.equal(false)
     expect(events.some(e => e.type === 'awaitingApproval')).to.equal(false)
-    const assistant = requests[1].messages.find((m: any) => m.role === 'assistant')
+    const assistant = requests[1].messages.find(
+      (m: any) => m.role === 'assistant'
+    )
     expect(assistant.toolCalls[0].args).to.deep.equal({ path: 'main.tex' })
     const tool = requests[1].messages.find((m: any) => m.role === 'tool')
     expect(tool.content).to.include('cut off at the 4096-token output limit')
@@ -1152,8 +1215,15 @@ describe('runAgent', function () {
       })
     )
 
-    expect(events.some(e => e.type === 'error' && (e as any).code === 'outputTruncated')).to.equal(true)
-    expect(events.at(-1)).to.deep.equal({ type: 'turnFinished', reason: 'stop' })
+    expect(
+      events.some(
+        e => e.type === 'error' && (e as any).code === 'outputTruncated'
+      )
+    ).to.equal(true)
+    expect(events.at(-1)).to.deep.equal({
+      type: 'turnFinished',
+      reason: 'stop',
+    })
   })
 
   it('sends the context window with every request', async function () {

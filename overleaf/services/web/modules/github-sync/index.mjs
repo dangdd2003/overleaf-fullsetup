@@ -40,7 +40,8 @@ const GithubSyncModule = {
     async passportSetup(passport, callback) {
       if (!isEnabled()) return callback()
       try {
-        const { createStrategy } = await import('./app/src/GitHubPassportStrategy.mjs')
+        const { createStrategy } =
+          await import('./app/src/GitHubPassportStrategy.mjs')
         createStrategy(passport)
         callback()
       } catch (err) {
@@ -51,32 +52,38 @@ const GithubSyncModule = {
       // projectModified fires with a single object payload — QueueWorkers.mjs:114
       projectModified: async ({ projectId }) => {
         if (!isEnabled()) return
-        const { default: GitHubSyncManager } = await import('./app/src/GitHubSyncManager.mjs')
+        const { default: GitHubSyncManager } =
+          await import('./app/src/GitHubSyncManager.mjs')
         await GitHubSyncManager.promises.markProjectModified(projectId)
       },
       removeGithub: async userId => {
         if (!isEnabled()) return
-        const { default: GitHubSyncManager } = await import('./app/src/GitHubSyncManager.mjs')
+        const { default: GitHubSyncManager } =
+          await import('./app/src/GitHubSyncManager.mjs')
         await GitHubSyncManager.promises.onUserRemoved(userId)
       },
       deleteUser: async userId => {
         if (!isEnabled()) return
-        const { default: GitHubSyncManager } = await import('./app/src/GitHubSyncManager.mjs')
+        const { default: GitHubSyncManager } =
+          await import('./app/src/GitHubSyncManager.mjs')
         await GitHubSyncManager.promises.onUserRemoved(userId)
       },
       expireDeletedUser: async userId => {
         if (!isEnabled()) return
-        const { default: GitHubSyncManager } = await import('./app/src/GitHubSyncManager.mjs')
+        const { default: GitHubSyncManager } =
+          await import('./app/src/GitHubSyncManager.mjs')
         await GitHubSyncManager.promises.onUserRemoved(userId)
       },
       deactivateProject: async projectId => {
         if (!isEnabled()) return
-        const { default: GitHubSyncManager } = await import('./app/src/GitHubSyncManager.mjs')
+        const { default: GitHubSyncManager } =
+          await import('./app/src/GitHubSyncManager.mjs')
         await GitHubSyncManager.promises.onProjectInactive(projectId)
       },
       projectExpired: async projectId => {
         if (!isEnabled()) return
-        const { default: GitHubSyncManager } = await import('./app/src/GitHubSyncManager.mjs')
+        const { default: GitHubSyncManager } =
+          await import('./app/src/GitHubSyncManager.mjs')
         await GitHubSyncManager.promises.onProjectInactive(projectId)
       },
     },

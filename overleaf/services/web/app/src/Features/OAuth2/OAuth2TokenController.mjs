@@ -203,7 +203,8 @@ const OAuth2TokenController = {
       if (resource && resource !== targetAudience) {
         return res.status(400).json({
           error: 'invalid_target',
-          error_description: 'Requested resource does not match granted audience',
+          error_description:
+            'Requested resource does not match granted audience',
         })
       }
 
@@ -242,7 +243,8 @@ const OAuth2TokenController = {
 
     return res.status(400).json({
       error: 'unsupported_grant_type',
-      error_description: 'grant_type must be authorization_code or refresh_token',
+      error_description:
+        'grant_type must be authorization_code or refresh_token',
     })
   },
 }

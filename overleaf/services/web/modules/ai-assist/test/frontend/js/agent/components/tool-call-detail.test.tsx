@@ -1,5 +1,5 @@
 import { expect } from 'chai'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { ToolCallDetailView } from '../../../../../frontend/js/features/ai-assist/components/agent/tool-call-detail'
 
 describe('ToolCallDetailView', function () {
@@ -29,8 +29,12 @@ describe('ToolCallDetailView', function () {
       result: { status: 'applied', message: 'Applied change to main.tex.' },
     }
     const { container } = render(<ToolCallDetailView call={call} />)
-    expect(container.querySelector('.diff-del')?.textContent).to.contain('\\begin{old}')
-    expect(container.querySelector('.diff-ins')?.textContent).to.contain('\\begin{new}')
+    expect(container.querySelector('.diff-del')?.textContent).to.contain(
+      '\\begin{old}'
+    )
+    expect(container.querySelector('.diff-ins')?.textContent).to.contain(
+      '\\begin{new}'
+    )
     expect(screen.getByText(/applied change to main\.tex/i)).to.exist
   })
 
@@ -47,7 +51,8 @@ describe('ToolCallDetailView', function () {
     }
     const { container } = render(<ToolCallDetailView call={call} />)
     expect(screen.getByText('Cancelled')).to.exist
-    expect(container.querySelector('.ai-assist-tool-detail-diff.is-cancelled')).to.exist
+    expect(container.querySelector('.ai-assist-tool-detail-diff.is-cancelled'))
+      .to.exist
   })
 
   it('renders error messages when tool failed', function () {
@@ -83,6 +88,12 @@ describe('ToolCallDetailView', function () {
     render(<ToolCallDetailView call={call} />)
     expect(screen.getByText('main.tex:15')).to.exist
     expect(screen.getByText('Environment undefined')).to.exist
+
+    // Only the title shows until the entry is clicked open.
+    expect(screen.queryByText('\\begin{undefined_env}')).to.equal(null)
+    const toggle = screen.getByRole('button', { expanded: false })
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).to.equal('true')
     expect(screen.getByText('\\begin{undefined_env}')).to.exist
   })
 
@@ -139,8 +150,20 @@ describe('ToolCallDetailView', function () {
         documentClass: 'article',
         packages: ['amsmath', 'graphicx'],
         sections: [
-          { path: 'main.tex', line: 1, level: 1, title: 'Introduction', numbered: true },
-          { path: 'main.tex', line: 30, level: 2, title: 'Background', numbered: true },
+          {
+            path: 'main.tex',
+            line: 1,
+            level: 1,
+            title: 'Introduction',
+            numbered: true,
+          },
+          {
+            path: 'main.tex',
+            line: 30,
+            level: 2,
+            title: 'Background',
+            numbered: true,
+          },
         ],
       },
     }
@@ -168,10 +191,15 @@ describe('ToolCallDetailView', function () {
     }
     const { container } = render(<ToolCallDetailView call={call} />)
     expect(screen.getByText('Rejected')).to.exist
-    expect(container.querySelector('.ai-assist-tool-detail-badge.rejected')).to.exist
+    expect(container.querySelector('.ai-assist-tool-detail-badge.rejected')).to
+      .exist
     expect(screen.getByText(/Prefer keeping original phrasing/)).to.exist
-    expect(container.querySelector('.diff-del')?.textContent).to.contain('original line')
-    expect(container.querySelector('.diff-ins')?.textContent).to.contain('modified line')
+    expect(container.querySelector('.diff-del')?.textContent).to.contain(
+      'original line'
+    )
+    expect(container.querySelector('.diff-ins')?.textContent).to.contain(
+      'modified line'
+    )
   })
 
   it('renders rejection badge and note for rejected create_file', function () {
@@ -190,7 +218,71 @@ describe('ToolCallDetailView', function () {
     }
     const { container } = render(<ToolCallDetailView call={call} />)
     expect(screen.getByText('Rejected')).to.exist
-    expect(container.querySelector('.ai-assist-tool-detail-badge.rejected')).to.exist
+    expect(container.querySelector('.ai-assist-tool-detail-badge.rejected')).to
+      .exist
     expect(screen.getByText(/File already exists elsewhere/)).to.exist
+  })
+
+  it('renders web_fetch content as rich markdown when page text is returned', function () {
+    const call = {
+      id: '10',
+      name: 'web_fetch',
+      args: { url: 'https://en.wikipedia.org/wiki/Latex' },
+      result: {
+        url: 'https://en.wikipedia.org/wiki/Latex',
+        title: 'LaTeX - Wikipedia',
+        content:
+          '# LaTeX\nLaTeX is a software system for document preparation.',
+        totalPages: 1,
+        page: 1,
+      },
+    }
+    const { container } = render(<ToolCallDetailView call={call} />)
+    expect(
+      screen.getByText(/LaTeX is a software system for document preparation/)
+    ).to.exist
+    // Renders the fetched URL like Claude.ai
+    expect(
+      container.querySelector('.ai-assist-web-fetch-url')?.getAttribute('href')
+    ).to.equal('https://en.wikipedia.org/wiki/Latex')
+    // Renders the box containing the result like other tools
+    expect(container.querySelector('.ai-assist-web-fetch-box')).to.exist
+    // Renders as formatted markdown (heading, paragraph) rather than raw code pre
+    expect(container.querySelector('h1')?.textContent).to.equal('LaTeX')
+    // Does NOT duplicate the website row inside the detail
+    expect(container.querySelector('.ai-assist-web-row')).to.be.null
+  })
+
+  it('renders web_fetch passages as rich markdown when matches are returned for find', function () {
+    const call = {
+      id: '11',
+      name: 'web_fetch',
+      args: { url: 'https://en.wikipedia.org/wiki/Test', find: 'Born' },
+      result: {
+        url: 'https://en.wikipedia.org/wiki/Test',
+        title: 'Test Person',
+        find: 'Born',
+        totalMatches: 2,
+        totalPages: 1,
+        matches: [
+          { heading: '## Early life', text: 'Born in Hanoi in **1980**.' },
+          { heading: '## Career', text: 'Born to lead projects.' },
+        ],
+      },
+    }
+    const { container } = render(<ToolCallDetailView call={call} />)
+    // Renders the fetched URL like Claude.ai
+    expect(
+      container.querySelector('.ai-assist-web-fetch-url')?.getAttribute('href')
+    ).to.equal('https://en.wikipedia.org/wiki/Test')
+    // Renders the box containing the result like other tools
+    expect(container.querySelector('.ai-assist-web-fetch-box')).to.exist
+    expect(screen.getByText('## Early life')).to.exist
+    expect(screen.getByText(/Born in Hanoi in/)).to.exist
+    expect(container.querySelector('strong')?.textContent).to.equal('1980')
+    expect(screen.getByText('## Career')).to.exist
+    expect(screen.getByText(/Born to lead projects\./)).to.exist
+    // Does NOT duplicate the website row inside the detail
+    expect(container.querySelector('.ai-assist-web-row')).to.be.null
   })
 })

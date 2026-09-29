@@ -47,7 +47,9 @@ describe('ApplyFixListener', function () {
         resolve((e as CustomEvent).detail?.status)
       }
       window.addEventListener('aiAssist:agentApplyEditResult', onResult)
-      window.dispatchEvent(new CustomEvent('aiAssist:agentApplyEdit', { detail }))
+      window.dispatchEvent(
+        new CustomEvent('aiAssist:agentApplyEdit', { detail })
+      )
     })
   }
 

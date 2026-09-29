@@ -711,7 +711,8 @@ describe('GoogleDriveOAuthManager', function () {
         user_id: userId,
         googleEmail: 'user@example.com',
         googleUserId: 'google-uid-123',
-        encryptedAccessToken: GoogleDriveOAuthManager.encryptToken('valid-token'),
+        encryptedAccessToken:
+          GoogleDriveOAuthManager.encryptToken('valid-token'),
         linkedAt,
       })
 
@@ -755,7 +756,8 @@ describe('GoogleDriveOAuthManager', function () {
         user_id: objId,
         googleEmail: 'user@example.com',
         googleUserId: 'google-uid-123',
-        encryptedAccessToken: GoogleDriveOAuthManager.encryptToken('valid-token'),
+        encryptedAccessToken:
+          GoogleDriveOAuthManager.encryptToken('valid-token'),
         linkedAt,
       })
 
@@ -805,7 +807,9 @@ describe('GoogleDriveOAuthManager', function () {
       // Configure oldSecret as fallback
       Settings.security.sessionSecretFallback = oldSecret
 
-      const decrypted = GoogleDriveOAuthManager.decryptToken(encryptedWithOldSecret)
+      const decrypted = GoogleDriveOAuthManager.decryptToken(
+        encryptedWithOldSecret
+      )
       expect(decrypted).toBe('token-encrypted-under-old-secret')
     })
   })

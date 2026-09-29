@@ -119,17 +119,20 @@ describe('latexSectionParser', function () {
     })
 
     it('recognises biblatex commands', function () {
-      expect(parseCitations('\\textcite{a} \\parencite{b}').map(c => c.key)).to.deep.equal([
-        'a',
-        'b',
-      ])
+      expect(
+        parseCitations('\\textcite{a} \\parencite{b}').map(c => c.key)
+      ).to.deep.equal(['a', 'b'])
     })
   })
 
   describe('parseLabelsAndRefs', function () {
     it('collects labels and references separately', function () {
       const { labels, refs } = parseLabelsAndRefs(DOC)
-      expect(labels.map(l => l.name)).to.have.members(['sec:intro', 'eq:main', 'fig:plot'])
+      expect(labels.map(l => l.name)).to.have.members([
+        'sec:intro',
+        'eq:main',
+        'fig:plot',
+      ])
       expect(refs.map(r => r.name)).to.have.members(['sec:intro', 'eq:main'])
     })
   })
@@ -162,7 +165,9 @@ describe('latexSectionParser', function () {
     })
 
     it('returns nothing for an unterminated environment', function () {
-      expect(parseEnvironments('\\begin{equation}\nx', ['equation'])).to.have.length(0)
+      expect(
+        parseEnvironments('\\begin{equation}\nx', ['equation'])
+      ).to.have.length(0)
     })
   })
 
@@ -181,7 +186,9 @@ describe('latexSectionParser', function () {
     })
 
     it('recognises DeclareMathOperator', function () {
-      const [command] = parseCustomCommands('\\DeclareMathOperator{\\argmin}{arg\\,min}')
+      const [command] = parseCustomCommands(
+        '\\DeclareMathOperator{\\argmin}{arg\\,min}'
+      )
       expect(command.name).to.equal('\\argmin')
     })
   })
@@ -201,10 +208,9 @@ describe('latexSectionParser', function () {
     })
 
     it('finds FIXME and XXX', function () {
-      expect(parseTodoNotes('% FIXME broken\n% XXX hack').map(n => n.kind)).to.deep.equal([
-        'FIXME',
-        'XXX',
-      ])
+      expect(
+        parseTodoNotes('% FIXME broken\n% XXX hack').map(n => n.kind)
+      ).to.deep.equal(['FIXME', 'XXX'])
     })
 
     it('finds a TODO in a comment following an escaped percent sign', function () {

@@ -1,3 +1,4 @@
+import { describe, it, beforeEach } from 'vitest'
 import { expect } from 'chai'
 import sinon from 'sinon'
 import { AiAssistChatHistoryController } from '../../../app/src/AiAssistChatHistoryController.mjs'
@@ -16,7 +17,9 @@ describe('AiAssistChatHistoryController', function () {
       listChats: sinon.stub().resolves([]),
       getChat: sinon.stub().resolves(null),
       saveChat: sinon.stub().resolves({ id: CHAT_ID, title: 'Test Chat' }),
-      saveChatTitle: sinon.stub().resolves({ id: CHAT_ID, title: 'Renamed Chat' }),
+      saveChatTitle: sinon
+        .stub()
+        .resolves({ id: CHAT_ID, title: 'Renamed Chat' }),
       deleteChat: sinon.stub().resolves(),
     }
     mockClientFactory = sinon.stub().returns({

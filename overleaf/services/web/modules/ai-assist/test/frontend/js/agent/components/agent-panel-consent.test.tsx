@@ -36,7 +36,8 @@ function sentBodies() {
   return fetchMock.callHistory
     .calls()
     .filter(
-      call => call.url.includes('/runs') || call.url.includes('chat/completions')
+      call =>
+        call.url.includes('/runs') || call.url.includes('chat/completions')
     )
     .map(call => JSON.parse(String(call.options?.body ?? '{}')))
 }
@@ -58,7 +59,9 @@ describe('AgentPanel first prompt before consent is given', function () {
 
     sinon.stub(ProjectSnapshot.prototype, 'refresh').resolves()
     sinon.stub(ProjectSnapshot.prototype, 'getDocPaths').returns(['main.tex'])
-    sinon.stub(ProjectSnapshot.prototype, 'getDocContents').callsFake(() => 'hi')
+    sinon
+      .stub(ProjectSnapshot.prototype, 'getDocContents')
+      .callsFake(() => 'hi')
     sinon
       .stub(ProjectSnapshot.prototype, 'getBinaryFilePathsWithHash')
       .returns([])

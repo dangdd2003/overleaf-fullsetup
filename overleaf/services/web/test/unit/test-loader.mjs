@@ -83,7 +83,8 @@ export async function resolve(specifier, context, nextResolve) {
   if (specifier === '@overleaf/validation-tools') {
     return {
       shortCircuit: true,
-      url: pathToFileURL(path.join(MOCKS_DIR, 'validation-tools-mock.mjs')).href,
+      url: pathToFileURL(path.join(MOCKS_DIR, 'validation-tools-mock.mjs'))
+        .href,
     }
   }
 

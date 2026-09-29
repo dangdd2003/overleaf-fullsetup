@@ -1,7 +1,5 @@
 import { expect } from 'chai'
-import {
-  renderCompileError,
-} from '../../../../frontend/js/features/ai-assist/agent/context/compile-error'
+import { renderCompileError } from '../../../../frontend/js/features/ai-assist/agent/context/compile-error'
 
 describe('renderCompileError', function () {
   it('renders the focused entry with its raw log', function () {
@@ -26,11 +24,19 @@ describe('renderCompileError', function () {
 
   it('states plainly when there are no other entries', function () {
     const text = renderCompileError({
-      focused: { level: 'error', message: 'boom', raw: null, file: null, line: null },
+      focused: {
+        level: 'error',
+        message: 'boom',
+        raw: null,
+        file: null,
+        line: null,
+      },
       others: [],
     })
 
-    expect(text).to.contain('<compile-log-index>no other entries</compile-log-index>')
+    expect(text).to.contain(
+      '<compile-log-index>no other entries</compile-log-index>'
+    )
   })
 
   it('lists same-level locations and collapses other levels to counts', function () {
@@ -59,7 +65,13 @@ describe('renderCompileError', function () {
 
   it('caps the location list at twenty', function () {
     const text = renderCompileError({
-      focused: { level: 'error', message: 'boom', raw: null, file: null, line: null },
+      focused: {
+        level: 'error',
+        message: 'boom',
+        raw: null,
+        file: null,
+        line: null,
+      },
       others: Array.from({ length: 25 }, (_unused, i) => ({
         level: 'error',
         file: `f${i}.tex`,
@@ -88,7 +100,13 @@ describe('renderCompileError', function () {
 
   it('omits attributes it has no value for', function () {
     const text = renderCompileError({
-      focused: { level: 'error', message: 'boom', raw: null, file: null, line: null },
+      focused: {
+        level: 'error',
+        message: 'boom',
+        raw: null,
+        file: null,
+        line: null,
+      },
       others: [],
     })
 

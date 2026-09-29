@@ -10,10 +10,13 @@ function jsonResponse(status, body, contentType = 'application/json') {
   return {
     ok: status >= 200 && status < 300,
     status,
-    headers: { get: name => (name.toLowerCase() === 'content-type' ? contentType : null) },
+    headers: {
+      get: name => (name.toLowerCase() === 'content-type' ? contentType : null),
+    },
     json: async () => body,
     text: async () => JSON.stringify(body),
-    arrayBuffer: async () => new TextEncoder().encode(JSON.stringify(body)).buffer,
+    arrayBuffer: async () =>
+      new TextEncoder().encode(JSON.stringify(body)).buffer,
   }
 }
 
@@ -64,7 +67,9 @@ describe('OverleafClient', function () {
   })
 
   it('preserves the upstream code from the error envelope', async function () {
-    fetchImpl.resolves(jsonResponse(403, { code: 'insufficient_scope', message: 'no mcp scope' }))
+    fetchImpl.resolves(
+      jsonResponse(403, { code: 'insufficient_scope', message: 'no mcp scope' })
+    )
     try {
       await client.get(TOKEN, '/projects')
       expect.fail('expected a throw')
@@ -88,7 +93,10 @@ describe('OverleafClient', function () {
 
   it('sanitises the internal URL out of an upstream message', async function () {
     fetchImpl.resolves(
-      jsonResponse(502, { code: 'upstream_error', message: 'clsi at http://web:3000 died' })
+      jsonResponse(502, {
+        code: 'upstream_error',
+        message: 'clsi at http://web:3000 died',
+      })
     )
     try {
       await client.get(TOKEN, '/projects/p1/compile')
@@ -118,9 +126,13 @@ describe('OverleafClient', function () {
       headers: { get: () => 'application/pdf' },
       arrayBuffer: async () => pdf.buffer,
     })
-    const result = await client.requestBinary(TOKEN, '/projects/p1/compile/pdf', {
-      buildId: 'b1',
-    })
+    const result = await client.requestBinary(
+      TOKEN,
+      '/projects/p1/compile/pdf',
+      {
+        buildId: 'b1',
+      }
+    )
     expect(result.contentType).to.equal('application/pdf')
     expect(Buffer.from(result.base64, 'base64').toString()).to.equal('%PDF-1.7')
   })
@@ -153,9 +165,13 @@ describe('OverleafClient', function () {
       headers: { get: () => 'application/pdf' },
       arrayBuffer: async () => pdf.buffer,
     })
-    const result = await client.requestBinary(TOKEN, '/projects/p1/compile/pdf', {
-      buildId: 'b1',
-    })
+    const result = await client.requestBinary(
+      TOKEN,
+      '/projects/p1/compile/pdf',
+      {
+        buildId: 'b1',
+      }
+    )
     const [url] = fetchImpl.firstCall.args
     expect(url).to.include('buildId=b1')
     expect(result.contentType).to.equal('application/pdf')
@@ -170,9 +186,13 @@ describe('OverleafClient', function () {
       headers: { get: () => 'application/pdf' },
       arrayBuffer: async () => pdf.buffer,
     })
-    const result = await client.requestBinary(TOKEN, '/projects/p1/compile/pdf', {
-      query: { buildId: 'b1' },
-    })
+    const result = await client.requestBinary(
+      TOKEN,
+      '/projects/p1/compile/pdf',
+      {
+        query: { buildId: 'b1' },
+      }
+    )
     const [url] = fetchImpl.firstCall.args
     expect(url).to.include('buildId=b1')
     expect(result.contentType).to.equal('application/pdf')
@@ -224,9 +244,9 @@ describe('OverleafClient', function () {
       headers: { get: name => withEncoded[name.toLowerCase()] ?? null },
       arrayBuffer: async () => new TextEncoder().encode('PK-zip').buffer,
     })
-    expect((await client.requestBinary(TOKEN, '/projects/p1/zip')).filename).to.equal(
-      'Thèse.zip'
-    )
+    expect(
+      (await client.requestBinary(TOKEN, '/projects/p1/zip')).filename
+    ).to.equal('Thèse.zip')
 
     fetchImpl.resolves({
       ok: true,
@@ -234,7 +254,7 @@ describe('OverleafClient', function () {
       headers: { get: () => null },
       arrayBuffer: async () => new TextEncoder().encode('PK-zip').buffer,
     })
-    expect((await client.requestBinary(TOKEN, '/projects/p1/zip')).filename).to.be
-      .undefined
+    expect((await client.requestBinary(TOKEN, '/projects/p1/zip')).filename).to
+      .be.undefined
   })
 })

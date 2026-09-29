@@ -21,9 +21,8 @@ vi.mock('../../../../../app/src/Features/Compile/ClsiManager.mjs', () => ({
   default: ClsiManager,
 }))
 
-const { default: McpCompileController } = await import(
-  '../../../../../app/src/Features/Mcp/McpCompileController.mjs'
-)
+const { default: McpCompileController } =
+  await import('../../../../../app/src/Features/Mcp/McpCompileController.mjs')
 
 function res() {
   return {
@@ -354,7 +353,13 @@ describe('McpCompileController.synctex', () => {
     const req = {
       mcpUserId: 'u1',
       params: { projectId: 'p1' },
-      query: { page: '3', h: '1.5', v: '2.5', buildId: '0a1b-2c3d', editorId: 'e1' },
+      query: {
+        page: '3',
+        h: '1.5',
+        v: '2.5',
+        buildId: '0a1b-2c3d',
+        editorId: 'e1',
+      },
     }
     const r = res()
     await McpCompileController.synctex(req, r)

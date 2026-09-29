@@ -26,9 +26,8 @@ vi.mock('../../../../../app/src/Features/Editor/EditorController.mjs', () => ({
   default: EditorController,
 }))
 
-const { default: McpProjectsController } = await import(
-  '../../../../../app/src/Features/Mcp/McpProjectsController.mjs'
-)
+const { default: McpProjectsController } =
+  await import('../../../../../app/src/Features/Mcp/McpProjectsController.mjs')
 
 function res() {
   return {
@@ -176,13 +175,18 @@ describe('McpProjectsController.createProject', () => {
     await McpProjectsController.createProject(
       {
         mcpUserId: 'u1',
-        body: { name: 'P', initialFiles: [{ path: 'valid.tex' }, { path: null }] },
+        body: {
+          name: 'P',
+          initialFiles: [{ path: 'valid.tex' }, { path: null }],
+        },
       },
       r1
     )
     expect(r1.statusCode).toBe(400)
     expect(r1.body.message).toContain('each initial file needs a path')
-    expect(ProjectCreationHandler.promises.createBlankProject).not.toHaveBeenCalled()
+    expect(
+      ProjectCreationHandler.promises.createBlankProject
+    ).not.toHaveBeenCalled()
 
     const r2 = res()
     await McpProjectsController.createProject(
@@ -194,7 +198,9 @@ describe('McpProjectsController.createProject', () => {
     )
     expect(r2.statusCode).toBe(400)
     expect(r2.body.message).toContain('invalid path in initialFiles')
-    expect(ProjectCreationHandler.promises.createBlankProject).not.toHaveBeenCalled()
+    expect(
+      ProjectCreationHandler.promises.createBlankProject
+    ).not.toHaveBeenCalled()
   })
 
   it('creates a blank project and seeds initial files', async () => {
@@ -276,7 +282,10 @@ describe('McpProjectsController.updateSettings', () => {
       'p1',
       'xelatex'
     )
-    expect(EditorController.promises.setRootDoc).toHaveBeenCalledWith('p1', 'rd1')
+    expect(EditorController.promises.setRootDoc).toHaveBeenCalledWith(
+      'p1',
+      'rd1'
+    )
     expect(
       EditorController.promises.setSpellCheckLanguage
     ).toHaveBeenCalledWith('p1', 'fr')

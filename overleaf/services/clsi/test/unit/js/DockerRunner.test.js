@@ -1,5 +1,6 @@
 import { vi, expect, describe, beforeEach, afterEach, it } from 'vitest'
-
+import chai from 'chai'
+chai.should()
 import sinon from 'sinon'
 import Path from 'node:path'
 

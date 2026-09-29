@@ -50,12 +50,14 @@ describe('scanEnvironments', function () {
 
   it('caps lines at MAX_ENV_LINES while count stays true', function () {
     // Build a file with 60 figures
-    const content = Array.from({ length: 60 }, (_, i) => [
-      `\\section{Section ${i}}`,
-      '\\begin{figure}',
-      'content',
-      '\\end{figure}',
-    ].join('\n')).join('\n')
+    const content = Array.from({ length: 60 }, (_, i) =>
+      [
+        `\\section{Section ${i}}`,
+        '\\begin{figure}',
+        'content',
+        '\\end{figure}',
+      ].join('\n')
+    ).join('\n')
     const envs = scanEnvironments(content)
     const figure = envs.find(e => e.name === 'figure')
     expect(figure?.count).to.equal(60)
@@ -92,9 +94,15 @@ describe('buildProjectIndex', function () {
     const first = buildProjectIndex({ docs: PAPER, rootPath: 'main.tex' })
     const changed = {
       ...PAPER,
-      'main.tex': PAPER['main.tex'].replace('\\section{Method}', '\\section{Methods}'),
+      'main.tex': PAPER['main.tex'].replace(
+        '\\section{Method}',
+        '\\section{Methods}'
+      ),
     }
-    const second = buildProjectIndex({ docs: changed, rootPath: 'main.tex' }, first)
+    const second = buildProjectIndex(
+      { docs: changed, rootPath: 'main.tex' },
+      first
+    )
     expect(second).to.not.equal(first)
     expect(second.outline.sections.map(s => s.title)).to.include('Methods')
   })
@@ -129,7 +137,10 @@ describe('buildProjectIndex', function () {
 })
 
 describe('matchSection', function () {
-  const outline = buildProjectIndex({ docs: PAPER, rootPath: 'main.tex' }).outline
+  const outline = buildProjectIndex({
+    docs: PAPER,
+    rootPath: 'main.tex',
+  }).outline
 
   it('matches a title case-insensitively with commands stripped', function () {
     const match = matchSection(outline, 'method')

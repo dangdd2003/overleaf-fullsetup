@@ -1,4 +1,11 @@
-import { ChangeEvent, KeyboardEvent, useEffect, useRef, useState } from 'react'
+import {
+  ChangeEvent,
+  KeyboardEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   FileText,
@@ -7,7 +14,6 @@ import {
   PencilSimple,
   ListChecks,
   CaretUp,
-  Check,
 } from '@phosphor-icons/react'
 import {
   OLDropdown,
@@ -19,6 +25,7 @@ import useEventListener from '@/shared/hooks/use-event-listener'
 import { AttachmentRef } from '../../agent/context/types'
 import { parseAttachmentRef } from '../../agent/context/attachments'
 import { AgentMode, nextMode } from '../../agent/agent-mode'
+import { ReasoningEffortPicker } from './reasoning-effort-picker'
 
 export interface AttachedSelection {
   path: string
@@ -42,6 +49,7 @@ export function mentionQueryAt(value: string, caret: number): string | null {
 
 export function AgentComposer({
   running,
+  disabled = false,
   paths = [],
   onSend,
   onStop,
@@ -54,6 +62,7 @@ export function AgentComposer({
   history = [],
 }: {
   running: boolean
+  disabled?: boolean
   paths?: string[]
   onSend: (
     text: string,
@@ -66,14 +75,18 @@ export function AgentComposer({
   attachments?: AttachmentRef[]
   setAttachments?: React.Dispatch<React.SetStateAction<AttachmentRef[]>>
   attachedSelection?: AttachedSelection | null
-  setAttachedSelection?: React.Dispatch<React.SetStateAction<AttachedSelection | null>>
+  setAttachedSelection?: React.Dispatch<
+    React.SetStateAction<AttachedSelection | null>
+  >
   history?: string[]
 }) {
   const { t } = useTranslation()
   const [value, setValue] = useState('')
   const [historyIndex, setHistoryIndex] = useState<number>(-1)
   const draftRef = useRef<string>('')
-  const [internalAttachments, setInternalAttachments] = useState<AttachmentRef[]>([])
+  const [internalAttachments, setInternalAttachments] = useState<
+    AttachmentRef[]
+  >([])
   const [internalAttachedSelection, setInternalAttachedSelection] =
     useState<AttachedSelection | null>(null)
 
@@ -92,13 +105,29 @@ export function AgentComposer({
   const menuRef = useRef<HTMLUListElement>(null)
   const attachBtnRef = useRef<HTMLButtonElement>(null)
 
+  const autoResize = useCallback(() => {
+    const el = textareaRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    const scrollHeight = el.scrollHeight
+    const nextHeight = Math.max(24, Math.min(scrollHeight, 180))
+    el.style.height = `${nextHeight}px`
+  }, [])
+
+  useEffect(() => {
+    autoResize()
+  }, [value, autoResize])
+
   const modeConfig: Record<
     AgentMode,
     { label: string; desc: string; num: string; icon: React.ReactNode }
   > = {
     manual: {
       label: t('ai_assist_mode_manual', 'Manual'),
-      desc: t('ai_assist_mode_manual_desc', 'Approve each change before it applies'),
+      desc: t(
+        'ai_assist_mode_manual_desc',
+        'Approve each change before it applies'
+      ),
       num: '1',
       icon: <HandPalm size={15} weight="bold" />,
     },
@@ -113,7 +142,10 @@ export function AgentComposer({
     },
     plan: {
       label: t('ai_assist_mode_plan', 'Plan'),
-      desc: t('ai_assist_mode_plan_desc', 'Research first, then propose a plan'),
+      desc: t(
+        'ai_assist_mode_plan_desc',
+        'Research first, then propose a plan'
+      ),
       num: '3',
       icon: <ListChecks size={15} weight="bold" />,
     },
@@ -177,6 +209,7 @@ export function AgentComposer({
   })
 
   const onChange = (event: ChangeEvent<HTMLTextAreaElement>) => {
+    if (disabled) return
     const next = event.target.value
     const caret = event.target.selectionStart ?? next.length
 
@@ -210,9 +243,12 @@ export function AgentComposer({
   }
 
   const hasContent =
-    Boolean(value.trim()) || attachments.length > 0 || attachedSelection !== null
+    Boolean(value.trim()) ||
+    attachments.length > 0 ||
+    attachedSelection !== null
 
   const send = () => {
+    if (disabled || running) return
     const trimmed = value.trim()
     if (!trimmed && attachments.length === 0 && !attachedSelection) return
     onSend(trimmed, attachments, attachedSelection)
@@ -240,6 +276,7 @@ export function AgentComposer({
   }
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (disabled) return
     if (event.key === 'Tab' && event.shiftKey) {
       event.preventDefault()
       onModeChange?.(nextMode(mode || 'manual'))
@@ -327,7 +364,9 @@ export function AgentComposer({
 
   return (
     <div className="ai-assist-composer">
-      <div className="ai-assist-composer-box">
+      <div
+        className={`ai-assist-composer-box ${disabled ? 'is-disabled' : ''}`}
+      >
         {query !== null && matches.length > 0 && (
           <ul ref={menuRef} className="ai-assist-mention-menu" role="listbox">
             {matches.map(path => {
@@ -359,6 +398,33 @@ export function AgentComposer({
           </ul>
         )}
 
+        <label
+          htmlFor="ai-assist-composer-textarea"
+          className="visually-hidden"
+        >
+          {t('ai_assist_composer_placeholder', 'What would you like to do?')}
+        </label>
+        <textarea
+          ref={textareaRef}
+          id="ai-assist-composer-textarea"
+          value={value}
+          disabled={disabled}
+          onChange={onChange}
+          onKeyDown={onKeyDown}
+          placeholder={
+            disabled
+              ? t(
+                  'ai_assist_composer_no_provider_placeholder',
+                  'Configure an AI provider in Account Settings to chat'
+                )
+              : t(
+                  'ai_assist_composer_placeholder',
+                  'What would you like to do?'
+                )
+          }
+          rows={1}
+        />
+
         {(attachedSelection || attachments.length > 0) && (
           <div className="ai-assist-selection-chip-wrapper">
             {attachedSelection && (
@@ -367,7 +433,19 @@ export function AgentComposer({
                   className="ai-assist-selection-chip-icon"
                   aria-hidden="true"
                 >
-                  &lt;&gt;
+                  <svg
+                    viewBox="0 0 16 16"
+                    width="12"
+                    height="12"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.75"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <polyline points="5 4 1 8 5 12" />
+                    <polyline points="11 4 15 8 11 12" />
+                  </svg>
                 </span>
                 <span className="ai-assist-selection-chip-label">
                   {attachedSelection.path}: {attachedSelection.from}-
@@ -382,16 +460,16 @@ export function AgentComposer({
                 >
                   <svg
                     viewBox="0 0 16 16"
-                    width="12"
-                    height="12"
+                    width="10"
+                    height="10"
                     fill="none"
                     stroke="currentColor"
                     strokeWidth="2"
                     strokeLinecap="round"
-                    aria-hidden="true"
+                    strokeLinejoin="round"
                   >
-                    <line x1="4" y1="4" x2="12" y2="12" />
-                    <line x1="12" y1="4" x2="4" y2="12" />
+                    <line x1="3" y1="3" x2="13" y2="13" />
+                    <line x1="13" y1="3" x2="3" y2="13" />
                   </svg>
                 </button>
               </span>
@@ -401,6 +479,11 @@ export function AgentComposer({
                 className="ai-assist-selection-chip"
                 key={`${attachment.path}-${index}`}
               >
+                <FileText
+                  size={12}
+                  className="ai-assist-selection-chip-icon"
+                  aria-hidden="true"
+                />
                 <span className="ai-assist-selection-chip-label">
                   {attachment.from != null && attachment.to != null
                     ? `${attachment.path}:${attachment.from}-${attachment.to}`
@@ -410,36 +493,32 @@ export function AgentComposer({
                   type="button"
                   className="ai-assist-selection-chip-close"
                   aria-label={t('remove_attachment', 'Remove attachment')}
+                  title={t('remove_attachment', 'Remove attachment')}
                   onClick={() =>
                     setAttachments(current =>
                       current.filter((_unused, at) => at !== index)
                     )
                   }
                 >
-                  ×
+                  <svg
+                    viewBox="0 0 16 16"
+                    width="10"
+                    height="10"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <line x1="3" y1="3" x2="13" y2="13" />
+                    <line x1="13" y1="3" x2="3" y2="13" />
+                  </svg>
                 </button>
               </span>
             ))}
           </div>
         )}
 
-        <label
-          htmlFor="ai-assist-composer-textarea"
-          className="visually-hidden"
-        >
-          {t('ai_assist_composer_placeholder', 'What would you like to do?')}
-        </label>
-        <textarea
-          ref={textareaRef}
-          id="ai-assist-composer-textarea"
-          value={value}
-          onChange={onChange}
-          onKeyDown={onKeyDown}
-          placeholder={t(
-            'ai_assist_composer_placeholder',
-            'What would you like to do?'
-          )}
-        />
         <div className="ai-assist-composer-actions">
           <div className="ai-assist-composer-left-actions">
             <button
@@ -449,6 +528,7 @@ export function AgentComposer({
               aria-label={t('attach_file', 'Attach context')}
               title={t('attach_file', 'Attach context')}
               aria-expanded={query !== null}
+              disabled={disabled}
               onClick={toggleAttachMenu}
             >
               <svg
@@ -477,16 +557,23 @@ export function AgentComposer({
                 id="ai-assist-mode-toggle"
                 as="button"
                 className="ai-assist-mode-selector-btn"
-                aria-label={t('ai_assist_select_mode', 'Select mode (Shift+Tab to cycle)')}
-                title={t(
-                  'ai_assist_select_mode_tooltip',
-                  'Mode: __label__ (Shift+Tab to cycle)',
-                  { label: currentModeConfig.label }
+                disabled={disabled}
+                aria-label={t(
+                  'ai_assist_select_mode',
+                  'Select mode (Shift+Tab to cycle)'
                 )}
               >
-                <span className="ai-assist-mode-icon">{currentModeConfig.icon}</span>
-                <span className="ai-assist-mode-label">{currentModeConfig.label}</span>
-                <CaretUp size={10} weight="bold" className="ai-assist-mode-caret" />
+                <span className="ai-assist-mode-icon">
+                  {currentModeConfig.icon}
+                </span>
+                <span className="ai-assist-mode-label">
+                  {currentModeConfig.label}
+                </span>
+                <CaretUp
+                  size={10}
+                  weight="bold"
+                  className="ai-assist-mode-caret"
+                />
               </OLDropdownToggle>
               <OLDropdownMenu className="ai-assist-mode-menu">
                 <div className="ai-assist-mode-menu-header">Mode</div>
@@ -496,12 +583,20 @@ export function AgentComposer({
                     className={`ai-assist-mode-menu-row ${m === (mode || 'manual') ? 'is-selected' : ''}`}
                     onClick={() => onModeChange?.(m)}
                   >
-                    <span className="ai-assist-mode-item-icon">{modeConfig[m].icon}</span>
+                    <span className="ai-assist-mode-item-icon">
+                      {modeConfig[m].icon}
+                    </span>
                     <div className="ai-assist-mode-item-text">
-                      <span className="ai-assist-mode-item-title">{modeConfig[m].label}</span>
-                      <span className="ai-assist-mode-item-desc">{modeConfig[m].desc}</span>
+                      <span className="ai-assist-mode-item-title">
+                        {modeConfig[m].label}
+                      </span>
+                      <span className="ai-assist-mode-item-desc">
+                        {modeConfig[m].desc}
+                      </span>
                     </div>
-                    <span className="ai-assist-mode-item-num">{modeConfig[m].num}</span>
+                    <span className="ai-assist-mode-item-num">
+                      {modeConfig[m].num}
+                    </span>
                   </OLDropdownItem>
                 ))}
               </OLDropdownMenu>
@@ -509,6 +604,7 @@ export function AgentComposer({
           </div>
 
           <div className="ai-assist-composer-right-actions">
+            <ReasoningEffortPicker />
             {running && !hasContent ? (
               <button
                 type="button"
@@ -530,8 +626,8 @@ export function AgentComposer({
             ) : (
               <button
                 type="button"
-                className={`ai-assist-send-btn ${hasContent ? 'is-active' : ''}`}
-                disabled={!hasContent}
+                className={`ai-assist-send-btn ${hasContent && !disabled ? 'is-active' : ''}`}
+                disabled={disabled || !hasContent}
                 onClick={send}
                 aria-label={sendLabel}
                 title={sendLabel}

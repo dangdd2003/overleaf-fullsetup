@@ -12,7 +12,10 @@ export interface StoredFix {
   running?: boolean
   error?: { code: string; message: string } | null
   feedback?: 'up' | 'down' | null
-  decidedEdits: Record<string, { path: string; startLine: number; accepted: boolean }>
+  decidedEdits: Record<
+    string,
+    { path: string; startLine: number; accepted: boolean }
+  >
   approvalContext?: { startLine: number } | null
   pendingApproval?: { id: string; edit: EditRequest } | null
   updatedAt: number
@@ -52,10 +55,15 @@ export function getLastCompletedFix(projectId: string): LastFixSummary | null {
 
 const keyFor = (projectId: string) => `ai-assist:fixes:${projectId}`
 
-export function clearFixStore(): void {
+export function clearFixStore(projectId?: string): void {
   inMemoryFixes.clear()
   listeners.clear()
   lastCompletedFixByProject.clear()
+  if (projectId) {
+    try {
+      customLocalStorage.removeItem(keyFor(projectId))
+    } catch {}
+  }
 }
 
 export function buildLogEntryFingerprint(logEntry?: any): string {
@@ -93,27 +101,29 @@ function ensureProjectLoaded(projectId: string): Map<string, StoredFix> {
         for (const item of raw) {
           if (item && typeof item === 'object' && item.entryId) {
             // Unpack and sanitize any nested result previews
-            const cleanedTranscript = (item.transcript ?? []).map((entry: any) => {
-              if (entry.role !== 'assistant') return entry
-              return {
-                ...entry,
-                toolCalls: (entry.toolCalls ?? []).map((call: any) => ({
-                  ...call,
-                  result: cleanStoredResult(call.result),
-                })),
-                blocks: entry.blocks?.map((block: any) =>
-                  block.type === 'tool_call'
-                    ? {
-                        ...block,
-                        call: {
-                          ...block.call,
-                          result: cleanStoredResult(block.call.result),
-                        },
-                      }
-                    : block
-                ),
+            const cleanedTranscript = (item.transcript ?? []).map(
+              (entry: any) => {
+                if (entry.role !== 'assistant') return entry
+                return {
+                  ...entry,
+                  toolCalls: (entry.toolCalls ?? []).map((call: any) => ({
+                    ...call,
+                    result: cleanStoredResult(call.result),
+                  })),
+                  blocks: entry.blocks?.map((block: any) =>
+                    block.type === 'tool_call'
+                      ? {
+                          ...block,
+                          call: {
+                            ...block.call,
+                            result: cleanStoredResult(block.call.result),
+                          },
+                        }
+                      : block
+                  ),
+                }
               }
-            })
+            )
             projectMap.set(item.entryId, {
               ...item,
               transcript: cleanedTranscript,
@@ -164,7 +174,10 @@ export function getStoredFix(
   // an entryId hit alone is not proof this is the same error — comparing
   // fingerprints (file + line + message) is what actually identifies "the
   // same problem" rather than "the same file" or "the same list slot".
-  if (exact && (!fingerprint || !exact.fingerprint || exact.fingerprint === fingerprint)) {
+  if (
+    exact &&
+    (!fingerprint || !exact.fingerprint || exact.fingerprint === fingerprint)
+  ) {
     return exact
   }
 

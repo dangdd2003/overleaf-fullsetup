@@ -44,7 +44,7 @@ export const FIX_SYSTEM_PROMPT = [
   'reformatting, no unrelated tidying, no fixing other entries in passing.',
   '',
   'Prefer the least invasive fix that works: change an argument before you add',
-  'a package, and add a package before you rewrite the author\'s text.',
+  "a package, and add a package before you rewrite the author's text.",
   '',
   '- `noMatch` — your anchor is not in the file. Read it again and copy the',
   '  span exactly. Do not guess at whitespace.',

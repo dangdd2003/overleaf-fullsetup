@@ -1,6 +1,6 @@
 import { expect } from 'chai'
 import sinon from 'sinon'
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import {
   STATUS_WORDS,
   formatElapsed,
@@ -8,8 +8,9 @@ import {
   toPastTense,
   formatCompletedStatus,
   nextStatusWord,
-  getThinkingStatus,
-  DEEP_THINKING_WORDS,
+  deriveStatusMode,
+  formatTokenCount,
+  thinkingPhrase,
 } from '../../../../../frontend/js/features/ai-assist/components/agent/status-words'
 import { AgentStatusLine } from '../../../../../frontend/js/features/ai-assist/components/agent/agent-status-line'
 import { SubresultGroup } from '../../../../../frontend/js/features/ai-assist/components/agent/subresult-group'
@@ -72,34 +73,48 @@ describe('the status vocabulary', function () {
   })
 })
 
-describe('getThinkingStatus token tiers', function () {
-  it('returns appropriate progressive phrases based on token count', function () {
-    expect(getThinkingStatus(0)).to.equal('Thinking…')
-    expect(getThinkingStatus(100)).to.equal('Thinking…')
-    expect(getThinkingStatus(249)).to.equal('Thinking…')
-
-    expect(getThinkingStatus(250)).to.equal('Still thinking…')
-    expect(getThinkingStatus(500)).to.equal('Still thinking…')
-    expect(getThinkingStatus(749)).to.equal('Still thinking…')
-
-    expect(getThinkingStatus(750)).to.equal('Thinking deeply…')
-    expect(getThinkingStatus(1499)).to.equal('Thinking deeply…')
-
-    expect(getThinkingStatus(1500)).to.equal('Pondering the solution…')
-    expect(getThinkingStatus(2999)).to.equal('Pondering the solution…')
-
-    expect(getThinkingStatus(3000)).to.equal('Working through complex reasoning…')
-    expect(getThinkingStatus(4999)).to.equal('Working through complex reasoning…')
+describe('deriveStatusMode', function () {
+  it('reads the live stream the way Claude Code does', function () {
+    expect(deriveStatusMode([])).to.equal('requesting')
+    expect(
+      deriveStatusMode([{ type: 'thinking', thinking: 'hm', startedAt: 1 }])
+    ).to.equal('thinking')
+    expect(deriveStatusMode([{ type: 'text', text: 'Hi' }])).to.equal(
+      'responding'
+    )
+    expect(
+      deriveStatusMode([
+        { type: 'tool_call', call: { id: 'a', name: 'read_file', args: {} } },
+      ])
+    ).to.equal('tool')
+    // A finished tool call leaves the run waiting on the provider again.
+    expect(
+      deriveStatusMode([
+        {
+          type: 'tool_call',
+          call: { id: 'a', name: 'read_file', args: {}, result: 'ok' },
+        },
+      ])
+    ).to.equal('requesting')
   })
+})
 
-  it('progresses through deep thinking words beyond 5000 tokens', function () {
-    expect(getThinkingStatus(5000)).to.equal(DEEP_THINKING_WORDS[0])
-    expect(getThinkingStatus(6000)).to.equal(DEEP_THINKING_WORDS[1])
-    expect(getThinkingStatus(7000)).to.equal(DEEP_THINKING_WORDS[2])
-    expect(getThinkingStatus(8000)).to.equal(DEEP_THINKING_WORDS[3])
-    expect(getThinkingStatus(9000)).to.equal(DEEP_THINKING_WORDS[4])
-    // Cycles back around
-    expect(getThinkingStatus(10000)).to.equal(DEEP_THINKING_WORDS[0])
+describe('formatTokenCount', function () {
+  it('abbreviates thousands', function () {
+    expect(formatTokenCount(840)).to.equal('840')
+    expect(formatTokenCount(1234)).to.equal('1.2k')
+    expect(formatTokenCount(12400)).to.equal('12.4k')
+  })
+})
+
+describe('thinkingPhrase', function () {
+  it("climbs Claude Code's ladder with the length of the thought", function () {
+    expect(thinkingPhrase(0)).to.equal('Thinking')
+    expect(thinkingPhrase(10000)).to.equal('Still thinking')
+    expect(thinkingPhrase(20000)).to.equal('Thinking more')
+    expect(thinkingPhrase(30000)).to.equal('Thinking some more')
+    expect(thinkingPhrase(45000)).to.equal('Deep in thought')
+    expect(thinkingPhrase(600000)).to.equal('Deep in thought')
   })
 })
 
@@ -115,21 +130,97 @@ describe('AgentStatusLine', function () {
     render(<AgentStatusLine startedAt={Date.now()} />)
 
     const line = screen.getByRole('status')
-    expect(STATUS_WORDS.some(word => line.textContent?.includes(word))).to.equal(
-      true
-    )
+    expect(
+      STATUS_WORDS.some(word => line.textContent?.includes(word))
+    ).to.equal(true)
   })
 
-  it('puts the elapsed time before the word, as Claude Code does', function () {
+  it('shows only the word while the reply streams, never the counters beside it', function () {
     const started = Date.now()
-    clock = sinon.useFakeTimers({ now: started + 67000, toFake: ['setInterval', 'clearInterval', 'Date'] })
+    clock = sinon.useFakeTimers({
+      now: started + 67000,
+      toFake: ['setInterval', 'clearInterval', 'Date'],
+    })
 
-    render(<AgentStatusLine startedAt={started} />)
+    const { container } = render(
+      <AgentStatusLine
+        startedAt={started}
+        blocks={[{ type: 'text', text: 'a'.repeat(4000) }]}
+      />
+    )
+
+    expect(container.querySelector('.ai-assist-status-meta')).to.equal(null)
+    expect(screen.getByRole('status').textContent).to.match(/^\S+…$/)
+  })
+
+  it('switches to time, tokens and "Running tools…" while a tool runs', function () {
+    const started = Date.now()
+    clock = sinon.useFakeTimers({
+      now: started + 161000,
+      toFake: ['setInterval', 'clearInterval', 'Date'],
+    })
+
+    render(
+      <AgentStatusLine
+        startedAt={started}
+        blocks={[
+          {
+            type: 'tool_call',
+            call: { id: 'c', name: 'read_file', args: { path: 'main.tex' } },
+          },
+        ]}
+      />
+    )
 
     const text = screen.getByRole('status').textContent ?? ''
-    expect(text).to.contain('1m 7s')
-    expect(text).to.contain('·')
-    expect(text.indexOf('1m 7s')).to.be.lessThan(text.indexOf('·'))
+    expect(text).to.match(/^2m 41s · ↓ \d+ tokens · Running tools…$/)
+    expect(STATUS_WORDS.some(word => text.includes(word))).to.equal(false)
+  })
+
+  it('turns red once the stream goes quiet', function () {
+    const started = Date.now()
+    clock = sinon.useFakeTimers({
+      now: started,
+      toFake: ['setInterval', 'clearInterval', 'Date'],
+    })
+
+    const { container } = render(
+      <AgentStatusLine
+        startedAt={started}
+        blocks={[{ type: 'text', text: 'a'.repeat(4000) }]}
+      />
+    )
+    const line = container.querySelector('.ai-assist-status-line')!
+    expect(line.classList.contains('is-responding')).to.equal(true)
+    expect(line.classList.contains('is-stalled')).to.equal(false)
+
+    act(() => {
+      clock.tick(3000)
+    })
+    expect(line.classList.contains('is-stalled')).to.equal(true)
+  })
+
+  it('never calls a running tool a stall', function () {
+    const started = Date.now()
+    clock = sinon.useFakeTimers({
+      now: started,
+      toFake: ['setInterval', 'clearInterval', 'Date'],
+    })
+
+    const { container } = render(
+      <AgentStatusLine
+        startedAt={started}
+        blocks={[
+          { type: 'tool_call', call: { id: 'c', name: 'compile', args: {} } },
+        ]}
+      />
+    )
+    act(() => {
+      clock.tick(10000)
+    })
+    const line = container.querySelector('.ai-assist-status-line')!
+    expect(line.classList.contains('is-tool')).to.equal(true)
+    expect(line.classList.contains('is-stalled')).to.equal(false)
   })
 
   it('renders a spinner alongside the text', function () {
@@ -146,36 +237,62 @@ describe('AgentStatusLine', function () {
     expect(line!.closest('.ai-assist-subresult-group')).to.equal(null)
   })
 
-  it('shows thinking status and transitions to still thinking as thinking tokens accumulate', function () {
+  it('rolls only the digit that changes when the timer ticks', function () {
     const started = Date.now()
-    const { rerender } = render(
-      <AgentStatusLine
-        startedAt={started}
-        blocks={[{ type: 'thinking', thinking: 'planning...', startedAt: started }]}
-      />
-    )
-    expect(screen.getByRole('status').textContent).to.contain('Thinking…')
+    clock = sinon.useFakeTimers({
+      now: started + 12000,
+      toFake: ['setInterval', 'clearInterval', 'Date'],
+    })
 
-    // 1500 characters / 3.7 chars-per-token ≈ 405 tokens (tier: [250, 750) -> 'Still thinking…')
-    rerender(
+    const { container } = render(
       <AgentStatusLine
         startedAt={started}
-        blocks={[{ type: 'thinking', thinking: 'a'.repeat(1500), startedAt: started }]}
+        blocks={[
+          { type: 'tool_call', call: { id: 'c', name: 'compile', args: {} } },
+        ]}
       />
     )
-    expect(screen.getByRole('status').textContent).to.contain('Still thinking…')
+    expect(container.querySelector('.ai-assist-roll-in')).to.equal(null)
 
-    // 6000 characters / 3.7 chars-per-token ≈ 1622 tokens (tier: [1500, 3000) -> 'Pondering the solution…')
-    rerender(
-      <AgentStatusLine
-        startedAt={started}
-        blocks={[{ type: 'thinking', thinking: 'a'.repeat(6000), startedAt: started }]}
-      />
-    )
-    expect(screen.getByRole('status').textContent).to.contain('Pondering the solution…')
+    act(() => {
+      clock.tick(1000)
+    })
+    const rolling = container.querySelectorAll('.ai-assist-roll-in')
+    expect(rolling).to.have.length(1)
+    expect(rolling[0].textContent).to.equal('3')
+    expect(
+      container.querySelector('.ai-assist-roll-out')?.textContent
+    ).to.equal('2')
   })
 
-  it('shows a rotating whimsical word while a tool call is in flight, never flickering transient verbs', function () {
+  it('climbs the thinking ladder in place of the word while thinking streams', function () {
+    const started = Date.now()
+    clock = sinon.useFakeTimers({
+      now: started + 49000,
+      toFake: ['setInterval', 'clearInterval', 'Date'],
+    })
+
+    const { container } = render(
+      <AgentStatusLine
+        startedAt={started}
+        blocks={[
+          {
+            type: 'thinking',
+            thinking: 'planning...',
+            startedAt: started + 15000,
+          },
+        ]}
+      />
+    )
+    expect(
+      container.querySelector('.ai-assist-status-verb')?.textContent
+    ).to.equal('Thinking some more…')
+    expect(screen.getByRole('status').textContent).to.match(
+      /^49s · ↓ \d+ tokens · Thinking some more…$/
+    )
+  })
+
+  it('says "Running tools…" while a tool call is in flight, never flickering transient verbs', function () {
     render(
       <AgentStatusLine
         startedAt={Date.now()}
@@ -189,24 +306,28 @@ describe('AgentStatusLine', function () {
     )
     const text = screen.getByRole('status').textContent || ''
     expect(text).to.not.contain('Reading main.tex…')
-    expect(STATUS_WORDS.some(word => text.includes(word))).to.equal(true)
+    expect(text).to.contain('Running tools…')
   })
 
-  it('shows a rotating whimsical word for search_project tool, never flickering search queries', function () {
+  it('says "Running tools…" for search_project too, never flickering search queries', function () {
     render(
       <AgentStatusLine
         startedAt={Date.now()}
         blocks={[
           {
             type: 'tool_call',
-            call: { id: 'c2', name: 'search_project', args: { query: '\\label' } },
+            call: {
+              id: 'c2',
+              name: 'search_project',
+              args: { query: '\\label' },
+            },
           },
         ]}
       />
     )
     const text = screen.getByRole('status').textContent || ''
     expect(text).to.not.contain('Searching for')
-    expect(STATUS_WORDS.some(word => text.includes(word))).to.equal(true)
+    expect(text).to.contain('Running tools…')
   })
 
   it('finishes the counter and renders nothing when pendingApproval requests user input', function () {
@@ -219,7 +340,10 @@ describe('AgentStatusLine', function () {
             call: { id: 'c3', name: 'edit_file', args: { path: 'main.tex' } },
           },
         ]}
-        pendingApproval={{ id: 'c3', edit: { path: 'main.tex', oldText: 'a', newText: 'b' } }}
+        pendingApproval={{
+          id: 'c3',
+          edit: { path: 'main.tex', oldText: 'a', newText: 'b' },
+        }}
       />
     )
     expect(container.querySelector('.ai-assist-status-line')).to.be.null
@@ -238,7 +362,9 @@ describe('AgentStatusLine', function () {
       />
     )
     const line = screen.getByRole('status')
-    expect(STATUS_WORDS.some(word => line.textContent?.includes(word))).to.equal(true)
+    expect(
+      STATUS_WORDS.some(word => line.textContent?.includes(word))
+    ).to.equal(true)
   })
 
   it('renders completed status line with static icon and total time when isRunning is false', function () {
@@ -300,7 +426,7 @@ describe('AgentStatusLine', function () {
 
   it('keeps the same status word across token updates rather than blinking on every token', function () {
     const started = Date.now()
-    const { rerender } = render(
+    const { container, rerender } = render(
       <AgentStatusLine
         startedAt={started}
         isRunning={true}
@@ -308,7 +434,9 @@ describe('AgentStatusLine', function () {
         onWordChange={() => {}}
       />
     )
-    const initialText = screen.getByRole('status').textContent
+    const verb = () =>
+      container.querySelector('.ai-assist-status-verb')?.textContent
+    const initialText = verb()
 
     // Simulate 5 successive token arrivals with new callback references
     for (let i = 1; i <= 5; i++) {
@@ -321,8 +449,7 @@ describe('AgentStatusLine', function () {
         />
       )
       // The status word should be identical, never changing per token
-      const currentText = screen.getByRole('status').textContent
-      expect(currentText).to.equal(initialText)
+      expect(verb()).to.equal(initialText)
     }
   })
 })
@@ -357,12 +484,14 @@ describe('formatDuration and toPastTense', function () {
 
   it('formats full completed status string like Claude Code', function () {
     expect(formatCompletedStatus('Brewing', 12000)).to.equal('Brewed for 12s')
-    expect(formatCompletedStatus('Typesetting…', 67000)).to.equal('Typeset for 1m 7s')
+    expect(formatCompletedStatus('Typesetting…', 67000)).to.equal(
+      'Typeset for 1m 7s'
+    )
     expect(formatCompletedStatus('Working', 500)).to.equal('Worked for 1s')
   })
 })
 
-describe('the activity line stays out of the status line\'s job', function () {
+describe("the activity line stays out of the status line's job", function () {
   it('renders no activity group at all for a live run with no blocks', function () {
     const { container } = render(
       <SubresultGroup items={[]} isLive onDecision={() => {}} />

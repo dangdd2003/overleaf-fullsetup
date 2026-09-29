@@ -56,14 +56,17 @@ export function loadConfig(env = process.env) {
 
   const stdioToken = env.MCP_TOKEN || ''
   if (enabled && transport === 'stdio' && !stdioToken) {
-    throw new Error(
-      'MCP_TOKEN is required when MCP_TRANSPORT=stdio'
-    )
+    throw new Error('MCP_TOKEN is required when MCP_TRANSPORT=stdio')
   }
 
   const host = env.MCP_HOST || DEFAULT_HOST
   const allowedHosts = listFromEnv(env, 'MCP_ALLOWED_HOSTS')
-  if (enabled && transport === 'http' && !LOCAL_HOSTS.includes(host) && !allowedHosts.length) {
+  if (
+    enabled &&
+    transport === 'http' &&
+    !LOCAL_HOSTS.includes(host) &&
+    !allowedHosts.length
+  ) {
     throw new Error(
       `MCP_ALLOWED_HOSTS must list the hostnames served when MCP_HOST is "${host}" ` +
         '(binding beyond loopback drops the default DNS-rebinding protection)'

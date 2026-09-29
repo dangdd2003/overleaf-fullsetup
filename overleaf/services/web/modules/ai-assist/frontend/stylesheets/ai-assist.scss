@@ -3,7 +3,10 @@
 // Mirror the one token we use here so the file is self-contained like the other
 // CE modules; `!default` keeps it from clobbering the app value if ever bundled.
 $font-family-monospace: 'DM Mono', monospace !default;
-$code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$font-family-monospace}, monospace));
+$code-font-family: var(
+  --ai-editor-font-family,
+  var(--source-font-family, #{$font-family-monospace}, monospace)
+);
 
 // Every floating box in the panel (the mode menu, chat history, @-mentions,
 // citation cards) shares the mode menu's look. Dropdown menus pass
@@ -15,9 +18,11 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
   }
   padding: 4px $imp;
   border-radius: var(--border-radius-medium, 8px) $imp;
-  background-color: var(--dropdown-background, var(--bg-dark-primary, #1b222c)) $imp;
+  background-color: var(--dropdown-background, var(--bg-dark-primary, #1b222c))
+    $imp;
   border: 1px solid var(--border-divider-themed, rgba(255, 255, 255, 0.12)) $imp;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45) $imp;
+  animation: ai-assist-dropdown-in 0.18s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 // The activity timeline's boxes: the group of steps, and each step's output
@@ -42,8 +47,38 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
   @if $important {
     $imp: !important;
   }
-  background-color: var(--file-tree-item-hover-bg, var(--bg-dark-secondary, rgba(255, 255, 255, 0.08))) $imp;
+  background-color: var(
+      --file-tree-item-hover-bg,
+      var(--bg-dark-secondary, rgba(255, 255, 255, 0.08))
+    )
+    $imp;
   color: var(--content-primary-themed, #ffffff) $imp;
+}
+
+// Every button in the chat box: one size, shape, colour and hover
+@mixin ai-assist-composer-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  height: 28px;
+  min-width: 28px;
+  border-radius: var(--border-radius-base, 4px) !important;
+  border: none !important;
+  background-color: transparent !important;
+  color: var(--content-secondary-themed);
+  cursor: pointer;
+  outline: none;
+  transition:
+    color 0.15s ease,
+    background-color 0.15s ease,
+    opacity 0.15s ease;
+
+  &:hover,
+  &:focus-visible {
+    color: var(--content-primary-themed);
+    background-color: var(--bg-tertiary-themed) !important;
+  }
 }
 
 // AI Assist provider widget — settings page.
@@ -102,12 +137,255 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
   margin-top: var(--spacing-06);
 }
 
+// What web search is using, as a short bulleted list under the description
+.web-search-status {
+  p {
+    margin-bottom: 0;
+  }
+
+  ul {
+    margin: var(--spacing-01) 0;
+    padding-left: var(--spacing-07);
+  }
+}
+
 .linking-ai-assist-form {
   margin-top: var(--spacing-04);
   padding: var(--spacing-05);
   border: 1px solid var(--border-divider);
   border-radius: var(--border-radius-base);
   background: var(--bg-light-secondary);
+}
+
+// A web search provider: compact card when added, expandable for configuration
+.web-search-provider-card {
+  margin-bottom: var(--spacing-03);
+  padding: var(--spacing-02) var(--spacing-04);
+  border: 1px solid var(--border-divider);
+  border-radius: var(--border-radius-base);
+  background: var(--bg-light-primary);
+
+  .ide-setting {
+    margin: 0;
+    padding: 0;
+  }
+
+  .ide-dropdown-setting-wide {
+    width: 180px;
+  }
+
+  &.is-expanded {
+    padding: var(--spacing-03) var(--spacing-04);
+  }
+}
+
+.web-search-provider-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-03);
+  min-height: 32px;
+}
+
+.web-search-provider-title-group {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-02);
+  min-width: 0;
+}
+
+.web-search-provider-name {
+  font-size: var(--font-size-02);
+  font-weight: 600;
+  color: var(--content-primary);
+  margin-bottom: 0;
+}
+
+.web-search-provider-summary {
+  font-size: var(--font-size-01);
+  color: var(--content-secondary);
+}
+
+.web-search-provider-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-02);
+  flex-shrink: 0;
+
+  .form-switch {
+    margin-bottom: 0;
+  }
+}
+
+.ai-assist-web-favicon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 20px !important;
+  height: 20px !important;
+  max-width: 20px !important;
+  max-height: 20px !important;
+  border-radius: 3px;
+  object-fit: contain;
+
+  &.is-fallback {
+    color: var(--content-secondary);
+    background-color: var(--bg-light-tertiary);
+  }
+}
+
+.web-search-provider-note {
+  margin-bottom: var(--spacing-02);
+  color: var(--content-secondary);
+  font-size: var(--font-size-02);
+}
+
+.web-search-provider-links {
+  margin-bottom: 0;
+  font-size: var(--font-size-02);
+}
+
+.web-search-provider-body {
+  margin-top: var(--spacing-03);
+  padding-top: var(--spacing-03);
+  border-top: 1px solid var(--border-divider);
+}
+
+// Add provider box: dashed clickable container at rest, full form when active
+.web-search-add-box {
+  margin-bottom: var(--spacing-03);
+  border: 1px dashed var(--border-divider);
+  border-radius: var(--border-radius-base);
+  background: var(--bg-light-primary);
+  transition:
+    border-color 0.15s ease,
+    background-color 0.15s ease;
+
+  &:not(.is-active) {
+    cursor: pointer;
+    padding: var(--spacing-02) var(--spacing-03);
+    text-align: center;
+    color: var(--content-secondary);
+    font-size: var(--font-size-02);
+
+    &:hover {
+      border-color: var(--content-secondary);
+      background: var(--bg-light-secondary);
+      color: var(--content-primary);
+    }
+  }
+
+  &.is-active {
+    border-style: solid;
+    padding: var(--spacing-03) var(--spacing-04);
+  }
+}
+
+.web-search-add-box-config {
+  margin-top: var(--spacing-03);
+  padding-top: var(--spacing-03);
+  border-top: 1px solid var(--border-divider);
+}
+
+.web-search-cache-details {
+  summary {
+    cursor: pointer;
+    user-select: none;
+    padding: var(--spacing-01) 0;
+
+    &:hover {
+      color: var(--content-primary);
+    }
+  }
+}
+
+.web-search-api-heading {
+  margin-top: var(--spacing-08);
+
+  h6 {
+    margin-bottom: var(--spacing-01);
+  }
+
+  p {
+    margin-bottom: 0;
+    color: var(--content-secondary);
+    font-size: var(--font-size-02);
+  }
+}
+
+.web-search-settings-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-04);
+  margin-top: var(--spacing-06);
+
+  .ide-settings-section-title {
+    margin: 0;
+    padding-bottom: var(--spacing-03);
+  }
+}
+
+.web-search-setting-input {
+  width: 180px;
+
+  &.is-wide {
+    width: 260px;
+  }
+}
+
+// Day, month and year dropdowns, together as wide as a wide input
+.web-search-date-setting {
+  display: flex;
+  gap: var(--spacing-02);
+  width: 260px;
+
+  .form-select {
+    flex: 1 1 auto;
+    width: auto;
+  }
+}
+
+// On a phone the control goes under its name and description, full width
+@media (max-width: 575.98px) {
+  .web-search-provider-card {
+    .web-search-provider-header {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: var(--spacing-03);
+
+      .web-search-provider-actions {
+        width: 100%;
+        justify-content: space-between;
+      }
+    }
+
+    .ide-setting {
+      flex-wrap: wrap;
+      gap: var(--spacing-03);
+    }
+
+    .ide-setting-input {
+      flex: 1 0 100%;
+      justify-content: flex-start;
+      min-width: 0;
+      margin-left: 0;
+    }
+
+    .web-search-setting-input,
+    .web-search-setting-input.is-wide,
+    .web-search-date-setting,
+    .ide-dropdown-setting-wide {
+      width: 100%;
+    }
+  }
+}
+
+.web-search-setting-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-02);
+  margin-top: calc(-1 * var(--spacing-02));
 }
 
 .linking-ai-assist-form-actions {
@@ -139,6 +417,7 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
 // system components; the rules below only handle layout, never chrome.
 
 .ai-assist-panel {
+  --ai-status-accent: var(--content-positive-themed, #138a07);
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -166,6 +445,8 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
 
 .ai-assist-transcript {
   flex: 1;
+  // Blocks inside size themselves against the visible chat height (cqh)
+  container-type: size;
   overflow-y: auto;
   overflow-x: hidden;
   padding: var(--spacing-06) 16px var(--spacing-08);
@@ -186,7 +467,9 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
   border: 1px solid var(--border-divider-themed, rgba(0, 0, 0, 0.12));
   background: var(--bg-primary-themed, #ffffff);
   color: var(--content-secondary-themed, #666666);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.08);
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.12),
+    0 1px 3px rgba(0, 0, 0, 0.08);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -339,7 +622,7 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
     }
   }
 
-  &[aria-expanded="true"] {
+  &[aria-expanded='true'] {
     background: transparent;
     border: none;
   }
@@ -356,7 +639,9 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
   justify-content: center;
   color: var(--content-secondary-themed);
   opacity: 0.72;
-  transition: opacity 0.15s ease, color 0.15s ease;
+  transition:
+    opacity 0.15s ease,
+    color 0.15s ease;
 }
 
 .ai-assist-subresult-group-title {
@@ -365,7 +650,9 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
   font-size: var(--font-size-01);
   color: var(--content-secondary-themed);
   opacity: 0.72;
-  transition: opacity 0.15s ease, color 0.15s ease;
+  transition:
+    opacity 0.15s ease,
+    color 0.15s ease;
 }
 
 // Claude Code-style "+12 -3" line diff stat badge
@@ -395,7 +682,9 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
 .ai-assist-subresult-group-chevron {
   flex-shrink: 0;
   color: var(--content-secondary-themed);
-  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1), color 0.15s ease;
+  transition:
+    transform 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+    color 0.15s ease;
   transform: rotate(0deg);
 
   &.is-expanded {
@@ -437,6 +726,10 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
   // A box inside the box, lined up with the row's text
   .ai-assist-tool-call-detail {
     margin: 0 12px 10px;
+
+    &.is-web {
+      margin: 0 4px 6px 4px;
+    }
   }
 }
 
@@ -491,7 +784,9 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
   color: var(--content-secondary-themed);
   opacity: 0.8;
   margin-right: 2px;
-  transition: color 0.15s ease, opacity 0.15s ease;
+  transition:
+    color 0.15s ease,
+    opacity 0.15s ease;
 }
 
 // A fetched page's site icon, in the row's icon slot
@@ -518,7 +813,9 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
   font-weight: 400;
   font-size: var(--font-size-01);
   opacity: 0.72;
-  transition: opacity 0.15s ease, color 0.15s ease;
+  transition:
+    opacity 0.15s ease,
+    color 0.15s ease;
   margin-right: 5px;
 }
 
@@ -539,13 +836,23 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
   opacity: 0.95;
 }
 
+.ai-assist-compile-count-error {
+  color: var(--content-danger-themed);
+}
+
+.ai-assist-compile-count-warning {
+  color: var(--content-warning-themed);
+}
+
 .ai-assist-file-link {
   color: var(--content-primary-themed);
   font-weight: 500;
   font-size: var(--font-size-01);
   cursor: pointer;
   text-decoration: none;
-  transition: color 0.15s ease, text-decoration 0.15s ease;
+  transition:
+    color 0.15s ease,
+    text-decoration 0.15s ease;
 
   &:hover {
     color: #ffffff;
@@ -579,7 +886,10 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
   flex-shrink: 0;
   color: var(--content-secondary-themed);
   opacity: 0.55;
-  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.15s ease, color 0.15s ease;
+  transition:
+    transform 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.15s ease,
+    color 0.15s ease;
   transform: rotate(0deg);
   margin-left: 2px;
 
@@ -598,6 +908,19 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
 .ai-assist-tool-call-detail-standalone {
   max-height: 350px;
   overflow-y: auto;
+
+  &.is-web {
+    max-height: 33.333vh;
+    max-height: calc(100cqh / 3);
+    overflow-y: auto;
+    scrollbar-width: thin;
+  }
+
+  &.is-web-fetch,
+  &:has(.ai-assist-web-fetch-box) {
+    max-height: none;
+    overflow: visible;
+  }
 }
 
 // The body only animates open; the card inside it does the scrolling, so
@@ -606,11 +929,23 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
   max-height: 0;
   opacity: 0;
   overflow: hidden;
-  transition: max-height 0.25s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s ease;
+  transition:
+    max-height 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.2s ease;
 
   &.is-expanded {
-    max-height: 400px;
+    max-height: 450px;
     opacity: 1;
+
+    &:has(.is-web) {
+      max-height: 40vh;
+      max-height: calc(100cqh / 3 + 40px);
+    }
+
+    &:has(.is-web-fetch),
+    &:has(.ai-assist-web-fetch-box) {
+      max-height: 500px;
+    }
   }
 
   .ai-assist-tool-call-detail {
@@ -619,13 +954,16 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
   }
 }
 
-// Output that already draws its own box (a code or diff preview) is shown
-// as-is, not boxed again, and scrolls by itself
-.ai-assist-tool-call-detail:has(.ai-suggest-code-diff) {
+// Output that already draws its own box (a code or diff preview, or web_fetch result)
+// is shown as-is, not boxed again, and scrolls by itself
+.ai-assist-tool-call-detail:has(.ai-suggest-code-diff),
+.ai-assist-tool-call-detail:has(.ai-assist-web-fetch-box),
+.ai-assist-tool-call-detail.is-web-fetch {
   border: none;
   padding: 0;
   max-height: none;
   overflow: visible;
+  background: transparent;
 }
 
 // A step's output, as a box of its own under the step
@@ -656,15 +994,44 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
   .ai-assist-tool-detail-diff {
     display: flex;
     flex-direction: column;
-    gap: var(--spacing-02);
+    gap: 6px;
 
+    // Claude Code-style: the file's path, quiet, with a copy button on the right
     .ai-assist-tool-detail-header {
       display: flex;
       align-items: center;
-      justify-content: space-between;
       gap: var(--spacing-02);
+      min-width: 0;
+      font-family: var(--bs-body-font-family, sans-serif);
       font-size: var(--font-size-01);
-      font-weight: 600;
+      white-space: nowrap;
+
+      .ai-assist-tool-detail-badge {
+        margin-left: 0;
+      }
+
+      .copy-button {
+        margin-left: auto;
+        flex-shrink: 0;
+        color: var(--content-secondary-themed);
+
+        &:hover {
+          color: var(--content-primary-themed);
+        }
+      }
+    }
+
+    .ai-assist-tool-detail-path {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: var(--content-secondary-themed);
+      cursor: pointer;
+
+      &:hover {
+        color: var(--content-primary-themed);
+        text-decoration: underline;
+      }
     }
   }
 
@@ -677,6 +1044,51 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
       display: flex;
       flex-direction: column;
       gap: 2px;
+
+      // Collapsed to one line — location then message, truncated — and the
+      // log excerpt drops down only when the title is clicked.
+      .ai-assist-log-title {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        min-width: 0;
+        white-space: nowrap;
+
+        > .ai-assist-file-link,
+        > .ai-assist-log-loc {
+          flex-shrink: 0;
+        }
+
+        > .ai-assist-log-msg {
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+      }
+
+      .ai-assist-log-toggle {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        min-width: 0;
+        padding: 0;
+        border: 0;
+        background: none;
+        font: inherit;
+        text-align: left;
+        cursor: pointer;
+
+        .ai-assist-log-msg {
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+
+        &:hover .ai-assist-tool-call-chevron {
+          color: var(--content-primary-themed);
+          opacity: 1;
+        }
+      }
 
       &.error .ai-assist-log-loc {
         color: var(--content-danger, #ef4444);
@@ -699,6 +1111,8 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
         border-left: 2px solid var(--border-divider-themed);
         font-size: 0.6875rem;
         color: var(--content-secondary-themed);
+        animation: ai-assist-dropdown-in 0.18s cubic-bezier(0.16, 1, 0.3, 1)
+          both;
       }
     }
   }
@@ -724,14 +1138,34 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
   }
 
   // Web results, as Claude.ai lists them: one row per page with the site's
-  // icon, the title in quiet text, and the domain on the right
+  // icon, the title in quiet text, and the domain on the right.
+  // When the list exceeds 1/3 of the main chat panel, it scrolls smoothly.
   &.is-web {
-    padding: 4px;
+    border: none;
+    padding: 0 2px 0 0;
+    max-height: 33.333vh;
+    max-height: calc(100cqh / 3);
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-width: thin;
     font-family: var(--font-sans);
     font-size: var(--font-size-01);
     white-space: normal;
     word-break: normal;
     background: transparent;
+  }
+
+  &.is-web-fetch,
+  &:has(.ai-assist-web-fetch-box) {
+    border: none;
+    padding: 0;
+    max-height: none !important;
+    overflow: visible !important;
+    background: transparent;
+    font-family: var(--font-sans);
+    font-size: var(--font-size-01);
+    white-space: normal;
+    word-break: normal;
   }
 
   .ai-assist-web-detail {
@@ -744,15 +1178,18 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
     align-items: center;
     gap: 10px;
     min-width: 0;
-    padding: 6px 8px;
+    padding: 6px 10px;
+    margin: 1px 4px;
     border-radius: 6px;
     color: var(--content-secondary-themed);
     text-decoration: none;
-    transition: background-color 0.15s ease, color 0.15s ease;
+    transition:
+      background-color 0.15s ease,
+      color 0.15s ease;
 
     &:hover,
     &:focus-visible {
-      background-color: var(--bg-tertiary-themed);
+      background-color: var(--bg-tertiary-themed, rgba(255, 255, 255, 0.08));
       color: var(--content-primary-themed);
       text-decoration: none;
     }
@@ -804,9 +1241,130 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
     line-height: 1.45;
 
     &.is-error {
-      color: var(--content-primary-themed);
-      opacity: 0.8;
+      color: var(--content-danger, #ef4444);
+      opacity: 0.9;
     }
+  }
+
+  .ai-assist-web-fetch-detail {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .ai-assist-web-fetch-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    max-width: 100%;
+    margin: 0 0 6px 0;
+    font-size: var(--font-size-01, 12px);
+    line-height: 1.4;
+
+    .ai-assist-web-fetch-url {
+      color: var(--content-secondary-themed);
+      text-decoration: none;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      min-width: 0;
+      flex: 0 1 auto;
+
+      &:hover,
+      &:focus-visible {
+        color: var(--content-primary-themed);
+        text-decoration: underline;
+      }
+
+      &.is-missing {
+        color: var(--content-secondary-themed);
+        font-style: italic;
+        text-decoration: none;
+        cursor: default;
+      }
+    }
+
+    .ai-assist-web-fetch-notes {
+      flex-shrink: 0;
+      white-space: nowrap;
+      color: var(--content-secondary-themed);
+      opacity: 0.72;
+      font-size: 11px;
+    }
+  }
+
+  .ai-assist-web-fetch-box {
+    @include ai-assist-activity-box;
+    background-color: var(--bg-primary-themed);
+    padding: 10px 14px;
+    max-height: 350px;
+    overflow-y: auto;
+    font-family: var(--font-sans);
+    box-sizing: border-box;
+  }
+
+  .ai-assist-web-fetch-content {
+    margin: 0;
+    padding: 0;
+    font-size: 0.8125rem;
+    line-height: 1.6;
+    color: var(--content-primary-themed);
+
+    .ai-assist-markdown {
+      font-size: 0.8125rem;
+      line-height: 1.6;
+
+      p {
+        margin-bottom: 6px;
+
+        &:last-child {
+          margin-bottom: 0;
+        }
+      }
+
+      h1,
+      h2,
+      h3,
+      h4,
+      h5,
+      h6 {
+        margin-top: 10px;
+        margin-bottom: 4px;
+        font-size: 0.875rem;
+
+        &:first-child {
+          margin-top: 0;
+        }
+      }
+
+      ul,
+      ol {
+        margin-bottom: 6px;
+        padding-left: 1.25rem;
+      }
+    }
+  }
+
+  .ai-assist-web-fetch-passage {
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border-divider-themed, rgba(0, 0, 0, 0.08));
+
+    &:first-child {
+      padding-top: 0;
+    }
+
+    &:last-child {
+      padding-bottom: 0;
+      border-bottom: none;
+    }
+  }
+
+  .ai-assist-web-fetch-heading {
+    font-weight: 600;
+    font-size: 0.75rem;
+    color: var(--interactive-primary-themed, #3b82f6);
+    margin-bottom: 4px;
   }
 
   .ai-assist-tool-detail-files {
@@ -983,28 +1541,17 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
 }
 
 .ai-assist-mode-selector-btn {
-  display: inline-flex;
-  align-items: center;
+  @include ai-assist-composer-button;
   gap: 5px;
-  height: 28px;
   padding: 0 8px;
-  border-radius: var(--border-radius-base, 4px) !important;
-  border: none !important;
-  background-color: transparent !important;
-  color: var(--content-secondary-themed);
   font-size: var(--font-size-01);
   font-weight: 500;
-  cursor: pointer;
-  outline: none;
-  transition: color 0.15s ease, background-color 0.15s ease;
   line-height: 1;
 
   &:after {
     display: none !important;
   }
 
-  &:hover,
-  &:focus-visible,
   &[aria-expanded='true'] {
     color: var(--content-primary-themed);
     background-color: var(--bg-tertiary-themed) !important;
@@ -1036,8 +1583,33 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
   max-width: calc(100vw - 32px);
   margin-bottom: 6px !important;
 
+  // Rows with a title only, such as the reasoning effort levels
+  &.is-compact .ai-assist-mode-menu-row {
+    min-height: 32px !important;
+  }
+
   .ai-assist-mode-menu-header {
     @include ai-assist-floating-box-header;
+    color: var(--content-placeholder-themed);
+  }
+
+  // Not a menu item, so choosing it toggles the switch and keeps the menu open
+  .ai-assist-effort-thinking {
+    gap: 10px;
+
+    label {
+      margin: 0;
+      cursor: pointer;
+    }
+
+    .form-check {
+      margin: 0;
+      flex-shrink: 0;
+    }
+
+    .form-check-input:focus {
+      box-shadow: none;
+    }
   }
 
   .dropdown-item,
@@ -1177,13 +1749,14 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
   }
 }
 
-
 .ai-assist-thinking-title {
   color: var(--content-secondary-themed);
   font-weight: 400;
   font-size: var(--font-size-01);
   opacity: 0.72;
-  transition: opacity 0.15s ease, color 0.15s ease;
+  transition:
+    opacity 0.15s ease,
+    color 0.15s ease;
 }
 
 .ai-assist-subresult-item .ai-assist-thinking-content {
@@ -1234,7 +1807,7 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
     }
   }
 
-  &[aria-expanded="true"] {
+  &[aria-expanded='true'] {
     background: transparent;
     border: none;
   }
@@ -1251,14 +1824,19 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
   justify-content: center;
   color: var(--content-secondary-themed);
   opacity: 0.72;
-  transition: opacity 0.15s ease, color 0.15s ease;
+  transition:
+    opacity 0.15s ease,
+    color 0.15s ease;
 }
 
 .ai-assist-thinking-chevron {
   flex-shrink: 0;
   color: var(--content-secondary-themed);
   opacity: 0.55;
-  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.15s ease, color 0.15s ease;
+  transition:
+    transform 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.15s ease,
+    color 0.15s ease;
   transform: rotate(0deg);
 
   &.is-expanded {
@@ -1272,7 +1850,17 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
   font-size: var(--font-size-01);
   color: var(--content-secondary-themed);
   opacity: 0.72;
-  transition: opacity 0.15s ease, color 0.15s ease;
+  transition:
+    opacity 0.15s ease,
+    color 0.15s ease;
+}
+
+// Registered so the stall drift can transition between two colours; an
+// unregistered custom property would snap.
+@property --ai-status-accent {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #138a07;
 }
 
 // The "still going" line. Rendered as a sibling of the activity rows, never
@@ -1280,16 +1868,30 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
 // has not finished, and merging them was what let the panel claim "Thinking…"
 // during phases with no thought process behind them.
 //
-// Shape follows Claude Code: spinner, elapsed, then a rotating word.
+// Shape follows the Claude desktop app, switching between `✳ Brewing…` and
+// `✳ 12s · ↓ 1.2k tokens · Running tools…`. The mark and the word share one
+// accent; the counters stay muted.
 .ai-assist-status-line {
+  --ai-status-accent: var(--content-positive-themed, #138a07);
+  --ai-status-highlight: color-mix(in srgb, var(--ai-status-accent) 50%, #fff);
+
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
   padding: 6px 0;
   font-size: 0.78125rem;
   color: var(--content-secondary-themed, #71717a);
+  transition: --ai-status-accent 1.5s ease;
 
-  &.is-completed {
+  // No tokens for a few seconds outside a tool call: drift to the danger
+  // colour so a hung provider reads differently from a busy one.
+  &.is-stalled {
+    --ai-status-accent: var(--content-danger-themed, #b83a33);
+  }
+
+  &.is-completed,
+  &.is-paused {
     color: var(--content-secondary-themed, #71717a);
 
     .ai-assist-status-mark,
@@ -1320,7 +1922,7 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
 }
 
 .ai-assist-status-mark {
-  fill: var(--green-50, #138a07);
+  fill: var(--ai-status-accent);
   // transform-origin on an SVG child only resolves against the viewBox when
   // transform-box says so; browsers default it to a zero-sized border box,
   // which puts the pivot in the corner and makes the mark slide rather than
@@ -1351,11 +1953,126 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
   }
 }
 
-// Motion is decoration here: the elapsed counter and the status word already
+// The word carries the state. A lighter band sweeps across it: quick and
+// forward while waiting on the provider, slow and backward while tokens
+// stream in, as Claude Code's does.
+.ai-assist-status-verb {
+  flex-shrink: 0;
+  font-weight: 500;
+  color: var(--ai-status-accent);
+  background-image: linear-gradient(
+    90deg,
+    var(--ai-status-accent) 0% 40%,
+    var(--ai-status-highlight) 50%,
+    var(--ai-status-accent) 60% 100%
+  );
+  background-size: 300% 100%;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: ai-assist-status-shimmer 2.8s linear infinite reverse;
+
+  .is-requesting & {
+    animation-duration: 1.2s;
+    animation-direction: normal;
+  }
+
+  // A tool is running: no tokens to sweep with, so the whole word breathes.
+  .is-tool & {
+    background-image: none;
+    -webkit-text-fill-color: currentcolor;
+    animation: ai-assist-status-glow 2s ease-in-out infinite;
+  }
+}
+
+@keyframes ai-assist-status-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+
+  to {
+    background-position: 0% 0;
+  }
+}
+
+@keyframes ai-assist-status-glow {
+  0%,
+  100% {
+    color: var(--ai-status-accent);
+  }
+
+  50% {
+    color: var(--ai-status-highlight);
+  }
+}
+
+// Counters and word share one line of text so the separators keep their
+// spacing; it truncates rather than wraps in a narrow panel.
+.ai-assist-status-body {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-assist-status-meta {
+  font-variant-numeric: tabular-nums;
+  color: var(--content-secondary-themed, #71717a);
+}
+
+// The elapsed time ticks over like Claude's: a changed digit rolls up out of
+// its slot while the next one rolls in from below.
+.ai-assist-roll-slot {
+  position: relative;
+  display: inline-block;
+}
+
+.ai-assist-roll-in {
+  display: inline-block;
+  animation: ai-assist-roll-in 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.ai-assist-roll-out {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  animation: ai-assist-roll-out 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes ai-assist-roll-in {
+  from {
+    transform: translateY(0.7em);
+    opacity: 0;
+  }
+
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+@keyframes ai-assist-roll-out {
+  from {
+    transform: none;
+    opacity: 1;
+  }
+
+  to {
+    transform: translateY(-0.7em);
+    opacity: 0;
+  }
+}
+
+// Motion is decoration here: the word, the counter and the colour already
 // carry the message, so reduced-motion users lose nothing by holding still.
 @media (prefers-reduced-motion: reduce) {
   .ai-assist-status-mark {
     animation: ai-assist-status-fade 1.8s ease-in-out infinite;
+  }
+
+  .ai-assist-status-verb,
+  .ai-assist-roll-in,
+  .ai-assist-roll-out {
+    animation: none;
   }
 
   @keyframes ai-assist-status-fade {
@@ -1401,7 +2118,9 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
   max-height: 0;
   opacity: 0;
   overflow: hidden;
-  transition: opacity 0.15s ease;
+  transition:
+    max-height 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.2s ease;
 
   &.is-expanded {
     max-height: 350px;
@@ -1415,7 +2134,8 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
   padding: var(--spacing-02) var(--spacing-03);
   background: var(--bg-secondary-themed);
   border-left: 2px solid var(--border-divider-themed);
-  border-radius: 0 var(--border-radius-base, 4px) var(--border-radius-base, 4px) 0;
+  border-radius: 0 var(--border-radius-base, 4px) var(--border-radius-base, 4px)
+    0;
   font-size: var(--font-size-01);
   line-height: 1.5;
   color: var(--content-secondary-themed);
@@ -1584,7 +2304,10 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
         font-size: 0.6875rem;
         line-height: 1.2;
         cursor: pointer;
-        transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+        transition:
+          background-color 0.15s ease,
+          color 0.15s ease,
+          border-color 0.15s ease;
 
         .ai-assist-icon-insert,
         .ai-assist-icon-copy {
@@ -1673,7 +2396,8 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
     margin: var(--spacing-02, 8px) 0;
     padding: var(--spacing-02, 6px) var(--spacing-03, 12px);
     border-left: 3px solid var(--border-primary-themed);
-    border-radius: 0 var(--border-radius-base, 4px) var(--border-radius-base, 4px) 0;
+    border-radius: 0 var(--border-radius-base, 4px)
+      var(--border-radius-base, 4px) 0;
     background: var(--bg-secondary-themed);
     color: var(--content-secondary-themed);
 
@@ -1799,7 +2523,9 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    transition: background-color 0.15s ease, color 0.15s ease;
+    transition:
+      background-color 0.15s ease,
+      color 0.15s ease;
 
     &:hover,
     &:focus-visible {
@@ -1823,7 +2549,9 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
     padding-top: 4px;
     visibility: hidden;
     opacity: 0;
-    transition: opacity 0.12s ease, visibility 0.12s ease;
+    transition:
+      opacity 0.12s ease,
+      visibility 0.12s ease;
 
     &.is-flipped {
       left: auto;
@@ -1964,18 +2692,24 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
     }
   }
 
-  // Tables
+  // Tables: the header stays put, only the table scrolls
   .ai-assist-table-wrapper {
     width: 100%;
-    overflow-x: auto;
+    overflow: hidden;
     margin: var(--spacing-02, 8px) 0;
     border: 1px solid var(--border-divider-themed);
     border-radius: 6px;
     background-color: var(--bg-secondary-themed);
-    -webkit-overflow-scrolling: touch;
 
     &:last-child {
       margin-bottom: 0;
+    }
+
+    // A table taller than a third of the chat scrolls inside its box
+    .ai-assist-table-scroll {
+      max-height: calc(100cqh / 3);
+      overflow: auto;
+      -webkit-overflow-scrolling: touch;
     }
 
     .ai-assist-table-header {
@@ -2015,7 +2749,10 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
         font-size: 0.6875rem;
         line-height: 1.2;
         cursor: pointer;
-        transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+        transition:
+          background-color 0.15s ease,
+          color 0.15s ease,
+          border-color 0.15s ease;
 
         .ai-assist-icon-insert {
           display: inline-block;
@@ -2127,13 +2864,13 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
       }
     }
 
-    th[align="center"],
-    td[align="center"] {
+    th[align='center'],
+    td[align='center'] {
       text-align: center;
     }
 
-    th[align="right"],
-    td[align="right"] {
+    th[align='right'],
+    td[align='right'] {
       text-align: right;
     }
   }
@@ -2189,7 +2926,7 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
   }
 
   // Task lists
-  ul:has(input[type="checkbox"]),
+  ul:has(input[type='checkbox']),
   ul.contains-task-list {
     list-style: none;
     padding-left: 2px;
@@ -2200,7 +2937,7 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
       gap: 6px;
       margin-bottom: var(--spacing-01);
 
-      input[type="checkbox"] {
+      input[type='checkbox'] {
         margin: 3px 0 0 0;
         accent-color: var(--interactive-primary-themed, #0ea5e9);
         cursor: default;
@@ -2218,6 +2955,10 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
   }
 }
 
+.ai-assist-stream-fade {
+  animation: ai-assist-stream-fade 400ms ease-out backwards;
+}
+
 @keyframes ai-assist-stream-fade {
   from {
     opacity: 0;
@@ -2228,7 +2969,8 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .ai-assist-markdown {
+  .ai-assist-markdown,
+  .ai-assist-thinking-content {
     .ai-assist-stream-fade {
       animation: none !important;
     }
@@ -2267,6 +3009,33 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
   padding: 0;
   margin-top: auto;
 
+  &.is-disabled {
+    opacity: 0.5;
+
+    * {
+      cursor: not-allowed !important;
+    }
+
+    .ai-assist-advanced-tool,
+    .ai-assist-starter {
+      cursor: not-allowed !important;
+      opacity: 0.6;
+      border-color: var(--border-divider-themed) !important;
+      background-color: transparent !important;
+      color: var(--content-secondary-themed) !important;
+
+      &:hover {
+        background-color: transparent !important;
+        border-color: var(--border-divider-themed) !important;
+        color: var(--content-secondary-themed) !important;
+
+        .ai-assist-empty-state-icon {
+          opacity: 0.65;
+        }
+      }
+    }
+  }
+
   h5 {
     font-size: 0.8125rem;
     line-height: 1.4;
@@ -2285,7 +3054,9 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
   flex-shrink: 0;
   color: var(--content-secondary-themed);
   opacity: 0.65;
-  transition: color 0.15s ease, opacity 0.15s ease;
+  transition:
+    color 0.15s ease,
+    opacity 0.15s ease;
 }
 
 .ai-assist-advanced-tool,
@@ -2296,7 +3067,10 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
   background-color: transparent !important;
   border: 1px solid var(--border-divider-themed) !important;
   color: var(--content-secondary-themed) !important;
-  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
 
   .button-content {
     justify-content: flex-start;
@@ -2304,10 +3078,19 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
     gap: 10px;
   }
 
-  &:hover {
+  // Same 1px border and colour as the focused composer box
+  &:hover,
+  &:focus,
+  &:focus-visible {
     background-color: var(--bg-secondary-themed) !important;
-    border-color: var(--border-active-themed) !important;
+    border-color: color-mix(
+      in srgb,
+      var(--border-primary-themed) 35%,
+      var(--border-divider-themed)
+    ) !important;
     color: var(--content-primary-themed) !important;
+    outline: none !important;
+    box-shadow: none !important;
 
     .ai-assist-empty-state-icon {
       color: var(--content-primary-themed);
@@ -2346,7 +3129,8 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
     font-weight: 400;
   }
 
-  &:hover .button-content > span:last-child {
+  &:hover .button-content > span:last-child,
+  &:focus-visible .button-content > span:last-child {
     color: var(--content-primary-themed);
   }
 }
@@ -2366,7 +3150,8 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
   }
 }
 
-.ai-assist-advanced-tool:hover .ai-assist-advanced-tool-text strong {
+.ai-assist-advanced-tool:hover .ai-assist-advanced-tool-text strong,
+.ai-assist-advanced-tool:focus-visible .ai-assist-advanced-tool-text strong {
   color: var(--content-primary-themed);
 }
 
@@ -2383,8 +3168,8 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
 .ai-assist-composer {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-02);
-  padding: 12px 16px 12px 16px;
+  gap: var(--spacing-01);
+  padding: 10px 12px 8px 12px;
   background: var(--bg-primary-themed);
 }
 
@@ -2393,28 +3178,64 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
   display: flex;
   flex-direction: column;
   border: 1px solid var(--border-divider-themed) !important;
-  border-radius: 8px !important;
+  border-radius: 12px !important;
   background: var(--bg-secondary-themed) !important;
   padding: 10px 14px;
-  transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
+  transition:
+    border-color 0.15s ease-in-out,
+    box-shadow 0.15s ease-in-out;
 
+  // A slightly stronger border, as on Claude.ai, rather than an accent ring
   &:focus-within {
-    border-color: var(--border-active-themed, #3880ff) !important;
-    box-shadow: 0 0 0 1px var(--border-active-themed, #3880ff) !important;
+    border-color: color-mix(
+      in srgb,
+      var(--border-primary-themed) 35%,
+      var(--border-divider-themed)
+    ) !important;
+  }
+
+  &.is-disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    background: var(
+      --bg-tertiary-themed,
+      var(--bg-secondary-themed)
+    ) !important;
+    border-color: var(--border-divider-themed) !important;
+
+    * {
+      cursor: not-allowed !important;
+    }
+
+    textarea {
+      cursor: not-allowed;
+      user-select: none;
+
+      &::placeholder {
+        color: var(--content-secondary-themed);
+        opacity: 0.8;
+      }
+    }
+
+    &:focus-within {
+      border-color: var(--border-divider-themed) !important;
+      box-shadow: none !important;
+    }
   }
 
   textarea {
     width: 100%;
-    min-height: 56px;
+    min-height: 22px;
     max-height: 160px;
     resize: none;
     border: 0;
     padding: 0;
     background: transparent;
     color: var(--content-primary-themed);
-    font-size: 0.8125rem;
-    line-height: 1.45;
+    font-size: 0.875rem;
+    line-height: 1.5;
     font-family: inherit;
+    overflow-y: auto;
 
     &:focus {
       outline: none;
@@ -2423,7 +3244,7 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
     &::placeholder {
       color: var(--content-placeholder-themed, var(--content-secondary-themed));
       opacity: 0.6;
-      font-size: 0.8125rem;
+      font-size: 0.875rem;
     }
   }
 }
@@ -2495,33 +3316,45 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
 }
 
 .ai-assist-selection-chip-wrapper {
-  margin-bottom: var(--spacing-01);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 0;
+  margin-bottom: 6px;
+  flex-shrink: 0;
 }
 
 .ai-assist-selection-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 2px 8px;
+  gap: 5px;
+  padding: 2px 6px 2px 8px;
   background: var(--bg-tertiary-themed);
   border: 1px solid var(--border-divider-themed);
-  border-radius: var(--border-radius-base, 4px);
+  border-radius: 6px;
   font-size: 0.6875rem;
   font-family: $font-family-monospace;
   color: var(--content-secondary-themed);
   max-width: 100%;
+  line-height: 1.4;
+  user-select: none;
 }
 
 .ai-assist-selection-chip-icon {
-  font-weight: 700;
-  font-size: 0.6875rem;
-  color: var(--content-primary-themed);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--content-secondary-themed);
+  flex-shrink: 0;
 }
 
 .ai-assist-selection-chip-label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--content-primary-themed);
+  font-weight: 500;
 }
 
 .ai-assist-selection-chip-close {
@@ -2535,13 +3368,16 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   flex-shrink: 0;
+  transition:
+    color 0.15s ease,
+    background-color 0.15s ease;
 
   &:hover {
     color: var(--content-primary-themed);
-    background: var(--bg-tertiary-themed);
+    background: var(--dropdown-background-hover, rgba(255, 255, 255, 0.1));
   }
 }
 
@@ -2549,7 +3385,7 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding-top: var(--spacing-02);
+  padding-top: 4px;
 }
 
 .ai-assist-composer-left-actions,
@@ -2560,20 +3396,9 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
 }
 
 .ai-assist-composer-attach-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  @include ai-assist-composer-button;
   width: 28px;
-  height: 28px;
-  border-radius: var(--border-radius-base, 4px) !important;
-  border: none !important;
-  background-color: transparent !important;
-  color: var(--content-secondary-themed);
-  cursor: pointer;
-  transition: color 0.15s ease, background-color 0.15s ease;
 
-  &:hover,
-  &:focus-visible,
   &.is-active {
     color: var(--content-primary-themed);
     background-color: var(--bg-tertiary-themed) !important;
@@ -2586,15 +3411,16 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
   justify-content: center;
   width: 28px;
   height: 28px;
-  // Round, like the icon buttons in the panel header: Overleaf's buttons use
-  // $btn-border-radius: $border-radius-full, which on a square button is a circle.
   border-radius: var(--border-radius-full, 9999px) !important;
   border: none !important;
   background-color: transparent !important;
   color: var(--content-secondary-themed);
   opacity: 0.45;
   cursor: default;
-  transition: color 0.15s ease, background-color 0.15s ease, opacity 0.15s ease;
+  transition:
+    color 0.15s ease,
+    background-color 0.15s ease,
+    opacity 0.15s ease;
   flex-shrink: 0;
 
   &.is-active {
@@ -2938,13 +3764,27 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
 // ---------------------------------------------------------------------------
 
 @keyframes ai-sparkle-pulse {
-  0%, 100% { transform: scale(1); opacity: 1; }
-  50% { transform: scale(1.15); opacity: 0.7; }
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.15);
+    opacity: 0.7;
+  }
 }
 
 @keyframes ai-pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.4; transform: scale(0.85); }
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(0.85);
+  }
 }
 
 .log-entry-header-actions {
@@ -2973,7 +3813,9 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
   min-width: 36px !important;
   min-height: 36px !important;
   padding: 0 !important;
-  transition: background-color 0.15s ease, color 0.15s ease;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
 
   .button-content {
     display: inline-flex;
@@ -2997,6 +3839,29 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
     outline: none !important;
     box-shadow: none !important;
     border-radius: 50% !important;
+  }
+
+  &.is-disabled,
+  &:disabled {
+    cursor: not-allowed !important;
+    opacity: 0.45 !important;
+    color: var(--content-secondary-themed, #9ca3af) !important;
+
+    * {
+      cursor: not-allowed !important;
+    }
+
+    &:hover,
+    &:focus,
+    &:focus-visible,
+    &:active {
+      background: transparent !important;
+      background-color: transparent !important;
+      color: var(--content-secondary-themed, #9ca3af) !important;
+      border: none !important;
+      outline: none !important;
+      box-shadow: none !important;
+    }
   }
 
   &.is-loading .ai-suggest-fix-icon {
@@ -3060,7 +3925,9 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
   background: transparent;
   color: var(--content-secondary-themed);
   cursor: pointer;
-  transition: background-color 0.15s ease, color 0.15s ease;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
 
   &:hover,
   &:focus-visible {
@@ -3209,7 +4076,9 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
   width: 13px;
   height: 13px;
   transform-origin: center center;
-  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1), color 0.15s ease;
+  transition:
+    transform 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+    color 0.15s ease;
   transform: rotate(0deg);
   color: var(--content-secondary-themed);
 
@@ -3226,11 +4095,14 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
   padding: 0 var(--spacing-03);
   background-color: var(--bg-tertiary-themed);
   border-left: 2px solid var(--border-divider-themed);
-  border-radius: 0 var(--border-radius-base, 4px) var(--border-radius-base, 4px) 0;
+  border-radius: 0 var(--border-radius-base, 4px) var(--border-radius-base, 4px)
+    0;
   font-size: var(--font-size-01);
   line-height: 1.5;
   color: var(--content-secondary-themed);
-  transition: max-height 0.25s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s ease,
+  transition:
+    max-height 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.2s ease,
     padding 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 
   &.is-expanded {
@@ -3341,7 +4213,9 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
   padding: 2px 8px;
   border-radius: var(--border-radius-base, 4px);
   cursor: pointer;
-  transition: color 0.15s ease, background-color 0.15s ease;
+  transition:
+    color 0.15s ease,
+    background-color 0.15s ease;
 
   .material-symbols {
     font-size: var(--font-size-02);
@@ -3387,16 +4261,6 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
     width: 100%;
     box-sizing: border-box;
 
-    &.diff-line-del {
-      background-color: rgba(239, 68, 68, 0.18);
-      color: #ff9492;
-    }
-
-    &.diff-line-ins {
-      background-color: rgba(34, 197, 94, 0.18);
-      color: #56d364;
-    }
-
     &.diff-line-context {
       background-color: transparent;
       color: inherit;
@@ -3431,27 +4295,15 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
 
     &.diff-gutter-clickable {
       cursor: pointer;
-      transition: color 0.15s ease, background-color 0.15s ease;
+      transition:
+        color 0.15s ease,
+        background-color 0.15s ease;
 
       &:hover {
         color: var(--content-accent-themed, #38bdf8) !important;
         text-decoration: underline;
       }
     }
-  }
-
-  .diff-line-del .diff-gutter {
-    color: #ff7b72;
-    background-color: rgba(239, 68, 68, 0.12);
-  }
-
-  .diff-line-ins .diff-gutter {
-    color: #3fb950;
-    background-color: rgba(34, 197, 94, 0.12);
-  }
-
-  .diff-line-context .diff-gutter {
-    color: var(--gutter-fg, var(--content-secondary-themed, #888));
   }
 
   .diff-content {
@@ -3466,87 +4318,104 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
     align-self: center;
   }
 
-  mark.diff-del,
-  .diff-del {
-    background-color: rgba(239, 68, 68, 0.4);
-    color: #ffffff !important;
-    font-weight: 600;
-    padding: 1px 4px;
-    border-radius: 3px;
-    text-decoration: none;
-  }
+  // Claude Code-style diff: line number and sign, the whole row tinted, the
+  // code in the editor's own colours
+  &.is-diff {
+    --diff-ins-tint: rgba(46, 160, 67, 0.14);
+    --diff-ins-mark: rgba(46, 160, 67, 0.36);
+    --diff-ins-sign: #1a7f37;
+    --diff-del-tint: rgba(248, 81, 73, 0.12);
+    --diff-del-mark: rgba(248, 81, 73, 0.32);
+    --diff-del-sign: #cf222e;
 
-  mark.diff-ins,
-  .diff-ins {
-    background-color: rgba(34, 197, 94, 0.4);
-    color: #ffffff !important;
-    font-weight: 600;
-    padding: 1px 4px;
-    border-radius: 3px;
-    text-decoration: none;
-  }
+    .cm-content {
+      padding: 4px 0;
+    }
 
-  &.overall-theme-light,
-  .overall-theme-light & {
-    .diff-line-del {
-      background-color: rgba(239, 68, 68, 0.12);
-      color: #991b1b;
+    .diff-line {
+      --diff-row-tint: transparent;
+
+      background-color: var(--diff-row-tint);
+
+      &.diff-line-ins {
+        --diff-row-tint: var(--diff-ins-tint);
+      }
+
+      &.diff-line-del {
+        --diff-row-tint: var(--diff-del-tint);
+      }
     }
-    .diff-line-ins {
-      background-color: rgba(34, 197, 94, 0.12);
-      color: #166534;
+
+    // Sticky, so it has to be opaque: the row's tint over the editor's background
+    .diff-gutter {
+      min-width: 0;
+      gap: 10px;
+      padding: 0 6px 0 12px;
+      border-right: none;
+      font-weight: 400;
+      background:
+        linear-gradient(var(--diff-row-tint), var(--diff-row-tint)),
+        var(--editor-bg);
+      color: color-mix(in srgb, var(--editor-fg) 45%, transparent);
     }
-    .diff-line-del .diff-gutter {
-      color: #dc2626;
-      background-color: rgba(239, 68, 68, 0.08);
+
+    .diff-line-no {
+      min-width: calc(var(--diff-line-no-chars, 3) * 1ch);
+      text-align: right;
+      font-variant-numeric: tabular-nums;
     }
-    .diff-line-ins .diff-gutter {
-      color: #16a34a;
-      background-color: rgba(34, 197, 94, 0.08);
+
+    // Only the number reacts to a hover, not the sign next to it
+    .diff-gutter.diff-gutter-clickable:hover {
+      color: color-mix(in srgb, var(--editor-fg) 45%, transparent) !important;
+      text-decoration: none;
+
+      .diff-line-no {
+        color: var(--content-accent-themed, #38bdf8);
+        text-decoration: underline;
+      }
     }
-    mark.diff-del,
-    .diff-del {
-      background-color: rgba(239, 68, 68, 0.3);
-      color: #7f1d1d !important;
-      font-weight: 600;
+
+    .diff-sign {
+      display: inline-block;
+      width: 1ch;
     }
+
+    .diff-line-ins .diff-sign {
+      color: var(--diff-ins-sign);
+    }
+
+    .diff-line-del .diff-sign {
+      color: var(--diff-del-sign);
+    }
+
+    .diff-content {
+      padding: 0 12px 0 4px;
+    }
+
     mark.diff-ins,
-    .diff-ins {
-      background-color: rgba(34, 197, 94, 0.3);
-      color: #14532d !important;
-      font-weight: 600;
+    mark.diff-del {
+      padding: 0;
+      border-radius: 2px;
+      color: inherit;
+      font-weight: inherit;
     }
-  }
 
-  &.overall-theme-dark,
-  .overall-theme-dark & {
-    .diff-line-del {
-      background-color: rgba(239, 68, 68, 0.22);
-      color: #ff9492;
+    mark.diff-ins {
+      background-color: var(--diff-ins-mark);
     }
-    .diff-line-ins {
-      background-color: rgba(34, 197, 94, 0.22);
-      color: #56d364;
+
+    mark.diff-del {
+      background-color: var(--diff-del-mark);
     }
-    .diff-line-del .diff-gutter {
-      color: #ff7b72;
-      background-color: rgba(239, 68, 68, 0.15);
-    }
-    .diff-line-ins .diff-gutter {
-      color: #3fb950;
-      background-color: rgba(34, 197, 94, 0.15);
-    }
-    mark.diff-del,
-    .diff-del {
-      background-color: rgba(239, 68, 68, 0.5);
-      color: #ffffff !important;
-      font-weight: 600;
-    }
-    mark.diff-ins,
-    .diff-ins {
-      background-color: rgba(34, 197, 94, 0.5);
-      color: #ffffff !important;
-      font-weight: 600;
+
+    &.overall-theme-dark {
+      --diff-ins-tint: rgba(46, 160, 67, 0.2);
+      --diff-ins-mark: rgba(46, 160, 67, 0.45);
+      --diff-ins-sign: #3fb950;
+      --diff-del-tint: rgba(248, 81, 73, 0.16);
+      --diff-del-mark: rgba(248, 81, 73, 0.42);
+      --diff-del-sign: #f85149;
     }
   }
 }
@@ -3675,7 +4544,6 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
   color: var(--content-danger-themed, #ef4444);
 }
 
-
 // Chat history dropdown in the panel header.
 .ai-assist-history-toggle::after {
   display: none;
@@ -3696,7 +4564,9 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
   margin-bottom: 2px;
   padding: 2px 4px 2px 8px;
   border-left: 3px solid transparent;
-  transition: background-color 0.15s ease, border-color 0.15s ease;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease;
 
   &:hover {
     @include ai-assist-floating-box-row-hover;
@@ -3784,7 +4654,11 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
   color: #f87171;
   cursor: pointer;
   opacity: 0.85;
-  transition: opacity 0.15s ease, background-color 0.15s ease, color 0.15s ease, transform 0.1s ease;
+  transition:
+    opacity 0.15s ease,
+    background-color 0.15s ease,
+    color 0.15s ease,
+    transform 0.1s ease;
 
   &:hover,
   &:focus-visible {
@@ -3807,6 +4681,30 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
   align-items: center;
   gap: var(--spacing-02);
   border-radius: var(--border-radius-full);
+
+  &.disabled,
+  &.is-disabled,
+  &:disabled {
+    cursor: not-allowed !important;
+    opacity: 0.5 !important;
+    background-color: var(--bg-tertiary-themed, #e5e7eb) !important;
+    border-color: var(--border-divider-themed, #d1d5db) !important;
+    color: var(--content-secondary-themed, #9ca3af) !important;
+
+    * {
+      cursor: not-allowed !important;
+    }
+
+    &:hover,
+    &:focus,
+    &:focus-visible,
+    &:active {
+      background-color: var(--bg-tertiary-themed, #e5e7eb) !important;
+      border-color: var(--border-divider-themed, #d1d5db) !important;
+      color: var(--content-secondary-themed, #9ca3af) !important;
+      box-shadow: none !important;
+    }
+  }
 }
 
 // AI panels use round header buttons. Scoped to the AI panel so the stock
@@ -3853,8 +4751,69 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
     transition: background-color 0.15s ease;
 
     &:hover {
-      background-color: var(--dropdown-background-hover, rgba(255, 255, 255, 0.08));
+      background-color: var(
+        --dropdown-background-hover,
+        rgba(255, 255, 255, 0.08)
+      );
     }
+  }
+}
+
+// A new title sweeps in over the old one from left to right. Both stay
+// white; a green copy of the new title rides the edge between them. All three
+// masks slide together, so the old title is gone before the green reaches it.
+.ai-assist-title-transform-container {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.ai-assist-title-layer {
+  grid-area: 1 / 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  mask-size: 250% 100%;
+  mask-repeat: no-repeat;
+  animation: ai-assist-title-sweep var(--ai-title-animation-duration, 2.5s)
+    linear both;
+}
+
+// The three masks overlap rather than meet, so no stretch of the title is
+// ever blank: the green edge covers where the new title fades in on its left
+// and where the old one fades out on its right.
+.ai-assist-title-layer-old {
+  mask-image: linear-gradient(90deg, transparent 52%, #000 55%);
+}
+
+.ai-assist-title-layer-new {
+  mask-image: linear-gradient(90deg, #000 45%, transparent 48%);
+}
+
+.ai-assist-title-layer-edge {
+  color: var(--content-positive-themed);
+  mask-image: linear-gradient(
+    90deg,
+    transparent 43%,
+    #000 45.5%,
+    #000 52.5%,
+    transparent 55%
+  );
+}
+
+@keyframes ai-assist-title-sweep {
+  from {
+    mask-position: 100% 0;
+  }
+
+  to {
+    mask-position: 0 0;
+  }
+}
+
+// Still ends, so the header settles on the new title
+@media (prefers-reduced-motion: reduce) {
+  .ai-assist-title-layer {
+    animation-duration: 1ms;
   }
 }
 
@@ -3871,13 +4830,19 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
   color: var(--content-secondary-themed, #9ca3af);
   cursor: pointer;
   opacity: 0;
-  transition: opacity 0.15s ease, color 0.15s ease, background-color 0.15s ease;
+  transition:
+    opacity 0.15s ease,
+    color 0.15s ease,
+    background-color 0.15s ease;
 
   &:hover,
   &:focus-visible {
     opacity: 1;
     color: var(--content-primary-themed, #ffffff);
-    background-color: var(--dropdown-background-hover, rgba(255, 255, 255, 0.12));
+    background-color: var(
+      --dropdown-background-hover,
+      rgba(255, 255, 255, 0.12)
+    );
   }
 }
 
@@ -3953,13 +4918,20 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family, #{$fon
   color: var(--content-secondary-themed, #9ca3af);
   cursor: pointer;
   opacity: 0.8;
-  transition: opacity 0.15s ease, background-color 0.15s ease, color 0.15s ease, transform 0.1s ease;
+  transition:
+    opacity 0.15s ease,
+    background-color 0.15s ease,
+    color 0.15s ease,
+    transform 0.1s ease;
 
   &:hover,
   &:focus-visible {
     opacity: 1;
     color: var(--content-primary-themed, #ffffff);
-    background-color: var(--dropdown-background-hover, rgba(255, 255, 255, 0.12));
+    background-color: var(
+      --dropdown-background-hover,
+      rgba(255, 255, 255, 0.12)
+    );
     transform: scale(1.05);
   }
 }

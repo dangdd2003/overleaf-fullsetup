@@ -1,3 +1,4 @@
+import { describe, it } from 'vitest'
 import { expect } from 'chai'
 import sinon from 'sinon'
 import { AiAssistRunSubscriber } from '../../../app/src/AiAssistRunSubscriber.mjs'
@@ -33,7 +34,9 @@ describe('AiAssistRunSubscriber', function () {
 
   it('subscribes to a channel once and fans messages out to every listener', async function () {
     const client = fakeClient()
-    const subscriber = new AiAssistRunSubscriber({ clientFactory: () => client })
+    const subscriber = new AiAssistRunSubscriber({
+      clientFactory: () => client,
+    })
     const first = sinon.spy()
     const second = sinon.spy()
     const other = sinon.spy()
@@ -51,7 +54,9 @@ describe('AiAssistRunSubscriber', function () {
 
   it('unsubscribes from Redis only when the last listener leaves', async function () {
     const client = fakeClient()
-    const subscriber = new AiAssistRunSubscriber({ clientFactory: () => client })
+    const subscriber = new AiAssistRunSubscriber({
+      clientFactory: () => client,
+    })
     const releaseFirst = await subscriber.subscribe('chan-a', () => {})
     const releaseSecond = await subscriber.subscribe('chan-a', () => {})
 
@@ -65,7 +70,9 @@ describe('AiAssistRunSubscriber', function () {
 
   it('stops delivering to a released listener', async function () {
     const client = fakeClient()
-    const subscriber = new AiAssistRunSubscriber({ clientFactory: () => client })
+    const subscriber = new AiAssistRunSubscriber({
+      clientFactory: () => client,
+    })
     const listener = sinon.spy()
     const keep = sinon.spy()
     const release = await subscriber.subscribe('chan-a', listener)
@@ -81,7 +88,9 @@ describe('AiAssistRunSubscriber', function () {
   it('does not keep a listener registered when SUBSCRIBE fails', async function () {
     const client = fakeClient()
     client.subscribe.rejects(new Error('redis down'))
-    const subscriber = new AiAssistRunSubscriber({ clientFactory: () => client })
+    const subscriber = new AiAssistRunSubscriber({
+      clientFactory: () => client,
+    })
     const listener = sinon.spy()
 
     let caught = null
@@ -98,7 +107,9 @@ describe('AiAssistRunSubscriber', function () {
 
   it('keeps delivering to other listeners when one throws', async function () {
     const client = fakeClient()
-    const subscriber = new AiAssistRunSubscriber({ clientFactory: () => client })
+    const subscriber = new AiAssistRunSubscriber({
+      clientFactory: () => client,
+    })
     const good = sinon.spy()
     await subscriber.subscribe('chan-a', () => {
       throw new Error('bad listener')

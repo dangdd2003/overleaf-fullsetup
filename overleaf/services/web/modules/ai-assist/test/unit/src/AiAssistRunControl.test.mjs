@@ -1,3 +1,4 @@
+import { describe, it } from 'vitest'
 import { expect } from 'chai'
 import sinon from 'sinon'
 import { AiAssistRunControl } from '../../../app/src/AiAssistRunControl.mjs'
@@ -42,7 +43,9 @@ describe('AiAssistRunControl', function () {
 
   it('publishes stop command to the control channel', async function () {
     const fakeRedis = createFakeRedis()
-    const control = new AiAssistRunControl({ clientFactory: fakeRedis.createClient })
+    const control = new AiAssistRunControl({
+      clientFactory: fakeRedis.createClient,
+    })
 
     await control.publish('run-1', { action: 'stop' })
 
@@ -53,7 +56,9 @@ describe('AiAssistRunControl', function () {
 
   it('delivers control messages to onCommand subscribers', async function () {
     const fakeRedis = createFakeRedis()
-    const control = new AiAssistRunControl({ clientFactory: fakeRedis.createClient })
+    const control = new AiAssistRunControl({
+      clientFactory: fakeRedis.createClient,
+    })
 
     const commands = []
     const stopListening = await control.start({
@@ -68,8 +73,12 @@ describe('AiAssistRunControl', function () {
 
   it('stops a run across instances when stopRun is called on a non-owning manager', async function () {
     const fakeRedis = createFakeRedis()
-    const controlA = new AiAssistRunControl({ clientFactory: fakeRedis.createClient })
-    const controlB = new AiAssistRunControl({ clientFactory: fakeRedis.createClient })
+    const controlA = new AiAssistRunControl({
+      clientFactory: fakeRedis.createClient,
+    })
+    const controlB = new AiAssistRunControl({
+      clientFactory: fakeRedis.createClient,
+    })
 
     const mockStore = {
       createRun: sinon.stub().resolves(),
@@ -104,8 +113,12 @@ describe('AiAssistRunControl', function () {
     managerA.attachControl(controlA)
     managerB.attachControl(controlB)
 
-    const stopA = await controlA.start({ onCommand: cmd => managerA.onCommand(cmd) })
-    const stopB = await controlB.start({ onCommand: cmd => managerB.onCommand(cmd) })
+    const stopA = await controlA.start({
+      onCommand: cmd => managerA.onCommand(cmd),
+    })
+    const stopB = await controlB.start({
+      onCommand: cmd => managerB.onCommand(cmd),
+    })
 
     // Manager A starts the run
     const runPromise = managerA.startRun({
@@ -130,8 +143,12 @@ describe('AiAssistRunControl', function () {
 
   it('resolves approval across instances when approveEdit is called on a non-owning manager', async function () {
     const fakeRedis = createFakeRedis()
-    const controlA = new AiAssistRunControl({ clientFactory: fakeRedis.createClient })
-    const controlB = new AiAssistRunControl({ clientFactory: fakeRedis.createClient })
+    const controlA = new AiAssistRunControl({
+      clientFactory: fakeRedis.createClient,
+    })
+    const controlB = new AiAssistRunControl({
+      clientFactory: fakeRedis.createClient,
+    })
 
     const mockStore = {
       createRun: sinon.stub().resolves(),
@@ -149,7 +166,12 @@ describe('AiAssistRunControl', function () {
       streamChat: sinon.stub().callsFake(async function* () {
         callCount++
         if (callCount === 1) {
-          yield { type: 'tool_call', id: 'edit-1', name: 'edit_file', args: { path: 'a.tex' } }
+          yield {
+            type: 'tool_call',
+            id: 'edit-1',
+            name: 'edit_file',
+            args: { path: 'a.tex' },
+          }
         } else {
           yield { type: 'text', text: 'applied' }
         }
@@ -170,8 +192,12 @@ describe('AiAssistRunControl', function () {
     managerA.attachControl(controlA)
     managerB.attachControl(controlB)
 
-    const stopA = await controlA.start({ onCommand: cmd => managerA.onCommand(cmd) })
-    const stopB = await controlB.start({ onCommand: cmd => managerB.onCommand(cmd) })
+    const stopA = await controlA.start({
+      onCommand: cmd => managerA.onCommand(cmd),
+    })
+    const stopB = await controlB.start({
+      onCommand: cmd => managerB.onCommand(cmd),
+    })
 
     const runPromise = managerA.startRun({
       runId: 'run-approve-cross',
@@ -195,8 +221,12 @@ describe('AiAssistRunControl', function () {
 
   it('guards against broadcast storm: publishing stop for unowned run publishes exactly once', async function () {
     const fakeRedis = createFakeRedis()
-    const controlA = new AiAssistRunControl({ clientFactory: fakeRedis.createClient })
-    const controlB = new AiAssistRunControl({ clientFactory: fakeRedis.createClient })
+    const controlA = new AiAssistRunControl({
+      clientFactory: fakeRedis.createClient,
+    })
+    const controlB = new AiAssistRunControl({
+      clientFactory: fakeRedis.createClient,
+    })
 
     const mockStore = {
       createRun: sinon.stub().resolves(),
@@ -210,8 +240,12 @@ describe('AiAssistRunControl', function () {
     managerA.attachControl(controlA)
     managerB.attachControl(controlB)
 
-    const stopA = await controlA.start({ onCommand: cmd => managerA.onCommand(cmd) })
-    const stopB = await controlB.start({ onCommand: cmd => managerB.onCommand(cmd) })
+    const stopA = await controlA.start({
+      onCommand: cmd => managerA.onCommand(cmd),
+    })
+    const stopB = await controlB.start({
+      onCommand: cmd => managerB.onCommand(cmd),
+    })
 
     // Stop a run that neither A nor B owns
     await managerA.stopRun('run-unowned')

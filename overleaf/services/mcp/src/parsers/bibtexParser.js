@@ -20,7 +20,8 @@ function readBraces(text, openIndex) {
     if (ch === '{') depth++
     else if (ch === '}') {
       depth--
-      if (depth === 0) return { value: text.slice(openIndex + 1, i), endIndex: i }
+      if (depth === 0)
+        return { value: text.slice(openIndex + 1, i), endIndex: i }
     }
   }
   return null
@@ -96,7 +97,9 @@ export function parseBibtex(text) {
     if (IGNORED_TYPES.has(type)) continue
 
     const comma = group.value.indexOf(',')
-    const key = (comma === -1 ? group.value : group.value.slice(0, comma)).trim()
+    const key = (
+      comma === -1 ? group.value : group.value.slice(0, comma)
+    ).trim()
     if (!key) continue
 
     entries.push({
@@ -117,7 +120,9 @@ export function parseBibtex(text) {
  * @param {string} query
  */
 export function searchBibtex(entries, query) {
-  const needle = String(query ?? '').trim().toLowerCase()
+  const needle = String(query ?? '')
+    .trim()
+    .toLowerCase()
   if (!needle) return entries
   return entries.filter(entry => {
     if (entry.key.toLowerCase().includes(needle)) return true

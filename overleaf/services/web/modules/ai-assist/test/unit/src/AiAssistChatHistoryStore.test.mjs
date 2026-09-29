@@ -1,3 +1,4 @@
+import { describe, it, beforeEach, afterEach } from 'vitest'
 import { expect } from 'chai'
 import fs from 'node:fs/promises'
 import os from 'node:os'
@@ -34,19 +35,32 @@ describe('AiAssistChatHistoryStore', function () {
     const transcript = [{ id: 'u0', role: 'user', text: 'Fix my table' }]
     const summary = await store.saveChat(PROJECT, USER, 'chat1', transcript)
 
-    expect(summary).to.include({ id: 'chat1', title: 'Fix My Table', messageCount: 1 })
+    expect(summary).to.include({
+      id: 'chat1',
+      title: 'Fix My Table',
+      messageCount: 1,
+    })
     const raw = JSON.parse(
-      await fs.readFile(Path.join(dir, `${PROJECT}-${USER}`, 'chat1.json'), 'utf8')
+      await fs.readFile(
+        Path.join(dir, `${PROJECT}-${USER}`, 'chat1.json'),
+        'utf8'
+      )
     )
     expect(raw.transcript).to.deep.equal(transcript)
   })
 
   it('lists newest first, loads and deletes chats', async function () {
-    await store.saveChat(PROJECT, USER, 'old', [{ id: 'u0', role: 'user', text: 'a' }])
+    await store.saveChat(PROJECT, USER, 'old', [
+      { id: 'u0', role: 'user', text: 'a' },
+    ])
     await new Promise(resolve => setTimeout(resolve, 5))
-    await store.saveChat(PROJECT, USER, 'new', [{ id: 'u0', role: 'user', text: 'b' }])
+    await store.saveChat(PROJECT, USER, 'new', [
+      { id: 'u0', role: 'user', text: 'b' },
+    ])
 
-    expect((await store.listChats(PROJECT, USER)).map(c => c.id)).to.deep.equal(['new', 'old'])
+    expect((await store.listChats(PROJECT, USER)).map(c => c.id)).to.deep.equal(
+      ['new', 'old']
+    )
     expect((await store.getChat(PROJECT, USER, 'old')).title).to.equal('A')
 
     await store.deleteChat(PROJECT, USER, 'old')
@@ -70,10 +84,14 @@ describe('AiAssistChatHistoryStore', function () {
     expect(sanitizeChatTitle('  "Title: Fix LaTeX Bibliography."  ')).to.equal(
       'Fix LaTeX Bibliography'
     )
-    expect(sanitizeChatTitle('**Chat Topic: Quantum Key Distribution**\nSome other line')).to.equal(
-      'Quantum Key Distribution'
+    expect(
+      sanitizeChatTitle(
+        '**Chat Topic: Quantum Key Distribution**\nSome other line'
+      )
+    ).to.equal('Quantum Key Distribution')
+    expect(sanitizeChatTitle('`Add Author Affiliations:`')).to.equal(
+      'Add Author Affiliations'
     )
-    expect(sanitizeChatTitle('`Add Author Affiliations:`')).to.equal('Add Author Affiliations')
   })
 
   it('reorganizes user prompt into a concise title like Claude AI', function () {

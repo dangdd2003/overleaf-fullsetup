@@ -9,7 +9,9 @@ import {
 
 const PATHS = ['main.tex', 'sections/results.tex', 'refs.bib']
 
-function renderComposer(overrides: Partial<Parameters<typeof AgentComposer>[0]> = {}) {
+function renderComposer(
+  overrides: Partial<Parameters<typeof AgentComposer>[0]> = {}
+) {
   const onSend = sinon.stub()
   render(
     <AgentComposer
@@ -62,16 +64,21 @@ describe('AgentComposer attachments', function () {
   it('filters the menu as the user types', function () {
     renderComposer()
     type('@res')
-    expect(screen.getByRole('option', { name: /sections\/results\.tex/ })).to.exist
+    expect(screen.getByRole('option', { name: /sections\/results\.tex/ })).to
+      .exist
     expect(screen.queryByRole('option', { name: /refs\.bib/ })).to.equal(null)
   })
 
   it('adds a chip and removes the mention text when a file is picked', function () {
     renderComposer()
     type('explain @res')
-    fireEvent.click(screen.getByRole('option', { name: /sections\/results\.tex/ }))
+    fireEvent.click(
+      screen.getByRole('option', { name: /sections\/results\.tex/ })
+    )
 
-    expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).to.equal('explain ')
+    expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).to.equal(
+      'explain '
+    )
     expect(screen.getByText('sections/results.tex')).to.exist
   })
 
@@ -84,11 +91,15 @@ describe('AgentComposer attachments', function () {
   it('sends the attachments alongside the text', function () {
     const { onSend } = renderComposer()
     type('explain @res')
-    fireEvent.click(screen.getByRole('option', { name: /sections\/results\.tex/ }))
+    fireEvent.click(
+      screen.getByRole('option', { name: /sections\/results\.tex/ })
+    )
     fireEvent.click(screen.getByRole('button', { name: /send/i }))
 
     expect(onSend.lastCall.args[0]).to.equal('explain')
-    expect(onSend.lastCall.args[1]).to.deep.equal([{ path: 'sections/results.tex' }])
+    expect(onSend.lastCall.args[1]).to.deep.equal([
+      { path: 'sections/results.tex' },
+    ])
   })
 
   it('allows sending attachments when text is empty', function () {
@@ -198,5 +209,31 @@ describe('AgentComposer attachments', function () {
       text: 'some text',
     })
     expect(screen.queryByText(/main\.tex: 10-15/)).to.equal(null)
+  })
+
+  it('renders selection chip below textarea so top of composer does not expand', function () {
+    renderComposer()
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent('aiAssist:selectionChanged', {
+          detail: { path: 'main.tex', from: 23, to: 31, text: 'selected text' },
+        })
+      )
+    })
+
+    const textarea = document.querySelector('#ai-assist-composer-textarea')
+    const chipWrapper = document.querySelector(
+      '.ai-assist-selection-chip-wrapper'
+    )
+
+    expect(textarea).to.exist
+    expect(chipWrapper).to.exist
+    expect(
+      Boolean(
+        textarea!.compareDocumentPosition(chipWrapper!) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+      )
+    ).to.be.true
   })
 })

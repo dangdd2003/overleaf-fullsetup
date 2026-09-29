@@ -143,9 +143,7 @@ describe('AiProvidersWidget', function () {
     fireEvent.click(disableButton)
 
     expect(customLocalStorage.getItem('ai-assist:enabled')).to.equal(false)
-    expect(
-      screen.getByRole('button', { name: /enable ai features/i })
-    ).to.exist
+    expect(screen.getByRole('button', { name: /enable ai features/i })).to.exist
     expect(screen.getByText('Disabled')).to.exist
 
     // Re-enable
@@ -156,9 +154,8 @@ describe('AiProvidersWidget', function () {
     fireEvent.click(enableButton)
 
     expect(customLocalStorage.getItem('ai-assist:enabled')).to.equal(true)
-    expect(
-      screen.getByRole('button', { name: /disable ai features/i })
-    ).to.exist
+    expect(screen.getByRole('button', { name: /disable ai features/i })).to
+      .exist
   })
 
   it('initializes as disabled when ol-showAiFeatures is false (default for new accounts)', function () {
@@ -186,40 +183,56 @@ describe('AiProvidersWidget', function () {
       render(<AiProvidersWidget />)
 
       fireEvent.click(screen.getByRole('button', { name: 'Set up web search' }))
-      fireEvent.change(screen.getByLabelText('Search provider'), {
-        target: { value: 'searxng' },
-      })
-      fireEvent.change(screen.getByLabelText('SearXNG URL'), {
+      fireEvent.click(screen.getByText(/add search provider/i))
+      const select = screen.getByLabelText(/select provider to add/i)
+      fireEvent.change(select, { target: { value: 'searxng' } })
+      fireEvent.change(screen.getByPlaceholderText('http://searxng:8080'), {
         target: { value: 'http://searxng:8080' },
       })
+      fireEvent.click(screen.getByRole('button', { name: /add searxng/i }))
       fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
       expect(customLocalStorage.getItem('ai-assist:web-search')).to.deep.equal({
-        type: 'searxng',
-        baseUrl: 'http://searxng:8080',
+        sourceMode: 'custom',
+        providers: {
+          searxng: {
+            enabled: true,
+            baseUrls: ['http://searxng:8080'],
+          },
+        },
+        rotationStrategy: 'round-robin',
+        primaryProvider: 'searxng',
       })
-      expect(screen.getByText(/Using SearXNG at http:\/\/searxng:8080/)).to.exist
+      expect(screen.getByText(/SearXNG \(1 instance\)/)).to.exist
     })
 
     it('tests the search through the Overleaf server', async function () {
       setMeta({ webTools: true })
-      fetchMock.post('/ai-assist/web-search/test', { latencyMs: 42, resultCount: 1 })
+      fetchMock.post('/ai-assist/web-search/test', {
+        latencyMs: 42,
+        resultCount: 1,
+        activeEndpoints: 1,
+        provider: 'ollama',
+      })
       render(<AiProvidersWidget />)
 
       fireEvent.click(screen.getByRole('button', { name: 'Set up web search' }))
-      fireEvent.change(screen.getByLabelText('Ollama API key'), {
+      fireEvent.click(screen.getByText(/add search provider/i))
+      const select = screen.getByLabelText(/select provider to add/i)
+      fireEvent.change(select, { target: { value: 'ollama' } })
+      fireEvent.change(screen.getByPlaceholderText('Ollama API key'), {
         target: { value: 'key-1' },
       })
       fireEvent.click(screen.getByRole('button', { name: 'Test search' }))
 
-      expect(await screen.findByText('Search answered in 42 ms.')).to.exist
+      expect(await screen.findByText(/Search answered in 42 ms/)).to.exist
       const body = JSON.parse(
         fetchMock.callHistory.lastCall('/ai-assist/web-search/test')?.options
           .body as string
       )
-      expect(body).to.deep.equal({
-        webSearchSettings: { type: 'ollama', apiKey: 'key-1' },
-      })
+      expect(body.webSearchSettings.providers.ollama.apiKeys).to.deep.equal([
+        'key-1',
+      ])
     })
 
     it('removes the stored web search', function () {

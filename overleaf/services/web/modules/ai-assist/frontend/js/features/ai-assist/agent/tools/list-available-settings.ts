@@ -22,7 +22,9 @@ export const listAvailableSettingsTool: AgentTool = {
         options,
       }
     } catch (error: any) {
-      return { error: error?.message ?? 'Failed to list available settings options.' }
+      return {
+        error: error?.message ?? 'Failed to list available settings options.',
+      }
     }
   },
 
@@ -34,7 +36,9 @@ export const listAvailableSettingsTool: AgentTool = {
         ? o.editorThemes.map((t: any) => (typeof t === 'string' ? t : t.name))
         : []
       const fontNames = Array.isArray(o.fontFamilies)
-        ? o.fontFamilies.map((f: any) => (typeof f === 'string' ? f : `${f.name} (${f.label})`))
+        ? o.fontFamilies.map((f: any) =>
+            typeof f === 'string' ? f : `${f.name} (${f.label})`
+          )
         : []
       const lines = [
         `Compilers: ${(o.compilers || []).join(', ')}`,
@@ -44,7 +48,10 @@ export const listAvailableSettingsTool: AgentTool = {
         themeNames.length > 0 ? `Editor Themes: ${themeNames.join(', ')}` : '',
         fontNames.length > 0 ? `Code Fonts: ${fontNames.join(', ')}` : '',
         `Line Heights: ${(o.lineHeights || []).join(', ')}`,
-        `Languages: ${(o.spellCheckLanguages || []).slice(0, 8).map((l: any) => `${l.code} (${l.name})`).join(', ')}...`,
+        `Languages: ${(o.spellCheckLanguages || [])
+          .slice(0, 8)
+          .map((l: any) => `${l.code} (${l.name})`)
+          .join(', ')}...`,
       ].filter(Boolean)
       return lines.join('\n')
     }

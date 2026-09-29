@@ -61,7 +61,9 @@ export const compileProjectTool: AgentTool = {
 
   async execute(args, handle, options?: { signal?: AbortSignal }) {
     if (compileInFlight) {
-      return { error: 'A compile is already in progress. Wait for it to finish.' }
+      return {
+        error: 'A compile is already in progress. Wait for it to finish.',
+      }
     }
 
     compileInFlight = true
@@ -88,9 +90,10 @@ export const compileProjectTool: AgentTool = {
       ) {
         message = describe(outcome, clean)
       } else if (currentErrors.length === 0) {
-        message = currentWarnings.length > 0
-          ? `${clean ? 'The cache was cleared and the project was rebuilt' : 'The project compiled'} with 0 errors and ${currentWarnings.length} warning(s).`
-          : `${clean ? 'The cache was cleared and the project was rebuilt' : 'The project compiled'} without errors.`
+        message =
+          currentWarnings.length > 0
+            ? `${clean ? 'The cache was cleared and the project was rebuilt' : 'The project compiled'} with 0 errors and ${currentWarnings.length} warning(s).`
+            : `${clean ? 'The cache was cleared and the project was rebuilt' : 'The project compiled'} without errors.`
       } else if (previous && delta.regressed) {
         message = `WARNING: Compilation worsened. Error count changed by ${delta.countDelta >= 0 ? `+${delta.countDelta}` : delta.countDelta} (${delta.newErrorsCount} new error(s) introduced, ${delta.resolvedErrorsCount} resolved). Recent edits likely introduced invalid LaTeX syntax. Focus on fixing the primary error first.`
       } else if (previous && delta.resolvedErrorsCount > 0) {
@@ -133,7 +136,9 @@ function describe(
   outcome: { status: string; errors: unknown[]; warnings: unknown[] },
   clean: boolean
 ): string {
-  const rebuilt = clean ? 'The cache was cleared and the project was rebuilt' : 'The project compiled'
+  const rebuilt = clean
+    ? 'The cache was cleared and the project was rebuilt'
+    : 'The project compiled'
 
   switch (outcome.status) {
     case 'no-output':

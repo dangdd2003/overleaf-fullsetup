@@ -13,7 +13,9 @@ export function modeLabel(value) {
 }
 
 export function normalizeMode(value) {
-  return typeof value === 'string' && MODES.includes(value) ? value : DEFAULT_MODE
+  return typeof value === 'string' && MODES.includes(value)
+    ? value
+    : DEFAULT_MODE
 }
 
 export const FILE_EDIT_TOOLS = new Set(['edit_file', 'create_file'])
@@ -65,7 +67,8 @@ export const PRESENT_PLAN_SPEC = {
     properties: {
       plan: {
         type: 'string',
-        description: 'The plan in Markdown: what will change, in which files, in what order.',
+        description:
+          'The plan in Markdown: what will change, in which files, in what order.',
       },
     },
     required: ['plan'],
@@ -106,7 +109,9 @@ export function decide(mode, toolName) {
 
 export function toolSpecsFor(mode, allSpecs = []) {
   const normMode = normalizeMode(mode)
-  const filtered = allSpecs.filter(spec => decide(normMode, spec.name) !== 'deny')
+  const filtered = allSpecs.filter(
+    spec => decide(normMode, spec.name) !== 'deny'
+  )
 
   if (normMode === 'plan') {
     if (!filtered.some(spec => spec.name === PLAN_TOOL)) {

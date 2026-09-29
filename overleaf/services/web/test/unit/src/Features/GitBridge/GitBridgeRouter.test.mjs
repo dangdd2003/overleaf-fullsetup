@@ -47,8 +47,12 @@ describe('GitBridgeRouter', function () {
     for (const r of [webRouter, publicApiRouter, privateApiRouter]) {
       expect(r.get.calledWith('/api/v0/docs/:projectId')).toBe(true)
       expect(r.get.calledWith('/api/v0/docs/:projectId/saved_vers')).toBe(true)
-      expect(r.get.calledWith('/api/v0/docs/:projectId/snapshots/:versionId')).toBe(true)
-      expect(r.get.calledWith('/api/v0/docs/:projectId/file/:fileId')).toBe(true)
+      expect(
+        r.get.calledWith('/api/v0/docs/:projectId/snapshots/:versionId')
+      ).toBe(true)
+      expect(r.get.calledWith('/api/v0/docs/:projectId/file/:fileId')).toBe(
+        true
+      )
       expect(r.post.calledWith('/api/v0/docs/:projectId/snapshots')).toBe(true)
     }
   })

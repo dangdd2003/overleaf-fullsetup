@@ -43,11 +43,14 @@ vi.mock('../../../../../app/src/infrastructure/mongodb.mjs', () => {
   }
 })
 
-vi.mock('../../../../../app/src/Features/Authentication/SessionManager.mjs', () => ({
-  default: {
-    getLoggedInUserId: vi.fn(),
-  },
-}))
+vi.mock(
+  '../../../../../app/src/Features/Authentication/SessionManager.mjs',
+  () => ({
+    default: {
+      getLoggedInUserId: vi.fn(),
+    },
+  })
+)
 
 vi.mock('../../../../../app/src/Features/User/UserSessionsManager.mjs', () => ({
   default: {
@@ -74,13 +77,16 @@ vi.mock('../../../../../app/src/Features/User/UserAuditLogHandler.mjs', () => ({
   },
 }))
 
-vi.mock('../../../../../app/src/Features/Security/OneTimeTokenHandler.mjs', () => ({
-  default: {
-    promises: {
-      getNewToken: vi.fn(),
+vi.mock(
+  '../../../../../app/src/Features/Security/OneTimeTokenHandler.mjs',
+  () => ({
+    default: {
+      promises: {
+        getNewToken: vi.fn(),
+      },
     },
-  },
-}))
+  })
+)
 
 vi.mock('../../../../../app/src/Features/User/UserGetter.mjs', () => ({
   default: {
@@ -111,14 +117,17 @@ vi.mock('../../../app/src/AdminUserRestorer.mjs', () => ({
   restoreUserAndProjects: vi.fn(),
 }))
 
-vi.mock('../../../../../app/src/Features/Collaborators/OwnershipTransferHandler.mjs', () => ({
-  default: {
-    promises: {
-      transferOwnership: vi.fn(),
-      transferAllProjectsToUser: vi.fn(),
+vi.mock(
+  '../../../../../app/src/Features/Collaborators/OwnershipTransferHandler.mjs',
+  () => ({
+    default: {
+      promises: {
+        transferOwnership: vi.fn(),
+        transferAllProjectsToUser: vi.fn(),
+      },
     },
-  },
-}))
+  })
+)
 
 vi.mock('../../../app/src/AdminUserQuery.mjs', () => ({
   getActiveUsers: vi.fn(),
@@ -155,11 +164,14 @@ vi.mock('../../../../../app/src/Features/User/UserCreator.mjs', () => ({
   },
 }))
 
-vi.mock('../../../../../app/src/Features/Authentication/AuthenticationManager.mjs', () => ({
-  default: {
-    hashPassword: vi.fn(),
-  },
-}))
+vi.mock(
+  '../../../../../app/src/Features/Authentication/AuthenticationManager.mjs',
+  () => ({
+    default: {
+      hashPassword: vi.fn(),
+    },
+  })
+)
 
 import AdminUserManagementController from '../../../app/src/AdminUserManagementController.mjs'
 
@@ -262,7 +274,9 @@ describe('AdminUserProjectsQuery Controller', () => {
 
       const findQuery = Project.find.mock.calls[0][0]
       expect(findQuery.name).toBeInstanceOf(RegExp)
-      expect(findQuery.name.source).toBe('quantum\\.\\*\\+\\?\\^\\$\\{\\}\\(\\)\\|\\[\\]\\\\')
+      expect(findQuery.name.source).toBe(
+        'quantum\\.\\*\\+\\?\\^\\$\\{\\}\\(\\)\\|\\[\\]\\\\'
+      )
       expect(findQuery.name.flags).toBe('i')
     })
 

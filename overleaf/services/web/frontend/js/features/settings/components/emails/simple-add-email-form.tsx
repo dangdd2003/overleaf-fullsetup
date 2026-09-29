@@ -10,7 +10,6 @@ import OLRow from '@/shared/components/ol/ol-row'
 import OLCol from '@/shared/components/ol/ol-col'
 import OLFormControl from '@/shared/components/ol/ol-form-control'
 import OLForm from '@/shared/components/ol/ol-form'
-import OLFormGroup from '@/shared/components/ol/ol-form-group'
 import Notification from '@/shared/components/notification'
 import AddAnotherEmailBtn from './add-email/add-another-email-btn'
 
@@ -129,7 +128,11 @@ function SimpleAddEmailForm() {
               disabled={isLoading}
             />
           </OLCol>
-          <OLCol lg={5} sm={12} className="text-lg-end d-flex gap-2 justify-content-lg-end">
+          <OLCol
+            lg={5}
+            sm={12}
+            className="text-lg-end d-flex gap-2 justify-content-lg-end"
+          >
             <OLButton
               variant="primary"
               size="sm"

@@ -24,7 +24,10 @@ export function pullImage(imageName) {
     logger.info({ imageName }, '[AutoPull] Starting docker pull for image')
     docker.pull(imageName, (err, stream) => {
       if (err) {
-        logger.error({ err, imageName }, '[AutoPull] Failed to initiate docker pull')
+        logger.error(
+          { err, imageName },
+          '[AutoPull] Failed to initiate docker pull'
+        )
         inFlightPulls.delete(imageName)
         return reject(err)
       }
@@ -35,7 +38,10 @@ export function pullImage(imageName) {
         (finishErr, output) => {
           inFlightPulls.delete(imageName)
           if (finishErr) {
-            logger.error({ finishErr, imageName }, '[AutoPull] Error during docker pull')
+            logger.error(
+              { finishErr, imageName },
+              '[AutoPull] Error during docker pull'
+            )
             return reject(finishErr)
           }
           logger.info({ imageName }, '[AutoPull] Successfully pulled image')
@@ -45,7 +51,10 @@ export function pullImage(imageName) {
           if (Date.now() - lastLog > 10000) {
             lastLog = Date.now()
             if (event.status) {
-              logger.info({ imageName, status: event.status, progress: event.progress }, '[AutoPull] Pulling progress')
+              logger.info(
+                { imageName, status: event.status, progress: event.progress },
+                '[AutoPull] Pulling progress'
+              )
             }
           }
         }
@@ -70,7 +79,10 @@ export async function imageExists(imageName) {
     if (err.statusCode === 404) {
       return false
     }
-    logger.warn({ err, imageName }, '[AutoPull] Error inspecting image, assuming not found')
+    logger.warn(
+      { err, imageName },
+      '[AutoPull] Error inspecting image, assuming not found'
+    )
     return false
   }
 }
@@ -96,11 +108,17 @@ export async function checkAndPullImages() {
     return
   }
 
-  logger.info({ count: images.length, images }, '[AutoPull] Background image pull worker initialized')
+  logger.info(
+    { count: images.length, images },
+    '[AutoPull] Background image pull worker initialized'
+  )
 
   for (const imageName of images) {
     try {
-      logger.info({ imageName }, '[AutoPull] Pulling latest image from remote registry...')
+      logger.info(
+        { imageName },
+        '[AutoPull] Pulling latest image from remote registry...'
+      )
       await pullImage(imageName)
     } catch (err) {
       const existsLocally = await imageExists(imageName)
@@ -118,7 +136,9 @@ export async function checkAndPullImages() {
     }
   }
 
-  logger.info('[AutoPull] Finished checking and pulling all configured TeX Live images.')
+  logger.info(
+    '[AutoPull] Finished checking and pulling all configured TeX Live images.'
+  )
 }
 
 export default {

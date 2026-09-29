@@ -91,7 +91,10 @@ export type UniqueSpanResult =
   | { status: 'ambiguous'; matches: number }
   | { status: 'noMatch' }
 
-export function findUniqueSpan(text: string, oldText: string): UniqueSpanResult {
+export function findUniqueSpan(
+  text: string,
+  oldText: string
+): UniqueSpanResult {
   // Append mode: empty oldText matches the very end of the file
   if (!oldText) {
     return { status: 'found', index: text.length, matchedLength: 0 }
@@ -104,7 +107,7 @@ export function findUniqueSpan(text: string, oldText: string): UniqueSpanResult 
     let index = first
     while (index !== -1) {
       matches += 1
-      index = text.indexOf(oldText, index + oldText.length)
+      index = text.indexOf(oldText, index + Math.max(1, oldText.length))
     }
     if (matches > 1) return { status: 'ambiguous', matches }
     return { status: 'found', index: first, matchedLength: oldText.length }
@@ -119,52 +122,54 @@ export function findUniqueSpan(text: string, oldText: string): UniqueSpanResult 
     .split('\n')
     .map(l => l.trimEnd())
     .join('\n')
-  const normFirst = normText.indexOf(normOld)
-  if (normFirst !== -1) {
-    let matches = 0
-    let index = normFirst
-    while (index !== -1) {
-      matches += 1
-      index = normText.indexOf(normOld, index + normOld.length)
-    }
-    if (matches > 1) return { status: 'ambiguous', matches }
-
-    const lineNum = normText.slice(0, normFirst).split('\n').length - 1
-    const origLines = text.split('\n')
-    let origIndex = 0
-    for (let i = 0; i < lineNum; i++) {
-      origIndex += origLines[i].length + 1
-    }
-    const lineOffset =
-      normFirst -
-      normText.split('\n').slice(0, lineNum).join('\n').length -
-      (lineNum > 0 ? 1 : 0)
-    origIndex += Math.max(0, lineOffset)
-
-    const oldLines = oldText.split('\n')
-    const oldLineCount = oldLines.length
-    let matchedLength: number
-    if (oldLineCount === 1) {
-      matchedLength = Math.min(
-        oldText.length,
-        origLines[lineNum].length - lineOffset
-      )
-    } else {
-      let len = origLines[lineNum].length - lineOffset + 1
-      for (let i = 1; i < oldLineCount - 1; i++) {
-        len += origLines[lineNum + i].length + 1
+  if (normOld) {
+    const normFirst = normText.indexOf(normOld)
+    if (normFirst !== -1) {
+      let matches = 0
+      let index = normFirst
+      while (index !== -1) {
+        matches += 1
+        index = normText.indexOf(normOld, index + Math.max(1, normOld.length))
       }
-      len += Math.min(
-        origLines[lineNum + oldLineCount - 1].length,
-        oldLines[oldLineCount - 1].length
-      )
-      matchedLength = len
-    }
+      if (matches > 1) return { status: 'ambiguous', matches }
 
-    return {
-      status: 'found',
-      index: origIndex,
-      matchedLength: Math.max(0, matchedLength),
+      const lineNum = normText.slice(0, normFirst).split('\n').length - 1
+      const origLines = text.split('\n')
+      let origIndex = 0
+      for (let i = 0; i < lineNum; i++) {
+        origIndex += origLines[i].length + 1
+      }
+      const lineOffset =
+        normFirst -
+        normText.split('\n').slice(0, lineNum).join('\n').length -
+        (lineNum > 0 ? 1 : 0)
+      origIndex += Math.max(0, lineOffset)
+
+      const oldLines = oldText.split('\n')
+      const oldLineCount = oldLines.length
+      let matchedLength: number
+      if (oldLineCount === 1) {
+        matchedLength = Math.min(
+          oldText.length,
+          origLines[lineNum].length - lineOffset
+        )
+      } else {
+        let len = origLines[lineNum].length - lineOffset + 1
+        for (let i = 1; i < oldLineCount - 1; i++) {
+          len += origLines[lineNum + i].length + 1
+        }
+        len += Math.min(
+          origLines[lineNum + oldLineCount - 1].length,
+          oldLines[oldLineCount - 1].length
+        )
+        matchedLength = len
+      }
+
+      return {
+        status: 'found',
+        index: origIndex,
+        matchedLength: Math.max(0, matchedLength),
+      }
     }
   }
 
@@ -201,7 +206,10 @@ export function findUniqueSpan(text: string, oldText: string): UniqueSpanResult 
   // 4. Token & fuzzy match via locateAnchorInText
   const match = locateAnchorInText(text, oldText)
   if (match) {
-    if (typeof match.charStart === 'number' && typeof match.charEnd === 'number') {
+    if (
+      typeof match.charStart === 'number' &&
+      typeof match.charEnd === 'number'
+    ) {
       return {
         status: 'found',
         index: match.charStart,
@@ -212,7 +220,11 @@ export function findUniqueSpan(text: string, oldText: string): UniqueSpanResult 
     if (idx !== -1) {
       const occurrences = countOccurrences(text, match.anchor)
       if (occurrences === 1) {
-        return { status: 'found', index: idx, matchedLength: match.anchor.length }
+        return {
+          status: 'found',
+          index: idx,
+          matchedLength: match.anchor.length,
+        }
       }
       if (occurrences > 1) {
         return { status: 'ambiguous', matches: occurrences }
@@ -250,13 +262,16 @@ export function docToProjectFile(path: string, content: any): ProjectFile {
   }
 }
 
-export function toLastCompile(entries: any, rawLog?: string | null): LastCompile | null {
+export function toLastCompile(
+  entries: any,
+  rawLog?: string | null
+): LastCompile | null {
   if (!entries) return null
   const errors: LogEntrySummary[] = (entries.errors ?? []).map((e: any) => {
     const summary: LogEntrySummary = {
       message: e.message ?? '',
       file: e.file ?? null,
-      line: typeof e.line === 'number' ? e.line : (parseInt(e.line, 10) || null),
+      line: typeof e.line === 'number' ? e.line : parseInt(e.line, 10) || null,
     }
     const excerpt = errorExcerpt(e)
     if (excerpt) summary.excerpt = excerpt
@@ -267,7 +282,7 @@ export function toLastCompile(entries: any, rawLog?: string | null): LastCompile
     .map((e: any) => ({
       message: e.message ?? '',
       file: e.file ?? null,
-      line: typeof e.line === 'number' ? e.line : (parseInt(e.line, 10) || null),
+      line: typeof e.line === 'number' ? e.line : parseInt(e.line, 10) || null,
     }))
   const status = errors.length > 0 ? 'failure' : 'success'
   return {
@@ -367,7 +382,11 @@ export function toCompileOutcome(
     } else if (!entries) {
       status = rawLogOrStatus
     } else {
-      if (['success', 'failure', 'timedout', 'no-output', 'skipped'].includes(rawLogOrStatus)) {
+      if (
+        ['success', 'failure', 'timedout', 'no-output', 'skipped'].includes(
+          rawLogOrStatus
+        )
+      ) {
         status = rawLogOrStatus
       } else {
         rawLog = rawLogOrStatus
@@ -379,11 +398,13 @@ export function toCompileOutcome(
     const summary: LogEntrySummary = {
       message: e.message ?? '',
       file: e.file ?? null,
-      line: typeof e.line === 'number' ? e.line : (parseInt(e.line, 10) || null),
+      line: typeof e.line === 'number' ? e.line : parseInt(e.line, 10) || null,
     }
     const excerpt =
       errorExcerpt(e) ??
-      (rawLog && summary.message ? excerptAround(rawLog, summary.message, 3) : null)
+      (rawLog && summary.message
+        ? excerptAround(rawLog, summary.message, 3)
+        : null)
     if (excerpt) {
       summary.excerpt = excerpt
     }
@@ -395,7 +416,7 @@ export function toCompileOutcome(
     .map((e: any) => ({
       message: e.message ?? '',
       file: e.file ?? null,
-      line: typeof e.line === 'number' ? e.line : (parseInt(e.line, 10) || null),
+      line: typeof e.line === 'number' ? e.line : parseInt(e.line, 10) || null,
     }))
 
   return {
@@ -405,7 +426,10 @@ export function toCompileOutcome(
   }
 }
 
-export function folderIdForPath(root: Folder, segments: string[]): string | null {
+export function folderIdForPath(
+  root: Folder,
+  segments: string[]
+): string | null {
   if (!root) return null
   if (!segments || segments.length === 0) return root._id
   let current: Folder | null = root
@@ -427,7 +451,9 @@ export async function ensureFolderPath(
   let currentFolder = rootFolder
   for (const segment of segments) {
     if (!segment) continue
-    const existing: Folder | undefined = currentFolder.folders?.find(f => f.name === segment)
+    const existing: Folder | undefined = currentFolder.folders?.find(
+      f => f.name === segment
+    )
     if (existing) {
       currentFolder = existing
     } else {
@@ -506,21 +532,24 @@ export function readDocOverBridge(
 ): Promise<string | null> {
   return new Promise(resolve => {
     let resolved = false
-    let timer: any
     const onResult = (event: Event) => {
       if (resolved) return
       resolved = true
       window.removeEventListener('aiAssist:agentReadDocResult', onResult)
-      if (timer) clearTimeout(timer)
+      clearTimeout(timer)
       const detail = (event as CustomEvent)?.detail
-      if (detail?.text === null || detail?.error === 'pathMismatch' || detail?.error === 'docIdMismatch') {
+      if (
+        detail?.text === null ||
+        detail?.error === 'pathMismatch' ||
+        detail?.error === 'docIdMismatch'
+      ) {
         resolve(null)
       } else {
         resolve(detail?.text ?? null)
       }
     }
     window.addEventListener('aiAssist:agentReadDocResult', onResult)
-    timer = setTimeout(() => {
+    const timer = setTimeout(() => {
       if (resolved) return
       resolved = true
       window.removeEventListener('aiAssist:agentReadDocResult', onResult)
@@ -550,17 +579,22 @@ export function applyEditOverBridge(
   detail: BridgeEditDetail,
   timeoutMs = REPLY_TIMEOUT_MS
 ): Promise<{
-  status: 'applied' | 'drifted' | 'pathMismatch' | 'docIdMismatch' | 'timeout' | 'error'
+  status:
+    | 'applied'
+    | 'drifted'
+    | 'pathMismatch'
+    | 'docIdMismatch'
+    | 'timeout'
+    | 'error'
   message?: string
 }> {
   return new Promise(resolve => {
     let resolved = false
-    let timer: any
     const onResult = (event: Event) => {
       if (resolved) return
       resolved = true
       window.removeEventListener('aiAssist:agentApplyEditResult', onResult)
-      if (timer) clearTimeout(timer)
+      clearTimeout(timer)
       const result = (event as CustomEvent)?.detail
       if (result && typeof result.status === 'string') {
         resolve(result)
@@ -572,7 +606,7 @@ export function applyEditOverBridge(
       }
     }
     window.addEventListener('aiAssist:agentApplyEditResult', onResult)
-    timer = setTimeout(() => {
+    const timer = setTimeout(() => {
       if (resolved) return
       resolved = true
       window.removeEventListener('aiAssist:agentApplyEditResult', onResult)
@@ -585,7 +619,11 @@ export function applyEditOverBridge(
   })
 }
 
-const DEFAULT_EDITOR_THEMES: Array<{ name: string; label?: string; dark: boolean }> = [
+const DEFAULT_EDITOR_THEMES: Array<{
+  name: string
+  label?: string
+  dark: boolean
+}> = [
   { name: 'cobalt', dark: true },
   { name: 'dracula', dark: true },
   { name: 'eclipse', dark: false },
@@ -647,7 +685,8 @@ export function useProjectHandle({
     logEntries,
     rawLog,
   } = useLocalCompileContext()
-  const { openDoc, openDocWithId, getCurrentDocumentId } = useEditorManagerContext()
+  const { openDoc, openDocWithId, getCurrentDocumentId } =
+    useEditorManagerContext()
   const { fileTreeData } = useFileTreeData()
   const userSettingsContext = useContext(UserSettingsContext)
 
@@ -707,7 +746,10 @@ export function useProjectHandle({
     return pathInFolder(fileTreeData, project.rootDocId)
   }, [project?.rootDocId, fileTreeData])
 
-  const openFile = useCallback((): { path: string; cursorLine: number | null } | null => {
+  const openFile = useCallback((): {
+    path: string
+    cursorLine: number | null
+  } | null => {
     if (!getCurrentDocumentId || !fileTreeData) return null
     const docId = getCurrentDocumentId()
     if (!docId) return null
@@ -758,7 +800,8 @@ export function useProjectHandle({
           projectSnapshot.getDocContents?.(norm) ??
           projectSnapshot.getDocContents?.('/' + norm) ??
           ''
-        const lines = typeof docContents === 'string' ? docContents.split('\n') : []
+        const lines =
+          typeof docContents === 'string' ? docContents.split('\n') : []
         result.push({
           path: norm,
           type: 'doc',
@@ -821,7 +864,9 @@ export function useProjectHandle({
     }
 
     if (snapshotFailed) {
-      throw new SnapshotUnavailableError('Project files could not be loaded from server')
+      throw new SnapshotUnavailableError(
+        'Project files could not be loaded from server'
+      )
     }
 
     return result
@@ -837,7 +882,9 @@ export function useProjectHandle({
 
       // Fast path: if the document is currently active in CodeMirror, read live content directly
       const open = openFile()
-      const isTargetOpen = Boolean(open?.path && open.path.replace(/^\//, '') === norm)
+      const isTargetOpen = Boolean(
+        open?.path && open.path.replace(/^\//, '') === norm
+      )
       if (isTargetOpen) {
         const live = await readDocOverBridge(norm)
         if (typeof live === 'string') {
@@ -852,7 +899,9 @@ export function useProjectHandle({
         } catch {
           // Ignore snapshot failure; continue to fallbacks
         }
-        const docContents = projectSnapshot?.getDocContents?.(norm) ?? projectSnapshot?.getDocContents?.('/' + norm)
+        const docContents =
+          projectSnapshot?.getDocContents?.(norm) ??
+          projectSnapshot?.getDocContents?.('/' + norm)
         if (typeof docContents === 'string') {
           allLines = docContents.split('\n')
         } else {
@@ -981,7 +1030,9 @@ export function useProjectHandle({
     async (edit: EditRequest): Promise<EditOutcome> => {
       const norm = edit.path.replace(/^\//, '')
       const open = openFile()
-      const isTargetOpen = Boolean(open?.path && open.path.replace(/^\//, '') === norm)
+      const isTargetOpen = Boolean(
+        open?.path && open.path.replace(/^\//, '') === norm
+      )
 
       let content: string | null = null
       if (isTargetOpen) {
@@ -1007,7 +1058,11 @@ export function useProjectHandle({
       }
 
       let span = findUniqueSpan(content, edit.oldText)
-      if (span.status !== 'found' && typeof edit.startLine === 'number' && edit.startLine >= 1) {
+      if (
+        span.status !== 'found' &&
+        typeof edit.startLine === 'number' &&
+        edit.startLine >= 1
+      ) {
         // Line-scoped fallback for ambiguous anchors (e.g. duplicate \label{...}, repeated theorem environments)
         const lines = content.split('\n')
         const sIdx = edit.startLine - 1
@@ -1015,24 +1070,32 @@ export function useProjectHandle({
         const windowRadius = Math.max(2, anchorLineCount + 1)
 
         // Try local window first
-        const localEIdx = typeof edit.endLine === 'number' && edit.endLine >= edit.startLine ? edit.endLine : Math.min(lines.length, sIdx + windowRadius)
+        const localEIdx =
+          typeof edit.endLine === 'number' && edit.endLine >= edit.startLine
+            ? edit.endLine
+            : Math.min(lines.length, sIdx + windowRadius)
         const localSlice = lines.slice(sIdx, localEIdx)
         const localSpan = findUniqueSpan(localSlice.join('\n'), edit.oldText)
 
         if (localSpan.status === 'found') {
-          const charOffset = lines.slice(0, sIdx).join('\n').length + (sIdx > 0 ? 1 : 0)
+          const charOffset =
+            lines.slice(0, sIdx).join('\n').length + (sIdx > 0 ? 1 : 0)
           span = {
             status: 'found',
             index: localSpan.index + charOffset,
             matchedLength: localSpan.matchedLength,
           }
         } else {
-          const eIdx = typeof edit.endLine === 'number' && edit.endLine >= edit.startLine ? edit.endLine : lines.length
+          const eIdx =
+            typeof edit.endLine === 'number' && edit.endLine >= edit.startLine
+              ? edit.endLine
+              : lines.length
           const sliceLines = lines.slice(sIdx, eIdx)
           const scopedContent = sliceLines.join('\n')
           const scopedSpan = findUniqueSpan(scopedContent, edit.oldText)
           if (scopedSpan.status === 'found') {
-            const charOffset = lines.slice(0, sIdx).join('\n').length + (sIdx > 0 ? 1 : 0)
+            const charOffset =
+              lines.slice(0, sIdx).join('\n').length + (sIdx > 0 ? 1 : 0)
             span = {
               status: 'found',
               index: scopedSpan.index + charOffset,
@@ -1056,7 +1119,9 @@ export function useProjectHandle({
       const isAppend = edit.oldText === ''
       const action: 'create' | 'append' | 'delete' | 'edit' = isAppend
         ? 'append'
-        : (!edit.newText ? 'delete' : 'edit')
+        : !edit.newText
+          ? 'delete'
+          : 'edit'
       const approval = await requestApproval(
         {
           ...edit,
@@ -1106,7 +1171,10 @@ export function useProjectHandle({
         isAppend,
       })
 
-      if (applied.status === 'pathMismatch' || applied.status === 'docIdMismatch') {
+      if (
+        applied.status === 'pathMismatch' ||
+        applied.status === 'docIdMismatch'
+      ) {
         await new Promise(r => setTimeout(r, 150))
         applied = await applyEditOverBridge({
           path: norm,
@@ -1131,13 +1199,20 @@ export function useProjectHandle({
       if (applied.status === 'timeout') {
         return {
           status: 'timeout',
-          message: applied.message || 'Editor bridge timed out waiting for editor response.',
+          message:
+            applied.message ||
+            'Editor bridge timed out waiting for editor response.',
         }
       }
-      if (applied.status === 'pathMismatch' || applied.status === 'docIdMismatch') {
+      if (
+        applied.status === 'pathMismatch' ||
+        applied.status === 'docIdMismatch'
+      ) {
         return {
           status: 'error',
-          message: applied.message || 'Editor document mismatch during edit application.',
+          message:
+            applied.message ||
+            'Editor document mismatch during edit application.',
         }
       }
       if (applied.status === 'drifted') {
@@ -1311,7 +1386,10 @@ export function useProjectHandle({
   }, [projectSnapshot, rootDocPath, ensureSnapshot, openFile])
 
   const createFile = useCallback(
-    async (request: { path: string; content: string }): Promise<EditOutcome> => {
+    async (request: {
+      path: string
+      content: string
+    }): Promise<EditOutcome> => {
       const approval = await requestApproval(
         {
           path: request.path,
@@ -1337,7 +1415,11 @@ export function useProjectHandle({
 
       let parentFolderId: string
       try {
-        parentFolderId = await ensureFolderPath(project._id, fileTreeData, segments)
+        parentFolderId = await ensureFolderPath(
+          project._id,
+          fileTreeData,
+          segments
+        )
       } catch (err: any) {
         return {
           status: 'error',
@@ -1393,7 +1475,10 @@ export function useProjectHandle({
                 'Editor bridge timed out populating new file content.',
             }
           }
-          if (applied.status === 'pathMismatch' || applied.status === 'docIdMismatch') {
+          if (
+            applied.status === 'pathMismatch' ||
+            applied.status === 'docIdMismatch'
+          ) {
             return {
               status: 'error',
               message:
@@ -1406,7 +1491,8 @@ export function useProjectHandle({
           }
           return {
             status: 'error',
-            message: applied.message || 'Failed to populate content in new file.',
+            message:
+              applied.message || 'Failed to populate content in new file.',
           }
         } catch (err: any) {
           return {
@@ -1421,49 +1507,51 @@ export function useProjectHandle({
     [fileTreeData, project?._id, openDoc, requestApproval, invalidateSnapshot]
   )
 
-  const getProjectSettings = useCallback(async (): Promise<ProjectSettingsSummary> => {
-    const s: any = userSettingsContext?.userSettings || getMeta('ol-userSettings') || {}
-    const appearance: AppearanceSettings = {
-      overallTheme: s.overallTheme || 'system',
-      editorTheme: s.editorTheme || 'textmate',
-      editorLightTheme: s.editorLightTheme || 'textmate',
-      editorDarkTheme: s.editorDarkTheme || 'overleaf_dark',
-      darkModePdf: s.darkModePdf ?? false,
-      fontSize: s.fontSize ?? 12,
-      fontFamily: s.fontFamily ?? null,
-      lineHeight: s.lineHeight ?? null,
-    }
-    const compiler: CompilerSettings = {
-      compiler: project?.compiler ?? 'pdflatex',
-      imageName: project?.imageName ?? null,
-      rootDocPath: rootDocPath(),
-      rootDocId: project?.rootDocId ?? null,
-      draft: (project as any)?.draft ?? false,
-      stopOnFirstError: (project as any)?.stopOnFirstError ?? false,
-    }
-    const editor: EditorSettings = {
-      mode: s.mode || 'none',
-      autoComplete: s.autoComplete ?? true,
-      autoPairDelimiters: s.autoPairDelimiters ?? true,
-      syntaxValidation: s.syntaxValidation ?? true,
-      pdfViewer: s.pdfViewer || 'pdfjs',
-      mathPreview: s.mathPreview ?? true,
-      breadcrumbs: s.breadcrumbs ?? true,
-      editorTabs: s.editorTabs ?? true,
-      spellCheckLanguage: s.spellCheckLanguage || 'en',
-    }
-    const spelling = {
-      spellCheckLanguage: project?.spellCheckLanguage ?? null,
-    }
-    return {
-      compiler,
-      appearance,
-      editor,
-      spelling,
-      name: project?.name ?? '',
-      description: (project as any)?.description ?? '',
-    }
-  }, [project, rootDocPath, userSettingsContext])
+  const getProjectSettings =
+    useCallback(async (): Promise<ProjectSettingsSummary> => {
+      const s: any =
+        userSettingsContext?.userSettings || getMeta('ol-userSettings') || {}
+      const appearance: AppearanceSettings = {
+        overallTheme: s.overallTheme || 'system',
+        editorTheme: s.editorTheme || 'textmate',
+        editorLightTheme: s.editorLightTheme || 'textmate',
+        editorDarkTheme: s.editorDarkTheme || 'overleaf_dark',
+        darkModePdf: s.darkModePdf ?? false,
+        fontSize: s.fontSize ?? 12,
+        fontFamily: s.fontFamily ?? null,
+        lineHeight: s.lineHeight ?? null,
+      }
+      const compiler: CompilerSettings = {
+        compiler: project?.compiler ?? 'pdflatex',
+        imageName: project?.imageName ?? null,
+        rootDocPath: rootDocPath(),
+        rootDocId: project?.rootDocId ?? null,
+        draft: (project as any)?.draft ?? false,
+        stopOnFirstError: (project as any)?.stopOnFirstError ?? false,
+      }
+      const editor: EditorSettings = {
+        mode: s.mode || 'none',
+        autoComplete: s.autoComplete ?? true,
+        autoPairDelimiters: s.autoPairDelimiters ?? true,
+        syntaxValidation: s.syntaxValidation ?? true,
+        pdfViewer: s.pdfViewer || 'pdfjs',
+        mathPreview: s.mathPreview ?? true,
+        breadcrumbs: s.breadcrumbs ?? true,
+        editorTabs: s.editorTabs ?? true,
+        spellCheckLanguage: s.spellCheckLanguage || 'en',
+      }
+      const spelling = {
+        spellCheckLanguage: project?.spellCheckLanguage ?? null,
+      }
+      return {
+        compiler,
+        appearance,
+        editor,
+        spelling,
+        name: project?.name ?? '',
+        description: (project as any)?.description ?? '',
+      }
+    }, [project, rootDocPath, userSettingsContext])
 
   const configureAppearanceSettings = useCallback(
     async (settingsToUpdate: Partial<AppearanceSettings>) => {
@@ -1496,7 +1584,12 @@ export function useProjectHandle({
           projectId: project?._id,
         })
       } catch (err: any) {
-        throw new Error(err?.message || 'Failed to update appearance settings.')
+        throw new Error(
+          err?.message || 'Failed to update appearance settings.',
+          {
+            cause: err,
+          }
+        )
       }
 
       return {
@@ -1512,18 +1605,25 @@ export function useProjectHandle({
     async (settingsToUpdate: Partial<CompilerSettings>) => {
       let rootDocId = settingsToUpdate.rootDocId
       if (!rootDocId && settingsToUpdate.rootDocPath && fileTreeData) {
-        const entity = findEntityByPath(fileTreeData, settingsToUpdate.rootDocPath)
+        const entity = findEntityByPath(
+          fileTreeData,
+          settingsToUpdate.rootDocPath
+        )
         if (entity?.type === 'doc') {
           rootDocId = entity.entity._id
         }
       }
 
       const payload: any = {}
-      if (settingsToUpdate.compiler !== undefined) payload.compiler = settingsToUpdate.compiler
-      if (settingsToUpdate.imageName !== undefined) payload.imageName = settingsToUpdate.imageName
+      if (settingsToUpdate.compiler !== undefined)
+        payload.compiler = settingsToUpdate.compiler
+      if (settingsToUpdate.imageName !== undefined)
+        payload.imageName = settingsToUpdate.imageName
       if (rootDocId !== undefined) payload.rootDocId = rootDocId
-      if (settingsToUpdate.draft !== undefined) payload.draft = settingsToUpdate.draft
-      if (settingsToUpdate.stopOnFirstError !== undefined) payload.stopOnFirstError = settingsToUpdate.stopOnFirstError
+      if (settingsToUpdate.draft !== undefined)
+        payload.draft = settingsToUpdate.draft
+      if (settingsToUpdate.stopOnFirstError !== undefined)
+        payload.stopOnFirstError = settingsToUpdate.stopOnFirstError
 
       if (Object.keys(payload).length === 0 && !settingsToUpdate.rootDocPath) {
         throw new Error('No valid compiler settings provided to update.')
@@ -1533,13 +1633,22 @@ export function useProjectHandle({
       if (projectId) {
         try {
           await postJSON(`/project/${projectId}/settings`, { body: payload })
-          applyLiveSettingsUpdate('configure_compiler_settings', settingsToUpdate, {
-            userSettingsContext,
-            projectContext: { updateProject },
-            projectId,
-          })
+          applyLiveSettingsUpdate(
+            'configure_compiler_settings',
+            settingsToUpdate,
+            {
+              userSettingsContext,
+              projectContext: { updateProject },
+              projectId,
+            }
+          )
         } catch (err: any) {
-          throw new Error(err?.message || 'Failed to update compiler settings.')
+          throw new Error(
+            err?.message || 'Failed to update compiler settings.',
+            {
+              cause: err,
+            }
+          )
         }
       }
 
@@ -1584,7 +1693,9 @@ export function useProjectHandle({
           projectId: project?._id,
         })
       } catch (err: any) {
-        throw new Error(err?.message || 'Failed to update editor settings.')
+        throw new Error(err?.message || 'Failed to update editor settings.', {
+          cause: err,
+        })
       }
 
       return {
@@ -1596,66 +1707,79 @@ export function useProjectHandle({
     [userSettingsContext, project?._id, updateProject]
   )
 
-  const listAvailableSettings = useCallback(async (): Promise<AvailableSettingsOptions> => {
-    const languages = (getMeta('ol-languages') || []).map((l: any) => ({
-      code: l.code,
-      name: l.name,
-    }))
-    const rawImages: any[] =
-      (getMeta('ol-imageNames') as any[]) ||
-      ((getMeta as any)('ol-allowedImageNames') as any[]) ||
-      []
-    const imageNames = rawImages.map((img: any) => ({
-      imageName: img.imageName,
-      imageDesc: img.imageDesc || img.imageName,
-      default: Boolean(img.default),
-    }))
-    const metaModernThemes: Array<{ name: string; label?: string; dark: boolean }> =
-      getMeta('ol-editorThemes') || []
-    const metaLegacyThemes: Array<{ name: string; label?: string; dark: boolean }> =
-      getMeta('ol-legacyEditorThemes') || []
-    const combinedThemes = [...metaModernThemes, ...metaLegacyThemes]
-    const editorThemes =
-      combinedThemes.length > 0
-        ? combinedThemes.map(t => ({
-            name: t.name,
-            label: t.label,
-            dark: Boolean(t.dark),
-          }))
-        : DEFAULT_EDITOR_THEMES
+  const listAvailableSettings =
+    useCallback(async (): Promise<AvailableSettingsOptions> => {
+      const languages = (getMeta('ol-languages') || []).map((l: any) => ({
+        code: l.code,
+        name: l.name,
+      }))
+      const rawImages: any[] =
+        (getMeta('ol-imageNames') as any[]) ||
+        ((getMeta as any)('ol-allowedImageNames') as any[]) ||
+        []
+      const imageNames = rawImages.map((img: any) => ({
+        imageName: img.imageName,
+        imageDesc: img.imageDesc || img.imageName,
+        default: Boolean(img.default),
+      }))
+      const metaModernThemes: Array<{
+        name: string
+        label?: string
+        dark: boolean
+      }> = getMeta('ol-editorThemes') || []
+      const metaLegacyThemes: Array<{
+        name: string
+        label?: string
+        dark: boolean
+      }> = getMeta('ol-legacyEditorThemes') || []
+      const combinedThemes = [...metaModernThemes, ...metaLegacyThemes]
+      const editorThemes =
+        combinedThemes.length > 0
+          ? combinedThemes.map(t => ({
+              name: t.name,
+              label: t.label,
+              dark: Boolean(t.dark),
+            }))
+          : DEFAULT_EDITOR_THEMES
 
-    const fontFamilies = [
-      { name: 'monaco', label: 'Monaco / Menlo / Consolas' },
-      { name: 'lucida', label: 'Lucida / Source Code Pro' },
-      { name: 'opendyslexicmono', label: 'OpenDyslexic Mono' },
-    ]
+      const fontFamilies = [
+        { name: 'monaco', label: 'Monaco / Menlo / Consolas' },
+        { name: 'lucida', label: 'Lucida / Source Code Pro' },
+        { name: 'opendyslexicmono', label: 'OpenDyslexic Mono' },
+      ]
 
-    return {
-      compilers: ['pdflatex', 'latex', 'xelatex', 'lualatex'],
-      imageNames:
-        imageNames.length > 0
-          ? imageNames
-          : [{ imageName: 'texlive-2024.1', imageDesc: 'TeX Live 2024', default: true }],
-      spellCheckLanguages:
-        languages.length > 0
-          ? languages
-          : [
-              { code: 'en', name: 'English' },
-              { code: 'en_GB', name: 'English (British)' },
-              { code: 'en_US', name: 'English (American)' },
-              { code: 'fr', name: 'French' },
-              { code: 'de', name: 'German' },
-              { code: 'es', name: 'Spanish' },
-            ],
-      editorModes: ['none', 'vim', 'emacs'],
-      overallThemes: ['system', 'light', 'dark'],
-      editorThemes,
-      fontFamilies,
-      lineHeights: ['compact', 'normal', 'spacious'],
-      fontSizes: [10, 11, 12, 13, 14, 16, 18, 20, 24],
-      pdfViewers: ['pdfjs', 'native'],
-    }
-  }, [])
+      return {
+        compilers: ['pdflatex', 'latex', 'xelatex', 'lualatex'],
+        imageNames:
+          imageNames.length > 0
+            ? imageNames
+            : [
+                {
+                  imageName: 'texlive-2024.1',
+                  imageDesc: 'TeX Live 2024',
+                  default: true,
+                },
+              ],
+        spellCheckLanguages:
+          languages.length > 0
+            ? languages
+            : [
+                { code: 'en', name: 'English' },
+                { code: 'en_GB', name: 'English (British)' },
+                { code: 'en_US', name: 'English (American)' },
+                { code: 'fr', name: 'French' },
+                { code: 'de', name: 'German' },
+                { code: 'es', name: 'Spanish' },
+              ],
+        editorModes: ['none', 'vim', 'emacs'],
+        overallThemes: ['system', 'light', 'dark'],
+        editorThemes,
+        fontFamilies,
+        lineHeights: ['compact', 'normal', 'spacious'],
+        fontSizes: [10, 11, 12, 13, 14, 16, 18, 20, 24],
+        pdfViewers: ['pdfjs', 'native'],
+      }
+    }, [])
 
   return useMemo(
     () => ({

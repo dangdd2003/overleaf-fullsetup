@@ -34,8 +34,13 @@ describe('tool result rendering', function () {
 
   it('says how to get the rest when a read was truncated', async function () {
     const lines = Array.from({ length: 1500 }, (_unused, index) => `l${index}`)
-    const { handle } = createFakeHandle({ docs: { 'big.tex': lines.join('\n') } })
-    const result = await readFileTool.execute({ path: 'big.tex', from: 1 }, handle)
+    const { handle } = createFakeHandle({
+      docs: { 'big.tex': lines.join('\n') },
+    })
+    const result = await readFileTool.execute(
+      { path: 'big.tex', from: 1 },
+      handle
+    )
 
     expect(readFileTool.render!(result)).to.match(/read_file.*1001/)
   })

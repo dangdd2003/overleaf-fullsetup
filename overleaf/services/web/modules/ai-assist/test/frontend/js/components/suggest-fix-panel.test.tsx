@@ -1,7 +1,13 @@
 import React from 'react'
 import { expect } from 'chai'
 import sinon from 'sinon'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  cleanup,
+} from '@testing-library/react'
 import fetchMock from 'fetch-mock'
 import customLocalStorage from '@/infrastructure/local-storage'
 import { resetMeta } from '../../../../../../test/frontend/helpers/reset-meta'
@@ -12,7 +18,7 @@ import {
 import { ProjectSnapshot } from '@/infrastructure/project-snapshot'
 import { EditorManagerContext } from '@/features/ide-react/context/editor-manager-context'
 import { LocalCompileContext } from '@/shared/context/local-compile-context'
-import { clearFixStore } from "../../../../frontend/js/features/ai-assist/agent/fix-store"
+import { clearFixStore } from '../../../../frontend/js/features/ai-assist/agent/fix-store'
 import SuggestFixPanel from '../../../../frontend/js/features/ai-assist/components/suggest-fix-panel'
 
 function setMeta({ enabled = true } = {}) {
@@ -49,7 +55,9 @@ const CHAT = '/ai-assist/providers/chat'
 /** Chunks as the Overleaf server relays them from the provider. */
 function ndjson(...chunks: object[]) {
   return {
-    body: [...chunks, { type: 'done' }].map(c => JSON.stringify(c) + '\n').join(''),
+    body: [...chunks, { type: 'done' }]
+      .map(c => JSON.stringify(c) + '\n')
+      .join(''),
     headers: { 'Content-Type': 'application/x-ndjson' },
   }
 }
@@ -133,7 +141,10 @@ describe('SuggestFixPanel on the agent harness', function () {
       .returns(['main.tex', 'chapter3.tex'])
     sinon
       .stub(ProjectSnapshot.prototype, 'getDocContents')
-      .callsFake(() => '\\documentclass{article}\n\\begin{document}\nhello\n\\end{document}')
+      .callsFake(
+        () =>
+          '\\documentclass{article}\n\\begin{document}\nhello\n\\end{document}'
+      )
     sinon
       .stub(ProjectSnapshot.prototype, 'getBinaryFilePathsWithHash')
       .returns([])
@@ -166,6 +177,7 @@ describe('SuggestFixPanel on the agent harness', function () {
   })
 
   afterEach(function () {
+    cleanup()
     sinon.restore()
     removeListeners?.()
     fetchMock.removeRoutes().clearHistory()
@@ -189,7 +201,10 @@ describe('SuggestFixPanel on the agent harness', function () {
     let turn = 0
     fetchMock.post(CHAT, () =>
       ++turn === 1
-        ? ndjson({ type: 'text', text: 'Add `\\usepackage{graphicx}` to the preamble.' })
+        ? ndjson({
+            type: 'text',
+            text: 'Add `\\usepackage{graphicx}` to the preamble.',
+          })
         : ndjson({ type: 'text', text: 'No edit.' })
     )
 
@@ -197,7 +212,9 @@ describe('SuggestFixPanel on the agent harness', function () {
     open()
 
     await waitFor(() => {
-      expect(screen.getByText('\\usepackage{graphicx}').tagName).to.equal('CODE')
+      expect(screen.getByText('\\usepackage{graphicx}').tagName).to.equal(
+        'CODE'
+      )
     })
   })
 
@@ -207,7 +224,12 @@ describe('SuggestFixPanel on the agent harness', function () {
       turn++
       if (turn === 1) {
         return ndjson(
-          { type: 'tool_call', id: 'call_1', name: 'read_file', args: { path: 'main.tex' } },
+          {
+            type: 'tool_call',
+            id: 'call_1',
+            name: 'read_file',
+            args: { path: 'main.tex' },
+          },
           { type: 'tool_call', id: 'call_2', name: 'get_references', args: {} }
         )
       }
@@ -217,11 +239,20 @@ describe('SuggestFixPanel on the agent harness', function () {
     const { container } = renderPanel()
     open()
 
-    await waitFor(() =>
-      expect(screen.getByText(/Read 1 file, checked references|Checked references, read 1 file/i)).to.exist
+    await waitFor(
+      () =>
+        expect(
+          screen.getByText(
+            /Read 1 file, checked references|Checked references, read 1 file/i
+          )
+        ).to.exist
     )
     fireEvent.click(
-      screen.getByText(/Read 1 file, checked references|Checked references, read 1 file/i).closest('button')!
+      screen
+        .getByText(
+          /Read 1 file, checked references|Checked references, read 1 file/i
+        )
+        .closest('button')!
     )
 
     const names = [...container.querySelectorAll('.ai-assist-tool-call')].map(
@@ -234,9 +265,12 @@ describe('SuggestFixPanel on the agent harness', function () {
   it('renders a pending approval card for an edit_file call', async function () {
     fetchMock.post(
       CHAT,
-      ndjson(
-        { type: 'tool_call', id: 'call_1', name: 'edit_file', args: { path: 'main.tex', oldText: 'hello', newText: 'hello world' } }
-      )
+      ndjson({
+        type: 'tool_call',
+        id: 'call_1',
+        name: 'edit_file',
+        args: { path: 'main.tex', oldText: 'hello', newText: 'hello world' },
+      })
     )
 
     const { container } = renderPanel()
@@ -253,9 +287,12 @@ describe('SuggestFixPanel on the agent harness', function () {
     fetchMock.post(CHAT, () => {
       turn++
       if (turn === 1) {
-        return ndjson(
-          { type: 'tool_call', id: 'call_1', name: 'edit_file', args: { path: 'main.tex', oldText: 'hello', newText: 'hello world' } }
-        )
+        return ndjson({
+          type: 'tool_call',
+          id: 'call_1',
+          name: 'edit_file',
+          args: { path: 'main.tex', oldText: 'hello', newText: 'hello world' },
+        })
       }
       return ndjson({ type: 'text', text: 'Applied fix.' })
     })
@@ -306,44 +343,39 @@ describe('SuggestFixPanel on the agent harness', function () {
   })
 
   it('aborts the in-page run when the panel unmounts', async function () {
-    fetchMock.post(
-      CHAT,
-      () => new Promise(() => {})
-    )
+    fetchMock.post(CHAT, () => new Promise(() => {}))
 
     const { unmount } = renderPanel()
     open()
     await waitFor(() => expect(screen.getByText(/stop/i)).to.exist)
 
-    const [fetchCall] = fetchMock.callHistory.calls()
-    expect(fetchCall.options.signal.aborted).to.be.false
+    const [fetchCall] = fetchMock.callHistory.calls(CHAT)
+    const signal =
+      (fetchCall?.options as any)?.signal || (fetchCall as any)?.signal
+    expect(signal?.aborted).to.be.false
 
     unmount()
-    expect(fetchCall.options.signal.aborted).to.be.true
+    expect(signal?.aborted).to.be.true
   })
 
   it('stopping an in-page fix run does not clear stored active run id for main chat', async function () {
     customLocalStorage.setItem('ai-assist:active-run:' + PROJECT_ID, 'run-main')
 
-    fetchMock.post(
-      CHAT,
-      () => new Promise(() => {})
-    )
+    fetchMock.post(CHAT, () => new Promise(() => {}))
 
     renderPanel()
     open()
     await waitFor(() => expect(screen.getByText(/stop/i)).to.exist)
     fireEvent.click(screen.getByText(/stop/i))
 
-    expect(customLocalStorage.getItem('ai-assist:active-run:' + PROJECT_ID)).to.equal('run-main')
+    expect(
+      customLocalStorage.getItem('ai-assist:active-run:' + PROJECT_ID)
+    ).to.equal('run-main')
   })
 
   it('aborts prior controller when starting a new in-page run on the same hook', async function () {
     const abortSpy = sinon.spy(AbortController.prototype, 'abort')
-    fetchMock.post(
-      CHAT,
-      () => new Promise(() => {})
-    )
+    fetchMock.post(CHAT, () => new Promise(() => {}))
 
     renderPanel()
     open()

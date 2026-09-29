@@ -36,7 +36,12 @@ const STORED_PROVIDER = {
 
 /** A finished fix run that both thought and used tools. */
 const TRANSCRIPT = [
-  { id: 'u0', role: 'user' as const, text: '<task>fix</task>', contextText: 'ctx' },
+  {
+    id: 'u0',
+    role: 'user' as const,
+    text: '<task>fix</task>',
+    contextText: 'ctx',
+  },
   {
     id: 'a0',
     role: 'assistant' as const,
@@ -157,7 +162,9 @@ describe('the error panel renders activity like the main chat', function () {
 
     sinon.stub(ProjectSnapshot.prototype, 'refresh').resolves()
     sinon.stub(ProjectSnapshot.prototype, 'getDocPaths').returns(['main.tex'])
-    sinon.stub(ProjectSnapshot.prototype, 'getDocContents').callsFake(() => 'hi')
+    sinon
+      .stub(ProjectSnapshot.prototype, 'getDocContents')
+      .callsFake(() => 'hi')
     sinon
       .stub(ProjectSnapshot.prototype, 'getBinaryFilePathsWithHash')
       .returns([])

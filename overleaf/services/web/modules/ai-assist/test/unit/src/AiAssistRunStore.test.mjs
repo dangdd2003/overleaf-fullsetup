@@ -1,3 +1,4 @@
+import { describe, it, beforeEach } from 'vitest'
 import { expect } from 'chai'
 import { AiAssistRunStore } from '../../../app/src/AiAssistRunStore.mjs'
 

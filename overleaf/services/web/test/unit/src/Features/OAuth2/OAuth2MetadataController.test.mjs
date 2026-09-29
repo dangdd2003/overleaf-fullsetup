@@ -1,4 +1,4 @@
-import { describe, it, vi, beforeEach } from 'vitest'
+import { describe, it, vi, beforeEach, afterEach } from 'vitest'
 import { expect } from 'chai'
 import Settings from '@overleaf/settings'
 import OAuth2MetadataController from '../../../../../app/src/Features/OAuth2/OAuth2MetadataController.mjs'
@@ -35,7 +35,9 @@ describe('OAuth2MetadataController', () => {
       registration_endpoint: 'http://localhost:3000/oauth/register',
       authorization_response_iss_parameter_supported: true,
     })
-    expect(responseData.code_challenge_methods_supported).to.deep.equal(['S256'])
+    expect(responseData.code_challenge_methods_supported).to.deep.equal([
+      'S256',
+    ])
     expect(responseData.scopes_supported).to.deep.equal(['mcp'])
   })
 
@@ -53,7 +55,9 @@ describe('OAuth2MetadataController', () => {
     }
     await OAuth2MetadataController.getAuthorizationServerMetadata(req, res)
     expect(responseData.issuer).to.equal('http://auth.example.com')
-    expect(responseData.authorization_endpoint).to.equal('http://auth.example.com/oauth/authorize')
+    expect(responseData.authorization_endpoint).to.equal(
+      'http://auth.example.com/oauth/authorize'
+    )
   })
 
   it('returns OIDC configuration identical to auth server metadata', async () => {
@@ -86,7 +90,10 @@ describe('OAuth2MetadataController', () => {
       },
     }
     await OAuth2MetadataController.getJwks({}, res)
-    expect(headerSet).to.deep.equal({ name: 'Cache-Control', val: 'public, max-age=86400' })
+    expect(headerSet).to.deep.equal({
+      name: 'Cache-Control',
+      val: 'public, max-age=86400',
+    })
     expect(responseData).to.have.property('keys').that.is.an('array')
     expect(responseData.keys[0].alg).to.equal('RS256')
   })

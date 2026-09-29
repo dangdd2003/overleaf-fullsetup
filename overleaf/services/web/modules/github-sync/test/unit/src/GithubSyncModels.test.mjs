@@ -42,21 +42,16 @@ const mockMongoose = {
 describe('GithubSyncModels', function () {
   beforeEach(function () {
     vi.resetModules()
-    vi.doMock(
-      '../../../../../app/src/infrastructure/Mongoose.mjs',
-      () => ({
-        default: mockMongoose,
-        __esModule: true,
-      })
-    )
+    vi.doMock('../../../../../app/src/infrastructure/Mongoose.mjs', () => ({
+      default: mockMongoose,
+      __esModule: true,
+    }))
   })
 
   describe('GithubSyncUserCredentials', function () {
     it('defines credentials schema with all required fields and options', async function () {
-      const {
-        GithubSyncUserCredentials,
-        GithubSyncUserCredentialsSchema,
-      } = await import('../../../app/src/models/GithubSyncModels.mjs')
+      const { GithubSyncUserCredentials, GithubSyncUserCredentialsSchema } =
+        await import('../../../app/src/models/GithubSyncModels.mjs')
 
       expect(GithubSyncUserCredentialsSchema).to.exist
       expect(GithubSyncUserCredentials).to.exist
@@ -99,10 +94,8 @@ describe('GithubSyncModels', function () {
 
   describe('GithubSyncProjectStates', function () {
     it('defines project states schema with all required fields, enums and options', async function () {
-      const {
-        GithubSyncProjectStates,
-        GithubSyncProjectStatesSchema,
-      } = await import('../../../app/src/models/GithubSyncModels.mjs')
+      const { GithubSyncProjectStates, GithubSyncProjectStatesSchema } =
+        await import('../../../app/src/models/GithubSyncModels.mjs')
 
       expect(GithubSyncProjectStatesSchema).to.exist
       expect(GithubSyncProjectStates).to.exist

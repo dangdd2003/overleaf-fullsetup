@@ -77,7 +77,10 @@ export function renderCompileError({
     ` level="${escapeAttribute(focused.level)}"`,
   ].join('')
 
-  const body = [`<compile-error${attributes}>`, neutraliseClosingTags(focused.message)]
+  const body = [
+    `<compile-error${attributes}>`,
+    neutraliseClosingTags(focused.message),
+  ]
 
   if (focused.raw) {
     body.push('<raw>', neutraliseClosingTags(focused.raw), '</raw>')

@@ -29,7 +29,9 @@ describe('ToolCallCard', function () {
     const body = container.querySelector('.ai-assist-tool-call-body')
     expect(body?.classList.contains('is-expanded')).to.be.false
 
-    fireEvent.click(container.querySelector('button.ai-assist-tool-call-summary')!)
+    fireEvent.click(
+      container.querySelector('button.ai-assist-tool-call-summary')!
+    )
     expect(body?.classList.contains('is-expanded')).to.be.true
     expect(screen.getByText(/intro section content/)).to.exist
   })
@@ -174,14 +176,22 @@ describe('ToolCallCard', function () {
         call={{
           id: 'c-space-test',
           name: 'edit_file',
-          args: { path: 'sections/epistemology.tex', oldText: 'a', newText: 'b' },
+          args: {
+            path: 'sections/epistemology.tex',
+            oldText: 'a',
+            newText: 'b',
+          },
           result: { status: 'applied' },
         }}
       />
     )
     const summaryLine = container.querySelector('.ai-assist-tool-call-summary')
-    expect(summaryLine?.textContent).to.include('Edited file sections/epistemology.tex')
-    expect(summaryLine?.textContent).to.not.include('Edited filesections/epistemology.tex')
+    expect(summaryLine?.textContent).to.include(
+      'Edited file sections/epistemology.tex'
+    )
+    expect(summaryLine?.textContent).to.not.include(
+      'Edited filesections/epistemology.tex'
+    )
   })
 })
 
@@ -220,7 +230,11 @@ describe('EditApprovalCard', function () {
 
   it('disables both buttons once a decision has been made', function () {
     render(
-      <EditApprovalCard edit={EDIT} onDecision={sinon.stub()} decided="accepted" />
+      <EditApprovalCard
+        edit={EDIT}
+        onDecision={sinon.stub()}
+        decided="accepted"
+      />
     )
     expect(screen.getByRole('button', { name: /accept/i })).to.have.property(
       'disabled',
@@ -241,7 +255,9 @@ describe('EditApprovalCard', function () {
     render(<EditApprovalCard edit={CREATION} onDecision={sinon.stub()} />)
     expect(screen.getByText('sections/new.tex')).to.exist
     expect(screen.getByText('new file')).to.exist
-    expect(screen.getByText('\\section{New}')).to.exist
+    expect(
+      screen.getByText((_, el) => el?.textContent?.trim() === '\\section{New}')
+    ).to.exist
   })
 
   it('shows append text badge instead of new file when edit_file has empty oldText', function () {
@@ -301,7 +317,9 @@ describe('EditApprovalCard', function () {
     )
 
     expect(container.querySelector('.diff-line-del')).to.exist
-    expect(container.querySelector('.diff-gutter')?.textContent).to.contain('13')
+    expect(container.querySelector('.diff-gutter')?.textContent).to.contain(
+      '13'
+    )
   })
 })
 
@@ -491,7 +509,9 @@ describe('AgentMessageView', function () {
     expect(screen.getByText('Creating new section:')).to.exist
     expect(screen.getByText('sections/new.tex')).to.exist
     expect(screen.getByText('new file')).to.exist
-    expect(screen.getByText('\\section{New}')).to.exist
+    expect(
+      screen.getByText((_, el) => el?.textContent?.trim() === '\\section{New}')
+    ).to.exist
 
     fireEvent.click(screen.getByRole('button', { name: /accept/i }))
     expect(onDecision).to.have.been.calledWithMatch({ accepted: true })
@@ -519,7 +539,7 @@ describe('AgentMessageView', function () {
         }}
         pendingApprovalId={null}
         onDecision={sinon.stub()}
-        isRunning={true}
+        isRunning={false}
       />
     )
 
@@ -551,7 +571,7 @@ describe('AgentMessageView', function () {
         }}
         pendingApprovalId={null}
         onDecision={sinon.stub()}
-        isRunning={true}
+        isRunning={false}
       />
     )
 
@@ -562,11 +582,11 @@ describe('AgentMessageView', function () {
 
 describe('ThinkingBlock', function () {
   it('shows thinking state when live without preview text in button', function () {
-    render(
-      <ThinkingBlock thinking="Considering options..." isLive />
-    )
+    render(<ThinkingBlock thinking="Considering options..." isLive />)
     expect(screen.getByText(/thinking…/i)).to.exist
-    expect(screen.getByRole('button').textContent).to.not.include('Considering options')
+    expect(screen.getByRole('button').textContent).to.not.include(
+      'Considering options'
+    )
   })
 
   it('shows thought duration in seconds when finished', function () {
@@ -578,7 +598,9 @@ describe('ThinkingBlock', function () {
       />
     )
     expect(screen.getByText(/thought for 5s/i)).to.exist
-    expect(screen.getByRole('button').textContent).to.not.include('Considering options')
+    expect(screen.getByRole('button').textContent).to.not.include(
+      'Considering options'
+    )
   })
 
   it('expands to show full thinking content when clicked', function () {

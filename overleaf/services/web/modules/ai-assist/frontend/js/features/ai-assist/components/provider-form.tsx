@@ -97,12 +97,11 @@ export default function ProviderForm({
     let selected = models.find(entry => entry.id === trimmedModel)
     let effectiveModel = trimmedModel
 
+    // Only an exact label match maps to a listed id: a suffix such as
+    // "(auto)" is part of the model name the provider expects, not decoration
     if (!selected && trimmedModel && models.length > 0) {
       const matchedByLabel = models.find(
-        entry =>
-          entry.label.trim().toLowerCase() === trimmedModel.toLowerCase() ||
-          entry.label.replace(/\s*\([^)]*\)$/, '').trim().toLowerCase() ===
-            trimmedModel.replace(/\s*\([^)]*\)$/, '').trim().toLowerCase()
+        entry => entry.label.trim().toLowerCase() === trimmedModel.toLowerCase()
       )
       if (matchedByLabel) {
         selected = matchedByLabel
@@ -114,8 +113,8 @@ export default function ProviderForm({
       selected?.label && selected.label !== effectiveModel
         ? selected.label
         : effectiveModel === initial?.model
-        ? initial?.modelName
-        : undefined
+          ? initial?.modelName
+          : undefined
     const parsedContextWindow = numeric(contextWindow)
     const parsedMaxOutputTokens = numeric(maxOutputTokens)
     return {
@@ -145,9 +144,7 @@ export default function ProviderForm({
         const selected = loaded.find(
           entry =>
             entry.id === model ||
-            entry.label.trim().toLowerCase() === model.trim().toLowerCase() ||
-            entry.label.replace(/\s*\([^)]*\)$/, '').trim().toLowerCase() ===
-              model.replace(/\s*\([^)]*\)$/, '').trim().toLowerCase()
+            entry.label.trim().toLowerCase() === model.trim().toLowerCase()
         )
         if (selected) {
           setModel(selected.id)
@@ -230,8 +227,8 @@ export default function ProviderForm({
           placeholder={DEFAULT_BASE_URLS[type]}
         />
         <OLFormText>
-          Leave blank to use the default ({DEFAULT_BASE_URLS[type]}), or enter
-          a custom compatible endpoint.
+          Leave blank to use the default ({DEFAULT_BASE_URLS[type]}), or enter a
+          custom compatible endpoint.
         </OLFormText>
       </OLFormGroup>
 
@@ -244,7 +241,9 @@ export default function ProviderForm({
           autoComplete="off"
           value={apiKey}
           onChange={e => setApiKey(e.target.value)}
-          placeholder={type === 'ollama' ? 'Optional for local Ollama' : undefined}
+          placeholder={
+            type === 'ollama' ? 'Optional for local Ollama' : undefined
+          }
         />
         <OLFormText>
           Stored in this browser only. Anyone who can run scripts on this page
@@ -265,7 +264,9 @@ export default function ProviderForm({
             value={model}
             onChange={e => {
               setModel(e.target.value)
-              applyModelLimits(models.find(entry => entry.id === e.target.value))
+              applyModelLimits(
+                models.find(entry => entry.id === e.target.value)
+              )
             }}
             data-testid="ai-provider-model-select"
           >

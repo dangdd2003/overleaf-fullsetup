@@ -4,7 +4,11 @@ import {
   ProviderModel,
   ProviderSettings,
 } from './providers/types'
-import { readSettings } from './provider-store'
+import {
+  readReasoningEffort,
+  readSettings,
+  readThinking,
+} from './provider-store'
 
 /**
  * The assistant as seen from the page. Provider requests are relayed by the
@@ -24,7 +28,12 @@ export class AiAssistant {
   static fromStoredSettings(): AiAssistant | null {
     const settings = readSettings()
     if (!settings?.type || !settings.model) return null
-    return new AiAssistant(settings)
+    const reasoningEffort = readReasoningEffort(settings.type)
+    return new AiAssistant({
+      ...settings,
+      ...(reasoningEffort ? { reasoningEffort } : {}),
+      thinking: readThinking(settings.type),
+    })
   }
 
   listModels(options?: { signal?: AbortSignal }): Promise<ProviderModel[]> {

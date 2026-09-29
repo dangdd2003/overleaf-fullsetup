@@ -36,7 +36,12 @@ function compactProject(p, userId) {
 }
 
 function normalisePath(p) {
-  return '/' + String(p || '').replace(/^\/+/, '').replace(/\/+$/, '')
+  return (
+    '/' +
+    String(p || '')
+      .replace(/^\/+/, '')
+      .replace(/\/+$/, '')
+  )
 }
 
 async function listProjects(req, res) {
@@ -126,15 +131,18 @@ async function createProject(req, res) {
 }
 
 async function getProject(req, res) {
-  const project = await ProjectGetter.promises.getProject(req.params.projectId, {
-    name: 1,
-    lastUpdated: 1,
-    compiler: 1,
-    rootDoc_id: 1,
-    spellCheckLanguage: 1,
-    archived: 1,
-    trashed: 1,
-  })
+  const project = await ProjectGetter.promises.getProject(
+    req.params.projectId,
+    {
+      name: 1,
+      lastUpdated: 1,
+      compiler: 1,
+      rootDoc_id: 1,
+      spellCheckLanguage: 1,
+      archived: 1,
+      trashed: 1,
+    }
+  )
   if (!project) {
     return McpErrors.send(res, McpErrors.CODES.NOT_FOUND)
   }

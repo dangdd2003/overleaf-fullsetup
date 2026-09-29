@@ -14,9 +14,6 @@ const CTX = { http: { authInfo: { token: TOKEN } } }
 const READ_ONLY_TOOLS = [
   'list_projects',
   'get_project',
-  'get_project_settings',
-  'list_available_settings',
-  'get_editor_settings',
   'export_project_zip',
   'list_files',
   'search_files',
@@ -112,8 +109,8 @@ describe('tool metadata', function () {
   it('never marks a read-only tool as destructive', function () {
     for (const [name, { config }] of server.tools) {
       if (!config.annotations.readOnlyHint) continue
-      expect(config.annotations.destructiveHint, `${name} destructiveHint`).to.be
-        .false
+      expect(config.annotations.destructiveHint, `${name} destructiveHint`).to
+        .be.false
     }
   })
 

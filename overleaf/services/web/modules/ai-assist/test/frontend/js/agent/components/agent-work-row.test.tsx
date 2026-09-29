@@ -11,7 +11,12 @@ import { SubresultGroup } from '../../../../../frontend/js/features/ai-assist/co
 const BLOCKS = [
   {
     type: 'tool_call' as const,
-    call: { id: '1', name: 'read_file', args: { path: 'main.tex' }, result: {} },
+    call: {
+      id: '1',
+      name: 'read_file',
+      args: { path: 'main.tex' },
+      result: {},
+    },
   },
   {
     type: 'tool_call' as const,
@@ -56,7 +61,12 @@ describe('the shared agent activity row', function () {
         items={[
           {
             type: 'tool_call' as const,
-            call: { id: '1', name: 'read_file', args: { path: 'main.tex' }, result: {} },
+            call: {
+              id: '1',
+              name: 'read_file',
+              args: { path: 'main.tex' },
+              result: {},
+            },
           },
         ]}
         isLive

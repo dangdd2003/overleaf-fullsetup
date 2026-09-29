@@ -22,33 +22,49 @@ function callback(req, res, next) {
 }
 
 async function status(req, res) {
-  const creds = await GitHubCredentialsManager.promises.getCredentials(req.user._id)
+  const creds = await GitHubCredentialsManager.promises.getCredentials(
+    req.user._id
+  )
   res.json({ linked: Boolean(creds), username: creds?.githubUsername || null })
 }
 
 async function repos(req, res) {
   try {
-    const token = await GitHubCredentialsManager.promises.getAccessToken(req.user._id)
+    const token = await GitHubCredentialsManager.promises.getAccessToken(
+      req.user._id
+    )
     const list = await GitHubApiManager.promises.listRepos(token)
     res.json({ repos: list })
   } catch (err) {
-    res.status(err.status || 500).json({ code: err.code || 'error', message: err.message })
+    res
+      .status(err.status || 500)
+      .json({ code: err.code || 'error', message: err.message })
   }
 }
 
 async function orgs(req, res) {
   try {
-    const token = await GitHubCredentialsManager.promises.getAccessToken(req.user._id)
+    const token = await GitHubCredentialsManager.promises.getAccessToken(
+      req.user._id
+    )
     const list = await GitHubApiManager.promises.listOrgs(token)
     res.json({ orgs: list })
   } catch (err) {
-    res.status(err.status || 500).json({ code: err.code || 'error', message: err.message })
+    res
+      .status(err.status || 500)
+      .json({ code: err.code || 'error', message: err.message })
   }
 }
 
 async function unlink(req, res) {
   const userId = req.user._id
-  await UserAuditLogHandler.promises.addEntry(userId, 'unlink-github', userId, req.ip, {})
+  await UserAuditLogHandler.promises.addEntry(
+    userId,
+    'unlink-github',
+    userId,
+    req.ip,
+    {}
+  )
   await User.updateOne(
     { _id: userId },
     {
@@ -63,18 +79,26 @@ async function unlink(req, res) {
 async function importProject(req, res) {
   const { repoOwner, repoName, branch, projectName } = req.body
   if (!repoOwner || !repoName) {
-    return res.status(400).json({ code: 'invalidParameters', message: 'repoOwner and repoName are required' })
+    return res.status(400).json({
+      code: 'invalidParameters',
+      message: 'repoOwner and repoName are required',
+    })
   }
   try {
-    const result = await GitHubSyncManager.promises.importProject(req.user._id, {
-      repoOwner,
-      repoName,
-      branch,
-      projectName,
-    })
+    const result = await GitHubSyncManager.promises.importProject(
+      req.user._id,
+      {
+        repoOwner,
+        repoName,
+        branch,
+        projectName,
+      }
+    )
     res.json(result)
   } catch (err) {
-    res.status(err.status || 400).json({ code: err.code || 'error', message: err.message })
+    res
+      .status(err.status || 400)
+      .json({ code: err.code || 'error', message: err.message })
   }
 }
 

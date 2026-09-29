@@ -64,7 +64,7 @@ export default function PurgeDeletedUserModal({
   }
 
   return (
-    <OLModal show={show} onHide={onHide} size="md">
+    <OLModal show={show} onHide={onHide}>
       <OLModalHeader className="bg-danger text-white" closeVariant="white">
         <OLModalTitle className="text-white d-flex align-items-center gap-2">
           <MaterialIcon type="warning" />
@@ -78,18 +78,15 @@ export default function PurgeDeletedUserModal({
         ) : null}
 
         <div className="alert alert-danger d-flex align-items-start gap-2 mb-3">
-          <MaterialIcon
-            type="warning"
-            className="fs-5 mt-1 flex-shrink-0"
-          />
+          <MaterialIcon type="warning" className="fs-5 mt-1 flex-shrink-0" />
           <div>
             <strong className="d-block mb-1">
               Warning: This action is permanent and irreversible!
             </strong>
             <span className="small">
-              The archived account and all its soft-deleted projects and metadata
-              will be permanently purged from the database. It cannot be recovered
-              or restored after this.
+              The archived account and all its soft-deleted projects and
+              metadata will be permanently purged from the database. It cannot
+              be recovered or restored after this.
             </span>
           </div>
         </div>
@@ -120,11 +117,7 @@ export default function PurgeDeletedUserModal({
         <OLButton variant="secondary" onClick={onHide} disabled={isPurging}>
           Cancel
         </OLButton>
-        <OLButton
-          variant="danger"
-          onClick={handlePurge}
-          disabled={isPurging}
-        >
+        <OLButton variant="danger" onClick={handlePurge} disabled={isPurging}>
           {isPurging ? 'Deleting...' : 'Permanently Delete User'}
         </OLButton>
       </OLModalFooter>

@@ -4,6 +4,7 @@ import {
   SYSTEM_PROMPT,
   MODE_PROMPTS,
   WEB_TOOLS_PROMPT,
+  WEB_FETCH_PROMPT,
   systemPromptFor,
 } from '../../../app/src/AiAssistSystemPrompt.mjs'
 
@@ -25,7 +26,9 @@ describe('AiAssistSystemPrompt', () => {
     expect(manualPrompt).to.equal(`${SYSTEM_PROMPT}\n\n${MODE_PROMPTS.manual}`)
 
     const acceptPrompt = systemPromptFor('acceptEdits')
-    expect(acceptPrompt).to.equal(`${SYSTEM_PROMPT}\n\n${MODE_PROMPTS.acceptEdits}`)
+    expect(acceptPrompt).to.equal(
+      `${SYSTEM_PROMPT}\n\n${MODE_PROMPTS.acceptEdits}`
+    )
 
     const planPrompt = systemPromptFor('plan')
     expect(planPrompt).to.equal(`${SYSTEM_PROMPT}\n\n${MODE_PROMPTS.plan}`)
@@ -36,8 +39,22 @@ describe('AiAssistSystemPrompt', () => {
   })
 
   it('adds the web research section before the mode only when web tools are on', () => {
-    expect(systemPromptFor('manual', { webTools: false })).to.equal(systemPromptFor('manual'))
+    expect(systemPromptFor('manual', { webTools: false })).to.equal(
+      systemPromptFor('manual')
+    )
     const withWeb = systemPromptFor('plan', { webTools: true })
-    expect(withWeb).to.equal(`${SYSTEM_PROMPT}\n\n${WEB_TOOLS_PROMPT}\n\n${MODE_PROMPTS.plan}`)
+    expect(withWeb).to.equal(
+      `${SYSTEM_PROMPT}\n\n${WEB_TOOLS_PROMPT}\n\n${MODE_PROMPTS.plan}`
+    )
+  })
+
+  it('describes only web_fetch when the run has no search backend', function () {
+    const prompt = systemPromptFor('manual', {
+      webTools: true,
+      webSearch: false,
+    })
+    expect(prompt).to.include(WEB_FETCH_PROMPT)
+    expect(prompt).not.to.include('web_search')
+    expect(prompt).to.include('# Web research')
   })
 })

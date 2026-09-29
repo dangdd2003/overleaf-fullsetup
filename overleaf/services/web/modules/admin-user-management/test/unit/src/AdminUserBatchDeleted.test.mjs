@@ -55,11 +55,14 @@ vi.mock('../../../../../app/src/infrastructure/mongodb.mjs', () => {
   }
 })
 
-vi.mock('../../../../../app/src/Features/Authentication/SessionManager.mjs', () => ({
-  default: {
-    getLoggedInUserId: vi.fn(),
-  },
-}))
+vi.mock(
+  '../../../../../app/src/Features/Authentication/SessionManager.mjs',
+  () => ({
+    default: {
+      getLoggedInUserId: vi.fn(),
+    },
+  })
+)
 
 vi.mock('../../../../../app/src/models/Project.mjs', () => ({
   Project: {
@@ -143,19 +146,25 @@ vi.mock('../../../../../app/src/Features/User/UserCreator.mjs', () => ({
   },
 }))
 
-vi.mock('../../../../../app/src/Features/Authentication/AuthenticationManager.mjs', () => ({
-  default: {
-    hashPassword: vi.fn(),
-  },
-}))
-
-vi.mock('../../../../../app/src/Features/Security/OneTimeTokenHandler.mjs', () => ({
-  default: {
-    promises: {
-      getNewToken: vi.fn(),
+vi.mock(
+  '../../../../../app/src/Features/Authentication/AuthenticationManager.mjs',
+  () => ({
+    default: {
+      hashPassword: vi.fn(),
     },
-  },
-}))
+  })
+)
+
+vi.mock(
+  '../../../../../app/src/Features/Security/OneTimeTokenHandler.mjs',
+  () => ({
+    default: {
+      promises: {
+        getNewToken: vi.fn(),
+      },
+    },
+  })
+)
 
 vi.mock('../../../../../app/src/Features/Helpers/EmailHelper.mjs', () => ({
   default: {
@@ -163,14 +172,17 @@ vi.mock('../../../../../app/src/Features/Helpers/EmailHelper.mjs', () => ({
   },
 }))
 
-vi.mock('../../../../../app/src/Features/Collaborators/OwnershipTransferHandler.mjs', () => ({
-  default: {
-    promises: {
-      transferOwnership: vi.fn(),
-      transferAllProjectsToUser: vi.fn(),
+vi.mock(
+  '../../../../../app/src/Features/Collaborators/OwnershipTransferHandler.mjs',
+  () => ({
+    default: {
+      promises: {
+        transferOwnership: vi.fn(),
+        transferAllProjectsToUser: vi.fn(),
+      },
     },
-  },
-}))
+  })
+)
 
 vi.mock('../../../../../app/src/Features/User/UserAuditLogHandler.mjs', () => ({
   default: {
@@ -247,8 +259,10 @@ describe('AdminUserBatchDeleted', () => {
       }
 
       restoreUserAndProjects.mockImplementation(async userId => {
-        if (userId === user1Id) return { user: { _id: user1Id }, restoredProjectCount: 3 }
-        if (userId === user2Id) return { user: { _id: user2Id }, restoredProjectCount: 2 }
+        if (userId === user1Id)
+          return { user: { _id: user1Id }, restoredProjectCount: 3 }
+        if (userId === user2Id)
+          return { user: { _id: user2Id }, restoredProjectCount: 2 }
         return null
       })
 

@@ -19,7 +19,8 @@ const TOOLS: any = {
 
 describe('extractFencedToolCall', function () {
   it('converts a complete fenced call and returns the surrounding text', function () {
-    const pending = 'Let me look.\n```json\n{"name":"read_file","arguments":{"path":"main.tex"}}\n```\nDone.'
+    const pending =
+      'Let me look.\n```json\n{"name":"read_file","arguments":{"path":"main.tex"}}\n```\nDone.'
     const found = extractFencedToolCall(pending, TOOLS)
     expect(found).to.not.equal(null)
     expect(found!.call.id).to.match(/^call_txt_/)
@@ -35,13 +36,15 @@ describe('extractFencedToolCall', function () {
   })
 
   it('leaves prose that merely mentions json alone', function () {
-    const pending = 'The config looks like ```json\n{"name": "read_file"}\n``` but is not a call.'
+    const pending =
+      'The config looks like ```json\n{"name": "read_file"}\n``` but is not a call.'
     // No "arguments" object that validates against the spec: not a call.
     expect(extractFencedToolCall(pending, TOOLS)).to.equal(null)
   })
 
   it('leaves an unknown tool name as text', function () {
-    const pending = '```json\n{"name":"vibes","arguments":{"path":"main.tex"}}\n```'
+    const pending =
+      '```json\n{"name":"vibes","arguments":{"path":"main.tex"}}\n```'
     expect(extractFencedToolCall(pending, TOOLS)).to.equal(null)
   })
 
@@ -64,6 +67,8 @@ describe('parseWholeMessageToolCall', function () {
   })
 
   it('returns null for a message that is prose', function () {
-    expect(parseWholeMessageToolCall('I will read the file now.', TOOLS)).to.equal(null)
+    expect(
+      parseWholeMessageToolCall('I will read the file now.', TOOLS)
+    ).to.equal(null)
   })
 })

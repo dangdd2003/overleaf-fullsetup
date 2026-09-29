@@ -1,8 +1,4 @@
-export type ProviderType =
-  | 'openai'
-  | 'anthropic'
-  | 'google'
-  | 'ollama'
+export type ProviderType = 'openai' | 'anthropic' | 'google' | 'ollama'
 
 export type ProviderSettings = {
   type: ProviderType
@@ -17,18 +13,345 @@ export type ProviderSettings = {
    */
   contextWindow?: number
   maxOutputTokens?: number
+  /** Unset leaves the choice to the provider's own default. */
+  reasoningEffort?: ReasoningEffort
+  /** The composer's thinking switch; unset leaves the provider's default. */
+  thinking?: boolean
 }
 
+export type ReasoningEffort =
+  | 'none'
+  | 'minimal'
+  | 'low'
+  | 'medium'
+  | 'high'
+  | 'xhigh'
+  | 'max'
+
 /**
- * Where the agent's web_search and web_fetch go. Ollama's hosted API answers
- * both; with SearXNG the Overleaf server searches through the instance and
- * reads pages itself.
+ * The levels each provider documents, lowest first. An OpenAI-compatible
+ * endpoint decides which of OpenAI's levels its model takes. No level at all
+ * is "Auto": the provider's own default.
  */
-export type WebSearchSettings = (
-  | { type: 'ollama'; apiKey: string }
-  | { type: 'searxng'; baseUrl: string }
-) &
-  WebSearchPreferences
+export const REASONING_EFFORTS: Record<ProviderType, ReasoningEffort[]> = {
+  openai: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
+  anthropic: ['low', 'medium', 'high', 'xhigh', 'max'],
+  google: ['minimal', 'low', 'medium', 'high'],
+  ollama: ['low', 'medium', 'high'],
+}
+
+/** OpenAI has effort levels only, so it gets no thinking switch. */
+export function hasThinkingSwitch(type: ProviderType) {
+  return type !== 'openai'
+}
+
+export type WebSearchRotationStrategy =
+  | 'round-robin'
+  | 'provider-priority'
+  | 'sticky'
+
+export type WebSearchPrimaryProvider =
+  | 'searxng'
+  | 'ollama'
+  | 'websearchapi'
+  | 'tavily'
+  | 'firecrawl'
+  | 'firecrawlSelfHosted'
+  | 'jina'
+  | 'langsearch'
+  | 'exa'
+
+export interface OllamaProviderConfig {
+  enabled: boolean
+  apiKeys: string[]
+  /** 1 to 10; unset asks for 10. */
+  maxResults?: number
+}
+
+export type WebsearchapiLength = 'short' | 'medium' | 'long'
+
+/** Defaults for WebSearchAPI.ai's Search API; a missing one is the API's. */
+export interface WebsearchapiSearchOptions {
+  /** 1 to 20; unset asks for 10. */
+  maxResults?: number
+  country?: string
+  language?: string
+  sortBy?: 'relevance' | 'date'
+  safeSearch?: boolean
+  includeDomains?: string[]
+  excludeDomains?: string[]
+  includeContent?: boolean
+  contentLength?: WebsearchapiLength
+  includeAnswer?: boolean
+  answerLength?: WebsearchapiLength
+  timeframe?: 'day' | 'week' | 'month' | 'year'
+  siteSearch?: string
+  exactTerms?: string
+  excludeTerms?: string
+  fileType?: string
+}
+
+/** How WebSearchAPI.ai's Scraper API reads pages for web_fetch. */
+export interface WebsearchapiScrapeOptions {
+  engine?: 'direct' | 'browser' | 'cf-browser-rendering'
+  timeout?: number
+  /** 100 to 1000000. */
+  tokenBudget?: number
+  retainImages?: 'all' | 'none'
+  targetSelector?: string
+  removeSelector?: string
+  respondWith?: 'default' | 'readerlm-v2'
+  proxy?: string
+  locale?: string
+  withGeneratedAlt?: boolean
+  withIframe?: boolean
+  withShadowDom?: boolean
+  noCache?: boolean
+  dnt?: boolean
+}
+
+export interface WebsearchapiProviderConfig {
+  enabled: boolean
+  apiKeys: string[]
+  search?: WebsearchapiSearchOptions
+  scrape?: WebsearchapiScrapeOptions
+}
+
+/** Defaults for Tavily's Search API; a missing one is the API's. */
+export interface TavilySearchOptions {
+  /** 1 to 20; unset asks for 10. */
+  maxResults?: number
+  searchDepth?: 'basic' | 'advanced' | 'fast' | 'ultra-fast'
+  chunksPerSource?: number
+  topic?: 'general' | 'news' | 'finance'
+  timeRange?: 'day' | 'week' | 'month' | 'year'
+  startDate?: string
+  endDate?: string
+  includePublishedDate?: boolean
+  filterByPublishedDate?: boolean
+  includeAnswer?: 'basic' | 'advanced'
+  includeRawContent?: 'markdown' | 'text'
+  includeDomains?: string[]
+  excludeDomains?: string[]
+  includeDomainsMode?: 'restrict' | 'prefer'
+  country?: string
+  language?: string
+  filterByLanguage?: boolean
+  autoParameters?: boolean
+  exactMatch?: boolean
+  safeSearch?: boolean
+}
+
+/** How Tavily's Extract API reads pages for web_fetch. */
+export interface TavilyExtractOptions {
+  extractDepth?: 'basic' | 'advanced'
+  format?: 'markdown' | 'text'
+  timeout?: number
+}
+
+export interface TavilyProviderConfig {
+  enabled: boolean
+  apiKeys: string[]
+  projectId?: string
+  search?: TavilySearchOptions
+  extract?: TavilyExtractOptions
+}
+
+/** Defaults for Firecrawl's Search API; a missing one is the API's. */
+export interface FirecrawlSearchOptions {
+  /** 1 to 100; unset asks for 10. */
+  maxResults?: number
+  categories?: ('developer' | 'pdf')[]
+  timeRange?: 'hour' | 'day' | 'week' | 'month' | 'year'
+  sortByDate?: boolean
+  includeDomains?: string[]
+  excludeDomains?: string[]
+  country?: string
+  location?: string
+  safeSearch?: boolean
+  scrapeResults?: boolean
+  /** Milliseconds, 1000 to 300000. */
+  timeout?: number
+  sources?: ('web' | 'news')[]
+  highlights?: boolean
+}
+
+/** How Firecrawl's Scrape API reads pages for web_fetch. */
+export interface FirecrawlScrapeOptions {
+  onlyMainContent?: boolean
+  onlyCleanContent?: boolean
+  /** Milliseconds a cached copy may be old. */
+  maxAge?: number
+  pdfMode?: 'fast' | 'auto' | 'ocr'
+  country?: string
+  languages?: string[]
+  includeTags?: string[]
+  excludeTags?: string[]
+  /** Milliseconds to wait before reading the page. */
+  waitFor?: number
+  /** Milliseconds, 1000 to 300000. */
+  timeout?: number
+  mobile?: boolean
+  blockAds?: boolean
+  /** Firecrawl Cloud only. */
+  proxy?: 'basic' | 'enhanced' | 'auto'
+  /** Firecrawl Cloud only. */
+  zeroDataRetention?: boolean
+}
+
+export interface FirecrawlProviderConfig {
+  enabled: boolean
+  apiKeys: string[]
+  search?: FirecrawlSearchOptions
+  scrape?: FirecrawlScrapeOptions
+}
+
+export interface FirecrawlSelfHostedProviderConfig {
+  enabled: boolean
+  baseUrls: string[]
+  search?: FirecrawlSearchOptions
+  scrape?: FirecrawlScrapeOptions
+}
+
+/** Defaults for Jina's Search API; a missing one is the API's. */
+export interface JinaSearchOptions {
+  /** 1 to 20; unset asks for 10. */
+  maxResults?: number
+  includeContent?: boolean
+  type?: 'news'
+  country?: string
+  language?: string
+  location?: string
+  includeDomains?: string[]
+}
+
+/** How Jina's Reader API reads pages for web_fetch. */
+export interface JinaReadOptions {
+  engine?: 'browser' | 'direct' | 'cf-browser-rendering'
+  /** Seconds, 1 to 180. */
+  timeout?: number
+  targetSelector?: string
+  removeSelector?: string
+  retainImages?: 'none' | 'alt'
+  withGeneratedAlt?: boolean
+  withIframe?: boolean
+  withShadowDom?: boolean
+  respondWith?: 'readerlm-v2'
+  proxy?: string
+  locale?: string
+  noCache?: boolean
+  dnt?: boolean
+  tokenBudget?: number
+  waitForSelector?: string
+  /** Seconds a cached copy may be old. */
+  cacheTolerance?: number
+}
+
+export interface JinaProviderConfig {
+  enabled: boolean
+  apiKeys: string[]
+  search?: JinaSearchOptions
+  read?: JinaReadOptions
+}
+
+export type LangsearchFreshness =
+  | 'noLimit'
+  | 'oneDay'
+  | 'oneWeek'
+  | 'oneMonth'
+  | 'oneYear'
+
+/** Defaults for LangSearch's Search API; a missing one is the API's. */
+export interface LangsearchSearchOptions {
+  /** 1 to 50; unset asks for 10. */
+  maxResults?: number
+  freshness?: LangsearchFreshness
+  includeDomains?: string[]
+  excludeDomains?: string[]
+  includeContent?: boolean
+  /** Max characters of page content to extract when includeContent is on. */
+  maxCharacters?: number
+}
+
+export interface LangsearchProviderConfig {
+  enabled: boolean
+  apiKeys: string[]
+  search?: LangsearchSearchOptions
+}
+
+export type ExaSearchType = 'auto' | 'neural' | 'keyword' | 'fast' | 'deep'
+export type ExaSearchCategory =
+  | 'company'
+  | 'research paper'
+  | 'news'
+  | 'pdf'
+  | 'github'
+  | 'tweet'
+  | 'personal site'
+  | 'linkedin profile'
+  | 'financial report'
+export type ExaLivecrawl = 'always' | 'fallback' | 'never' | 'auto'
+
+/** Defaults for Exa's Search API; a missing one is the API's. */
+export interface ExaSearchOptions {
+  /** 1 to 100; unset asks for 10. */
+  maxResults?: number
+  type?: ExaSearchType
+  category?: ExaSearchCategory
+  includeDomains?: string[]
+  excludeDomains?: string[]
+  startPublishedDate?: string
+  endPublishedDate?: string
+  includeText?: string[]
+  excludeText?: string[]
+  moderation?: boolean
+  includeContent?: boolean
+  maxCharacters?: number
+  includeHtmlTags?: boolean
+  highlights?: boolean
+  numSentences?: number
+  highlightsPerUrl?: number
+  highlightsQuery?: string
+  summary?: boolean
+  summaryQuery?: string
+  livecrawl?: ExaLivecrawl
+  livecrawlTimeout?: number
+  subpages?: number
+  subpageTarget?: string
+}
+
+/** How Exa's Contents API reads pages for web_fetch. */
+export interface ExaReadOptions {
+  maxCharacters?: number
+  includeHtmlTags?: boolean
+  highlights?: boolean
+  numSentences?: number
+  highlightsPerUrl?: number
+  highlightsQuery?: string
+  summary?: boolean
+  summaryQuery?: string
+  livecrawl?: ExaLivecrawl
+  livecrawlTimeout?: number
+  subpages?: number
+  subpageTarget?: string
+}
+
+export interface ExaProviderConfig {
+  enabled: boolean
+  apiKeys: string[]
+  search?: ExaSearchOptions
+  read?: ExaReadOptions
+}
+
+export interface SearxngProviderConfig {
+  enabled: boolean
+  baseUrls: string[]
+  defaultCategories?: string
+  defaultLanguage?: string
+  timeRange?: 'day' | 'week' | 'month' | 'year'
+  /** 0 off, 1 moderate, 2 strict. */
+  safeSearch?: 0 | 1 | 2
+}
 
 /**
  * How the server caches and sizes web research for this user. Every field is
@@ -39,22 +362,66 @@ export type WebSearchPreferences = {
   cacheHours?: number
   maxCachedSearches?: number
   maxCachedPages?: number
-  /** The most results the model may ask for in one search. */
-  resultsPerSearch?: number
 }
+
+export type WebSearchSourceMode = 'server' | 'custom' | 'disabled'
+
+export interface MultiWebSearchSettings extends WebSearchPreferences {
+  sourceMode?: WebSearchSourceMode
+  providers: {
+    ollama?: OllamaProviderConfig
+    searxng?: SearxngProviderConfig
+    websearchapi?: WebsearchapiProviderConfig
+    tavily?: TavilyProviderConfig
+    firecrawl?: FirecrawlProviderConfig
+    firecrawlSelfHosted?: FirecrawlSelfHostedProviderConfig
+    jina?: JinaProviderConfig
+    langsearch?: LangsearchProviderConfig
+    exa?: ExaProviderConfig
+  }
+  rotationStrategy?: WebSearchRotationStrategy
+  primaryProvider?: WebSearchPrimaryProvider
+}
+
+export type LegacyWebSearchSettings = (
+  | { type: 'ollama'; apiKey: string }
+  | { type: 'searxng'; baseUrl: string }
+  | { type: 'websearchapi'; apiKey: string }
+  | { type: 'tavily'; apiKey: string }
+  | { type: 'firecrawl'; apiKey: string }
+  | { type: 'firecrawlSelfHosted'; baseUrl: string }
+  | { type: 'jina'; apiKey: string }
+  | { type: 'langsearch'; apiKey: string }
+  | { type: 'exa'; apiKey: string }
+) &
+  WebSearchPreferences
+
+/**
+ * Where the agent's web_search and web_fetch go. Supports both multi-provider
+ * pools with endpoint rotation and legacy single-provider configurations.
+ */
+export type WebSearchSettings = MultiWebSearchSettings | LegacyWebSearchSettings
 
 /** The recommended values, and the range the server accepts for each. */
 export const WEB_SEARCH_DEFAULTS = {
   cacheHours: { value: 24, min: 0, max: 168 },
   maxCachedSearches: { value: 256, min: 0, max: 1000 },
   maxCachedPages: { value: 64, min: 0, max: 200 },
-  resultsPerSearch: { value: 10, min: 1, max: 10 },
 } as const satisfies Record<
   keyof WebSearchPreferences,
   { value: number; min: number; max: number }
 >
 
-export type WebSearchProviderType = WebSearchSettings['type']
+export type WebSearchProviderType =
+  | 'ollama'
+  | 'searxng'
+  | 'websearchapi'
+  | 'tavily'
+  | 'firecrawl'
+  | 'firecrawlSelfHosted'
+  | 'jina'
+  | 'langsearch'
+  | 'exa'
 
 export type Limits = {
   contextWindow: number
@@ -80,7 +447,10 @@ export function resolveLimits(settings: ProviderSettings): Limits {
   const defaults = DEFAULT_LIMITS[settings.type] ?? DEFAULT_LIMITS.openai
   return {
     contextWindow: positive(settings.contextWindow, defaults.contextWindow),
-    maxOutputTokens: positive(settings.maxOutputTokens, defaults.maxOutputTokens),
+    maxOutputTokens: positive(
+      settings.maxOutputTokens,
+      defaults.maxOutputTokens
+    ),
   }
 }
 
@@ -301,28 +671,38 @@ export async function toProviderError(response: Response) {
 
   if (response.status === 401 || response.status === 403) {
     code = 'providerAuth'
-    hint = 'The API key was rejected. Verify your API key and permissions in Account Settings.'
-    message = upstreamMessage || `The provider rejected this API key (HTTP ${response.status}).`
+    hint =
+      'The API key was rejected. Verify your API key and permissions in Account Settings.'
+    message =
+      upstreamMessage ||
+      `The provider rejected this API key (HTTP ${response.status}).`
   } else if (response.status === 404) {
     code = 'modelsUnsupported'
-    hint = 'The requested endpoint or model was not found. Verify the model name and endpoint base URL in Account Settings.'
-    message = upstreamMessage || `This endpoint or model was not found (HTTP 404).`
+    hint =
+      'The requested endpoint or model was not found. Verify the model name and endpoint base URL in Account Settings.'
+    message =
+      upstreamMessage || `This endpoint or model was not found (HTTP 404).`
   } else if (response.status === 429) {
     code = 'providerError'
-    hint = 'Rate limit or billing quota exceeded. Check your plan, usage limits, and credit balance on your provider dashboard.'
+    hint =
+      'Rate limit or billing quota exceeded. Check your plan, usage limits, and credit balance on your provider dashboard.'
     message = upstreamMessage || `Rate limit or quota exceeded (HTTP 429).`
   } else if (response.status === 400) {
     code = 'providerError'
     hint = 'The upstream API rejected the request parameters or payload format.'
-    message = upstreamMessage || `The provider rejected the request format (HTTP 400).`
+    message =
+      upstreamMessage || `The provider rejected the request format (HTTP 400).`
   } else if (response.status >= 500) {
     code = 'providerError'
     hint = `Upstream service failure (HTTP ${response.status}). The AI provider's servers encountered an internal error. Check their status page or retry.`
-    message = upstreamMessage || `The AI provider encountered an internal server error (HTTP ${response.status}).`
+    message =
+      upstreamMessage ||
+      `The AI provider encountered an internal server error (HTTP ${response.status}).`
   } else {
     code = 'providerError'
     hint = `Unexpected response from provider (HTTP ${response.status}).`
-    message = upstreamMessage || `The provider returned HTTP ${response.status}.`
+    message =
+      upstreamMessage || `The provider returned HTTP ${response.status}.`
   }
 
   return new ProviderError(code, message, response.status, {

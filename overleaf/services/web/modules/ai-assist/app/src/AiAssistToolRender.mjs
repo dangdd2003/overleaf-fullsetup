@@ -22,7 +22,9 @@ function diagnosticLines(result) {
 }
 
 function attributeValue(value) {
-  return String(value ?? '').replace(/"/g, "'").replace(/\s+/g, ' ')
+  return String(value ?? '')
+    .replace(/"/g, "'")
+    .replace(/\s+/g, ' ')
 }
 
 /**
@@ -30,10 +32,18 @@ function attributeValue(value) {
  * harness resumes. A page must not be able to close the fence itself.
  */
 function webText(text) {
-  return String(text ?? '').replace(/<(\/?)(web_page|web_results)\b/gi, '&lt;$1$2')
+  return String(text ?? '').replace(
+    /<(\/?)(web_page|web_results)\b/gi,
+    '&lt;$1$2'
+  )
 }
 
-const RECENCY_WORDS = { day: 'past day', week: 'past week', month: 'past month', year: 'past year' }
+const RECENCY_WORDS = {
+  day: 'past day',
+  week: 'past week',
+  month: 'past month',
+  year: 'past year',
+}
 
 /** One search result, as the numbered source the model cites it by. */
 function sourceLines(entry, index) {
@@ -41,6 +51,8 @@ function sourceLines(entry, index) {
   const lines = [`[${number}] ${webText(entry.title)}`, `    ${entry.url}`]
   if (entry.published) lines.push(`    published ${entry.published}`)
   if (entry.snippet) lines.push(`    ${webText(entry.snippet)}`)
+  if (entry.cached)
+    lines.push('    read before; web_fetch returns it from the cache')
   return lines
 }
 
@@ -52,7 +64,51 @@ function webPageAttributes(result) {
     result.published ? ` published="${result.published}"` : '',
     result.modified ? ` updated="${result.modified}"` : '',
     result.archived ? ` archived="${result.archived}"` : '',
+    result.partial ? ' partial="true"' : '',
   ].join('')
+}
+
+const ARCHIVE_NAMES = {
+  wayback: 'the Internet Archive',
+  'archive.today': 'archive.today',
+}
+
+/** What the model must know about a copy that is not the live page. */
+/** The document's headings with their pages, so the model can jump to one. */
+/** 3, 7–9, 12 */
+function pageRanges(pages) {
+  const ranges = []
+  for (const page of pages) {
+    const last = ranges[ranges.length - 1]
+    if (last && page === last[1] + 1) last[1] = page
+    else ranges.push([page, page])
+  }
+  return ranges
+    .map(([from, to]) => (from === to ? `${from}` : `${from}–${to}`))
+    .join(', ')
+}
+
+function contentsLines(outline) {
+  if (!Array.isArray(outline) || outline.length === 0) return ''
+  return [
+    'Contents:',
+    ...outline.map(
+      entry =>
+        `${entry.level === 3 ? '  ' : ''}- ${webText(entry.title)} (p. ${entry.page})`
+    ),
+  ].join('\n')
+}
+
+function copyNotes(result) {
+  const archive = ARCHIVE_NAMES[result.via] ?? 'the Internet Archive'
+  const archived =
+    result.archived || result.archiveUrl
+      ? result.archived
+        ? `The live page could not be read; this is the copy ${archive} captured ${result.archived}. Anything newer than that is not in it.`
+        : `The live page could not be read; this is a copy from ${archive}, so it may be out of date.`
+      : ''
+  const partial = result.partial ? 'Only part of this page could be read.' : ''
+  return [archived, partial]
 }
 
 const RENDERERS = {
@@ -66,7 +122,9 @@ const RENDERERS = {
       `<web_results query="${attributeValue(result.query)}"${filters.length ? ` filter="${filters.join(', ')}"` : ''}>`,
     ]
     if (result.relaxed) {
-      lines.push('Nothing matched the filter, so these results are from an unfiltered search.')
+      lines.push(
+        'Nothing matched the filter, so these results are from an unfiltered search.'
+      )
     }
     for (const answer of result.answers ?? []) {
       lines.push(`Answer: ${webText(answer)}`)
@@ -74,16 +132,15 @@ const RENDERERS = {
     if (result.results.length === 0) {
       lines.push('No results. Try fewer or different words.')
     }
-    result.results.forEach((entry, index) => lines.push(...sourceLines(entry, index)))
+    result.results.forEach((entry, index) =>
+      lines.push(...sourceLines(entry, index))
+    )
     lines.push('</web_results>')
     return lines.join('\n')
   },
 
   web_fetch(result) {
     const open = `<web_page${webPageAttributes(result)}>`
-    const archived = result.archived
-      ? `The site refused a direct read; this is the Internet Archive copy captured ${result.archived}. Anything newer than that is not in it.`
-      : ''
 
     if (Array.isArray(result.matches)) {
       const body =
@@ -92,15 +149,21 @@ const RENDERERS = {
           : result.matches
               .map(
                 match =>
-                  `[page ${match.page}]${match.heading ? ` ${webText(match.heading)}` : ''}\n${webText(match.text)}`
+                  `[page ${match.page}]${match.heading ? ` ${webText(match.heading)}` : ''}${match.match ? ` (${match.match})` : ''}\n${webText(match.text)}`
               )
               .join('\n\n')
       const hidden = (result.totalMatches ?? 0) - result.matches.length
+      const shown = new Set(result.matches.map(match => match.page))
+      const elsewhere = (result.matchPages ?? []).filter(
+        page => !shown.has(page)
+      )
       const summary =
         result.matches.length === 0
-          ? `The document has ${result.totalPages} page(s); read one, or try another term.`
-          : `${result.totalMatches} passage(s) mention "${result.find}" across ${result.totalPages} page(s).${hidden > 0 ? ` ${hidden} not shown; narrow find to see them.` : ''}`
-      return [open, body, '</web_page>', summary, archived].filter(Boolean).join('\n')
+          ? `The document has ${result.totalPages} page(s); read one, or try other words.`
+          : `${result.totalMatches} passage(s) match "${result.find}" across ${result.totalPages} page(s).${hidden > 0 ? ` ${hidden} not shown${elsewhere.length > 0 ? `; more on page ${pageRanges(elsewhere)}` : ''}. Read a page, or narrow find.` : ''}`
+      return [open, body, '</web_page>', summary, ...copyNotes(result)]
+        .filter(Boolean)
+        .join('\n')
     }
 
     let footer = ''
@@ -109,8 +172,18 @@ const RENDERERS = {
     } else if (result.totalPages > 1) {
       footer = `Page ${result.page} of ${result.totalPages} (last).`
     }
-    if (result.truncated) footer += `${footer ? ' ' : ''}The document was cut short because it is very large.`
-    return [open, webText(result.content), '</web_page>', footer, archived].filter(Boolean).join('\n')
+    if (result.truncated)
+      footer += `${footer ? ' ' : ''}The document was cut short because it is very large.`
+    return [
+      open,
+      webText(result.content),
+      '</web_page>',
+      contentsLines(result.outline),
+      footer,
+      ...copyNotes(result),
+    ]
+      .filter(Boolean)
+      .join('\n')
   },
 
   compile_project(result) {
@@ -119,10 +192,12 @@ const RENDERERS = {
       result.message ||
         `Compile ${result.status}: ${result.errorCount} error(s), ${result.warningCount} warning(s).`,
     ]
-    if (result.errorCount > 1) lines.push('Errors after the first often cascade from it.')
+    if (result.errorCount > 1)
+      lines.push('Errors after the first often cascade from it.')
     lines.push(...diagnosticLines(result))
     const hiddenErrors = result.errorCount - (result.errors?.length ?? 0)
-    const hiddenWarnings = (result.warningCount ?? 0) - (result.warnings?.length ?? 0)
+    const hiddenWarnings =
+      (result.warningCount ?? 0) - (result.warnings?.length ?? 0)
     if (hiddenErrors > 0 || hiddenWarnings > 0) {
       lines.push(
         `(${hiddenErrors} more error(s) and ${hiddenWarnings} more warning(s) not shown; call get_compile_result with a higher limit)`
@@ -137,9 +212,11 @@ const RENDERERS = {
     const lines = [
       `Last compile: ${result.status} - ${result.errorCount} error(s), ${result.warningCount} warning(s)`,
     ]
-    if (result.errorCount > 1) lines.push('Errors after the first often cascade from it.')
+    if (result.errorCount > 1)
+      lines.push('Errors after the first often cascade from it.')
     lines.push(...diagnosticLines(result))
-    if (result.truncated) lines.push('(more entries not shown; pass a higher limit)')
+    if (result.truncated)
+      lines.push('(more entries not shown; pass a higher limit)')
     return lines.join('\n')
   },
 
@@ -155,7 +232,9 @@ const RENDERERS = {
       : ''
     const note = result.note ? ` ${result.note}` : ''
     const header = `Applied to ${result.path}, ${where}.${shift}${note}`
-    return result.excerpt ? [header, '```', result.excerpt, '```'].join('\n') : header
+    return result.excerpt
+      ? [header, '```', result.excerpt, '```'].join('\n')
+      : header
   },
 
   get_outline(result) {
@@ -173,7 +252,8 @@ const RENDERERS = {
         `documentclass: ${result.documentClass ?? 'unknown'}`,
         ...result.sections.map(outlineLine),
         ...(result.includes || []).map(
-          i => `\\input ${i.from}:${i.line} -> ${i.to}${i.resolved ? '' : ' (UNRESOLVED)'}`
+          i =>
+            `\\input ${i.from}:${i.line} -> ${i.to}${i.resolved ? '' : ' (UNRESOLVED)'}`
         ),
         ...(result.notes || []),
       ].join('\n')
@@ -192,17 +272,33 @@ const RENDERERS = {
   get_references(result) {
     const lines = []
     if (result.labels) {
-      lines.push(...result.labels.map(l => `label ${l.key}  ${l.path}:${l.line}`))
-      lines.push(...(result.duplicateLabels ?? []).map(k => `DUPLICATE label ${k}`))
+      lines.push(
+        ...result.labels.map(l => `label ${l.key}  ${l.path}:${l.line}`)
+      )
+      lines.push(
+        ...(result.duplicateLabels ?? []).map(k => `DUPLICATE label ${k}`)
+      )
     }
     if (result.refs) {
-      lines.push(...result.refs.map(r => `${r.command} ${r.key}  ${r.path}:${r.line}  ${r.resolved ? 'ok' : 'UNRESOLVED'}`))
+      lines.push(
+        ...result.refs.map(
+          r =>
+            `${r.command} ${r.key}  ${r.path}:${r.line}  ${r.resolved ? 'ok' : 'UNRESOLVED'}`
+        )
+      )
     }
     if (result.citations) {
-      lines.push(...result.citations.map(c => `${c.command} ${c.key}  ${c.path}:${c.line}  ${c.resolved ? 'ok' : 'MISSING'}`))
+      lines.push(
+        ...result.citations.map(
+          c =>
+            `${c.command} ${c.key}  ${c.path}:${c.line}  ${c.resolved ? 'ok' : 'MISSING'}`
+        )
+      )
     }
     if (result.bibKeys) {
-      lines.push(...result.bibKeys.map(b => `bib ${b.key}  ${b.path}:${b.line}`))
+      lines.push(
+        ...result.bibKeys.map(b => `bib ${b.key}  ${b.path}:${b.line}`)
+      )
     }
     return lines.length > 0
       ? lines.join('\n')
@@ -217,7 +313,9 @@ const RENDERERS = {
         : `${file.path}  ${file.type}  ${file.lines ?? ''}`.trimEnd()
     )
     if (result.truncated) {
-      rows.push(`(${result.total - result.files.length} more; narrow with glob=)`)
+      rows.push(
+        `(${result.total - result.files.length} more; narrow with glob=)`
+      )
     }
     return rows.length > 0 ? rows.join('\n') : '(no files found)'
   },
@@ -239,7 +337,11 @@ const RENDERERS = {
         lines.push(hit)
       } else {
         if (Array.isArray(hit.before) && hit.before.length > 0) {
-          lines.push(...hit.before.map((l, i) => `  ${hit.line - hit.before.length + i}: ${l}`))
+          lines.push(
+            ...hit.before.map(
+              (l, i) => `  ${hit.line - hit.before.length + i}: ${l}`
+            )
+          )
         }
         lines.push(`${hit.path}:${hit.line}: ${hit.text}`)
         if (Array.isArray(hit.after) && hit.after.length > 0) {
@@ -272,7 +374,12 @@ export function renderToolResult(name, result) {
     return renderFetchFailure(result)
   }
   const renderer = RENDERERS[name]
-  if (!renderer || result === null || typeof result !== 'object' || result.error) {
+  if (
+    !renderer ||
+    result === null ||
+    typeof result !== 'object' ||
+    result.error
+  ) {
     return JSON.stringify(result)
   }
   try {

@@ -35,7 +35,13 @@ describe('NewProjectGithub', function () {
 
   it('renders the menu item and invokes onClick', function () {
     let clicked = false
-    render(<NewProjectGithubMenu onClick={() => { clicked = true }} />)
+    render(
+      <NewProjectGithubMenu
+        onClick={() => {
+          clicked = true
+        }}
+      />
+    )
     fireEvent.click(screen.getByText(/github/i))
     expect(clicked).to.equal(true)
   })
@@ -43,15 +49,26 @@ describe('NewProjectGithub', function () {
   it('lists repos and imports the selected one', async function () {
     fetchMock.get('/auth/github/repos', {
       repos: [
-        { name: 'paper', owner: { login: 'octo' }, private: false, default_branch: 'main', empty: false },
+        {
+          name: 'paper',
+          owner: { login: 'octo' },
+          private: false,
+          default_branch: 'main',
+          empty: false,
+        },
       ],
     })
-    fetchMock.post('/auth/github/import', { projectId: 'newproj', warnings: [] })
+    fetchMock.post('/auth/github/import', {
+      projectId: 'newproj',
+      warnings: [],
+    })
     render(<NewProjectGithubModalWrapper onHide={() => {}} />)
     const option = await screen.findByText(/octo\/paper/)
     fireEvent.click(option)
     fireEvent.click(await screen.findByRole('button', { name: /^import$/i }))
-    await waitFor(() => expect(fetchMock.callHistory.called('/auth/github/import')).to.equal(true))
+    await waitFor(() =>
+      expect(fetchMock.callHistory.called('/auth/github/import')).to.equal(true)
+    )
     const call = fetchMock.callHistory.lastCall('/auth/github/import')
     expect(JSON.parse(call!.options.body as string)).to.deep.include({
       repoOwner: 'octo',

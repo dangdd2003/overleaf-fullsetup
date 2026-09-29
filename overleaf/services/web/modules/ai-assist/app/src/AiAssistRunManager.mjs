@@ -7,7 +7,7 @@ import defaultChatHistoryStore from './AiAssistChatHistoryStore.mjs'
 import { generateChatTitle } from './AiAssistChatTitler.mjs'
 import { createProviderClient } from './AiAssistProviders.mjs'
 import { renderToolResult } from './AiAssistToolRender.mjs'
-import { SYSTEM_PROMPT, systemPromptFor } from './AiAssistSystemPrompt.mjs'
+import { systemPromptFor } from './AiAssistSystemPrompt.mjs'
 import { coerceToolArgs } from './AiAssistToolSchema.mjs'
 import { AiAssistWebTools, WEB_TOOL_NAMES } from './AiAssistWebTools.mjs'
 import {
@@ -21,7 +21,6 @@ import {
   PLAN_TOOL,
 } from './AiAssistModePolicy.mjs'
 
-
 export function toAgentMessages(transcript) {
   if (!Array.isArray(transcript)) return []
   const messages = []
@@ -30,16 +29,25 @@ export function toAgentMessages(transcript) {
     if (entry.role === 'user') {
       const content = entry.contextText
         ? `${entry.contextText}\n\n${entry.text}`
-        : (entry.text || entry.content || '')
+        : entry.text || entry.content || ''
       messages.push({ role: 'user', content })
       return
     }
 
     const isLast = index === transcript.length - 1
-    if (isLast && !entry.text && !entry.content && (!entry.toolCalls || entry.toolCalls.length === 0)) return
+    if (
+      isLast &&
+      !entry.text &&
+      !entry.content &&
+      (!entry.toolCalls || entry.toolCalls.length === 0)
+    )
+      return
 
     if (!entry.toolCalls || entry.toolCalls.length === 0) {
-      messages.push({ role: 'assistant', content: entry.text || entry.content || '' })
+      messages.push({
+        role: 'assistant',
+        content: entry.text || entry.content || '',
+      })
       return
     }
 
@@ -60,7 +68,9 @@ export function toAgentMessages(transcript) {
         toolCallId: call.id,
         name: call.name,
         content: finished
-          ? (typeof call.result === 'string' ? call.result : renderToolResult(call.name, call.result))
+          ? typeof call.result === 'string'
+            ? call.result
+            : renderToolResult(call.name, call.result)
           : 'This tool call did not complete.',
         isError: finished ? Boolean(call.isError || call.result?.error) : true,
       })
@@ -89,13 +99,16 @@ export function sanitizeCompileOutcome(outcome) {
     status: typeof outcome?.status === 'string' ? outcome.status : 'failure',
     errors: entries(outcome?.errors),
     warnings: entries(outcome?.warnings),
-    rawLog: typeof outcome?.rawLog === 'string' ? outcome.rawLog.slice(-MAX_COMPILE_LOG_CHARS) : '',
+    rawLog:
+      typeof outcome?.rawLog === 'string'
+        ? outcome.rawLog.slice(-MAX_COMPILE_LOG_CHARS)
+        : '',
   }
 }
 
 export const KEEP_RECENT_TOOL_RESULTS = 3
 export const KEEP_RECENT_ASSISTANT_TURNS = 3
-export const CHARS_PER_TOKEN = 3.7
+export const CHARS_PER_TOKEN = 4
 export const MARGIN_FRACTION = 0.1
 export const ASSISTANT_ELISION_MARKER = '[earlier reply elided]'
 // Once trimming is needed, trim to this fraction of the budget instead of to
@@ -146,9 +159,10 @@ export const IDENTICAL_FAILURE_LIMIT = 3
 // decision, not three.
 export const FAILED_TURN_LIMIT = 4
 
-
 export function estimateTokens(text) {
-  return Math.ceil(((text && typeof text === 'string') ? text : '').length / CHARS_PER_TOKEN)
+  return Math.ceil(
+    (text && typeof text === 'string' ? text : '').length / CHARS_PER_TOKEN
+  )
 }
 
 export function estimateMessageTokens(message) {
@@ -198,7 +212,9 @@ export const KNOWN_TOOLS = new Set([
 
 export function extractTextToolCall(text, toolSpecs = []) {
   if (!text || typeof text !== 'string') return null
-  const validTools = toolSpecs?.length ? new Set(toolSpecs.map(t => t.name)) : KNOWN_TOOLS
+  const validTools = toolSpecs?.length
+    ? new Set(toolSpecs.map(t => t.name))
+    : KNOWN_TOOLS
 
   // 1. Fenced JSON block: ```json\n{ "name": "...", "arguments": { ... } }\n```
   const fenceMatch = text.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/i)
@@ -213,7 +229,12 @@ export function extractTextToolCall(text, toolSpecs = []) {
         delete copy.tool
         args = copy
       }
-      if (name && validTools.has(name) && typeof args === 'object' && args !== null) {
+      if (
+        name &&
+        validTools.has(name) &&
+        typeof args === 'object' &&
+        args !== null
+      ) {
         return {
           call: { id: `call_txt_${Date.now()}`, name, args },
           prose: text.slice(0, fenceMatch.index).trim(),
@@ -223,7 +244,9 @@ export function extractTextToolCall(text, toolSpecs = []) {
   }
 
   // 2. <tool_call> or <function=name> XML tags used by open-source models
-  const tagMatch = text.match(/<(?:tool_call|function(?:=([^>]+))?)>([\s\S]*?)<\/(?:tool_call|function)>/i)
+  const tagMatch = text.match(
+    /<(?:tool_call|function(?:=([^>]+))?)>([\s\S]*?)<\/(?:tool_call|function)>/i
+  )
   if (tagMatch) {
     try {
       const explicitName = tagMatch[1]?.trim()
@@ -236,7 +259,12 @@ export function extractTextToolCall(text, toolSpecs = []) {
         delete copy.tool
         args = copy
       }
-      if (name && validTools.has(name) && typeof args === 'object' && args !== null) {
+      if (
+        name &&
+        validTools.has(name) &&
+        typeof args === 'object' &&
+        args !== null
+      ) {
         return {
           call: { id: `call_txt_${Date.now()}`, name, args },
           prose: text.slice(0, tagMatch.index).trim(),
@@ -258,7 +286,12 @@ export function extractTextToolCall(text, toolSpecs = []) {
         delete copy.tool
         args = copy
       }
-      if (name && validTools.has(name) && typeof args === 'object' && args !== null) {
+      if (
+        name &&
+        validTools.has(name) &&
+        typeof args === 'object' &&
+        args !== null
+      ) {
         return {
           call: { id: `call_txt_${Date.now()}`, name, args },
           prose: '',
@@ -283,7 +316,8 @@ export function stubToolMessage(message) {
 export function applyContextBudget({ system, messages, limits, tools = [] }) {
   const contextWindow = limits?.contextWindow ?? 200000
   const maxOutputTokens = limits?.maxOutputTokens ?? 32000
-  const rawBudget = contextWindow - maxOutputTokens - Math.ceil(contextWindow * MARGIN_FRACTION)
+  const rawBudget =
+    contextWindow - maxOutputTokens - Math.ceil(contextWindow * MARGIN_FRACTION)
 
   if (rawBudget <= 0) {
     return { messages: [...messages], exhausted: true }
@@ -348,7 +382,8 @@ export function applyContextBudget({ system, messages, limits, tools = [] }) {
 
   for (const idx of elidableAssistants) {
     const msg = working[idx]
-    if (estimateTokens(ASSISTANT_ELISION_MARKER) >= estimateTokens(msg.content)) continue
+    if (estimateTokens(ASSISTANT_ELISION_MARKER) >= estimateTokens(msg.content))
+      continue
     replace(idx, { ...msg, content: ASSISTANT_ELISION_MARKER })
     if (total <= target) return { messages: working, exhausted: false }
   }
@@ -425,6 +460,29 @@ export function incompleteCallError(call, reason, maxTokens) {
     : `The arguments of this ${call.name} call were not valid JSON, so it was not run. Send the call again with complete arguments.`
 }
 
+// Used when the provider settings do not set a context window or output limit
+const DEFAULT_LIMITS = {
+  openai: { contextWindow: 200000, maxOutputTokens: 32000 },
+  anthropic: { contextWindow: 200000, maxOutputTokens: 32000 },
+  google: { contextWindow: 1000000, maxOutputTokens: 65536 },
+  ollama: { contextWindow: 256000, maxOutputTokens: 65536 },
+}
+
+// Hosted providers shed load with 5xx errors and dropped streams for tens of
+// seconds at a time, so a step keeps retrying for about a minute (2s, 4s, 8s,
+// 16s, 20s) before the run gives up.
+const MAX_STREAM_ATTEMPTS = 6
+const NON_RETRYABLE_STATUSES = new Set([400, 401, 403, 404])
+const NON_RETRYABLE_CODES = new Set([
+  'providerAuth',
+  'invalidProviderUrl',
+  'restrictedProviderUrl',
+  'contextExhausted',
+])
+
+// Cycle detection compares the last four calls, so no more are kept
+const CYCLE_WINDOW = 4
+
 export class AiAssistRunManager {
   constructor({
     store = defaultStore,
@@ -433,7 +491,8 @@ export class AiAssistRunManager {
     chatHistoryStore = defaultChatHistoryStore,
     approvalTimeoutMs = null,
     compileTimeoutMs = null,
-    webToolsFactory = (settings, { userId } = {}) => new AiAssistWebTools(settings, { cacheOwner: userId }),
+    webToolsFactory = (settings, { userId, contextWindow } = {}) =>
+      new AiAssistWebTools(settings, { cacheOwner: userId, contextWindow }),
   } = {}) {
     this.store = store
     this.tools = tools
@@ -486,20 +545,8 @@ export class AiAssistRunManager {
     await this.store.createRun({ runId, projectId, userId, mode: initialMode })
 
     const client = this.clientFactory(providerSettings)
-    // Only runs whose user configured web search get the web tools, and the
-    // prompt section describing them.
-    const webTools = webSearchSettings ? this.webToolsFactory(webSearchSettings, { userId }) : null
-    // Sources cited in earlier turns keep their numbers in this one
-    webTools?.rememberSources?.(transcript)
-    let messages = toAgentMessages(transcript)
-
-    const DEFAULT_LIMITS = {
-      openai: { contextWindow: 200000, maxOutputTokens: 32000 },
-      anthropic: { contextWindow: 200000, maxOutputTokens: 32000 },
-      google: { contextWindow: 1000000, maxOutputTokens: 65536 },
-      ollama: { contextWindow: 256000, maxOutputTokens: 65536 },
-    }
-    const limits = DEFAULT_LIMITS[providerSettings?.type] ?? DEFAULT_LIMITS.openai
+    const limits =
+      DEFAULT_LIMITS[providerSettings?.type] ?? DEFAULT_LIMITS.openai
     const maxTokens =
       Number(providerSettings?.maxOutputTokens) > 0
         ? Number(providerSettings.maxOutputTokens)
@@ -512,12 +559,18 @@ export class AiAssistRunManager {
           ? Number(providerSettings.contextWindow)
           : limits.contextWindow,
     }
+    // Only runs whose user configured web search get the web tools, and the
+    // prompt section describing them. Fetched pages are cut to fit the model.
+    const webTools = webSearchSettings
+      ? this.webToolsFactory(webSearchSettings, {
+          userId,
+          contextWindow: resolvedLimits.contextWindow,
+        })
+      : null
+    // Sources cited in earlier turns keep their numbers in this one
+    webTools?.rememberSources?.(transcript)
+    let messages = toAgentMessages(transcript)
 
-    // Streamed text and thinking are buffered and written in batches: every
-    // appendEvent is INCR + RPUSH + PUBLISH, and the provider stream is not
-    // read again until the write resolves. Only one kind is buffered at a
-    // time, so a switch between thinking and text flushes first and order
-    // is preserved.
     // Streamed text and thinking are buffered and written in batches: every
     // appendEvent is INCR + RPUSH + PUBLISH, and the provider stream is not
     // read again until the write resolves. Only one kind is buffered at a
@@ -586,10 +639,19 @@ export class AiAssistRunManager {
       if (firstUser) {
         void (async () => {
           try {
-            const existing = await this.chatHistoryStore.getChat(projectId, userId, chatId)
+            const existing = await this.chatHistoryStore.getChat(
+              projectId,
+              userId,
+              chatId
+            )
             if (existing?.titleGenerated) return
 
-            const titlingClient = this.clientFactory(providerSettings)
+            // A title is a few words; it runs at the provider's default effort
+            const titlingClient = this.clientFactory({
+              ...providerSettings,
+              reasoningEffort: undefined,
+              thinking: undefined,
+            })
             const generatedTitle = await generateChatTitle({
               client: titlingClient,
               firstMessageText: firstUser.text,
@@ -597,7 +659,13 @@ export class AiAssistRunManager {
             })
 
             if (generatedTitle && !controller.signal.aborted) {
-              await this.chatHistoryStore.saveChatTitle(projectId, userId, chatId, generatedTitle, true)
+              await this.chatHistoryStore.saveChatTitle(
+                projectId,
+                userId,
+                chatId,
+                generatedTitle,
+                true
+              )
               await emitEvent({
                 type: 'chatTitle',
                 chatId,
@@ -617,9 +685,14 @@ export class AiAssistRunManager {
     const compileInEditor = async ({ id, clean }) => {
       if (!this.store.getWatcherCount) return null
       if ((await this.store.getWatcherCount(runId)) === 0) return null
-      const requestId = id || `compile_${Date.now()}_${Math.random().toString(36).slice(2)}`
+      const requestId =
+        id || `compile_${Date.now()}_${Math.random().toString(36).slice(2)}`
 
-      await emitEvent({ type: 'awaitingCompile', id: requestId, clean: Boolean(clean) })
+      await emitEvent({
+        type: 'awaitingCompile',
+        id: requestId,
+        clean: Boolean(clean),
+      })
       await this.store.touchHeartbeat?.(runId, 0)
 
       const outcome = await new Promise(resolve => {
@@ -647,7 +720,12 @@ export class AiAssistRunManager {
       await this.store.touchHeartbeat?.(runId, 0)
       return outcome
     }
-    const toolContext = call => ({ projectId, userId, callId: call.id, compileInEditor })
+    const toolContext = call => ({
+      projectId,
+      userId,
+      callId: call.id,
+      compileInEditor,
+    })
     const runTool = call =>
       webTools && WEB_TOOL_NAMES.has(call.name)
         ? webTools.execute(call.name, call.args, { signal: controller.signal })
@@ -665,7 +743,10 @@ export class AiAssistRunManager {
       let settled = false
 
       const cleanup = () => {
-        if (timer) { clearTimeout(timer); timer = null }
+        if (timer) {
+          clearTimeout(timer)
+          timer = null
+        }
         if (onAbort) {
           controller.signal.removeEventListener('abort', onAbort)
           onAbort = null
@@ -708,6 +789,11 @@ export class AiAssistRunManager {
       let toolsRanThisRun = false
       let finalReplyNudged = false
       const executedTools = []
+      // Neither list depends on the mode, so it is built once per run
+      const allToolSpecs = [
+        ...(this.tools?.getToolSpecs ? this.tools.getToolSpecs() : []),
+        ...(webTools ? webTools.getToolSpecs() : []),
+      ]
 
       const finishWithError = async (code, message) => {
         await emitEvent({ type: 'error', code, message })
@@ -745,12 +831,13 @@ export class AiAssistRunManager {
         let truncated = false
 
         const currentMode = this.activeRuns.get(runId)?.mode || 'manual'
-        const currentSystemPrompt = systemPromptFor(currentMode, { webTools: Boolean(webTools) })
+        const currentSystemPrompt = systemPromptFor(currentMode, {
+          webTools: Boolean(webTools),
+          webSearch: webTools?.canSearch
+            ? webTools.canSearch()
+            : Boolean(webTools),
+        })
 
-        const allToolSpecs = [
-          ...(this.tools?.getToolSpecs ? this.tools.getToolSpecs() : []),
-          ...(webTools ? webTools.getToolSpecs() : []),
-        ]
         const modeToolSpecs = toolSpecsFor(currentMode, allToolSpecs)
 
         const budgeted = applyContextBudget({
@@ -781,10 +868,6 @@ export class AiAssistRunManager {
 
         let streamSucceeded = false
         let streamAttempts = 0
-        // Hosted providers shed load with 5xx errors and dropped streams for
-        // tens of seconds at a time, so a step keeps retrying for about a
-        // minute (2s, 4s, 8s, 16s, 20s) before the run gives up.
-        const MAX_STREAM_ATTEMPTS = 6
 
         while (!streamSucceeded && streamAttempts < MAX_STREAM_ATTEMPTS) {
           if (controller.signal.aborted || shouldStop) break
@@ -811,7 +894,10 @@ export class AiAssistRunManager {
                 await emitChunk('text', chunk.text)
               } else if (chunk.type === 'tool_call') {
                 calls.push(chunk)
-              } else if (chunk.type === 'stop' && chunk.reason === 'max_tokens') {
+              } else if (
+                chunk.type === 'stop' &&
+                chunk.reason === 'max_tokens'
+              ) {
                 truncated = true
               }
             }
@@ -826,17 +912,10 @@ export class AiAssistRunManager {
               throw streamErr
             }
 
-            const isNonRetryable =
-              streamErr.status === 400 ||
-              streamErr.status === 401 ||
-              streamErr.status === 403 ||
-              streamErr.status === 404 ||
-              streamErr.code === 'providerAuth' ||
-              streamErr.code === 'invalidProviderUrl' ||
-              streamErr.code === 'restrictedProviderUrl' ||
-              streamErr.code === 'contextExhausted'
-
-            if (isNonRetryable) {
+            if (
+              NON_RETRYABLE_STATUSES.has(streamErr.status) ||
+              NON_RETRYABLE_CODES.has(streamErr.code)
+            ) {
               throw streamErr
             }
 
@@ -849,14 +928,22 @@ export class AiAssistRunManager {
               },
               '[AiAssist] Transient error from provider during tool run, auto-retrying'
             )
-            const delay = Math.min(2000 * Math.pow(2, streamAttempts - 1) + Math.random() * 300, 20000)
+            const delay = Math.min(
+              2000 * Math.pow(2, streamAttempts - 1) + Math.random() * 300,
+              20000
+            )
             await new Promise(resolve => {
-              const timer = setTimeout(resolve, delay)
               const onAbort = () => {
                 clearTimeout(timer)
                 resolve()
               }
-              controller.signal.addEventListener('abort', onAbort, { once: true })
+              const timer = setTimeout(() => {
+                controller.signal.removeEventListener('abort', onAbort)
+                resolve()
+              }, delay)
+              controller.signal.addEventListener('abort', onAbort, {
+                once: true,
+              })
             })
           }
         }
@@ -872,7 +959,12 @@ export class AiAssistRunManager {
         }
 
         if (calls.length === 0) {
-          if (!text.trim() && toolsRanThisRun && !truncated && !finalReplyNudged) {
+          if (
+            !text.trim() &&
+            toolsRanThisRun &&
+            !truncated &&
+            !finalReplyNudged
+          ) {
             finalReplyNudged = true
             messages.push({ role: 'user', content: FINAL_REPLY_NUDGE })
             continue
@@ -896,7 +988,11 @@ export class AiAssistRunManager {
           break
         }
 
-        const incomplete = classifyIncompleteCalls(calls, truncated, modeToolSpecs)
+        const incomplete = classifyIncompleteCalls(
+          calls,
+          truncated,
+          modeToolSpecs
+        )
 
         toolsRanThisRun = true
         messages.push({ role: 'assistant', content: text, toolCalls: calls })
@@ -947,7 +1043,11 @@ export class AiAssistRunManager {
           ) {
             try {
               editPlan = await this.tools.checkEdit(call.args, { projectId })
-              if (editPlan?.status === 'ok' && editPlan.path && editPlan.path !== call.args.path) {
+              if (
+                editPlan?.status === 'ok' &&
+                editPlan.path &&
+                editPlan.path !== call.args.path
+              ) {
                 call.args.path = editPlan.path
               }
             } catch {
@@ -985,17 +1085,32 @@ export class AiAssistRunManager {
             if (userDeclinedEdit) {
               result = {
                 status: 'rejected',
-                error: 'The user declined an edit earlier in this turn, so file changes are blocked until they send a new message. Do not retry the edit. Say what you would change and why, or ask how they want to proceed.',
+                error:
+                  'The user declined an edit earlier in this turn, so file changes are blocked until they send a new message. Do not retry the edit. Say what you would change and why, or ask how they want to proceed.',
               }
             } else if (editPlan && editPlan.status !== 'ok') {
               result = editPlan
             } else {
               const isCreate = call.name === 'create_file'
-              const resolvedOldText = editPlan?.oldText !== undefined ? editPlan.oldText : (isCreate ? '' : (call.args.oldText || ''))
-              const resolvedNewText = editPlan?.newText !== undefined ? editPlan.newText : (isCreate ? (call.args.content || '') : (call.args.newText || ''))
+              const resolvedOldText =
+                editPlan?.oldText !== undefined
+                  ? editPlan.oldText
+                  : isCreate
+                    ? ''
+                    : call.args.oldText || ''
+              const resolvedNewText =
+                editPlan?.newText !== undefined
+                  ? editPlan.newText
+                  : isCreate
+                    ? call.args.content || ''
+                    : call.args.newText || ''
               const action = isCreate
                 ? 'create'
-                : (!resolvedOldText ? 'append' : (!resolvedNewText ? 'delete' : 'edit'))
+                : !resolvedOldText
+                  ? 'append'
+                  : !resolvedNewText
+                    ? 'delete'
+                    : 'edit'
               const approvalEdit = {
                 ...call.args,
                 path: editPlan?.path || call.args.path,
@@ -1009,14 +1124,21 @@ export class AiAssistRunManager {
               const execArgs = {
                 ...call.args,
                 path: editPlan?.path || call.args.path,
-                ...(editPlan?.oldText !== undefined ? { oldText: editPlan.oldText } : {}),
-                ...(editPlan?.newText !== undefined ? { newText: editPlan.newText } : {}),
+                ...(editPlan?.oldText !== undefined
+                  ? { oldText: editPlan.oldText }
+                  : {}),
+                ...(editPlan?.newText !== undefined
+                  ? { newText: editPlan.newText }
+                  : {}),
               }
 
               if (verdict === 'allow') {
                 // acceptEdits mode: auto-apply directly
                 try {
-                  result = await this.tools.execute(call.name, execArgs, { projectId, userId })
+                  result = await this.tools.execute(call.name, execArgs, {
+                    projectId,
+                    userId,
+                  })
                 } catch (err) {
                   result = { error: err.message || 'Tool execution failed' }
                   isError = true
@@ -1031,7 +1153,9 @@ export class AiAssistRunManager {
 
                 if (!decision?.accepted) {
                   userDeclinedEdit = true
-                  const userNote = decision?.note ? ` with note: "${decision.note}"` : ''
+                  const userNote = decision?.note
+                    ? ` with note: "${decision.note}"`
+                    : ''
                   result = {
                     status: 'rejected',
                     message: `The user declined this change${userNote}. Do not attempt any further file modifications or repeat this edit in this turn. Acknowledge to the user that the edit was rejected, address their feedback, and explain alternatives or ask how they would like to proceed.`,
@@ -1039,7 +1163,10 @@ export class AiAssistRunManager {
                   }
                 } else {
                   try {
-                    result = await this.tools.execute(call.name, execArgs, { projectId, userId })
+                    result = await this.tools.execute(call.name, execArgs, {
+                      projectId,
+                      userId,
+                    })
                   } catch (err) {
                     result = { error: err.message || 'Tool execution failed' }
                     isError = true
@@ -1055,7 +1182,9 @@ export class AiAssistRunManager {
             })
 
             if (!decision?.accepted) {
-              const userNote = decision?.note ? ` with note: "${decision.note}"` : ''
+              const userNote = decision?.note
+                ? ` with note: "${decision.note}"`
+                : ''
               result = {
                 status: 'rejected',
                 message: `The user declined this settings change${userNote}. Do not retry it in this turn.`,
@@ -1063,14 +1192,19 @@ export class AiAssistRunManager {
               }
             } else {
               try {
-                result = await this.tools.execute(call.name, call.args, toolContext(call))
+                result = await this.tools.execute(
+                  call.name,
+                  call.args,
+                  toolContext(call)
+                )
               } catch (err) {
                 result = { error: err.message || 'Tool execution failed' }
                 isError = true
               }
             }
           } else if (call.name === PLAN_TOOL && verdict === 'ask') {
-            const planText = typeof call.args?.plan === 'string' ? call.args.plan : ''
+            const planText =
+              typeof call.args?.plan === 'string' ? call.args.plan : ''
             const decision = await awaitUserApproval({
               id: call.id,
               kind: 'plan',
@@ -1082,14 +1216,20 @@ export class AiAssistRunManager {
               const active = this.activeRuns.get(runId)
               if (active) active.mode = nextMode
               await this.store.setMode(runId, nextMode)
-              await emitEvent({ type: 'modeChanged', mode: nextMode, source: 'planApproval' })
+              await emitEvent({
+                type: 'modeChanged',
+                mode: nextMode,
+                source: 'planApproval',
+              })
               result = {
                 status: 'approved',
                 mode: nextMode,
                 message: `The user approved the plan. You are now in ${modeLabel(nextMode)} mode: carry the plan out now, in this turn, then say what you changed.`,
               }
             } else {
-              const userNote = decision?.note ? ` with note: "${decision.note}"` : ''
+              const userNote = decision?.note
+                ? ` with note: "${decision.note}"`
+                : ''
               result = {
                 status: 'keepPlanning',
                 note: decision?.note,
@@ -1120,14 +1260,14 @@ export class AiAssistRunManager {
           // "nothing compiled yet" (status 'none') is an answer, not a failure.
           const isFailed = Boolean(
             (isError && result?.status !== 'denied') ||
-              result?.error ||
-              result?.status === 'noMatch' ||
-              result?.status === 'ambiguous'
+            result?.error ||
+            result?.status === 'noMatch' ||
+            result?.status === 'ambiguous'
           )
 
+          const callSig = `${call.name}:${JSON.stringify(call.args ?? {})}`
           if (isFailed) {
             turnFailed = true
-            const callSig = `${call.name}:${JSON.stringify(call.args)}`
             const repeats = (failedCallSignatures.get(callSig) ?? 0) + 1
             failedCallSignatures.set(callSig, repeats)
             if (repeats >= IDENTICAL_FAILURE_LIMIT) {
@@ -1137,7 +1277,11 @@ export class AiAssistRunManager {
               )
               break
             }
-            if (repeats === IDENTICAL_FAILURE_LIMIT - 1 && result && typeof result === 'object') {
+            if (
+              repeats === IDENTICAL_FAILURE_LIMIT - 1 &&
+              result &&
+              typeof result === 'object'
+            ) {
               result = {
                 ...result,
                 repeated: `This exact ${call.name} call has now failed ${repeats} times with the same arguments; one more identical failure ends the run. Change the arguments (re-read the file and copy its current text) or take a different approach.`,
@@ -1153,12 +1297,12 @@ export class AiAssistRunManager {
           // loop making no progress (compile -> read result -> compile -> read
           // result). Comparing names alone would also stop edit -> compile ->
           // edit -> compile, which is how compile errors get fixed.
-          recentCallSignatures.push({
-            name: call.name,
-            signature: `${call.name}:${JSON.stringify(call.args ?? {})}`,
-          })
-          if (recentCallSignatures.length >= 4) {
-            const [a, b, c, d] = recentCallSignatures.slice(-4)
+          recentCallSignatures.push({ name: call.name, signature: callSig })
+          if (recentCallSignatures.length > CYCLE_WINDOW) {
+            recentCallSignatures.shift()
+          }
+          if (recentCallSignatures.length === CYCLE_WINDOW) {
+            const [a, b, c, d] = recentCallSignatures
             if (
               a.signature === c.signature &&
               b.signature === d.signature &&
@@ -1278,7 +1422,10 @@ export class AiAssistRunManager {
     // No control channel (single process, or a unit test constructing the
     // manager directly). Fall back to Task 3's behaviour so those tests pass.
     await this.store.updateStatus(runId, 'stopped')
-    await this.store.appendEvent(runId, { type: 'turnFinished', reason: 'aborted' })
+    await this.store.appendEvent(runId, {
+      type: 'turnFinished',
+      reason: 'aborted',
+    })
   }
 
   /** Same shape for approval: local first, broadcast only if not ours. */
@@ -1290,7 +1437,9 @@ export class AiAssistRunManager {
       return
     }
     if (this.control) {
-      await this.control.publish(runId, { action: 'approve', decision }).catch(() => {})
+      await this.control
+        .publish(runId, { action: 'approve', decision })
+        .catch(() => {})
     }
   }
 
@@ -1305,11 +1454,15 @@ export class AiAssistRunManager {
   async queueMessage(runId, message) {
     const active = this.activeRuns.get(runId)
     if (active?.queuedMessages) {
-      active.queuedMessages.push(toQueuedMessage(message, active.queuedMessages.length))
+      active.queuedMessages.push(
+        toQueuedMessage(message, active.queuedMessages.length)
+      )
       return true
     }
     if (this.control) {
-      await this.control.publish(runId, { action: 'message', message }).catch(() => {})
+      await this.control
+        .publish(runId, { action: 'message', message })
+        .catch(() => {})
     }
     return false
   }
@@ -1320,11 +1473,17 @@ export class AiAssistRunManager {
     if (active) {
       active.mode = normalized
       await this.store.setMode(runId, normalized)
-      await this.store.appendEvent(runId, { type: 'modeChanged', mode: normalized, source: 'user' })
+      await this.store.appendEvent(runId, {
+        type: 'modeChanged',
+        mode: normalized,
+        source: 'user',
+      })
       return
     }
     if (this.control) {
-      await this.control.publish(runId, { action: 'setMode', mode: normalized }).catch(() => {})
+      await this.control
+        .publish(runId, { action: 'setMode', mode: normalized })
+        .catch(() => {})
     } else {
       await this.store.setMode(runId, normalized)
     }
@@ -1342,7 +1501,9 @@ export class AiAssistRunManager {
       return
     }
     if (this.control) {
-      await this.control.publish(runId, { action: 'compile', id, outcome }).catch(() => {})
+      await this.control
+        .publish(runId, { action: 'compile', id, outcome })
+        .catch(() => {})
     }
   }
 
@@ -1362,7 +1523,9 @@ export class AiAssistRunManager {
       return
     }
     if (action === 'compile') {
-      this.activeRuns.get(runId)?.compileResolvers?.get(id)?.(sanitizeCompileOutcome(outcome))
+      this.activeRuns.get(runId)?.compileResolvers?.get(id)?.(
+        sanitizeCompileOutcome(outcome)
+      )
       return
     }
     if (action === 'setMode') {
@@ -1370,7 +1533,9 @@ export class AiAssistRunManager {
       if (active) {
         active.mode = mode
         void this.store.setMode(runId, mode).catch(() => {})
-        void this.store.appendEvent(runId, { type: 'modeChanged', mode, source: 'user' }).catch(() => {})
+        void this.store
+          .appendEvent(runId, { type: 'modeChanged', mode, source: 'user' })
+          .catch(() => {})
       }
       return
     }

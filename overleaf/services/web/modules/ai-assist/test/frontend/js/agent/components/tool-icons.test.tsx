@@ -131,7 +131,12 @@ describe('summarise with settings tools', function () {
 
   it('summarises get_project_settings', function () {
     const summary = summarise(
-      { id: '1', name: 'get_project_settings', args: {}, result: { compiler: 'pdflatex' } },
+      {
+        id: '1',
+        name: 'get_project_settings',
+        args: {},
+        result: { compiler: 'pdflatex' },
+      },
       fakeT
     )
     expect(summary.action).to.equal('Checked project settings')
@@ -139,13 +144,23 @@ describe('summarise with settings tools', function () {
 
   it('summarises configure_project_settings and configure_compiler_settings', function () {
     const summary1 = summarise(
-      { id: '1', name: 'configure_project_settings', args: { compiler: 'xelatex' }, result: { success: true } },
+      {
+        id: '1',
+        name: 'configure_project_settings',
+        args: { compiler: 'xelatex' },
+        result: { success: true },
+      },
       fakeT
     )
     expect(summary1.action).to.equal('Configured project settings')
 
     const summary2 = summarise(
-      { id: '2', name: 'configure_compiler_settings', args: { compiler: 'lualatex' }, result: { success: true } },
+      {
+        id: '2',
+        name: 'configure_compiler_settings',
+        args: { compiler: 'lualatex' },
+        result: { success: true },
+      },
       fakeT
     )
     expect(summary2.action).to.equal('Configured project settings')
@@ -153,7 +168,12 @@ describe('summarise with settings tools', function () {
 
   it('summarises get_editor_settings', function () {
     const summary = summarise(
-      { id: '1', name: 'get_editor_settings', args: {}, result: { theme: 'github' } },
+      {
+        id: '1',
+        name: 'get_editor_settings',
+        args: {},
+        result: { theme: 'github' },
+      },
       fakeT
     )
     expect(summary.action).to.equal('Checked editor settings')
@@ -161,13 +181,23 @@ describe('summarise with settings tools', function () {
 
   it('summarises configure_editor_settings and configure_appearance_settings', function () {
     const summary1 = summarise(
-      { id: '1', name: 'configure_editor_settings', args: { fontSize: 14 }, result: { success: true } },
+      {
+        id: '1',
+        name: 'configure_editor_settings',
+        args: { fontSize: 14 },
+        result: { success: true },
+      },
       fakeT
     )
     expect(summary1.action).to.equal('Configured editor settings')
 
     const summary2 = summarise(
-      { id: '2', name: 'configure_appearance_settings', args: { theme: 'dark' }, result: { success: true } },
+      {
+        id: '2',
+        name: 'configure_appearance_settings',
+        args: { theme: 'dark' },
+        result: { success: true },
+      },
       fakeT
     )
     expect(summary2.action).to.equal('Configured editor settings')
@@ -175,7 +205,12 @@ describe('summarise with settings tools', function () {
 
   it('summarises list_available_settings', function () {
     const summary = summarise(
-      { id: '1', name: 'list_available_settings', args: {}, result: { settings: [] } },
+      {
+        id: '1',
+        name: 'list_available_settings',
+        args: {},
+        result: { settings: [] },
+      },
       fakeT
     )
     expect(summary.action).to.equal('Checked available settings')
@@ -183,7 +218,13 @@ describe('summarise with settings tools', function () {
 
   it('summarises failed settings tools', function () {
     const summary = summarise(
-      { id: '1', name: 'configure_project_settings', args: {}, result: { error: 'denied' }, isError: true },
+      {
+        id: '1',
+        name: 'configure_project_settings',
+        args: {},
+        result: { error: 'denied' },
+        isError: true,
+      },
       fakeT
     )
     expect(summary.action).to.equal('Configured project settings (failed)')

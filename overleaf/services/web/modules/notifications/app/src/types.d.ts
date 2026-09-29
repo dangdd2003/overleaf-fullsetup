@@ -14,7 +14,6 @@ export interface NotificationPreferencesSchema {
   trackChangesRejectedOnAuthoredChange?: boolean
 }
 
-export interface GlobalNotificationPreferencesSchema
-  extends NotificationPreferencesSchema {
+export interface GlobalNotificationPreferencesSchema extends NotificationPreferencesSchema {
   muteAllNotifications?: boolean
 }

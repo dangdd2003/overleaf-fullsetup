@@ -2,7 +2,10 @@ import logger from '@overleaf/logger'
 import Settings from '@overleaf/settings'
 import './ModuleSettings.mjs'
 import { createProviderClient, ProviderError } from './AiAssistProviders.mjs'
-import { normalizeWebSearchSettings, testWebSearch } from './AiAssistWebTools.mjs'
+import {
+  normalizeWebSearchSettings,
+  testWebSearch,
+} from './AiAssistWebTools.mjs'
 
 /**
  * Every request to an LLM provider leaves from this server, never from the
@@ -13,7 +16,8 @@ import { normalizeWebSearchSettings, testWebSearch } from './AiAssistWebTools.mj
 
 function errorPayload(err) {
   return {
-    code: err?.code && typeof err.code === 'string' ? err.code : 'providerError',
+    code:
+      err?.code && typeof err.code === 'string' ? err.code : 'providerError',
     message: err?.message || 'The provider request failed.',
     ...(err?.hint ? { hint: err.hint } : {}),
   }
@@ -33,8 +37,15 @@ function httpStatusFor(err) {
 
 function readProviderSettings(req) {
   const providerSettings = req.body?.providerSettings
-  if (!providerSettings || typeof providerSettings !== 'object' || !providerSettings.type) {
-    throw new ProviderError('Missing providerSettings', { code: 'invalidProviderSettings', status: 400 })
+  if (
+    !providerSettings ||
+    typeof providerSettings !== 'object' ||
+    !providerSettings.type
+  ) {
+    throw new ProviderError('Missing providerSettings', {
+      code: 'invalidProviderSettings',
+      status: 400,
+    })
   }
   return providerSettings
 }
@@ -49,7 +60,10 @@ function abortOnDisconnect(req, res) {
 }
 
 export class AiAssistProviderController {
-  constructor({ clientFactory = createProviderClient, webSearchTester = testWebSearch } = {}) {
+  constructor({
+    clientFactory = createProviderClient,
+    webSearchTester = testWebSearch,
+  } = {}) {
     this.clientFactory = clientFactory
     this.webSearchTester = webSearchTester
   }
@@ -58,9 +72,22 @@ export class AiAssistProviderController {
   testWebSearch = async (req, res) => {
     let settings
     try {
-      settings = normalizeWebSearchSettings(req.body?.webSearchSettings)
+      const clientSettings = req.body?.webSearchSettings
+      if (
+        clientSettings?.sourceMode === 'server' &&
+        Settings.aiAssist?.serverWebSearch?.enabled
+      ) {
+        settings = Settings.aiAssist.serverWebSearch
+      } else if (clientSettings?.sourceMode === 'server') {
+        throw new ProviderError('Server web search is not enabled.', {
+          code: 'serverWebSearchDisabled',
+          status: 400,
+        })
+      } else {
+        settings = normalizeWebSearchSettings(clientSettings)
+      }
       if (!settings) {
-        throw new ProviderError('Missing webSearchSettings', {
+        throw new ProviderError('No web search providers are configured.', {
           code: 'invalidWebSearchSettings',
           status: 400,
         })
@@ -70,11 +97,16 @@ export class AiAssistProviderController {
     }
     const controller = abortOnDisconnect(req, res)
     try {
-      const outcome = await this.webSearchTester(settings, { signal: controller.signal })
+      const outcome = await this.webSearchTester(settings, {
+        signal: controller.signal,
+      })
       res.json(outcome)
     } catch (err) {
       if (controller.signal.aborted) return
-      logger.debug({ err, type: settings.type }, '[AiAssist] web search test failed')
+      logger.debug(
+        { err, type: settings.type },
+        '[AiAssist] web search test failed'
+      )
       res.status(httpStatusFor(err)).json({ error: errorPayload(err) })
     }
   }
@@ -93,7 +125,10 @@ export class AiAssistProviderController {
       res.json({ models })
     } catch (err) {
       if (controller.signal.aborted) return
-      logger.debug({ err, type: providerSettings.type }, '[AiAssist] listing models failed')
+      logger.debug(
+        { err, type: providerSettings.type },
+        '[AiAssist] listing models failed'
+      )
       res.status(httpStatusFor(err)).json({ error: errorPayload(err) })
     }
   }
@@ -121,7 +156,10 @@ export class AiAssistProviderController {
       res.json({ latencyMs: Date.now() - startedAt })
     } catch (err) {
       if (controller.signal.aborted) return
-      logger.debug({ err, type: providerSettings.type }, '[AiAssist] provider test failed')
+      logger.debug(
+        { err, type: providerSettings.type },
+        '[AiAssist] provider test failed'
+      )
       res.status(httpStatusFor(err)).json({ error: errorPayload(err) })
     }
   }
@@ -138,7 +176,11 @@ export class AiAssistProviderController {
       return res.status(400).json({ error: errorPayload(err) })
     }
     const request = req.body?.request
-    if (!request || typeof request !== 'object' || !Array.isArray(request.messages)) {
+    if (
+      !request ||
+      typeof request !== 'object' ||
+      !Array.isArray(request.messages)
+    ) {
       return res.status(400).json({
         error: { code: 'invalidRequest', message: 'Missing chat request' },
       })
@@ -146,7 +188,10 @@ export class AiAssistProviderController {
     const maxBytes = Settings.aiAssist?.maxTranscriptBytes ?? 5000000
     if (Buffer.byteLength(JSON.stringify(request.messages)) > maxBytes) {
       return res.status(400).json({
-        error: { code: 'contextExhausted', message: 'Conversation is too large to send' },
+        error: {
+          code: 'contextExhausted',
+          message: 'Conversation is too large to send',
+        },
       })
     }
 
@@ -173,7 +218,10 @@ export class AiAssistProviderController {
         system: typeof request.system === 'string' ? request.system : '',
         messages: request.messages,
         maxTokens: request.maxTokens,
-        contextWindow: Number(request.contextWindow) > 0 ? Number(request.contextWindow) : undefined,
+        contextWindow:
+          Number(request.contextWindow) > 0
+            ? Number(request.contextWindow)
+            : undefined,
         tools: Array.isArray(request.tools) ? request.tools : [],
         cacheHints: request.cacheHints,
         signal: controller.signal,
@@ -183,7 +231,10 @@ export class AiAssistProviderController {
       write({ type: 'done' })
     } catch (err) {
       if (!controller.signal.aborted) {
-        logger.debug({ err, type: providerSettings.type }, '[AiAssist] provider chat failed')
+        logger.debug(
+          { err, type: providerSettings.type },
+          '[AiAssist] provider chat failed'
+        )
         write({ type: 'error', error: errorPayload(err) })
       }
     } finally {

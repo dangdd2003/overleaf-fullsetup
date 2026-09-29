@@ -36,17 +36,17 @@ export const getReferencesTool: AgentTool = {
   ) {
     const index = await handle.index()
     const refs = index.references
-    const pick = {
-      labels: { labels: refs.labels, duplicateLabels: refs.duplicateLabels },
-      refs: { refs: refs.refs },
-      citations: { citations: refs.citations, bibKeys: refs.bibKeys },
-      all: refs,
-    }[kind] ?? refs
+    const pick =
+      {
+        labels: { labels: refs.labels, duplicateLabels: refs.duplicateLabels },
+        refs: { refs: refs.refs },
+        citations: { citations: refs.citations, bibKeys: refs.bibKeys },
+        all: refs,
+      }[kind] ?? refs
 
     if (!unresolvedOnly) return pick
 
-    const filterUnresolved = (uses: any[]) =>
-      uses.filter(use => !use.resolved)
+    const filterUnresolved = (uses: any[]) => uses.filter(use => !use.resolved)
     return {
       ...('refs' in pick ? { refs: filterUnresolved(pick.refs as any[]) } : {}),
       ...('citations' in pick
@@ -64,25 +64,35 @@ export const getReferencesTool: AgentTool = {
 
     const lines: string[] = []
     if (result.labels) {
-      lines.push(...result.labels.map((l: any) => `label ${l.key}  ${l.path}:${l.line}`))
-      lines.push(...(result.duplicateLabels ?? []).map((k: string) => `DUPLICATE label ${k}`))
+      lines.push(
+        ...result.labels.map((l: any) => `label ${l.key}  ${l.path}:${l.line}`)
+      )
+      lines.push(
+        ...(result.duplicateLabels ?? []).map(
+          (k: string) => `DUPLICATE label ${k}`
+        )
+      )
     }
     if (result.refs) {
       lines.push(
         ...result.refs.map(
-          (r: any) => `${r.command} ${r.key}  ${r.path}:${r.line}  ${r.resolved ? 'ok' : 'UNRESOLVED'}`
+          (r: any) =>
+            `${r.command} ${r.key}  ${r.path}:${r.line}  ${r.resolved ? 'ok' : 'UNRESOLVED'}`
         )
       )
     }
     if (result.citations) {
       lines.push(
         ...result.citations.map(
-          (c: any) => `${c.command} ${c.key}  ${c.path}:${c.line}  ${c.resolved ? 'ok' : 'MISSING'}`
+          (c: any) =>
+            `${c.command} ${c.key}  ${c.path}:${c.line}  ${c.resolved ? 'ok' : 'MISSING'}`
         )
       )
     }
     if (result.bibKeys) {
-      lines.push(...result.bibKeys.map((b: any) => `bib ${b.key}  ${b.path}:${b.line}`))
+      lines.push(
+        ...result.bibKeys.map((b: any) => `bib ${b.key}  ${b.path}:${b.line}`)
+      )
     }
     return lines.length > 0
       ? lines.join('\n')

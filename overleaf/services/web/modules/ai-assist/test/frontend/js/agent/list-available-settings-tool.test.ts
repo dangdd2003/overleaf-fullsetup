@@ -22,7 +22,11 @@ describe('list_available_settings tool', function () {
       availableSettings: {
         compilers: ['pdflatex', 'latex', 'xelatex', 'lualatex'],
         imageNames: [
-          { imageName: 'texlive-2024.1', imageDesc: 'TeX Live 2024', default: true },
+          {
+            imageName: 'texlive-2024.1',
+            imageDesc: 'TeX Live 2024',
+            default: true,
+          },
           { imageName: 'texlive-2023.1', imageDesc: 'TeX Live 2023' },
         ],
         spellCheckLanguages: [
@@ -53,15 +57,24 @@ describe('list_available_settings tool', function () {
     expect(res.options.imageNames).to.have.lengthOf(2)
     expect(res.options.editorModes).to.include('vim')
     expect(res.options.overallThemes).to.include('dark')
-    expect(res.options.editorThemes).to.deep.include({ name: 'dracula', dark: true })
+    expect(res.options.editorThemes).to.deep.include({
+      name: 'dracula',
+      dark: true,
+    })
 
-    expect(calls.filter(c => c.name === 'listAvailableSettings')).to.have.lengthOf(1)
+    expect(
+      calls.filter(c => c.name === 'listAvailableSettings')
+    ).to.have.lengthOf(1)
 
     const rendered = listAvailableSettingsTool.render?.(res)
     expect(rendered).to.include('Compilers: pdflatex, latex, xelatex, lualatex')
-    expect(rendered).to.include('TeX Live Versions: texlive-2024.1, texlive-2023.1')
+    expect(rendered).to.include(
+      'TeX Live Versions: texlive-2024.1, texlive-2023.1'
+    )
     expect(rendered).to.include('Keybinding Modes: none, vim, emacs')
     expect(rendered).to.include('Editor Themes: cobalt, dracula, monokai')
-    expect(rendered).to.include('Code Fonts: monaco (Monaco / Menlo / Consolas), lucida (Lucida / Source Code Pro)')
+    expect(rendered).to.include(
+      'Code Fonts: monaco (Monaco / Menlo / Consolas), lucida (Lucida / Source Code Pro)'
+    )
   })
 })

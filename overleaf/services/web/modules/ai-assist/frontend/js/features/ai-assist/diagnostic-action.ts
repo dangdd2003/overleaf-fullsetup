@@ -1,6 +1,7 @@
 import getMeta from '@/utils/meta'
 import type { DiagnosticAction } from '@/features/source-editor/extensions/annotations'
 import { isFixableLogEntry } from './log-entry-levels'
+import { AiAssistant } from './assistant'
 import '../../../stylesheets/ai-assist.scss'
 
 const SPARKLE_PATH =
@@ -42,10 +43,18 @@ const suggestFixDiagnosticAction: DiagnosticAction = diagnostic => {
   // entries also reach the editor as 'warning'.
   if (!enabled || !compile || !id || !isFixableLogEntry(id)) return null
 
+  const hasProvider = Boolean(AiAssistant.fromStoredSettings())
+
   const button = document.createElement('button')
   button.type = 'button'
-  button.className = 'btn btn-primary btn-sm ai-diagnostic-suggest-fix'
+  button.className = `btn btn-primary btn-sm ai-diagnostic-suggest-fix ${!hasProvider ? 'disabled is-disabled' : ''}`
   button.setAttribute('data-action', 'diagnostic-suggest-fix')
+  if (!hasProvider) {
+    button.disabled = true
+    button.setAttribute('aria-disabled', 'true')
+    button.title =
+      'Configure an AI provider in Account Settings to suggest fixes'
+  }
 
   const svgNS = 'http://www.w3.org/2000/svg'
   const svg = document.createElementNS(svgNS, 'svg')
@@ -62,6 +71,9 @@ const suggestFixDiagnosticAction: DiagnosticAction = diagnostic => {
 
   button.addEventListener('click', event => {
     event.preventDefault()
+    if (!Boolean(AiAssistant.fromStoredSettings())) {
+      return
+    }
     // Deliberately not passing `suggestFix: true`: the native handler gates
     // that on hosted AI usage quota and would show the paywall in CE.
     window.dispatchEvent(

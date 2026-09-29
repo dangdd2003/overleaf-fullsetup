@@ -1,43 +1,70 @@
 import { FC, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Globe } from '@phosphor-icons/react'
 import { ToolCallRecord } from '../../agent/agent-messages'
 import { cleanStoredResult } from '../../agent/conversation-store'
 import { useOpenFileInEditor } from '../../hooks/use-open-file'
 import DiffView from './diff-view'
 import CodeView from './code-view'
-import { faviconUrl, hostOf } from '../../agent/web-sources'
+import { MarkdownContent } from './markdown-content'
+import { hostOf } from '../../agent/web-sources'
+import { SiteIcon } from './site-icon'
+import { CopyToClipboard } from '@/shared/components/copy-to-clipboard'
 
-export const WEB_TOOLS = new Set(['web_search', 'web_fetch'])
+export { SiteIcon }
 
-/**
- * The site's own favicon, found by the server (most sites name it only in
- * their home page's HTML) and served from Overleaf's origin, so no
- * third-party icon service learns what the agent looked up. Sites without
- * any icon get a globe.
- */
-export function SiteIcon({ url }: { url: string }) {
-  const [failed, setFailed] = useState(false)
-  const src = faviconUrl(url)
-  if (failed || !src) {
-    return (
-      <span className="ai-assist-web-favicon is-fallback" aria-hidden="true">
-        <Globe size={12} />
-      </span>
-    )
-  }
+/** The file an edit touched, as Claude Code shows it above the diff. */
+function DiffFileHeader({
+  call,
+  line,
+  isRejected,
+  isCancelled,
+}: {
+  call: ToolCallRecord
+  line: number
+  isRejected: boolean
+  isCancelled: boolean
+}) {
+  const { t } = useTranslation()
+  const openFile = useOpenFileInEditor()
+  const path: string = (call.args as any)?.path ?? ''
+
   return (
-    <img
-      className="ai-assist-web-favicon"
-      src={src}
-      alt=""
-      width={16}
-      height={16}
-      loading="lazy"
-      onError={() => setFailed(true)}
-    />
+    <div className="ai-assist-tool-detail-header">
+      <span
+        role="button"
+        tabIndex={0}
+        className="ai-assist-tool-detail-path"
+        title={t('ai_assist_open_file', {
+          path,
+          defaultValue: `Open ${path}`,
+        })}
+        onClick={() => openFile(path, line)}
+        onKeyDown={e => e.key === 'Enter' && openFile(path, line)}
+      >
+        {path}
+      </span>
+      {isRejected && (
+        <span className="ai-assist-tool-detail-badge rejected">
+          {t('ai_assist_rejected_badge', 'Rejected')}
+        </span>
+      )}
+      {isCancelled && (
+        <span className="ai-assist-tool-detail-badge cancelled">
+          {t('ai_assist_cancelled_badge', 'Cancelled')}
+        </span>
+      )}
+      {path && (
+        <CopyToClipboard
+          content={path}
+          tooltipId={`ai-assist-copy-path-${call.id}`}
+          unfilled
+        />
+      )}
+    </div>
   )
 }
+
+export const WEB_TOOLS = new Set(['web_search', 'web_fetch'])
 
 /**
  * One web page as a row, the way Claude.ai lists search results: the site's
@@ -75,10 +102,13 @@ function WebPageRow({
 function webErrorText(error: string, url?: string) {
   let text = error
   if (url) text = text.split(url).join('The page')
-  return text.replace(/\s+(Its search snippet|Read another result)[\s\S]*$/, '').trim()
+  return text
+    .replace(/\s+(Its search snippet|Read another result)[\s\S]*$/, '')
+    .trim()
 }
 
 function WebToolError({ call, result }: { call: ToolCallRecord; result: any }) {
+  const { t } = useTranslation()
   const args = (call.args ?? {}) as any
   const url = typeof result?.url === 'string' ? result.url : args.url
   const message = webErrorText(
@@ -91,12 +121,148 @@ function WebToolError({ call, result }: { call: ToolCallRecord; result: any }) {
   )
   return (
     <div className="ai-assist-web-detail">
-      {call.name === 'web_fetch' && typeof url === 'string' && url && (
+      {call.name === 'web_search' && typeof url === 'string' && url && (
         <WebPageRow url={url} title={result?.title} />
       )}
-      <div className="ai-assist-web-note is-error">{message}</div>
+      {call.name === 'web_fetch' && (
+        <div className="ai-assist-web-fetch-header">
+          {url ? (
+            <a
+              className="ai-assist-web-fetch-url"
+              href={url}
+              target="_blank"
+              rel="noopener noreferrer"
+              title={url}
+            >
+              {url}
+            </a>
+          ) : (
+            <span className="ai-assist-web-fetch-url is-missing">
+              {result?.title || t('ai_assist_web_fetch_no_url', 'Web page')}
+            </span>
+          )}
+        </div>
+      )}
+      <div className="ai-assist-tool-detail-error">
+        <span className="ai-assist-tool-detail-badge error">Error</span>
+        <pre className="ai-assist-tool-detail-text">{message}</pre>
+      </div>
     </div>
   )
+}
+
+/**
+ * One compile error or warning, collapsed to its title — location and
+ * message on a single line. Clicking the title drops down the log excerpt.
+ */
+function CompileLogEntry({
+  entry,
+  level,
+  openFile,
+}: {
+  entry: any
+  level: 'error' | 'warning'
+  openFile: (path: string, line?: number) => void
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const hasExcerpt = Boolean(entry.excerpt)
+
+  return (
+    <div className={`ai-assist-log-entry ${level}`}>
+      <div className="ai-assist-log-title">
+        <span
+          role="button"
+          tabIndex={0}
+          className={entry.file ? 'ai-assist-file-link' : 'ai-assist-log-loc'}
+          onClick={() => {
+            if (entry.file) openFile(entry.file, entry.line)
+          }}
+          onKeyDown={e => {
+            if (e.key === 'Enter' && entry.file)
+              openFile(entry.file, entry.line)
+          }}
+        >
+          {entry.file
+            ? `${entry.file}:${entry.line ?? '?'}`
+            : level === 'error'
+              ? 'Error'
+              : 'Warning'}
+        </span>
+        {hasExcerpt ? (
+          <button
+            type="button"
+            className="ai-assist-log-toggle"
+            aria-expanded={expanded}
+            onClick={() => setExpanded(open => !open)}
+          >
+            <span className="ai-assist-log-msg">{entry.message}</span>
+            <svg
+              className={`ai-assist-tool-call-chevron ${expanded ? 'is-expanded' : ''}`}
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 16 16"
+              width="13"
+              height="13"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <polyline points="6 4 10 8 6 12" />
+            </svg>
+          </button>
+        ) : (
+          <span className="ai-assist-log-msg">{entry.message}</span>
+        )}
+      </div>
+      {hasExcerpt && expanded && (
+        <pre className="ai-assist-log-excerpt">{entry.excerpt}</pre>
+      )}
+    </div>
+  )
+}
+
+const VIA_NOTES: Record<string, string> = {
+  browser: 'Read via browser',
+  ollama: 'Read via Ollama',
+  websearchapi: 'Read via WebSearchAPI.ai',
+  tavily: 'Read via Tavily',
+  firecrawl: 'Read via Firecrawl',
+  firecrawlSelfHosted: 'Read via Firecrawl',
+  jina: 'Read via Jina Reader',
+  exa: 'Read via Exa',
+}
+
+const ARCHIVE_LABELS: Record<string, string> = {
+  wayback: 'Internet Archive',
+  'archive.today': 'archive.today',
+}
+
+/** The notes line under a fetched page: which part, when, and how it was read. */
+export function webFetchNotes(result: any): string[] {
+  if (!result || typeof result !== 'object') return []
+  const notes: string[] = []
+  if (result.totalPages > 1) {
+    notes.push(`Page ${result.page ?? 1} of ${result.totalPages}`)
+  }
+  if (result.published) {
+    notes.push(`Published ${result.published}`)
+  }
+  if (result.archived || result.archiveUrl) {
+    const archive = ARCHIVE_LABELS[result.via] ?? 'Internet Archive'
+    notes.push(
+      result.archived
+        ? `Read from the ${archive} copy of ${result.archived}`
+        : `Read from the ${archive} copy`
+    )
+  } else if (VIA_NOTES[result.via]) {
+    notes.push(VIA_NOTES[result.via])
+  }
+  if (result.partial) {
+    notes.push('Only part of this page could be read')
+  }
+  return notes
 }
 
 export const ToolCallDetailView: FC<{ call: ToolCallRecord }> = ({ call }) => {
@@ -130,16 +296,16 @@ export const ToolCallDetailView: FC<{ call: ToolCallRecord }> = ({ call }) => {
     const rawLines = Array.isArray(result?.lines)
       ? result.lines
       : typeof result?.content === 'string'
-      ? result.content.split('\n')
-      : null
+        ? result.content.split('\n')
+        : null
 
     if (rawLines && rawLines.length > 0) {
       const startLine =
         typeof result?.from === 'number'
           ? result.from
           : typeof args?.from === 'number'
-          ? args.from
-          : 1
+            ? args.from
+            : 1
       return (
         <div className="ai-assist-tool-detail-code">
           <CodeView
@@ -149,7 +315,8 @@ export const ToolCallDetailView: FC<{ call: ToolCallRecord }> = ({ call }) => {
           />
           {result?.truncated && (
             <div className="ai-assist-tool-detail-note">
-              (lines {result.from ?? 1}-{result.to ?? ''} of {result.totalLines ?? ''})
+              (lines {result.from ?? 1}-{result.to ?? ''} of{' '}
+              {result.totalLines ?? ''})
             </div>
           )}
         </div>
@@ -166,7 +333,9 @@ export const ToolCallDetailView: FC<{ call: ToolCallRecord }> = ({ call }) => {
               tabIndex={0}
               className="ai-assist-file-link"
               onClick={() => openFile(args.path, args.from)}
-              onKeyDown={e => e.key === 'Enter' && openFile(args.path, args.from)}
+              onKeyDown={e =>
+                e.key === 'Enter' && openFile(args.path, args.from)
+              }
             >
               {args.path}
             </span>{' '}
@@ -188,41 +357,26 @@ export const ToolCallDetailView: FC<{ call: ToolCallRecord }> = ({ call }) => {
 
     if (oldText || newText) {
       return (
-        <div className={`ai-assist-tool-detail-diff ${isRejected ? 'is-rejected' : ''} ${isCancelled ? 'is-cancelled' : ''}`}>
-          <div className="ai-assist-tool-detail-header">
-            <span
-              role="button"
-              tabIndex={0}
-              className="ai-assist-file-link"
-              title={t('ai_assist_open_file', {
-                path: args.path,
-                defaultValue: `Open ${args.path}`,
-              })}
-              onClick={() => openFile(args.path, startLine)}
-              onKeyDown={e => e.key === 'Enter' && openFile(args.path, startLine)}
-            >
-              {args.path}{startLine ? `:${startLine}` : ''}
-            </span>
-            {isRejected && (
-              <span className="ai-assist-tool-detail-badge rejected">
-                {t('ai_assist_rejected_badge', 'Rejected')}
-              </span>
-            )}
-            {isCancelled && (
-              <span className="ai-assist-tool-detail-badge cancelled">
-                {t('ai_assist_cancelled_badge', 'Cancelled')}
-              </span>
-            )}
-          </div>
+        <div
+          className={`ai-assist-tool-detail-diff ${isRejected ? 'is-rejected' : ''} ${isCancelled ? 'is-cancelled' : ''}`}
+        >
+          <DiffFileHeader
+            call={call}
+            line={startLine}
+            isRejected={isRejected}
+            isCancelled={isCancelled}
+          />
           <DiffView
             oldText={oldText}
             newText={newText}
             startLine={startLine}
+            path={args.path}
             onLineClick={line => args.path && openFile(args.path, line)}
           />
           {result?.note && (
             <div className="ai-assist-tool-detail-note ai-assist-tool-detail-rejection">
-              <strong>{t('ai_assist_user_reason', 'User note:')}</strong> {result.note}
+              <strong>{t('ai_assist_user_reason', 'User note:')}</strong>{' '}
+              {result.note}
             </div>
           )}
           {result?.message && (
@@ -239,41 +393,26 @@ export const ToolCallDetailView: FC<{ call: ToolCallRecord }> = ({ call }) => {
     const isRejected = result?.status === 'rejected'
     const isCancelled = result?.status === 'stopped'
     return (
-      <div className={`ai-assist-tool-detail-diff ${isRejected ? 'is-rejected' : ''} ${isCancelled ? 'is-cancelled' : ''}`}>
-        <div className="ai-assist-tool-detail-header">
-          <span
-            role="button"
-            tabIndex={0}
-            className="ai-assist-file-link"
-            title={t('ai_assist_open_file', {
-              path: args.path,
-              defaultValue: `Open ${args.path}`,
-            })}
-            onClick={() => openFile(args.path, 1)}
-            onKeyDown={e => e.key === 'Enter' && openFile(args.path, 1)}
-          >
-            {args.path}
-          </span>
-          {isRejected && (
-            <span className="ai-assist-tool-detail-badge rejected">
-              {t('ai_assist_rejected_badge', 'Rejected')}
-            </span>
-          )}
-          {isCancelled && (
-            <span className="ai-assist-tool-detail-badge cancelled">
-              {t('ai_assist_cancelled_badge', 'Cancelled')}
-            </span>
-          )}
-        </div>
+      <div
+        className={`ai-assist-tool-detail-diff ${isRejected ? 'is-rejected' : ''} ${isCancelled ? 'is-cancelled' : ''}`}
+      >
+        <DiffFileHeader
+          call={call}
+          line={1}
+          isRejected={isRejected}
+          isCancelled={isCancelled}
+        />
         <DiffView
           oldText=""
           newText={content}
           startLine={1}
+          path={args.path}
           onLineClick={line => args.path && openFile(args.path, line)}
         />
         {result?.note && (
           <div className="ai-assist-tool-detail-note ai-assist-tool-detail-rejection">
-            <strong>{t('ai_assist_user_reason', 'User note:')}</strong> {result.note}
+            <strong>{t('ai_assist_user_reason', 'User note:')}</strong>{' '}
+            {result.note}
           </div>
         )}
         {result?.message && (
@@ -288,8 +427,8 @@ export const ToolCallDetailView: FC<{ call: ToolCallRecord }> = ({ call }) => {
     const files: any[] = Array.isArray(result)
       ? result
       : Array.isArray(result?.files)
-      ? result.files
-      : []
+        ? result.files
+        : []
 
     if (files.length > 0) {
       return (
@@ -309,8 +448,8 @@ export const ToolCallDetailView: FC<{ call: ToolCallRecord }> = ({ call }) => {
                 {file.lines != null
                   ? `${file.lines} lines`
                   : file.size != null
-                  ? `${Math.max(1, Math.round(file.size / 1024))} KB`
-                  : file.type}
+                    ? `${Math.max(1, Math.round(file.size / 1024))} KB`
+                    : file.type}
               </span>
             </div>
           ))}
@@ -321,8 +460,12 @@ export const ToolCallDetailView: FC<{ call: ToolCallRecord }> = ({ call }) => {
 
   // 5. get_outline: clean section hierarchy with line numbers
   if (call.name === 'get_outline' || call.name === 'outline_project') {
-    const sections: any[] = Array.isArray(result?.sections) ? result.sections : []
-    const packages: string[] = Array.isArray(result?.packages) ? result.packages : []
+    const sections: any[] = Array.isArray(result?.sections)
+      ? result.sections
+      : []
+    const packages: string[] = Array.isArray(result?.packages)
+      ? result.packages
+      : []
 
     if (sections.length > 0 || packages.length > 0) {
       return (
@@ -336,7 +479,9 @@ export const ToolCallDetailView: FC<{ call: ToolCallRecord }> = ({ call }) => {
             <div
               key={idx}
               className="ai-assist-outline-section"
-              style={{ paddingLeft: `${Math.max(0, (sec.level ?? 1) - 1) * 12}px` }}
+              style={{
+                paddingLeft: `${Math.max(0, (sec.level ?? 1) - 1) * 12}px`,
+              }}
             >
               <span className="ai-assist-outline-line">Line {sec.line}:</span>
               <span
@@ -344,7 +489,9 @@ export const ToolCallDetailView: FC<{ call: ToolCallRecord }> = ({ call }) => {
                 tabIndex={0}
                 className="ai-assist-file-link"
                 onClick={() => openFile(sec.path, sec.line)}
-                onKeyDown={e => e.key === 'Enter' && openFile(sec.path, sec.line)}
+                onKeyDown={e =>
+                  e.key === 'Enter' && openFile(sec.path, sec.line)
+                }
               >
                 {sec.title}
               </span>
@@ -374,43 +521,20 @@ export const ToolCallDetailView: FC<{ call: ToolCallRecord }> = ({ call }) => {
       return (
         <div className="ai-assist-tool-detail-log">
           {errors.map((err: any, idx: number) => (
-            <div key={`err-${idx}`} className="ai-assist-log-entry error">
-              <span
-                role="button"
-                tabIndex={0}
-                className={err.file ? 'ai-assist-file-link' : 'ai-assist-log-loc'}
-                onClick={() => {
-                  if (err.file) openFile(err.file, err.line)
-                }}
-                onKeyDown={e => {
-                  if (e.key === 'Enter' && err.file) openFile(err.file, err.line)
-                }}
-              >
-                {err.file ? `${err.file}:${err.line ?? '?'}` : 'Error'}
-              </span>
-              <span className="ai-assist-log-msg">{err.message}</span>
-              {err.excerpt && (
-                <pre className="ai-assist-log-excerpt">{err.excerpt}</pre>
-              )}
-            </div>
+            <CompileLogEntry
+              key={`err-${idx}`}
+              entry={err}
+              level="error"
+              openFile={openFile}
+            />
           ))}
           {warnings.slice(0, 5).map((warn: any, idx: number) => (
-            <div key={`warn-${idx}`} className="ai-assist-log-entry warning">
-              <span
-                role="button"
-                tabIndex={0}
-                className={warn.file ? 'ai-assist-file-link' : 'ai-assist-log-loc'}
-                onClick={() => {
-                  if (warn.file) openFile(warn.file, warn.line)
-                }}
-                onKeyDown={e => {
-                  if (e.key === 'Enter' && warn.file) openFile(warn.file, warn.line)
-                }}
-              >
-                {warn.file ? `${warn.file}:${warn.line ?? '?'}` : 'Warning'}
-              </span>
-              <span className="ai-assist-log-msg">{warn.message}</span>
-            </div>
+            <CompileLogEntry
+              key={`warn-${idx}`}
+              entry={warn}
+              level="warning"
+              openFile={openFile}
+            />
           ))}
         </div>
       )
@@ -454,7 +578,9 @@ export const ToolCallDetailView: FC<{ call: ToolCallRecord }> = ({ call }) => {
                   tabIndex={0}
                   className="ai-assist-file-link"
                   onClick={() => openFile(hit.path, hit.line)}
-                  onKeyDown={e => e.key === 'Enter' && openFile(hit.path, hit.line)}
+                  onKeyDown={e =>
+                    e.key === 'Enter' && openFile(hit.path, hit.line)
+                  }
                 >
                   {hit.path}:{hit.line ?? '?'}
                 </span>
@@ -473,7 +599,10 @@ export const ToolCallDetailView: FC<{ call: ToolCallRecord }> = ({ call }) => {
   }
 
   // 8. get_references
-  if ((call.name === 'get_references' || call.name === 'list_references') && result) {
+  if (
+    (call.name === 'get_references' || call.name === 'list_references') &&
+    result
+  ) {
     return (
       <div className="ai-assist-tool-detail-refs">
         {result.summary && (
@@ -523,30 +652,85 @@ export const ToolCallDetailView: FC<{ call: ToolCallRecord }> = ({ call }) => {
   }
 
   // 10. web_fetch: the page read, and which part of it
-  if (call.name === 'web_fetch' && result?.url) {
-    const notes: string[] = []
-    if (typeof result.find === 'string') {
-      const count = result.totalMatches ?? 0
-      notes.push(
-        count === 0
-          ? `No passage mentions "${result.find}"`
-          : `${count} passage${count === 1 ? '' : 's'} mention "${result.find}"`
-      )
-    } else if (result.totalPages > 1) {
-      notes.push(`Page ${result.page ?? 1} of ${result.totalPages}`)
-    }
-    if (result.published) {
-      notes.push(`Published ${result.published}`)
-    }
-    if (result.archived) {
-      notes.push(`Read from the Internet Archive copy of ${result.archived}`)
-    }
+  if (call.name === 'web_fetch') {
+    const url =
+      (typeof result?.url === 'string'
+        ? result.url
+        : typeof args?.url === 'string'
+          ? args.url
+          : '') || ''
+    const notes = result ? webFetchNotes(result) : []
+    const hasMatches =
+      Array.isArray(result?.matches) && result.matches.length > 0
+    const hasContent =
+      typeof result?.content === 'string' && result.content.trim().length > 0
+    const hasText =
+      typeof result?.text === 'string' && result.text.trim().length > 0
+    const outputText = hasContent
+      ? result.content
+      : hasText
+        ? result.text
+        : typeof result === 'string'
+          ? result
+          : null
+
     return (
-      <div className="ai-assist-web-detail">
-        <WebPageRow url={result.url} title={result.title} />
-        {notes.length > 0 && (
-          <div className="ai-assist-web-note">{notes.join(' · ')}</div>
-        )}
+      <div className="ai-assist-web-fetch-detail">
+        <div className="ai-assist-web-fetch-header">
+          {url ? (
+            <a
+              className="ai-assist-web-fetch-url"
+              href={url}
+              target="_blank"
+              rel="noopener noreferrer"
+              title={url}
+            >
+              {url}
+            </a>
+          ) : (
+            <span className="ai-assist-web-fetch-url is-missing">
+              {result?.title || t('ai_assist_web_fetch_no_url', 'Web page')}
+            </span>
+          )}
+          {notes.length > 0 && (
+            <span
+              className="ai-assist-web-fetch-notes"
+              title={notes.join(' · ')}
+            >
+              · {notes.join(' · ')}
+            </span>
+          )}
+        </div>
+        <div className="ai-assist-web-fetch-box">
+          {hasMatches ? (
+            <div className="ai-assist-web-fetch-content">
+              {result.matches.map((match: any, idx: number) => (
+                <div key={idx} className="ai-assist-web-fetch-passage">
+                  {match.heading && (
+                    <div className="ai-assist-web-fetch-heading">
+                      {match.heading}
+                      {typeof match.page === 'number' && result?.totalPages > 1
+                        ? ` (page ${match.page})`
+                        : ''}
+                    </div>
+                  )}
+                  <MarkdownContent content={match.text || ''} baseUrl={url} />
+                </div>
+              ))}
+            </div>
+          ) : typeof result?.find === 'string' &&
+            (result?.totalMatches === 0 || !hasMatches) ? (
+            <div className="ai-assist-web-note">
+              No passages found mentioning &quot;{result.find}&quot;.
+            </div>
+          ) : outputText ? (
+            <div className="ai-assist-web-fetch-content">
+              <MarkdownContent content={String(outputText)} baseUrl={url} />
+            </div>
+          ) : (
+            <div className="ai-assist-web-note">No content available.</div>
+          )}
+        </div>
       </div>
     )
   }

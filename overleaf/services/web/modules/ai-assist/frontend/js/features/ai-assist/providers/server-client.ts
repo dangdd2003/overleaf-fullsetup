@@ -61,7 +61,12 @@ async function post(
 /** Runs one small search through the server, for the settings form. */
 export async function testWebSearch(
   webSearchSettings: WebSearchSettings
-): Promise<{ latencyMs: number; resultCount: number }> {
+): Promise<{
+  latencyMs: number
+  resultCount: number
+  activeEndpoints?: number
+  provider?: string
+}> {
   const response = await post('/ai-assist/web-search/test', {
     webSearchSettings,
   })

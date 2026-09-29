@@ -79,7 +79,8 @@ describe('requireBearerToken', function () {
       const next = sinon.stub()
 
       await middleware(req, res, next)
-      expect(client.get.calledOnceWith('olp_validtoken', '/projects')).to.be.true
+      expect(client.get.calledOnceWith('olp_validtoken', '/projects')).to.be
+        .true
       expect(next.calledOnce).to.be.true
 
       // Second request with same token should hit cache and NOT call client.get again
@@ -91,7 +92,9 @@ describe('requireBearerToken', function () {
 
     it('rejects an invalid token with 401', async function () {
       const client = {
-        get: sinon.stub().rejects(new OverleafApiError('unauthorized', 'invalid token', 401)),
+        get: sinon
+          .stub()
+          .rejects(new OverleafApiError('unauthorized', 'invalid token', 401)),
       }
       const middleware = createBearerAuthMiddleware(client)
       const req = { get: () => 'Bearer olp_badtoken' }
@@ -106,7 +109,11 @@ describe('requireBearerToken', function () {
 
     it('rejects a token without mcp scope with 403', async function () {
       const client = {
-        get: sinon.stub().rejects(new OverleafApiError('insufficient_scope', 'missing mcp scope', 403)),
+        get: sinon
+          .stub()
+          .rejects(
+            new OverleafApiError('insufficient_scope', 'missing mcp scope', 403)
+          ),
       }
       const middleware = createBearerAuthMiddleware(client)
       const req = { get: () => 'Bearer olp_gitonly' }
@@ -127,7 +134,8 @@ describe('requireBearerToken', function () {
       const next = sinon.stub()
 
       await middleware(req, res, next)
-      expect(client.get.calledOnceWith('olp_factory_token', '/projects')).to.be.true
+      expect(client.get.calledOnceWith('olp_factory_token', '/projects')).to.be
+        .true
       expect(next.calledOnce).to.be.true
     })
 
@@ -141,7 +149,8 @@ describe('requireBearerToken', function () {
       const next = sinon.stub()
 
       await requireBearerToken(req, res, next)
-      expect(client.get.calledOnceWith('olp_app_locals_token', '/projects')).to.be.true
+      expect(client.get.calledOnceWith('olp_app_locals_token', '/projects')).to
+        .be.true
       expect(next.calledOnce).to.be.true
 
       // Second request with same token should hit cache and NOT call client.get again
@@ -167,7 +176,8 @@ describe('requireBearerToken', function () {
       const next = sinon.stub()
 
       await middleware(req, res, next)
-      expect(jwtVerifier.verifyToken.calledOnceWith('aaaaa.bbbbb.ccccc')).to.be.true
+      expect(jwtVerifier.verifyToken.calledOnceWith('aaaaa.bbbbb.ccccc')).to.be
+        .true
       expect(client.get.called).to.be.false
       expect(next.calledOnce).to.be.true
       expect(req.auth.userId).to.equal('jwt_user_123')
@@ -196,7 +206,9 @@ describe('requireBearerToken', function () {
       expect(res.status.calledWith(401)).to.be.true
       expect(res.json.firstCall.args[0].code).to.equal('invalid_token')
       expect(res.setHeader.calledWith('WWW-Authenticate')).to.be.true
-      expect(res.setHeader.firstCall.args[1]).to.include('error="invalid_token"')
+      expect(res.setHeader.firstCall.args[1]).to.include(
+        'error="invalid_token"'
+      )
     })
   })
 
@@ -259,7 +271,9 @@ describe('requireBearerToken', function () {
 
       expect(globalThis.fetch.calledOnce).to.be.true
       const [calledUrl, calledOpts] = globalThis.fetch.firstCall.args
-      expect(calledUrl.href).to.equal('http://web:3000/.well-known/oauth-authorization-server')
+      expect(calledUrl.href).to.equal(
+        'http://web:3000/.well-known/oauth-authorization-server'
+      )
       expect(calledOpts.method).to.equal('GET')
       expect(res.status.calledWith(200)).to.be.true
       expect(res.send.calledOnce).to.be.true
@@ -269,7 +283,8 @@ describe('requireBearerToken', function () {
       globalThis.fetch = sinon.stub().resolves({
         status: 201,
         headers: new Headers({ 'content-type': 'application/json' }),
-        arrayBuffer: async () => Buffer.from(JSON.stringify({ client_id: '123' })),
+        arrayBuffer: async () =>
+          Buffer.from(JSON.stringify({ client_id: '123' })),
       })
 
       const req = {

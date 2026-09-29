@@ -19,10 +19,12 @@ describe('AiAssistRunController', function () {
     }
 
     mockStore = {
-      getRun: sinon.stub().resolves({ runId: 'run-1', projectId: 'p1', status: 'running' }),
-      getEvents: sinon.stub().resolves([
-        { seq: 1, event: { type: 'text', text: 'hi' } },
-      ]),
+      getRun: sinon
+        .stub()
+        .resolves({ runId: 'run-1', projectId: 'p1', status: 'running' }),
+      getEvents: sinon
+        .stub()
+        .resolves([{ seq: 1, event: { type: 'text', text: 'hi' } }]),
       addWatcher: sinon.stub().resolves(1),
       removeWatcher: sinon.stub().resolves(0),
     }
@@ -102,7 +104,11 @@ describe('AiAssistRunController', function () {
     })
 
     it('answers 409 for a finished run so the client can start a fresh one', async function () {
-      mockStore.getRun.resolves({ runId: 'run-1', projectId: 'p1', status: 'done' })
+      mockStore.getRun.resolves({
+        runId: 'run-1',
+        projectId: 'p1',
+        status: 'done',
+      })
       const res = reply()
       await controller.queueMessage(
         {
@@ -126,7 +132,10 @@ describe('AiAssistRunController', function () {
 
       const crossProject = reply()
       await controller.queueMessage(
-        { params: { Project_id: 'other', runId: 'run-1' }, body: { text: 'hi' } },
+        {
+          params: { Project_id: 'other', runId: 'run-1' },
+          body: { text: 'hi' },
+        },
         crossProject
       )
       expect(crossProject.statusCode).to.equal(403)
@@ -151,7 +160,8 @@ describe('AiAssistRunController', function () {
     const res = { json: sinon.stub(), status: sinon.stub().returnsThis() }
 
     await controller.approve(req, res)
-    expect(mockManager.approveEdit.calledWith('run-1', { accepted: true })).to.be.true
+    expect(mockManager.approveEdit.calledWith('run-1', { accepted: true })).to
+      .be.true
     expect(res.json.calledWith({ ok: true })).to.be.true
   })
 
@@ -161,7 +171,11 @@ describe('AiAssistRunController', function () {
       session: { user: { _id: 'user-1' } },
       body: {
         transcript: [{ role: 'user', content: 'test' }],
-        providerSettings: { type: 'openai', baseUrl: 'http://mongo:27017', apiKey: 'key' },
+        providerSettings: {
+          type: 'openai',
+          baseUrl: 'http://mongo:27017',
+          apiKey: 'key',
+        },
       },
     }
     const res = {
@@ -254,7 +268,8 @@ describe('AiAssistRunController', function () {
     }
 
     await controller.streamRun(req, res)
-    expect(fakeSubscriber.subscribe.calledWith('ai-assist:run:run-1:channel')).to.be.true
+    expect(fakeSubscriber.subscribe.calledWith('ai-assist:run:run-1:channel'))
+      .to.be.true
     expect(mockStore.addWatcher.calledWith('run-1')).to.be.true
     expect(mockStore.removeWatcher.called).to.be.false
 
@@ -266,9 +281,10 @@ describe('AiAssistRunController', function () {
   it('does not increment or decrement watcher count if request closes before subscribe resolves', async function () {
     let resolveSubscribe
     fakeSubscriber.subscribe = sinon.stub().callsFake(
-      () => new Promise(resolve => {
-        resolveSubscribe = () => resolve(fakeSubscriber.release)
-      })
+      () =>
+        new Promise(resolve => {
+          resolveSubscribe = () => resolve(fakeSubscriber.release)
+        })
     )
 
     let closeHandler
@@ -301,7 +317,11 @@ describe('AiAssistRunController', function () {
 
   it('forwards live pub/sub messages to the SSE response', async function () {
     mockStore.getEvents.resolves([])
-    mockStore.getRun.resolves({ runId: 'run-1', projectId: 'p1', status: 'running' })
+    mockStore.getRun.resolves({
+      runId: 'run-1',
+      projectId: 'p1',
+      status: 'running',
+    })
     const req = {
       params: { Project_id: 'p1', runId: 'run-1' },
       query: {},
@@ -319,7 +339,11 @@ describe('AiAssistRunController', function () {
     const listener = fakeSubscriber.listeners.get('ai-assist:run:run-1:channel')
     listener(JSON.stringify({ seq: 5, event: { type: 'text', text: 'hi' } }))
 
-    expect(res.write.calledWith(`data: ${JSON.stringify({ seq: 5, event: { type: 'text', text: 'hi' } })}\n\n`)).to.be.true
+    expect(
+      res.write.calledWith(
+        `data: ${JSON.stringify({ seq: 5, event: { type: 'text', text: 'hi' } })}\n\n`
+      )
+    ).to.be.true
   })
 
   it('accepts createRun with rich transcripts up to maxTranscriptBytes (e.g. 500KB)', async function () {
@@ -381,11 +405,14 @@ describe('AiAssistRunController', function () {
     await controller.streamRun(req, res)
 
     expect(res.setHeader.calledWith('X-Accel-Buffering', 'no')).to.be.true
-    expect(res.setHeader.calledWith('Cache-Control', 'no-cache, no-transform')).to.be.true
+    expect(res.setHeader.calledWith('Cache-Control', 'no-cache, no-transform'))
+      .to.be.true
   })
 
   it('writes SSE comment keep-alives while the stream is idle and stops after close', async function () {
-    const clock = sinon.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    const clock = sinon.useFakeTimers({
+      toFake: ['setInterval', 'clearInterval'],
+    })
     try {
       let closeHandler
       const req = {
@@ -427,7 +454,10 @@ describe('AiAssistRunController', function () {
         webSearchSettings,
       },
     })
-    const response = () => ({ json: sinon.stub(), status: sinon.stub().returnsThis() })
+    const response = () => ({
+      json: sinon.stub(),
+      status: sinon.stub().returnsThis(),
+    })
     let original
 
     beforeEach(function () {
@@ -440,8 +470,13 @@ describe('AiAssistRunController', function () {
 
     it('ignores them while the instance has web tools switched off', async function () {
       Settings.aiAssist.webToolsEnabled = false
-      await controller.createRun(request({ type: 'ollama', apiKey: 'k' }), response())
-      expect(mockManager.startRun.firstCall.args[0].webSearchSettings).to.equal(null)
+      await controller.createRun(
+        request({ type: 'ollama', apiKey: 'k' }),
+        response()
+      )
+      expect(mockManager.startRun.firstCall.args[0].webSearchSettings).to.equal(
+        null
+      )
     })
 
     it('validates them and hands them to the run when switched on', async function () {
@@ -450,19 +485,93 @@ describe('AiAssistRunController', function () {
         request({ type: 'searxng', baseUrl: 'searxng:8080/search' }),
         response()
       )
-      expect(mockManager.startRun.firstCall.args[0].webSearchSettings).to.deep.equal({
+      expect(
+        mockManager.startRun.firstCall.args[0].webSearchSettings
+      ).to.deep.equal({
         type: 'searxng',
         baseUrl: 'http://searxng:8080',
         cacheHours: 24,
         maxCachedSearches: 256,
         maxCachedPages: 64,
-        resultsPerSearch: 10,
       })
 
       const res = response()
-      await controller.createRun(request({ type: 'searxng', baseUrl: 'http://mongo:27017' }), res)
+      await controller.createRun(
+        request({ type: 'searxng', baseUrl: 'http://mongo:27017' }),
+        res
+      )
       expect(res.status.calledWith(400)).to.be.true
       expect(mockManager.startRun.calledOnce).to.be.true
+    })
+
+    it('resolves serverWebSearch when sourceMode is server', async function () {
+      Settings.aiAssist.webToolsEnabled = true
+      const origServer = Settings.aiAssist.serverWebSearch
+      Settings.aiAssist.serverWebSearch = {
+        enabled: true,
+        providers: {
+          searxng: {
+            enabled: true,
+            baseUrls: ['http://searxng.internal:8080'],
+          },
+        },
+        rotationStrategy: 'round-robin',
+      }
+      try {
+        await controller.createRun(
+          request({ sourceMode: 'server' }),
+          response()
+        )
+        expect(
+          mockManager.startRun.firstCall.args[0].webSearchSettings
+        ).to.deep.equal(Settings.aiAssist.serverWebSearch)
+      } finally {
+        Settings.aiAssist.serverWebSearch = origServer
+      }
+    })
+
+    it('sets webSearchSettings to null when sourceMode is disabled', async function () {
+      Settings.aiAssist.webToolsEnabled = true
+      const origServer = Settings.aiAssist.serverWebSearch
+      Settings.aiAssist.serverWebSearch = {
+        enabled: true,
+        providers: {
+          searxng: {
+            enabled: true,
+            baseUrls: ['http://searxng.internal:8080'],
+          },
+        },
+      }
+      try {
+        await controller.createRun(
+          request({ sourceMode: 'disabled' }),
+          response()
+        )
+        expect(
+          mockManager.startRun.firstCall.args[0].webSearchSettings
+        ).to.equal(null)
+      } finally {
+        Settings.aiAssist.serverWebSearch = origServer
+      }
+    })
+
+    it('gives the run web_fetch alone when no search is set up', async function () {
+      Settings.aiAssist.webToolsEnabled = true
+      const origServer = Settings.aiAssist.serverWebSearch
+      Settings.aiAssist.serverWebSearch = null
+      try {
+        await controller.createRun(request(undefined), response())
+        expect(
+          mockManager.startRun.firstCall.args[0].webSearchSettings
+        ).to.deep.equal({
+          providers: {},
+          cacheHours: 24,
+          maxCachedSearches: 256,
+          maxCachedPages: 64,
+        })
+      } finally {
+        Settings.aiAssist.serverWebSearch = origServer
+      }
     })
   })
 })

@@ -25,11 +25,18 @@ async function rpc(url, body, { token } = {}) {
     Accept: 'application/json, text/event-stream',
   }
   if (token) headers.Authorization = `Bearer ${token}`
-  const response = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) })
+  const response = await fetch(url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body),
+  })
   const text = await response.text()
   // The endpoint answers with a single SSE `message` event or a JSON body.
   const line = text.split('\n').find(l => l.startsWith('data: '))
-  return { status: response.status, body: line ? JSON.parse(line.slice(6)) : text }
+  return {
+    status: response.status,
+    body: line ? JSON.parse(line.slice(6)) : text,
+  }
 }
 
 describe('MCP HTTP transport', function () {
@@ -53,8 +60,12 @@ describe('MCP HTTP transport', function () {
           ok: false,
           status: 401,
           headers: { get: () => 'application/json' },
-          json: async () => ({ code: 'unauthorized', message: 'invalid token' }),
-          text: async () => JSON.stringify({ code: 'unauthorized', message: 'invalid token' }),
+          json: async () => ({
+            code: 'unauthorized',
+            message: 'invalid token',
+          }),
+          text: async () =>
+            JSON.stringify({ code: 'unauthorized', message: 'invalid token' }),
         }
       },
     })
@@ -156,7 +167,12 @@ describe('MCP HTTP transport', function () {
   it('calls a tool with a valid token', async function () {
     const { body } = await rpc(
       running.url,
-      { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'list_projects', arguments: {} } },
+      {
+        jsonrpc: '2.0',
+        id: 3,
+        method: 'tools/call',
+        params: { name: 'list_projects', arguments: {} },
+      },
       { token: 'olp_0123456789abcdef' }
     )
     expect(JSON.parse(body.result.content[0].text).projects).to.deep.equal([])

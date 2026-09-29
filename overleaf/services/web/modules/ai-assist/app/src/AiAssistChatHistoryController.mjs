@@ -32,7 +32,10 @@ export class AiAssistChatHistoryController {
     try {
       res.json({ chats: await this.store.listChats(ids.projectId, ids.userId) })
     } catch (err) {
-      logger.error({ err, projectId: ids.projectId }, '[AiAssist] list chats failed')
+      logger.error(
+        { err, projectId: ids.projectId },
+        '[AiAssist] list chats failed'
+      )
       res.status(500).json({ error: 'Failed to list chats' })
     }
   }
@@ -41,11 +44,18 @@ export class AiAssistChatHistoryController {
     const ids = this.#ids(req, res)
     if (!ids) return
     try {
-      const chat = await this.store.getChat(ids.projectId, ids.userId, ids.chatId)
+      const chat = await this.store.getChat(
+        ids.projectId,
+        ids.userId,
+        ids.chatId
+      )
       if (!chat) return res.status(404).json({ error: 'Chat not found' })
       res.json(chat)
     } catch (err) {
-      logger.error({ err, projectId: ids.projectId }, '[AiAssist] get chat failed')
+      logger.error(
+        { err, projectId: ids.projectId },
+        '[AiAssist] get chat failed'
+      )
       res.status(500).json({ error: 'Failed to load chat' })
     }
   }
@@ -62,7 +72,9 @@ export class AiAssistChatHistoryController {
     }
     const maxBytes = Settings.aiAssist?.maxTranscriptBytes ?? 5000000
     if (Buffer.byteLength(JSON.stringify(transcript)) > maxBytes) {
-      return res.status(413).json({ error: 'Conversation is too large to save' })
+      return res
+        .status(413)
+        .json({ error: 'Conversation is too large to save' })
     }
     try {
       res.json(
@@ -77,7 +89,10 @@ export class AiAssistChatHistoryController {
         )
       )
     } catch (err) {
-      logger.error({ err, projectId: ids.projectId }, '[AiAssist] save chat failed')
+      logger.error(
+        { err, projectId: ids.projectId },
+        '[AiAssist] save chat failed'
+      )
       res.status(500).json({ error: 'Failed to save chat' })
     }
   }
@@ -98,7 +113,10 @@ export class AiAssistChatHistoryController {
       )
       res.json(summary)
     } catch (err) {
-      logger.error({ err, projectId: ids.projectId }, '[AiAssist] rename chat failed')
+      logger.error(
+        { err, projectId: ids.projectId },
+        '[AiAssist] rename chat failed'
+      )
       res.status(500).json({ error: 'Failed to rename chat' })
     }
   }
@@ -111,14 +129,24 @@ export class AiAssistChatHistoryController {
       return res.status(400).json({ error: 'Missing providerSettings' })
     }
     try {
-      const client = this.clientFactory(providerSettings)
+      // A title is a few words; it runs at the provider's default effort
+      const client = this.clientFactory({
+        ...providerSettings,
+        reasoningEffort: undefined,
+        thinking: undefined,
+      })
       const title = await generateChatTitle({
         client,
         firstMessageText: prompt || '',
         assistantReplyText: assistantReply || '',
       })
       if (title && ids.chatId) {
-        await this.store.saveChatTitle(ids.projectId, ids.userId, ids.chatId, title)
+        await this.store.saveChatTitle(
+          ids.projectId,
+          ids.userId,
+          ids.chatId,
+          title
+        )
       }
       res.json({ title })
     } catch (err) {
@@ -137,7 +165,10 @@ export class AiAssistChatHistoryController {
       await this.store.deleteChat(ids.projectId, ids.userId, ids.chatId)
       res.sendStatus(204)
     } catch (err) {
-      logger.error({ err, projectId: ids.projectId }, '[AiAssist] delete chat failed')
+      logger.error(
+        { err, projectId: ids.projectId },
+        '[AiAssist] delete chat failed'
+      )
       res.status(500).json({ error: 'Failed to delete chat' })
     }
   }

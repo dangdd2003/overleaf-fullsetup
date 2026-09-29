@@ -1,8 +1,12 @@
+import { describe, it } from 'vitest'
 import { expect } from 'chai'
 import sinon from 'sinon'
 import { EventEmitter } from 'node:events'
 import { AiAssistProviderController } from '../../../app/src/AiAssistProviderController.mjs'
-import { createProviderClient, ProviderError } from '../../../app/src/AiAssistProviders.mjs'
+import {
+  createProviderClient,
+  ProviderError,
+} from '../../../app/src/AiAssistProviders.mjs'
 
 function fakeRes() {
   const res = new EventEmitter()
@@ -31,11 +35,19 @@ function fakeRes() {
   return res
 }
 
-const settings = { type: 'ollama', baseUrl: 'http://10.0.0.5:11434', model: 'qwen3:8b' }
+const settings = {
+  type: 'ollama',
+  baseUrl: 'http://10.0.0.5:11434',
+  model: 'qwen3:8b',
+}
 
 describe('AiAssistProviderController', function () {
   it('lists models through the server-side client', async function () {
-    const client = { listModels: sinon.stub().resolves([{ id: 'qwen3:8b', label: 'qwen3:8b' }]) }
+    const client = {
+      listModels: sinon
+        .stub()
+        .resolves([{ id: 'qwen3:8b', label: 'qwen3:8b' }]),
+    }
     const clientFactory = sinon.stub().returns(client)
     const controller = new AiAssistProviderController({ clientFactory })
     const res = fakeRes()
@@ -43,11 +55,15 @@ describe('AiAssistProviderController', function () {
     await controller.listModels({ body: { providerSettings: settings } }, res)
 
     expect(clientFactory.firstCall.args[0]).to.deep.equal(settings)
-    expect(res.body).to.deep.equal({ models: [{ id: 'qwen3:8b', label: 'qwen3:8b' }] })
+    expect(res.body).to.deep.equal({
+      models: [{ id: 'qwen3:8b', label: 'qwen3:8b' }],
+    })
   })
 
   it('rejects requests without provider settings', async function () {
-    const controller = new AiAssistProviderController({ clientFactory: sinon.stub() })
+    const controller = new AiAssistProviderController({
+      clientFactory: sinon.stub(),
+    })
     const res = fakeRes()
 
     await controller.listModels({ body: {} }, res)
@@ -57,23 +73,42 @@ describe('AiAssistProviderController', function () {
 
   it('returns upstream failures as 502 with the provider message', async function () {
     const client = {
-      listModels: sinon.stub().rejects(new ProviderError('bad key', { code: 'providerAuth', status: 401 })),
+      listModels: sinon
+        .stub()
+        .rejects(
+          new ProviderError('bad key', { code: 'providerAuth', status: 401 })
+        ),
     }
-    const controller = new AiAssistProviderController({ clientFactory: () => client })
+    const controller = new AiAssistProviderController({
+      clientFactory: () => client,
+    })
     const res = fakeRes()
 
     await controller.listModels({ body: { providerSettings: settings } }, res)
 
     expect(res.statusCode).to.equal(502)
-    expect(res.body.error).to.deep.equal({ code: 'providerAuth', message: 'bad key' })
+    expect(res.body.error).to.deep.equal({
+      code: 'providerAuth',
+      message: 'bad key',
+    })
   })
 
   it('refuses internal service URLs with 400', async function () {
-    const controller = new AiAssistProviderController({ clientFactory: createProviderClient })
+    const controller = new AiAssistProviderController({
+      clientFactory: createProviderClient,
+    })
     const res = fakeRes()
 
     await controller.test(
-      { body: { providerSettings: { type: 'openai', baseUrl: 'http://mongo:27017', model: 'x' } } },
+      {
+        body: {
+          providerSettings: {
+            type: 'openai',
+            baseUrl: 'http://mongo:27017',
+            model: 'x',
+          },
+        },
+      },
       res
     )
 
@@ -85,7 +120,9 @@ describe('AiAssistProviderController', function () {
     const streamChat = sinon.spy(async function* () {
       yield { type: 'text', text: 'ok' }
     })
-    const controller = new AiAssistProviderController({ clientFactory: () => ({ streamChat }) })
+    const controller = new AiAssistProviderController({
+      clientFactory: () => ({ streamChat }),
+    })
     const res = fakeRes()
 
     await controller.test({ body: { providerSettings: settings } }, res)
@@ -97,9 +134,16 @@ describe('AiAssistProviderController', function () {
   it('streams chat chunks as NDJSON and ends with done', async function () {
     const streamChat = sinon.spy(async function* () {
       yield { type: 'thinking', text: 'hmm' }
-      yield { type: 'tool_call', id: 'c1', name: 'read_file', args: { path: 'main.tex' } }
+      yield {
+        type: 'tool_call',
+        id: 'c1',
+        name: 'read_file',
+        args: { path: 'main.tex' },
+      }
     })
-    const controller = new AiAssistProviderController({ clientFactory: () => ({ streamChat }) })
+    const controller = new AiAssistProviderController({
+      clientFactory: () => ({ streamChat }),
+    })
     const res = fakeRes()
     const request = {
       system: 'fix it',
@@ -108,12 +152,23 @@ describe('AiAssistProviderController', function () {
       tools: [{ name: 'read_file', description: 'd', parameters: {} }],
     }
 
-    await controller.chat({ body: { providerSettings: settings, request } }, res)
+    await controller.chat(
+      { body: { providerSettings: settings, request } },
+      res
+    )
 
-    expect(streamChat.firstCall.args[0]).to.include({ system: 'fix it', maxTokens: 100 })
+    expect(streamChat.firstCall.args[0]).to.include({
+      system: 'fix it',
+      maxTokens: 100,
+    })
     expect(res.written.map(line => JSON.parse(line))).to.deep.equal([
       { type: 'thinking', text: 'hmm' },
-      { type: 'tool_call', id: 'c1', name: 'read_file', args: { path: 'main.tex' } },
+      {
+        type: 'tool_call',
+        id: 'c1',
+        name: 'read_file',
+        args: { path: 'main.tex' },
+      },
       { type: 'done' },
     ])
     expect(res.end.called).to.equal(true)
@@ -124,7 +179,9 @@ describe('AiAssistProviderController', function () {
       yield { type: 'text', text: 'partial' }
       yield { type: 'stop', reason: 'max_tokens' }
     })
-    const controller = new AiAssistProviderController({ clientFactory: () => ({ streamChat }) })
+    const controller = new AiAssistProviderController({
+      clientFactory: () => ({ streamChat }),
+    })
     const res = fakeRes()
     const request = {
       system: 'fix it',
@@ -133,7 +190,10 @@ describe('AiAssistProviderController', function () {
       contextWindow: 32768,
     }
 
-    await controller.chat({ body: { providerSettings: settings, request } }, res)
+    await controller.chat(
+      { body: { providerSettings: settings, request } },
+      res
+    )
 
     expect(streamChat.firstCall.args[0]).to.include({ contextWindow: 32768 })
     expect(res.written.map(line => JSON.parse(line))).to.deep.equal([
@@ -148,11 +208,18 @@ describe('AiAssistProviderController', function () {
       yield { type: 'text', text: 'par' }
       throw new ProviderError('Could not reach Ollama', { code: 'network' })
     }
-    const controller = new AiAssistProviderController({ clientFactory: () => ({ streamChat }) })
+    const controller = new AiAssistProviderController({
+      clientFactory: () => ({ streamChat }),
+    })
     const res = fakeRes()
 
     await controller.chat(
-      { body: { providerSettings: settings, request: { messages: [], maxTokens: 10 } } },
+      {
+        body: {
+          providerSettings: settings,
+          request: { messages: [], maxTokens: 10 },
+        },
+      },
       res
     )
 
@@ -171,11 +238,18 @@ describe('AiAssistProviderController', function () {
       await new Promise(resolve => signal.addEventListener('abort', resolve))
       throw new ProviderError('Request was cancelled', { code: 'aborted' })
     }
-    const controller = new AiAssistProviderController({ clientFactory: () => ({ streamChat }) })
+    const controller = new AiAssistProviderController({
+      clientFactory: () => ({ streamChat }),
+    })
     const res = fakeRes()
 
     const done = controller.chat(
-      { body: { providerSettings: settings, request: { messages: [], maxTokens: 10 } } },
+      {
+        body: {
+          providerSettings: settings,
+          request: { messages: [], maxTokens: 10 },
+        },
+      },
       res
     )
     await new Promise(resolve => setImmediate(resolve))
@@ -183,6 +257,104 @@ describe('AiAssistProviderController', function () {
     await done
 
     expect(seenSignal.aborted).to.equal(true)
-    expect(res.written.map(line => JSON.parse(line).type)).to.deep.equal(['text'])
+    expect(res.written.map(line => JSON.parse(line).type)).to.deep.equal([
+      'text',
+    ])
+  })
+
+  describe('testWebSearch', function () {
+    it('tests multi-provider web search settings successfully', async function () {
+      const webSearchTester = sinon.stub().resolves({
+        latencyMs: 85,
+        resultCount: 5,
+        activeEndpoints: 2,
+        provider: 'searxng',
+      })
+      const controller = new AiAssistProviderController({
+        webSearchTester,
+      })
+      const res = fakeRes()
+
+      await controller.testWebSearch(
+        {
+          body: {
+            webSearchSettings: {
+              providers: {
+                searxng: { enabled: true, baseUrls: ['http://searx:8080'] },
+              },
+            },
+          },
+        },
+        res
+      )
+
+      expect(res.body).to.deep.equal({
+        latencyMs: 85,
+        resultCount: 5,
+        activeEndpoints: 2,
+        provider: 'searxng',
+      })
+    })
+
+    it('tests Exa web search provider settings successfully in multi and single format', async function () {
+      const webSearchTester = sinon.stub().resolves({
+        latencyMs: 120,
+        resultCount: 3,
+        activeEndpoints: 1,
+        provider: 'exa',
+      })
+      const controller = new AiAssistProviderController({
+        webSearchTester,
+      })
+
+      const res1 = fakeRes()
+      await controller.testWebSearch(
+        {
+          body: {
+            webSearchSettings: {
+              providers: {
+                exa: { enabled: true, apiKeys: ['test-exa-key'] },
+              },
+            },
+          },
+        },
+        res1
+      )
+      expect(res1.body).to.deep.equal({
+        latencyMs: 120,
+        resultCount: 3,
+        activeEndpoints: 1,
+        provider: 'exa',
+      })
+
+      const res2 = fakeRes()
+      await controller.testWebSearch(
+        {
+          body: {
+            webSearchSettings: {
+              type: 'exa',
+              apiKey: 'test-exa-key',
+            },
+          },
+        },
+        res2
+      )
+      expect(res2.body).to.deep.equal({
+        latencyMs: 120,
+        resultCount: 3,
+        activeEndpoints: 1,
+        provider: 'exa',
+      })
+    })
+
+    it('rejects testWebSearch without webSearchSettings', async function () {
+      const controller = new AiAssistProviderController()
+      const res = fakeRes()
+
+      await controller.testWebSearch({ body: {} }, res)
+
+      expect(res.statusCode).to.equal(400)
+      expect(res.body.error.code).to.equal('invalidWebSearchSettings')
+    })
   })
 })

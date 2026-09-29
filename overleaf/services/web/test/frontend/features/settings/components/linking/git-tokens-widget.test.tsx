@@ -1,4 +1,10 @@
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  within,
+} from '@testing-library/react'
 import { expect } from 'chai'
 import sinon from 'sinon'
 import fetchMock from 'fetch-mock'
@@ -128,8 +134,8 @@ describe('<GitTokensWidget />', function () {
     fireEvent.click(screen.getByRole('button', { name: 'Generate token' }))
 
     await waitFor(() => {
-      expect(fetchMock.called('/user/personal-access-tokens', { method: 'POST' }))
-        .to.be.true
+      expect(fetchMock.callHistory.called('/user/personal-access-tokens')).to.be
+        .true
     })
     const call = fetchMock.callHistory
       ? fetchMock.callHistory.calls('/user/personal-access-tokens')
@@ -190,11 +196,9 @@ describe('<GitTokensWidget />', function () {
       ).to.exist
     })
 
-    fetchMock.get(
-      '/user/personal-access-tokens',
-      [],
-      { overwriteRoutes: true }
-    )
+    fetchMock.get('/user/personal-access-tokens', [], {
+      overwriteRoutes: true,
+    } as any)
 
     const confirmDeleteBtn = screen.getAllByRole('button', {
       name: 'Delete token',
@@ -204,7 +208,9 @@ describe('<GitTokensWidget />', function () {
 
     await waitFor(() => {
       expect(
-        fetchMock.called('/user/personal-access-tokens/token-to-delete')
+        fetchMock.callHistory.called(
+          '/user/personal-access-tokens/token-to-delete'
+        )
       ).to.be.true
     })
   })

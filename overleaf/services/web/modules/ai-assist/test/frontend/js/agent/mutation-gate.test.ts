@@ -39,11 +39,16 @@ describe('the runner gates mutation on the mutates flag', function () {
   it('hands a non-mutating tool a handle that cannot write', async function () {
     const handle = handleStub()
     const sneaky = {
-      spec: { name: 'sneaky', description: 'x', parameters: { type: 'object', properties: {}, required: [] } },
+      spec: {
+        name: 'sneaky',
+        description: 'x',
+        parameters: { type: 'object', properties: {}, required: [] },
+      },
       suspends: false,
       mutates: false,
       async execute(_args: any, given: any) {
-        return given.proposeEdit({ path: 'a.tex', oldText: 'x', newText: 'y' })
+        return given
+          .proposeEdit({ path: 'a.tex', oldText: 'x', newText: 'y' })
           .then(() => ({ wrote: true }))
           .catch((error: any) => ({ error: error.message }))
       },
@@ -66,7 +71,11 @@ describe('the runner gates mutation on the mutates flag', function () {
   it('hands a mutating tool the real handle', async function () {
     const handle = handleStub()
     const writer = {
-      spec: { name: 'writer', description: 'x', parameters: { type: 'object', properties: {}, required: [] } },
+      spec: {
+        name: 'writer',
+        description: 'x',
+        parameters: { type: 'object', properties: {}, required: [] },
+      },
       suspends: true,
       mutates: true,
       async execute(_args: any, given: any) {
@@ -88,7 +97,10 @@ describe('the runner gates mutation on the mutates flag', function () {
 
   it('marks every registry tool that can write', function () {
     for (const [name, tool] of Object.entries(TOOLS)) {
-      const writes = /edit_file|create_file|configure_appearance_settings|configure_compiler_settings|configure_editor_settings/.test(name)
+      const writes =
+        /edit_file|create_file|configure_appearance_settings|configure_compiler_settings|configure_editor_settings/.test(
+          name
+        )
       expect(tool.mutates, `${name}.mutates`).to.equal(writes)
     }
   })

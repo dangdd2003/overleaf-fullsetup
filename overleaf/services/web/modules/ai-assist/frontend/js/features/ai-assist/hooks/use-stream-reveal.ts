@@ -31,7 +31,7 @@ const TABLE_LINE = /^\s*\|/
 const MARKER_ONLY_LINE = /^\s*(?:[-*+>]|\d+[.)]|#{1,6})?\s*$/
 // Same environments the markdown renderer draws as display math
 const DISPLAY_MATH_OPEN =
-  /\$\$|\\\[|\\begin\{((?:equation|align|alignat|gather|multline|matrix|pmatrix|bmatrix|vmatrix|Vmatrix|cases|aligned|gathered)\*?)\}(?:\[[^\]]*\])?(?:\{[^\}]*\})?/g
+  /\$\$|\\\[|\\begin\{((?:equation|align|alignat|gather|multline|matrix|pmatrix|bmatrix|vmatrix|Vmatrix|cases|aligned|gathered)\*?)\}(?:\[[^\]]*\])?(?:\{[^}]*\})?/g
 
 function lineStartBefore(text: string, pos: number) {
   return text.lastIndexOf('\n', pos - 1) + 1
@@ -139,7 +139,10 @@ function unrenderedTableStart(head: string) {
   const lines = head.split('\n')
   if (complete) lines.pop()
   let count = 0
-  while (count < lines.length && TABLE_LINE.test(lines[lines.length - 1 - count]))
+  while (
+    count < lines.length &&
+    TABLE_LINE.test(lines[lines.length - 1 - count])
+  )
     count++
   if (count === 0 || (complete ? count : count - 1) >= 2) return -1
   const before = lines.slice(0, lines.length - count)

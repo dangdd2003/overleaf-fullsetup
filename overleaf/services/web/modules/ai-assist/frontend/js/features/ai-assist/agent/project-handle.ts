@@ -105,7 +105,11 @@ export type ProjectSettingsSummary = {
 
 export type AvailableSettingsOptions = {
   compilers: string[]
-  imageNames?: Array<{ imageName: string; imageDesc?: string; default?: boolean }>
+  imageNames?: Array<{
+    imageName: string
+    imageDesc?: string
+    default?: boolean
+  }>
   spellCheckLanguages: Array<{ code: string; name: string }>
   editorModes: string[]
   overallThemes: string[]
@@ -160,17 +164,23 @@ export interface ProjectHandle {
   /** Read current project settings summary across compiler, appearance, editor, and spelling. */
   getProjectSettings(): Promise<ProjectSettingsSummary>
   /** Update appearance preferences (overall theme, editor theme, dark mode PDF, font size, etc.). */
-  configureAppearanceSettings(
-    settings: Partial<AppearanceSettings>
-  ): Promise<{ status: 'applied'; updatedSettings: Partial<AppearanceSettings>; message?: string }>
+  configureAppearanceSettings(settings: Partial<AppearanceSettings>): Promise<{
+    status: 'applied'
+    updatedSettings: Partial<AppearanceSettings>
+    message?: string
+  }>
   /** Update compiler settings (engine, TeX Live version, root doc, draft, stop-on-first-error). */
-  configureCompilerSettings(
-    settings: Partial<CompilerSettings>
-  ): Promise<{ status: 'applied'; updatedSettings: Partial<CompilerSettings>; message?: string }>
+  configureCompilerSettings(settings: Partial<CompilerSettings>): Promise<{
+    status: 'applied'
+    updatedSettings: Partial<CompilerSettings>
+    message?: string
+  }>
   /** Update editor preferences (keybindings, auto-complete, bracket pairing, PDF viewer, etc.). */
-  configureEditorSettings(
-    settings: Partial<EditorSettings>
-  ): Promise<{ status: 'applied'; updatedSettings: Partial<EditorSettings>; message?: string }>
+  configureEditorSettings(settings: Partial<EditorSettings>): Promise<{
+    status: 'applied'
+    updatedSettings: Partial<EditorSettings>
+    message?: string
+  }>
   /** List valid options and enums for project and editor settings. */
   listAvailableSettings(): Promise<AvailableSettingsOptions>
 }

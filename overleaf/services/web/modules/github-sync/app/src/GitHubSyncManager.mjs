@@ -76,7 +76,11 @@ async function releaseLock(projectId, patch = {}) {
 async function _failSync(projectId, err) {
   await releaseLock(projectId, {
     syncState: 'error',
-    lastError: { code: err.code || 'error', message: err.message, at: new Date() },
+    lastError: {
+      code: err.code || 'error',
+      message: err.message,
+      at: new Date(),
+    },
   })
 }
 
@@ -92,9 +96,13 @@ async function _prepare(projectId) {
     throw err
   }
   try {
-    const token = await GitHubCredentialsManager.promises.getAccessToken(stateDoc.user_id)
+    const token = await GitHubCredentialsManager.promises.getAccessToken(
+      stateDoc.user_id
+    )
     await GitHubCredentialsManager.promises.touch(stateDoc.user_id)
-    const creds = await GitHubCredentialsManager.promises.getCredentials(stateDoc.user_id)
+    const creds = await GitHubCredentialsManager.promises.getCredentials(
+      stateDoc.user_id
+    )
     const repoDir = SyncEngine.promises.repoDirFor(_reposDir(), projectId)
     if (!(await SyncEngine.promises.ensureRepoExists(repoDir))) {
       await SyncEngine.promises.cloneRepo(
@@ -117,10 +125,21 @@ async function pull(projectId) {
   const { stateDoc, token, creds, repoDir } = await _prepare(projectId)
   try {
     await ProjectContentIO.promises.materializeProject(projectId, repoDir)
-    await SyncEngine.promises.commitAll(repoDir, 'Sync from Overleaf', creds.githubUsername, creds.email)
-    const { conflict } = await SyncEngine.promises.mergeOrigin(repoDir, stateDoc.repoDefaultBranch)
+    await SyncEngine.promises.commitAll(
+      repoDir,
+      'Sync from Overleaf',
+      creds.githubUsername,
+      creds.email
+    )
+    const { conflict } = await SyncEngine.promises.mergeOrigin(
+      repoDir,
+      stateDoc.repoDefaultBranch
+    )
     if (conflict) {
-      const branchName = await SyncEngine.promises.pushRescueBranch(repoDir, token)
+      const branchName = await SyncEngine.promises.pushRescueBranch(
+        repoDir,
+        token
+      )
       await releaseLock(projectId, {
         syncState: 'conflict',
         lastError: { code: 'conflict', message: branchName, at: new Date() },
@@ -163,9 +182,15 @@ async function push(projectId, commitMessage) {
       creds.githubUsername,
       creds.email
     )
-    const { conflict } = await SyncEngine.promises.mergeOrigin(repoDir, stateDoc.repoDefaultBranch)
+    const { conflict } = await SyncEngine.promises.mergeOrigin(
+      repoDir,
+      stateDoc.repoDefaultBranch
+    )
     if (conflict) {
-      const branchName = await SyncEngine.promises.pushRescueBranch(repoDir, token)
+      const branchName = await SyncEngine.promises.pushRescueBranch(
+        repoDir,
+        token
+      )
       await releaseLock(projectId, {
         syncState: 'conflict',
         lastError: { code: 'conflict', message: branchName, at: new Date() },
@@ -187,7 +212,12 @@ async function push(projectId, commitMessage) {
       })
       return { code: 'upToDate' }
     }
-    await SyncEngine.promises.pushRef(repoDir, 'HEAD', stateDoc.repoDefaultBranch, token)
+    await SyncEngine.promises.pushRef(
+      repoDir,
+      'HEAD',
+      stateDoc.repoDefaultBranch,
+      token
+    )
     await releaseLock(projectId, {
       syncState: 'idle',
       outgoing: false,
@@ -215,9 +245,16 @@ async function continueAfterManualMerge(projectId) {
   return pull(projectId)
 }
 
-async function importProject(userId, { repoOwner, repoName, branch, projectName }) {
+async function importProject(
+  userId,
+  { repoOwner, repoName, branch, projectName }
+) {
   const token = await GitHubCredentialsManager.promises.getAccessToken(userId)
-  const repoInfo = await GitHubApiManager.promises.getRepo(token, repoOwner, repoName)
+  const repoInfo = await GitHubApiManager.promises.getRepo(
+    token,
+    repoOwner,
+    repoName
+  )
   if (repoInfo.size === 0) {
     const err = new Error('repository is empty')
     err.code = 'github_empty_repository_error'
@@ -241,7 +278,11 @@ async function importProject(userId, { repoOwner, repoName, branch, projectName 
       targetBranch,
       token
     )
-    const warnings = await SyncFileOps.promises.applyImportTree(project._id, userId, repoDir)
+    const warnings = await SyncFileOps.promises.applyImportTree(
+      project._id,
+      userId,
+      repoDir
+    )
     const headSha = await SyncEngine.promises.getHeadSha(repoDir)
     await GithubSyncProjectStates.create({
       project_id: project._id,
@@ -253,17 +294,23 @@ async function importProject(userId, { repoOwner, repoName, branch, projectName 
     })
     return { projectId: project._id.toString(), warnings }
   } catch (err) {
-    await ProjectDeleter.promises.deleteProject(project._id, {
-      deletedReason: DeletedProjectReasons.GITHUB_IMPORT_FAILURE,
-    }).catch(deleteErr =>
-      logger.err({ err: deleteErr }, 'failed to delete failed import project')
-    )
+    await ProjectDeleter.promises
+      .deleteProject(project._id, {
+        deletedReason: DeletedProjectReasons.GITHUB_IMPORT_FAILURE,
+      })
+      .catch(deleteErr =>
+        logger.err({ err: deleteErr }, 'failed to delete failed import project')
+      )
     await SyncEngine.promises.deleteRepoDir(repoDir).catch(() => {})
     throw err
   }
 }
 
-async function createRepoAndLink(userId, projectId, { name, owner, isPrivate }) {
+async function createRepoAndLink(
+  userId,
+  projectId,
+  { name, owner, isPrivate }
+) {
   const existing = await getState(projectId)
   if (existing) {
     const err = new Error('project is already linked to a repository')
@@ -280,12 +327,20 @@ async function createRepoAndLink(userId, projectId, { name, owner, isPrivate }) 
   const creds = await GitHubCredentialsManager.promises.getCredentials(userId)
   const me = await GitHubApiManager.promises.getUser(token)
   const orgLogin = owner && owner !== me.login ? owner : null
-  const repo = await GitHubApiManager.promises.createRepo(token, { name, isPrivate, orgLogin })
+  const repo = await GitHubApiManager.promises.createRepo(token, {
+    name,
+    isPrivate,
+    orgLogin,
+  })
   const repoRef = { owner: repo.owner.login, name: repo.name }
   const defaultBranch = repo.default_branch || 'main'
   const repoDir = SyncEngine.promises.repoDirFor(_reposDir(), projectId)
   try {
-    await SyncEngine.promises.createRepo(repoDir, _repoUrl(repoRef), defaultBranch)
+    await SyncEngine.promises.createRepo(
+      repoDir,
+      _repoUrl(repoRef),
+      defaultBranch
+    )
     await DocumentUpdaterHandler.promises.flushProjectToMongo(projectId)
     await ProjectContentIO.promises.materializeProject(projectId, repoDir)
     // After materialize, not before: materializeProject prunes the working tree
@@ -294,7 +349,12 @@ async function createRepoAndLink(userId, projectId, { name, owner, isPrivate }) 
     if (!(await _exists(`${repoDir}/.gitignore`))) {
       await fs.writeFile(`${repoDir}/.gitignore`, TEX_GITIGNORE)
     }
-    await SyncEngine.promises.commitAll(repoDir, 'Import from Overleaf', creds.githubUsername, creds.email)
+    await SyncEngine.promises.commitAll(
+      repoDir,
+      'Import from Overleaf',
+      creds.githubUsername,
+      creds.email
+    )
     await SyncEngine.promises.pushRef(repoDir, 'HEAD', defaultBranch, token)
     const headSha = await SyncEngine.promises.getHeadSha(repoDir)
     await GithubSyncProjectStates.create({
@@ -329,7 +389,10 @@ async function unlinkProject(projectId) {
 async function unlinkAllForUser(userId) {
   const states = await GithubSyncProjectStates.find({ user_id: userId })
   for (const stateDoc of states) {
-    const repoDir = SyncEngine.promises.repoDirFor(_reposDir(), stateDoc.project_id)
+    const repoDir = SyncEngine.promises.repoDirFor(
+      _reposDir(),
+      stateDoc.project_id
+    )
     await SyncEngine.promises.deleteRepoDir(repoDir).catch(() => {})
   }
   await GithubSyncProjectStates.deleteMany({ user_id: userId })
@@ -347,7 +410,9 @@ async function getStatus(projectId) {
     outgoing: Boolean(stateDoc.outgoing),
     lastError: stateDoc.lastError || null,
     conflictBranch:
-      stateDoc.lastError?.code === 'conflict' ? stateDoc.lastError.message : null,
+      stateDoc.lastError?.code === 'conflict'
+        ? stateDoc.lastError.message
+        : null,
   }
   const cache = stateDoc.status
   if (
@@ -358,7 +423,9 @@ async function getStatus(projectId) {
     return { ...base, incoming: cache.incomingCommits || 0 }
   }
   try {
-    const token = await GitHubCredentialsManager.promises.getAccessToken(stateDoc.user_id)
+    const token = await GitHubCredentialsManager.promises.getAccessToken(
+      stateDoc.user_id
+    )
     const cmp = await GitHubApiManager.promises.compareCommits(
       token,
       stateDoc.repo.owner,
@@ -368,7 +435,11 @@ async function getStatus(projectId) {
     )
     await GithubSyncProjectStates.updateOne(
       { project_id: projectId },
-      { $set: { status: { incomingCommits: cmp.ahead_by, checkedAt: new Date() } } }
+      {
+        $set: {
+          status: { incomingCommits: cmp.ahead_by, checkedAt: new Date() },
+        },
+      }
     )
     return { ...base, incoming: cmp.ahead_by }
   } catch (err) {

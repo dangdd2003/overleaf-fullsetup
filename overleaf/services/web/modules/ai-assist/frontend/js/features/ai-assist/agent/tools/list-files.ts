@@ -44,7 +44,9 @@ export const listFilesTool: AgentTool = {
           `${file.path}  ${file.type}  ${file.lines ?? Math.round(file.size / 1024) + ' KB'}`
       )
       if (result.truncated) {
-        rows.push(`(${result.total - result.files.length} more; narrow with glob=)`)
+        rows.push(
+          `(${result.total - result.files.length} more; narrow with glob=)`
+        )
       }
       return rows.length > 0 ? rows.join('\n') : '(no files found)'
     }

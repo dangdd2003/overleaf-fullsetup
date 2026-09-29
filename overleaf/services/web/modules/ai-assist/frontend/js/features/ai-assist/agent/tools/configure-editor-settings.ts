@@ -46,7 +46,8 @@ export const configureEditorSettingsTool: AgentTool = {
         },
         spellCheckLanguage: {
           type: 'string',
-          description: 'Default user spell-check language code (e.g. "en", "fr")',
+          description:
+            'Default user spell-check language code (e.g. "en", "fr")',
         },
       },
       required: [],

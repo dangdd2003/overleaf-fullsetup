@@ -1,6 +1,5 @@
-import { AssistantBlock, ToolCallRecord } from '../../agent/agent-messages'
+import { AssistantBlock } from '../../agent/agent-messages'
 import { estimateTokens } from '../../agent/context/budget'
-import { wantsCleanCompile } from '../../agent/tools/compile-args'
 
 /**
  * The vocabulary of the idle / text-generating status line.
@@ -26,7 +25,112 @@ export const STATUS_WORDS = [
   'Ligaturing',
   'Paginating',
   'Badboxing',
+  'Lamporting',
+  'BibTeXing',
+  'TikZing',
+  'Beamering',
+  'XeLaTeXing',
+  'LuaTeXing',
+  'Metafonting',
+  'Microtyping',
+  'Backslashing',
+  'Brace-balancing',
+  'Macro-expanding',
+  'Ampersanding',
+  'Tabulating',
+  'Itemizing',
+  'Enumerating',
+  'Cross-referencing',
+  'Captioning',
+  'Figuring',
+  'Theoremizing',
+  'Lemmatizing',
+  'Subscripting',
+  'Superscripting',
+  'Italicizing',
+  'Emboldening',
+  'Small-capping',
+  'Em-dashing',
+  'Quadding',
+  'Hfilling',
+  'Vspacing',
+  'Clearpaging',
+  'Overfulling',
+  'Underfulling',
+  'Unboxing',
+  'Widow-hunting',
+  'Orphan-rescuing',
+  'Penalizing',
+  'Documentclassing',
+  'Usepackaging',
+  'Newcommanding',
+  'Mathmoding',
+  'Dollar-signing',
+  'Align-starring',
+  'Labeling',
+  'Hyperreffing',
+  'PDFLaTeXing',
+  'Latexmking',
+  'SyncTeXing',
+  'ChkTeXing',
+  'Biblatexing',
+  'Natbibbing',
+  'Fontspeccing',
+  'Baselineskipping',
+  'Line-breaking',
+  'Indenting',
+  'Minipaging',
+  'Parboxing',
+  'Twocolumning',
+  'Multicolumning',
+  'Booktabbing',
+  'Pgfplotting',
+  'Tcolorboxing',
+  'Verbatimming',
+  'Escaping',
+  'Table-of-contenting',
+  'CTANing',
+  'Lion-taming',
+  'Pi-approaching',
+  // Print shop flavour
+  'Gutenberging',
+  'Letterpressing',
+  'Typecasting',
+  'Inking',
+  'Serifing',
+  'Font-fiddling',
+  'Margin-nudging',
+  'Galley-proofing',
+  'Glyphing',
+  'River-fording',
+  'Drop-capping',
+  'Dingbatting',
+  'Fleuron-sprinkling',
+  // Overleaf itself
+  'Leafing',
+  'Page-turning',
+  'Track-changing',
+  'Collaborating',
+  'Rich-texting',
+  'Git-bridging',
+  'Dropboxing',
+  'Templating',
+  'Word-counting',
   // Academic & editorial flavour
+  'arXiving',
+  'Reviewer-2-appeasing',
+  'Rebutting',
+  'Camera-readying',
+  'Deadline-dodging',
+  'Citation-hunting',
+  'Paraphrasing',
+  'Caveating',
+  'Abstracting',
+  'Appendixing',
+  'Acknowledging',
+  'Hypothesizing',
+  'Postulating',
+  'Theorizing',
   'Pontificating',
   'Peer-reviewing',
   'Proofreading',
@@ -37,6 +141,13 @@ export const STATUS_WORDS = [
   'Composing',
   'Articulating',
   'Preparing',
+  'Et-al-ing',
+  'Ibid-ing',
+  'QED-ing',
+  'Corollarizing',
+  'Axiomatizing',
+  'Tenure-tracking',
+  'H-indexing',
   // General whimsy
   'Brewing',
   'Percolating',
@@ -112,7 +223,112 @@ export const PAST_TENSE_WORDS: Record<string, string> = {
   Ligaturing: 'Ligatured',
   Paginating: 'Paginated',
   Badboxing: 'Badboxed',
+  Lamporting: 'Lamported',
+  BibTeXing: 'BibTeXed',
+  TikZing: 'TikZed',
+  Beamering: 'Beamered',
+  XeLaTeXing: 'XeLaTeXed',
+  LuaTeXing: 'LuaTeXed',
+  Metafonting: 'Metafonted',
+  Microtyping: 'Microtyped',
+  Backslashing: 'Backslashed',
+  'Brace-balancing': 'Brace-balanced',
+  'Macro-expanding': 'Macro-expanded',
+  Ampersanding: 'Ampersanded',
+  Tabulating: 'Tabulated',
+  Itemizing: 'Itemized',
+  Enumerating: 'Enumerated',
+  'Cross-referencing': 'Cross-referenced',
+  Captioning: 'Captioned',
+  Figuring: 'Figured',
+  Theoremizing: 'Theoremized',
+  Lemmatizing: 'Lemmatized',
+  Subscripting: 'Subscripted',
+  Superscripting: 'Superscripted',
+  Italicizing: 'Italicized',
+  Emboldening: 'Emboldened',
+  'Small-capping': 'Small-capped',
+  'Em-dashing': 'Em-dashed',
+  Quadding: 'Quadded',
+  Hfilling: 'Hfilled',
+  Vspacing: 'Vspaced',
+  Clearpaging: 'Clearpaged',
+  Overfulling: 'Overfulled',
+  Underfulling: 'Underfulled',
+  Unboxing: 'Unboxed',
+  'Widow-hunting': 'Widow-hunted',
+  'Orphan-rescuing': 'Orphan-rescued',
+  Penalizing: 'Penalized',
+  Documentclassing: 'Documentclassed',
+  Usepackaging: 'Usepackaged',
+  Newcommanding: 'Newcommanded',
+  Mathmoding: 'Mathmoded',
+  'Dollar-signing': 'Dollar-signed',
+  'Align-starring': 'Align-starred',
+  Labeling: 'Labeled',
+  Hyperreffing: 'Hyperreffed',
+  PDFLaTeXing: 'PDFLaTeXed',
+  Latexmking: 'Latexmked',
+  SyncTeXing: 'SyncTeXed',
+  ChkTeXing: 'ChkTeXed',
+  Biblatexing: 'Biblatexed',
+  Natbibbing: 'Natbibbed',
+  Fontspeccing: 'Fontspecced',
+  Baselineskipping: 'Baselineskipped',
+  'Line-breaking': 'Line-broken',
+  Indenting: 'Indented',
+  Minipaging: 'Minipaged',
+  Parboxing: 'Parboxed',
+  Twocolumning: 'Twocolumned',
+  Multicolumning: 'Multicolumned',
+  Booktabbing: 'Booktabbed',
+  Pgfplotting: 'Pgfplotted',
+  Tcolorboxing: 'Tcolorboxed',
+  Verbatimming: 'Verbatimmed',
+  Escaping: 'Escaped',
+  'Table-of-contenting': 'Table-of-contented',
+  CTANing: 'CTANed',
+  'Lion-taming': 'Lion-tamed',
+  'Pi-approaching': 'Pi-approached',
+  // Print shop flavour
+  Gutenberging: 'Gutenberged',
+  Letterpressing: 'Letterpressed',
+  Typecasting: 'Typecast',
+  Inking: 'Inked',
+  Serifing: 'Serifed',
+  'Font-fiddling': 'Font-fiddled',
+  'Margin-nudging': 'Margin-nudged',
+  'Galley-proofing': 'Galley-proofed',
+  Glyphing: 'Glyphed',
+  'River-fording': 'River-forded',
+  'Drop-capping': 'Drop-capped',
+  Dingbatting: 'Dingbatted',
+  'Fleuron-sprinkling': 'Fleuron-sprinkled',
+  // Overleaf itself
+  Leafing: 'Leafed',
+  'Page-turning': 'Page-turned',
+  'Track-changing': 'Track-changed',
+  Collaborating: 'Collaborated',
+  'Rich-texting': 'Rich-texted',
+  'Git-bridging': 'Git-bridged',
+  Dropboxing: 'Dropboxed',
+  Templating: 'Templated',
+  'Word-counting': 'Word-counted',
   // Academic & editorial flavour
+  arXiving: 'arXived',
+  'Reviewer-2-appeasing': 'Reviewer-2-appeased',
+  Rebutting: 'Rebutted',
+  'Camera-readying': 'Camera-readied',
+  'Deadline-dodging': 'Deadline-dodged',
+  'Citation-hunting': 'Citation-hunted',
+  Paraphrasing: 'Paraphrased',
+  Caveating: 'Caveated',
+  Abstracting: 'Abstracted',
+  Appendixing: 'Appendixed',
+  Acknowledging: 'Acknowledged',
+  Hypothesizing: 'Hypothesized',
+  Postulating: 'Postulated',
+  Theorizing: 'Theorized',
   Pontificating: 'Pontificated',
   'Peer-reviewing': 'Peer-reviewed',
   Proofreading: 'Proofread',
@@ -123,6 +339,13 @@ export const PAST_TENSE_WORDS: Record<string, string> = {
   Composing: 'Composed',
   Articulating: 'Articulated',
   Preparing: 'Prepared',
+  'Et-al-ing': 'Et-al-ed',
+  'Ibid-ing': 'Ibid-ed',
+  'QED-ing': 'QED-ed',
+  Corollarizing: 'Corollarized',
+  Axiomatizing: 'Axiomatized',
+  'Tenure-tracking': 'Tenure-tracked',
+  'H-indexing': 'H-indexed',
   // General whimsy
   Brewing: 'Brewed',
   Percolating: 'Percolated',
@@ -172,118 +395,69 @@ export function formatCompletedStatus(word: string, elapsedMs: number): string {
   return `${pastWord} for ${duration}`
 }
 
-export const THINKING_TOKEN_TIERS = [
-  { maxTokens: 250, text: 'Thinking…' },
-  { maxTokens: 750, text: 'Still thinking…' },
-  { maxTokens: 1500, text: 'Thinking deeply…' },
-  { maxTokens: 3000, text: 'Pondering the solution…' },
-  { maxTokens: 5000, text: 'Working through complex reasoning…' },
-]
+/**
+ * What the model is doing right now, read off the live stream the way Claude
+ * Code's spinner reads it:
+ * - requesting: waiting on the provider (no block yet, or a finished block
+ *   the model has not followed up on)
+ * - thinking: a thinking block is still streaming
+ * - responding: reply text is streaming
+ * - tool: a tool call has no result yet
+ */
+export type LiveStatusMode = 'requesting' | 'thinking' | 'responding' | 'tool'
 
-export const THINKING_TIERS = THINKING_TOKEN_TIERS
-
-export const DEEP_THINKING_WORDS = [
-  'Synthesizing thoughts…',
-  'Analyzing multiple angles…',
-  'Formulating detailed approach…',
-  'Refining logical steps…',
-  'Deep in contemplation…',
-]
-
-export function getThinkingStatus(tokens: number): string {
-  for (const tier of THINKING_TOKEN_TIERS) {
-    if (tokens < tier.maxTokens) {
-      return tier.text
-    }
+export function deriveStatusMode(blocks: AssistantBlock[]): LiveStatusMode {
+  const last = blocks.at(-1)
+  if (!last) return 'requesting'
+  if (last.type === 'thinking') {
+    return last.elapsedMs == null ? 'thinking' : 'requesting'
   }
-  const idx = Math.floor((tokens - 5000) / 1000) % DEEP_THINKING_WORDS.length
-  return DEEP_THINKING_WORDS[Math.max(0, idx)]
-}
-
-export const TOOL_ACTION_LABELS: Record<string, (args: any) => string> = {
-  read_file: args => (args?.path ? `Reading ${args.path}…` : 'Reading file…'),
-  search_project: args =>
-    args?.query ? `Searching for "${args.query}"…` : 'Searching project…',
-  search_text: args =>
-    args?.query ? `Searching for "${args.query}"…` : 'Searching text…',
-  edit_file: args =>
-    args?.path ? `Preparing edit to ${args.path}…` : 'Editing file…',
-  create_file: args =>
-    args?.path ? `Creating ${args.path}…` : 'Creating file…',
-  compile_project: args =>
-    wantsCleanCompile(args)
-      ? 'Clearing build cache and rebuilding…'
-      : 'Compiling project…',
-  get_compile_result: () => 'Checking compile logs…',
-  get_compile_log: () => 'Reading compile log…',
-  get_outline: () => 'Reading project outline…',
-  outline_project: () => 'Reading project outline…',
-  get_references: () => 'Checking references…',
-  list_references: () => 'Checking references…',
-  get_packages: () => 'Checking packages…',
-  list_files: () => 'Listing project files…',
-  project_map: () => 'Mapping project…',
-  web_search: args =>
-    args?.query ? `Searching the web for "${args.query}"…` : 'Searching the web…',
-  web_fetch: args => {
-    try {
-      return `Reading ${new URL(args?.url).hostname.replace(/^www\./, '')}…`
-    } catch {
-      return 'Reading web page…'
-    }
-  },
-}
-
-export function getToolStatusText(call: ToolCallRecord): string {
-  if ('result' in call && call.result !== undefined) {
-    return 'Analyzing tool results…'
+  if (last.type === 'tool_call') {
+    return last.call.result === undefined ? 'tool' : 'requesting'
   }
-  const formatter = TOOL_ACTION_LABELS[call.name]
-  if (formatter) {
-    return formatter(call.args)
-  }
-  const formatted = call.name.replace(/_/g, ' ')
-  return `${formatted.charAt(0).toUpperCase() + formatted.slice(1)}…`
+  return 'responding'
 }
 
 /**
- * Derives the active status line text from the current state of the agent run.
+ * Tokens the model has streamed back this run: thinking, reply text and tool
+ * arguments. An estimate, like every other count in the panel.
  */
-export function deriveDynamicStatus({
-  blocks = [],
-  elapsedMs: _elapsedMs,
-  fancyWord,
-  pendingApproval = null,
-}: {
-  blocks?: AssistantBlock[]
-  elapsedMs: number
-  fancyWord: string
-  pendingApproval?: any
-}): string {
-  if (pendingApproval) {
-    return 'Waiting for edit approval…'
+export function countOutputTokens(blocks: AssistantBlock[]): number {
+  let total = 0
+  for (const block of blocks) {
+    if (block.type === 'thinking') {
+      total += estimateTokens(block.thinking ?? '')
+    } else if (block.type === 'text') {
+      total += estimateTokens(block.text ?? '')
+    } else {
+      total += estimateTokens(JSON.stringify(block.call.args ?? ''))
+    }
   }
+  return total
+}
 
-  if (blocks.length === 0) {
-    return `${fancyWord}…`
+/**
+ * "840", "1.2k", "12.4k" — Claude Code's token counter shape.
+ */
+export function formatTokenCount(tokens: number): string {
+  if (tokens < 1000) return `${tokens}`
+  return `${(tokens / 1000).toFixed(1)}k`
+}
+
+/**
+ * Claude Code's thinking ladder: the phrase climbs with how long the current
+ * thinking burst has run. It says how long, never how close to done.
+ */
+const THINKING_LADDER: [number, string][] = [
+  [45000, 'Deep in thought'],
+  [30000, 'Thinking some more'],
+  [20000, 'Thinking more'],
+  [10000, 'Still thinking'],
+]
+
+export function thinkingPhrase(thinkingMs: number): string {
+  for (const [after, phrase] of THINKING_LADDER) {
+    if (thinkingMs >= after) return phrase
   }
-
-  const latestBlock = blocks.at(-1)
-
-  if (latestBlock?.type === 'thinking') {
-    const tokens = estimateTokens(latestBlock.thinking || '')
-    return getThinkingStatus(tokens)
-  }
-
-  if (latestBlock?.type === 'tool_call') {
-    // Never show transient flickering verbs ("Reading...", "Editing...", "Analyzing tool results...")
-    return `${fancyWord}…`
-  }
-
-  if (latestBlock?.type === 'text') {
-    // When generating response text, keep fancy rotating words
-    return `${fancyWord}…`
-  }
-
-  return `${fancyWord}…`
+  return 'Thinking'
 }

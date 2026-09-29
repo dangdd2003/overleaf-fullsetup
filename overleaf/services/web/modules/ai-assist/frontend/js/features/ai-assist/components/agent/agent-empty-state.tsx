@@ -33,12 +33,14 @@ export function AgentEmptyState({
   files,
   projectId,
   refreshSeed,
+  disabled = false,
 }: {
   onPick: (starter: PickedStarter) => void
   handle: ProjectHandle
   files: ProjectFile[]
   projectId?: string
   refreshSeed?: number
+  disabled?: boolean
 }) {
   const { t } = useTranslation()
   const starters = useProjectStarters({ handle, files, projectId, refreshSeed })
@@ -117,7 +119,10 @@ export function AgentEmptyState({
           defaultValue: `Add a figure placeholder to ${params.file}`,
         })
       case 'what_can_you_do':
-        return t('ai_assist_starter_what_can_you_do', 'What can the assistant do for me?')
+        return t(
+          'ai_assist_starter_what_can_you_do',
+          'What can the assistant do for me?'
+        )
       case 'beamer':
         return t('ai_assist_starter_beamer', 'Create a Beamer presentation')
       case 'generate_table':
@@ -125,10 +130,7 @@ export function AgentEmptyState({
       case 'generate_tikz':
         return t('ai_assist_starter_generate_tikz', 'Create a TikZ diagram')
       case 'manage_bibliography':
-        return t(
-          'ai_assist_starter_manage_bibliography',
-          'Add a bibliography'
-        )
+        return t('ai_assist_starter_manage_bibliography', 'Add a bibliography')
       case 'insert_equation':
         return t('ai_assist_starter_insert_equation', 'Insert an equation')
       case 'summarize':
@@ -147,7 +149,13 @@ export function AgentEmptyState({
         'ai_assist_tool_scan_unsupported_statements_description',
         "Get ready for peer review by checking if you've missed any references."
       ),
-      icon: <Quotes size={18} weight="fill" className="ai-assist-empty-state-icon" />,
+      icon: (
+        <Quotes
+          size={18}
+          weight="fill"
+          className="ai-assist-empty-state-icon"
+        />
+      ),
       prompt:
         'Scan this project for unsupported statements, claims, or assertions that lack citations or references, and suggest additions.',
     },
@@ -161,24 +169,33 @@ export function AgentEmptyState({
         'ai_assist_tool_audit_references_description',
         'Check for duplicate labels, unresolved cross-references, and missing bibliography entries.'
       ),
-      icon: <Bookmarks size={18} weight="fill" className="ai-assist-empty-state-icon" />,
+      icon: (
+        <Bookmarks
+          size={18}
+          weight="fill"
+          className="ai-assist-empty-state-icon"
+        />
+      ),
       prompt:
-        'Run an audit of this project\'s references: call get_references to find any duplicate labels, unresolved \\ref calls, or missing bibliography entries, and suggest the exact fixes.',
+        "Run an audit of this project's references: call get_references to find any duplicate labels, unresolved \\ref calls, or missing bibliography entries, and suggest the exact fixes.",
     },
   ]
 
   return (
-    <div className="ai-assist-empty-state">
+    <div className={`ai-assist-empty-state ${disabled ? 'is-disabled' : ''}`}>
       <h5>{t('ai_assist_advanced_tools', 'Advanced tools')}</h5>
       {advancedTools.map((tool, index) => (
         <OLButton
           key={tool.id}
           type="button"
           variant="secondary"
+          disabled={disabled}
           className="ai-assist-advanced-tool ai-assist-suggestion-enter"
           style={{ animationDelay: `${index * 40}ms` }}
           leadingIcon={tool.icon}
-          onClick={() => onPick({ prompt: tool.prompt, oneShot: true })}
+          onClick={() =>
+            !disabled && onPick({ prompt: tool.prompt, oneShot: true })
+          }
         >
           <span className="ai-assist-advanced-tool-text">
             <strong>{tool.title}</strong>
@@ -196,6 +213,7 @@ export function AgentEmptyState({
           type="button"
           variant="secondary"
           size="sm"
+          disabled={disabled}
           className="ai-assist-starter ai-assist-suggestion-enter"
           style={{
             animationDelay: `${(advancedTools.length + index) * 40}ms`,
@@ -206,7 +224,7 @@ export function AgentEmptyState({
               className="ai-assist-empty-state-icon"
             />
           }
-          onClick={() => onPick(starter)}
+          onClick={() => !disabled && onPick(starter)}
         >
           {labelFor(starter)}
         </OLButton>

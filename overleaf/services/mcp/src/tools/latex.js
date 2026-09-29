@@ -23,14 +23,25 @@ const EQUATION_ENVIRONMENTS = [
   'displaymath',
   'flalign',
 ]
-const FLOAT_ENVIRONMENTS = ['figure', 'table', 'subfigure', 'wrapfigure', 'longtable']
+const FLOAT_ENVIRONMENTS = [
+  'figure',
+  'table',
+  'subfigure',
+  'wrapfigure',
+  'longtable',
+]
 
 const optionalPath = z
   .string()
   .optional()
-  .describe('Limit to one document; omit to scan every .tex document in the project')
+  .describe(
+    'Limit to one document; omit to scan every .tex document in the project'
+  )
 
-const sourceLine = z.number().int().describe('1-based line the item was found on')
+const sourceLine = z
+  .number()
+  .int()
+  .describe('1-based line the item was found on')
 const sourceDoc = z.string().describe('Document the item was found in')
 
 const environmentEntry = looseObject({
@@ -40,7 +51,10 @@ const environmentEntry = looseObject({
   endLine: z.number().int().describe('1-based line the environment ends on'),
   body: z.string().describe('Verbatim contents of the environment'),
   label: z.string().nullable().describe('\\label key, or null when unlabelled'),
-  caption: z.string().nullable().describe('\\caption text, or null when absent'),
+  caption: z
+    .string()
+    .nullable()
+    .describe('\\caption text, or null when absent'),
 })
 
 /**
@@ -52,13 +66,17 @@ const scanResult = looseObject({
   aspect: z.string().describe('The aspect that was scanned'),
   truncated: z
     .boolean()
-    .describe(`True when the project has more than ${MAX_SCANNED_DOCS} .tex documents and the scan stopped early`),
+    .describe(
+      `True when the project has more than ${MAX_SCANNED_DOCS} .tex documents and the scan stopped early`
+    ),
   citations: z
     .array(
       looseObject({
         path: sourceDoc,
         key: z.string().describe('The cited BibTeX key'),
-        command: z.string().describe('Citation command used, e.g. cite or citep'),
+        command: z
+          .string()
+          .describe('Citation command used, e.g. cite or citep'),
         line: sourceLine,
       })
     )
@@ -79,7 +97,9 @@ const scanResult = looseObject({
       looseObject({
         path: sourceDoc,
         name: z.string().describe('The referenced label key'),
-        command: z.string().describe('Reference command used, e.g. ref or eqref'),
+        command: z
+          .string()
+          .describe('Reference command used, e.g. ref or eqref'),
         line: sourceLine,
       })
     )
@@ -88,7 +108,9 @@ const scanResult = looseObject({
   undefinedRefs: z
     .array(z.string())
     .optional()
-    .describe('Referenced keys with no matching \\label — these compile to "??"'),
+    .describe(
+      'Referenced keys with no matching \\label — these compile to "??"'
+    ),
   unusedLabels: z
     .array(z.string())
     .optional()
@@ -105,7 +127,9 @@ const scanResult = looseObject({
     .array(
       looseObject({
         path: sourceDoc,
-        command: z.string().describe('Defining command, e.g. newcommand or def'),
+        command: z
+          .string()
+          .describe('Defining command, e.g. newcommand or def'),
         name: z.string().describe('Name of the macro being defined'),
         arity: z.number().int().describe('Number of arguments the macro takes'),
         definition: z.string().describe('The macro body'),
@@ -129,13 +153,17 @@ const scanResult = looseObject({
     .array(
       looseObject({
         sourcePath: z.string().describe('Document containing the include'),
-        command: z.string().describe('Include command, e.g. input or bibliography'),
+        command: z
+          .string()
+          .describe('Include command, e.g. input or bibliography'),
         path: z.string().describe('Path as written in the source'),
         line: sourceLine,
         resolvedPath: z
           .string()
           .nullable()
-          .describe('Matching path in the project, or null when the include is broken'),
+          .describe(
+            'Matching path in the project, or null when the include is broken'
+          ),
       })
     )
     .optional()
@@ -161,21 +189,29 @@ async function readDoc(client, token, id, path) {
  */
 async function readScope(client, token, id, path) {
   if (path) {
-    return { docs: [{ path, content: await readDoc(client, token, id, path) }], truncated: false }
+    return {
+      docs: [{ path, content: await readDoc(client, token, id, path) }],
+      truncated: false,
+    }
   }
   const tree = await client.get(token, `/projects/${id}/tree`)
   const texPaths = (tree.docs ?? []).map(doc => doc.path).filter(isTexPath)
   const selected = texPaths.slice(0, MAX_SCANNED_DOCS)
   const docs = []
   for (const docPath of selected) {
-    docs.push({ path: docPath, content: await readDoc(client, token, id, docPath) })
+    docs.push({
+      path: docPath,
+      content: await readDoc(client, token, id, docPath),
+    })
   }
   return { docs, truncated: texPaths.length > selected.length }
 }
 
 /** Flatten a per-document parse into one list carrying the source path. */
 function acrossDocs(docs, parse) {
-  return docs.flatMap(doc => parse(doc.content).map(item => ({ ...item, path: doc.path })))
+  return docs.flatMap(doc =>
+    parse(doc.content).map(item => ({ ...item, path: doc.path }))
+  )
 }
 
 /**
@@ -214,19 +250,31 @@ export function registerLatexTools(server, { client, staticToken }) {
               title: z.string().describe('The heading text'),
               starred: z
                 .boolean()
-                .describe('True for the unnumbered starred form, e.g. \\section*'),
-              startLine: z.number().int().describe('1-based line the heading is on'),
+                .describe(
+                  'True for the unnumbered starred form, e.g. \\section*'
+                ),
+              startLine: z
+                .number()
+                .int()
+                .describe('1-based line the heading is on'),
               endLine: z
                 .number()
                 .int()
-                .describe('1-based last line before the next heading of the same or higher level'),
+                .describe(
+                  '1-based last line before the next heading of the same or higher level'
+                ),
             })
           )
           .describe('The headings, in document order'),
       }),
     },
     runTool(async ({ projectId: id, path }, ctx) => {
-      const content = await readDoc(client, tokenFrom(ctx, staticToken), id, path)
+      const content = await readDoc(
+        client,
+        tokenFrom(ctx, staticToken),
+        id,
+        path
+      )
       return textResult({ path, outline: parseSections(content) })
     })
   )
@@ -267,7 +315,10 @@ export function registerLatexTools(server, { client, staticToken }) {
             truncated,
           })
         case 'labels_refs': {
-          const labels = acrossDocs(docs, text => parseLabelsAndRefs(text).labels)
+          const labels = acrossDocs(
+            docs,
+            text => parseLabelsAndRefs(text).labels
+          )
           const refs = acrossDocs(docs, text => parseLabelsAndRefs(text).refs)
           const labelNames = new Set(labels.map(label => label.name))
           const refNames = new Set(refs.map(ref => ref.name))
@@ -291,7 +342,9 @@ export function registerLatexTools(server, { client, staticToken }) {
         case 'floats':
           return textResult({
             aspect,
-            floats: acrossDocs(docs, text => parseEnvironments(text, FLOAT_ENVIRONMENTS)),
+            floats: acrossDocs(docs, text =>
+              parseEnvironments(text, FLOAT_ENVIRONMENTS)
+            ),
             truncated,
           })
         case 'commands':
@@ -325,7 +378,8 @@ export function registerLatexTools(server, { client, staticToken }) {
               return {
                 ...include,
                 sourcePath: doc.path,
-                resolvedPath: candidates.find(candidate => known.has(candidate)) ?? null,
+                resolvedPath:
+                  candidates.find(candidate => known.has(candidate)) ?? null,
               }
             })
           )
@@ -350,7 +404,10 @@ export function registerLatexTools(server, { client, staticToken }) {
       annotations: READ_ONLY,
       inputSchema: z.object({
         projectId,
-        path: z.string().min(1).describe('Path to .bib document, e.g. /refs.bib'),
+        path: z
+          .string()
+          .min(1)
+          .describe('Path to .bib document, e.g. /refs.bib'),
         query: z
           .string()
           .optional()
@@ -373,7 +430,12 @@ export function registerLatexTools(server, { client, staticToken }) {
       }),
     },
     runTool(async ({ projectId: id, path, query }, ctx) => {
-      const content = await readDoc(client, tokenFrom(ctx, staticToken), id, path)
+      const content = await readDoc(
+        client,
+        tokenFrom(ctx, staticToken),
+        id,
+        path
+      )
       const parsed = parseBibtex(content)
       return textResult({
         path,

@@ -43,7 +43,11 @@ function ApplyFixListenerInner() {
 
   // Full repo-relative path (e.g. 'sections/intro.tex') resolved via fileTreeData, falling back to openDocName
   const currentPath = normalizePath(
-    (currentDocumentId && fileTreeData ? pathInFolder(fileTreeData, currentDocumentId) : null) ?? openDocName ?? 'main.tex'
+    (currentDocumentId && fileTreeData
+      ? pathInFolder(fileTreeData, currentDocumentId)
+      : null) ??
+      openDocName ??
+      'main.tex'
   )
 
   useEffect(() => {
@@ -73,7 +77,9 @@ function ApplyFixListenerInner() {
       }
       window.dispatchEvent(
         new CustomEvent('aiAssist:agentCursor', {
-          detail: { line: view.state.doc.lineAt(view.state.selection.main.head).number },
+          detail: {
+            line: view.state.doc.lineAt(view.state.selection.main.head).number,
+          },
         })
       )
     }
@@ -104,7 +110,9 @@ function ApplyFixListenerInner() {
 
   const onAgentReadDoc = useCallback(
     (event: Event) => {
-      const detail = (event as CustomEvent<{ path?: string; docId?: string }> | undefined)?.detail
+      const detail = (
+        event as CustomEvent<{ path?: string; docId?: string }> | undefined
+      )?.detail
       const requestedPath = normalizePath(detail?.path)
       const requestedDocId = detail?.docId
 
@@ -121,7 +129,10 @@ function ApplyFixListenerInner() {
         )
       }
 
-      if (requestedDocId && (!currentDocumentId || requestedDocId !== currentDocumentId)) {
+      if (
+        requestedDocId &&
+        (!currentDocumentId || requestedDocId !== currentDocumentId)
+      ) {
         return window.dispatchEvent(
           new CustomEvent('aiAssist:agentReadDocResult', {
             detail: {
@@ -164,7 +175,9 @@ function ApplyFixListenerInner() {
 
       const respond = (status: string, message?: string) =>
         window.dispatchEvent(
-          new CustomEvent('aiAssist:agentApplyEditResult', { detail: { status, message } })
+          new CustomEvent('aiAssist:agentApplyEditResult', {
+            detail: { status, message },
+          })
         )
 
       const requestedPath = normalizePath(path)
@@ -205,7 +218,9 @@ function ApplyFixListenerInner() {
         if (replacement !== '') return { cFrom, cTo }
         const isFullLineStart = cFrom === 0 || docText[cFrom - 1] === '\n'
         const isFullLineEnd =
-          cTo === doc.length || docText[cTo - 1] === '\n' || docText[cTo] === '\n'
+          cTo === doc.length ||
+          docText[cTo - 1] === '\n' ||
+          docText[cTo] === '\n'
         if (isFullLineStart && isFullLineEnd) {
           // If the span already includes its trailing newline, no adjustment is needed
           if (cTo > cFrom && docText[cTo - 1] === '\n') {
@@ -276,13 +291,20 @@ function ApplyFixListenerInner() {
       // 4. Fallback: Line-range resolution (Legacy support)
       if (typeof from === 'number' && typeof to === 'number') {
         const offsets = lineRangeToOffsets(doc, from, to)
-        if (!offsets) return respond('drifted', 'Line range out of document bounds.')
+        if (!offsets)
+          return respond('drifted', 'Line range out of document bounds.')
 
         const currentSlice = view.state.sliceDoc(offsets.from, offsets.to)
         if (
           currentSlice === oldText ||
-          currentSlice.split('\n').map((l: string) => l.trimEnd()).join('\n') ===
-            oldText.split('\n').map((l: string) => l.trimEnd()).join('\n')
+          currentSlice
+            .split('\n')
+            .map((l: string) => l.trimEnd())
+            .join('\n') ===
+            oldText
+              .split('\n')
+              .map((l: string) => l.trimEnd())
+              .join('\n')
         ) {
           const { cFrom, cTo } = adjustForCleanLineDeletion(
             offsets.from,
@@ -295,7 +317,10 @@ function ApplyFixListenerInner() {
         }
       }
 
-      respond('drifted', 'Document content drifted before edit could be applied.')
+      respond(
+        'drifted',
+        'Document content drifted before edit could be applied.'
+      )
     },
     [view, currentPath, currentDocumentId]
   )
@@ -319,11 +344,13 @@ function ApplyFixListenerInner() {
 
   const onJumpToLine = useCallback(
     (event: Event) => {
-      const detail = (event as CustomEvent<{ line?: number; column?: number }>).detail
+      const detail = (event as CustomEvent<{ line?: number; column?: number }>)
+        .detail
       if (typeof detail?.line === 'number' && view) {
         const lineNo = Math.min(Math.max(1, detail.line), view.state.doc.lines)
         const line = view.state.doc.line(lineNo)
-        const col = typeof detail.column === 'number' ? Math.max(0, detail.column - 1) : 0
+        const col =
+          typeof detail.column === 'number' ? Math.max(0, detail.column - 1) : 0
         const pos = Math.min(line.from + col, line.to)
         view.dispatch({
           selection: { anchor: pos, head: pos },
@@ -336,9 +363,10 @@ function ApplyFixListenerInner() {
 
   const onInsertSnippet = useCallback(
     (event: Event) => {
-      const detail = (event as CustomEvent<{ text?: string; command?: string }>).detail
+      const detail = (event as CustomEvent<{ text?: string; command?: string }>)
+        .detail
       const text = detail?.text ?? detail?.command
-      if (typeof text !== "string" || !view) return
+      if (typeof text !== 'string' || !view) return
 
       view.focus()
       const { from, to } = view.state.selection.main

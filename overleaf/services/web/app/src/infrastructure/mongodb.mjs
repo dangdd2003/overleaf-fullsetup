@@ -194,7 +194,6 @@ export async function startSession({ aux = false } = {}) {
   )
 }
 
-
 export default {
   db,
   ObjectId,

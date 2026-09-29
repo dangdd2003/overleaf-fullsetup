@@ -25,9 +25,7 @@
     "zod": "^4.1.7"
   },
   "devDependencies": {
-    "@modelcontextprotocol/client": "^2.0.0",
     "chai": "^4.3.6",
-    "chai-as-promised": "^7.1.1",
     "mocha": "^11.1.0",
     "sinon": "^9.2.4",
     "typescript": "^5.0.4"

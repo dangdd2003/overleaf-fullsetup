@@ -1,5 +1,6 @@
 import { expect } from 'chai'
 import { render, screen, fireEvent } from '@testing-library/react'
+import customLocalStorage from '@/infrastructure/local-storage'
 import SuggestFixButton from '../../../../frontend/js/features/ai-assist/components/suggest-fix-button'
 import type { LogEntry } from '@/features/pdf-preview/util/types'
 
@@ -40,6 +41,17 @@ describe('SuggestFixButton', function () {
   beforeEach(function () {
     setMeta()
     document.body.innerHTML = ''
+    customLocalStorage.clear()
+    customLocalStorage.setItem('ai-assist:provider', {
+      type: 'openai',
+      baseUrl: 'https://api.openai.com/v1',
+      apiKey: 'sk-test',
+      model: 'gpt-4o-mini',
+    })
+  })
+
+  afterEach(function () {
+    customLocalStorage.clear()
   })
 
   it('renders nothing when the feature is disabled', function () {
@@ -135,5 +147,29 @@ describe('SuggestFixButton', function () {
 
     fireEvent.click(screen.getByRole('button', { name: /suggest fix/i }))
     expect(toggleClicks).to.have.length(0)
+  })
+
+  it('greys out and disables the button when upstream AI provider is not set', function () {
+    customLocalStorage.clear()
+    const { container } = render(<SuggestFixButton logEntry={LOG_ENTRY} />)
+    const button = container.querySelector(
+      'button[data-action="suggest-fix"]'
+    ) as HTMLButtonElement
+    expect(button).to.exist
+    expect(button.disabled).to.be.true
+    expect(button.classList.contains('is-disabled')).to.be.true
+    expect(button.getAttribute('aria-label')).to.include(
+      'Configure an AI provider'
+    )
+
+    const received: any[] = []
+    const listener = (e: Event) => received.push((e as CustomEvent).detail)
+    window.addEventListener('aiAssist:suggestFix', listener)
+    try {
+      fireEvent.click(button)
+      expect(received).to.deep.equal([])
+    } finally {
+      window.removeEventListener('aiAssist:suggestFix', listener)
+    }
   })
 })

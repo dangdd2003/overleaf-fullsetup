@@ -66,7 +66,10 @@ function normalizeDigits(str: string): string {
 function escapeMathPipesInTable(line: string): string {
   if (!line.includes('|') || !line.includes('$')) return line
   return line.replace(/\$([^$\n]+)\$/g, (_match, math) => {
-    return `$${math.replace(/\\\|/g, '__ESCAPED_PIPE__').replace(/\|/g, '\\mid ').replace(/__ESCAPED_PIPE__/g, '\\|')}$`
+    return `$${math
+      .replace(/\\\|/g, '__ESCAPED_PIPE__')
+      .replace(/\|/g, '\\mid ')
+      .replace(/__ESCAPED_PIPE__/g, '\\|')}$`
   })
 }
 
@@ -82,7 +85,10 @@ export function normalizeMarkdown(text: string): string {
     l = l
       .replace(MARKER_THEN_ODD_SPACE, '$1$2 ')
       .replace(UNICODE_BULLET, '$1- ')
-      .replace(CJK_ORDERED, (_m, lead, digits) => `${lead}${normalizeDigits(digits)}. `)
+      .replace(
+        CJK_ORDERED,
+        (_m, lead, digits) => `${lead}${normalizeDigits(digits)}. `
+      )
       .replace(TASK_LIST, (_m, prefix, check) => {
         const isChecked = check && /[xXvV✓]/.test(check)
         return `${prefix}[${isChecked ? 'x' : ' '}] `
@@ -123,7 +129,9 @@ export function ensureTableSeparation(text: string): string {
       lines[i - 1].trim() !== '' &&
       lines[i].trim().startsWith('|') &&
       i + 1 < lines.length &&
-      /^[ \t]*\|?[ \t]*:?-+:?[ \t]*(\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$/.test(lines[i + 1])
+      /^[ \t]*\|?[ \t]*:?-+:?[ \t]*(\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$/.test(
+        lines[i + 1]
+      )
     ) {
       lines.splice(i, 0, '')
       i++

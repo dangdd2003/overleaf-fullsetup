@@ -1,5 +1,5 @@
 import { expect } from 'chai'
-import { render, fireEvent } from '@testing-library/react'
+import { render, fireEvent, waitFor } from '@testing-library/react'
 import { ThinkingBlock } from '../../../../../frontend/js/features/ai-assist/components/agent/thinking-block'
 
 function makeScrollable(
@@ -25,7 +25,10 @@ function makeScrollable(
   Object.defineProperty(element, 'scrollTop', {
     get: () => currentScrollTop,
     set: value => {
-      currentScrollTop = Math.min(value, dimensions.scrollHeight - dimensions.clientHeight)
+      currentScrollTop = Math.min(
+        value,
+        dimensions.scrollHeight - dimensions.clientHeight
+      )
     },
     configurable: true,
   })
@@ -36,8 +39,12 @@ describe('ThinkingBlock auto-scroll', function () {
     const { container } = render(
       <ThinkingBlock thinking="Line 1\nLine 2\nLine 3\nLine 4" isLive={true} />
     )
-    const button = container.querySelector('.ai-assist-thinking-header') as HTMLButtonElement
-    const body = container.querySelector('.ai-assist-thinking-body') as HTMLDivElement
+    const button = container.querySelector(
+      '.ai-assist-thinking-header'
+    ) as HTMLButtonElement
+    const body = container.querySelector(
+      '.ai-assist-thinking-body'
+    ) as HTMLDivElement
 
     makeScrollable(body, { scrollHeight: 1000, clientHeight: 350 })
 
@@ -52,8 +59,12 @@ describe('ThinkingBlock auto-scroll', function () {
     const { container, rerender } = render(
       <ThinkingBlock thinking="Initial thought" isLive={true} />
     )
-    const button = container.querySelector('.ai-assist-thinking-header') as HTMLButtonElement
-    const body = container.querySelector('.ai-assist-thinking-body') as HTMLDivElement
+    const button = container.querySelector(
+      '.ai-assist-thinking-header'
+    ) as HTMLButtonElement
+    const body = container.querySelector(
+      '.ai-assist-thinking-body'
+    ) as HTMLDivElement
 
     makeScrollable(body, { scrollHeight: 600, clientHeight: 350 })
     fireEvent.click(button)
@@ -61,7 +72,9 @@ describe('ThinkingBlock auto-scroll', function () {
 
     // New thinking text arrives and scrollHeight increases
     makeScrollable(body, { scrollHeight: 900, clientHeight: 350 })
-    rerender(<ThinkingBlock thinking="Initial thought and more..." isLive={true} />)
+    rerender(
+      <ThinkingBlock thinking="Initial thought and more..." isLive={true} />
+    )
 
     // Auto-scroll follows the latest generated text
     expect(body.scrollTop).to.equal(550)
@@ -71,8 +84,12 @@ describe('ThinkingBlock auto-scroll', function () {
     const { container, rerender } = render(
       <ThinkingBlock thinking="Initial thought" isLive={true} />
     )
-    const button = container.querySelector('.ai-assist-thinking-header') as HTMLButtonElement
-    const body = container.querySelector('.ai-assist-thinking-body') as HTMLDivElement
+    const button = container.querySelector(
+      '.ai-assist-thinking-header'
+    ) as HTMLButtonElement
+    const body = container.querySelector(
+      '.ai-assist-thinking-body'
+    ) as HTMLDivElement
 
     makeScrollable(body, { scrollHeight: 1000, clientHeight: 350 })
     fireEvent.click(button)
@@ -84,7 +101,12 @@ describe('ThinkingBlock auto-scroll', function () {
 
     // New text arrives
     makeScrollable(body, { scrollHeight: 1200, clientHeight: 350 })
-    rerender(<ThinkingBlock thinking="Initial thought and more text..." isLive={true} />)
+    rerender(
+      <ThinkingBlock
+        thinking="Initial thought and more text..."
+        isLive={true}
+      />
+    )
 
     // Should stop following and remain at user scrolled position
     expect(body.scrollTop).to.equal(200)
@@ -94,8 +116,12 @@ describe('ThinkingBlock auto-scroll', function () {
     const { container, rerender } = render(
       <ThinkingBlock thinking="Initial thought" isLive={true} />
     )
-    const button = container.querySelector('.ai-assist-thinking-header') as HTMLButtonElement
-    const body = container.querySelector('.ai-assist-thinking-body') as HTMLDivElement
+    const button = container.querySelector(
+      '.ai-assist-thinking-header'
+    ) as HTMLButtonElement
+    const body = container.querySelector(
+      '.ai-assist-thinking-body'
+    ) as HTMLDivElement
 
     makeScrollable(body, { scrollHeight: 1000, clientHeight: 350 })
     fireEvent.click(button)
@@ -111,7 +137,12 @@ describe('ThinkingBlock auto-scroll', function () {
 
     // New text arrives
     makeScrollable(body, { scrollHeight: 1300, clientHeight: 350 })
-    rerender(<ThinkingBlock thinking="Initial thought and even more text..." isLive={true} />)
+    rerender(
+      <ThinkingBlock
+        thinking="Initial thought and even more text..."
+        isLive={true}
+      />
+    )
 
     // Auto-scroll resumes and follows the latest text
     expect(body.scrollTop).to.equal(950)
@@ -127,11 +158,90 @@ describe('ThinkingBlock auto-scroll', function () {
     const { container } = render(
       <ThinkingBlock thinking="Some thinking" isLive={true} />
     )
-    const button = container.querySelector('.ai-assist-thinking-header') as HTMLButtonElement
+    const button = container.querySelector(
+      '.ai-assist-thinking-header'
+    ) as HTMLButtonElement
 
     fireEvent.click(button)
     expect(dispatched).to.be.true
 
     window.removeEventListener('aiAssist:stickToBottom', listener)
+  })
+
+  it('animates dropdown state with is-expanded on body and chevron', function () {
+    const { container } = render(
+      <ThinkingBlock thinking="Detailed thought process" isLive={false} />
+    )
+    const button = container.querySelector(
+      '.ai-assist-thinking-header'
+    ) as HTMLButtonElement
+    const chevron = container.querySelector(
+      '.ai-assist-thinking-chevron'
+    ) as SVGElement
+    const body = container.querySelector(
+      '.ai-assist-thinking-body'
+    ) as HTMLDivElement
+
+    expect(button.getAttribute('aria-expanded')).to.equal('false')
+    expect(chevron.classList.contains('is-expanded')).to.be.false
+    expect(body.classList.contains('is-expanded')).to.be.false
+
+    // Expand
+    fireEvent.click(button)
+    expect(button.getAttribute('aria-expanded')).to.equal('true')
+    expect(chevron.classList.contains('is-expanded')).to.be.true
+    expect(body.classList.contains('is-expanded')).to.be.true
+
+    // Collapse
+    fireEvent.click(button)
+    expect(button.getAttribute('aria-expanded')).to.equal('false')
+    expect(chevron.classList.contains('is-expanded')).to.be.false
+    expect(body.classList.contains('is-expanded')).to.be.false
+  })
+
+  it('applies token streaming fade animation when expanded during live generation', async function () {
+    const { container, rerender } = render(
+      <ThinkingBlock thinking="Thinking step one" isLive={true} />
+    )
+    const button = container.querySelector(
+      '.ai-assist-thinking-header'
+    ) as HTMLButtonElement
+    const content = container.querySelector(
+      '.ai-assist-thinking-content'
+    ) as HTMLDivElement
+
+    // Expand dropdown
+    fireEvent.click(button)
+    expect(button.getAttribute('aria-expanded')).to.equal('true')
+
+    // Stream new tokens
+    rerender(
+      <ThinkingBlock
+        thinking="Thinking step one and step two with more reasoning"
+        isLive={true}
+      />
+    )
+
+    // Newly revealed chunks are wrapped in ai-assist-stream-fade spans
+    await waitFor(() => {
+      const fadeSpans = content.querySelectorAll('.ai-assist-stream-fade')
+      expect(fadeSpans.length).to.be.greaterThan(0)
+    })
+  })
+
+  it('renders completed thinking block statically without animation spans when not live', function () {
+    const { container } = render(
+      <ThinkingBlock thinking="Finished thought process" isLive={false} />
+    )
+    const button = container.querySelector(
+      '.ai-assist-thinking-header'
+    ) as HTMLButtonElement
+    const content = container.querySelector(
+      '.ai-assist-thinking-content'
+    ) as HTMLDivElement
+
+    fireEvent.click(button)
+    expect(content.textContent).to.equal('Finished thought process')
+    expect(content.querySelectorAll('.ai-assist-stream-fade')).to.have.length(0)
   })
 })

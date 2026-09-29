@@ -71,7 +71,6 @@ export function GoogleDriveLinkingWidget({
   const [showModal, setShowModal] = useState<boolean>(false)
   const [unlinkInflight, setUnlinkInflight] = useState<boolean>(false)
   const [errorMessage, setErrorMessage] = useState<string>('')
-  const [scanInflight, setScanInflight] = useState<boolean>(false)
   const [scanMessage, setScanMessage] = useState<string>('')
   const [showBulkSync, setShowBulkSync] = useState<boolean>(false)
 

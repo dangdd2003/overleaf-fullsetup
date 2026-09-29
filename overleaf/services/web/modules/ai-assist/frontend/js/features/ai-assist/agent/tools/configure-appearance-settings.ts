@@ -65,7 +65,9 @@ export const configureAppearanceSettingsTool: AgentTool = {
         message: outcome.message || 'Appearance settings updated successfully.',
       }
     } catch (error: any) {
-      return { error: error?.message ?? 'Failed to update appearance settings.' }
+      return {
+        error: error?.message ?? 'Failed to update appearance settings.',
+      }
     }
   },
 

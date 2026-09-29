@@ -6,7 +6,10 @@ import {
   WebSources,
 } from '../../../../frontend/js/features/ai-assist/agent/web-sources'
 import { shrinkCall } from '../../../../frontend/js/features/ai-assist/agent/conversation-store'
-import { formatToday, renderEnvelope } from '../../../../frontend/js/features/ai-assist/agent/context/project-context'
+import {
+  formatToday,
+  renderEnvelope,
+} from '../../../../frontend/js/features/ai-assist/agent/context/project-context'
 import { summarise } from '../../../../frontend/js/features/ai-assist/components/agent/tool-call-card'
 
 const fakeT = (_key: string, opts?: any) =>
@@ -30,11 +33,17 @@ describe('web citations', function () {
     )
     expect(chips).to.have.length(1)
     expect(chips[0].textContent).to.equal('reuters')
-    expect(chips[0].getAttribute('href')).to.equal('https://www.reuters.com/world/a')
+    expect(chips[0].getAttribute('href')).to.equal(
+      'https://www.reuters.com/world/a'
+    )
   })
 
   it('folds adjacent citations, in either spelling, into one pill with a count', function () {
-    for (const text of ['Claim [2][5].', 'Claim [2, 5].', 'Claim 【2†L4-L9】【5†L1】.']) {
+    for (const text of [
+      'Claim [2][5].',
+      'Claim [2, 5].',
+      'Claim 【2†L4-L9】【5†L1】.',
+    ]) {
       const container = render(text)
       const chips = container.querySelectorAll('.ai-assist-citation-chip')
       expect(chips, text).to.have.length(1)
@@ -77,7 +86,9 @@ describe('web citations', function () {
             id: 's',
             name: 'web_search',
             args: {},
-            result: { results: [{ source: 1, url: 'https://a.org', title: 'A' }] },
+            result: {
+              results: [{ source: 1, url: 'https://a.org', title: 'A' }],
+            },
           },
         ],
       },
@@ -86,7 +97,12 @@ describe('web citations', function () {
         role: 'assistant',
         text: '',
         toolCalls: [
-          { id: 'f', name: 'web_fetch', args: {}, result: { source: 2, url: 'https://b.org' } },
+          {
+            id: 'f',
+            name: 'web_fetch',
+            args: {},
+            result: { source: 2, url: 'https://b.org' },
+          },
         ],
       },
     ] as any)

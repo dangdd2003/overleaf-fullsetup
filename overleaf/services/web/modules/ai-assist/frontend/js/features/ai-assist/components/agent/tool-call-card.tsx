@@ -79,6 +79,8 @@ export type ToolSummary = {
   lineRange?: string
   /** Quiet trailing detail, like a result count. */
   meta?: string
+  /** A compile's error and warning counts, each coloured when non-zero. */
+  compileCounts?: { errors: number; warnings: number }
 }
 
 export function formatLineRanges(args: any, result: any): string | null {
@@ -152,17 +154,32 @@ export function summarise(
       case 'get_compile_log':
         return t('ai_assist_tool_get_compile_log', 'Read compile log')
       case 'get_project_settings':
-        return t('ai_assist_tool_get_project_settings', 'Checked project settings')
+        return t(
+          'ai_assist_tool_get_project_settings',
+          'Checked project settings'
+        )
       case 'configure_project_settings':
       case 'configure_compiler_settings':
-        return t('ai_assist_tool_configure_project_settings', 'Configured project settings')
+        return t(
+          'ai_assist_tool_configure_project_settings',
+          'Configured project settings'
+        )
       case 'get_editor_settings':
-        return t('ai_assist_tool_get_editor_settings', 'Checked editor settings')
+        return t(
+          'ai_assist_tool_get_editor_settings',
+          'Checked editor settings'
+        )
       case 'configure_editor_settings':
       case 'configure_appearance_settings':
-        return t('ai_assist_tool_configure_editor_settings', 'Configured editor settings')
+        return t(
+          'ai_assist_tool_configure_editor_settings',
+          'Configured editor settings'
+        )
       case 'list_available_settings':
-        return t('ai_assist_tool_list_available_settings', 'Checked available settings')
+        return t(
+          'ai_assist_tool_list_available_settings',
+          'Checked available settings'
+        )
       case 'web_search':
         return t('ai_assist_tool_web_search', 'Searched the web')
       case 'web_fetch':
@@ -215,7 +232,9 @@ export function summarise(
   }
 
   if (call.isError) {
-    return { action: `${getToolBaseAction()} (${t('ai_assist_tool_failed', 'failed')})` }
+    return {
+      action: `${getToolBaseAction()} (${t('ai_assist_tool_failed', 'failed')})`,
+    }
   }
 
   switch (call.name) {
@@ -291,10 +310,10 @@ export function summarise(
         action: wantsCleanCompile(args)
           ? t('ai_assist_tool_compile_project_clean', 'Rebuilt from scratch')
           : t('ai_assist_tool_compile_project', 'Compiled project'),
-        target: t('ai_assist_tool_compile_project_detail', {
-          count: result?.errorCount ?? 0,
-          defaultValue: `${result?.errorCount ?? 0} errors`,
-        }),
+        compileCounts: {
+          errors: result?.errorCount ?? 0,
+          warnings: result?.warningCount ?? 0,
+        },
       }
     case 'get_compile_result':
     case 'get_compile_log':
@@ -310,25 +329,40 @@ export function summarise(
       }
     case 'get_project_settings':
       return {
-        action: t('ai_assist_tool_get_project_settings', 'Checked project settings'),
+        action: t(
+          'ai_assist_tool_get_project_settings',
+          'Checked project settings'
+        ),
       }
     case 'configure_project_settings':
     case 'configure_compiler_settings':
       return {
-        action: t('ai_assist_tool_configure_project_settings', 'Configured project settings'),
+        action: t(
+          'ai_assist_tool_configure_project_settings',
+          'Configured project settings'
+        ),
       }
     case 'get_editor_settings':
       return {
-        action: t('ai_assist_tool_get_editor_settings', 'Checked editor settings'),
+        action: t(
+          'ai_assist_tool_get_editor_settings',
+          'Checked editor settings'
+        ),
       }
     case 'configure_editor_settings':
     case 'configure_appearance_settings':
       return {
-        action: t('ai_assist_tool_configure_editor_settings', 'Configured editor settings'),
+        action: t(
+          'ai_assist_tool_configure_editor_settings',
+          'Configured editor settings'
+        ),
       }
     case 'list_available_settings':
       return {
-        action: t('ai_assist_tool_list_available_settings', 'Checked available settings'),
+        action: t(
+          'ai_assist_tool_list_available_settings',
+          'Checked available settings'
+        ),
       }
     case 'web_search': {
       return {
@@ -411,10 +445,38 @@ export function ToolCallSummaryLine({ call }: { call: ToolCallRecord }) {
           </span>
         ))}
 
-      {summary.lineRange && (
-        <span className="ai-assist-tool-call-range">
-          ({summary.lineRange})
+      {summary.compileCounts && (
+        <span className="ai-assist-tool-call-target">
+          <span
+            className={
+              summary.compileCounts.errors > 0
+                ? 'ai-assist-compile-count-error'
+                : undefined
+            }
+          >
+            {t('ai_assist_tool_compile_project_detail', {
+              count: summary.compileCounts.errors,
+              defaultValue: `${summary.compileCounts.errors} errors`,
+            })}
+          </span>
+          {', '}
+          <span
+            className={
+              summary.compileCounts.warnings > 0
+                ? 'ai-assist-compile-count-warning'
+                : undefined
+            }
+          >
+            {t('ai_assist_tool_compile_project_warnings', {
+              count: summary.compileCounts.warnings,
+              defaultValue: `${summary.compileCounts.warnings} warnings`,
+            })}
+          </span>
         </span>
+      )}
+
+      {summary.lineRange && (
+        <span className="ai-assist-tool-call-range">({summary.lineRange})</span>
       )}
 
       {summary.meta && (
@@ -433,7 +495,8 @@ export function toolCallDetailClass(call: ToolCallRecord, extra = '') {
   return [
     'ai-assist-tool-call-detail',
     extra,
-    WEB_TOOLS.has(call?.name) ? 'is-web' : '',
+    call?.name === 'web_search' ? 'is-web' : '',
+    call?.name === 'web_fetch' ? 'is-web-fetch' : '',
   ]
     .filter(Boolean)
     .join(' ')

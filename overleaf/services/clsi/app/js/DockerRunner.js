@@ -11,10 +11,9 @@ import * as LastProjectAccessModule from './LastProjectAccess.js'
 import LockManager from './LockManager.js'
 import * as AutoPullManager from './AutoPullManager.js'
 
-const LastProjectAccess =
-  LastProjectAccessModule.getLastProjectAccessTime
-    ? LastProjectAccessModule
-    : LastProjectAccessModule.default || LastProjectAccessModule
+const LastProjectAccess = LastProjectAccessModule.getLastProjectAccessTime
+  ? LastProjectAccessModule
+  : LastProjectAccessModule.default || LastProjectAccessModule
 
 let dockerClient
 let detectedMounts = null
@@ -30,8 +29,12 @@ function getDocker() {
 function getDetectedMounts(callback) {
   if (detectedMounts) return callback(null, detectedMounts)
   try {
-    const docker = getDocker()
+    const docker = DockerRunner._getDocker()
     const container = docker.getContainer(os.hostname())
+    if (!container || typeof container.inspect !== 'function') {
+      detectedMounts = {}
+      return callback(null, detectedMounts)
+    }
     container.inspect((err, data) => {
       detectedMounts = {}
       if (!err && data?.Mounts) {
@@ -70,10 +73,12 @@ function resolveHostPath(containerPath, mounts) {
 }
 
 const DockerRunner = {
+  _getDocker() {
+    return new Docker(Settings.clsi?.docker?.clientConfig || {})
+  },
   MAX_CONTAINER_AGE:
     Settings.clsi?.expireProjectAfterIdleMs || 24 * 60 * 60 * 1000,
-  CONTAINER_POLL_INTERVAL:
-    Settings.clsi?.checkProjectsIntervalMs || 60 * 1000,
+  CONTAINER_POLL_INTERVAL: Settings.clsi?.checkProjectsIntervalMs || 60 * 1000,
   _containerMonitorInterval: null,
 
   canRunSyncTeXInOutputDir() {
@@ -96,6 +101,7 @@ const DockerRunner = {
       clearInterval(this._containerMonitorInterval)
       this._containerMonitorInterval = null
     }
+    activeCompiles.clear()
   },
 
   run(
@@ -176,10 +182,7 @@ const DockerRunner = {
             hostOutputDir + '/directory'
           )
         }
-      } else if (
-        compileGroup === 'synctex' ||
-        compileGroup === 'wordcount'
-      ) {
+      } else if (compileGroup === 'synctex' || compileGroup === 'wordcount') {
         isReadOnly = true
         if (directory.startsWith('/var/lib/overleaf/data/compile')) {
           hostDirectory = directory.replace(
@@ -268,6 +271,7 @@ const DockerRunner = {
       const fingerprint = this._fingerprintContainer(options)
       const containerName = `sandbox-compiler-${projectId}-${fingerprint}`
       options.name = containerName
+      options.projectId = projectId
 
       compileEntry.containerName = containerName
       if (compileEntry.killed) {
@@ -279,12 +283,14 @@ const DockerRunner = {
 
       const executeWithRetry = (isRetry = false) => {
         this._runAndWaitForContainer(
-          projectId,
           options,
           volumes,
           timeout,
           (err, output) => {
-            if (err && (err.statusCode === 500 || err.message?.includes('500'))) {
+            if (
+              err &&
+              (err.statusCode === 500 || err.message?.includes('500'))
+            ) {
               if (!isRetry && !compileEntry.killed) {
                 logger.warn(
                   { err, containerName, projectId },
@@ -345,9 +351,7 @@ const DockerRunner = {
       ...(env || {}),
     }
 
-    const envArray = Object.entries(envMap).map(
-      ([key, val]) => `${key}=${val}`
-    )
+    const envArray = Object.entries(envMap).map(([key, val]) => `${key}=${val}`)
 
     const workingDir = cwd ? Path.posix.join('/compile', cwd) : '/compile'
 
@@ -390,7 +394,8 @@ const DockerRunner = {
       .digest('hex')
   },
 
-  _runAndWaitForContainer(projectId, options, volumes, timeout, callback) {
+  _runAndWaitForContainer(options, volumes, timeout, callback) {
+    const projectId = options?.projectId || 'default'
     let capturedOutput = { stdout: '', stderr: '' }
 
     const attachStreamHandler = (err, stream) => {
@@ -440,7 +445,7 @@ const DockerRunner = {
   },
 
   startContainer(options, volumes, attachStreamHandler, callback) {
-    const docker = getDocker()
+    const docker = this._getDocker()
     const container = docker.getContainer(options.name)
 
     container.inspect((err, info) => {
@@ -508,7 +513,7 @@ const DockerRunner = {
   },
 
   attachToContainer(containerId, attachStreamHandler, callback) {
-    const docker = getDocker()
+    const docker = this._getDocker()
     const container = docker.getContainer(containerId)
     container.attach(
       { stream: true, stdout: true, stderr: true },
@@ -523,7 +528,7 @@ const DockerRunner = {
   },
 
   waitForContainer(containerId, timeout, options, callback) {
-    const docker = getDocker()
+    const docker = this._getDocker()
     const container = docker.getContainer(containerId)
     let timedOut = false
 
@@ -541,7 +546,10 @@ const DockerRunner = {
       if (timedOut) return
 
       if (err) {
-        if (err.statusCode === 404 && options?.HostConfig?.AutoRemove === true) {
+        if (
+          err.statusCode === 404 &&
+          options?.HostConfig?.AutoRemove === true
+        ) {
           return callback(null, 0)
         }
         return callback(err)
@@ -552,7 +560,7 @@ const DockerRunner = {
   },
 
   destroyOldContainers(callback) {
-    const docker = getDocker()
+    const docker = this._getDocker()
     const nowInSeconds = Date.now() / 1000
     const maxAgeInSeconds = this.MAX_CONTAINER_AGE / 1000
 
@@ -609,7 +617,7 @@ const DockerRunner = {
   },
 
   _destroyContainer(containerId, shouldForce, callback) {
-    const docker = getDocker()
+    const docker = this._getDocker()
     const container = docker.getContainer(containerId)
     container.remove(
       { force: Boolean(shouldForce), v: true },
@@ -632,23 +640,24 @@ const DockerRunner = {
         containerId = entry.containerName
       }
     }
-    const docker = getDocker()
+    const docker = this._getDocker()
     const container = docker.getContainer(containerId)
+    console.log('[DEBUG kill] container returned:', container)
     container.kill(err => {
       if (
         err &&
         (err.statusCode === 500 || err.statusCode === 404) &&
         err.message?.includes('is not running')
       ) {
-        return callback()
+        return process.nextTick(callback)
       }
       if (err && err.statusCode === 404) {
-        return callback()
+        return process.nextTick(callback)
       }
       if (err) {
-        return callback(err)
+        return process.nextTick(() => callback(err))
       }
-      callback()
+      process.nextTick(callback)
     })
   },
 }

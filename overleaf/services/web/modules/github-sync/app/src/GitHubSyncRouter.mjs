@@ -3,11 +3,12 @@ import AuthorizationManager from '../../../../app/src/Features/Authorization/Aut
 import GitHubSyncManager from './GitHubSyncManager.mjs'
 
 async function _requireWriteAccess(req, res) {
-  const canWrite = await AuthorizationManager.promises.canUserWriteProjectContent(
-    req.user._id,
-    req.params.projectId,
-    null
-  )
+  const canWrite =
+    await AuthorizationManager.promises.canUserWriteProjectContent(
+      req.user._id,
+      req.params.projectId,
+      null
+    )
   if (!canWrite) {
     res.status(403).json({ code: 'forbidden', message: 'No write access' })
     return false
@@ -16,9 +17,13 @@ async function _requireWriteAccess(req, res) {
 }
 
 async function _requireLinkedOwner(req, res) {
-  const stateDoc = await GitHubSyncManager.promises.getState(req.params.projectId)
+  const stateDoc = await GitHubSyncManager.promises.getState(
+    req.params.projectId
+  )
   if (!stateDoc) {
-    res.status(404).json({ code: 'notLinked', message: 'project is not linked to GitHub' })
+    res
+      .status(404)
+      .json({ code: 'notLinked', message: 'project is not linked to GitHub' })
     return null
   }
   // Being the linked owner is not enough on its own: the link outlives changes
@@ -41,7 +46,9 @@ async function status(req, res) {
     null
   )
   if (!canRead) {
-    return res.status(403).json({ code: 'forbidden', message: 'No read access' })
+    return res
+      .status(403)
+      .json({ code: 'forbidden', message: 'No read access' })
   }
   res.json(await GitHubSyncManager.promises.getStatus(req.params.projectId))
 }
@@ -63,7 +70,12 @@ async function push(req, res) {
   const stateDoc = await _requireLinkedOwner(req, res)
   if (!stateDoc) return
   try {
-    res.json(await GitHubSyncManager.promises.push(req.params.projectId, req.body?.message))
+    res.json(
+      await GitHubSyncManager.promises.push(
+        req.params.projectId,
+        req.body?.message
+      )
+    )
   } catch (err) {
     res.status(err.code === 'busy' ? 409 : err.status || 400).json({
       code: err.code || 'error',
@@ -83,20 +95,32 @@ async function continueMerge(req, res) {
   const stateDoc = await _requireLinkedOwner(req, res)
   if (!stateDoc) return
   try {
-    res.json(await GitHubSyncManager.promises.continueAfterManualMerge(req.params.projectId))
+    res.json(
+      await GitHubSyncManager.promises.continueAfterManualMerge(
+        req.params.projectId
+      )
+    )
   } catch (err) {
-    res.status(err.status || 400).json({ code: err.code || 'error', message: err.message })
+    res
+      .status(err.status || 400)
+      .json({ code: err.code || 'error', message: err.message })
   }
 }
 
 async function createRepo(req, res) {
   const { name, owner, isPrivate } = req.body
   if (!name) {
-    return res.status(400).json({ code: 'invalidParameters', message: 'name is required' })
+    return res
+      .status(400)
+      .json({ code: 'invalidParameters', message: 'name is required' })
   }
-  const existing = await GitHubSyncManager.promises.getState(req.params.projectId)
+  const existing = await GitHubSyncManager.promises.getState(
+    req.params.projectId
+  )
   if (existing) {
-    return res.status(409).json({ code: 'alreadyLinked', message: 'already linked' })
+    return res
+      .status(409)
+      .json({ code: 'alreadyLinked', message: 'already linked' })
   }
   // createRepo does not go through _requireLinkedOwner (there is no link yet),
   // so it needs its own write-access check.
@@ -109,7 +133,10 @@ async function createRepo(req, res) {
     )
     res.json(result)
   } catch (err) {
-    const status = err.code === 'only_project_owner_can_link_github' ? 403 : err.status || 400
+    const status =
+      err.code === 'only_project_owner_can_link_github'
+        ? 403
+        : err.status || 400
     res.status(status).json({ code: err.code || 'error', message: err.message })
   }
 }

@@ -132,7 +132,9 @@ export function parseOutline({
         const open = section.index + section[0].length - 1
         const group = readBraceGroup(line, open)
         if (!group) {
-          notes.push(`${path}:${lineNumber}: unterminated section title, skipped`)
+          notes.push(
+            `${path}:${lineNumber}: unterminated section title, skipped`
+          )
         } else {
           sections.push({
             path,

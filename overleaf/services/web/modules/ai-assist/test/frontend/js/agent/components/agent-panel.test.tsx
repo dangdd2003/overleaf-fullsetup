@@ -1,6 +1,6 @@
 import { expect } from 'chai'
 import sinon from 'sinon'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import {
   AgentPanel,
   buildUserEntry,
@@ -97,13 +97,20 @@ describe('buildUserEntry', function () {
   })
 
   it('bundles attachedSelection into attachments and selection context', async function () {
-    const { handle } = createFakeHandle({ docs: { 'main.tex': 'hello world line 1\nline 2' } })
+    const { handle } = createFakeHandle({
+      docs: { 'main.tex': 'hello world line 1\nline 2' },
+    })
     const entry = await buildUserEntry({
       handle,
       transcript: [],
       text: 'explain selection',
       attachments: [{ path: 'refs.bib', text: '@article{test}' }],
-      attachedSelection: { path: 'main.tex', from: 1, to: 2, text: 'hello world line 1\nline 2' },
+      attachedSelection: {
+        path: 'main.tex',
+        from: 1,
+        to: 2,
+        text: 'hello world line 1\nline 2',
+      },
     })
 
     expect(entry.role).to.equal('user')
@@ -132,7 +139,8 @@ describe('AgentEmptyState', function () {
     render(<AgentEmptyState onPick={sinon.stub()} handle={handle} files={[]} />)
 
     expect(screen.getByText(/scan for unsupported statements/i)).to.exist
-    expect(screen.getByText(/what can (you help me with|the assistant do)/i)).to.exist
+    expect(screen.getByText(/what can (you help me with|the assistant do)/i)).to
+      .exist
   })
 
   it('suggests fixing the compile errors the project actually has', function () {
@@ -140,7 +148,9 @@ describe('AgentEmptyState', function () {
       docs: { 'main.tex': '\\begin{document}\noops\n\\end{document}' },
       lastCompile: {
         status: 'failure',
-        errors: [{ message: 'Undefined control sequence.', file: 'main.tex', line: 2 }],
+        errors: [
+          { message: 'Undefined control sequence.', file: 'main.tex', line: 2 },
+        ],
         warnings: [],
         rawLog: null,
       },
@@ -155,16 +165,44 @@ describe('AgentEmptyState', function () {
     const { handle } = createFakeHandle({ docs: { 'main.tex': 'hello' } })
     render(<AgentEmptyState onPick={onPick} handle={handle} files={[]} />)
 
-    fireEvent.click(screen.getByText(/what can (you help me with|the assistant do)/i))
+    fireEvent.click(
+      screen.getByText(/what can (you help me with|the assistant do)/i)
+    )
     expect(onPick).to.have.been.calledOnce
     expect(onPick.firstCall.args[0].prompt).to.be.a('string').and.not.be.empty
+  })
+
+  it('greys out and disables suggestion buttons when disabled is true', function () {
+    const onPick = sinon.stub()
+    const { handle } = createFakeHandle({ docs: { 'main.tex': 'hello' } })
+    const { container } = render(
+      <AgentEmptyState
+        onPick={onPick}
+        handle={handle}
+        files={[]}
+        disabled={true}
+      />
+    )
+
+    const emptyState = container.querySelector('.ai-assist-empty-state')
+    expect(emptyState?.classList.contains('is-disabled')).to.be.true
+
+    const starterBtn = screen
+      .getByText(/what can (you help me with|the assistant do)/i)
+      .closest('button') as HTMLButtonElement
+    expect(starterBtn.disabled).to.be.true
+
+    fireEvent.click(starterBtn)
+    expect(onPick).to.have.not.been.called
   })
 })
 
 describe('AgentComposer', function () {
   it('sends on Enter and clears the input', function () {
     const onSend = sinon.stub()
-    render(<AgentComposer running={false} onSend={onSend} onStop={sinon.stub()} />)
+    render(
+      <AgentComposer running={false} onSend={onSend} onStop={sinon.stub()} />
+    )
 
     const input = screen.getByPlaceholderText(/what would you like to do/i)
     fireEvent.change(input, { target: { value: 'add a section' } })
@@ -176,7 +214,9 @@ describe('AgentComposer', function () {
 
   it('does not send on Shift+Enter', function () {
     const onSend = sinon.stub()
-    render(<AgentComposer running={false} onSend={onSend} onStop={sinon.stub()} />)
+    render(
+      <AgentComposer running={false} onSend={onSend} onStop={sinon.stub()} />
+    )
 
     const input = screen.getByPlaceholderText(/what would you like to do/i)
     fireEvent.change(input, { target: { value: 'line one' } })
@@ -187,11 +227,16 @@ describe('AgentComposer', function () {
 
   it('refuses to send an empty message', function () {
     const onSend = sinon.stub()
-    render(<AgentComposer running={false} onSend={onSend} onStop={sinon.stub()} />)
+    render(
+      <AgentComposer running={false} onSend={onSend} onStop={sinon.stub()} />
+    )
 
-    fireEvent.keyDown(screen.getByPlaceholderText(/what would you like to do/i), {
-      key: 'Enter',
-    })
+    fireEvent.keyDown(
+      screen.getByPlaceholderText(/what would you like to do/i),
+      {
+        key: 'Enter',
+      }
+    )
     expect(onSend).to.have.not.been.called
   })
 
@@ -207,9 +252,12 @@ describe('AgentComposer', function () {
     const onStop = sinon.stub()
     render(<AgentComposer running onSend={sinon.stub()} onStop={onStop} />)
 
-    fireEvent.keyDown(screen.getByPlaceholderText(/what would you like to do/i), {
-      key: 'Escape',
-    })
+    fireEvent.keyDown(
+      screen.getByPlaceholderText(/what would you like to do/i),
+      {
+        key: 'Escape',
+      }
+    )
     expect(onStop).to.have.been.calledOnce
   })
 
@@ -234,7 +282,9 @@ describe('AgentComposer', function () {
       />
     )
 
-    const input = screen.getByPlaceholderText(/what would you like to do/i) as HTMLTextAreaElement
+    const input = screen.getByPlaceholderText(
+      /what would you like to do/i
+    ) as HTMLTextAreaElement
     expect(input.value).to.equal('')
 
     // Up arrow to latest history prompt
@@ -268,7 +318,9 @@ describe('AgentComposer', function () {
       />
     )
 
-    const input = screen.getByPlaceholderText(/what would you like to do/i) as HTMLTextAreaElement
+    const input = screen.getByPlaceholderText(
+      /what would you like to do/i
+    ) as HTMLTextAreaElement
     fireEvent.change(input, { target: { value: 'my unfinished draft' } })
 
     fireEvent.keyDown(input, { key: 'ArrowUp' })
@@ -288,7 +340,9 @@ describe('AgentComposer', function () {
       />
     )
 
-    const input = screen.getByPlaceholderText(/what would you like to do/i) as HTMLTextAreaElement
+    const input = screen.getByPlaceholderText(
+      /what would you like to do/i
+    ) as HTMLTextAreaElement
     fireEvent.change(input, { target: { value: 'current text' } })
 
     fireEvent.keyDown(input, { key: 'ArrowUp' })
@@ -307,7 +361,9 @@ describe('AgentComposer', function () {
       />
     )
 
-    const input = screen.getByPlaceholderText(/what would you like to do/i) as HTMLTextAreaElement
+    const input = screen.getByPlaceholderText(
+      /what would you like to do/i
+    ) as HTMLTextAreaElement
     fireEvent.keyDown(input, { key: 'Tab', shiftKey: true })
     expect(onModeChange.calledWith('acceptEdits')).to.be.true
   })
@@ -373,6 +429,43 @@ describe('AgentComposer', function () {
     expect(onModeChange.called).to.be.false
     expect(input.value).to.equal('2')
   })
+
+  it('greys out and disables the composer when disabled is true', function () {
+    const onSend = sinon.stub()
+    const { container } = render(
+      <AgentComposer
+        running={false}
+        disabled={true}
+        onSend={onSend}
+        onStop={sinon.stub()}
+      />
+    )
+
+    const box = container.querySelector('.ai-assist-composer-box')
+    expect(box?.classList.contains('is-disabled')).to.be.true
+
+    const textarea = screen.getByPlaceholderText(
+      /configure an ai provider in account settings/i
+    ) as HTMLTextAreaElement
+    expect(textarea.disabled).to.be.true
+
+    const attachBtn = screen.getByLabelText(
+      /attach context/i
+    ) as HTMLButtonElement
+    expect(attachBtn.disabled).to.be.true
+
+    const modeBtn = screen.getByLabelText(/select mode/i) as HTMLButtonElement
+    expect(modeBtn.disabled).to.be.true
+
+    const sendBtn = screen.getByRole('button', {
+      name: /send/i,
+    }) as HTMLButtonElement
+    expect(sendBtn.disabled).to.be.true
+
+    fireEvent.change(textarea, { target: { value: 'test message' } })
+    fireEvent.keyDown(textarea, { key: 'Enter' })
+    expect(onSend).to.have.not.been.called
+  })
 })
 
 describe('AgentPanel', function () {
@@ -407,7 +500,10 @@ describe('AgentPanel', function () {
 
   it('stops active background run when New chat is clicked', async function () {
     customLocalStorage.setItem('ai-assist:active-run:' + PROJECT_ID, 'run-123')
-    customLocalStorage.setItem('ai-assist:active-run-start:' + PROJECT_ID, String(Date.now()))
+    customLocalStorage.setItem(
+      'ai-assist:active-run-start:' + PROJECT_ID,
+      String(Date.now())
+    )
 
     fakeFetch = sinon.stub(globalThis, 'fetch' as any).resolves({
       ok: true,
@@ -431,15 +527,18 @@ describe('AgentPanel', function () {
 
     fireEvent.click(screen.getByLabelText('New chat'))
 
-    const stopCall = fakeFetch.getCalls().find(c =>
-      String(c.args[0]).includes('/runs/run-123/stop')
-    )
+    const stopCall = fakeFetch
+      .getCalls()
+      .find(c => String(c.args[0]).includes('/runs/run-123/stop'))
     expect(stopCall, 'New chat must POST stop for the active run').to.exist
   })
 
   it('does not repopulate transcript with stream events arriving after New chat', async function () {
     customLocalStorage.setItem('ai-assist:active-run:' + PROJECT_ID, 'run-123')
-    customLocalStorage.setItem('ai-assist:active-run-start:' + PROJECT_ID, String(Date.now()))
+    customLocalStorage.setItem(
+      'ai-assist:active-run-start:' + PROJECT_ID,
+      String(Date.now())
+    )
 
     fakeFetch = sinon.stub(globalThis, 'fetch' as any).resolves({
       ok: true,
@@ -494,7 +593,9 @@ describe('AgentPanel', function () {
       </EditorProviders>
     )
 
-    const transcript = container.querySelector('.ai-assist-transcript') as HTMLElement
+    const transcript = container.querySelector(
+      '.ai-assist-transcript'
+    ) as HTMLElement
     expect(transcript).to.exist
 
     let scrollTop = 0
@@ -522,5 +623,122 @@ describe('AgentPanel', function () {
     fireEvent.click(jumpBtn)
     expect(transcript.scrollTop).to.equal(1000)
     expect(screen.queryByLabelText(/jump to latest/i)).to.equal(null)
+  })
+
+  it('jumps to the latest message when a prompt is sent while scrolled up', async function () {
+    customLocalStorage.setItem('ai-assist:provider', {
+      type: 'openai',
+      baseUrl: 'https://api.openai.com/v1',
+      apiKey: 'sk-test',
+      model: 'gpt-4o-mini',
+    })
+    saveConversation(PROJECT_ID, [
+      { id: 'u1', role: 'user', text: 'turn 1' },
+      { id: 'a1', role: 'assistant', text: 'turn 1 reply', toolCalls: [] },
+    ])
+
+    const { container } = render(
+      <EditorProviders mockCompileOnLoad>
+        <AgentPanel />
+      </EditorProviders>
+    )
+
+    const transcript = container.querySelector(
+      '.ai-assist-transcript'
+    ) as HTMLElement
+    let scrollTop = 0
+    Object.defineProperty(transcript, 'scrollHeight', { get: () => 1000 })
+    Object.defineProperty(transcript, 'clientHeight', { get: () => 200 })
+    Object.defineProperty(transcript, 'scrollTop', {
+      get: () => scrollTop,
+      set: v => {
+        scrollTop = v
+      },
+    })
+
+    scrollTop = 100
+    fireEvent.scroll(transcript)
+    expect(screen.getByLabelText(/jump to latest/i)).to.exist
+
+    const input = screen.getByPlaceholderText(/what would you like to do/i)
+    fireEvent.change(input, { target: { value: 'turn 2' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    await waitFor(() => expect(transcript.scrollTop).to.equal(1000))
+    expect(screen.queryByLabelText(/jump to latest/i)).to.equal(null)
+  })
+
+  it('greys out the chatbox and suggestions when upstream AI provider is not set', function () {
+    const { container } = render(
+      <EditorProviders mockCompileOnLoad>
+        <AgentPanel />
+      </EditorProviders>
+    )
+
+    const box = container.querySelector('.ai-assist-composer-box')
+    expect(box?.classList.contains('is-disabled')).to.be.true
+
+    const emptyState = container.querySelector('.ai-assist-empty-state')
+    expect(emptyState?.classList.contains('is-disabled')).to.be.true
+
+    const textarea = screen.getByPlaceholderText(
+      /configure an ai provider in account settings/i
+    ) as HTMLTextAreaElement
+    expect(textarea.disabled).to.be.true
+  })
+
+  it('enables the chatbox and suggestions when upstream AI provider is configured', function () {
+    customLocalStorage.setItem('ai-assist:provider', {
+      type: 'openai',
+      baseUrl: 'https://api.openai.com/v1',
+      apiKey: 'sk-test',
+      model: 'gpt-4o-mini',
+    })
+
+    const { container } = render(
+      <EditorProviders mockCompileOnLoad>
+        <AgentPanel />
+      </EditorProviders>
+    )
+
+    const box = container.querySelector('.ai-assist-composer-box')
+    expect(box?.classList.contains('is-disabled')).to.be.false
+
+    const emptyState = container.querySelector('.ai-assist-empty-state')
+    expect(emptyState?.classList.contains('is-disabled')).to.be.false
+
+    const textarea = screen.getByPlaceholderText(
+      /what would you like to do/i
+    ) as HTMLTextAreaElement
+    expect(textarea.disabled).to.be.false
+  })
+
+  it('reactively enables the chatbox when provider is configured via event', async function () {
+    const { container } = render(
+      <EditorProviders mockCompileOnLoad>
+        <AgentPanel />
+      </EditorProviders>
+    )
+
+    const box = container.querySelector('.ai-assist-composer-box')
+    expect(box?.classList.contains('is-disabled')).to.be.true
+
+    customLocalStorage.setItem('ai-assist:provider', {
+      type: 'openai',
+      baseUrl: 'https://api.openai.com/v1',
+      apiKey: 'sk-test',
+      model: 'gpt-4o-mini',
+    })
+
+    window.dispatchEvent(new CustomEvent('aiAssist:providerChanged'))
+
+    await waitFor(() => {
+      expect(box?.classList.contains('is-disabled')).to.be.false
+    })
+
+    const textarea = screen.getByPlaceholderText(
+      /what would you like to do/i
+    ) as HTMLTextAreaElement
+    expect(textarea.disabled).to.be.false
   })
 })

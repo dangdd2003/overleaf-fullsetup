@@ -177,8 +177,7 @@ describe('GoogleDriveImportManager', () => {
     it('marks active jobs cancelled and unsets active flag', async () => {
       await GoogleDriveImportManager.cancelActiveJobs(userId.toString())
 
-      const [query, update] =
-        db.googleDriveImportJobs.updateMany.mock.calls[0]
+      const [query, update] = db.googleDriveImportJobs.updateMany.mock.calls[0]
       expect(query.userId.toString()).toBe(userId.toString())
       expect(query.active).toBe(true)
       expect(update.$set.status).toBe('cancelled')
@@ -216,7 +215,12 @@ describe('GoogleDriveImportManager', () => {
         failedCount: 1,
         folders: [
           { folderId: 'f-1', name: 'Thesis', status: 'synced', error: null },
-          { folderId: 'f-2', name: 'Paper', status: 'failed', error: 'Not found' },
+          {
+            folderId: 'f-2',
+            name: 'Paper',
+            status: 'failed',
+            error: 'Not found',
+          },
         ],
       })
     })

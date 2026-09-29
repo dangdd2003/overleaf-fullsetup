@@ -12,6 +12,7 @@ import OLIconButton from '@/shared/components/ol/ol-icon-button'
 import OLTooltip from '@/shared/components/ol/ol-tooltip'
 import GitLogoOrange from '@/shared/svgs/git-logo-orange'
 import getMeta from '@/utils/meta'
+import { debugConsole } from '@/utils/debugging'
 
 interface TokenRecord {
   _id: string
@@ -164,7 +165,7 @@ export function GitTokensWidget() {
         fetchTokens()
       }
     } catch (err) {
-      console.error('Failed to generate token', err)
+      debugConsole.error('Failed to generate token', err)
     }
   }
 
@@ -185,13 +186,13 @@ export function GitTokensWidget() {
         }
       )
       if (!response.ok) {
-        console.error('Failed to delete token', response.status)
+        debugConsole.error('Failed to delete token', response.status)
         return
       }
       setTokenToDelete(null)
       fetchTokens()
     } catch (err) {
-      console.error('Failed to delete token', err)
+      debugConsole.error('Failed to delete token', err)
     }
   }
 
@@ -273,10 +274,7 @@ export function GitTokensWidget() {
                 className="form-check-label"
                 htmlFor="git-token-scope-git-bridge"
               >
-                {t(
-                  'personal_access_token_scope_git_bridge',
-                  'Git integration'
-                )}
+                {t('personal_access_token_scope_git_bridge', 'Git integration')}
               </label>
             </div>
             <div className="form-check">
@@ -287,10 +285,7 @@ export function GitTokensWidget() {
                 checked={scopeMcp}
                 onChange={e => setScopeMcp(e.target.checked)}
               />
-              <label
-                className="form-check-label"
-                htmlFor="git-token-scope-mcp"
-              >
+              <label className="form-check-label" htmlFor="git-token-scope-mcp">
                 {t('personal_access_token_scope_mcp', 'AI assistant (MCP)')}
               </label>
             </div>
@@ -371,8 +366,7 @@ export function GitTokensWidget() {
                   <tr
                     key={token._id}
                     style={{
-                      borderBottom:
-                        '1px solid var(--border-divider, #e2e8f0)',
+                      borderBottom: '1px solid var(--border-divider, #e2e8f0)',
                       fontSize: '14px',
                     }}
                   >
@@ -465,7 +459,10 @@ export function GitTokensWidget() {
           </OLModalTitle>
         </OLModalHeader>
         <OLModalBody>
-          <p className="git-bridge-secondary-text mb-2" style={{ fontSize: '15px' }}>
+          <p
+            className="git-bridge-secondary-text mb-2"
+            style={{ fontSize: '15px' }}
+          >
             {t(
               'git_token_info_subtitle',
               'This is your Git authentication token. You should enter this when prompted for a password.'

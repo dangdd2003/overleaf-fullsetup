@@ -66,9 +66,13 @@ export default function DeleteUserModal({
 
         <div className="alert alert-warning mb-0">
           <ul className="mb-0 ps-3 small">
-            <li>All active sessions will be terminated and owned projects archived.</li>
             <li>
-              The account can be restored within <strong>{retentionDays} days</strong> before permanent deletion.
+              All active sessions will be terminated and owned projects
+              archived.
+            </li>
+            <li>
+              The account can be restored within{' '}
+              <strong>{retentionDays} days</strong> before permanent deletion.
             </li>
           </ul>
         </div>

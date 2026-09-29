@@ -65,6 +65,7 @@ export type OLDropdownToggleProps = PropsWithChildren<
     as?: ElementType
     size?: 'sm' | 'lg' | undefined
     tabIndex?: number
+    title?: string
     role?: string
     onMouseEnter?: React.MouseEventHandler
   } & React.AriaAttributes & { [key: `data-${string}`]: unknown }

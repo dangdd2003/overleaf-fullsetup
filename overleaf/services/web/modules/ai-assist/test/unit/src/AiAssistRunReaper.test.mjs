@@ -1,3 +1,4 @@
+import { describe, it, beforeEach, afterEach } from 'vitest'
 import { expect } from 'chai'
 import sinon from 'sinon'
 import Settings from '@overleaf/settings'
@@ -57,7 +58,8 @@ describe('AiAssistRunReaper', function () {
 
     const cancelled = await reaper.sweepOnce()
 
-    expect(mockControl.publish.calledWith('run-abandoned', { action: 'stop' })).to.be.true
+    expect(mockControl.publish.calledWith('run-abandoned', { action: 'stop' }))
+      .to.be.true
     expect(cancelled).to.deep.equal(['run-abandoned'])
     expect(mockStore.reconcileStaleRuns.calledOnce).to.be.true
   })
@@ -90,7 +92,9 @@ describe('AiAssistRunReaper', function () {
     const cancelled = await reaper.sweepOnce()
 
     expect(mockControl.publish.called).to.be.false
-    expect(mockStore.setZeroSince.calledWith('run-first-zero', sinon.match.number)).to.be.true
+    expect(
+      mockStore.setZeroSince.calledWith('run-first-zero', sinon.match.number)
+    ).to.be.true
     expect(cancelled).to.be.empty
   })
 
@@ -143,8 +147,10 @@ describe('AiAssistRunReaper', function () {
     }
 
     mockStore.getRun
-      .onFirstCall().resolves(staleRun)
-      .onSecondCall().resolves(freshReconnectedRun)
+      .onFirstCall()
+      .resolves(staleRun)
+      .onSecondCall()
+      .resolves(freshReconnectedRun)
 
     const cancelled = await reaper.sweepOnce()
 

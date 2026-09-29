@@ -2,7 +2,6 @@ import { TranscriptEntry, AssistantBlock } from '../../agent/agent-messages'
 import { WebSources } from '../../agent/web-sources'
 import { MarkdownContent } from './markdown-content'
 import { SubresultGroup, SubresultItem } from './subresult-group'
-import { ThinkingBlock } from './thinking-block'
 
 export type MessageSegment =
   | { type: 'subresults'; items: SubresultItem[] }

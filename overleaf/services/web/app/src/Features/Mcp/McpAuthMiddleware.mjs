@@ -38,11 +38,12 @@ async function requireMcpAuth(req, res, next) {
     try {
       const payload = await OAuth2KeyManager.verifyJwt(token, req)
       if (payload && payload.sub) {
-        const scopes = typeof payload.scope === 'string'
-          ? payload.scope.split(' ').filter(Boolean)
-          : Array.isArray(payload.scope)
-            ? payload.scope
-            : []
+        const scopes =
+          typeof payload.scope === 'string'
+            ? payload.scope.split(' ').filter(Boolean)
+            : Array.isArray(payload.scope)
+              ? payload.scope
+              : []
         info = {
           userId: payload.sub,
           scopes,

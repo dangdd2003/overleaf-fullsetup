@@ -91,11 +91,7 @@ export default function BatchRevokeSessionsModal({
         <OLButton variant="secondary" onClick={onHide} disabled={isLoading}>
           Cancel
         </OLButton>
-        <OLButton
-          variant="outline-danger"
-          onClick={handleRevoke}
-          disabled={isLoading}
-        >
+        <OLButton variant="danger" onClick={handleRevoke} disabled={isLoading}>
           {isLoading
             ? 'Revoking...'
             : `Revoke Sessions for ${users.length} User${users.length !== 1 ? 's' : ''}`}

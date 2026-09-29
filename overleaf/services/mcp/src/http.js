@@ -38,14 +38,18 @@ export function createBearerAuthMiddleware(
   let verifier = jwtVerifier
 
   return async function requireBearerToken(req, res, next) {
-    const activeConfig =
-      config || req.app?.locals?.config || { resourceUri: 'http://localhost:3050/mcp' }
+    const activeConfig = config ||
+      req.app?.locals?.config || { resourceUri: 'http://localhost:3050/mcp' }
     const match = BEARER_PATTERN.exec(req.get('authorization') || '')
     if (!match) {
-      res.setHeader('WWW-Authenticate', buildWwwAuthenticateHeader(activeConfig))
-      res
-        .status(401)
-        .json({ code: 'unauthorized', message: 'an Authorization: Bearer token is required' })
+      res.setHeader(
+        'WWW-Authenticate',
+        buildWwwAuthenticateHeader(activeConfig)
+      )
+      res.status(401).json({
+        code: 'unauthorized',
+        message: 'an Authorization: Bearer token is required',
+      })
       return
     }
 
@@ -81,7 +85,8 @@ export function createBearerAuthMiddleware(
         const expiresAt = Math.min(expMs, now + cacheTtlMs)
         const userId = payload.sub
         const clientId = payload.client_id || 'overleaf-mcp'
-        const scopes = typeof payload.scope === 'string' ? payload.scope.split(' ') : ['mcp']
+        const scopes =
+          typeof payload.scope === 'string' ? payload.scope.split(' ') : ['mcp']
 
         tokenCache.set(token, {
           expiresAt,
@@ -175,7 +180,9 @@ export function createHttpApp({ config, client }) {
   const app = createMcpExpressApp({
     host: config.host,
     ...(allowedHosts.length ? { allowedHosts } : {}),
-    ...(config.allowedOrigins.length ? { allowedOrigins: [...config.allowedOrigins] } : {}),
+    ...(config.allowedOrigins.length
+      ? { allowedOrigins: [...config.allowedOrigins] }
+      : {}),
   })
   app.locals.client = client
   app.locals.config = config
@@ -256,7 +263,11 @@ export async function proxyToInternalUrl(req, res, internalUrl) {
 
     let body = undefined
     if (!['GET', 'HEAD'].includes(req.method)) {
-      if (typeof req.body === 'object' && req.body !== null && Object.keys(req.body).length > 0) {
+      if (
+        typeof req.body === 'object' &&
+        req.body !== null &&
+        Object.keys(req.body).length > 0
+      ) {
         body = JSON.stringify(req.body)
         headers.set('content-type', 'application/json')
       } else if (typeof req.body === 'string') {
@@ -287,6 +298,8 @@ export async function proxyToInternalUrl(req, res, internalUrl) {
     const buffer = Buffer.from(await upstreamRes.arrayBuffer())
     res.send(buffer)
   } catch (err) {
-    res.status(502).json({ error: 'bad_gateway', error_description: err.message })
+    res
+      .status(502)
+      .json({ error: 'bad_gateway', error_description: err.message })
   }
 }

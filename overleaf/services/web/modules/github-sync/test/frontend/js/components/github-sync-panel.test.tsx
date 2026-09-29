@@ -35,15 +35,19 @@ describe('GithubSyncPanel', function () {
     setMeta({ enabled: false })
     const { container } = render(<GithubSyncPanel />)
     expect(container.firstChild).to.equal(null)
-    expect(fetchMock.callHistory.called('/project/proj1/github/status')).to.equal(
-      false
-    )
+    expect(
+      fetchMock.callHistory.called('/project/proj1/github/status')
+    ).to.equal(false)
   })
 
   it('renders nothing when not linked', async function () {
     fetchMock.get('/project/proj1/github/status', { linked: false })
     const { container } = renderPanel()
-    await waitFor(() => expect(fetchMock.callHistory.called('/project/proj1/github/status')).to.equal(true))
+    await waitFor(() =>
+      expect(
+        fetchMock.callHistory.called('/project/proj1/github/status')
+      ).to.equal(true)
+    )
     expect(container.firstChild).to.equal(null)
   })
 
@@ -71,8 +75,14 @@ describe('GithubSyncPanel', function () {
     })
     fetchMock.post('/project/proj1/github/pull', { code: 'ok', sha: 'abc' })
     renderPanel()
-    fireEvent.click(await screen.findByRole('button', { name: /pull github changes/i }))
-    await waitFor(() => expect(fetchMock.callHistory.called('/project/proj1/github/pull')).to.equal(true))
+    fireEvent.click(
+      await screen.findByRole('button', { name: /pull github changes/i })
+    )
+    await waitFor(() =>
+      expect(
+        fetchMock.callHistory.called('/project/proj1/github/pull')
+      ).to.equal(true)
+    )
     const call = fetchMock.callHistory.lastCall('/project/proj1/github/pull')
     // fetch-mock normalizes header names to lower case; read them through
     // Headers so the assertion is case-insensitive

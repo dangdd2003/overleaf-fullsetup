@@ -20,9 +20,11 @@ function addSource(sources: WebSources, item: any) {
   sources.set(item.source, {
     n: item.source,
     url: known?.url ?? item.url,
-    title: known?.title || (typeof item.title === 'string' ? item.title : undefined),
+    title:
+      known?.title || (typeof item.title === 'string' ? item.title : undefined),
     published:
-      known?.published || (typeof item.published === 'string' ? item.published : undefined),
+      known?.published ||
+      (typeof item.published === 'string' ? item.published : undefined),
   })
 }
 
@@ -87,6 +89,7 @@ export function siteName(url: unknown): string {
   if (parts.length < 2) return host
   const last = parts[parts.length - 1]
   const second = parts[parts.length - 2]
-  const countryPair = last.length === 2 && second.length <= 3 && parts.length >= 3
+  const countryPair =
+    last.length === 2 && second.length <= 3 && parts.length >= 3
   return countryPair ? parts[parts.length - 3] : second
 }

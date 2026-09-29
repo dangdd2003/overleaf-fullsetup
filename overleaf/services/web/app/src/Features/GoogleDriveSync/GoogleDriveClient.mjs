@@ -269,7 +269,7 @@ async function getOrCreateRootFolder(userId, folderName) {
     })
   )
 
-  let rootFolderId = null
+  let rootFolderId
   if (listResponse?.files && listResponse.files.length > 0) {
     rootFolderId = listResponse.files[0].id
   } else {

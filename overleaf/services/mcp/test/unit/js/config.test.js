@@ -39,7 +39,10 @@ describe('config', function () {
     })
 
     it('strips a trailing slash from the internal URL', function () {
-      const config = loadConfig({ ...BASE, OVERLEAF_INTERNAL_URL: 'http://web:3000/' })
+      const config = loadConfig({
+        ...BASE,
+        OVERLEAF_INTERNAL_URL: 'http://web:3000/',
+      })
       expect(config.internalUrl).to.equal('http://web:3000')
     })
 
@@ -54,9 +57,9 @@ describe('config', function () {
     })
 
     it('rejects an unknown transport', function () {
-      expect(() => loadConfig({ ...BASE, MCP_TRANSPORT: 'websocket' })).to.throw(
-        /MCP_TRANSPORT/
-      )
+      expect(() =>
+        loadConfig({ ...BASE, MCP_TRANSPORT: 'websocket' })
+      ).to.throw(/MCP_TRANSPORT/)
     })
 
     it('does not validate transport when disabled', function () {

@@ -30,6 +30,10 @@ describe('findUniqueSpan', function () {
     })
   })
 
+  it('reports noMatch for a whitespace-only oldText the text lacks', function () {
+    expect(findUniqueSpan(TEXT, ' ')).to.deep.equal({ status: 'noMatch' })
+  })
+
   it('matches multi-line blocks containing blank lines in Tier 3', function () {
     const docWithBlanks = 'line 1\n\nline 2\nline 3\n'
     const needleWithBlanks = '  line 1  \n\n  line 2  '
@@ -236,7 +240,10 @@ describe('resolveCompileOutcome', function () {
     const outcome = resolveCompileOutcome({
       kind: 'responded',
       settled: true,
-      entries: { errors: [{ message: 'boom', file: 'main.tex', line: 7 }], warnings: [] },
+      entries: {
+        errors: [{ message: 'boom', file: 'main.tex', line: 7 }],
+        warnings: [],
+      },
     })
     expect(outcome.status).to.equal('failure')
     expect(outcome.errors).to.deep.equal([
@@ -278,7 +285,11 @@ describe('resolveCompileOutcome', function () {
   })
 
   it('reports the request failure when the compile never produced a response', function () {
-    for (const error of ['clsi-unavailable', 'rate-limited', 'project-too-large']) {
+    for (const error of [
+      'clsi-unavailable',
+      'rate-limited',
+      'project-too-large',
+    ]) {
       const outcome = resolveCompileOutcome({
         kind: 'no-response',
         timedOut: false,

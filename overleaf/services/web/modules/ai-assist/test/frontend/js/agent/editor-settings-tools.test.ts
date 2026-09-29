@@ -67,7 +67,9 @@ describe('configure_editor_settings tool', function () {
     const { handle, calls } = createFakeHandle()
 
     const res: any = await TOOLS.configure_editor_settings.execute({}, handle)
-    expect(res.error).to.include('Supply at least one editor setting to configure')
+    expect(res.error).to.include(
+      'Supply at least one editor setting to configure'
+    )
     expect(calls.filter(c => c.name === 'configureEditorSettings')).to.be.empty
   })
 })

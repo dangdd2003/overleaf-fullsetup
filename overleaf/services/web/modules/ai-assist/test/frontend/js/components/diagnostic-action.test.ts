@@ -1,10 +1,15 @@
 import { expect } from 'chai'
+import customLocalStorage from '@/infrastructure/local-storage'
 import suggestFixDiagnosticAction from '../../../../frontend/js/features/ai-assist/diagnostic-action'
 import { setCompileLogEntries } from '../../../../frontend/js/features/ai-assist/log-entry-levels'
 
 function setEntries(levels: Record<string, string>) {
   setCompileLogEntries(
-    Object.entries(levels).map(([key, level]) => ({ key, level, raw: '' })) as any
+    Object.entries(levels).map(([key, level]) => ({
+      key,
+      level,
+      raw: '',
+    })) as any
   )
 }
 
@@ -23,7 +28,18 @@ const DIAGNOSTIC = {
 }
 
 describe('suggestFixDiagnosticAction', function () {
+  beforeEach(function () {
+    customLocalStorage.clear()
+    customLocalStorage.setItem('ai-assist:provider', {
+      type: 'openai',
+      baseUrl: 'https://api.openai.com/v1',
+      apiKey: 'sk-test',
+      model: 'gpt-4o-mini',
+    })
+  })
+
   afterEach(function () {
+    customLocalStorage.clear()
     document.body.innerHTML = ''
     setMeta({ enabled: false })
     setCompileLogEntries(undefined)
@@ -89,5 +105,22 @@ describe('suggestFixDiagnosticAction', function () {
 
     expect(events).to.deep.equal([{ id: 'entry-1' }])
     expect(clicked).to.equal(true)
+  })
+
+  it('greys out and disables the button when upstream AI provider is not set', function () {
+    customLocalStorage.clear()
+    setMeta()
+    setEntries({ 'entry-1': 'error' })
+
+    const button = suggestFixDiagnosticAction(DIAGNOSTIC)!
+    expect(button).to.not.equal(null)
+    expect(button.disabled).to.equal(true)
+    expect(button.classList.contains('disabled')).to.equal(true)
+    expect(button.title).to.include('Configure an AI provider')
+
+    let clicked = false
+    button.addEventListener('click', () => (clicked = true))
+    button.click()
+    expect(clicked).to.equal(false)
   })
 })

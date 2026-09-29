@@ -41,15 +41,25 @@ describe('GitHubApiManager', function () {
         { email: 'c@example.com', primary: false, verified: false },
       ])
     )
-    expect(await manager.promises.getPrimaryEmail('tok')).to.equal('b@example.com')
+    expect(await manager.promises.getPrimaryEmail('tok')).to.equal(
+      'b@example.com'
+    )
   })
 
   it('falls back to first verified, then first email, then null', async function () {
     // first verified when no primary verified
     fetchStub.mockResolvedValueOnce(
       jsonResponse([
-        { email: 'unverified-primary@example.com', primary: true, verified: false },
-        { email: 'verified-secondary@example.com', primary: false, verified: true },
+        {
+          email: 'unverified-primary@example.com',
+          primary: true,
+          verified: false,
+        },
+        {
+          email: 'verified-secondary@example.com',
+          primary: false,
+          verified: true,
+        },
       ])
     )
     expect(await manager.promises.getPrimaryEmail('tok')).to.equal(
@@ -59,7 +69,11 @@ describe('GitHubApiManager', function () {
     // first email when none verified
     fetchStub.mockResolvedValueOnce(
       jsonResponse([
-        { email: 'only-unverified@example.com', primary: false, verified: false },
+        {
+          email: 'only-unverified@example.com',
+          primary: false,
+          verified: false,
+        },
       ])
     )
     expect(await manager.promises.getPrimaryEmail('tok')).to.equal(
@@ -94,7 +108,9 @@ describe('GitHubApiManager', function () {
   })
 
   it('maps other non-2xx errors to status error', async function () {
-    fetchStub.mockResolvedValueOnce(jsonResponse({ message: 'server error' }, 500))
+    fetchStub.mockResolvedValueOnce(
+      jsonResponse({ message: 'server error' }, 500)
+    )
     try {
       await manager.promises.getUser('tok')
       expect.fail('should have thrown')
@@ -105,7 +121,11 @@ describe('GitHubApiManager', function () {
   })
 
   it('returns null on 204 No Content', async function () {
-    fetchStub.mockResolvedValueOnce({ ok: true, status: 204, json: async () => {} })
+    fetchStub.mockResolvedValueOnce({
+      ok: true,
+      status: 204,
+      json: async () => {},
+    })
     const res = await manager.promises.getUser('tok')
     expect(res).to.equal(null)
   })
@@ -153,7 +173,10 @@ describe('GitHubApiManager', function () {
 
   it('lists orgs for authenticated user', async function () {
     fetchStub.mockResolvedValueOnce(
-      jsonResponse([{ login: 'org-a', id: 1 }, { login: 'org-b', id: 2 }])
+      jsonResponse([
+        { login: 'org-a', id: 1 },
+        { login: 'org-b', id: 2 },
+      ])
     )
     const orgs = await manager.promises.listOrgs('tok')
     expect(orgs).to.deep.equal([{ login: 'org-a' }, { login: 'org-b' }])
@@ -175,7 +198,11 @@ describe('GitHubApiManager', function () {
 
   it('creates a user repo with private flag and gitignore', async function () {
     fetchStub.mockResolvedValueOnce(
-      jsonResponse({ name: 'paper', owner: { login: 'octocat' }, default_branch: 'main' })
+      jsonResponse({
+        name: 'paper',
+        owner: { login: 'octocat' },
+        default_branch: 'main',
+      })
     )
     const repo = await manager.promises.createRepo('tok', {
       name: 'paper',
@@ -209,7 +236,13 @@ describe('GitHubApiManager', function () {
     fetchStub.mockResolvedValueOnce(
       jsonResponse({ status: 'ahead', ahead_by: 3, behind_by: 0 })
     )
-    const cmp = await manager.promises.compareCommits('tok', 'octocat', 'paper', 'abc123', 'main')
+    const cmp = await manager.promises.compareCommits(
+      'tok',
+      'octocat',
+      'paper',
+      'abc123',
+      'main'
+    )
     expect(cmp.ahead_by).to.equal(3)
     expect(fetchStub.mock.calls[0][0]).to.equal(
       'https://api.github.test/repos/octocat/paper/compare/abc123...main'

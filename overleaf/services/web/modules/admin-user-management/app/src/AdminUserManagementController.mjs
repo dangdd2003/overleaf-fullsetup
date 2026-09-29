@@ -28,7 +28,10 @@ import UserGetter from '../../../../app/src/Features/User/UserGetter.mjs'
 import UserUpdater from '../../../../app/src/Features/User/UserUpdater.mjs'
 import EmailHelper from '../../../../app/src/Features/Helpers/EmailHelper.mjs'
 import OwnershipTransferHandler from '../../../../app/src/Features/Collaborators/OwnershipTransferHandler.mjs'
-import { restoreUserAndProjects, purgeDeletedUser } from './AdminUserRestorer.mjs'
+import {
+  restoreUserAndProjects,
+  purgeDeletedUser,
+} from './AdminUserRestorer.mjs'
 import { UserAuditLogEntry } from '../../../../app/src/models/UserAuditLogEntry.mjs'
 import UserCreator from '../../../../app/src/Features/User/UserCreator.mjs'
 import AuthenticationManager from '../../../../app/src/Features/Authentication/AuthenticationManager.mjs'
@@ -116,8 +119,10 @@ export const AdminUserManagementController = {
       }
 
       const { first_name, last_name } = req.body
-      const firstNameSafe = typeof first_name === 'string' ? first_name.trim().slice(0, 100) : ''
-      const lastNameSafe = typeof last_name === 'string' ? last_name.trim().slice(0, 100) : ''
+      const firstNameSafe =
+        typeof first_name === 'string' ? first_name.trim().slice(0, 100) : ''
+      const lastNameSafe =
+        typeof last_name === 'string' ? last_name.trim().slice(0, 100) : ''
 
       await db.users.updateOne(
         { _id: new ObjectId(userId) },
@@ -184,7 +189,10 @@ export const AdminUserManagementController = {
       if (err instanceof ForbiddenError) {
         return res.status(403).json({ error: err.message })
       }
-      logger.error({ err, userId: req.params.userId }, 'Failed to update admin status')
+      logger.error(
+        { err, userId: req.params.userId },
+        'Failed to update admin status'
+      )
       res.status(500).json({ error: 'failed_to_update_admin_status' })
     }
   },
@@ -206,7 +214,9 @@ export const AdminUserManagementController = {
       )
 
       const resetUrl = `${Settings.siteUrl}/user/password/set?passwordResetToken=${token}&email=${encodeURIComponent(user.email)}`
-      const expiresAt = new Date(Date.now() + ONE_WEEK_IN_SECONDS * 1000).toISOString()
+      const expiresAt = new Date(
+        Date.now() + ONE_WEEK_IN_SECONDS * 1000
+      ).toISOString()
 
       await UserAuditLogHandler.promises.addEntry(
         new ObjectId(userId),
@@ -218,7 +228,10 @@ export const AdminUserManagementController = {
 
       res.json({ resetUrl, expiresAt })
     } catch (err) {
-      logger.error({ err, userId: req.params.userId }, 'Failed to generate reset link')
+      logger.error(
+        { err, userId: req.params.userId },
+        'Failed to generate reset link'
+      )
       res.status(500).json({ error: 'failed_to_generate_reset_link' })
     }
   },
@@ -296,7 +309,10 @@ export const AdminUserManagementController = {
       if (err instanceof NotFoundError) {
         return res.status(404).json({ error: err.message })
       }
-      logger.error({ err, userId: req.params.userId }, 'Failed to purge deleted user')
+      logger.error(
+        { err, userId: req.params.userId },
+        'Failed to purge deleted user'
+      )
       res.status(500).json({ error: 'failed_to_purge_deleted_user' })
     }
   },
@@ -401,7 +417,8 @@ export const AdminUserManagementController = {
         { confirmed: true },
         { initiatorId: callerUserId, ipAddress: req.ip || '0.0.0.0', info: {} }
       )
-      const confirmFn = userUpdater.confirmEmail || UserUpdater.promises?.confirmEmail
+      const confirmFn =
+        userUpdater.confirmEmail || UserUpdater.promises?.confirmEmail
       if (confirmFn) {
         await confirmFn(userId, parsedEmail)
       }
@@ -456,11 +473,11 @@ export const AdminUserManagementController = {
       }
 
       const userUpdater = UserUpdater.promises || UserUpdater
-      await userUpdater.removeEmailAddress(
-        userId,
-        parsedEmail,
-        { initiatorId: callerUserId, ipAddress: req.ip || '0.0.0.0', info: {} }
-      )
+      await userUpdater.removeEmailAddress(userId, parsedEmail, {
+        initiatorId: callerUserId,
+        ipAddress: req.ip || '0.0.0.0',
+        info: {},
+      })
 
       await UserAuditLogHandler.promises.addEntry(
         new ObjectId(userId),
@@ -504,12 +521,11 @@ export const AdminUserManagementController = {
       }
 
       const userUpdater = UserUpdater.promises || UserUpdater
-      await userUpdater.setDefaultEmailAddress(
-        userId,
-        parsedEmail,
-        true,
-        { initiatorId: callerUserId, ipAddress: req.ip || '0.0.0.0', info: {} }
-      )
+      await userUpdater.setDefaultEmailAddress(userId, parsedEmail, true, {
+        initiatorId: callerUserId,
+        ipAddress: req.ip || '0.0.0.0',
+        info: {},
+      })
 
       await UserAuditLogHandler.promises.addEntry(
         new ObjectId(userId),
@@ -725,8 +741,7 @@ export const AdminUserManagementController = {
 
       return res.json({
         success: true,
-        transferredCount:
-          result?.projectCount ?? result?.transferredCount ?? 0,
+        transferredCount: result?.projectCount ?? result?.transferredCount ?? 0,
         newTagName: result?.newTagName,
       })
     } catch (err) {
@@ -792,9 +807,7 @@ export const AdminUserManagementController = {
         initiators.map(user => [
           user._id.toString(),
           {
-            name: [user.first_name, user.last_name]
-              .filter(Boolean)
-              .join(' '),
+            name: [user.first_name, user.last_name].filter(Boolean).join(' '),
             email: user.email,
           },
         ])
@@ -1038,7 +1051,9 @@ export const AdminUserManagementController = {
         }
 
         try {
-          if (typeof userSessionsManager.removeSessionsFromRedis === 'function') {
+          if (
+            typeof userSessionsManager.removeSessionsFromRedis === 'function'
+          ) {
             await userSessionsManager.removeSessionsFromRedis(
               { _id: new ObjectId(userId) },
               options
@@ -1055,7 +1070,10 @@ export const AdminUserManagementController = {
 
           totalRevoked++
         } catch (err) {
-          logger.error({ err, userId }, 'Failed to revoke user session in batch')
+          logger.error(
+            { err, userId },
+            'Failed to revoke user session in batch'
+          )
           failed.push({ userId, reason: err.message || 'failed_to_revoke' })
         }
       }
@@ -1138,11 +1156,7 @@ export const AdminUserManagementController = {
         }
 
         try {
-          await purgeDeletedUser(
-            recordId,
-            callerUserId,
-            req.ip || '0.0.0.0'
-          )
+          await purgeDeletedUser(recordId, callerUserId, req.ip || '0.0.0.0')
           purgedCount++
         } catch (err) {
           logger.error(

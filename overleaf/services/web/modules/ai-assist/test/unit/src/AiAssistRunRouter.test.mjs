@@ -1,3 +1,4 @@
+import { describe, it, beforeEach, afterEach } from 'vitest'
 import { expect } from 'chai'
 import sinon from 'sinon'
 import Settings from '@overleaf/settings'
@@ -14,6 +15,7 @@ describe('AiAssistRunRouter', function () {
       get: sinon.stub(),
       post: sinon.stub(),
       put: sinon.stub(),
+      patch: sinon.stub(),
       delete: sinon.stub(),
     }
   })
@@ -29,10 +31,18 @@ describe('AiAssistRunRouter', function () {
     const getRoutes = webRouter.get.args.map(call => call[0])
 
     expect(postRoutes).to.include('/ai-assist/projects/:Project_id/runs')
-    expect(getRoutes).to.include('/ai-assist/projects/:Project_id/runs/:runId/stream')
-    expect(postRoutes).to.include('/ai-assist/projects/:Project_id/runs/:runId/stop')
-    expect(postRoutes).to.include('/ai-assist/projects/:Project_id/runs/:runId/approve')
-    expect(postRoutes).to.include('/ai-assist/projects/:Project_id/runs/:runId/compile')
+    expect(getRoutes).to.include(
+      '/ai-assist/projects/:Project_id/runs/:runId/stream'
+    )
+    expect(postRoutes).to.include(
+      '/ai-assist/projects/:Project_id/runs/:runId/stop'
+    )
+    expect(postRoutes).to.include(
+      '/ai-assist/projects/:Project_id/runs/:runId/approve'
+    )
+    expect(postRoutes).to.include(
+      '/ai-assist/projects/:Project_id/runs/:runId/compile'
+    )
   })
 
   it('registers server-side provider routes', async function () {
@@ -50,8 +60,14 @@ describe('AiAssistRunRouter', function () {
 
     const getRoutes = webRouter.get.args.map(call => call[0])
     expect(getRoutes).to.include('/ai-assist/projects/:Project_id/chats')
-    expect(getRoutes).to.include('/ai-assist/projects/:Project_id/chats/:chatId')
-    expect(webRouter.put.args[0][0]).to.equal('/ai-assist/projects/:Project_id/chats/:chatId')
-    expect(webRouter.delete.args[0][0]).to.equal('/ai-assist/projects/:Project_id/chats/:chatId')
+    expect(getRoutes).to.include(
+      '/ai-assist/projects/:Project_id/chats/:chatId'
+    )
+    expect(webRouter.put.args[0][0]).to.equal(
+      '/ai-assist/projects/:Project_id/chats/:chatId'
+    )
+    expect(webRouter.delete.args[0][0]).to.equal(
+      '/ai-assist/projects/:Project_id/chats/:chatId'
+    )
   })
 })

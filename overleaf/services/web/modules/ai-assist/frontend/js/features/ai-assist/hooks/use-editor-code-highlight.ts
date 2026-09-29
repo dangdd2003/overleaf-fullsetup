@@ -6,6 +6,11 @@ import { classHighlighter } from '@/features/source-editor/extensions/class-high
 /** Code blocks in these languages are highlighted the way the editor does it. */
 const LATEX_LANGS = new Set(['latex', 'tex', 'ltx', 'sty', 'cls'])
 
+/** Whether code in this language is highlighted like the editor's. */
+export function canHighlightCode(lang: string) {
+  return LATEX_LANGS.has(lang.toLowerCase())
+}
+
 /** Scope of the editor's token colours outside the editor. */
 export const EDITOR_CODE_CLASS = 'ai-assist-editor-code'
 
@@ -42,6 +47,38 @@ export function highlightCodeHtml(code: string, lang: string): string | null {
   if (highlightCache.size >= 200) highlightCache.clear()
   highlightCache.set(code, html)
   return html
+}
+
+export type CodeSegment = { text: string; className?: string }
+
+/**
+ * The same highlighting split into lines of segments, for views that lay code
+ * out line by line. The whole text is parsed at once so a construct spanning
+ * lines keeps its colours. Returns null for other languages.
+ */
+export function highlightCodeLines(
+  code: string,
+  lang: string
+): CodeSegment[][] | null {
+  if (!LATEX_LANGS.has(lang.toLowerCase())) return null
+
+  const lines: CodeSegment[][] = [[]]
+  const push = (text: string, className?: string) => {
+    text.split('\n').forEach((part, index) => {
+      if (index > 0) lines.push([])
+      if (part) lines[lines.length - 1].push({ text: part, className })
+    })
+  }
+
+  const tree = LaTeXLanguage.parser.parse(code)
+  let pos = 0
+  highlightTree(tree, classHighlighter, (from, to, classes) => {
+    if (from > pos) push(code.slice(pos, from))
+    push(code.slice(from, to), classes)
+    pos = to
+  })
+  push(code.slice(pos))
+  return lines
 }
 
 type StyleSpec = Record<string, Record<string, string>>

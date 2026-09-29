@@ -133,7 +133,9 @@ export default function CreateUsersModal({
   }
 
   function handleDeleteRow(id: string) {
-    setBulkRows(prev => (prev.length > 1 ? prev.filter(r => r.id !== id) : prev))
+    setBulkRows(prev =>
+      prev.length > 1 ? prev.filter(r => r.id !== id) : prev
+    )
   }
 
   function handleUpdateRow(
@@ -282,7 +284,7 @@ export default function CreateUsersModal({
       last_name?: string
       password?: string
       isAdmin?: boolean
-    }> = []
+    }>
 
     if (tab === 'single') {
       const emailTrimmed = singleEmail.trim()
@@ -693,8 +695,12 @@ export default function CreateUsersModal({
                 <div className="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
                   <div>
                     <p className="text-muted small mb-0">
-                      Enter users below or import a <code>.csv</code> file (headers:{' '}
-                      <code>email, first_name, last_name, password, isAdmin</code>).
+                      Enter users below or import a <code>.csv</code> file
+                      (headers:{' '}
+                      <code>
+                        email, first_name, last_name, password, isAdmin
+                      </code>
+                      ).
                     </p>
                   </div>
                   <div className="d-flex align-items-center gap-2">
@@ -757,11 +763,7 @@ export default function CreateUsersModal({
                               onChange={(
                                 e: React.ChangeEvent<HTMLInputElement>
                               ) =>
-                                handleUpdateRow(
-                                  row.id,
-                                  'email',
-                                  e.target.value
-                                )
+                                handleUpdateRow(row.id, 'email', e.target.value)
                               }
                               required={idx === 0}
                             />

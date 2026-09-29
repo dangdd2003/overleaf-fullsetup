@@ -637,7 +637,6 @@ describe('GoogleDriveController', () => {
     })
   })
 
-
   describe('listImportableFolders', () => {
     it('returns 200 with folders array', async () => {
       GoogleDriveImportManager.listImportableFolders.mockResolvedValue([
@@ -719,7 +718,9 @@ describe('GoogleDriveController', () => {
 
       await GoogleDriveController.cancelImportJob(req, res)
 
-      expect(GoogleDriveImportManager.cancelActiveJobs).toHaveBeenCalledWith('user-123')
+      expect(GoogleDriveImportManager.cancelActiveJobs).toHaveBeenCalledWith(
+        'user-123'
+      )
       expect(res.json).toHaveBeenCalledWith({ job: { id: 'job-1' } })
     })
   })

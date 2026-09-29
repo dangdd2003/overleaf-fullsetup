@@ -1,22 +1,66 @@
-import dns from 'node:dns'
-import http from 'node:http'
-import https from 'node:https'
-import net from 'node:net'
-import zlib from 'node:zlib'
-import sanitizeHtml from 'sanitize-html'
 import {
   ProviderError,
-  fetchWithRetry,
   resolveDockerHostUrl,
   validateSafeProviderBaseUrl,
 } from './AiAssistProviders.mjs'
+import {
+  HOUR_MS,
+  clampInt,
+  clip,
+  collapse,
+  isoDay,
+  webError,
+} from './web-fetch/util.mjs'
+import { apiRequest } from './web-fetch/api.mjs'
+import { pageCharsFor, pageText } from './web-fetch/document.mjs'
+import { documentIndex } from './web-fetch/doc-index.mjs'
+import { findPassages } from './web-fetch/find.mjs'
+import { REQUEST_TIMEOUT_MS, fetchPublicUrl } from './web-fetch/transport.mjs'
+import { WebFetcher } from './web-fetch/WebFetcher.mjs'
+import { sharedBrowserRoute } from './web-fetch/routes/browser.mjs'
+import {
+  JINA_SEARCH_BASE,
+  OLLAMA_API_BASE,
+  TAVILY_API_BASE,
+  WEBSEARCHAPI_BASE,
+  exaTimeoutMs,
+  firecrawlRequest,
+  firecrawlScrapeOptions,
+  firecrawlTimeoutMs,
+  jinaTimeoutMs,
+  tavilyHeaders,
+} from './web-fetch/routes/readers.mjs'
+import { WebRouter, clearEndpointHealth } from './web-fetch/routing.mjs'
+import { clearWebCacheStore, ownerWebCaches } from './web-fetch/cache-store.mjs'
+import { JINA_COUNTRIES, JINA_LANGUAGES } from './web-fetch/jina-codes.mjs'
+import { cacheKeyFor } from './web-fetch/urls.mjs'
+
+export { openWebCache } from './web-fetch/cache-store.mjs'
+export {
+  WebRouter,
+  WebRouter as EndpointRotator,
+  clearEndpointHealth,
+} from './web-fetch/routing.mjs'
+export {
+  PAGE_CHARS,
+  documentFromResponse,
+  splitPages,
+} from './web-fetch/document.mjs'
+export { findPassages } from './web-fetch/find.mjs'
+export { extractPageDates, htmlToMarkdown } from './web-fetch/extract/html.mjs'
+export {
+  fetchPublicUrl,
+  guardedLookup,
+  isPublicAddress,
+} from './web-fetch/transport.mjs'
+export { isoDay } from './web-fetch/util.mjs'
 
 /**
  * Web research for the agent: `web_search` and `web_fetch`.
  *
- * Two backends. Ollama's hosted web search API answers both tools. A
- * self-hosted SearXNG instance answers searches, and this server then reads
- * pages itself.
+ * Ollama's, WebSearchAPI.ai's, Tavily's, Firecrawl's and Jina's hosted APIs
+ * each answer both tools, as does a self-hosted Firecrawl instance. A self-hosted
+ * SearXNG instance answers searches, and this server then reads pages itself.
  *
  * Every request leaves from the Overleaf server, like the provider calls, so a
  * SearXNG instance on the internal network works behind a public domain. The
@@ -27,108 +71,120 @@ import {
  * through.
  */
 
-export const WEB_SEARCH_PROVIDERS = ['ollama', 'searxng']
+export const WEB_SEARCH_PROVIDERS = [
+  'searxng',
+  'ollama',
+  'websearchapi',
+  'tavily',
+  'firecrawl',
+  'firecrawlSelfHosted',
+  'jina',
+  'langsearch',
+  'exa',
+]
 export const WEB_TOOL_NAMES = new Set(['web_search', 'web_fetch'])
+export const WEB_SEARCH_ROTATION_STRATEGIES = [
+  'round-robin',
+  'provider-priority',
+  'sticky',
+]
+export const WEB_SEARCH_PRIMARY_PROVIDERS = [
+  'searxng',
+  'ollama',
+  'websearchapi',
+  'tavily',
+  'firecrawl',
+  'firecrawlSelfHosted',
+  'jina',
+  'langsearch',
+  'exa',
+]
+/** Providers that answer web_search. */
+export const SEARCH_PROVIDERS = new Set([
+  'searxng',
+  'ollama',
+  'websearchapi',
+  'tavily',
+  'firecrawl',
+  'firecrawlSelfHosted',
+  'jina',
+  'langsearch',
+  'exa',
+])
 
 export const WEB_SEARCH_DEFAULTS = {
   cacheHours: 24,
   maxCachedSearches: 256,
   maxCachedPages: 64,
-  // How many results a search returns, and the most the model may ask for
-  resultsPerSearch: 10,
 }
 
-const OLLAMA_API_BASE = 'https://ollama.com/api'
-const MAX_SNIPPET_CHARS = 600
-/** About 3k tokens: enough for a manual section, small enough to page through. */
-export const PAGE_CHARS = 12_000
-const MAX_DOCUMENT_CHARS = 400_000
-const MAX_DOWNLOAD_BYTES = 5 * 1024 * 1024
-const MAX_REDIRECTS = 5
-const REQUEST_TIMEOUT_MS = 20_000
-const MAX_FIND_MATCHES = 12
-const MAX_FIND_PASSAGE_CHARS = 1500
-/**
- * Pages and search results are kept in this process's memory, per user, for
- * as long as the user's cacheHours allows (a day unless they change it), so
- * repeating a lookup costs no second API call or download. A search restricted
- * to recent results is the exception: it exists to see what changed, so it is
- * reused for an hour at most.
- */
-const HOUR_MS = 60 * 60 * 1000
-const RECENT_SEARCH_TTL_MS = HOUR_MS
-const USER_AGENT = 'Mozilla/5.0 (compatible; OverleafAIAssist/1.0)'
-/**
- * Many news and documentation sites answer an unfamiliar user agent with 401
- * or 403 but serve an ordinary browser. A refused page is asked for once more
- * the way a browser would ask.
- */
-const BROWSER_HEADERS = {
-  'User-Agent':
-    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-  Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-  'Accept-Language': 'en-US,en;q=0.9',
-  'Upgrade-Insecure-Requests': '1',
+export const LANGSEARCH_API_BASE = 'https://api.langsearch.com'
+export const EXA_API_BASE = 'https://api.exa.ai'
+
+/** Settings for a run with no search backend: web_fetch only, default caching. */
+export function fetchOnlyWebSettings() {
+  return { providers: {}, ...WEB_SEARCH_DEFAULTS }
 }
-const REFUSED_STATUSES = new Set([401, 403, 406, 429, 451, 503])
-const WAYBACK_LOOKUP = 'https://archive.org/wayback/available'
+
+/** Ollama's web search returns at most 10 results. */
+const OLLAMA_MAX_RESULTS = 10
+/**
+ * How many results a provider that takes a count is asked for when the user
+ * has not set one. SearXNG takes no count and keeps all it finds.
+ */
+const DEFAULT_RESULTS = 10
+/** The Search API answers 1 to 20 results per request. */
+const WEBSEARCHAPI_MAX_RESULTS = 20
+const WEBSEARCHAPI_LENGTHS = ['short', 'medium', 'long']
+const WEBSEARCHAPI_ENGINES = ['direct', 'browser', 'cf-browser-rendering']
+/** Tavily's Search API answers 0 to 20 results per request. */
+const TAVILY_MAX_RESULTS = 20
+const TAVILY_DEPTHS = ['basic', 'advanced', 'fast', 'ultra-fast']
+const TAVILY_TOPICS = ['general', 'news', 'finance']
+/** Firecrawl's Search API answers 1 to 100 results per request. */
+const FIRECRAWL_MAX_RESULTS = 100
+// Not research: from 2026-11-16 it answers paper records outside data.web
+const FIRECRAWL_CATEGORIES = ['developer', 'pdf']
+/** Each one's initial is its `qdr:` code in Firecrawl's tbs parameter. */
+const FIRECRAWL_TIME_RANGES = ['hour', 'day', 'week', 'month', 'year']
+const FIRECRAWL_PROXIES = ['basic', 'enhanced', 'auto']
+const FIRECRAWL_SOURCES = ['web', 'news']
+const FIRECRAWL_PDF_MODES = ['fast', 'auto', 'ocr']
+/** Jina's Search API answers 0 to 20 results per request. */
+const JINA_MAX_RESULTS = 20
+const JINA_ENGINES = ['browser', 'direct', 'cf-browser-rendering']
+/** LangSearch's Search API answers 1 to 50 results per request. */
+const LANGSEARCH_MAX_RESULTS = 50
+const LANGSEARCH_FRESHNESS = [
+  'noLimit',
+  'oneDay',
+  'oneWeek',
+  'oneMonth',
+  'oneYear',
+]
+/** Exa's Search API answers 1 to 100 results per request. */
+const EXA_MAX_RESULTS = 100
+const EXA_SEARCH_TYPES = ['auto', 'neural', 'keyword', 'fast', 'deep']
+const EXA_SEARCH_CATEGORIES = [
+  'company',
+  'research paper',
+  'news',
+  'pdf',
+  'github',
+  'tweet',
+  'personal site',
+  'linkedin profile',
+  'financial report',
+]
+const EXA_LIVECRAWL_MODES = ['always', 'fallback', 'never', 'auto']
+const MAX_SNIPPET_CHARS = 600
 const RECENCY_VALUES = ['day', 'week', 'month', 'year']
 
-/**
- * `kind` says whether another route to the same page could succeed: a page
- * that refused us or timed out might be readable from an archive, a PDF or a
- * private address never is.
- */
-function webError(message, { status, hint, kind = 'content' } = {}) {
-  const error = new ProviderError(message, { code: 'webToolError', status, hint })
-  error.kind = kind
-  return error
-}
-
-function isRetryableFailure(err) {
-  return err?.kind === 'http' || err?.kind === 'network'
-}
-
-function describeStatus(status) {
-  if (status === 401 || status === 403 || status === 451) {
-    return 'the site refuses automated readers'
-  }
-  if (status === 404 || status === 410) return 'the page does not exist'
-  if (status === 429) return 'the site is rate-limiting requests'
-  if (status >= 500) return 'the site had a server error'
-  return ''
-}
-
 function settingsError(message) {
-  return new ProviderError(message, { code: 'invalidWebSearchSettings', status: 400 })
-}
-
-function collapse(text) {
-  return String(text ?? '').replace(/\s+/g, ' ').trim()
-}
-
-function clip(text, max) {
-  return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text
-}
-
-function clampInt(value, min, max, fallback) {
-  const parsed = typeof value === 'string' ? Number(value.trim()) : value
-  if (typeof parsed !== 'number' || !Number.isFinite(parsed)) return fallback
-  return Math.min(max, Math.max(min, Math.trunc(parsed)))
-}
-
-/** `YYYY-MM-DD` for anything Date can parse, else ''. */
-export function isoDay(value) {
-  if (typeof value !== 'string' && typeof value !== 'number') return ''
-  const raw = typeof value === 'string' ? value.trim() : value
-  if (!raw) return ''
-  // Wayback timestamps: 20260407153000
-  const stamp = /^(\d{4})(\d{2})(\d{2})\d{0,6}$/.exec(String(raw))
-  const date = stamp ? new Date(`${stamp[1]}-${stamp[2]}-${stamp[3]}T00:00:00Z`) : new Date(raw)
-  if (Number.isNaN(date.getTime())) return ''
-  const year = date.getUTCFullYear()
-  if (year < 1990 || year > 2200) return ''
-  return date.toISOString().slice(0, 10)
+  return new ProviderError(message, {
+    code: 'invalidWebSearchSettings',
+    status: 400,
+  })
 }
 
 /** The same page under the spellings search engines and links give it. */
@@ -143,17 +199,37 @@ function sourceKey(url) {
   }
 }
 
-/** A model's recency word, forgiving the obvious variants. */
-function normalizeRecency(value) {
-  if (typeof value !== 'string') return ''
-  const word = value.trim().toLowerCase().replace(/^(past|last)\s+/, '')
-  if (RECENCY_VALUES.includes(word)) return word
-  return { today: 'day', '24h': 'day', '7d': 'week', '30d': 'month', '1y': 'year' }[word] || ''
+/**
+ * A query as the search cache keys it. Case, spacing, the hyphen or
+ * underscore joining two words and trailing punctuation do not change what an
+ * engine returns; quotes, a leading minus, site: and symbols like C++ do, so
+ * they stay.
+ */
+export function searchCacheText(query) {
+  return collapse(
+    String(query ?? '')
+      .toLowerCase()
+      .replace(/(?<=[\p{L}\p{N}])[-_]+(?=[\p{L}\p{N}])/gu, ' ')
+      .replace(/[,;!?]+|\.+(?=\s|$)/gu, ' ')
+  )
 }
 
 const SNIPPET_STOPWORDS = new Set([
-  'the', 'and', 'for', 'with', 'from', 'that', 'this', 'what', 'about', 'how',
-  'news', 'latest', 'today', 'current', 'recent',
+  'the',
+  'and',
+  'for',
+  'with',
+  'from',
+  'that',
+  'this',
+  'what',
+  'about',
+  'how',
+  'news',
+  'latest',
+  'today',
+  'current',
+  'recent',
 ])
 
 /**
@@ -211,7 +287,31 @@ export function normalizeSearxngBaseUrl(raw) {
   }
   parsed.search = ''
   parsed.hash = ''
-  parsed.pathname = parsed.pathname.replace(/\/search\/?$/, '').replace(/\/+$/, '')
+  parsed.pathname = parsed.pathname
+    .replace(/\/search\/?$/, '')
+    .replace(/\/+$/, '')
+  return parsed.toString().replace(/\/+$/, '')
+}
+
+/**
+ * A self-hosted Firecrawl's API lives at `<instance>/v2`. The address is
+ * accepted with or without the version path.
+ */
+export function normalizeFirecrawlBaseUrl(raw) {
+  if (typeof raw !== 'string' || !raw.trim()) return ''
+  let value = raw.trim()
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) value = `http://${value}`
+  let parsed
+  try {
+    parsed = new URL(value)
+  } catch {
+    throw settingsError('The Firecrawl URL is not a valid URL.')
+  }
+  parsed.search = ''
+  parsed.hash = ''
+  parsed.pathname = parsed.pathname
+    .replace(/\/v[12](\/.*)?$/, '')
+    .replace(/\/+$/, '')
   return parsed.toString().replace(/\/+$/, '')
 }
 
@@ -220,933 +320,997 @@ export function normalizeSearxngBaseUrl(raw) {
  * when none were sent, which leaves the web tools out of the run.
  */
 function clampCacheParam(value, min, max, defaultValue) {
-  const num = typeof value === 'string' ? parseInt(value, 10) : typeof value === 'number' ? value : null
+  const num =
+    typeof value === 'string'
+      ? parseInt(value, 10)
+      : typeof value === 'number'
+        ? value
+        : null
   if (num === null || Number.isNaN(num)) return defaultValue
   return Math.max(min, Math.min(max, num))
 }
 
-export function normalizeWebSearchSettings(raw) {
-  if (raw === null || raw === undefined) return null
-  if (typeof raw !== 'object') throw settingsError('Invalid web search settings.')
+function optionalChoice(value, choices) {
+  return choices.includes(value) ? value : undefined
+}
 
-  const type = typeof raw.type === 'string' ? raw.type.trim() : ''
-  if (!WEB_SEARCH_PROVIDERS.includes(type)) {
-    throw settingsError(`Unknown web search provider '${type}'.`)
+function optionalFlag(value) {
+  return typeof value === 'boolean' ? value : undefined
+}
+
+function optionalText(value, pattern, max = 200) {
+  const text = typeof value === 'string' ? value.trim() : ''
+  return text && text.length <= max && (!pattern || pattern.test(text))
+    ? text
+    : undefined
+}
+
+/** "https://www.arxiv.org/abs" and "arxiv.org" both name the domain arxiv.org. */
+function domainList(value, max = 50) {
+  if (!Array.isArray(value)) return undefined
+  const domains = new Set()
+  for (const entry of value) {
+    if (typeof entry !== 'string') continue
+    const domain = entry
+      .trim()
+      .toLowerCase()
+      .replace(/^[a-z][a-z0-9+.-]*:\/\//, '')
+      .replace(/[/?#].*$/, '')
+    if (/^(?=.{1,253}$)([a-z0-9-]+\.)+[a-z]{2,}$/.test(domain)) {
+      domains.add(domain)
+    }
+    if (domains.size >= max) break
+  }
+  return domains.size > 0 ? [...domains] : undefined
+}
+
+function withoutUndefined(object) {
+  return Object.fromEntries(
+    Object.entries(object).filter(([, value]) => value !== undefined)
+  )
+}
+
+/**
+ * The WebSearchAPI.ai request options a user chose, keeping only valid values.
+ * An option left out is left to the API's own default.
+ */
+export function normalizeWebsearchapiOptions(raw = {}) {
+  const rawSearch =
+    raw?.search && typeof raw.search === 'object' ? raw.search : {}
+  const rawScrape =
+    raw?.scrape && typeof raw.scrape === 'object' ? raw.scrape : {}
+  const timeout = Number.isInteger(rawScrape.timeout)
+    ? Math.min(120, Math.max(1, rawScrape.timeout))
+    : undefined
+  const search = withoutUndefined({
+    maxResults: Number.isInteger(rawSearch.maxResults)
+      ? Math.min(WEBSEARCHAPI_MAX_RESULTS, Math.max(1, rawSearch.maxResults))
+      : undefined,
+    country: optionalText(rawSearch.country, /^[a-z]{2}$/i)?.toLowerCase(),
+    language: optionalText(rawSearch.language, /^[a-z]{2}$/i)?.toLowerCase(),
+    sortBy: optionalChoice(rawSearch.sortBy, ['relevance', 'date']),
+    safeSearch: optionalFlag(rawSearch.safeSearch),
+    includeDomains: domainList(rawSearch.includeDomains),
+    excludeDomains: domainList(rawSearch.excludeDomains),
+    includeContent: optionalFlag(rawSearch.includeContent),
+    contentLength: optionalChoice(
+      rawSearch.contentLength,
+      WEBSEARCHAPI_LENGTHS
+    ),
+    includeAnswer: optionalFlag(rawSearch.includeAnswer),
+    answerLength: optionalChoice(rawSearch.answerLength, WEBSEARCHAPI_LENGTHS),
+    timeframe: optionalChoice(rawSearch.timeframe, RECENCY_VALUES),
+    siteSearch: domainList([rawSearch.siteSearch], 1)?.[0],
+    exactTerms: optionalText(rawSearch.exactTerms),
+    excludeTerms: optionalText(rawSearch.excludeTerms),
+    fileType: optionalText(
+      rawSearch.fileType,
+      /^[a-z0-9]{1,10}$/i
+    )?.toLowerCase(),
+  })
+  const scrape = withoutUndefined({
+    engine: optionalChoice(rawScrape.engine, WEBSEARCHAPI_ENGINES),
+    timeout,
+    tokenBudget: Number.isInteger(rawScrape.tokenBudget)
+      ? Math.min(1_000_000, Math.max(100, rawScrape.tokenBudget))
+      : undefined,
+    retainImages: optionalChoice(rawScrape.retainImages, ['all', 'none']),
+    targetSelector: optionalText(rawScrape.targetSelector, null, 500),
+    removeSelector: optionalText(rawScrape.removeSelector, null, 500),
+    respondWith: optionalChoice(rawScrape.respondWith, [
+      'default',
+      'readerlm-v2',
+    ]),
+    proxy: optionalText(
+      rawScrape.proxy,
+      /^(auto|none|[a-z]{2})$/i
+    )?.toLowerCase(),
+    locale: optionalText(rawScrape.locale, /^[a-z]{2,3}(-[a-z0-9]{2,8})*$/i),
+    withGeneratedAlt: optionalFlag(rawScrape.withGeneratedAlt),
+    withIframe: optionalFlag(rawScrape.withIframe),
+    withShadowDom: optionalFlag(rawScrape.withShadowDom),
+    noCache: optionalFlag(rawScrape.noCache),
+    dnt: optionalFlag(rawScrape.dnt),
+  })
+  return {
+    ...(Object.keys(search).length > 0 ? { search } : {}),
+    ...(Object.keys(scrape).length > 0 ? { scrape } : {}),
+  }
+}
+
+/**
+ * The Tavily request options a user chose, keeping only valid values and
+ * dropping combinations the API refuses. An option left out is left to the
+ * API's own default.
+ */
+export function normalizeTavilyOptions(raw = {}) {
+  const rawSearch =
+    raw?.search && typeof raw.search === 'object' ? raw.search : {}
+  const rawExtract =
+    raw?.extract && typeof raw.extract === 'object' ? raw.extract : {}
+  const depth = optionalChoice(rawSearch.searchDepth, TAVILY_DEPTHS)
+  const quick = depth === 'fast' || depth === 'ultra-fast'
+  const topic = optionalChoice(rawSearch.topic, TAVILY_TOPICS)
+  const includeDomains = domainList(rawSearch.includeDomains, 300)
+  const language = optionalText(
+    rawSearch.language,
+    /^[a-z][a-z -]{1,30}$/i
+  )?.toLowerCase()
+  const day = value => optionalText(value, /^\d{4}-\d{2}-\d{2}$/)
+  const search = withoutUndefined({
+    maxResults: Number.isInteger(rawSearch.maxResults)
+      ? Math.min(TAVILY_MAX_RESULTS, Math.max(1, rawSearch.maxResults))
+      : undefined,
+    searchDepth: depth,
+    // Snippets come as one summary per page at ultra-fast
+    chunksPerSource:
+      Number.isInteger(rawSearch.chunksPerSource) && depth !== 'ultra-fast'
+        ? Math.min(3, Math.max(1, rawSearch.chunksPerSource))
+        : undefined,
+    topic,
+    timeRange: optionalChoice(rawSearch.timeRange, RECENCY_VALUES),
+    startDate: day(rawSearch.startDate),
+    endDate: day(rawSearch.endDate),
+    includePublishedDate: optionalFlag(rawSearch.includePublishedDate),
+    filterByPublishedDate: optionalFlag(rawSearch.filterByPublishedDate),
+    includeAnswer: optionalChoice(rawSearch.includeAnswer, [
+      'basic',
+      'advanced',
+    ]),
+    includeRawContent: optionalChoice(rawSearch.includeRawContent, [
+      'markdown',
+      'text',
+    ]),
+    includeDomains,
+    excludeDomains: domainList(rawSearch.excludeDomains, 150),
+    includeDomainsMode: includeDomains
+      ? optionalChoice(rawSearch.includeDomainsMode, ['restrict', 'prefer'])
+      : undefined,
+    // Tavily boosts a country only for general searches
+    country:
+      !topic || topic === 'general'
+        ? optionalText(rawSearch.country, /^[a-z][a-z ]{1,40}$/i)?.toLowerCase()
+        : undefined,
+    language,
+    filterByLanguage: language
+      ? optionalFlag(rawSearch.filterByLanguage)
+      : undefined,
+    autoParameters: optionalFlag(rawSearch.autoParameters),
+    exactMatch: optionalFlag(rawSearch.exactMatch),
+    safeSearch: quick ? undefined : optionalFlag(rawSearch.safeSearch),
+  })
+  const extract = withoutUndefined({
+    extractDepth: optionalChoice(rawExtract.extractDepth, [
+      'basic',
+      'advanced',
+    ]),
+    format: optionalChoice(rawExtract.format, ['markdown', 'text']),
+    timeout:
+      typeof rawExtract.timeout === 'number' &&
+      Number.isFinite(rawExtract.timeout)
+        ? Math.min(60, Math.max(1, rawExtract.timeout))
+        : undefined,
+  })
+  const projectId = optionalText(raw?.projectId, /^[\x21-\x7e]+$/)
+  return {
+    ...(projectId ? { projectId } : {}),
+    ...(Object.keys(search).length > 0 ? { search } : {}),
+    ...(Object.keys(extract).length > 0 ? { extract } : {}),
+  }
+}
+
+/** HTML tags or selectors, such as "article" or ".sidebar". */
+function selectorList(value, max = 50) {
+  if (!Array.isArray(value)) return undefined
+  const selectors = [
+    ...new Set(
+      value
+        .map(entry => (typeof entry === 'string' ? entry.trim() : ''))
+        .filter(entry => entry && entry.length <= 200)
+    ),
+  ].slice(0, max)
+  return selectors.length > 0 ? selectors : undefined
+}
+
+/**
+ * The Firecrawl request options a user chose, keeping only valid values and
+ * dropping combinations the API refuses. An option left out is left to the
+ * API's own default. Proxies are a Firecrawl Cloud service, so a self-hosted
+ * instance is never asked for one.
+ */
+export function normalizeFirecrawlOptions(raw = {}, { cloud = true } = {}) {
+  const rawSearch =
+    raw?.search && typeof raw.search === 'object' ? raw.search : {}
+  const rawScrape =
+    raw?.scrape && typeof raw.scrape === 'object' ? raw.scrape : {}
+  const timeout = value =>
+    Number.isInteger(value)
+      ? Math.min(300_000, Math.max(1000, value))
+      : undefined
+  const categories = Array.isArray(rawSearch.categories)
+    ? [...new Set(rawSearch.categories)].filter(category =>
+        FIRECRAWL_CATEGORIES.includes(category)
+      )
+    : []
+  const includeDomains = domainList(rawSearch.includeDomains)
+  const sources = Array.isArray(rawSearch.sources)
+    ? [...new Set(rawSearch.sources)].filter(source =>
+        FIRECRAWL_SOURCES.includes(source)
+      )
+    : []
+  const search = withoutUndefined({
+    maxResults: Number.isInteger(rawSearch.maxResults)
+      ? Math.min(FIRECRAWL_MAX_RESULTS, Math.max(1, rawSearch.maxResults))
+      : undefined,
+    categories: categories.length > 0 ? categories : undefined,
+    timeRange: optionalChoice(rawSearch.timeRange, FIRECRAWL_TIME_RANGES),
+    sortByDate: optionalFlag(rawSearch.sortByDate),
+    includeDomains,
+    // Firecrawl refuses both lists in one search
+    excludeDomains: includeDomains
+      ? undefined
+      : domainList(rawSearch.excludeDomains),
+    country: optionalText(rawSearch.country, /^[a-z]{2}$/i)?.toUpperCase(),
+    location: optionalText(rawSearch.location),
+    safeSearch: optionalFlag(rawSearch.safeSearch),
+    scrapeResults: optionalFlag(rawSearch.scrapeResults),
+    timeout: timeout(rawSearch.timeout),
+    sources: sources.length > 0 ? sources : undefined,
+    highlights: optionalFlag(rawSearch.highlights),
+  })
+  const languages = Array.isArray(rawScrape.languages)
+    ? [
+        ...new Set(
+          rawScrape.languages
+            .map(language =>
+              optionalText(language, /^[a-z]{2,3}(-[a-z0-9]{2,8})*$/i)
+            )
+            .filter(Boolean)
+        ),
+      ].slice(0, 10)
+    : []
+  const scrape = withoutUndefined({
+    onlyMainContent: optionalFlag(rawScrape.onlyMainContent),
+    onlyCleanContent: optionalFlag(rawScrape.onlyCleanContent),
+    maxAge: Number.isInteger(rawScrape.maxAge)
+      ? Math.max(0, rawScrape.maxAge)
+      : undefined,
+    pdfMode: optionalChoice(rawScrape.pdfMode, FIRECRAWL_PDF_MODES),
+    country: optionalText(rawScrape.country, /^[a-z]{2}$/i)?.toUpperCase(),
+    languages: languages.length > 0 ? languages : undefined,
+    includeTags: selectorList(rawScrape.includeTags),
+    excludeTags: selectorList(rawScrape.excludeTags),
+    waitFor: Number.isInteger(rawScrape.waitFor)
+      ? Math.min(60_000, Math.max(0, rawScrape.waitFor))
+      : undefined,
+    timeout: timeout(rawScrape.timeout),
+    mobile: optionalFlag(rawScrape.mobile),
+    blockAds: optionalFlag(rawScrape.blockAds),
+    proxy: cloud
+      ? optionalChoice(rawScrape.proxy, FIRECRAWL_PROXIES)
+      : undefined,
+    zeroDataRetention: cloud
+      ? optionalFlag(rawScrape.zeroDataRetention)
+      : undefined,
+  })
+  return {
+    ...(Object.keys(search).length > 0 ? { search } : {}),
+    ...(Object.keys(scrape).length > 0 ? { scrape } : {}),
+  }
+}
+
+/**
+ * The Jina request options a user chose, keeping only valid values. An option
+ * left out is left to the API's own default. Reader options travel as HTTP
+ * headers, so their text must be printable ASCII.
+ */
+export function normalizeJinaOptions(raw = {}) {
+  const rawSearch =
+    raw?.search && typeof raw.search === 'object' ? raw.search : {}
+  const rawRead = raw?.read && typeof raw.read === 'object' ? raw.read : {}
+  const headerText = value => optionalText(value, /^[\x20-\x7e]+$/, 500)
+  const country = optionalText(rawSearch.country)?.toLowerCase()
+  const language = optionalText(rawSearch.language)?.toLowerCase()
+  const respondWith = optionalChoice(rawRead.respondWith, ['readerlm-v2'])
+  const search = withoutUndefined({
+    maxResults: Number.isInteger(rawSearch.maxResults)
+      ? Math.min(JINA_MAX_RESULTS, Math.max(1, rawSearch.maxResults))
+      : undefined,
+    includeContent: optionalFlag(rawSearch.includeContent),
+    type: optionalChoice(rawSearch.type, ['news']),
+    country: JINA_COUNTRIES.has(country) ? country : undefined,
+    language: JINA_LANGUAGES.get(language),
+    location: optionalText(rawSearch.location),
+    includeDomains: domainList(rawSearch.includeDomains),
+  })
+  const read = withoutUndefined({
+    engine: optionalChoice(rawRead.engine, JINA_ENGINES),
+    timeout: Number.isInteger(rawRead.timeout)
+      ? Math.min(180, Math.max(1, rawRead.timeout))
+      : undefined,
+    targetSelector: headerText(rawRead.targetSelector),
+    removeSelector: headerText(rawRead.removeSelector),
+    retainImages: optionalChoice(rawRead.retainImages, ['none', 'alt']),
+    // Jina ignores it once X-Respond-With is set
+    withGeneratedAlt: respondWith
+      ? undefined
+      : optionalFlag(rawRead.withGeneratedAlt),
+    withIframe: optionalFlag(rawRead.withIframe),
+    withShadowDom: optionalFlag(rawRead.withShadowDom),
+    respondWith,
+    proxy: optionalText(
+      rawRead.proxy,
+      /^(auto|none|[a-z]{2})$/i
+    )?.toLowerCase(),
+    locale: optionalText(rawRead.locale, /^[a-z]{2,3}(-[a-z0-9]{2,8})*$/i),
+    noCache: optionalFlag(rawRead.noCache),
+    dnt: optionalFlag(rawRead.dnt),
+    tokenBudget: Number.isInteger(rawRead.tokenBudget)
+      ? Math.max(1, rawRead.tokenBudget)
+      : undefined,
+    waitForSelector: headerText(rawRead.waitForSelector),
+    cacheTolerance: Number.isInteger(rawRead.cacheTolerance)
+      ? Math.max(0, rawRead.cacheTolerance)
+      : undefined,
+  })
+  return {
+    ...(Object.keys(search).length > 0 ? { search } : {}),
+    ...(Object.keys(read).length > 0 ? { read } : {}),
+  }
+}
+
+/**
+ * The LangSearch request options a user chose, keeping only valid values.
+ * An option left out is left to the API's own default.
+ */
+export function normalizeLangsearchOptions(raw = {}) {
+  const rawSearch =
+    raw?.search && typeof raw.search === 'object' ? raw.search : raw
+  const includeDomains = domainList(rawSearch.includeDomains)
+  const excludeDomains = domainList(rawSearch.excludeDomains)
+  const search = withoutUndefined({
+    maxResults: Number.isInteger(rawSearch.maxResults)
+      ? Math.min(LANGSEARCH_MAX_RESULTS, Math.max(1, rawSearch.maxResults))
+      : undefined,
+    freshness: optionalChoice(rawSearch.freshness, LANGSEARCH_FRESHNESS),
+    includeDomains,
+    excludeDomains,
+    includeContent: optionalFlag(rawSearch.includeContent),
+    maxCharacters: Number.isInteger(rawSearch.maxCharacters)
+      ? Math.min(100_000, Math.max(100, rawSearch.maxCharacters))
+      : undefined,
+  })
+  return Object.keys(search).length > 0 ? { search } : {}
+}
+
+/**
+ * The Exa request options a user chose, keeping only valid values.
+ * An option left out is left to the API's own default.
+ */
+export function normalizeExaOptions(raw = {}) {
+  const rawSearch =
+    raw?.search && typeof raw.search === 'object' ? raw.search : {}
+  const rawRead =
+    raw?.read && typeof raw.read === 'object'
+      ? raw.read
+      : raw?.contents && typeof raw.contents === 'object'
+        ? raw.contents
+        : {}
+
+  const stringArray = val => {
+    if (Array.isArray(val)) {
+      const filtered = val
+        .map(t => (typeof t === 'string' ? t.trim() : ''))
+        .filter(Boolean)
+      return filtered.length > 0 ? filtered : undefined
+    }
+    if (typeof val === 'string' && val.trim()) {
+      const filtered = val
+        .split(/[\n,]+/)
+        .map(t => t.trim())
+        .filter(Boolean)
+      return filtered.length > 0 ? filtered : undefined
+    }
+    return undefined
   }
 
-  // Extract cache configuration parameters
-  const cacheHours = clampCacheParam(raw.cacheHours, 0, 168, WEB_SEARCH_DEFAULTS.cacheHours)
-  const maxCachedSearches = clampCacheParam(raw.maxCachedSearches, 0, 1000, WEB_SEARCH_DEFAULTS.maxCachedSearches)
-  const maxCachedPages = clampCacheParam(raw.maxCachedPages, 0, 200, WEB_SEARCH_DEFAULTS.maxCachedPages)
-  const resultsPerSearch = clampCacheParam(raw.resultsPerSearch, 1, 10, WEB_SEARCH_DEFAULTS.resultsPerSearch)
+  const search = withoutUndefined({
+    maxResults: Number.isInteger(rawSearch.maxResults)
+      ? Math.min(EXA_MAX_RESULTS, Math.max(1, rawSearch.maxResults))
+      : undefined,
+    type: optionalChoice(rawSearch.type, EXA_SEARCH_TYPES),
+    category: optionalChoice(rawSearch.category, EXA_SEARCH_CATEGORIES),
+    includeDomains: domainList(rawSearch.includeDomains),
+    excludeDomains: domainList(rawSearch.excludeDomains),
+    startPublishedDate: optionalText(rawSearch.startPublishedDate),
+    endPublishedDate: optionalText(rawSearch.endPublishedDate),
+    includeText: stringArray(rawSearch.includeText),
+    excludeText: stringArray(rawSearch.excludeText),
+    moderation: optionalFlag(rawSearch.moderation),
+    includeContent: optionalFlag(rawSearch.includeContent),
+    maxCharacters: Number.isInteger(rawSearch.maxCharacters)
+      ? Math.min(100_000, Math.max(100, rawSearch.maxCharacters))
+      : undefined,
+    includeHtmlTags: optionalFlag(rawSearch.includeHtmlTags),
+    highlights: optionalFlag(rawSearch.highlights),
+    numSentences: Number.isInteger(rawSearch.numSentences)
+      ? Math.min(10, Math.max(1, rawSearch.numSentences))
+      : undefined,
+    highlightsPerUrl: Number.isInteger(rawSearch.highlightsPerUrl)
+      ? Math.min(10, Math.max(1, rawSearch.highlightsPerUrl))
+      : undefined,
+    highlightsQuery: optionalText(rawSearch.highlightsQuery),
+    summary: optionalFlag(rawSearch.summary),
+    summaryQuery: optionalText(rawSearch.summaryQuery),
+    livecrawl: optionalChoice(rawSearch.livecrawl, EXA_LIVECRAWL_MODES),
+    livecrawlTimeout: Number.isInteger(rawSearch.livecrawlTimeout)
+      ? Math.min(60_000, Math.max(1000, rawSearch.livecrawlTimeout))
+      : undefined,
+    subpages: Number.isInteger(rawSearch.subpages)
+      ? Math.min(10, Math.max(1, rawSearch.subpages))
+      : undefined,
+    subpageTarget: optionalText(rawSearch.subpageTarget),
+  })
 
-  const baseSettings = {
-    type,
+  const read = withoutUndefined({
+    maxCharacters: Number.isInteger(rawRead.maxCharacters)
+      ? Math.min(100_000, Math.max(100, rawRead.maxCharacters))
+      : undefined,
+    includeHtmlTags: optionalFlag(rawRead.includeHtmlTags),
+    highlights: optionalFlag(rawRead.highlights),
+    numSentences: Number.isInteger(rawRead.numSentences)
+      ? Math.min(10, Math.max(1, rawRead.numSentences))
+      : undefined,
+    highlightsPerUrl: Number.isInteger(rawRead.highlightsPerUrl)
+      ? Math.min(10, Math.max(1, rawRead.highlightsPerUrl))
+      : undefined,
+    highlightsQuery: optionalText(rawRead.highlightsQuery),
+    summary: optionalFlag(rawRead.summary),
+    summaryQuery: optionalText(rawRead.summaryQuery),
+    livecrawl: optionalChoice(rawRead.livecrawl, EXA_LIVECRAWL_MODES),
+    livecrawlTimeout: Number.isInteger(rawRead.livecrawlTimeout)
+      ? Math.min(60_000, Math.max(1000, rawRead.livecrawlTimeout))
+      : undefined,
+    subpages: Number.isInteger(rawRead.subpages)
+      ? Math.min(10, Math.max(1, rawRead.subpages))
+      : undefined,
+    subpageTarget: optionalText(rawRead.subpageTarget),
+  })
+
+  return {
+    ...(Object.keys(search).length > 0 ? { search } : {}),
+    ...(Object.keys(read).length > 0 ? { read } : {}),
+  }
+}
+
+export function normalizeWebSearchSettings(raw) {
+  if (raw === null || raw === undefined) return null
+  if (typeof raw !== 'object')
+    throw settingsError('Invalid web search settings.')
+
+  // Extract cache configuration parameters
+  const cacheHours = clampCacheParam(
+    raw.cacheHours,
+    0,
+    168,
+    WEB_SEARCH_DEFAULTS.cacheHours
+  )
+  const maxCachedSearches = clampCacheParam(
+    raw.maxCachedSearches,
+    0,
+    1000,
+    WEB_SEARCH_DEFAULTS.maxCachedSearches
+  )
+  const maxCachedPages = clampCacheParam(
+    raw.maxCachedPages,
+    0,
+    200,
+    WEB_SEARCH_DEFAULTS.maxCachedPages
+  )
+  const preferences = {
     cacheHours,
     maxCachedSearches,
     maxCachedPages,
-    resultsPerSearch,
   }
 
-  if (type === 'ollama') {
+  // Legacy single-provider format
+  if (typeof raw.type === 'string') {
+    const type = raw.type.trim()
+    if (!WEB_SEARCH_PROVIDERS.includes(type)) {
+      throw settingsError(`Unknown web search provider '${type}'.`)
+    }
+
+    if (type === 'searxng') {
+      const baseUrl = normalizeSearxngBaseUrl(raw.baseUrl)
+      if (!baseUrl)
+        throw settingsError(
+          'SearXNG web search needs the URL of your instance.'
+        )
+      validateSafeProviderBaseUrl(baseUrl)
+      return {
+        type: 'searxng',
+        baseUrl,
+        ...preferences,
+      }
+    }
+
+    if (type === 'firecrawlSelfHosted') {
+      const baseUrl = normalizeFirecrawlBaseUrl(raw.baseUrl)
+      if (!baseUrl)
+        throw settingsError(
+          'Firecrawl web search needs the URL of your instance.'
+        )
+      validateSafeProviderBaseUrl(baseUrl)
+      return {
+        type: 'firecrawlSelfHosted',
+        baseUrl,
+        ...preferences,
+      }
+    }
+
     const apiKey = typeof raw.apiKey === 'string' ? raw.apiKey.trim() : ''
     if (!apiKey) {
-      throw settingsError(
-        'Ollama web search needs an API key from https://ollama.com/settings/keys.'
-      )
+      const label =
+        type === 'ollama'
+          ? 'Ollama'
+          : type === 'websearchapi'
+            ? 'WebSearchAPI.ai'
+            : type === 'tavily'
+              ? 'Tavily'
+              : type === 'firecrawl'
+                ? 'Firecrawl'
+                : type === 'jina'
+                  ? 'Jina AI'
+                  : type === 'langsearch'
+                    ? 'LangSearch'
+                    : type === 'exa'
+                      ? 'Exa'
+                      : type
+      const help =
+        type === 'ollama' ? ' from https://ollama.com/settings/keys.' : '.'
+      throw settingsError(`${label} web search needs an API key${help}`)
     }
-    return { ...baseSettings, apiKey }
+    return {
+      type,
+      apiKey,
+      ...preferences,
+    }
   }
 
-  const baseUrl = normalizeSearxngBaseUrl(raw.baseUrl)
-  if (!baseUrl) throw settingsError('SearXNG web search needs the URL of your instance.')
-  validateSafeProviderBaseUrl(baseUrl)
-  return { ...baseSettings, baseUrl }
+  // Multi-provider format
+  if (raw.providers && typeof raw.providers === 'object') {
+    const rawOllama = raw.providers.ollama
+    const rawSearxng = raw.providers.searxng
+    const rawWebsearchapi = raw.providers.websearchapi
+    const rawTavily = raw.providers.tavily
+    const rawJina = raw.providers.jina
+    const rawFirecrawl = raw.providers.firecrawl
+    const rawLangsearch = raw.providers.langsearch
+    const rawExa = raw.providers.exa
+    const readerKeys = raw =>
+      Array.isArray(raw?.apiKeys)
+        ? raw.apiKeys
+            .map(k => (typeof k === 'string' ? k.trim() : ''))
+            .filter(Boolean)
+        : []
+    const jinaKeys = readerKeys(rawJina)
+    const firecrawlKeys = readerKeys(rawFirecrawl)
+    const langsearchKeys = readerKeys(rawLangsearch)
+    const exaKeys = readerKeys(rawExa)
+
+    const ollamaKeys = Array.isArray(rawOllama?.apiKeys)
+      ? rawOllama.apiKeys
+          .map(k => (typeof k === 'string' ? k.trim() : ''))
+          .filter(Boolean)
+      : []
+    const websearchapiKeys = Array.isArray(rawWebsearchapi?.apiKeys)
+      ? rawWebsearchapi.apiKeys
+          .map(k => (typeof k === 'string' ? k.trim() : ''))
+          .filter(Boolean)
+      : []
+
+    const tavilyKeys = readerKeys(rawTavily)
+
+    const rawUrls = Array.isArray(rawSearxng?.baseUrls)
+      ? rawSearxng.baseUrls
+      : []
+
+    const searxngUrls = rawUrls
+      .map(u => normalizeSearxngBaseUrl(u))
+      .filter(Boolean)
+
+    // Validate safe URL for every SearXNG baseUrl
+    for (const url of searxngUrls) {
+      validateSafeProviderBaseUrl(url)
+    }
+
+    const rawFirecrawlSelfHosted = raw.providers.firecrawlSelfHosted
+    const firecrawlSelfHostedUrls = (
+      Array.isArray(rawFirecrawlSelfHosted?.baseUrls)
+        ? rawFirecrawlSelfHosted.baseUrls
+        : []
+    )
+      .map(u => normalizeFirecrawlBaseUrl(u))
+      .filter(Boolean)
+    for (const url of firecrawlSelfHostedUrls) {
+      validateSafeProviderBaseUrl(url)
+    }
+
+    const ollamaEnabled = Boolean(rawOllama?.enabled && ollamaKeys.length > 0)
+    const ollamaMaxResults = Number.isInteger(rawOllama?.maxResults)
+      ? Math.min(OLLAMA_MAX_RESULTS, Math.max(1, rawOllama.maxResults))
+      : undefined
+    const searxngEnabled = Boolean(
+      rawSearxng?.enabled && searxngUrls.length > 0
+    )
+    const websearchapiEnabled = Boolean(
+      rawWebsearchapi?.enabled && websearchapiKeys.length > 0
+    )
+
+    const tavilyEnabled = Boolean(rawTavily?.enabled && tavilyKeys.length > 0)
+    const firecrawlEnabled = Boolean(
+      rawFirecrawl?.enabled && firecrawlKeys.length > 0
+    )
+    const firecrawlSelfHostedEnabled = Boolean(
+      rawFirecrawlSelfHosted?.enabled && firecrawlSelfHostedUrls.length > 0
+    )
+    const jinaEnabled = Boolean(rawJina?.enabled && jinaKeys.length > 0)
+    const langsearchEnabled = Boolean(
+      rawLangsearch?.enabled && langsearchKeys.length > 0
+    )
+    const exaEnabled = Boolean(rawExa?.enabled && exaKeys.length > 0)
+
+    if (
+      !ollamaEnabled &&
+      !searxngEnabled &&
+      !websearchapiEnabled &&
+      !tavilyEnabled &&
+      !firecrawlEnabled &&
+      !firecrawlSelfHostedEnabled &&
+      !jinaEnabled &&
+      !langsearchEnabled &&
+      !exaEnabled
+    ) {
+      return null
+    }
+
+    const rotationStrategy = WEB_SEARCH_ROTATION_STRATEGIES.includes(
+      raw.rotationStrategy
+    )
+      ? raw.rotationStrategy
+      : 'round-robin'
+
+    const primaryProvider = WEB_SEARCH_PRIMARY_PROVIDERS.includes(
+      raw.primaryProvider
+    )
+      ? raw.primaryProvider
+      : 'searxng'
+
+    return {
+      type: searxngEnabled
+        ? 'searxng'
+        : ollamaEnabled
+          ? 'ollama'
+          : websearchapiEnabled
+            ? 'websearchapi'
+            : tavilyEnabled
+              ? 'tavily'
+              : firecrawlEnabled
+                ? 'firecrawl'
+                : firecrawlSelfHostedEnabled
+                  ? 'firecrawlSelfHosted'
+                  : jinaEnabled
+                    ? 'jina'
+                    : langsearchEnabled
+                      ? 'langsearch'
+                      : 'exa',
+      providers: {
+        ollama: {
+          enabled: ollamaEnabled,
+          apiKeys: ollamaKeys,
+          ...(ollamaMaxResults ? { maxResults: ollamaMaxResults } : {}),
+        },
+        websearchapi: {
+          enabled: websearchapiEnabled,
+          apiKeys: websearchapiKeys,
+          ...normalizeWebsearchapiOptions(rawWebsearchapi),
+        },
+        tavily: {
+          enabled: tavilyEnabled,
+          apiKeys: tavilyKeys,
+          ...normalizeTavilyOptions(rawTavily),
+        },
+        firecrawl: {
+          enabled: firecrawlEnabled,
+          apiKeys: firecrawlKeys,
+          ...normalizeFirecrawlOptions(rawFirecrawl),
+        },
+        firecrawlSelfHosted: {
+          enabled: firecrawlSelfHostedEnabled,
+          baseUrls: firecrawlSelfHostedUrls,
+          ...normalizeFirecrawlOptions(rawFirecrawlSelfHosted, {
+            cloud: false,
+          }),
+        },
+        jina: {
+          enabled: jinaEnabled,
+          apiKeys: jinaKeys,
+          ...normalizeJinaOptions(rawJina),
+        },
+        langsearch: {
+          enabled: langsearchEnabled,
+          apiKeys: langsearchKeys,
+          ...normalizeLangsearchOptions(rawLangsearch),
+        },
+        exa: {
+          enabled: exaEnabled,
+          apiKeys: exaKeys,
+          ...normalizeExaOptions(rawExa),
+        },
+        searxng: {
+          enabled: searxngEnabled,
+          baseUrls: searxngUrls,
+          ...(typeof rawSearxng?.defaultCategories === 'string' &&
+          rawSearxng.defaultCategories.trim()
+            ? { defaultCategories: rawSearxng.defaultCategories.trim() }
+            : {}),
+          ...(typeof rawSearxng?.defaultLanguage === 'string' &&
+          rawSearxng.defaultLanguage.trim()
+            ? { defaultLanguage: rawSearxng.defaultLanguage.trim() }
+            : {}),
+          ...withoutUndefined({
+            timeRange: optionalChoice(rawSearxng?.timeRange, RECENCY_VALUES),
+            safeSearch: optionalChoice(rawSearxng?.safeSearch, [0, 1, 2]),
+          }),
+        },
+      },
+      rotationStrategy,
+      primaryProvider,
+      ...preferences,
+    }
+  }
+
+  throw settingsError('Invalid web search settings.')
+}
+
+export function buildEndpointPool(settings) {
+  const pool = []
+  if (settings?.providers?.searxng?.enabled) {
+    const urls = settings.providers.searxng.baseUrls || []
+    urls.forEach((baseUrl, index) => {
+      pool.push({
+        id: `searxng:${index}`,
+        provider: 'searxng',
+        baseUrl,
+        defaultCategories: settings.providers.searxng.defaultCategories,
+        defaultLanguage: settings.providers.searxng.defaultLanguage,
+        timeRange: settings.providers.searxng.timeRange,
+        safeSearch: settings.providers.searxng.safeSearch,
+      })
+    })
+  }
+  if (settings?.providers?.ollama?.enabled) {
+    const keys = settings.providers.ollama.apiKeys || []
+    keys.forEach((apiKey, index) => {
+      pool.push({
+        id: `ollama:${index}`,
+        provider: 'ollama',
+        apiKey,
+        maxResults: settings.providers.ollama.maxResults,
+      })
+    })
+  }
+  if (settings?.providers?.websearchapi?.enabled) {
+    const keys = settings.providers.websearchapi.apiKeys || []
+    keys.forEach((apiKey, index) => {
+      pool.push({
+        id: `websearchapi:${index}`,
+        provider: 'websearchapi',
+        apiKey,
+        search: settings.providers.websearchapi.search,
+        scrape: settings.providers.websearchapi.scrape,
+      })
+    })
+  }
+  if (settings?.providers?.tavily?.enabled) {
+    const {
+      apiKeys = [],
+      projectId,
+      search,
+      extract,
+    } = settings.providers.tavily
+    apiKeys.forEach((apiKey, index) => {
+      pool.push({
+        id: `tavily:${index}`,
+        provider: 'tavily',
+        apiKey,
+        projectId,
+        search,
+        extract,
+      })
+    })
+  }
+  if (settings?.providers?.firecrawl?.enabled) {
+    const { apiKeys = [], search, scrape } = settings.providers.firecrawl
+    apiKeys.forEach((apiKey, index) => {
+      pool.push({
+        id: `firecrawl:${index}`,
+        provider: 'firecrawl',
+        apiKey,
+        search,
+        scrape,
+      })
+    })
+  }
+  if (settings?.providers?.firecrawlSelfHosted?.enabled) {
+    const {
+      baseUrls = [],
+      search,
+      scrape,
+    } = settings.providers.firecrawlSelfHosted
+    baseUrls.forEach((baseUrl, index) => {
+      pool.push({
+        id: `firecrawlSelfHosted:${index}`,
+        provider: 'firecrawlSelfHosted',
+        baseUrl,
+        search,
+        scrape,
+      })
+    })
+  }
+  if (settings?.providers?.jina?.enabled) {
+    const { apiKeys = [], search, read } = settings.providers.jina
+    apiKeys.forEach((apiKey, index) => {
+      pool.push({ id: `jina:${index}`, provider: 'jina', apiKey, search, read })
+    })
+  }
+  if (settings?.providers?.langsearch?.enabled) {
+    const { apiKeys = [], search } = settings.providers.langsearch
+    apiKeys.forEach((apiKey, index) => {
+      pool.push({
+        id: `langsearch:${index}`,
+        provider: 'langsearch',
+        apiKey,
+        search,
+      })
+    })
+  }
+  if (settings?.providers?.exa?.enabled) {
+    const { apiKeys = [], search, read } = settings.providers.exa
+    apiKeys.forEach((apiKey, index) => {
+      pool.push({
+        id: `exa:${index}`,
+        provider: 'exa',
+        apiKey,
+        search,
+        read,
+      })
+    })
+  }
+  if (pool.length === 0) {
+    if (settings?.type === 'searxng' && settings.baseUrl) {
+      pool.push({
+        id: 'searxng:0',
+        provider: 'searxng',
+        baseUrl: settings.baseUrl,
+      })
+    } else if (settings?.type === 'firecrawlSelfHosted' && settings.baseUrl) {
+      pool.push({
+        id: 'firecrawlSelfHosted:0',
+        provider: 'firecrawlSelfHosted',
+        baseUrl: settings.baseUrl,
+      })
+    } else if (
+      settings?.type &&
+      settings.apiKey &&
+      SEARCH_PROVIDERS.has(settings.type)
+    ) {
+      pool.push({
+        id: `${settings.type}:0`,
+        provider: settings.type,
+        apiKey: settings.apiKey,
+      })
+    }
+  }
+  return pool
 }
 
 // ---------------------------------------------------------------------------
 // Tool specs
 // ---------------------------------------------------------------------------
 
+/**
+ * The model says what it wants and nothing else. How to get it (categories,
+ * language, safe search, result counts, caching) is the user's backend
+ * settings, so every provider is offered the same small schema.
+ */
+const WEB_SEARCH_SPEC = {
+  name: 'web_search',
+  description:
+    'Search the web. Returns the top results, each numbered as a source [n], with title, URL, publication date when known, and a snippet. Use it for anything outside this project that you cannot state reliably from memory: facts that change over time (news, people in office, releases, prices, events), package options and syntax, unfamiliar errors, journal or conference requirements. Snippets are pointers: read the page with web_fetch before relying on a detail.',
+  parameters: {
+    type: 'object',
+    properties: {
+      query: {
+        type: 'string',
+        description:
+          'What to search for, in the words a page answering it would use. Include the year for time-sensitive questions, e.g. "Vietnam president 2026" or "siunitx range-phrase option".',
+      },
+    },
+    required: ['query'],
+  },
+}
+
 const WEB_FETCH_SPEC = {
   name: 'web_fetch',
-  description: `Read a web page as Markdown. Long documents come in pages of about ${PAGE_CHARS} characters, and the result says which page you got and how many there are. Pass find to get only the passages that mention a command, option or phrase anywhere in the document, instead of paging through it. A page that refuses automated readers is read from its latest web archive copy when one exists.`,
+  description: `Read a web page, PDF or text file as Markdown. Long documents come in pages, and the result says which page you got and how many there are. Pass find to jump to the passages about a command, option or phrase anywhere in the document, most relevant first, instead of paging through it. A page that blocks automated readers is retried through other routes automatically.`,
   parameters: {
     type: 'object',
     properties: {
       url: {
         type: 'string',
-        description: 'The http or https URL to read, usually one from web_search.',
+        description:
+          'The http or https URL to read, usually one from web_search.',
       },
       page: {
         type: 'integer',
-        description: 'Which page of a long document to return, starting at 1. Defaults to 1.',
+        description: 'Which page of a long document to return. Defaults to 1.',
       },
       find: {
         type: 'string',
         description:
-          'Return only the passages containing this text (case-insensitive), each with the page it is on.',
+          'Words or a phrase to look for. Case, Markdown formatting and hyphens versus spaces do not matter; when no passage has the exact phrase, passages with all its words come back, marked as such. Separate alternatives with " | ", e.g. "range-phrase | range-units".',
       },
     },
     required: ['url'],
   },
 }
 
-/**
- * The search filters are offered only where the backend honours them: Ollama's
- * web search API takes a query and a count and nothing else, and a parameter
- * that is silently ignored would mislead the model about what it got.
- */
-export function webToolSpecs(type, { resultsPerSearch = WEB_SEARCH_DEFAULTS.resultsPerSearch } = {}) {
-  const filters =
-    type === 'searxng'
-      ? {
-          recency: {
-            type: 'string',
-            enum: RECENCY_VALUES,
-            description:
-              'Only results published within this window. Use it when the answer must be current: news, recent events, latest releases.',
-          },
-          topic: {
-            type: 'string',
-            enum: ['general', 'news'],
-            description:
-              'news searches news sites, whose results carry publication dates. Defaults to general.',
-          },
-        }
-      : {}
-  return [
-    {
-      name: 'web_search',
-      description:
-        'Search the web. Returns the top results, each numbered as a source [n], with title, URL, publication date when known, and a snippet. Use it for anything outside this project that you cannot state reliably from memory: facts that change over time (news, people in office, releases, prices, events), package options and syntax, unfamiliar errors, journal or conference requirements. Snippets are pointers: read the page with web_fetch before relying on a detail.',
-      parameters: {
-        type: 'object',
-        properties: {
-          query: {
-            type: 'string',
-            description:
-              'What to search for, in the words a page answering it would use. Include the year for time-sensitive questions, e.g. "Vietnam president 2026" or "siunitx range-phrase option".',
-          },
-          maxResults: {
-            type: 'integer',
-            minimum: 1,
-            maximum: resultsPerSearch,
-            description: `How many results to return, 1-${resultsPerSearch}. Defaults to ${resultsPerSearch}, the number set in the user's web search settings.`,
-          },
-          ...filters,
-        },
-        required: ['query'],
-      },
-    },
-    WEB_FETCH_SPEC,
-  ]
-}
+export const WEB_TOOL_SPECS = [WEB_SEARCH_SPEC, WEB_FETCH_SPEC]
 
-export const WEB_TOOL_SPECS = webToolSpecs('searxng')
-
-// ---------------------------------------------------------------------------
-// Public-address guard
-// ---------------------------------------------------------------------------
-
-const BLOCKED_ADDRESSES = new net.BlockList()
-for (const [prefix, bits] of [
-  ['0.0.0.0', 8],
-  ['10.0.0.0', 8],
-  ['100.64.0.0', 10],
-  ['127.0.0.0', 8],
-  ['169.254.0.0', 16],
-  ['172.16.0.0', 12],
-  ['192.0.0.0', 24],
-  ['192.0.2.0', 24],
-  ['192.88.99.0', 24],
-  ['192.168.0.0', 16],
-  ['198.18.0.0', 15],
-  ['198.51.100.0', 24],
-  ['203.0.113.0', 24],
-  ['224.0.0.0', 4],
-  ['240.0.0.0', 4],
-]) {
-  BLOCKED_ADDRESSES.addSubnet(prefix, bits, 'ipv4')
-}
-for (const [prefix, bits] of [
-  ['::', 128],
-  ['::1', 128],
-  // NAT64, Teredo and 6to4 all embed an IPv4 address that may be private;
-  // none of them is how a public documentation site is reached. IPv4-mapped
-  // addresses are unwrapped in isPublicAddress instead: BlockList matches every
-  // plain IPv4 address against a ::ffff:0:0/96 rule.
-  ['64:ff9b::', 96],
-  ['64:ff9b:1::', 48],
-  ['100::', 64],
-  ['2001::', 32],
-  ['2001:db8::', 32],
-  ['2002::', 16],
-  ['fc00::', 7],
-  ['fe80::', 10],
-  ['fec0::', 10],
-  ['ff00::', 8],
-]) {
-  BLOCKED_ADDRESSES.addSubnet(prefix, bits, 'ipv6')
-}
-
-/** True only for a globally routable unicast IP address. */
-export function isPublicAddress(address) {
-  const raw = String(address ?? '').replace(/^\[|\]$/g, '')
-  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(raw)
-  if (mapped) return isPublicAddress(mapped[1])
-  const mappedHex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i.exec(raw)
-  if (mappedHex) {
-    const high = parseInt(mappedHex[1], 16)
-    const low = parseInt(mappedHex[2], 16)
-    return isPublicAddress(`${high >> 8}.${high & 255}.${low >> 8}.${low & 255}`)
-  }
-  try {
-    const family = net.isIP(raw)
-    if (family === 4) return !BLOCKED_ADDRESSES.check(raw, 'ipv4')
-    if (family === 6) return !BLOCKED_ADDRESSES.check(raw, 'ipv6')
-  } catch {
-    // an address BlockList cannot parse (a zone id, say) is not public
-  }
-  return false
-}
+export const MAX_DOCUMENT_CACHE_BYTES = Infinity
 
 /**
- * A `dns.lookup` replacement that refuses to hand back a private address.
- * Used as the socket's own lookup, so the address it vets is the one dialled.
+ * A user's search and page caches, at the limits the user set. They live in
+ * SQLite on the data volume (see web-fetch/cache-store.mjs).
  */
-export function guardedLookup(hostname, options, callback) {
-  if (typeof options === 'function') {
-    callback = options
-    options = {}
-  } else if (typeof options === 'number') {
-    options = { family: options }
-  }
-  dns.lookup(hostname, { ...options, all: true }, (err, addresses) => {
-    if (err) return callback(err)
-    const list = Array.isArray(addresses) ? addresses : []
-    const blocked = list.find(entry => !isPublicAddress(entry.address))
-    if (list.length === 0 || blocked) {
-      const error = new Error(
-        `${hostname} resolves to a private or reserved address${blocked ? ` (${blocked.address})` : ''}`
-      )
-      error.code = 'EADDRBLOCKED'
-      return callback(error)
-    }
-    if (options?.all) return callback(null, list)
-    callback(null, list[0].address, list[0].family)
-  })
-}
-
-function parseFetchUrl(raw) {
-  let parsed
-  try {
-    parsed = new URL(String(raw).trim())
-  } catch {
-    throw webError(`Not a valid URL: ${raw}`)
-  }
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    throw webError(`Only http and https URLs can be fetched, not ${parsed.protocol}`)
-  }
-  const host = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase()
-  if (
-    (net.isIP(host) && !isPublicAddress(host)) ||
-    host === 'localhost' ||
-    host.endsWith('.localhost') ||
-    host.endsWith('.internal') ||
-    host.endsWith('.local')
-  ) {
-    throw webError(`${host} is not a public address. Only public web pages can be fetched.`)
-  }
-  parsed.hash = ''
-  return parsed
-}
-
-const DEFAULT_HEADERS = {
-  'User-Agent': USER_AGENT,
-  Accept: 'text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.5',
-  'Accept-Language': 'en;q=1.0, *;q=0.5',
-}
-
-function requestOnce(url, { signal, maxBytes, lookup, headers = DEFAULT_HEADERS }) {
-  return new Promise((resolve, reject) => {
-    const transport = url.protocol === 'https:' ? https : http
-    const req = transport.request(
-      url,
-      {
-        method: 'GET',
-        headers: { ...headers, 'Accept-Encoding': 'gzip, deflate, br' },
-        lookup,
-        signal,
-        agent: false,
-      },
-      res => {
-        const status = res.statusCode ?? 0
-        if (status >= 300 && status < 400 && res.headers.location) {
-          res.resume()
-          resolve({ redirect: res.headers.location })
-          return
-        }
-        if (status >= 400) {
-          res.resume()
-          const reason = describeStatus(status)
-          reject(
-            webError(`${url} returned HTTP ${status}${reason ? `: ${reason}` : ''}.`, {
-              status,
-              kind: 'http',
-            })
-          )
-          return
-        }
-
-        let stream = res
-        const encoding = String(res.headers['content-encoding'] || '').trim().toLowerCase()
-        if (encoding === 'gzip' || encoding === 'x-gzip') stream = res.pipe(zlib.createGunzip())
-        else if (encoding === 'deflate') stream = res.pipe(zlib.createInflate())
-        else if (encoding === 'br') stream = res.pipe(zlib.createBrotliDecompress())
-
-        const chunks = []
-        let size = 0
-        let truncated = false
-        let settled = false
-        const finish = () => {
-          if (settled) return
-          settled = true
-          resolve({
-            status,
-            contentType: String(res.headers['content-type'] || ''),
-            body: Buffer.concat(chunks),
-            truncated,
-          })
-        }
-        // The cap applies after decompression, so a small compressed bomb
-        // cannot expand past it.
-        stream.on('data', chunk => {
-          if (truncated) return
-          size += chunk.length
-          if (size > maxBytes) {
-            chunks.push(chunk.subarray(0, chunk.length - (size - maxBytes)))
-            truncated = true
-            finish()
-            res.destroy()
-            return
-          }
-          chunks.push(chunk)
-        })
-        stream.on('end', finish)
-        stream.on('error', err => {
-          if (truncated) return
-          if (settled) return
-          settled = true
-          reject(err)
-        })
-      }
-    )
-    req.on('error', reject)
-    req.end()
-  })
-}
-
-/**
- * GETs a public web page: http(s) only, public addresses only (checked on
- * every redirect hop and at connect time), bounded in size and time.
- */
-export async function fetchPublicUrl(
-  rawUrl,
+export function getOwnerCaches(
+  owner = 'default',
   {
-    signal,
-    maxBytes = MAX_DOWNLOAD_BYTES,
-    timeoutMs = REQUEST_TIMEOUT_MS,
-    lookup = guardedLookup,
-    headers,
+    maxCachedSearches = WEB_SEARCH_DEFAULTS.maxCachedSearches,
+    maxCachedPages = WEB_SEARCH_DEFAULTS.maxCachedPages,
   } = {}
 ) {
-  const timeout = AbortSignal.timeout(timeoutMs)
-  const combined = AbortSignal.any([signal, timeout].filter(Boolean))
-  let current = parseFetchUrl(rawUrl)
-
-  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-    let response
-    try {
-      response = await requestOnce(current, { signal: combined, maxBytes, lookup, headers })
-    } catch (err) {
-      if (signal?.aborted) throw new ProviderError('Request was cancelled', { code: 'aborted' })
-      if (timeout.aborted) {
-        throw webError(`${current} did not answer within ${Math.round(timeoutMs / 1000)}s.`, {
-          kind: 'network',
-        })
-      }
-      if (err instanceof ProviderError) throw err
-      if (err?.code === 'EADDRBLOCKED') {
-        throw webError(`${err.message}. Only public web pages can be fetched.`)
-      }
-      if (err?.code === 'ENOTFOUND' || err?.code === 'EAI_AGAIN') {
-        throw webError(`Could not resolve ${current.hostname}. Check the URL.`)
-      }
-      throw webError(`Could not fetch ${current}: ${err?.message || 'network error'}`, {
-        kind: 'network',
-      })
-    }
-    if (response.redirect) {
-      current = parseFetchUrl(new URL(response.redirect, current).toString())
-      continue
-    }
-    return { ...response, url: current.toString() }
-  }
-  throw webError(`Too many redirects fetching ${rawUrl}.`)
-}
-
-// ---------------------------------------------------------------------------
-// HTML to Markdown
-// ---------------------------------------------------------------------------
-
-/** Page chrome: removed with everything inside it. */
-const DROPPED_ELEMENTS = new Set(['nav', 'footer', 'aside', 'form', 'button', 'select', 'dialog', 'menu'])
-
-const MARKDOWN_TAGS = [
-  'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
-  'p', 'div', 'section', 'article', 'main', 'header', 'blockquote',
-  'figure', 'figcaption', 'details', 'summary',
-  'ul', 'ol', 'li', 'dl', 'dt', 'dd',
-  'pre', 'code', 'kbd', 'samp', 'tt',
-  'a', 'br', 'hr', 'math',
-  'table', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td', 'caption',
-  ...DROPPED_ELEMENTS,
-]
-
-const BLOCK_TAGS = new Set([
-  'p', 'div', 'section', 'article', 'main', 'header', 'blockquote',
-  'figure', 'figcaption', 'details', 'summary', 'dl', 'dt', 'dd',
-  'table', 'thead', 'tbody', 'tfoot', 'caption',
-])
-
-const INLINE_CODE_TAGS = new Set(['code', 'kbd', 'samp', 'tt'])
-
-function unescapeHtml(text) {
-  return text.replace(
-    /&(lt|gt|quot|#39|amp);/g,
-    (_match, entity) => ({ lt: '<', gt: '>', quot: '"', '#39': "'", amp: '&' })[entity]
-  )
-}
-
-function attribute(attrs, name) {
-  const match = new RegExp(`\\b${name}="([^"]*)"`).exec(attrs || '')
-  return match ? unescapeHtml(match[1]) : undefined
-}
-
-/** Prefer the page's main content when it marks one, to skip site chrome. */
-function pickMainHtml(html) {
-  const main = /<main\b[^>]*>([\s\S]*)<\/main>/i.exec(html)
-  if (main && main[1].length > 500) return main[1]
-  if ((html.match(/<article\b/gi) || []).length === 1) {
-    const article = /<article\b[^>]*>([\s\S]*)<\/article>/i.exec(html)
-    if (article && article[1].length > 500) return article[1]
-  }
-  const body = /<body\b[^>]*>([\s\S]*)<\/body>/i.exec(html)
-  return body ? body[1] : html
-}
-
-function sanitizeForMarkdown(html) {
-  return sanitizeHtml(html, {
-    allowedTags: MARKDOWN_TAGS,
-    allowedAttributes: { a: ['href'], math: ['alttext', 'display'] },
-    allowedSchemes: ['http', 'https'],
-    nonTextTags: [
-      'script', 'style', 'textarea', 'option', 'noscript', 'svg',
-      'template', 'iframe', 'head', 'title', 'canvas', 'object',
-    ],
-    exclusiveFilter: frame => DROPPED_ELEMENTS.has(frame.tag),
-    disallowedTagsMode: 'discard',
+  return ownerWebCaches(owner, {
+    searches: maxCachedSearches,
+    pages: maxCachedPages,
+    pageBytes: MAX_DOCUMENT_CACHE_BYTES,
   })
-}
-
-function formatLink(inner, href, baseUrl) {
-  const text = collapse(inner)
-  if (!text) return ''
-  if (!href) return inner
-  let target
-  try {
-    target = new URL(href, baseUrl)
-  } catch {
-    return inner
-  }
-  if (target.protocol !== 'http:' && target.protocol !== 'https:') return inner
-  // An anchor on the same page tells the reader nothing the text does not.
-  if (target.hash) {
-    const page = new URL(target)
-    page.hash = ''
-    const base = baseUrl ? new URL(baseUrl) : null
-    if (base) base.hash = ''
-    if (base && page.toString() === base.toString()) return inner
-  }
-  return `[${text}](${target.toString()})`
-}
-
-function tidyMarkdown(text) {
-  const result = []
-  let fenced = false
-  for (const raw of text.split('\n')) {
-    if (/^\s*```/.test(raw)) {
-      fenced = !fenced
-      result.push(raw.trim())
-      continue
-    }
-    if (fenced) {
-      result.push(raw.replace(/\s+$/, ''))
-      continue
-    }
-    let line = raw.replace(/\s+$/, '')
-    const listItem = /^(\s*)(- |\d+\. )\s*(.*)$/.exec(line)
-    if (listItem) {
-      if (!listItem[3]) continue
-      line = `${listItem[1]}${listItem[2]}${listItem[3].replace(/ {2,}/g, ' ')}`
-    } else {
-      line = line.replace(/(\S) {2,}/g, '$1 ')
-      line = line.trimStart().replace(/^(#{1,6} )\s+/, '$1')
-      if (/^#{1,6}$/.test(line)) continue
-    }
-    result.push(line)
-  }
-  return result.join('\n').replace(/\n{3,}/g, '\n\n').trim()
-}
-
-/** Converts HTML already narrowed by `sanitizeForMarkdown` to Markdown. */
-function sanitizedHtmlToMarkdown(html, baseUrl) {
-  const out = []
-  const lists = []
-  const links = []
-  let preDepth = 0
-  let skippingMath = false
-  let row = null
-  let tableRows = 0
-  let inCell = false
-
-  const blockBreak = () => out.push(inCell ? ' ' : '\n\n')
-
-  for (const match of html.matchAll(/<(\/?)([a-z][a-z0-9]*)([^>]*)>|([^<]+)/gi)) {
-    const [, closing, rawName, attrs, text] = match
-
-    if (text !== undefined) {
-      if (skippingMath) continue
-      const decoded = unescapeHtml(text)
-      out.push(preDepth ? decoded.replace(/ /g, ' ') : decoded.replace(/\s+/g, ' '))
-      continue
-    }
-
-    const name = rawName.toLowerCase()
-
-    // MathML carries the TeX source in alttext (Wikipedia, arXiv HTML), which
-    // is exactly what a LaTeX assistant wants rather than the rendered glyphs.
-    if (name === 'math') {
-      if (closing) {
-        skippingMath = false
-        continue
-      }
-      const tex = attribute(attrs, 'alttext')
-      if (tex && tex.trim()) {
-        skippingMath = true
-        out.push(attribute(attrs, 'display') === 'block' ? `\n\n$$${tex.trim()}$$\n\n` : ` $${tex.trim()}$ `)
-      }
-      continue
-    }
-    if (skippingMath) continue
-
-    if (name === 'pre') {
-      if (!closing) {
-        preDepth++
-        if (preDepth === 1) out.push('\n\n```\n')
-      } else if (preDepth > 0) {
-        preDepth--
-        if (preDepth === 0) out.push('\n```\n\n')
-      }
-      continue
-    }
-    if (preDepth) {
-      if (name === 'br') out.push('\n')
-      continue
-    }
-
-    const heading = /^h([1-6])$/.exec(name)
-    if (heading) {
-      if (inCell) out.push(' ')
-      else out.push(closing ? '\n\n' : `\n\n${'#'.repeat(Number(heading[1]))} `)
-      continue
-    }
-
-    if (INLINE_CODE_TAGS.has(name)) {
-      out.push('`')
-      continue
-    }
-
-    switch (name) {
-      case 'br':
-        out.push(inCell ? ' ' : '\n')
-        break
-      case 'hr':
-        out.push(inCell ? ' ' : '\n\n---\n\n')
-        break
-      case 'ul':
-      case 'ol':
-        if (!closing) {
-          // A nested list starts on its first item's own line, not a blank one.
-          if (lists.length === 0) out.push(inCell ? ' ' : '\n')
-          lists.push({ ordered: name === 'ol', count: 0 })
-        } else {
-          lists.pop()
-          out.push(inCell ? ' ' : lists.length ? '\n' : '\n\n')
-        }
-        break
-      case 'li':
-        if (!closing) {
-          const list = lists.at(-1)
-          const marker = list?.ordered ? `${++list.count}. ` : '- '
-          out.push(inCell ? ' ' : `\n${'  '.repeat(Math.max(0, lists.length - 1))}${marker}`)
-        }
-        break
-      case 'a':
-        if (!closing) {
-          links.push({ href: attribute(attrs, 'href'), at: out.length })
-        } else {
-          const link = links.pop()
-          if (link) out.push(formatLink(out.splice(link.at).join(''), link.href, baseUrl))
-        }
-        break
-      case 'table':
-        tableRows = 0
-        row = null
-        inCell = false
-        out.push('\n\n')
-        break
-      case 'tr':
-        if (!closing) {
-          row = { cells: 0 }
-          out.push('\n| ')
-        } else if (row) {
-          out.push(' |')
-          tableRows++
-          if (tableRows === 1 && row.cells > 0) out.push(`\n|${' --- |'.repeat(row.cells)}`)
-          row = null
-        }
-        break
-      case 'th':
-      case 'td':
-        if (!closing) {
-          if (row && row.cells > 0) out.push(' | ')
-          if (row) row.cells++
-          inCell = true
-        } else {
-          inCell = false
-        }
-        break
-      default:
-        if (BLOCK_TAGS.has(name)) blockBreak()
-    }
-  }
-
-  return tidyMarkdown(out.join(''))
-}
-
-const PUBLISHED_META = [
-  'article:published_time',
-  'og:published_time',
-  'datepublished',
-  'publish-date',
-  'publishdate',
-  'pubdate',
-  'date',
-  'dc.date.issued',
-  'dc.date',
-  'citation_publication_date',
-  'citation_date',
-]
-const MODIFIED_META = ['article:modified_time', 'og:updated_time', 'datemodified', 'last-modified']
-
-function metaContent(html, names) {
-  const found = new Map()
-  for (const [tag] of html.matchAll(/<meta\b[^>]*>/gi)) {
-    const name = /\b(?:property|name|itemprop)\s*=\s*["']([^"']+)["']/i.exec(tag)?.[1]?.toLowerCase()
-    const content = /\bcontent\s*=\s*["']([^"']*)["']/i.exec(tag)?.[1]
-    if (name && content && !found.has(name)) found.set(name, content)
-  }
-  for (const name of names) {
-    const day = isoDay(found.get(name))
-    if (day) return day
-  }
-  return ''
-}
-
-/**
- * When a page says it was published and last changed. How current a source
- * is decides whether it answers a question about the present, so the model
- * is told whenever the page says.
- */
-export function extractPageDates(html) {
-  const head = html.slice(0, 200_000)
-  const jsonLd = key => isoDay(new RegExp(`"${key}"\\s*:\\s*"([^"]+)"`).exec(head)?.[1])
-  const published =
-    metaContent(head, PUBLISHED_META) ||
-    jsonLd('datePublished') ||
-    isoDay(/<time\b[^>]*\bdatetime\s*=\s*["']([^"']+)["']/i.exec(head)?.[1])
-  const modified = metaContent(head, MODIFIED_META) || jsonLd('dateModified')
-  return {
-    ...(published ? { published } : {}),
-    ...(modified && modified !== published ? { modified } : {}),
-  }
-}
-
-/** Title and Markdown body of an HTML page, and its dates when it has them. */
-export function htmlToMarkdown(html, baseUrl) {
-  const titleMatch = /<title\b[^>]*>([\s\S]*?)<\/title>/i.exec(html)
-  const title = titleMatch
-    ? collapse(unescapeHtml(sanitizeHtml(titleMatch[1], { allowedTags: [], allowedAttributes: {} })))
-    : ''
-  const markdown = sanitizedHtmlToMarkdown(sanitizeForMarkdown(pickMainHtml(html)), baseUrl)
-  return { title, markdown, ...extractPageDates(html) }
-}
-
-// ---------------------------------------------------------------------------
-// Documents, pages and find
-// ---------------------------------------------------------------------------
-
-/**
- * Start offsets of each page. Pages break at a paragraph, else a line, near
- * the size limit, so a page does not end mid-sentence where it can help it.
- */
-export function splitPages(text, size = PAGE_CHARS) {
-  const starts = [0]
-  let pos = 0
-  while (text.length - pos > size) {
-    const limit = pos + size
-    const earliest = pos + Math.floor(size * 0.6)
-    let cut = text.lastIndexOf('\n\n', limit)
-    if (cut < earliest) cut = text.lastIndexOf('\n', limit)
-    if (cut < earliest) cut = limit
-    pos = cut
-    while (text[pos] === '\n') pos++
-    if (pos >= text.length) break
-    starts.push(pos)
-  }
-  return starts
-}
-
-function pageText(doc, page) {
-  return doc.text.slice(doc.pages[page - 1], doc.pages[page] ?? doc.text.length).trimEnd()
-}
-
-function pageOf(pages, offset) {
-  let page = 1
-  for (let i = 0; i < pages.length; i++) {
-    if (pages[i] <= offset) page = i + 1
-  }
-  return page
-}
-
-function makeDocument({ url, title, text, truncated = false, published, modified }) {
-  let body = String(text ?? '').trim()
-  let cut = truncated
-  if (body.length > MAX_DOCUMENT_CHARS) {
-    body = body.slice(0, MAX_DOCUMENT_CHARS)
-    cut = true
-  }
-  if (!body) {
-    throw webError(
-      `${url} has no readable text. It may need JavaScript to render; try another source.`
-    )
-  }
-  return {
-    url,
-    title: clip(collapse(title), 200),
-    text: body,
-    pages: splitPages(body),
-    truncated: cut,
-    ...(published ? { published } : {}),
-    ...(modified ? { modified } : {}),
-  }
-}
-
-function findPassagesFor(doc, term) {
-  const needle = term.toLowerCase()
-  const matches = []
-  let total = 0
-  let budget = PAGE_CHARS
-  let heading = ''
-  let offset = 0
-  for (const block of doc.text.split(/\n{2,}/)) {
-    const at = doc.text.indexOf(block, offset)
-    offset = at + block.length
-    const firstLine = block.split('\n', 1)[0]
-    if (/^#{1,6} /.test(firstLine)) heading = firstLine
-    if (!block.toLowerCase().includes(needle)) continue
-    total++
-    if (matches.length >= MAX_FIND_MATCHES || budget <= 0) continue
-    const passage = clip(block, MAX_FIND_PASSAGE_CHARS)
-    budget -= passage.length
-    matches.push({
-      page: pageOf(doc.pages, at),
-      ...(heading && heading !== firstLine ? { heading } : {}),
-      text: passage,
-    })
-  }
-  return { matches, total }
-}
-
-/**
- * Passages mentioning `find`. A model often over-escapes a command name
- * (`\\qty`) or includes a backslash the page drops, so fall back through
- * those spellings before reporting nothing.
- */
-export function findPassages(doc, find) {
-  const term = collapse(find)
-  const candidates = [...new Set([term, term.replace(/\\\\/g, '\\'), term.replace(/^\\+/, '')])]
-    .filter(Boolean)
-  for (const candidate of candidates) {
-    const found = findPassagesFor(doc, candidate)
-    if (found.total > 0) return { ...found, term: candidate }
-  }
-  return { matches: [], total: 0, term }
-}
-
-function mediaType(contentType) {
-  return String(contentType || '').split(';')[0].trim().toLowerCase()
-}
-
-function charsetOf(contentType, body) {
-  const header = /charset\s*=\s*["']?([\w.:-]+)/i.exec(contentType || '')?.[1]
-  if (header) return header
-  const head = body.subarray(0, 4096).toString('latin1')
-  return /<meta[^>]+charset\s*=\s*["']?([\w.:-]+)/i.exec(head)?.[1] || 'utf-8'
-}
-
-function decodeBody(body, charset) {
-  try {
-    return new TextDecoder(charset).decode(body)
-  } catch {
-    return new TextDecoder('utf-8').decode(body)
-  }
-}
-
-function isTextualType(type) {
-  return (
-    type.startsWith('text/') ||
-    /(json|xml|javascript|x-tex|x-latex|x-bibtex|yaml|toml)/.test(type)
-  )
-}
-
-/** Turns a fetched response into a paged document, or explains why it can't. */
-export function documentFromResponse({ url, contentType = '', body, truncated = false }) {
-  const type = mediaType(contentType)
-  if (type === 'application/pdf' || body.subarray(0, 5).toString('latin1') === '%PDF-') {
-    throw webError(
-      `${url} is a PDF, which web_fetch cannot read. Look for an HTML version of the same document, such as the package's CTAN page or its documentation site.`
-    )
-  }
-
-  const text = decodeBody(body, charsetOf(contentType, body))
-  const looksLikeHtml = /^\s*<(!doctype html|html|head|body)\b/i.test(text)
-  if (type === 'text/html' || type === 'application/xhtml+xml' || (!type && looksLikeHtml)) {
-    const { markdown, ...page } = htmlToMarkdown(text, url)
-    return makeDocument({ url, ...page, text: markdown, truncated })
-  }
-
-  if ((type && !isTextualType(type)) || text.includes('\u0000')) {
-    throw webError(`${url} is ${type || 'binary data'}, not a text page, so web_fetch cannot read it.`)
-  }
-  let content = text.replace(/\r\n?/g, '\n')
-  if (type.includes('json')) {
-    try {
-      content = JSON.stringify(JSON.parse(content), null, 2)
-    } catch {
-      // keep the raw text
-    }
-  }
-  return makeDocument({ url, title: '', text: content, truncated })
-}
-
-/** Least-recently-used entries go first once the cache is full. */
-class TtlCache {
-  constructor(maxEntries) {
-    this.maxEntries = maxEntries
-    this.entries = new Map()
-  }
-
-  /**
-   * The value if it was stored less than `maxAgeMs` ago. The age limit is
-   * checked on read, not fixed on write, so shortening it in the settings
-   * also retires what is already cached.
-   */
-  get(key, maxAgeMs) {
-    const entry = this.entries.get(key)
-    if (!entry) return null
-    if (Date.now() - entry.at >= maxAgeMs) {
-      this.entries.delete(key)
-      return null
-    }
-    this.entries.delete(key)
-    this.entries.set(key, entry)
-    return entry.value
-  }
-
-  set(key, value) {
-    this.entries.delete(key)
-    this.entries.set(key, { at: Date.now(), value })
-    while (this.entries.size > this.maxEntries) {
-      this.entries.delete(this.entries.keys().next().value)
-    }
-  }
-
-  clear() {
-    this.entries.clear()
-  }
-}
-
-// Per-user caches: owner -> { searches: TtlCache, documents: TtlCache, maxCached: {...} }
-const MAX_OWNER_CACHE_COUNT = 100
-const ownerCaches = new Map()
-
-function getOwnerCaches(owner = 'default') {
-  if (!ownerCaches.has(owner)) {
-    ownerCaches.set(owner, {
-      searches: new TtlCache(WEB_SEARCH_DEFAULTS.maxCachedSearches),
-      documents: new TtlCache(WEB_SEARCH_DEFAULTS.maxCachedPages),
-      maxCached: { searches: WEB_SEARCH_DEFAULTS.maxCachedSearches, pages: WEB_SEARCH_DEFAULTS.maxCachedPages },
-    })
-    // Drop least recently used owner when exceeding capacity
-    if (ownerCaches.size > MAX_OWNER_CACHE_COUNT) {
-      const firstKey = ownerCaches.keys().next().value
-      ownerCaches.delete(firstKey)
-    }
-  }
-  const caches = ownerCaches.get(owner)
-  // Move to end (most recently used)
-  ownerCaches.delete(owner)
-  ownerCaches.set(owner, caches)
-  return caches
-}
-
-function updateOwnerCacheCapacity(owner, maxCachedSearches, maxCachedPages) {
-  const caches = getOwnerCaches(owner)
-  const changed = caches.maxCached.searches !== maxCachedSearches || caches.maxCached.pages !== maxCachedPages
-  if (!changed) return
-
-  caches.maxCached.searches = maxCachedSearches
-  caches.maxCached.pages = maxCachedPages
-
-  // Trim caches to new capacity
-  caches.searches.maxEntries = maxCachedSearches
-  caches.documents.maxEntries = maxCachedPages
-  while (caches.searches.entries.size > maxCachedSearches) {
-    caches.searches.entries.delete(caches.searches.entries.keys().next().value)
-  }
-  while (caches.documents.entries.size > maxCachedPages) {
-    caches.documents.entries.delete(caches.documents.entries.keys().next().value)
-  }
 }
 
 export function clearWebDocumentCache() {
-  for (const caches of ownerCaches.values()) {
-    caches.searches.clear()
-    caches.documents.clear()
-  }
+  clearWebCacheStore()
+  clearEndpointHealth()
 }
 
 // ---------------------------------------------------------------------------
@@ -1164,7 +1328,9 @@ function normalizeResults(list, max, query) {
     const key = sourceKey(url)
     if (seen.has(key)) continue
     seen.add(key)
-    const published = isoDay(entry.publishedDate ?? entry.published_date ?? entry.pubdate)
+    const published = isoDay(
+      entry.publishedDate ?? entry.published_date ?? entry.pubdate
+    )
     results.push({
       title: clip(collapse(entry.title || url), 200),
       url,
@@ -1176,30 +1342,6 @@ function normalizeResults(list, max, query) {
   return results
 }
 
-async function upstreamError(res, label, type) {
-  const raw = await res.text().catch(() => '')
-  let detail = /<html|<!doctype/i.test(raw) ? '' : raw.slice(0, 300).trim()
-  try {
-    const parsed = JSON.parse(raw)
-    const candidate = parsed?.error?.message ?? parsed?.error ?? parsed?.message
-    if (typeof candidate === 'string') detail = candidate
-  } catch {
-    // keep the raw text
-  }
-  let hint = ''
-  if (type === 'searxng' && res.status === 403) {
-    hint = 'SearXNG refuses JSON requests until "json" is added to search.formats in its settings.yml.'
-  } else if (type === 'searxng' && res.status === 429) {
-    hint = "SearXNG's bot limiter blocked the request; allow this server's address or turn the limiter off for it."
-  } else if (res.status === 401 || res.status === 403) {
-    hint = 'The Ollama API key was rejected. Create one at https://ollama.com/settings/keys and update it in Account Settings.'
-  } else if (res.status === 429) {
-    hint = 'The web search rate limit was reached. Wait a moment before searching again.'
-  }
-  const message = `${label} returned HTTP ${res.status}${detail ? `: ${detail}` : ''}.${hint ? ` ${hint}` : ''}`
-  return webError(message, { status: res.status, hint })
-}
-
 // ---------------------------------------------------------------------------
 // The tools
 // ---------------------------------------------------------------------------
@@ -1207,37 +1349,65 @@ async function upstreamError(res, label, type) {
 export class AiAssistWebTools {
   /**
    * @param {{ type: 'ollama', apiKey: string } | { type: 'searxng', baseUrl: string },
-   *          cacheHours, maxCachedSearches, maxCachedPages, resultsPerSearch } settings
+   *          cacheHours, maxCachedSearches, maxCachedPages } settings
    *   Already validated by `normalizeWebSearchSettings`.
    */
-  constructor(settings, { fetchFn = fetch, fetchPage = fetchPublicUrl, cacheOwner = 'default' } = {}) {
+  constructor(
+    settings,
+    {
+      fetchFn = fetch,
+      fetchPage = fetchPublicUrl,
+      cacheOwner = 'default',
+      browser = sharedBrowserRoute(),
+      contextWindow,
+      runJob,
+    } = {}
+  ) {
     this.settings = settings
+    // Extraction-worker jobs, such as indexing a long document
+    this.runJob = runJob
     this.fetchFn = fetchFn
     this.fetchPage = fetchPage
     this.cacheOwner = cacheOwner
+    // Pages are cut per run, for the model it serves
+    this.pageChars = pageCharsFor(contextWindow)
+    this.rotator = new WebRouter(settings, { cacheOwner })
 
-    // Initialize per-user caches with configured capacity limits
-    updateOwnerCacheCapacity(
-      cacheOwner,
-      settings.maxCachedSearches ?? WEB_SEARCH_DEFAULTS.maxCachedSearches,
-      settings.maxCachedPages ?? WEB_SEARCH_DEFAULTS.maxCachedPages
-    )
+    this.caches = getOwnerCaches(cacheOwner, settings)
+
+    this.fetcher = new WebFetcher({
+      fetchPage,
+      fetchFn,
+      rotator: this.rotator,
+      browser,
+      cache: this.caches.documents,
+      cacheHours: settings.cacheHours ?? WEB_SEARCH_DEFAULTS.cacheHours,
+    })
 
     // Every page the conversation has seen gets a number, [n], that the model
     // cites it by and the chat turns into a link. Numbers carry over from
     // earlier turns (see rememberSources), so [2] names one page throughout.
     this.sources = new Map()
     this.nextSource = 1
+    // searchCacheText(query) -> the search in flight for it
+    this.pending = new Map()
+  }
+
+  /** Whether a search backend is configured; page readers alone only read pages. */
+  canSearch() {
+    return this.rotator.pool.some(e => SEARCH_PROVIDERS.has(e.provider))
   }
 
   getToolSpecs() {
-    return webToolSpecs(this.settings.type, { resultsPerSearch: this.settings.resultsPerSearch })
+    return this.canSearch() ? WEB_TOOL_SPECS : [WEB_FETCH_SPEC]
   }
 
   /** Picks up the source numbers earlier turns of the conversation handed out. */
   rememberSources(transcript) {
     for (const entry of Array.isArray(transcript) ? transcript : []) {
-      for (const call of Array.isArray(entry?.toolCalls) ? entry.toolCalls : []) {
+      for (const call of Array.isArray(entry?.toolCalls)
+        ? entry.toolCalls
+        : []) {
         const result = call?.result
         if (!result || typeof result !== 'object') continue
         const items =
@@ -1259,7 +1429,8 @@ export class AiAssistWebTools {
     const key = sourceKey(url)
     let source = this.sources.get(key)
     if (!source) {
-      const n = Number.isInteger(number) && number > 0 ? number : this.nextSource
+      const n =
+        Number.isInteger(number) && number > 0 ? number : this.nextSource
       source = { n, url }
       this.sources.set(key, source)
       this.nextSource = Math.max(this.nextSource, n + 1)
@@ -1273,7 +1444,18 @@ export class AiAssistWebTools {
   /** Tool failures come back as `{ error }` for the model, like project tools. */
   async execute(name, args = {}, { signal } = {}) {
     try {
-      if (name === 'web_search') return await this.search(args, { signal })
+      if (name === 'web_search') {
+        if (!this.canSearch()) {
+          return {
+            error:
+              'Web search is not set up. Read pages with web_fetch instead.',
+          }
+        }
+        return await this._shared(
+          searchCacheText(typeof args?.query === 'string' ? args.query : ''),
+          () => this.search(args, { signal })
+        )
+      }
       if (name === 'web_fetch') return await this.fetch(args, { signal })
       return { error: `Unknown tool: ${name}` }
     } catch (err) {
@@ -1290,7 +1472,11 @@ export class AiAssistWebTools {
    */
   _fetchFailure(args, error) {
     const url = typeof args?.url === 'string' ? args.url.trim() : ''
-    const known = url ? this.sources.get(sourceKey(/^https?:/i.test(url) ? url : `https://${url}`)) : null
+    const known = url
+      ? this.sources.get(
+          sourceKey(/^https?:/i.test(url) ? url : `https://${url}`)
+        )
+      : null
     if (!known) return { error, ...(url ? { url } : {}) }
     return {
       error: `${error} ${known.snippet ? 'Its search snippet is included; rely on it only for what it states, or read another result.' : 'Read another result instead.'}`,
@@ -1302,51 +1488,164 @@ export class AiAssistWebTools {
     }
   }
 
+  /**
+   * Calls that ask the same thing at the same time, as a model's parallel
+   * tool calls can, share one request. Each gets its own copy of the result.
+   */
+  async _shared(key, run) {
+    let pending = this.pending.get(key)
+    if (!pending) {
+      pending = run().finally(() => this.pending.delete(key))
+      this.pending.set(key, pending)
+    }
+    return structuredClone(await pending)
+  }
+
   async search(args, { signal, useCache = true } = {}) {
     const query = collapse(typeof args?.query === 'string' ? args.query : '')
     if (!query) return { error: 'web_search needs a query.' }
-    const limit = this.settings.resultsPerSearch ?? WEB_SEARCH_DEFAULTS.resultsPerSearch
-    const maxResults = clampInt(args?.maxResults, 1, limit, limit)
-    const searxng = this.settings.type === 'searxng'
-    const recency = searxng ? normalizeRecency(args?.recency) : ''
-    const topic =
-      searxng && String(args?.topic ?? '').trim().toLowerCase() === 'news' ? 'news' : ''
 
     const cacheKey = JSON.stringify([
-      this.settings.type,
+      this.settings.type ?? this.settings.rotationStrategy ?? 'round-robin',
       this.settings.baseUrl ?? '',
-      query.toLowerCase(),
-      maxResults,
-      recency,
-      topic,
+      this.settings.providers?.websearchapi?.search ?? null,
+      this.settings.providers?.tavily?.search ?? null,
+      this.settings.providers?.firecrawl?.search ?? null,
+      this.settings.providers?.firecrawlSelfHosted?.search ?? null,
+      this.settings.providers?.jina?.search ?? null,
+      this.settings.providers?.langsearch?.search ?? null,
+      this.settings.providers?.exa?.search ?? null,
+      this.settings.providers?.ollama?.maxResults ?? null,
+      this.settings.providers?.searxng?.timeRange ?? null,
+      this.settings.providers?.searxng?.safeSearch ?? null,
+      searchCacheText(query),
     ])
 
-    const ownerCaches = getOwnerCaches(this.cacheOwner)
-    const cacheHours = this.settings.cacheHours ?? WEB_SEARCH_DEFAULTS.cacheHours
+    const cacheHours =
+      this.settings.cacheHours ?? WEB_SEARCH_DEFAULTS.cacheHours
     const shouldUseCache = useCache && cacheHours > 0
 
-    const maxAgeMs =
-      recency || topic
-        ? Math.min(cacheHours * HOUR_MS, RECENT_SEARCH_TTL_MS)
-        : cacheHours * HOUR_MS
-    let found = shouldUseCache ? ownerCaches.searches.get(cacheKey, maxAgeMs) : null
+    let found = shouldUseCache
+      ? this.caches.searches.get(cacheKey, cacheHours * HOUR_MS)
+      : null
+    // Pages this user already read that contain every word of the query
+    const readPages = shouldUseCache
+      ? this.caches.documents.search(query, { maxAgeMs: cacheHours * HOUR_MS })
+      : []
+
+    let providerUsed = this.settings.type || 'searxng'
+
     if (!found) {
-      found = searxng
-        ? await this._searxngSearch(query, maxResults, { recency, topic }, signal)
-        : await this._ollamaSearch(query, maxResults, signal)
-      // An empty answer is as likely a flaky engine as a real miss
+      const plan = this.rotator.plan('search')
+      const errors = []
+      let zeroResultAnswer = null
+
+      outer: for (const { provider, endpoints } of plan) {
+        for (const endpoint of endpoints) {
+          try {
+            let res
+            if (provider === 'searxng') {
+              res = await this._searxngSearch(query, signal, endpoint)
+            } else if (provider === 'websearchapi') {
+              res = await this._websearchapiSearch(query, signal, endpoint)
+            } else if (provider === 'tavily') {
+              res = await this._tavilySearch(query, signal, endpoint)
+            } else if (
+              provider === 'firecrawl' ||
+              provider === 'firecrawlSelfHosted'
+            ) {
+              res = await this._firecrawlSearch(query, signal, endpoint)
+            } else if (provider === 'jina') {
+              res = await this._jinaSearch(query, signal, endpoint)
+            } else if (provider === 'langsearch') {
+              res = await this._langsearchSearch(query, signal, endpoint)
+            } else if (provider === 'exa') {
+              res = await this._exaSearch(query, signal, endpoint)
+            } else {
+              res = await this._ollamaSearch(query, signal, endpoint)
+            }
+
+            if (res && res.results && res.results.length > 0) {
+              this.rotator.success(endpoint, 'search')
+              providerUsed = provider
+              found = res
+              break outer
+            }
+
+            // Provider returned zero results: record it and fall through to NEXT PROVIDER (without pausing endpoint)
+            zeroResultAnswer = res || { results: [] }
+            providerUsed = provider
+            break // move to next provider in outer loop
+          } catch (err) {
+            const failure = this.rotator.failure(endpoint, err)
+            errors.push({
+              endpoint: endpoint.id,
+              message: err?.message || String(err),
+            })
+            if (failure.class === 'aborted') throw err
+            if (failure.skipProvider && !endpoint.baseUrl) {
+              // A hosted API's outage: skip remaining keys of this provider.
+              // A self-hosted instance's leaves the user's other instances.
+              break
+            }
+            // Key/rate error: try next key of this provider
+          }
+        }
+      }
+
+      if (!found) {
+        if (zeroResultAnswer) {
+          found = zeroResultAnswer
+        } else if (readPages.length > 0) {
+          // Every endpoint failed, but pages already read still answer it
+          found = { results: [] }
+        } else {
+          throw webError(
+            errors.length > 0
+              ? `All web search endpoints failed: ${errors.map(e => `[${e.endpoint}]: ${e.message}`).join('; ')}`
+              : 'No web search endpoints available.'
+          )
+        }
+      }
+
       if (found.results.length > 0 && shouldUseCache) {
-        ownerCaches.searches.set(cacheKey, found)
+        this.caches.searches.set(cacheKey, found)
       }
     }
 
+    // Results this user already read: web_fetch returns them from the cache
+    const held = shouldUseCache
+      ? this.caches.documents.held(
+          found.results.map(result => cacheKeyFor(result.url)),
+          cacheHours * HOUR_MS
+        )
+      : new Set()
+    // A page is listed once, even when the cache holds it under two addresses
+    const listed = new Set(found.results.map(result => sourceKey(result.url)))
+    const results = [
+      ...found.results.map(result =>
+        held.has(cacheKeyFor(result.url)) ? { ...result, cached: true } : result
+      ),
+      ...readPages
+        .filter(page => {
+          const key = sourceKey(page.url)
+          if (listed.has(key)) return false
+          listed.add(key)
+          return true
+        })
+        .map(page => ({
+          title: clip(collapse(page.title || page.url), 200),
+          url: page.url,
+          ...(page.published ? { published: page.published } : {}),
+          snippet: bestSnippet(page.snippet, query),
+          cached: true,
+        })),
+    ]
+
     return {
-      provider: this.settings.type,
+      provider: providerUsed,
       query,
-      ...(recency ? { recency } : {}),
-      ...(topic ? { topic } : {}),
-      ...(found.relaxed ? { relaxed: true } : {}),
-      results: found.results.map(result => ({
+      results: results.map(result => ({
         source: this._source(result.url, result).n,
         ...result,
       })),
@@ -1360,35 +1659,65 @@ export class AiAssistWebTools {
     let url
     try {
       // "ctan.org/pkg/siunitx" is a URL to anyone reading it; accept it.
-      url = new URL(/^[a-z][a-z0-9+.-]*:/i.test(rawUrl) ? rawUrl : `https://${rawUrl}`)
+      url = new URL(
+        /^[a-z][a-z0-9+.-]*:/i.test(rawUrl) ? rawUrl : `https://${rawUrl}`
+      )
     } catch {
       return { error: `Not a valid URL: ${rawUrl}` }
     }
     if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-      return { error: `Only http and https URLs can be fetched, not ${url.protocol}` }
+      return {
+        error: `Only http and https URLs can be fetched, not ${url.protocol}`,
+      }
     }
     url.hash = ''
 
-    const doc = await this._document(url.toString(), signal)
+    const doc = await this.fetcher.read(url.toString(), { signal })
     const source = this._source(url.toString(), doc)
     // A redirect lands on another address for the same page
-    if (!this.sources.has(sourceKey(doc.url))) this.sources.set(sourceKey(doc.url), source)
-    const totalPages = doc.pages.length
+    if (!this.sources.has(sourceKey(doc.url)))
+      this.sources.set(sourceKey(doc.url), source)
+    // A cached document serves any model: its pages are cut for this one.
+    // A long document is indexed once, so paging and find stay fast at any size.
+    const index = await documentIndex(doc, this.pageChars, {
+      runJob: this.runJob,
+    })
+    const pages = index.map.starts
+    const totalPages = pages.length
     const base = {
       source: source.n,
       url: doc.url,
       ...(doc.title ? { title: doc.title } : {}),
       ...(doc.published ? { published: doc.published } : {}),
       ...(doc.modified ? { modified: doc.modified } : {}),
-      ...(doc.archived ? { archived: doc.archived, archiveUrl: doc.archiveUrl } : {}),
+      ...(doc.archiveUrl
+        ? {
+            ...(doc.archived ? { archived: doc.archived } : {}),
+            archiveUrl: doc.archiveUrl,
+          }
+        : {}),
       totalPages,
       ...(doc.truncated ? { truncated: true } : {}),
+      ...(doc.via ? { via: doc.via } : {}),
+      ...(doc.fetchedAt ? { fetchedAt: doc.fetchedAt } : {}),
+      ...(doc.partial ? { partial: true } : {}),
     }
 
     const find = typeof args?.find === 'string' ? args.find.trim() : ''
     if (find) {
-      const { matches, total, term } = findPassages(doc, find)
-      return { ...base, find: term, matches, totalMatches: total }
+      // Passages fill at most a page, the size this model reads at once
+      const found = findPassages(doc, find, {
+        budget: this.pageChars,
+        source: index.source,
+        pages,
+      })
+      return {
+        ...base,
+        find: found.term,
+        matches: found.matches,
+        totalMatches: found.total,
+        ...(found.pages.length > 0 ? { matchPages: found.pages } : {}),
+      }
     }
 
     const page = clampInt(args?.page, 1, Number.MAX_SAFE_INTEGER, 1)
@@ -1397,146 +1726,46 @@ export class AiAssistWebTools {
         error: `${doc.url} has ${totalPages} page${totalPages === 1 ? '' : 's'}; there is no page ${page}.`,
       }
     }
-    return { ...base, page, content: pageText(doc, page) }
+    return {
+      ...base,
+      page,
+      content: pageText({ text: doc.text, pages, open: index.map.open }, page),
+      ...(page === 1 && totalPages > 1 ? { outline: index.map.outline } : {}),
+    }
   }
 
-  async _document(url, signal) {
-    const key = `${this.settings.type}:${url}`
-    const cacheHours = this.settings.cacheHours ?? WEB_SEARCH_DEFAULTS.cacheHours
-    const ownerCaches = getOwnerCaches(this.cacheOwner)
-
-    if (cacheHours > 0) {
-      const cached = ownerCaches.documents.get(key, cacheHours * HOUR_MS)
-      if (cached) return cached
-    }
-
-    const doc = await this._read(url, signal)
-    if (cacheHours > 0) {
-      ownerCaches.documents.set(key, doc)
-    }
-    return doc
-  }
-
-  /**
-   * The page by the first route that works: the configured reader, then (for
-   * Ollama) this server reading it directly, then the page's latest copy in
-   * the Internet Archive. Only a refusal, an HTTP error or a network failure
-   * moves on to the next route; a PDF or a private address would fail the same
-   * way everywhere.
-   */
-  async _read(url, signal) {
-    const routes = [
-      ...(this.settings.type === 'ollama' ? [() => this._ollamaDocument(url, signal)] : []),
-      () => this._directDocument(url, signal),
-      () => this._archivedDocument(url, signal),
-    ]
-    let first
-    for (const route of routes) {
-      try {
-        return await route()
-      } catch (err) {
-        if (err?.code === 'aborted' || !isRetryableFailure(err)) throw err
-        first ??= err
-      }
-    }
-    throw webError(`${first.message.replace(/\.$/, '')}, and no archived copy could be read.`, {
-      status: first.status,
-      kind: first.kind,
+  async _request(
+    url,
+    init,
+    signal,
+    label,
+    providerType = this.settings.type,
+    timeoutMs = REQUEST_TIMEOUT_MS
+  ) {
+    return apiRequest(url, init, {
+      signal,
+      label,
+      providerType,
+      timeoutMs,
+      fetchFn: this.fetchFn,
     })
   }
 
-  async _ollamaDocument(url, signal) {
-    try {
-      const body = await this._postOllama('web_fetch', { url }, signal)
-      return makeDocument({
-        url,
-        title: typeof body?.title === 'string' ? body.title : '',
-        text: typeof body?.content === 'string' ? body.content : '',
-      })
-    } catch (err) {
-      // A rejected key or the rate limit is Ollama's own problem and would
-      // fail the same way again; anything else is about the page.
-      if (![401, 403, 429].includes(err?.status) && err?.code !== 'aborted') err.kind = 'http'
-      throw err
-    }
-  }
-
-  async _directDocument(url, signal) {
-    let response
-    try {
-      response = await this.fetchPage(url, { signal })
-    } catch (err) {
-      if (!REFUSED_STATUSES.has(err?.status)) throw err
-      response = await this.fetchPage(url, { signal, headers: BROWSER_HEADERS })
-    }
-    return documentFromResponse(response)
-  }
-
-  async _archivedDocument(url, signal) {
-    try {
-      const lookup = new URL(WAYBACK_LOOKUP)
-      lookup.searchParams.set('url', url)
-      const answer = await this.fetchPage(lookup.toString(), { signal, maxBytes: 64 * 1024 })
-      const closest = JSON.parse(answer.body.toString('utf8'))?.archived_snapshots?.closest
-      const stamp =
-        closest?.available && String(closest.status ?? '200') === '200'
-          ? /^\d{14}$/.exec(String(closest.timestamp ?? ''))?.[0]
-          : null
-      if (!stamp) throw webError(`${url} has no archived copy.`)
-      // id_ asks for the page as it was captured, without the archive's toolbar
-      const snapshot = await this.fetchPage(`https://web.archive.org/web/${stamp}id_/${url}`, {
-        signal,
-      })
-      return {
-        ...documentFromResponse({ ...snapshot, url }),
-        archived: isoDay(stamp),
-        archiveUrl: `https://web.archive.org/web/${stamp}/${url}`,
-      }
-    } catch (err) {
-      if (err?.code === 'aborted') throw err
-      throw webError(err?.message || `${url} has no archived copy.`, { kind: 'network' })
-    }
-  }
-
-  async _request(url, init, signal, label) {
-    const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS)
-    const combined = AbortSignal.any([signal, timeout].filter(Boolean))
-    let res
-    try {
-      res = await fetchWithRetry(
-        url,
-        { ...init, signal: combined },
-        { maxRetries: 2, fetchFn: this.fetchFn }
-      )
-    } catch (err) {
-      if (signal?.aborted) throw new ProviderError('Request was cancelled', { code: 'aborted' })
-      if (timeout.aborted) {
-        throw webError(`${label} did not answer within ${REQUEST_TIMEOUT_MS / 1000}s.`, {
-          kind: 'network',
-        })
-      }
-      throw webError(
-        `Could not reach ${label}: ${err?.cause?.code || err?.message || 'network error'}.`,
-        { kind: 'network' }
-      )
-    }
-    if (!res.ok) throw await upstreamError(res, label, this.settings.type)
-    return res
-  }
-
-  async _postOllama(endpoint, payload, signal) {
+  async _postOllama(endpoint, payload, signal, apiKey = null) {
+    const key = apiKey || this.settings.apiKey
     const res = await this._request(
       `${OLLAMA_API_BASE}/${endpoint}`,
       {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${this.settings.apiKey}`,
+          Authorization: `Bearer ${key}`,
         },
         body: JSON.stringify(payload),
       },
       signal,
-      'Ollama web search'
+      'Ollama web search',
+      'ollama'
     )
     try {
       return await res.json()
@@ -1545,22 +1774,469 @@ export class AiAssistWebTools {
     }
   }
 
-  async _ollamaSearch(query, maxResults, signal) {
-    const body = await this._postOllama('web_search', { query, max_results: maxResults }, signal)
-    return { results: normalizeResults(body?.results, maxResults, query) }
+  async _ollamaSearch(query, signal, endpoint = null) {
+    const apiKey = endpoint?.apiKey || this.settings.apiKey
+    const limit = endpoint?.maxResults ?? DEFAULT_RESULTS
+    const body = await this._postOllama(
+      'web_search',
+      { query, max_results: limit },
+      signal,
+      apiKey
+    )
+    return { results: normalizeResults(body?.results, limit, query) }
   }
 
-  async _searxngSearch(query, maxResults, { recency = '', topic = '' } = {}, signal) {
-    const url = new URL(`${resolveDockerHostUrl(this.settings.baseUrl)}/search`)
+  async _postWebsearchapi(
+    path,
+    payload,
+    signal,
+    apiKey,
+    timeoutMs = REQUEST_TIMEOUT_MS
+  ) {
+    const res = await this._request(
+      `${WEBSEARCHAPI_BASE}/${path}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(payload),
+      },
+      signal,
+      'WebSearchAPI.ai',
+      'websearchapi',
+      timeoutMs
+    )
+    try {
+      return await res.json()
+    } catch {
+      throw webError('WebSearchAPI.ai returned a response that is not JSON.')
+    }
+  }
+
+  /**
+   * WebSearchAPI.ai's Search API with the user's chosen options. Page content
+   * is fetched only when the user turned it on (two credits a search); snippets
+   * are then chosen from the page text instead of the result description.
+   */
+  async _websearchapiSearch(query, signal, endpoint) {
+    const options = endpoint.search ?? {}
+    const limit = options.maxResults ?? DEFAULT_RESULTS
+    const body = await this._postWebsearchapi(
+      'ai-search',
+      {
+        query,
+        ...options,
+        maxResults: limit,
+        ...(options.includeContent ? { contentFormat: 'text' } : {}),
+      },
+      signal,
+      endpoint.apiKey
+    )
+    const organic = (Array.isArray(body?.organic) ? body.organic : []).map(
+      entry => ({ ...entry, content: entry?.content || entry?.description })
+    )
+    const answer =
+      typeof body?.answer === 'string' && body.answer.trim()
+        ? [clip(collapse(body.answer), 500)]
+        : []
+    return {
+      results: normalizeResults(organic, limit, query),
+      answers: answer,
+    }
+  }
+
+  /**
+   * Tavily's Search API with the user's chosen options. With raw content on,
+   * snippets are chosen from the page text.
+   */
+  async _tavilySearch(query, signal, endpoint) {
+    const options = endpoint.search ?? {}
+    const limit = options.maxResults ?? DEFAULT_RESULTS
+    const res = await this._request(
+      `${TAVILY_API_BASE}/search`,
+      {
+        method: 'POST',
+        headers: tavilyHeaders(endpoint),
+        body: JSON.stringify(
+          withoutUndefined({
+            query,
+            max_results: limit,
+            search_depth: options.searchDepth,
+            chunks_per_source: options.chunksPerSource,
+            topic: options.topic,
+            time_range: options.timeRange,
+            start_date: options.startDate,
+            end_date: options.endDate,
+            include_published_date: options.includePublishedDate,
+            filter_by_published_date: options.filterByPublishedDate,
+            include_answer: options.includeAnswer,
+            include_raw_content: options.includeRawContent,
+            include_domains: options.includeDomains,
+            exclude_domains: options.excludeDomains,
+            include_domains_mode: options.includeDomainsMode,
+            country: options.country,
+            language: options.language,
+            filter_by_language: options.filterByLanguage,
+            auto_parameters: options.autoParameters,
+            exact_match: options.exactMatch,
+            safe_search: options.safeSearch,
+          })
+        ),
+      },
+      signal,
+      'Tavily',
+      'tavily'
+    )
+    let body
+    try {
+      body = await res.json()
+    } catch {
+      throw webError('Tavily returned a response that is not JSON.')
+    }
+    const results = (Array.isArray(body?.results) ? body.results : []).map(
+      entry => ({ ...entry, content: entry?.raw_content || entry?.content })
+    )
+    const answer =
+      typeof body?.answer === 'string' && body.answer.trim()
+        ? [clip(collapse(body.answer), 500)]
+        : []
+    return {
+      results: normalizeResults(results, limit, query),
+      answers: answer,
+    }
+  }
+
+  /**
+   * Firecrawl's Search API, on Firecrawl Cloud or a self-hosted instance, with
+   * the user's chosen options. With page content on, snippets are chosen from
+   * each result's Markdown.
+   */
+  async _firecrawlSearch(query, signal, endpoint) {
+    const options = endpoint.search ?? {}
+    const limit = options.maxResults ?? DEFAULT_RESULTS
+    const selfHosted = endpoint.provider === 'firecrawlSelfHosted'
+    const label = selfHosted ? 'Firecrawl (self-hosted)' : 'Firecrawl'
+    const tbs = [
+      options.sortByDate ? 'sbd:1' : null,
+      options.timeRange ? `qdr:${options.timeRange[0]}` : null,
+    ]
+      .filter(Boolean)
+      .join(',')
+    // Search refuses zeroDataRetention inside its scrape options
+    const scrape = { ...endpoint.scrape }
+    delete scrape.zeroDataRetention
+    const request = firecrawlRequest(endpoint, 'search')
+    let res
+    try {
+      res = await this._request(
+        request.url,
+        {
+          method: 'POST',
+          headers: request.headers,
+          body: JSON.stringify(
+            withoutUndefined({
+              query,
+              limit,
+              categories: options.categories?.map(type => ({ type })),
+              tbs: tbs || undefined,
+              includeDomains: options.includeDomains,
+              excludeDomains: options.excludeDomains,
+              country: options.country,
+              location: options.location,
+              safe: options.safeSearch,
+              timeout: options.timeout,
+              sources: options.sources,
+              highlights: options.highlights,
+              scrapeOptions: options.scrapeResults
+                ? firecrawlScrapeOptions(scrape)
+                : undefined,
+            })
+          ),
+        },
+        signal,
+        label,
+        endpoint.provider,
+        firecrawlTimeoutMs(options.timeout)
+      )
+    } catch (err) {
+      // A self-hosted instance with no search engine behind it fails searches
+      if (selfHosted && err?.status >= 500) {
+        throw webError(
+          `${err.message} Search backend not configured on self-hosted instance: set SEARXNG_ENDPOINT in its .env.`,
+          { status: err.status, hint: err.hint, kind: err.kind }
+        )
+      }
+      throw err
+    }
+    let body
+    try {
+      body = await res.json()
+    } catch {
+      throw webError(`${label} returned a response that is not JSON.`)
+    }
+    // v2 answers { data: { web: [...], news: [...] } }; older instances a plain list
+    const list = Array.isArray(body?.data)
+      ? body.data
+      : ['web', 'news'].flatMap(source =>
+          Array.isArray(body?.data?.[source]) ? body.data[source] : []
+        )
+    const results = list.map(entry => ({
+      ...entry,
+      title: entry?.title || entry?.metadata?.title,
+      content: entry?.markdown || entry?.description || entry?.snippet,
+      publishedDate: entry?.date,
+    }))
+    // The limit applies to each source
+    const max = limit * Math.max(1, options.sources?.length ?? 1)
+    return { results: normalizeResults(results, max, query) }
+  }
+
+  /**
+   * Jina's Search API with the user's chosen options. Without page content it
+   * returns only each result's title, URL, description and date; with it, Jina
+   * reads every result and snippets are chosen from the page text.
+   */
+  async _jinaSearch(query, signal, endpoint) {
+    const options = endpoint.search ?? {}
+    const limit = options.maxResults ?? DEFAULT_RESULTS
+    const res = await this._request(
+      `${JINA_SEARCH_BASE}/`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          Authorization: `Bearer ${endpoint.apiKey}`,
+          ...(options.includeContent ? {} : { 'X-Respond-With': 'no-content' }),
+        },
+        body: JSON.stringify(
+          withoutUndefined({
+            q: query,
+            num: limit,
+            type: options.type,
+            gl: options.country,
+            hl: options.language,
+            location: options.location,
+            site: options.includeDomains,
+          })
+        ),
+      },
+      signal,
+      'Jina Search',
+      'jina',
+      options.includeContent ? jinaTimeoutMs() : REQUEST_TIMEOUT_MS
+    )
+    let body
+    try {
+      body = await res.json()
+    } catch {
+      throw webError('Jina Search returned a response that is not JSON.')
+    }
+    // `date` is the search engine's; publishedTime can be a Last-Modified header
+    const results = (Array.isArray(body?.data) ? body.data : []).map(entry => ({
+      ...entry,
+      content: entry?.content || entry?.description,
+      publishedDate: entry?.date,
+    }))
+    return { results: normalizeResults(results, limit, query) }
+  }
+
+  /**
+   * LangSearch's Search API with the user's chosen options. With page content
+   * on, LangSearch extracts full webpage text and snippets are chosen from it.
+   */
+  async _langsearchSearch(query, signal, endpoint) {
+    const options = endpoint.search ?? {}
+    const limit = options.maxResults ?? DEFAULT_RESULTS
+    const payload = withoutUndefined({
+      query,
+      count: limit,
+      freshness: options.freshness,
+      includeDomains: options.includeDomains,
+      excludeDomains: options.excludeDomains,
+      contents: options.includeContent
+        ? {
+            text: options.maxCharacters
+              ? { maxCharacters: options.maxCharacters }
+              : true,
+          }
+        : undefined,
+    })
+    const res = await this._request(
+      `${LANGSEARCH_API_BASE}/v1/web-search`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${endpoint.apiKey}`,
+        },
+        body: JSON.stringify(payload),
+      },
+      signal,
+      'LangSearch',
+      'langsearch'
+    )
+    let body
+    try {
+      body = await res.json()
+    } catch {
+      throw webError('LangSearch returned a response that is not JSON.')
+    }
+    const rawResults =
+      body?.data?.webPages?.value || body?.data?.results || body?.results || []
+    const results = rawResults.map(entry => ({
+      title: entry?.name || entry?.title,
+      url: entry?.url,
+      content:
+        entry?.text || entry?.summary || entry?.snippet || entry?.description,
+      publishedDate:
+        entry?.datePublished || entry?.dateLastCrawled || entry?.publishedDate,
+    }))
+    return { results: normalizeResults(results, limit, query) }
+  }
+
+  /**
+   * Exa's Search API with the user's chosen options. Exa supports neural,
+   * keyword, fast, deep search, category filtering, domain inclusion/exclusion,
+   * date ranges, text filtering, moderation, and full contents retrieval
+   * (text, highlights, summary, livecrawl, subpages).
+   */
+  async _exaSearch(query, signal, endpoint) {
+    const options = endpoint.search ?? {}
+    const limit = options.maxResults ?? DEFAULT_RESULTS
+
+    let contents
+    if (
+      options.includeContent ||
+      options.highlights ||
+      options.summary ||
+      options.maxCharacters ||
+      options.includeHtmlTags ||
+      options.livecrawl ||
+      options.subpages
+    ) {
+      const textOption = options.maxCharacters
+        ? {
+            maxCharacters: options.maxCharacters,
+            ...(options.includeHtmlTags ? { includeHtmlTags: true } : {}),
+          }
+        : options.includeHtmlTags
+          ? { includeHtmlTags: true }
+          : true
+
+      const highlightsOption = options.highlights
+        ? options.numSentences ||
+          options.highlightsPerUrl ||
+          options.highlightsQuery
+          ? {
+              ...(options.numSentences
+                ? { numSentences: options.numSentences }
+                : {}),
+              ...(options.highlightsPerUrl
+                ? { highlightsPerUrl: options.highlightsPerUrl }
+                : {}),
+              ...(options.highlightsQuery
+                ? { query: options.highlightsQuery }
+                : {}),
+            }
+          : true
+        : undefined
+
+      const summaryOption = options.summary
+        ? options.summaryQuery
+          ? { query: options.summaryQuery }
+          : true
+        : undefined
+
+      contents = withoutUndefined({
+        text: textOption,
+        highlights: highlightsOption,
+        summary: summaryOption,
+        livecrawl: options.livecrawl,
+        livecrawlTimeout: options.livecrawlTimeout,
+        subpages: options.subpages,
+        subpageTarget: options.subpageTarget,
+      })
+    }
+
+    const payload = withoutUndefined({
+      query,
+      numResults: limit,
+      type: options.type,
+      category: options.category,
+      includeDomains: options.includeDomains,
+      excludeDomains: options.excludeDomains,
+      startPublishedDate: options.startPublishedDate,
+      endPublishedDate: options.endPublishedDate,
+      includeText: options.includeText,
+      excludeText: options.excludeText,
+      moderation: options.moderation,
+      contents,
+    })
+
+    const res = await this._request(
+      `${EXA_API_BASE}/search`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': endpoint.apiKey,
+        },
+        body: JSON.stringify(payload),
+      },
+      signal,
+      'Exa',
+      'exa',
+      exaTimeoutMs(options.livecrawlTimeout)
+    )
+
+    let body
+    try {
+      body = await res.json()
+    } catch {
+      throw webError('Exa returned a response that is not JSON.')
+    }
+
+    const rawResults = Array.isArray(body?.results) ? body.results : []
+    const results = rawResults.map(entry => ({
+      title: entry?.title,
+      url: entry?.url,
+      content:
+        entry?.text ||
+        (Array.isArray(entry?.highlights)
+          ? entry.highlights.join('\n\n')
+          : '') ||
+        entry?.summary ||
+        entry?.snippet ||
+        entry?.description,
+      publishedDate: entry?.publishedDate,
+    }))
+    return { results: normalizeResults(results, limit, query) }
+  }
+
+  /** SearXNG has no result count: every result the instance sends is kept. */
+  async _searxngSearch(query, signal, endpoint = null) {
+    const baseUrl = endpoint?.baseUrl || this.settings.baseUrl
+    const url = new URL(`${resolveDockerHostUrl(baseUrl)}/search`)
     url.searchParams.set('q', query)
     url.searchParams.set('format', 'json')
-    if (recency) url.searchParams.set('time_range', recency)
-    if (topic === 'news') url.searchParams.set('categories', 'news')
+    if (endpoint?.defaultCategories)
+      url.searchParams.set('categories', endpoint.defaultCategories)
+    if (endpoint?.defaultLanguage)
+      url.searchParams.set('language', endpoint.defaultLanguage)
+    if (endpoint?.timeRange)
+      url.searchParams.set('time_range', endpoint.timeRange)
+    if (endpoint?.safeSearch !== undefined)
+      url.searchParams.set('safesearch', String(endpoint.safeSearch))
+
     const res = await this._request(
       url.toString(),
       { headers: { Accept: 'application/json' } },
       signal,
-      'SearXNG'
+      'SearXNG',
+      'searxng'
     )
     let body
     try {
@@ -1570,13 +2246,11 @@ export class AiAssistWebTools {
         'SearXNG did not return JSON. Add "json" to search.formats in its settings.yml.'
       )
     }
-    const results = normalizeResults(body?.results, maxResults, query)
-    // Not every engine supports a time range or has a news index, and one
-    // that does not answers with nothing. Nothing is not an answer to a
-    // question about the present, so fall back to the plain search.
-    if (results.length === 0 && (recency || topic)) {
-      return { ...(await this._searxngSearch(query, maxResults, {}, signal)), relaxed: true }
-    }
+    const results = normalizeResults(
+      body?.results,
+      Number.MAX_SAFE_INTEGER,
+      query
+    )
     const answers = (Array.isArray(body?.answers) ? body.answers : [])
       .map(answer => (typeof answer === 'string' ? answer : answer?.answer))
       .filter(answer => typeof answer === 'string' && answer.trim())
@@ -1590,6 +2264,16 @@ export class AiAssistWebTools {
 export async function testWebSearch(settings, { signal, fetchFn } = {}) {
   const tools = new AiAssistWebTools(settings, fetchFn ? { fetchFn } : {})
   const startedAt = Date.now()
-  const result = await tools.search({ query: 'LaTeX', maxResults: 1 }, { signal, useCache: false })
-  return { latencyMs: Date.now() - startedAt, resultCount: result.results.length }
+  const result = await tools.search(
+    { query: 'LaTeX' },
+    { signal, useCache: false }
+  )
+  return {
+    latencyMs: Date.now() - startedAt,
+    resultCount: result.results.length,
+    activeEndpoints: tools.rotator.pool.filter(e =>
+      SEARCH_PROVIDERS.has(e.provider)
+    ).length,
+    provider: result.provider,
+  }
 }

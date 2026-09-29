@@ -1,14 +1,23 @@
-import { FC, useEffect, useRef, useState } from 'react'
+import { FC, Fragment, ReactNode, useEffect, useRef, useState } from 'react'
 import { AssistantBlock } from '../../agent/agent-messages'
 import {
   formatElapsed,
   formatCompletedStatus,
   nextStatusWord,
-  deriveDynamicStatus,
+  deriveStatusMode,
+  countOutputTokens,
+  formatTokenCount,
+  thinkingPhrase,
 } from './status-words'
 
 /** How long a status word stays up before rotating. */
 const WORD_ROTATE_MS = 4000
+
+/**
+ * No new tokens for this long outside a tool call and the line drifts to the
+ * danger colour, as Claude Code's spinner does.
+ */
+const STALL_MS = 3000
 
 /**
  * The Overleaf "O" mark, taken verbatim from `public/img/ol-brand/overleaf-o.svg`.
@@ -24,15 +33,70 @@ const OVERLEAF_MARK =
   '52.184-20.517 73.217-37.459C114.038-3.07 37.33-6.117 37.205 39.652z'
 
 /**
- * The status line, matching Claude Code's progressive activity display.
- * While running: reflects thinking, tool execution, or text generation with elapsed timer.
+ * Text whose changed characters roll up to their new value, the way Claude's
+ * timer ticks over to the next second. Characters line up from the right, so
+ * "9s" → "10s" rolls the units digit and brings the tens digit in fresh.
+ */
+const RollingText: FC<{ text: string }> = ({ text }) => {
+  // The text before the latest change, held until the next one so re-renders
+  // between ticks (every streamed token) do not cut the roll short.
+  const [roll, setRoll] = useState({ text, previous: text })
+  if (roll.text !== text) {
+    setRoll({ text, previous: roll.text })
+  }
+  const { previous } = roll
+
+  const chars = [...text]
+  return (
+    <>
+      {chars.map((char, index) => {
+        const fromRight = chars.length - index
+        const before = previous[previous.length - fromRight]
+        const changed = before !== char
+        return (
+          <span key={fromRight} className="ai-assist-roll-slot">
+            {changed && before !== undefined && (
+              <span
+                key={`out-${before}`}
+                className="ai-assist-roll-out"
+                aria-hidden="true"
+              >
+                {before}
+              </span>
+            )}
+            <span
+              key={`in-${char}`}
+              className={changed ? 'ai-assist-roll-in' : undefined}
+            >
+              {char}
+            </span>
+          </span>
+        )
+      })}
+    </>
+  )
+}
+
+/**
+ * The status line, in the Claude desktop app's shape. It switches between two
+ * forms: `✳ Brewing…` while waiting on the provider or streaming the reply,
+ * and `✳ 12s · ↓ 1.2k tokens · Thinking some more…` / `… · Running tools…`
+ * while a thought streams or a tool runs.
+ * While running, the mark and the word share the accent colour and the word's
+ * shimmer follows the stream: a quick forward sweep while waiting on the
+ * provider, a slow backward sweep while tokens arrive, a pulse while a tool
+ * runs, and a drift to red when the stream goes quiet.
  * When completed: shows static Overleaf icon (no blinking) and total running time (e.g. "Brewed for 12s").
+ * While the run waits on the user (a confirmation card), the line stops: the
+ * mark holds still and the clock and word freeze, leaving the wait uncounted.
  */
 export const AgentStatusLine: FC<{
   startedAt: number
   blocks?: AssistantBlock[]
   pendingApproval?: { id: string; edit: any } | null
   isRunning?: boolean
+  /** The run is waiting on the user rather than working. */
+  isPaused?: boolean
   durationMs?: number
   completedWord?: string
   onWordChange?: (word: string) => void
@@ -41,6 +105,7 @@ export const AgentStatusLine: FC<{
   blocks = [],
   pendingApproval = null,
   isRunning = true,
+  isPaused = false,
   durationMs,
   completedWord,
   onWordChange,
@@ -57,6 +122,27 @@ export const AgentStatusLine: FC<{
   wordRef.current = word
 
   const prevStartedAtRef = useRef(startedAt)
+
+  // Time spent waiting on the user, which the clock leaves out
+  const pausedRef = useRef({
+    startedAt,
+    total: 0,
+    since: null as number | null,
+  })
+  if (pausedRef.current.startedAt !== startedAt) {
+    pausedRef.current = { startedAt, total: 0, since: null }
+  }
+
+  const mode = deriveStatusMode(blocks)
+  const tokens = countOutputTokens(blocks)
+
+  // When the stream last moved: a new token, or a change of mode (a tool
+  // finishing starts a fresh wait on the provider, not a stall).
+  const activityKey = `${startedAt}:${mode}:${tokens}`
+  const activityRef = useRef({ key: activityKey, at: Date.now() })
+  if (activityRef.current.key !== activityKey) {
+    activityRef.current = { key: activityKey, at: Date.now() }
+  }
 
   useEffect(() => {
     if (!isRunning) {
@@ -76,12 +162,23 @@ export const AgentStatusLine: FC<{
       onWordChangeRef.current?.(wordRef.current)
     }
 
-    setElapsedMs(Math.max(0, Date.now() - startedAt))
+    const paused = pausedRef.current
+    if (isPaused) {
+      paused.since ??= Date.now()
+    } else if (paused.since !== null) {
+      paused.total += Date.now() - paused.since
+      paused.since = null
+    }
+    const clock = () =>
+      Math.max(0, (paused.since ?? Date.now()) - startedAt - paused.total)
+
+    setElapsedMs(clock())
+    if (isPaused) return
 
     let ticks = 0
     const timer = setInterval(() => {
       ticks += 1
-      setElapsedMs(Date.now() - startedAt)
+      setElapsedMs(clock())
       if ((ticks * 1000) % WORD_ROTATE_MS === 0) {
         setWord(current => {
           const next = nextStatusWord(current)
@@ -92,21 +189,60 @@ export const AgentStatusLine: FC<{
     }, 1000)
 
     return () => clearInterval(timer)
-  }, [startedAt, isRunning, durationMs])
+  }, [startedAt, isRunning, isPaused, durationMs])
 
   if (pendingApproval) {
     return null
   }
 
+  if (isRunning && isPaused) {
+    const elapsed = formatElapsed(elapsedMs)
+    return (
+      <div
+        className="ai-assist-status-line is-paused"
+        role="status"
+        aria-live="polite"
+      >
+        <span
+          className="ai-assist-status-icon ai-assist-status-icon-static"
+          aria-hidden="true"
+        >
+          <svg viewBox="0 0 136 157">
+            <path
+              className="ai-assist-status-mark ai-assist-status-mark-static"
+              d={OVERLEAF_MARK}
+            />
+          </svg>
+        </span>
+        <span className="ai-assist-status-text">
+          {elapsed ? `${elapsed} · ` : ''}Waiting for approval
+        </span>
+      </div>
+    )
+  }
+
   if (!isRunning) {
     const finalElapsed = durationMs !== undefined ? durationMs : elapsedMs
-    const statusText = formatCompletedStatus(completedWord || word, finalElapsed)
+    const statusText = formatCompletedStatus(
+      completedWord || word,
+      finalElapsed
+    )
 
     return (
-      <div className="ai-assist-status-line is-completed" role="status" aria-live="polite">
-        <span className="ai-assist-status-icon ai-assist-status-icon-static" aria-hidden="true">
+      <div
+        className="ai-assist-status-line is-completed"
+        role="status"
+        aria-live="polite"
+      >
+        <span
+          className="ai-assist-status-icon ai-assist-status-icon-static"
+          aria-hidden="true"
+        >
           <svg viewBox="0 0 136 157">
-            <path className="ai-assist-status-mark ai-assist-status-mark-static" d={OVERLEAF_MARK} />
+            <path
+              className="ai-assist-status-mark ai-assist-status-mark-static"
+              d={OVERLEAF_MARK}
+            />
           </svg>
         </span>
         <span className="ai-assist-status-text">{statusText}</span>
@@ -114,24 +250,54 @@ export const AgentStatusLine: FC<{
     )
   }
 
-  const elapsed = formatElapsed(elapsedMs)
-  const statusText = deriveDynamicStatus({
-    blocks,
-    elapsedMs,
-    fancyWord: word,
-    pendingApproval,
-  })
+  const now = Date.now()
+  const stalled = mode !== 'tool' && now - activityRef.current.at >= STALL_MS
+
+  // Claude's two forms, never mixed: the rotating word on its own, or — while
+  // the model is visibly doing something — the counters followed by what it
+  // is doing ("49s · Thinking some more…", "2m 41s · Running tools…").
+  const last = blocks.at(-1)
+  let activity: string | null = null
+  if (mode === 'thinking' && last?.type === 'thinking') {
+    activity = thinkingPhrase(now - (last.startedAt ?? startedAt))
+  } else if (mode === 'tool') {
+    activity = 'Running tools'
+  }
+
+  const meta: { key: string; content: ReactNode }[] = []
+  if (activity) {
+    const elapsed = formatElapsed(elapsedMs)
+    if (elapsed) {
+      meta.push({ key: 'elapsed', content: <RollingText text={elapsed} /> })
+    }
+    if (tokens > 0) {
+      meta.push({
+        key: 'tokens',
+        content: `↓ ${formatTokenCount(tokens)} tokens`,
+      })
+    }
+  }
 
   return (
-    <div className="ai-assist-status-line" role="status" aria-live="polite">
+    <div
+      className={`ai-assist-status-line is-${mode}${stalled ? ' is-stalled' : ''}`}
+      role="status"
+      aria-live="polite"
+    >
       <span className="ai-assist-status-spinner" aria-hidden="true">
         <svg viewBox="0 0 136 157">
           <path className="ai-assist-status-mark" d={OVERLEAF_MARK} />
         </svg>
       </span>
-      <span className="ai-assist-status-text">
-        {elapsed ? `${elapsed} · ` : ''}
-        {statusText}
+      <span className="ai-assist-status-body">
+        {meta.length > 0 && (
+          <span className="ai-assist-status-meta">
+            {meta.map(segment => (
+              <Fragment key={segment.key}>{segment.content} · </Fragment>
+            ))}
+          </span>
+        )}
+        <span className="ai-assist-status-verb">{activity ?? word}…</span>
       </span>
     </div>
   )

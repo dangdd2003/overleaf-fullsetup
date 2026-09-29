@@ -61,7 +61,10 @@ describe('formatSubresultsSummary', function () {
 
   it('summarizes multiple tool actions', function () {
     const items: any[] = [
-      { type: 'tool_call', call: { name: 'read_file', args: { path: 'main.tex' } } },
+      {
+        type: 'tool_call',
+        call: { name: 'read_file', args: { path: 'main.tex' } },
+      },
       { type: 'tool_call', call: { name: 'list_references', args: {} } },
     ]
 
@@ -82,7 +85,10 @@ describe('formatSubresultsSummary', function () {
   it('summarizes settings tools in formatSubresultsSummary', function () {
     const items: any[] = [
       { type: 'tool_call', call: { name: 'get_project_settings', args: {} } },
-      { type: 'tool_call', call: { name: 'configure_editor_settings', args: {} } },
+      {
+        type: 'tool_call',
+        call: { name: 'configure_editor_settings', args: {} },
+      },
     ]
 
     const { title } = formatSubresultsSummary(items, false, fakeT)
@@ -92,8 +98,14 @@ describe('formatSubresultsSummary', function () {
 
   it('summarizes multiple configured settings and checked settings with counts', function () {
     const items: any[] = [
-      { type: 'tool_call', call: { name: 'configure_project_settings', args: {} } },
-      { type: 'tool_call', call: { name: 'configure_appearance_settings', args: {} } },
+      {
+        type: 'tool_call',
+        call: { name: 'configure_project_settings', args: {} },
+      },
+      {
+        type: 'tool_call',
+        call: { name: 'configure_appearance_settings', args: {} },
+      },
     ]
 
     const { title } = formatSubresultsSummary(items, false, fakeT)
@@ -126,7 +138,10 @@ describe('formatSubresultsSummary', function () {
 
   it('has no diff stats when no calls wrote to a file', function () {
     const items: any[] = [
-      { type: 'tool_call', call: { name: 'read_file', args: { path: 'a.tex' } } },
+      {
+        type: 'tool_call',
+        call: { name: 'read_file', args: { path: 'a.tex' } },
+      },
     ]
     const { diffStats } = formatSubresultsSummary(items, false, fakeT)
     expect(diffStats).to.equal(null)
@@ -247,16 +262,16 @@ describe('SubresultGroup Component', function () {
       },
     ]
 
-    render(
-      <SubresultGroup
-        items={items}
-        isLive={false}
-        onDecision={sinon.stub()}
-      />
+    const { container } = render(
+      <SubresultGroup items={items} isLive={false} onDecision={sinon.stub()} />
     )
 
     const headerBtn = screen.getByRole('button')
     expect(headerBtn.textContent).to.include('Read 1 file')
+    const chevron = container.querySelector(
+      '.ai-assist-subresult-group-chevron'
+    ) as SVGElement
+    expect(chevron.classList.contains('is-expanded')).to.be.false
 
     // Initially collapsed when isLive is false
     expect(screen.queryByText('main.tex')).to.equal(null)
@@ -264,6 +279,13 @@ describe('SubresultGroup Component', function () {
     // Click to expand
     fireEvent.click(headerBtn)
     expect(screen.getByText('main.tex')).to.exist
+    expect(chevron.classList.contains('is-expanded')).to.be.true
+    expect(container.querySelector('.ai-assist-subresult-group-dropdown')).to
+      .exist
+
+    // Click to collapse
+    fireEvent.click(headerBtn)
+    expect(chevron.classList.contains('is-expanded')).to.be.false
   })
 
   it('shows the aggregated +/- diff badge in the group header', function () {
@@ -352,11 +374,20 @@ describe('SubresultGroup Component', function () {
     const items: any[] = [
       {
         type: 'tool_call',
-        call: { id: 'c-read', name: 'read_file', args: { path: 'chapter1.tex' }, result: { content: 'hello' } },
+        call: {
+          id: 'c-read',
+          name: 'read_file',
+          args: { path: 'chapter1.tex' },
+          result: { content: 'hello' },
+        },
       },
       {
         type: 'tool_call',
-        call: { id: 'c-edit', name: 'edit_file', args: { path: 'main.tex', oldText: 'a', newText: 'b' } },
+        call: {
+          id: 'c-edit',
+          name: 'edit_file',
+          args: { path: 'main.tex', oldText: 'a', newText: 'b' },
+        },
       },
     ]
 
@@ -432,7 +463,9 @@ describe('SubresultGroup Component', function () {
     )
 
     // MUST remain unfolded — AI actions never collapse user-unfolded state
-    const updatedHeader = container.querySelector('.ai-assist-subresult-group-header')
+    const updatedHeader = container.querySelector(
+      '.ai-assist-subresult-group-header'
+    )
     expect(updatedHeader?.getAttribute('aria-expanded')).to.equal('true')
     expect(screen.getByText('main.tex')).to.exist
   })
@@ -459,7 +492,9 @@ describe('SubresultGroup Component', function () {
       />
     )
 
-    const headerBtn = container.querySelector('.ai-assist-subresult-group-header')!
+    const headerBtn = container.querySelector(
+      '.ai-assist-subresult-group-header'
+    )!
 
     // Unfold then fold again
     fireEvent.click(headerBtn)
@@ -492,7 +527,9 @@ describe('SubresultGroup Component', function () {
     )
 
     // MUST remain folded
-    const updatedHeader = container.querySelector('.ai-assist-subresult-group-header')
+    const updatedHeader = container.querySelector(
+      '.ai-assist-subresult-group-header'
+    )
     expect(updatedHeader?.getAttribute('aria-expanded')).to.equal('false')
   })
 })

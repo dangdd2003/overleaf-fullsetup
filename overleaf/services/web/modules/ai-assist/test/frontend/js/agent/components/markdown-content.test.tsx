@@ -59,6 +59,27 @@ describe('MarkdownContent', function () {
     expect(link?.getAttribute('rel')).to.equal('noreferrer noopener')
   })
 
+  it('resolves relative URLs against baseUrl to valid external links', function () {
+    const { container } = render(
+      <MarkdownContent
+        content="[Hanoi](/wiki/Hanoi) and [Section](#early_life)"
+        baseUrl="https://en.wikipedia.org/wiki/Test_Page"
+      />
+    )
+
+    const links = container.querySelectorAll('a')
+    expect(links).to.have.length(2)
+    expect(links[0].getAttribute('href')).to.equal(
+      'https://en.wikipedia.org/wiki/Hanoi'
+    )
+    expect(links[0].getAttribute('target')).to.equal('_blank')
+    expect(links[0].getAttribute('rel')).to.equal('noreferrer noopener')
+
+    expect(links[1].getAttribute('href')).to.equal(
+      'https://en.wikipedia.org/wiki/Test_Page#early_life'
+    )
+  })
+
   it('sanitizes malicious script tags and event handlers', function () {
     const malicious =
       'Hello <script>alert("xss")</script><img src="x" onerror="alert(1)">'
@@ -117,7 +138,9 @@ describe('MarkdownContent', function () {
       const langSpan = block?.querySelector('.ai-assist-code-lang')
       expect(langSpan?.textContent).to.equal('latex')
 
-      const copyBtn = block?.querySelector('.ai-assist-code-copy-btn') as HTMLButtonElement
+      const copyBtn = block?.querySelector(
+        '.ai-assist-code-copy-btn'
+      ) as HTMLButtonElement
       expect(copyBtn).to.exist
       expect(copyBtn.querySelector('.ai-assist-icon-copy')).to.exist
       expect(copyBtn.querySelector('.ai-assist-icon-check')).to.exist
@@ -238,7 +261,9 @@ describe('MarkdownContent', function () {
     try {
       const { container } = render(<MarkdownContent content={md} />)
 
-      const insertBtn = container.querySelector('.ai-assist-code-insert-btn') as HTMLButtonElement
+      const insertBtn = container.querySelector(
+        '.ai-assist-code-insert-btn'
+      ) as HTMLButtonElement
       expect(insertBtn).to.exist
       expect(insertBtn.textContent).to.contain('Insert')
 
@@ -361,8 +386,9 @@ describe('MarkdownContent', function () {
     )
     const markdown = container.querySelector('.ai-assist-markdown')
     expect(markdown?.classList.contains('is-streaming')).to.be.true
-    expect(container.querySelectorAll('.ai-assist-stream-fade').length).to.be
-      .greaterThan(0)
+    expect(
+      container.querySelectorAll('.ai-assist-stream-fade').length
+    ).to.be.greaterThan(0)
     expect(container.querySelector('.ai-assist-stream-word')).to.not.exist
     expect(container.querySelector('.ai-assist-streaming-cursor')).to.not.exist
   })
@@ -372,7 +398,9 @@ describe('MarkdownContent', function () {
     const { container } = render(<MarkdownContent content={md} isLive />)
 
     await waitFor(() =>
-      expect(container.querySelectorAll('.ai-assist-table tr')).to.have.length(2)
+      expect(container.querySelectorAll('.ai-assist-table tr')).to.have.length(
+        2
+      )
     )
     expect(container.textContent).to.not.contain('|')
   })
@@ -387,9 +415,9 @@ describe('MarkdownContent', function () {
       () => {
         expect(container.textContent).to.contain('Last word')
         expect(
-          container.querySelector('.ai-assist-markdown')?.classList.contains(
-            'is-streaming'
-          )
+          container
+            .querySelector('.ai-assist-markdown')
+            ?.classList.contains('is-streaming')
         ).to.be.false
       },
       { timeout: 2000 }
@@ -402,8 +430,14 @@ describe('MarkdownContent', function () {
     )
 
     expect(container.textContent).to.contain('Completed response')
-    expect(container.querySelectorAll('.ai-assist-stream-fade')).to.have.length(0)
-    expect(container.querySelector('.ai-assist-markdown')?.classList.contains('is-streaming')).to.be.false
+    expect(container.querySelectorAll('.ai-assist-stream-fade')).to.have.length(
+      0
+    )
+    expect(
+      container
+        .querySelector('.ai-assist-markdown')
+        ?.classList.contains('is-streaming')
+    ).to.be.false
   })
 })
 
@@ -412,9 +446,9 @@ describe('holdBackIncomplete', function () {
     const text = 'Intro.\n| a | b |\n'
     expect(holdBackIncomplete(text, text.length)).to.equal('Intro.\n'.length)
     const partialDelimiter = `${text}|--`
-    expect(holdBackIncomplete(partialDelimiter, partialDelimiter.length)).to.equal(
-      'Intro.\n'.length
-    )
+    expect(
+      holdBackIncomplete(partialDelimiter, partialDelimiter.length)
+    ).to.equal('Intro.\n'.length)
     const withDelimiter = `${text}|---|---|\n| 1 | 2`
     expect(holdBackIncomplete(withDelimiter, withDelimiter.length)).to.equal(
       withDelimiter.length
@@ -434,16 +468,22 @@ describe('holdBackIncomplete', function () {
       closing.lastIndexOf('\n') + 1
     )
     const opening = 'Code:\n```la'
-    expect(holdBackIncomplete(opening, opening.length)).to.equal('Code:\n'.length)
+    expect(holdBackIncomplete(opening, opening.length)).to.equal(
+      'Code:\n'.length
+    )
   })
 
   it('holds an unclosed inline marker', function () {
     const text = 'This is **very imp'
     expect(holdBackIncomplete(text, text.length)).to.equal('This is '.length)
     const italic = 'This is *very imp'
-    expect(holdBackIncomplete(italic, italic.length)).to.equal('This is '.length)
+    expect(holdBackIncomplete(italic, italic.length)).to.equal(
+      'This is '.length
+    )
     const strike = 'This is ~~very imp'
-    expect(holdBackIncomplete(strike, strike.length)).to.equal('This is '.length)
+    expect(holdBackIncomplete(strike, strike.length)).to.equal(
+      'This is '.length
+    )
     const link = 'See [Overleaf Docs'
     expect(holdBackIncomplete(link, link.length)).to.equal('See '.length)
   })
@@ -492,21 +532,33 @@ describe('holdBackIncomplete', function () {
   })
 
   it('separates tables immediately following prose without a blank line', function () {
-    const md = ['Summary table:', '| Col 1 | Col 2 |', '|---|---|', '| val 1 | val 2 |'].join('\n')
+    const md = [
+      'Summary table:',
+      '| Col 1 | Col 2 |',
+      '|---|---|',
+      '| val 1 | val 2 |',
+    ].join('\n')
     const { container } = render(<MarkdownContent content={md} />)
     expect(container.querySelectorAll('.ai-assist-table')).to.have.length(1)
-    expect(container.querySelectorAll('.ai-assist-table tbody tr')).to.have.length(1)
+    expect(
+      container.querySelectorAll('.ai-assist-table tbody tr')
+    ).to.have.length(1)
   })
 
   it('escapes math pipes inside table cells so columns do not split', function () {
-    const md = ['| Expression | Note |', '|---|---|', '| $a | b$ | logic |'].join('\n')
+    const md = [
+      '| Expression | Note |',
+      '|---|---|',
+      '| $a | b$ | logic |',
+    ].join('\n')
     const { container } = render(<MarkdownContent content={md} />)
     const row = container.querySelector('.ai-assist-table tbody tr')
     expect(row?.querySelectorAll('td')).to.have.length(2)
   })
 
   it('renders safe HTML tags and escapes unknown pseudo-tags', function () {
-    const md = 'Press <kbd>Ctrl</kbd>+<kbd>S</kbd>, <mark>highlight</mark>, H<sub>2</sub>O and <tabular>tag</tabular>'
+    const md =
+      'Press <kbd>Ctrl</kbd>+<kbd>S</kbd>, <mark>highlight</mark>, H<sub>2</sub>O and <tabular>tag</tabular>'
     const { container } = render(<MarkdownContent content={md} />)
     expect(container.querySelector('kbd')).to.exist
     expect(container.querySelector('mark')).to.exist

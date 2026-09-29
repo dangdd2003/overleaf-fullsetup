@@ -35,26 +35,26 @@ const OPENAPI_SPEC = {
       get: {
         summary: 'List projects',
         operationId: 'listProjects',
-        responses: { '200': { description: 'Project list' } },
+        responses: { 200: { description: 'Project list' } },
       },
       post: {
         summary: 'Create project',
         operationId: 'createProject',
-        responses: { '200': { description: 'Created project' } },
+        responses: { 200: { description: 'Created project' } },
       },
     },
     '/projects/{projectId}': {
       get: {
         summary: 'Get project metadata',
         operationId: 'getProject',
-        responses: { '200': { description: 'Project details' } },
+        responses: { 200: { description: 'Project details' } },
       },
     },
     '/projects/{projectId}/files': {
       get: {
         summary: 'List project files',
         operationId: 'listFiles',
-        responses: { '200': { description: 'Files tree' } },
+        responses: { 200: { description: 'Files tree' } },
       },
     },
     '/projects/{projectId}/search': {
@@ -62,35 +62,65 @@ const OPENAPI_SPEC = {
         summary: 'Search project files for text or patterns',
         operationId: 'searchFiles',
         parameters: [
-          { name: 'projectId', in: 'path', required: true, schema: { type: 'string' } },
-          { name: 'query', in: 'query', required: true, schema: { type: 'string' } },
-          { name: 'path', in: 'query', required: false, schema: { type: 'string' } },
-          { name: 'fileTypes', in: 'query', required: false, schema: { type: 'string' } },
-          { name: 'caseSensitive', in: 'query', required: false, schema: { type: 'boolean', default: false } },
-          { name: 'maxMatches', in: 'query', required: false, schema: { type: 'integer', default: 30 } },
+          {
+            name: 'projectId',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+          },
+          {
+            name: 'query',
+            in: 'query',
+            required: true,
+            schema: { type: 'string' },
+          },
+          {
+            name: 'path',
+            in: 'query',
+            required: false,
+            schema: { type: 'string' },
+          },
+          {
+            name: 'fileTypes',
+            in: 'query',
+            required: false,
+            schema: { type: 'string' },
+          },
+          {
+            name: 'caseSensitive',
+            in: 'query',
+            required: false,
+            schema: { type: 'boolean', default: false },
+          },
+          {
+            name: 'maxMatches',
+            in: 'query',
+            required: false,
+            schema: { type: 'integer', default: 30 },
+          },
         ],
-        responses: { '200': { description: 'Matching lines and snippets' } },
+        responses: { 200: { description: 'Matching lines and snippets' } },
       },
     },
     '/projects/{projectId}/compile': {
       post: {
         summary: 'Trigger project compile',
         operationId: 'compileProject',
-        responses: { '200': { description: 'Compile output' } },
+        responses: { 200: { description: 'Compile output' } },
       },
     },
     '/projects/{projectId}/compile/log': {
       get: {
         summary: 'Get compile log',
         operationId: 'getCompileLog',
-        responses: { '200': { description: 'Raw build log' } },
+        responses: { 200: { description: 'Raw build log' } },
       },
     },
     '/projects/{projectId}/compile/pdf': {
       get: {
         summary: 'Download compiled PDF',
         operationId: 'getCompilePdf',
-        responses: { '200': { description: 'PDF stream' } },
+        responses: { 200: { description: 'PDF stream' } },
       },
     },
   },

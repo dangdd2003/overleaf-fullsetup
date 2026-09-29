@@ -124,8 +124,14 @@ export default function AiProvidersWidget() {
             </div>
           </div>
           <div className="linking-ai-assist-provider-actions">
-            <OLBadge bg={!aiEnabled ? 'danger' : consented ? 'info' : 'warning'}>
-              {!aiEnabled ? 'Disabled' : consented ? 'Ready' : 'Consent pending'}
+            <OLBadge
+              bg={!aiEnabled ? 'danger' : consented ? 'info' : 'warning'}
+            >
+              {!aiEnabled
+                ? 'Disabled'
+                : consented
+                  ? 'Ready'
+                  : 'Consent pending'}
             </OLBadge>
             <OLButton
               variant="secondary"

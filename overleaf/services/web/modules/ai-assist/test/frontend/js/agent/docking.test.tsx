@@ -108,7 +108,12 @@ describe('AI panel docking', function () {
       const Tab = railEntry.tab!
       const { container } = render(
         <Nav>
-          <Tab icon="smart_toy" title="AI assistant" eventKey="ai-assist" open={false} />
+          <Tab
+            icon="smart_toy"
+            title="AI assistant"
+            eventKey="ai-assist"
+            open={false}
+          />
         </Nav>
       )
       const button = container.querySelector('button')
@@ -121,7 +126,12 @@ describe('AI panel docking', function () {
       const Tab = railEntry.tab!
       const { container } = render(
         <Nav>
-          <Tab icon="smart_toy" title="AI assistant" eventKey="ai-assist" open={false} />
+          <Tab
+            icon="smart_toy"
+            title="AI assistant"
+            eventKey="ai-assist"
+            open={false}
+          />
         </Nav>
       )
       const button = container.querySelector('button')
@@ -135,8 +145,18 @@ describe('AI panel docking', function () {
       const Tab = railEntry.tab!
       let parentClicked = false
       const { container } = render(
-        <div role="presentation" onClick={() => { parentClicked = true }}>
-          <Tab icon="smart_toy" title="AI assistant" eventKey="ai-assist" open={false} />
+        <div
+          role="presentation"
+          onClick={() => {
+            parentClicked = true
+          }}
+        >
+          <Tab
+            icon="smart_toy"
+            title="AI assistant"
+            eventKey="ai-assist"
+            open={false}
+          />
         </div>
       )
       const button = container.querySelector('button')
@@ -179,7 +199,100 @@ describe('AI panel docking', function () {
       )
       const closeBtn = getByRole('button', { name: /close/i })
       fireEvent.click(closeBtn)
-      expect(localStorage.getItem('rail-is-open-test-project')).to.equal('false')
+      expect(localStorage.getItem('rail-is-open-test-project')).to.equal(
+        'false'
+      )
+    })
+  })
+
+  describe('AgentPanelHeader title animation', function () {
+    it('renders text transformation from initial title to new title with dynamic duration', function () {
+      const { container, rerender } = render(
+        <ProjectContext.Provider value={{ projectId: 'test-project' } as any}>
+          <RailProvider>
+            <AgentPanelHeader title="AI assistant" isGeneratingTitle={false} />
+          </RailProvider>
+        </ProjectContext.Provider>
+      )
+
+      expect(container.querySelector('.ai-assist-title-transform-container')).to
+        .be.null
+
+      rerender(
+        <ProjectContext.Provider value={{ projectId: 'test-project' } as any}>
+          <RailProvider>
+            <AgentPanelHeader title="Fix typo" isGeneratingTitle={true} />
+          </RailProvider>
+        </ProjectContext.Provider>
+      )
+
+      const transformContainer = container.querySelector(
+        '.ai-assist-title-transform-container'
+      )
+      expect(transformContainer).to.exist
+
+      const oldLayer = container.querySelector('.ai-assist-title-layer-old')
+      const newLayer = container.querySelector('.ai-assist-title-layer-new')
+      expect(oldLayer?.textContent).to.equal('AI assistant')
+      expect(newLayer?.textContent).to.equal('Fix typo')
+
+      const shortDurationStr = (
+        transformContainer as HTMLElement
+      )?.style.getPropertyValue('--ai-title-animation-duration')
+      expect(shortDurationStr).to.include('s')
+      const shortDuration = parseFloat(shortDurationStr)
+
+      // Test with a longer title to confirm duration increases proportionally to keep speed constant
+      const { container: longContainer } = render(
+        <ProjectContext.Provider value={{ projectId: 'test-project' } as any}>
+          <RailProvider>
+            <AgentPanelHeader
+              title="Fetch Phan Van Giang Details From Historical Records"
+              isGeneratingTitle={true}
+            />
+          </RailProvider>
+        </ProjectContext.Provider>
+      )
+
+      const longTransformContainer = longContainer.querySelector(
+        '.ai-assist-title-transform-container'
+      )
+      const longDurationStr = (
+        longTransformContainer as HTMLElement
+      )?.style.getPropertyValue('--ai-title-animation-duration')
+      const longDuration = parseFloat(longDurationStr)
+
+      expect(longDuration).to.be.greaterThan(shortDuration)
+    })
+
+    it('clears transformation and triggers onTitleAnimationEnd when animation ends', function () {
+      let animationEnded = false
+      const { container } = render(
+        <ProjectContext.Provider value={{ projectId: 'test-project' } as any}>
+          <RailProvider>
+            <AgentPanelHeader
+              title="Fetch Phan Van Giang Details"
+              isGeneratingTitle={true}
+              onTitleAnimationEnd={() => {
+                animationEnded = true
+              }}
+            />
+          </RailProvider>
+        </ProjectContext.Provider>
+      )
+
+      const transformContainer = container.querySelector(
+        '.ai-assist-title-transform-container'
+      )
+      expect(transformContainer).to.exist
+
+      fireEvent.animationEnd(transformContainer!)
+
+      expect(container.querySelector('.ai-assist-title-transform-container')).to
+        .be.null
+      const finalTitle = container.querySelector('.ai-assist-panel-title-text')
+      expect(finalTitle?.textContent).to.equal('Fetch Phan Van Giang Details')
+      expect(animationEnded).to.be.true
     })
   })
 })

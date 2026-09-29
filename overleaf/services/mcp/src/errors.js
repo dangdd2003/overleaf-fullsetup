@@ -54,7 +54,9 @@ export function codeForStatus(status) {
  * @returns {string}
  */
 export function sanitiseMessage(message, internalUrl) {
-  let safe = String(message ?? '').split('\n')[0].trim()
+  let safe = String(message ?? '')
+    .split('\n')[0]
+    .trim()
   if (internalUrl) {
     safe = safe.split(internalUrl).join('[overleaf]')
     try {

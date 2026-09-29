@@ -45,14 +45,17 @@ vi.mock('../../../app/src/AdminUserRestorer.mjs', () => ({
   restoreUserAndProjects: vi.fn(),
 }))
 
-vi.mock('../../../../../app/src/Features/Collaborators/OwnershipTransferHandler.mjs', () => ({
-  default: {
-    promises: {
-      transferOwnership: vi.fn(),
-      transferAllProjectsToUser: vi.fn(),
+vi.mock(
+  '../../../../../app/src/Features/Collaborators/OwnershipTransferHandler.mjs',
+  () => ({
+    default: {
+      promises: {
+        transferOwnership: vi.fn(),
+        transferAllProjectsToUser: vi.fn(),
+      },
     },
-  },
-}))
+  })
+)
 
 vi.mock('../../../app/src/AdminUserQuery.mjs', () => ({
   getActiveUsers: vi.fn(),
@@ -88,11 +91,14 @@ vi.mock('../../../../../app/src/Features/User/UserCreator.mjs', () => ({
   },
 }))
 
-vi.mock('../../../../../app/src/Features/Authentication/AuthenticationManager.mjs', () => ({
-  default: {
-    hashPassword: vi.fn(),
-  },
-}))
+vi.mock(
+  '../../../../../app/src/Features/Authentication/AuthenticationManager.mjs',
+  () => ({
+    default: {
+      hashPassword: vi.fn(),
+    },
+  })
+)
 
 vi.mock('../../../../../app/src/models/DeletedUser.mjs', () => ({
   DeletedUser: {
@@ -143,19 +149,25 @@ vi.mock('../../../../../app/src/Features/User/UserDeleter.mjs', () => ({
   },
 }))
 
-vi.mock('../../../../../app/src/Features/Security/OneTimeTokenHandler.mjs', () => ({
-  default: {
-    promises: {
-      getNewToken: vi.fn(),
+vi.mock(
+  '../../../../../app/src/Features/Security/OneTimeTokenHandler.mjs',
+  () => ({
+    default: {
+      promises: {
+        getNewToken: vi.fn(),
+      },
     },
-  },
-}))
+  })
+)
 
-vi.mock('../../../../../app/src/Features/Authentication/SessionManager.mjs', () => ({
-  default: {
-    getLoggedInUserId: vi.fn(),
-  },
-}))
+vi.mock(
+  '../../../../../app/src/Features/Authentication/SessionManager.mjs',
+  () => ({
+    default: {
+      getLoggedInUserId: vi.fn(),
+    },
+  })
+)
 
 vi.mock('../../../../../app/src/Features/User/UserSessionsManager.mjs', () => {
   const getAllUserSessions = vi.fn()
@@ -213,7 +225,9 @@ describe('AdminUserSessions Controller', () => {
 
       expect(res.status).toHaveBeenCalledWith(400)
       expect(res.json).toHaveBeenCalledWith({ error: 'invalid_user_id' })
-      expect(UserSessionsManager.promises.getAllUserSessions).not.toHaveBeenCalled()
+      expect(
+        UserSessionsManager.promises.getAllUserSessions
+      ).not.toHaveBeenCalled()
     })
 
     it('calls UserSessionsManager.getAllUserSessions with { _id: userId } and returns { sessions, count: 1 }', async () => {
@@ -223,11 +237,15 @@ describe('AdminUserSessions Controller', () => {
           session_created: '2026-08-29T09:30:00.000Z',
         },
       ]
-      UserSessionsManager.promises.getAllUserSessions.mockResolvedValue(mockSessions)
+      UserSessionsManager.promises.getAllUserSessions.mockResolvedValue(
+        mockSessions
+      )
 
       await AdminUserManagementController.getUserSessions(req, res)
 
-      expect(UserSessionsManager.promises.getAllUserSessions).toHaveBeenCalledWith({
+      expect(
+        UserSessionsManager.promises.getAllUserSessions
+      ).toHaveBeenCalledWith({
         _id: targetUserId,
       })
       expect(res.json).toHaveBeenCalledWith({
@@ -241,7 +259,9 @@ describe('AdminUserSessions Controller', () => {
 
       await AdminUserManagementController.getUserSessions(req, res)
 
-      expect(UserSessionsManager.promises.getAllUserSessions).toHaveBeenCalledWith({
+      expect(
+        UserSessionsManager.promises.getAllUserSessions
+      ).toHaveBeenCalledWith({
         _id: targetUserId,
       })
       expect(res.json).toHaveBeenCalledWith({

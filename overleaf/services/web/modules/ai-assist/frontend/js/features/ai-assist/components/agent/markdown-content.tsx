@@ -252,7 +252,12 @@ const inlineMath = {
     // 4. \( ... \)
     m = src.match(/^\\\(([\s\S]+?)\\\)/)
     if (m) {
-      return { type: 'inlineMath', raw: m[0], text: m[1].trim(), display: false }
+      return {
+        type: 'inlineMath',
+        raw: m[0],
+        text: m[1].trim(),
+        display: false,
+      }
     }
     // 5. $ ... $ (disallow leading/trailing whitespace, and currency numbers like $10)
     m = src.match(/^\$((?:\\\$|[^$\n])+?)\$/)
@@ -260,7 +265,12 @@ const inlineMath = {
       const rawInner = m[1]
       if (/^\s/.test(rawInner) || /\s$/.test(rawInner)) return
       if (/^\d+(?:\.\d+)?$/.test(rawInner.trim())) return
-      return { type: 'inlineMath', raw: m[0], text: rawInner.trim(), display: false }
+      return {
+        type: 'inlineMath',
+        raw: m[0],
+        text: rawInner.trim(),
+        display: false,
+      }
     }
   },
   renderer(token: any) {
@@ -313,6 +323,7 @@ const CITATION_RUN = new RegExp(`^${CITATION_UNIT}(?:[ \t]?${CITATION_UNIT})*`)
 
 // Set only for the duration of one synchronous renderMarkdown call
 let activeSources: WebSources | null = null
+let activeBaseUrl: string | null = null
 
 /** The nearest ancestor that clips its content, which a card must stay inside. */
 function clippingAncestor(el: HTMLElement): HTMLElement | null {
@@ -366,8 +377,9 @@ const citation = {
   tokenizer(src: string) {
     const m = src.match(CITATION_RUN)
     if (!m) return
-    const numbers = [...m[0].matchAll(/\d+(?![^【]*】)|【(\d+)/g)]
-      .map(n => Number(n[1] ?? n[0]))
+    const numbers = [...m[0].matchAll(/\d+(?![^【]*】)|【(\d+)/g)].map(n =>
+      Number(n[1] ?? n[0])
+    )
     const seen = new Set<number>()
     const sources: WebSource[] = []
     for (const n of numbers) {
@@ -534,7 +546,7 @@ marked.use({
       </button>
     </div>
   </div>
-  <table class="ai-assist-table"><thead>${header}</thead><tbody>${body}</tbody></table>
+  <div class="ai-assist-table-scroll"><table class="ai-assist-table"><thead>${header}</thead><tbody>${body}</tbody></table></div>
 </div>`
     },
     code(code: string, infostring: string | undefined) {
@@ -542,7 +554,8 @@ marked.use({
       const langLabel = `<span class="ai-assist-code-lang">${escapeHtml(lang || 'code')}</span>`
       const highlighted = lang ? highlightCodeHtml(code, lang) : null
       const escapedCode = highlighted !== null ? highlighted : escapeHtml(code)
-      const editorCodeClass = highlighted !== null ? ` ${EDITOR_CODE_CLASS}` : ''
+      const editorCodeClass =
+        highlighted !== null ? ` ${EDITOR_CODE_CLASS}` : ''
 
       return `<div class="ai-assist-code-block">
   <div class="ai-assist-code-header">
@@ -575,14 +588,47 @@ marked.use({
     text(text: string) {
       return renderTextWithFileMentions(text)
     },
-    link(href: string, title: string | null | undefined, text: string) {
-      const cleanText = text.replace(/<button[^>]*>([\s\S]*?)<\/button>/gi, '$1')
-      return `<a href="${href}"${title ? ` title="${escapeHtml(title)}"` : ''}>${cleanText}</a>`
+    link(
+      href: string | null | undefined,
+      title: string | null | undefined,
+      text: string
+    ) {
+      const cleanText = (text || '').replace(
+        /<button[^>]*>([\s\S]*?)<\/button>/gi,
+        '$1'
+      )
+      let targetHref = href || ''
+      if (activeBaseUrl && targetHref) {
+        try {
+          const resolved = new URL(targetHref, activeBaseUrl)
+          if (resolved.protocol === 'http:' || resolved.protocol === 'https:') {
+            targetHref = resolved.toString()
+          }
+        } catch {}
+      } else if (targetHref && targetHref.startsWith('//')) {
+        targetHref = `https:${targetHref}`
+      }
+      return `<a href="${escapeHtml(targetHref)}"${title ? ` title="${escapeHtml(title)}"` : ''}>${cleanText}</a>`
     },
     // Remote images are not loaded into the chat; the image is a link to it
-    image(href: string | null, title: string | null, text: string) {
-      if (!href) return text
-      return `<a href="${href}"${title ? ` title="${escapeHtml(title)}"` : ''}>${text || escapeHtml(href)}</a>`
+    image(
+      href: string | null | undefined,
+      title: string | null | undefined,
+      text: string
+    ) {
+      if (!href) return text || ''
+      let targetHref = href
+      if (activeBaseUrl && targetHref) {
+        try {
+          const resolved = new URL(targetHref, activeBaseUrl)
+          if (resolved.protocol === 'http:' || resolved.protocol === 'https:') {
+            targetHref = resolved.toString()
+          }
+        } catch {}
+      } else if (targetHref && targetHref.startsWith('//')) {
+        targetHref = `https:${targetHref}`
+      }
+      return `<a href="${escapeHtml(targetHref)}"${title ? ` title="${escapeHtml(title)}"` : ''}>${text || escapeHtml(targetHref)}</a>`
     },
     html(html: string) {
       const tags = [...html.matchAll(/<\/?([a-zA-Z][a-zA-Z0-9-]*)/g)]
@@ -593,7 +639,11 @@ marked.use({
   },
 })
 
-export function renderMarkdown(content: string, sources?: WebSources): string {
+export function renderMarkdown(
+  content: string,
+  sources?: WebSources,
+  baseUrl?: string
+): string {
   if (!content) {
     return ''
   }
@@ -605,6 +655,22 @@ export function renderMarkdown(content: string, sources?: WebSources): string {
 
   DOMPurify.addHook('afterSanitizeAttributes', node => {
     if (node.nodeName === 'A') {
+      const rawHref = node.getAttribute('href') || ''
+      if (rawHref) {
+        if (baseUrl) {
+          try {
+            const resolved = new URL(rawHref, baseUrl)
+            if (
+              resolved.protocol === 'http:' ||
+              resolved.protocol === 'https:'
+            ) {
+              node.setAttribute('href', resolved.toString())
+            }
+          } catch {}
+        } else if (rawHref.startsWith('//')) {
+          node.setAttribute('href', `https:${rawHref}`)
+        }
+      }
       node.setAttribute('rel', 'noreferrer noopener')
       node.setAttribute('target', '_blank')
     }
@@ -612,14 +678,23 @@ export function renderMarkdown(content: string, sources?: WebSources): string {
 
   activeSources = sources ?? null
   activeFootnotes = { notes: footnotes.notes, order: [] }
+  activeBaseUrl = baseUrl ?? null
   try {
-    const rawHtml = (marked.parse(footnotes.text) as string) + renderFootnotes()
+    let rawHtml = ''
+    try {
+      rawHtml = (marked.parse(footnotes.text) as string) + renderFootnotes()
+    } catch {
+      rawHtml = escapeHtml(content)
+    }
     return DOMPurify.sanitize(rawHtml, PURIFY_CONFIG)
       .replace(EMPTY_LIST_ITEM, '')
       .replace(EMPTY_LIST, '')
+  } catch {
+    return escapeHtml(content)
   } finally {
     activeSources = null
     activeFootnotes = null
+    activeBaseUrl = null
     DOMPurify.removeHook('afterSanitizeAttributes')
   }
 }
@@ -658,7 +733,8 @@ function applyChunkFades(container: HTMLElement, state: FadeState) {
   while (kept < max && text[kept] === state.text[kept]) kept++
 
   const chunks = state.chunks.filter(
-    chunk => chunk.start < kept && now - chunk.at < STREAM_FADE_MS + MAX_FADE_LEAD_MS
+    chunk =>
+      chunk.start < kept && now - chunk.at < STREAM_FADE_MS + MAX_FADE_LEAD_MS
   )
   if (text.length > kept) {
     const newText = text.slice(kept)
@@ -743,14 +819,18 @@ export const MarkdownContent: FC<{
   isLive?: boolean
   /** Web pages the model may cite by number. */
   sources?: WebSources
-}> = ({ content, onOpenFile, isLive = false, sources }) => {
+  baseUrl?: string
+}> = ({ content, onOpenFile, isLive = false, sources, baseUrl }) => {
   const defaultOpenFile = useOpenFileInEditor()
   const openFile = onOpenFile ?? defaultOpenFile
   const { editorTheme } = useEditorThemeStyles()
   useEditorHighlightStyle(editorTheme)
 
   const { text, animating } = useStreamReveal(content, isLive)
-  const html = useMemo(() => renderMarkdown(text, sources), [text, sources])
+  const html = useMemo(
+    () => renderMarkdown(text, sources, baseUrl),
+    [text, sources, baseUrl]
+  )
 
   const containerRef = useRef<HTMLDivElement>(null)
   const fadeState = useRef<FadeState | null>(
@@ -779,13 +859,16 @@ export const MarkdownContent: FC<{
       const target = e.target as HTMLElement
 
       // 1. Insert code button
-      const insertBtn = target.closest<HTMLButtonElement>('.ai-assist-code-insert-btn')
+      const insertBtn = target.closest<HTMLButtonElement>(
+        '.ai-assist-code-insert-btn'
+      )
       if (insertBtn) {
         e.preventDefault()
         e.stopPropagation()
 
         const block = insertBtn.closest('.ai-assist-code-block')
-        const codeEl = block?.querySelector('pre > code') || block?.querySelector('code')
+        const codeEl =
+          block?.querySelector('pre > code') || block?.querySelector('code')
         const textToInsert = codeEl?.textContent || ''
 
         if (!textToInsert) return
@@ -802,7 +885,6 @@ export const MarkdownContent: FC<{
           label.textContent = 'Inserted!'
         }
         insertBtn.setAttribute('title', 'Inserted!')
-
         ;(insertBtn as any)._insertTimeout = window.setTimeout(() => {
           insertBtn.classList.remove('is-inserted')
           if (label) {
@@ -815,7 +897,9 @@ export const MarkdownContent: FC<{
       }
 
       // 2. Insert table button
-      const tableInsertBtn = target.closest<HTMLButtonElement>('.ai-assist-table-insert-btn')
+      const tableInsertBtn = target.closest<HTMLButtonElement>(
+        '.ai-assist-table-insert-btn'
+      )
       if (tableInsertBtn) {
         e.preventDefault()
         e.stopPropagation()
@@ -839,7 +923,6 @@ export const MarkdownContent: FC<{
           label.textContent = 'Inserted!'
         }
         tableInsertBtn.setAttribute('title', 'Inserted!')
-
         ;(tableInsertBtn as any)._insertTimeout = window.setTimeout(() => {
           tableInsertBtn.classList.remove('is-inserted')
           if (label) {
@@ -852,13 +935,16 @@ export const MarkdownContent: FC<{
       }
 
       // 3. Copy button
-      const copyBtn = target.closest<HTMLButtonElement>('.ai-assist-code-copy-btn')
+      const copyBtn = target.closest<HTMLButtonElement>(
+        '.ai-assist-code-copy-btn'
+      )
       if (copyBtn) {
         e.preventDefault()
         e.stopPropagation()
 
         const block = copyBtn.closest('.ai-assist-code-block')
-        const codeEl = block?.querySelector('pre > code') || block?.querySelector('code')
+        const codeEl =
+          block?.querySelector('pre > code') || block?.querySelector('code')
         const textToCopy = codeEl?.textContent || ''
 
         if (!textToCopy) return
@@ -874,7 +960,6 @@ export const MarkdownContent: FC<{
             label.textContent = 'Copied!'
           }
           copyBtn.setAttribute('title', 'Copied!')
-
           ;(copyBtn as any)._copyTimeout = window.setTimeout(() => {
             copyBtn.classList.remove('is-copied')
             if (label) {
@@ -888,11 +973,16 @@ export const MarkdownContent: FC<{
       }
 
       // 4. File mention / link
-      const fileLink = target.closest<HTMLElement>('.ai-assist-file-link, .ai-assist-file-mention')
+      const fileLink = target.closest<HTMLElement>(
+        '.ai-assist-file-link, .ai-assist-file-mention'
+      )
       if (fileLink) {
         e.preventDefault()
         e.stopPropagation()
-        const path = fileLink.getAttribute('data-path') || fileLink.textContent?.trim() || ''
+        const path =
+          fileLink.getAttribute('data-path') ||
+          fileLink.textContent?.trim() ||
+          ''
         const lineStr = fileLink.getAttribute('data-line')
         const line = lineStr ? parseInt(lineStr, 10) : undefined
         if (path) {
@@ -907,11 +997,16 @@ export const MarkdownContent: FC<{
     (e: React.KeyboardEvent<HTMLDivElement>) => {
       if (e.key === 'Enter') {
         const target = e.target as HTMLElement
-        const fileLink = target.closest<HTMLElement>('.ai-assist-file-link, .ai-assist-file-mention')
+        const fileLink = target.closest<HTMLElement>(
+          '.ai-assist-file-link, .ai-assist-file-mention'
+        )
         if (fileLink) {
           e.preventDefault()
           e.stopPropagation()
-          const path = fileLink.getAttribute('data-path') || fileLink.textContent?.trim() || ''
+          const path =
+            fileLink.getAttribute('data-path') ||
+            fileLink.textContent?.trim() ||
+            ''
           const lineStr = fileLink.getAttribute('data-line')
           const line = lineStr ? parseInt(lineStr, 10) : undefined
           if (path) {
@@ -927,12 +1022,19 @@ export const MarkdownContent: FC<{
   // run past the right edge, and upwards when the scrolling area it sits in
   // (the transcript, above the composer) has more room there than below
   const handleMouseOver = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    const citation = (e.target as HTMLElement).closest<HTMLElement>('.ai-assist-citation')
-    const card = citation?.querySelector<HTMLElement>('.ai-assist-citation-card')
+    const citation = (e.target as HTMLElement).closest<HTMLElement>(
+      '.ai-assist-citation'
+    )
+    const card = citation?.querySelector<HTMLElement>(
+      '.ai-assist-citation-card'
+    )
     const bounds = containerRef.current?.getBoundingClientRect()
     if (!citation || !card || !bounds) return
     const chip = citation.getBoundingClientRect()
-    card.classList.toggle('is-flipped', chip.left + card.offsetWidth > bounds.right)
+    card.classList.toggle(
+      'is-flipped',
+      chip.left + card.offsetWidth > bounds.right
+    )
     const view = clippingAncestor(citation)?.getBoundingClientRect()
     const roomBelow = (view ? view.bottom : window.innerHeight) - chip.bottom
     const roomAbove = chip.top - (view ? view.top : 0)
@@ -948,7 +1050,9 @@ export const MarkdownContent: FC<{
     /* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions, jsx-a11y/mouse-events-have-key-events */
     <div
       ref={containerRef}
-      className={animating ? 'ai-assist-markdown is-streaming' : 'ai-assist-markdown'}
+      className={
+        animating ? 'ai-assist-markdown is-streaming' : 'ai-assist-markdown'
+      }
       onClick={handleClick}
       onKeyDown={handleKeyDown}
       onMouseOver={handleMouseOver}

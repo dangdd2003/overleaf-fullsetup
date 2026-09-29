@@ -21,7 +21,10 @@ export function formatToday(now: Date = new Date()): string {
   return `${now.getFullYear()}-${month}-${day} (${weekday})`
 }
 
-function renderFiles(snapshot: ContextSnapshot, previous: EnvelopeState | null) {
+function renderFiles(
+  snapshot: ContextSnapshot,
+  previous: EnvelopeState | null
+) {
   const fingerprint = fingerprintFiles(snapshot.files)
 
   if (previous && previous.filesFingerprint === fingerprint) {
@@ -42,12 +45,18 @@ function renderFiles(snapshot: ContextSnapshot, previous: EnvelopeState | null) 
 
   // For small projects (<= 50 files), list explicit file paths so the model knows what files exist
   if (snapshot.files.length <= MAX_EXPLICIT_FILES) {
-    const rows = snapshot.files
-      .map(file => {
-        const safePath = neutraliseClosingTags(file.path)
-        const tag = file.type === 'binary' ? 'binary' : file.path.endsWith('.tex') ? 'tex' : file.path.endsWith('.bib') ? 'bib' : 'doc'
-        return `${safePath} [${tag}]`
-      })
+    const rows = snapshot.files.map(file => {
+      const safePath = neutraliseClosingTags(file.path)
+      const tag =
+        file.type === 'binary'
+          ? 'binary'
+          : file.path.endsWith('.tex')
+            ? 'tex'
+            : file.path.endsWith('.bib')
+              ? 'bib'
+              : 'doc'
+      return `${safePath} [${tag}]`
+    })
     return {
       text: [open, ...rows, '</files>'].join('\n'),
       fingerprint,
@@ -84,7 +93,10 @@ function renderFiles(snapshot: ContextSnapshot, previous: EnvelopeState | null) 
 
 const MAX_OUTLINE_SECTIONS = 40
 
-function renderOutline(snapshot: ContextSnapshot, previous: EnvelopeState | null) {
+function renderOutline(
+  snapshot: ContextSnapshot,
+  previous: EnvelopeState | null
+) {
   const sections = snapshot.outline?.sections ?? []
   if (sections.length === 0) return null
 
@@ -147,7 +159,8 @@ export function renderEnvelope({
   // Stable first, volatile last, so the selection and attachments end up
   // adjacent to the user's own words.
   const sections: string[] = []
-  if (snapshot.today) sections.push(`<date>${escapeAttribute(snapshot.today)}</date>`)
+  if (snapshot.today)
+    sections.push(`<date>${escapeAttribute(snapshot.today)}</date>`)
   sections.push(files.text)
   if (outline) sections.push(outline.text)
   sections.push(renderCompile(snapshot))

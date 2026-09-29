@@ -2,6 +2,7 @@ import { useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { UserSettingsContext } from '@/shared/context/user-settings-context'
 import { ProjectContext } from '@/shared/context/project-context'
 import { applyLiveSettingsUpdate } from '../agent/live-settings-updater'
+import { debugConsole } from '@/utils/debugging'
 import { useTranslation } from 'react-i18next'
 import { AiAssistant } from '../assistant'
 import {
@@ -32,6 +33,7 @@ import {
   approveBackgroundEdit,
   submitBackgroundCompile,
   getStoredActiveRunId,
+  getStoredActiveRunStartedAt,
   setStoredActiveRunId,
   setBackgroundRunMode,
   sendBackgroundRunMessage,
@@ -46,6 +48,7 @@ export function useAgentRun({
   cacheKey,
   onEvent,
   initialTranscript,
+  initialMode,
   chatId,
 }: {
   tools: Record<string, AgentTool>
@@ -56,11 +59,12 @@ export function useAgentRun({
   cacheKey?: string
   onEvent?: (event: AgentEvent, nextState: AgentState) => void
   initialTranscript?: TranscriptEntry[]
+  initialMode?: AgentMode
   chatId?: string
 }) {
   const { t } = useTranslation()
   const [state, setState] = useState<AgentState>(() =>
-    emptyAgentState(initialTranscript ?? [])
+    emptyAgentState(initialTranscript ?? [], initialMode ?? 'manual')
   )
   const [needsConsent, setNeedsConsent] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
@@ -135,7 +139,7 @@ export function useAgentRun({
             projectId: projectIdRef.current,
           })
         } catch (err) {
-          console.warn('Failed to apply live settings update:', err)
+          debugConsole.warn('Failed to apply live settings update:', err)
         }
       }
     }
@@ -217,7 +221,11 @@ export function useAgentRun({
   }, [])
 
   const onDecision = useCallback(
-    async (decision: { accepted: boolean; note?: string; nextMode?: AgentMode }) => {
+    async (decision: {
+      accepted: boolean
+      note?: string
+      nextMode?: AgentMode
+    }) => {
       if (currentRunIdRef.current) {
         await approveBackgroundEdit(currentRunIdRef.current, decision)
       } else {
@@ -259,8 +267,12 @@ export function useAgentRun({
     modeRef.current = mode
     setState(current => ({ ...current, mode }))
     if (currentRunIdRef.current) {
-      void setBackgroundRunMode(projectIdRef.current, currentRunIdRef.current, mode).catch(err => {
-        console.warn('Failed to set background run mode:', err)
+      void setBackgroundRunMode(
+        projectIdRef.current,
+        currentRunIdRef.current,
+        mode
+      ).catch(err => {
+        debugConsole.warn('Failed to set background run mode:', err)
       })
     }
   }, [])
@@ -296,16 +308,6 @@ export function useAgentRun({
     async (transcript: TranscriptEntry[]) => {
       const assistant = AiAssistant.fromStoredSettings()
       if (!assistant) {
-        setState(current => ({
-          ...current,
-          error: {
-            code: 'noProvider',
-            message: t(
-              'ai_assist_configure_provider',
-              'Configure an AI provider in Account Settings to use the assistant.'
-            ),
-          },
-        }))
         return
       }
       if (!hasConsented()) {
@@ -360,9 +362,14 @@ export function useAgentRun({
             }
             if (event.type === 'toolCallFinished') {
               const e: any = event
-              const name = e.name || e.call?.name || callMapRef.current.get(e.id) || ''
+              const name =
+                e.name || e.call?.name || callMapRef.current.get(e.id) || ''
               const result = e.result
-              if (result && result.status === 'applied' && result.updatedSettings) {
+              if (
+                result &&
+                result.status === 'applied' &&
+                result.updatedSettings
+              ) {
                 try {
                   applyLiveSettingsUpdate(name, result.updatedSettings, {
                     userSettingsContext,
@@ -370,7 +377,10 @@ export function useAgentRun({
                     projectId,
                   })
                 } catch (err) {
-                  console.warn('Failed to apply live settings update:', err)
+                  debugConsole.warn(
+                    'Failed to apply live settings update:',
+                    err
+                  )
                 }
               }
             }
@@ -381,7 +391,11 @@ export function useAgentRun({
             })
           }
         } catch (err: any) {
-          if (controller.signal.aborted || err?.code === 'aborted' || err?.name === 'AbortError') {
+          if (
+            controller.signal.aborted ||
+            err?.code === 'aborted' ||
+            err?.name === 'AbortError'
+          ) {
             setState(current => ({
               ...current,
               running: false,
@@ -409,7 +423,9 @@ export function useAgentRun({
           providerSettings: assistant.settings,
           mode: modeRef.current,
           chatId: chatIdRef.current,
-          webSearchSettings: isWebToolsAvailable() ? readWebSearchSettings() : null,
+          webSearchSettings: isWebToolsAvailable()
+            ? readWebSearchSettings()
+            : null,
         })
         currentRunIdRef.current = runId
 
@@ -421,7 +437,11 @@ export function useAgentRun({
           onDone: () => {
             currentRunIdRef.current = null
             setStoredActiveRunId(projectId, null)
-            setState(current => ({ ...current, running: false, pendingApproval: null }))
+            setState(current => ({
+              ...current,
+              running: false,
+              pendingApproval: null,
+            }))
           },
           onError: _err => {
             if (!currentRunIdRef.current) return
@@ -431,7 +451,10 @@ export function useAgentRun({
               ...current,
               running: false,
               pendingApproval: null,
-              error: current.error ?? { code: 'network', message: 'Connection to AI background run failed.' },
+              error: current.error ?? {
+                code: 'network',
+                message: 'Connection to AI background run failed.',
+              },
             }))
           },
         })
@@ -443,52 +466,94 @@ export function useAgentRun({
         }))
       }
     },
-    [handle, tools, systemPrompt, requireTool, cacheKey, projectId, onEvent, handleStreamEvent, t, projectContext, userSettingsContext, stop]
+    [
+      handle,
+      tools,
+      systemPrompt,
+      requireTool,
+      cacheKey,
+      projectId,
+      onEvent,
+      handleStreamEvent,
+      t,
+      projectContext,
+      userSettingsContext,
+      stop,
+    ]
+  )
+
+  /**
+   * Stops following the run without stopping it: the server carries on, and
+   * `attach` picks it up again. Returns the run's id, or null if none is live.
+   */
+  const detach = useCallback((): string | null => {
+    if (systemPrompt) return null
+    const runId = currentRunIdRef.current
+    currentRunIdRef.current = null
+    streamCleanupRef.current?.()
+    streamCleanupRef.current = null
+    approvalRef.current = null
+    setApprovalContext(null)
+    setStoredActiveRunId(projectId, null)
+    return runId
+  }, [projectId, systemPrompt])
+
+  /**
+   * Follows a run from its first event, as after a reload: the unfinished
+   * assistant turn is dropped and rebuilt from the replay.
+   */
+  const attach = useCallback(
+    (runId: string, startedAt?: number) => {
+      if (systemPrompt || currentRunIdRef.current === runId) return
+      streamCleanupRef.current?.()
+      currentRunIdRef.current = runId
+      setStoredActiveRunId(projectId, runId, startedAt)
+      setState(current => {
+        const last = current.transcript.at(-1)
+        const transcript =
+          last && last.role === 'assistant'
+            ? current.transcript.slice(0, -1)
+            : current.transcript
+        return {
+          ...current,
+          transcript,
+          running: true,
+          error: null,
+        }
+      })
+      const finish = () => {
+        if (currentRunIdRef.current !== runId) return
+        currentRunIdRef.current = null
+        setStoredActiveRunId(projectId, null)
+        setState(current => ({
+          ...current,
+          running: false,
+          pendingApproval: null,
+        }))
+      }
+      streamCleanupRef.current = connectRunStream({
+        runId,
+        projectId,
+        since: 0,
+        onEvent: handleStreamEvent,
+        onDone: finish,
+        onError: finish,
+      })
+    },
+    [handleStreamEvent, projectId, systemPrompt]
   )
 
   // Reconnect on mount if a background run is in progress
   useEffect(() => {
     if (systemPrompt) return
     const activeRunId = getStoredActiveRunId(projectId)
-    if (!activeRunId || currentRunIdRef.current === activeRunId) {
-      return
+    if (activeRunId) {
+      attach(activeRunId, getStoredActiveRunStartedAt(projectId) ?? undefined)
     }
-
-    currentRunIdRef.current = activeRunId
-    setState(current => {
-      // Strip unfinished assistant turn so the catch-up events from sequence 0 replay cleanly
-      const last = current.transcript.at(-1)
-      const transcript =
-        last && last.role === 'assistant'
-          ? current.transcript.slice(0, -1)
-          : current.transcript
-      return {
-        ...current,
-        transcript,
-        running: true,
-        error: null,
-      }
-    })
-    streamCleanupRef.current = connectRunStream({
-      runId: activeRunId,
-      projectId,
-      since: 0,
-      onEvent: handleStreamEvent,
-      onDone: () => {
-        currentRunIdRef.current = null
-        setStoredActiveRunId(projectId, null)
-        setState(current => ({ ...current, running: false, pendingApproval: null }))
-      },
-      onError: () => {
-        currentRunIdRef.current = null
-        setStoredActiveRunId(projectId, null)
-        setState(current => ({ ...current, running: false, pendingApproval: null }))
-      },
-    })
     return () => {
       streamCleanupRef.current?.()
     }
-  }, [projectId, systemPrompt])
+  }, [attach, projectId, systemPrompt])
 
   const allowConsent = useCallback(() => {
     recordConsent()
@@ -501,6 +566,7 @@ export function useAgentRun({
     mode: state.mode,
     setMode,
     chatTitle: state.chatTitle,
+    isTitleGenerated: state.isTitleGenerated,
     queueMessage,
     running: state.running,
     error: state.error,
@@ -508,6 +574,8 @@ export function useAgentRun({
     approvalContext,
     run,
     stop,
+    detach,
+    attach,
     onDecision,
     needsConsent,
     allowConsent,

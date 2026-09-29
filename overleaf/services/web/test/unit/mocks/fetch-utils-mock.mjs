@@ -28,7 +28,8 @@ export async function fetchRedirect(...args) {
   return {}
 }
 export async function fetchRedirectWithResponse(...args) {
-  if (fetchRedirectWithResponse.impl) return fetchRedirectWithResponse.impl(...args)
+  if (fetchRedirectWithResponse.impl)
+    return fetchRedirectWithResponse.impl(...args)
   return { response: {} }
 }
 export async function fetchString(...args) {

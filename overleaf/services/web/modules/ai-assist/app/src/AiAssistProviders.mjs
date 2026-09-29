@@ -5,7 +5,10 @@ import './ModuleSettings.mjs'
 import { sanitizeToolSchema } from './AiAssistToolSchema.mjs'
 
 export class ProviderError extends Error {
-  constructor(message, { code = 'providerError', status = undefined, hint = '' } = {}) {
+  constructor(
+    message,
+    { code = 'providerError', status = undefined, hint = '' } = {}
+  ) {
     super(message)
     this.name = 'ProviderError'
     this.code = code
@@ -41,86 +44,110 @@ export function validateSafeProviderBaseUrl(rawUrl) {
   try {
     parsed = new URL(rawUrl.trim())
   } catch {
-    throw new ProviderError('Invalid provider URL format', { code: 'invalidProviderUrl', status: 400 })
-  }
-
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    throw new ProviderError(`Forbidden protocol '${parsed.protocol}'. Only http and https are permitted.`, {
+    throw new ProviderError('Invalid provider URL format', {
       code: 'invalidProviderUrl',
       status: 400,
     })
   }
 
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new ProviderError(
+      `Forbidden protocol '${parsed.protocol}'. Only http and https are permitted.`,
+      {
+        code: 'invalidProviderUrl',
+        status: 400,
+      }
+    )
+  }
+
   const hostname = parsed.hostname.toLowerCase()
   if (BLOCKED_INTERNAL_HOSTS.has(hostname) || hostname.endsWith('.internal')) {
-    throw new ProviderError(`Access to internal service '${hostname}' is forbidden.`, {
-      code: 'restrictedProviderUrl',
-      status: 400,
-    })
+    throw new ProviderError(
+      `Access to internal service '${hostname}' is forbidden.`,
+      {
+        code: 'restrictedProviderUrl',
+        status: 400,
+      }
+    )
   }
 
   // Block link-local and cloud metadata
   if (hostname === '169.254.169.254' || hostname.startsWith('169.254.')) {
-    throw new ProviderError('Access to cloud metadata endpoints is forbidden.', {
-      code: 'restrictedProviderUrl',
-      status: 400,
-    })
+    throw new ProviderError(
+      'Access to cloud metadata endpoints is forbidden.',
+      {
+        code: 'restrictedProviderUrl',
+        status: 400,
+      }
+    )
   }
 
   return true
+}
+
+function cancelledError() {
+  return new ProviderError('Request was cancelled', { code: 'aborted' })
+}
+
+/** Waits `ms`, rejecting with a cancellation error if `signal` aborts first. */
+function abortableDelay(ms, signal) {
+  if (signal?.aborted) return Promise.reject(cancelledError())
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer)
+      reject(cancelledError())
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
 }
 
 /**
  * Automatically retries transient errors (429 Rate-Limit, 500, 502, 503, 504, connection drops)
  * with exponential backoff and jitter, matching official agent SDKs.
  */
-export async function fetchWithRetry(url, options, {
-  maxRetries = 3,
-  initialDelayMs = 1000,
-  maxDelayMs = 8000,
-  fetchFn = fetch,
-} = {}) {
+export async function fetchWithRetry(
+  url,
+  options,
+  {
+    maxRetries = 3,
+    initialDelayMs = 1000,
+    maxDelayMs = 8000,
+    fetchFn = fetch,
+  } = {}
+) {
   let attempt = 0
   while (true) {
-    if (options?.signal?.aborted) {
-      throw new ProviderError('Request was cancelled', { code: 'aborted' })
-    }
+    if (options?.signal?.aborted) throw cancelledError()
 
     try {
       const res = await fetchFn(url, options)
 
-      if ((res.status === 429 || (res.status >= 500 && res.status < 600)) && attempt < maxRetries) {
+      if (
+        (res.status === 429 || (res.status >= 500 && res.status < 600)) &&
+        attempt < maxRetries
+      ) {
         attempt++
         const retryAfter = res.headers.get('retry-after')
-        let delay = initialDelayMs * Math.pow(2, attempt - 1) + Math.random() * 200
+        let delay =
+          initialDelayMs * Math.pow(2, attempt - 1) + Math.random() * 200
         if (retryAfter) {
           const parsed = parseInt(retryAfter, 10)
           if (!isNaN(parsed) && parsed > 0 && parsed <= 30) {
             delay = parsed * 1000
           }
         }
-        delay = Math.min(delay, maxDelayMs)
-        if (options?.signal?.aborted) {
-          throw new ProviderError('Request was cancelled', { code: 'aborted' })
-        }
-        await new Promise((resolve, reject) => {
-          const onAbort = () => {
-            clearTimeout(timer)
-            reject(new ProviderError('Request was cancelled', { code: 'aborted' }))
-          }
-          const timer = setTimeout(() => {
-            options?.signal?.removeEventListener('abort', onAbort)
-            resolve()
-          }, delay)
-          options?.signal?.addEventListener('abort', onAbort, { once: true })
-        })
+        await abortableDelay(Math.min(delay, maxDelayMs), options?.signal)
         continue
       }
 
       return res
     } catch (err) {
       if (options?.signal?.aborted || err?.code === 'aborted') {
-        throw new ProviderError('Request was cancelled', { code: 'aborted' })
+        throw cancelledError()
       }
       if (err.name === 'AbortError') {
         throw err
@@ -129,25 +156,17 @@ export async function fetchWithRetry(url, options, {
         err.code === 'ECONNRESET' ||
         err.code === 'ETIMEDOUT' ||
         err.code === 'UND_ERR_SOCKET' ||
-        err.message?.includes('fetch failed') || err.message?.includes('socket hang up') || err.message?.includes('network timeout')
+        err.message?.includes('fetch failed') ||
+        err.message?.includes('socket hang up') ||
+        err.message?.includes('network timeout')
 
       if (isTransientNetwork && attempt < maxRetries) {
         attempt++
-        const delay = Math.min(initialDelayMs * Math.pow(2, attempt - 1) + Math.random() * 200, maxDelayMs)
-        if (options?.signal?.aborted) {
-          throw new ProviderError('Request was cancelled', { code: 'aborted' })
-        }
-        await new Promise((resolve, reject) => {
-          const onAbort = () => {
-            clearTimeout(timer)
-            reject(new ProviderError('Request was cancelled', { code: 'aborted' }))
-          }
-          const timer = setTimeout(() => {
-            options?.signal?.removeEventListener('abort', onAbort)
-            resolve()
-          }, delay)
-          options?.signal?.addEventListener('abort', onAbort, { once: true })
-        })
+        const delay = Math.min(
+          initialDelayMs * Math.pow(2, attempt - 1) + Math.random() * 200,
+          maxDelayMs
+        )
+        await abortableDelay(delay, options?.signal)
         continue
       }
       throw err
@@ -155,16 +174,11 @@ export async function fetchWithRetry(url, options, {
   }
 }
 
-export function withRequestTimeouts(callerSignal, {
-  connectMs,
-  idleMs,
-} = {}) {
+export function withRequestTimeouts(callerSignal, { connectMs, idleMs } = {}) {
   const resolvedConnectMs =
-    connectMs ??
-    (Settings.aiAssist?.requestTimeoutSeconds ?? 180) * 1000
+    connectMs ?? (Settings.aiAssist?.requestTimeoutSeconds ?? 180) * 1000
   const resolvedIdleMs =
-    idleMs ??
-    (Settings.aiAssist?.streamIdleSeconds ?? 120) * 1000
+    idleMs ?? (Settings.aiAssist?.streamIdleSeconds ?? 120) * 1000
 
   const connectController = new AbortController()
   const idleController = new AbortController()
@@ -172,12 +186,17 @@ export function withRequestTimeouts(callerSignal, {
   let idleTimer = null
 
   if (resolvedConnectMs && resolvedConnectMs > 0) {
-    connectTimer = setTimeout(() => connectController.abort(), resolvedConnectMs)
+    connectTimer = setTimeout(
+      () => connectController.abort(),
+      resolvedConnectMs
+    )
     connectTimer.unref?.()
   }
 
   const combinedSignal = AbortSignal.any(
-    [callerSignal, connectController.signal, idleController.signal].filter(Boolean)
+    [callerSignal, connectController.signal, idleController.signal].filter(
+      Boolean
+    )
   )
 
   const clearConnectTimeout = () => {
@@ -205,10 +224,16 @@ export function withRequestTimeouts(callerSignal, {
 
   const checkAbortReason = () => {
     if (callerSignal?.aborted) {
-      throw new ProviderError('Request was cancelled', { code: 'aborted', status: undefined })
+      throw new ProviderError('Request was cancelled', {
+        code: 'aborted',
+        status: undefined,
+      })
     }
     if (connectController.signal.aborted) {
-      throw new ProviderError('Connection timed out', { code: 'aborted', status: undefined })
+      throw new ProviderError('Connection timed out', {
+        code: 'aborted',
+        status: undefined,
+      })
     }
     if (idleController.signal.aborted) {
       throw new ProviderError(
@@ -229,15 +254,23 @@ export function withRequestTimeouts(callerSignal, {
   }
 }
 
+// /.dockerenv cannot appear or vanish while the process runs, so it is
+// checked once instead of with a blocking stat on every client construction
+let dockerEnvFileExists
+
 export function resolveDockerHostUrl(url) {
   if (!url) return url
-  const isDocker = Boolean(process.env.DOCKER) || fs.existsSync('/.dockerenv')
+  dockerEnvFileExists ??= fs.existsSync('/.dockerenv')
+  const isDocker = Boolean(process.env.DOCKER) || dockerEnvFileExists
   if (isDocker) {
     const hostGateway = process.env.DOCKER_HOST_GATEWAY || '172.20.0.1'
-    return url.replace(/https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/, (_match, _host, port) => {
-      const portPart = port || ''
-      return `http://${hostGateway}${portPart}`
-    })
+    return url.replace(
+      /https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/,
+      (_match, _host, port) => {
+        const portPart = port || ''
+        return `http://${hostGateway}${portPart}`
+      }
+    )
   }
   return url
 }
@@ -439,21 +472,35 @@ export async function* parseSseLines(stream, onActivity) {
  */
 export function parseModelLimits(entry) {
   const contextWindow =
-    entry?.max_input_tokens ?? entry?.context_window ?? entry?.details?.context_length
+    entry?.max_input_tokens ??
+    entry?.context_window ??
+    entry?.details?.context_length
   let maxOutputTokens =
-    entry?.max_tokens ?? entry?.max_output_tokens ?? entry?.details?.max_output_tokens
-  if (typeof contextWindow === 'number' && contextWindow >= 128000 && !maxOutputTokens) {
+    entry?.max_tokens ??
+    entry?.max_output_tokens ??
+    entry?.details?.max_output_tokens
+  if (
+    typeof contextWindow === 'number' &&
+    contextWindow >= 128000 &&
+    !maxOutputTokens
+  ) {
     maxOutputTokens = 65536
   }
   return {
-    ...(typeof contextWindow === 'number' && contextWindow > 0 ? { contextWindow } : {}),
-    ...(typeof maxOutputTokens === 'number' && maxOutputTokens > 0 ? { maxOutputTokens } : {}),
+    ...(typeof contextWindow === 'number' && contextWindow > 0
+      ? { contextWindow }
+      : {}),
+    ...(typeof maxOutputTokens === 'number' && maxOutputTokens > 0
+      ? { maxOutputTokens }
+      : {}),
   }
 }
 
 async function fetchModelList(fetchFn, url, headers, signal) {
   const timeoutMs = (Settings.aiAssist?.requestTimeoutSeconds ?? 60) * 1000
-  const combined = AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)].filter(Boolean))
+  const combined = AbortSignal.any(
+    [signal, AbortSignal.timeout(timeoutMs)].filter(Boolean)
+  )
   let res
   try {
     res = await fetchFn(url, { method: 'GET', headers, signal: combined })
@@ -462,16 +509,21 @@ async function fetchModelList(fetchFn, url, headers, signal) {
       throw new ProviderError('Request was cancelled', { code: 'aborted' })
     }
     const origin = new URL(url).origin
-    throw new ProviderError(`Could not reach ${origin}: ${err.cause?.message || err.message}`, {
-      code: 'network',
-      status: 502,
-    })
+    throw new ProviderError(
+      `Could not reach ${origin}: ${err.cause?.message || err.message}`,
+      {
+        code: 'network',
+        status: 502,
+      }
+    )
   }
   if (!res.ok) {
     let msg = `Provider returned ${res.status} when listing models`
     try {
       const body = await res.json()
-      const upstream = body?.error?.message || (typeof body?.error === 'string' ? body.error : null)
+      const upstream =
+        body?.error?.message ||
+        (typeof body?.error === 'string' ? body.error : null)
       if (upstream) msg = upstream
     } catch {}
     const code =
@@ -509,7 +561,9 @@ export function markMessageCacheBreakpoints(wire) {
     const entry = wire[index]
     if (!entry) return
     if (typeof entry.content === 'string') {
-      entry.content = [{ type: 'text', text: entry.content, cache_control: ephemeral }]
+      entry.content = [
+        { type: 'text', text: entry.content, cache_control: ephemeral },
+      ]
     } else if (Array.isArray(entry.content) && entry.content.length > 0) {
       const last = entry.content.length - 1
       entry.content[last] = { ...entry.content[last], cache_control: ephemeral }
@@ -531,29 +585,94 @@ export function markMessageCacheBreakpoints(wire) {
   if (previous >= 0 && previous !== newest) mark(previous)
 }
 
+/**
+ * The reasoning effort levels each provider documents, as the composer offers
+ * them. Anything else is dropped rather than sent upstream; no level at all
+ * leaves the provider's default. Thinking on or off is a separate switch,
+ * except on OpenAI, which has effort levels only ("none" among them).
+ */
+export const REASONING_EFFORTS = {
+  openai: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
+  anthropic: ['low', 'medium', 'high', 'xhigh', 'max'],
+  google: ['minimal', 'low', 'medium', 'high'],
+  ollama: ['low', 'medium', 'high'],
+}
+
+function reasoningEffortFor(type, effort) {
+  return REASONING_EFFORTS[type].includes(effort) ? effort : null
+}
+
+/** true or false from the composer's switch; anything else is left unset. */
+function thinkingFor(thinking) {
+  return typeof thinking === 'boolean' ? thinking : null
+}
+
+// Gemini 2.5 takes a token budget rather than a level; the Pro model cannot
+// turn thinking off, so its lowest budget stands in for off and "minimal".
+const GEMINI_THINKING_BUDGETS = {
+  minimal: 0,
+  low: 1024,
+  medium: 8192,
+  high: 24576,
+}
+
+function geminiThinkingBudget(effort, model) {
+  const budget = GEMINI_THINKING_BUDGETS[effort]
+  return budget === 0 && model.includes('pro') ? 128 : budget
+}
+
 class AnthropicServerClient {
-  constructor({ apiKey, model, baseURL, baseUrl, fetchFn = fetch, connectTimeoutMs, streamIdleTimeoutMs } = {}) {
+  constructor({
+    apiKey,
+    model,
+    baseURL,
+    baseUrl,
+    fetchFn = fetch,
+    connectTimeoutMs,
+    streamIdleTimeoutMs,
+    reasoningEffort,
+    thinking,
+  } = {}) {
     this.apiKey = (apiKey || '').trim()
     this.model = (model || '').trim()
     const url = baseURL || baseUrl || 'https://api.anthropic.com'
     this.baseURL = resolveDockerHostUrl(url.trim().replace(/\/+$/, ''))
     this.fetch = fetchFn
-    this.connectTimeoutMs = connectTimeoutMs ?? (Settings.aiAssist?.requestTimeoutSeconds ?? 180) * 1000
-    this.streamIdleTimeoutMs = streamIdleTimeoutMs ?? (Settings.aiAssist?.streamIdleSeconds ?? 120) * 1000
+    this.connectTimeoutMs =
+      connectTimeoutMs ??
+      (Settings.aiAssist?.requestTimeoutSeconds ?? 180) * 1000
+    this.streamIdleTimeoutMs =
+      streamIdleTimeoutMs ??
+      (Settings.aiAssist?.streamIdleSeconds ?? 120) * 1000
+    this.reasoningEffort = reasoningEffortFor('anthropic', reasoningEffort)
+    this.thinking = thinkingFor(thinking)
   }
 
   async listModels({ signal } = {}) {
-    const headers = { 'x-api-key': this.apiKey, 'anthropic-version': '2023-06-01' }
+    const headers = {
+      'x-api-key': this.apiKey,
+      'anthropic-version': '2023-06-01',
+    }
     const models = []
     let cursor = null
     for (let page = 0; page < 10; page++) {
       const url = new URL(`${this.baseURL}/v1/models`)
       url.searchParams.set('limit', '1000')
       if (cursor) url.searchParams.set('after_id', cursor)
-      const payload = await fetchModelList(this.fetch, url.toString(), headers, signal)
+      const payload = await fetchModelList(
+        this.fetch,
+        url.toString(),
+        headers,
+        signal
+      )
       for (const entry of Array.isArray(payload?.data) ? payload.data : []) {
         if (entry && typeof entry.id === 'string') {
-          const label = entry.display_name || entry.name || entry.title || entry.description || entry.id
+          const label =
+            entry.display_name ||
+            entry.name ||
+            entry.title ||
+            entry.description ||
+            entry.id
           models.push({ id: entry.id, label, ...parseModelLimits(entry) })
         }
       }
@@ -563,7 +682,14 @@ class AnthropicServerClient {
     return models
   }
 
-  async *streamChat({ system, messages, maxTokens = 8192, tools = [], cacheHints, signal }) {
+  async *streamChat({
+    system,
+    messages,
+    maxTokens = 8192,
+    tools = [],
+    cacheHints,
+    signal,
+  }) {
     const timeouts = withRequestTimeouts(signal, {
       connectMs: this.connectTimeoutMs,
       idleMs: this.streamIdleTimeoutMs,
@@ -579,7 +705,8 @@ class AnthropicServerClient {
     for (const message of messages) {
       if (message.role === 'tool') {
         const safeContent =
-          typeof message.content === 'string' && message.content.trim().length > 0
+          typeof message.content === 'string' &&
+          message.content.trim().length > 0
             ? message.content
             : '(empty result)'
         const block = {
@@ -603,7 +730,8 @@ class AnthropicServerClient {
 
       if (message.role === 'assistant' && message.toolCalls?.length) {
         const content = []
-        if (message.content) content.push({ type: 'text', text: message.content })
+        if (message.content)
+          content.push({ type: 'text', text: message.content })
         for (const call of message.toolCalls) {
           let input = call.args ?? {}
           if (typeof input === 'string') {
@@ -637,12 +765,15 @@ class AnthropicServerClient {
     }
 
     const isClaude37 =
-      (this.model.includes('claude-3-7') ||
-        this.model.includes('claude-3.7') ||
-        (this.model.includes('claude') && this.model.includes('thinking')))
+      this.model.includes('claude-3-7') ||
+      this.model.includes('claude-3.7') ||
+      (this.model.includes('claude') && this.model.includes('thinking'))
     let effectiveMaxTokens = maxTokens
     let thinkingPayload = null
-    if (isClaude37) {
+    // Extended thinking is opt-in: with the switch off no thinking field goes
+    if (this.thinking === false) {
+      thinkingPayload = null
+    } else if (isClaude37) {
       const budget = Math.min(Math.max(1024, maxTokens - 1024), 4096)
       thinkingPayload = {
         type: 'enabled',
@@ -651,6 +782,10 @@ class AnthropicServerClient {
       if (effectiveMaxTokens <= budget) {
         effectiveMaxTokens = budget + 2048
       }
+    } else if (this.thinking || this.reasoningEffort) {
+      // Effort sets thinking depth only in adaptive mode; without it the
+      // model does not think and gateways ignore output_config.effort.
+      thinkingPayload = { type: 'adaptive' }
     }
 
     let wireTools = undefined
@@ -672,21 +807,28 @@ class AnthropicServerClient {
       max_tokens: effectiveMaxTokens,
       stream: true,
       ...(thinkingPayload ? { thinking: thinkingPayload } : {}),
+      ...(this.reasoningEffort
+        ? { output_config: { effort: this.reasoningEffort } }
+        : {}),
       ...(wireTools ? { tools: wireTools } : {}),
     }
 
     let res
     try {
-      res = await fetchWithRetry(`${this.baseURL}/v1/messages`, {
-        method: 'POST',
-        headers: {
-          'x-api-key': this.apiKey,
-          'anthropic-version': '2023-06-01',
-          'content-type': 'application/json',
+      res = await fetchWithRetry(
+        `${this.baseURL}/v1/messages`,
+        {
+          method: 'POST',
+          headers: {
+            'x-api-key': this.apiKey,
+            'anthropic-version': '2023-06-01',
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+          signal: timeouts.signal,
         },
-        body: JSON.stringify(payload),
-        signal: timeouts.signal,
-      }, { fetchFn: this.fetch })
+        { fetchFn: this.fetch }
+      )
     } catch (err) {
       timeouts.checkAbortReason()
       throw err
@@ -696,7 +838,10 @@ class AnthropicServerClient {
 
     if (!res.ok) {
       let msg = `Anthropic API error (${res.status})`
-      let code = res.status === 401 || res.status === 403 ? 'providerAuth' : 'providerError'
+      let code =
+        res.status === 401 || res.status === 403
+          ? 'providerAuth'
+          : 'providerError'
       try {
         const body = await res.json()
         if (body?.error?.message) msg = body.error.message
@@ -709,7 +854,9 @@ class AnthropicServerClient {
     let truncated = false
     try {
       timeouts.resetIdleTimer()
-      for await (const data of parseSseLines(res.body, () => timeouts.resetIdleTimer())) {
+      for await (const data of parseSseLines(res.body, () =>
+        timeouts.resetIdleTimer()
+      )) {
         timeouts.resetIdleTimer()
         if (data === '[DONE]') break
         let parsed
@@ -720,10 +867,16 @@ class AnthropicServerClient {
         }
 
         if (parsed.type === 'error') {
-          throw new ProviderError(parsed.error?.message || 'Anthropic stream error', {
-            code: parsed.error?.type === 'authentication_error' ? 'providerAuth' : 'providerError',
-            status: parsed.error?.code ? 500 : undefined,
-          })
+          throw new ProviderError(
+            parsed.error?.message || 'Anthropic stream error',
+            {
+              code:
+                parsed.error?.type === 'authentication_error'
+                  ? 'providerAuth'
+                  : 'providerError',
+              status: parsed.error?.code ? 500 : undefined,
+            }
+          )
         }
 
         if (parsed.type === 'content_block_start') {
@@ -803,18 +956,36 @@ export function isOfficialOpenAiUrl(url) {
 
 /** Groups requests for OpenAI's cache routing without sending the raw key. */
 export function promptCacheKey(key) {
-  return crypto.createHash('sha256').update(String(key)).digest('hex').slice(0, 32)
+  return crypto
+    .createHash('sha256')
+    .update(String(key))
+    .digest('hex')
+    .slice(0, 32)
 }
 
 export class OpenAiServerClient {
-  constructor({ apiKey, model, baseURL, baseUrl, fetchFn = fetch, connectTimeoutMs, streamIdleTimeoutMs } = {}) {
+  constructor({
+    apiKey,
+    model,
+    baseURL,
+    baseUrl,
+    fetchFn = fetch,
+    connectTimeoutMs,
+    streamIdleTimeoutMs,
+    reasoningEffort,
+  } = {}) {
     this.apiKey = (apiKey || '').trim()
     this.model = (model || '').trim()
     const url = baseURL || baseUrl || 'https://api.openai.com'
     this.baseURL = resolveDockerHostUrl(url.trim().replace(/\/+$/, ''))
     this.fetch = fetchFn
-    this.connectTimeoutMs = connectTimeoutMs ?? (Settings.aiAssist?.requestTimeoutSeconds ?? 180) * 1000
-    this.streamIdleTimeoutMs = streamIdleTimeoutMs ?? (Settings.aiAssist?.streamIdleSeconds ?? 120) * 1000
+    this.connectTimeoutMs =
+      connectTimeoutMs ??
+      (Settings.aiAssist?.requestTimeoutSeconds ?? 180) * 1000
+    this.streamIdleTimeoutMs =
+      streamIdleTimeoutMs ??
+      (Settings.aiAssist?.streamIdleSeconds ?? 120) * 1000
+    this.reasoningEffort = reasoningEffortFor('openai', reasoningEffort)
   }
 
   _getHeaders() {
@@ -827,29 +998,50 @@ export class OpenAiServerClient {
   _getChatEndpoint() {
     const base = this.baseURL.replace(/\/+$/, '')
     if (base.endsWith('/chat/completions')) return base
-    if (base.endsWith('/v1') || base.includes('/openai')) return `${base}/chat/completions`
+    if (base.endsWith('/v1') || base.includes('/openai'))
+      return `${base}/chat/completions`
     return `${base}/v1/chat/completions`
   }
 
   _getModelsEndpoint() {
-    const base = this.baseURL.replace(/\/+$/, '').replace(/\/chat\/completions$/, '')
-    if (base.endsWith('/v1') || base.includes('/openai')) return `${base}/models`
+    const base = this.baseURL
+      .replace(/\/+$/, '')
+      .replace(/\/chat\/completions$/, '')
+    if (base.endsWith('/v1') || base.includes('/openai'))
+      return `${base}/models`
     return `${base}/v1/models`
   }
 
   async listModels({ signal } = {}) {
-    const payload = await fetchModelList(this.fetch, this._getModelsEndpoint(), this._getHeaders(), signal)
+    const payload = await fetchModelList(
+      this.fetch,
+      this._getModelsEndpoint(),
+      this._getHeaders(),
+      signal
+    )
     return (Array.isArray(payload?.data) ? payload.data : [])
       .filter(entry => entry && typeof entry.id === 'string')
       .map(entry => ({
         id: entry.id,
-        label: entry.name || entry.display_name || entry.title || entry.description || entry.id,
+        label:
+          entry.name ||
+          entry.display_name ||
+          entry.title ||
+          entry.description ||
+          entry.id,
         ...parseModelLimits(entry),
       }))
       .sort((a, b) => a.label.localeCompare(b.label))
   }
 
-  async *streamChat({ system, messages, maxTokens = 8192, tools = [], cacheHints, signal }) {
+  async *streamChat({
+    system,
+    messages,
+    maxTokens = 8192,
+    tools = [],
+    cacheHints,
+    signal,
+  }) {
     const timeouts = withRequestTimeouts(signal, {
       connectMs: this.connectTimeoutMs,
       idleMs: this.streamIdleTimeoutMs,
@@ -902,8 +1094,13 @@ export class OpenAiServerClient {
       messages: formattedMessages,
       // OpenAI's reasoning models reject max_tokens; compatible servers often
       // do not know max_completion_tokens.
-      ...(official ? { max_completion_tokens: maxTokens } : { max_tokens: maxTokens }),
+      ...(official
+        ? { max_completion_tokens: maxTokens }
+        : { max_tokens: maxTokens }),
       stream: true,
+      ...(this.reasoningEffort
+        ? { reasoning_effort: this.reasoningEffort }
+        : {}),
       ...(official && cacheHints?.cacheKey
         ? { prompt_cache_key: promptCacheKey(cacheHints.cacheKey) }
         : {}),
@@ -922,12 +1119,16 @@ export class OpenAiServerClient {
 
     let res
     try {
-      res = await fetchWithRetry(this._getChatEndpoint(), {
-        method: 'POST',
-        headers: this._getHeaders(),
-        body: JSON.stringify(payload),
-        signal: timeouts.signal,
-      }, { fetchFn: this.fetch })
+      res = await fetchWithRetry(
+        this._getChatEndpoint(),
+        {
+          method: 'POST',
+          headers: this._getHeaders(),
+          body: JSON.stringify(payload),
+          signal: timeouts.signal,
+        },
+        { fetchFn: this.fetch }
+      )
     } catch (err) {
       timeouts.checkAbortReason()
       throw err
@@ -937,7 +1138,10 @@ export class OpenAiServerClient {
 
     if (!res.ok) {
       let msg = `OpenAI API error (${res.status})`
-      let code = res.status === 401 || res.status === 403 ? 'providerAuth' : 'providerError'
+      let code =
+        res.status === 401 || res.status === 403
+          ? 'providerAuth'
+          : 'providerError'
       try {
         const body = await res.json()
         if (body?.error?.message) msg = body.error.message
@@ -952,7 +1156,9 @@ export class OpenAiServerClient {
 
     try {
       timeouts.resetIdleTimer()
-      for await (const data of parseSseLines(res.body, () => timeouts.resetIdleTimer())) {
+      for await (const data of parseSseLines(res.body, () =>
+        timeouts.resetIdleTimer()
+      )) {
         timeouts.resetIdleTimer()
         if (data === '[DONE]') break
         let parsed
@@ -984,7 +1190,11 @@ export class OpenAiServerClient {
           for (const tc of delta.tool_calls) {
             const index = tc.index ?? 0
             if (!pendingToolCalls.has(index)) {
-              pendingToolCalls.set(index, { id: tc.id, name: tc.function?.name || '', rawArgs: '' })
+              pendingToolCalls.set(index, {
+                id: tc.id,
+                name: tc.function?.name || '',
+                rawArgs: '',
+              })
             }
             const curr = pendingToolCalls.get(index)
             if (tc.id) curr.id = tc.id
@@ -1028,7 +1238,7 @@ export function toGeminiContents(messages) {
 
   for (const message of messages) {
     if (message.role === 'tool') {
-      let responseObj = {}
+      let responseObj
       if (typeof message.content === 'string') {
         try {
           responseObj = JSON.parse(message.content)
@@ -1101,15 +1311,36 @@ export function toGeminiContents(messages) {
  * contents, systemInstruction, thinkingConfig, and functionDeclarations schemas.
  */
 export class GoogleServerClient {
-  constructor({ apiKey, model, baseURL, baseUrl, fetchFn = fetch, connectTimeoutMs, streamIdleTimeoutMs } = {}) {
+  constructor({
+    apiKey,
+    model,
+    baseURL,
+    baseUrl,
+    fetchFn = fetch,
+    connectTimeoutMs,
+    streamIdleTimeoutMs,
+    reasoningEffort,
+    thinking,
+  } = {}) {
     this.apiKey = (apiKey || '').trim()
     this.model = (model || 'gemini-2.0-flash').trim()
     const defaultUrl = 'https://generativelanguage.googleapis.com/v1beta'
     const url = baseURL || baseUrl || defaultUrl
-    this.baseURL = resolveDockerHostUrl(url.trim().replace(/\/+$/, '').replace(/\/openai\/?$/, ''))
+    this.baseURL = resolveDockerHostUrl(
+      url
+        .trim()
+        .replace(/\/+$/, '')
+        .replace(/\/openai\/?$/, '')
+    )
     this.fetch = fetchFn
-    this.connectTimeoutMs = connectTimeoutMs ?? (Settings.aiAssist?.requestTimeoutSeconds ?? 180) * 1000
-    this.streamIdleTimeoutMs = streamIdleTimeoutMs ?? (Settings.aiAssist?.streamIdleSeconds ?? 120) * 1000
+    this.connectTimeoutMs =
+      connectTimeoutMs ??
+      (Settings.aiAssist?.requestTimeoutSeconds ?? 180) * 1000
+    this.streamIdleTimeoutMs =
+      streamIdleTimeoutMs ??
+      (Settings.aiAssist?.streamIdleSeconds ?? 120) * 1000
+    this.reasoningEffort = reasoningEffortFor('google', reasoningEffort)
+    this.thinking = thinkingFor(thinking)
   }
 
   async listModels({ signal } = {}) {
@@ -1138,7 +1369,13 @@ export class GoogleServerClient {
       .sort((a, b) => a.id.localeCompare(b.id))
   }
 
-  async *streamChat({ system, messages, maxTokens = 8192, tools = [], signal }) {
+  async *streamChat({
+    system,
+    messages,
+    maxTokens = 8192,
+    tools = [],
+    signal,
+  }) {
     const timeouts = withRequestTimeouts(signal, {
       connectMs: this.connectTimeoutMs,
       idleMs: this.streamIdleTimeoutMs,
@@ -1155,12 +1392,26 @@ export class GoogleServerClient {
       cleanModel.includes('2.5') ||
       cleanModel.includes('pro')
 
+    // Gemini 3 has no off switch; "minimal" is its lowest level
+    const off = this.thinking === false
+    const effort = off ? 'minimal' : this.reasoningEffort
+    const thinkingConfig = effort
+      ? {
+          includeThoughts: !off,
+          ...(cleanModel.includes('2.5')
+            ? { thinkingBudget: geminiThinkingBudget(effort, cleanModel) }
+            : { thinkingLevel: effort }),
+        }
+      : isThinkingModel
+        ? { includeThoughts: true }
+        : null
+
     const payload = {
       contents,
       generationConfig: {
         maxOutputTokens: maxTokens,
         temperature: 0.2,
-        ...(isThinkingModel ? { thinkingConfig: { includeThoughts: true } } : {}),
+        ...(thinkingConfig ? { thinkingConfig } : {}),
       },
     }
 
@@ -1196,12 +1447,16 @@ export class GoogleServerClient {
 
     let res
     try {
-      res = await fetchWithRetry(url, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(payload),
-        signal: timeouts.signal,
-      }, { fetchFn: this.fetch })
+      res = await fetchWithRetry(
+        url,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(payload),
+          signal: timeouts.signal,
+        },
+        { fetchFn: this.fetch }
+      )
     } catch (err) {
       timeouts.checkAbortReason()
       throw err
@@ -1211,11 +1466,17 @@ export class GoogleServerClient {
 
     if (!res.ok) {
       let msg = `Google Gemini API error (${res.status})`
-      let code = res.status === 401 || res.status === 403 ? 'providerAuth' : 'providerError'
+      let code =
+        res.status === 401 || res.status === 403
+          ? 'providerAuth'
+          : 'providerError'
       try {
         const body = await res.json()
         if (body?.error?.message) msg = body.error.message
-        if (body?.error?.status === 'UNAUTHENTICATED' || body?.error?.status === 'PERMISSION_DENIED') {
+        if (
+          body?.error?.status === 'UNAUTHENTICATED' ||
+          body?.error?.status === 'PERMISSION_DENIED'
+        ) {
           code = 'providerAuth'
         }
       } catch {}
@@ -1228,7 +1489,9 @@ export class GoogleServerClient {
 
     try {
       timeouts.resetIdleTimer()
-      for await (const data of parseSseLines(res.body, () => timeouts.resetIdleTimer())) {
+      for await (const data of parseSseLines(res.body, () =>
+        timeouts.resetIdleTimer()
+      )) {
         timeouts.resetIdleTimer()
         if (data === '[DONE]') break
         let parsed
@@ -1240,7 +1503,9 @@ export class GoogleServerClient {
 
         if (parsed.error) {
           throw new ProviderError(
-            typeof parsed.error === 'string' ? parsed.error : parsed.error.message || 'Gemini error',
+            typeof parsed.error === 'string'
+              ? parsed.error
+              : parsed.error.message || 'Gemini error',
             { code: 'providerError' }
           )
         }
@@ -1304,27 +1569,54 @@ async function ollamaErrorMessage(res) {
   let msg = `Ollama error (${res.status})`
   try {
     const json = await res.json()
-    if (json?.error) msg = typeof json.error === 'string' ? json.error : json.error.message || msg
+    if (json?.error)
+      msg =
+        typeof json.error === 'string' ? json.error : json.error.message || msg
   } catch {}
   return msg
 }
 
 export class OllamaServerClient {
-  constructor({ apiKey, model, baseURL, baseUrl, fetchFn = fetch, connectTimeoutMs, streamIdleTimeoutMs } = {}) {
+  constructor({
+    apiKey,
+    model,
+    baseURL,
+    baseUrl,
+    fetchFn = fetch,
+    connectTimeoutMs,
+    streamIdleTimeoutMs,
+    reasoningEffort,
+    thinking,
+  } = {}) {
     this.apiKey = (apiKey || '').trim()
     this.model = (model || '').trim()
     const rawUrl = baseURL || baseUrl || 'http://localhost:11434'
-    const url = rawUrl.trim().replace(/\/+$/, '').replace(/\/v1$/, '').replace(/\/+$/, '')
+    const url = rawUrl
+      .trim()
+      .replace(/\/+$/, '')
+      .replace(/\/v1$/, '')
+      .replace(/\/+$/, '')
     this.baseURL = resolveDockerHostUrl(url)
     this.fetch = fetchFn
-    this.connectTimeoutMs = connectTimeoutMs ?? (Settings.aiAssist?.requestTimeoutSeconds ?? 180) * 1000
-    this.streamIdleTimeoutMs = streamIdleTimeoutMs ?? (Settings.aiAssist?.streamIdleSeconds ?? 120) * 1000
+    this.connectTimeoutMs =
+      connectTimeoutMs ??
+      (Settings.aiAssist?.requestTimeoutSeconds ?? 180) * 1000
+    this.streamIdleTimeoutMs =
+      streamIdleTimeoutMs ??
+      (Settings.aiAssist?.streamIdleSeconds ?? 120) * 1000
+    this.reasoningEffort = reasoningEffortFor('ollama', reasoningEffort)
+    this.thinking = thinkingFor(thinking)
   }
 
   async listModels({ signal } = {}) {
     const headers = {}
     if (this.apiKey) headers.authorization = `Bearer ${this.apiKey}`
-    const payload = await fetchModelList(this.fetch, `${this.baseURL}/api/tags`, headers, signal)
+    const payload = await fetchModelList(
+      this.fetch,
+      `${this.baseURL}/api/tags`,
+      headers,
+      signal
+    )
     const rawList = Array.isArray(payload?.models)
       ? payload.models
       : Array.isArray(payload?.data)
@@ -1333,14 +1625,26 @@ export class OllamaServerClient {
     return rawList
       .map(entry => {
         const id = entry?.name || entry?.model || entry?.id
-        const label = entry?.name || entry?.display_name || entry?.title || entry?.model || entry?.id
+        const label =
+          entry?.name ||
+          entry?.display_name ||
+          entry?.title ||
+          entry?.model ||
+          entry?.id
         return { id, label, ...parseModelLimits(entry) }
       })
       .filter(entry => typeof entry.id === 'string' && entry.id)
       .sort((a, b) => a.label.localeCompare(b.label))
   }
 
-  async *streamChat({ system, messages, maxTokens = 8192, tools = [], contextWindow, signal }) {
+  async *streamChat({
+    system,
+    messages,
+    maxTokens = 8192,
+    tools = [],
+    contextWindow,
+    signal,
+  }) {
     const timeouts = withRequestTimeouts(signal, {
       connectMs: this.connectTimeoutMs,
       idleMs: this.streamIdleTimeoutMs,
@@ -1357,12 +1661,18 @@ export class OllamaServerClient {
     }))
 
     const thinkKey = `${this.baseURL}|${this.model}`
-    const numCtx = Number(contextWindow) > 0 ? Math.floor(Number(contextWindow)) : null
+    const numCtx =
+      Number(contextWindow) > 0 ? Math.floor(Number(contextWindow)) : null
     const body = {
       model: this.model,
       messages: wireMessages,
       stream: true,
-      ...(ollamaThinkUnsupported.has(thinkKey) ? {} : { think: true }),
+      ...(ollamaThinkUnsupported.has(thinkKey)
+        ? {}
+        : {
+            think:
+              this.thinking === false ? false : (this.reasoningEffort ?? true),
+          }),
       options: {
         num_predict: maxTokens,
         // Without num_ctx Ollama uses its small default window and silently
@@ -1377,28 +1687,38 @@ export class OllamaServerClient {
 
     const send = async () => {
       try {
-        return await fetchWithRetry(`${this.baseURL}/api/chat`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify(body),
-          signal: timeouts.signal,
-        }, { fetchFn: this.fetch })
+        return await fetchWithRetry(
+          `${this.baseURL}/api/chat`,
+          {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(body),
+            signal: timeouts.signal,
+          },
+          { fetchFn: this.fetch }
+        )
       } catch (err) {
         timeouts.checkAbortReason()
         if (err.name === 'AbortError' || err.code === 'aborted') throw err
-        throw new ProviderError(`Could not reach Ollama at ${this.baseURL}: ${err.message}`, {
-          code: 'network',
-        })
+        throw new ProviderError(
+          `Could not reach Ollama at ${this.baseURL}: ${err.message}`,
+          {
+            code: 'network',
+          }
+        )
       }
     }
 
     let res
     try {
       res = await send()
-      if (!res.ok && body.think) {
+      if (!res.ok && body.think !== undefined) {
         const message = await ollamaErrorMessage(res)
         if (!/does not support thinking/i.test(message)) {
-          throw new ProviderError(message, { status: res.status, code: 'providerError' })
+          throw new ProviderError(message, {
+            status: res.status,
+            code: 'providerError',
+          })
         }
         ollamaThinkUnsupported.add(thinkKey)
         delete body.think
@@ -1421,7 +1741,9 @@ export class OllamaServerClient {
 
     try {
       timeouts.resetIdleTimer()
-      for await (const chunk of parseNdjsonLines(res.body, () => timeouts.resetIdleTimer())) {
+      for await (const chunk of parseNdjsonLines(res.body, () =>
+        timeouts.resetIdleTimer()
+      )) {
         timeouts.resetIdleTimer()
         if (!chunk) continue
         let parsed
@@ -1433,7 +1755,9 @@ export class OllamaServerClient {
 
         if (parsed.error) {
           throw new ProviderError(
-            typeof parsed.error === 'string' ? parsed.error : parsed.error.message || 'Ollama returned an error.',
+            typeof parsed.error === 'string'
+              ? parsed.error
+              : parsed.error.message || 'Ollama returned an error.',
             { code: 'providerError' }
           )
         }
@@ -1459,7 +1783,9 @@ export class OllamaServerClient {
             const index = tc.function?.index ?? i
             const name = tc.function?.name || tc.name || ''
             const args = tc.function?.arguments ?? tc.args ?? {}
-            const id = tc.id || (name ? `call_${name}_${index}` : `call_${Date.now()}_${index}`)
+            const id =
+              tc.id ||
+              (name ? `call_${name}_${index}` : `call_${Date.now()}_${index}`)
             pendingToolCalls.set(id, { id, name, args })
           }
         }
@@ -1485,7 +1811,10 @@ export class OllamaServerClient {
         type: 'tool_call',
         id: tool.id,
         name: tool.name,
-        args: typeof tool.args === 'string' ? safeParseToolArgs(tool.args) : tool.args,
+        args:
+          typeof tool.args === 'string'
+            ? safeParseToolArgs(tool.args)
+            : tool.args,
       }
     }
 

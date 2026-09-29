@@ -9,7 +9,6 @@ import OLFormLabel from '@/shared/components/ol/ol-form-label'
 import OLFormControl from '@/shared/components/ol/ol-form-control'
 import OLFormCheckbox from '@/shared/components/ol/ol-form-checkbox'
 import OLSpinner from '@/shared/components/ol/ol-spinner'
-import OLBadge from '@/shared/components/ol/ol-badge'
 import Notification from '@/shared/components/notification'
 import MaterialIcon from '@/shared/components/material-icon'
 import getMeta from '@/utils/meta'
@@ -63,7 +62,9 @@ export default function AdminUserDetailPage() {
 
   // Password reset link state
   const [resetLink, setResetLink] = useState<string | null>(null)
-  const [resetLinkExpiresAt, setResetLinkExpiresAt] = useState<string | null>(null)
+  const [resetLinkExpiresAt, setResetLinkExpiresAt] = useState<string | null>(
+    null
+  )
   const [isGeneratingReset, setIsGeneratingReset] = useState(false)
   const [copiedLink, setCopiedLink] = useState(false)
 
@@ -100,10 +101,7 @@ export default function AdminUserDetailPage() {
   }, [targetUserId])
 
   const handleError = useCallback((err: string) => setError(err), [])
-  const handleSuccess = useCallback(
-    (msg: string) => setSuccessMessage(msg),
-    []
-  )
+  const handleSuccess = useCallback((msg: string) => setSuccessMessage(msg), [])
 
   useEffect(() => {
     fetchUser()
@@ -115,15 +113,16 @@ export default function AdminUserDetailPage() {
     setError(null)
     setSuccessMessage(null)
     try {
-      const res = await postJSON<{ success: boolean; user: UserDetail; error?: string }>(
-        `/admin/users/api/users/${targetUserId}/profile`,
-        {
-          body: {
-            first_name: firstName,
-            last_name: lastName,
-          },
-        }
-      )
+      const res = await postJSON<{
+        success: boolean
+        user: UserDetail
+        error?: string
+      }>(`/admin/users/api/users/${targetUserId}/profile`, {
+        body: {
+          first_name: firstName,
+          last_name: lastName,
+        },
+      })
       if (res.error) {
         setError(res.error)
       } else {
@@ -143,14 +142,15 @@ export default function AdminUserDetailPage() {
     setError(null)
     setSuccessMessage(null)
     try {
-      const res = await postJSON<{ success: boolean; isAdmin: boolean; error?: string }>(
-        `/admin/users/api/users/${targetUserId}/admin`,
-        {
-          body: {
-            isAdmin,
-          },
-        }
-      )
+      const res = await postJSON<{
+        success: boolean
+        isAdmin: boolean
+        error?: string
+      }>(`/admin/users/api/users/${targetUserId}/admin`, {
+        body: {
+          isAdmin,
+        },
+      })
       if (res.error) {
         setError(res.error)
       } else {
@@ -175,10 +175,13 @@ export default function AdminUserDetailPage() {
     setResetLink(null)
     setCopiedLink(false)
     try {
-      const res = await postJSON<{ resetUrl: string; expiresAt: string; error?: string }>(
-        `/admin/users/api/users/${targetUserId}/password-reset-link`,
-        { body: {} }
-      )
+      const res = await postJSON<{
+        resetUrl: string
+        expiresAt: string
+        error?: string
+      }>(`/admin/users/api/users/${targetUserId}/password-reset-link`, {
+        body: {},
+      })
       if (res.error) {
         setError(res.error)
       } else {
@@ -241,303 +244,309 @@ export default function AdminUserDetailPage() {
     <div className="row">
       <div className="col-12">
         {/* Breadcrumb & Navigation */}
-      <div className="mb-3">
-        <a
-          href="/admin/users"
-          className="text-decoration-none text-muted d-inline-flex align-items-center gap-2 fw-medium"
-        >
-          <MaterialIcon type="arrow_back" />
-          <span>Back to Manage Users</span>
-        </a>
-      </div>
-
-      {/* User Header */}
-      <div className="page-header d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
-        <div>
-          <div className="d-flex align-items-center gap-3">
-            <h1 className="mb-0">{fullName || user.email}</h1>
-            <UserStatusBadge
-              isAdmin={user.isAdmin}
-              suspended={user.suspended}
-              holdingAccount={user.holdingAccount}
-            />
-          </div>
-          <p className="text-muted mb-0 mt-1">{user.email}</p>
+        <div className="mb-3">
+          <a
+            href="/admin/users"
+            className="text-decoration-none text-muted d-inline-flex align-items-center gap-2 fw-medium"
+          >
+            <MaterialIcon type="arrow_back" />
+            <span>Back to Manage Users</span>
+          </a>
         </div>
-      </div>
 
-      {successMessage ? (
-        <Notification
-          type="success"
-          content={successMessage}
-          className="mb-4"
-        />
-      ) : null}
-
-      {error ? (
-        <Notification type="error" content={error} className="mb-4" />
-      ) : null}
-
-      <OLRow className="g-4">
-        {/* Left Column: Profile & Admin Controls */}
-        <OLCol lg={7}>
-          {/* Card 1: Profile Info */}
-          <OLCard className="mb-4">
-            <div className="card-header bg-transparent py-3 px-3">
-              <h2 className="h4 mb-0">Profile Information</h2>
-            </div>
-            <div className="card-body">
-              <OLForm onSubmit={handleSaveProfile}>
-                <OLRow className="g-3 mb-3">
-                  <OLCol md={6}>
-                    <OLFormGroup>
-                      <OLFormLabel htmlFor="first-name">First Name</OLFormLabel>
-                      <OLFormControl
-                        id="first-name"
-                        type="text"
-                        value={firstName}
-                        onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                          setFirstName(e.target.value)
-                        }
-                      />
-                    </OLFormGroup>
-                  </OLCol>
-                  <OLCol md={6}>
-                    <OLFormGroup>
-                      <OLFormLabel htmlFor="last-name">Last Name</OLFormLabel>
-                      <OLFormControl
-                        id="last-name"
-                        type="text"
-                        value={lastName}
-                        onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                          setLastName(e.target.value)
-                        }
-                      />
-                    </OLFormGroup>
-                  </OLCol>
-                </OLRow>
-
-                <div className="d-flex justify-content-end mb-3">
-                  <OLButton
-                    type="submit"
-                    variant="primary"
-                    isLoading={isSavingProfile}
-                    loadingLabel="Saving..."
-                  >
-                    Save profile changes
-                  </OLButton>
-                </div>
-              </OLForm>
-
-              <hr className="my-4" />
-
-              <AdminUserEmailsCard
-                userId={user._id}
-                primaryEmail={user.email}
-                emails={user.emails}
-                onUserUpdated={(updatedUser: UserDetail) => setUser(updatedUser)}
-                onError={(err: string) => setError(err)}
-                onSuccess={(msg: string) => setSuccessMessage(msg)}
+        {/* User Header */}
+        <div className="page-header d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+          <div>
+            <div className="d-flex align-items-center gap-3">
+              <h1 className="mb-0">{fullName || user.email}</h1>
+              <UserStatusBadge
+                isAdmin={user.isAdmin}
+                suspended={user.suspended}
+                holdingAccount={user.holdingAccount}
               />
             </div>
-          </OLCard>
+            <p className="text-muted mb-0 mt-1">{user.email}</p>
+          </div>
+        </div>
 
-          {/* Card 2: Site Administrator Privileges */}
-          <OLCard className="mb-4">
-            <div className="card-header bg-transparent py-3 px-3">
-              <h2 className="h4 mb-0">Site Administrator Access</h2>
-            </div>
-            <div className="card-body">
-              <OLForm onSubmit={handleSaveAdmin}>
-                <div className="mb-3">
-                  <OLFormCheckbox
-                    id="is-site-admin"
-                    type="checkbox"
-                    label="Grant Site Administrator Privileges"
-                    checked={isAdmin}
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                      setIsAdmin(e.target.checked)
-                    }
-                  />
-                  <small className="text-muted d-block mt-2">
-                    Site administrators have complete administrative control over
-                    all projects, server settings, maintenance modes, and user
-                    accounts on this Overleaf instance.
-                  </small>
-                </div>
+        {successMessage ? (
+          <Notification
+            type="success"
+            content={successMessage}
+            className="mb-4"
+          />
+        ) : null}
 
-                <div className="d-flex justify-content-end">
-                  <OLButton
-                    type="submit"
-                    variant="primary"
-                    isLoading={isSavingAdmin}
-                    loadingLabel="Updating..."
-                  >
-                    Save permissions
-                  </OLButton>
-                </div>
-              </OLForm>
-            </div>
-          </OLCard>
-        </OLCol>
+        {error ? (
+          <Notification type="error" content={error} className="mb-4" />
+        ) : null}
 
-        {/* Right Column: Password Reset & Account Metadata */}
-        <OLCol lg={5}>
-          {/* Card 3: Password Management */}
-          <OLCard className="mb-4">
-            <div className="card-header bg-transparent py-3 px-3">
-              <h2 className="h4 mb-0">Password Management</h2>
-            </div>
-            <div className="card-body">
-              <p className="text-muted small mb-3">
-                Generate a single-use, 7-day password setup link to send directly
-                to this user.
-              </p>
+        <OLRow className="g-4">
+          {/* Left Column: Profile & Admin Controls */}
+          <OLCol lg={7}>
+            {/* Card 1: Profile Info */}
+            <OLCard className="mb-4">
+              <div className="card-header bg-transparent py-3 px-3">
+                <h2 className="h4 mb-0">Profile Information</h2>
+              </div>
+              <div className="card-body">
+                <OLForm onSubmit={handleSaveProfile}>
+                  <OLRow className="g-3 mb-3">
+                    <OLCol md={6}>
+                      <OLFormGroup>
+                        <OLFormLabel htmlFor="first-name">
+                          First Name
+                        </OLFormLabel>
+                        <OLFormControl
+                          id="first-name"
+                          type="text"
+                          value={firstName}
+                          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                            setFirstName(e.target.value)
+                          }
+                        />
+                      </OLFormGroup>
+                    </OLCol>
+                    <OLCol md={6}>
+                      <OLFormGroup>
+                        <OLFormLabel htmlFor="last-name">Last Name</OLFormLabel>
+                        <OLFormControl
+                          id="last-name"
+                          type="text"
+                          value={lastName}
+                          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                            setLastName(e.target.value)
+                          }
+                        />
+                      </OLFormGroup>
+                    </OLCol>
+                  </OLRow>
 
-              <OLButton
-                variant="secondary"
-                onClick={handleGenerateResetLink}
-                isLoading={isGeneratingReset}
-                loadingLabel="Generating..."
-                className="w-100 mb-3"
-              >
-                Generate Password Reset Link
-              </OLButton>
-
-              {resetLink ? (
-                <div className="mt-3">
-                  <span className="form-label small fw-bold text-muted d-block mb-1">
-                    Password Setup URL:
-                  </span>
-                  <div className="git-bridge-copy my-2 d-flex align-items-center justify-content-between">
-                    <code
-                      id="admin-user-password-reset-url"
-                      aria-label="Password Reset URL"
-                      style={{
-                        minWidth: 0,
-                        flex: '1 1 auto',
-                        wordBreak: 'break-all',
-                      }}
-                    >
-                      {resetLink}
-                    </code>
+                  <div className="d-flex justify-content-end mb-3">
                     <OLButton
-                      variant="secondary"
-                      size="sm"
-                      style={{ minWidth: '78px', flexShrink: 0 }}
-                      onClick={handleCopyLink}
-                      aria-label={copiedLink ? 'Copied' : 'Copy'}
+                      type="submit"
+                      variant="primary"
+                      isLoading={isSavingProfile}
+                      loadingLabel="Saving..."
                     >
-                      {copiedLink ? 'Copied' : 'Copy'}
+                      Save profile changes
                     </OLButton>
                   </div>
-                  {resetLinkExpiresAt ? (
-                    <small className="text-muted d-block mt-1">
-                      Expires:{' '}
-                      {new Date(resetLinkExpiresAt).toLocaleDateString()}
+                </OLForm>
+
+                <hr className="my-4" />
+
+                <AdminUserEmailsCard
+                  userId={user._id}
+                  primaryEmail={user.email}
+                  emails={user.emails}
+                  onUserUpdated={(updatedUser: UserDetail) =>
+                    setUser(updatedUser)
+                  }
+                  onError={(err: string) => setError(err)}
+                  onSuccess={(msg: string) => setSuccessMessage(msg)}
+                />
+              </div>
+            </OLCard>
+
+            {/* Card 2: Site Administrator Privileges */}
+            <OLCard className="mb-4">
+              <div className="card-header bg-transparent py-3 px-3">
+                <h2 className="h4 mb-0">Site Administrator Access</h2>
+              </div>
+              <div className="card-body">
+                <OLForm onSubmit={handleSaveAdmin}>
+                  <div className="mb-3">
+                    <OLFormCheckbox
+                      id="is-site-admin"
+                      type="checkbox"
+                      label="Grant Site Administrator Privileges"
+                      checked={isAdmin}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                        setIsAdmin(e.target.checked)
+                      }
+                    />
+                    <small className="text-muted d-block mt-2">
+                      Site administrators have complete administrative control
+                      over all projects, server settings, maintenance modes, and
+                      user accounts on this Overleaf instance.
                     </small>
-                  ) : null}
-                </div>
-              ) : null}
-            </div>
-          </OLCard>
+                  </div>
 
-          {/* Card: Active Sessions */}
-          <AdminUserSessionsCard
-            userId={user._id}
-            userEmail={user.email}
-            isSelf={isSelf}
-            onError={handleError}
-            onSuccess={handleSuccess}
-          />
+                  <div className="d-flex justify-content-end">
+                    <OLButton
+                      type="submit"
+                      variant="primary"
+                      isLoading={isSavingAdmin}
+                      loadingLabel="Updating..."
+                    >
+                      Save permissions
+                    </OLButton>
+                  </div>
+                </OLForm>
+              </div>
+            </OLCard>
+          </OLCol>
 
-          {/* Account Metadata Summary Card */}
-          <OLCard className="mb-4">
-            <div className="card-header bg-transparent py-3 px-3">
-              <h2 className="h4 mb-0">Account Metadata</h2>
-            </div>
-            <div className="card-body">
-              <dl className="row mb-0 small">
-                <dt className="col-sm-5 text-muted">User ID:</dt>
-                <dd className="col-sm-7 font-monospace text-truncate">
-                  {user._id}
-                </dd>
+          {/* Right Column: Password Reset & Account Metadata */}
+          <OLCol lg={5}>
+            {/* Card 3: Password Management */}
+            <OLCard className="mb-4">
+              <div className="card-header bg-transparent py-3 px-3">
+                <h2 className="h4 mb-0">Password Management</h2>
+              </div>
+              <div className="card-body">
+                <p className="text-muted small mb-3">
+                  Generate a single-use, 7-day password setup link to send
+                  directly to this user.
+                </p>
 
-                <dt className="col-sm-5 text-muted">Signed Up:</dt>
-                <dd className="col-sm-7">
-                  {user.signUpDate
-                    ? new Date(user.signUpDate).toLocaleString()
-                    : '—'}
-                </dd>
+                <OLButton
+                  variant="secondary"
+                  onClick={handleGenerateResetLink}
+                  isLoading={isGeneratingReset}
+                  loadingLabel="Generating..."
+                  className="w-100 mb-3"
+                >
+                  Generate Password Reset Link
+                </OLButton>
 
-                <dt className="col-sm-5 text-muted">Last Active:</dt>
-                <dd className="col-sm-7">
-                  {user.lastActive || user.lastLoggedIn
-                    ? new Date(user.lastActive || user.lastLoggedIn!).toLocaleString()
-                    : 'Never'}
-                </dd>
+                {resetLink ? (
+                  <div className="mt-3">
+                    <span className="form-label small fw-bold text-muted d-block mb-1">
+                      Password Setup URL:
+                    </span>
+                    <div className="git-bridge-copy my-2 d-flex align-items-center justify-content-between">
+                      <code
+                        id="admin-user-password-reset-url"
+                        aria-label="Password Reset URL"
+                        style={{
+                          minWidth: 0,
+                          flex: '1 1 auto',
+                          wordBreak: 'break-all',
+                        }}
+                      >
+                        {resetLink}
+                      </code>
+                      <OLButton
+                        variant="secondary"
+                        size="sm"
+                        style={{ minWidth: '78px', flexShrink: 0 }}
+                        onClick={handleCopyLink}
+                        aria-label={copiedLink ? 'Copied' : 'Copy'}
+                      >
+                        {copiedLink ? 'Copied' : 'Copy'}
+                      </OLButton>
+                    </div>
+                    {resetLinkExpiresAt ? (
+                      <small className="text-muted d-block mt-1">
+                        Expires:{' '}
+                        {new Date(resetLinkExpiresAt).toLocaleDateString()}
+                      </small>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            </OLCard>
 
-                <dt className="col-sm-5 text-muted">Total Logins:</dt>
-                <dd className="col-sm-7">{user.loginCount || 0}</dd>
+            {/* Card: Active Sessions */}
+            <AdminUserSessionsCard
+              userId={user._id}
+              userEmail={user.email}
+              isSelf={isSelf}
+              onError={handleError}
+              onSuccess={handleSuccess}
+            />
 
-                <dt className="col-sm-5 text-muted">Affiliation:</dt>
-                <dd className="col-sm-7">
-                  {user.institution || user.role || '—'}
-                </dd>
-              </dl>
-            </div>
-          </OLCard>
+            {/* Account Metadata Summary Card */}
+            <OLCard className="mb-4">
+              <div className="card-header bg-transparent py-3 px-3">
+                <h2 className="h4 mb-0">Account Metadata</h2>
+              </div>
+              <div className="card-body">
+                <dl className="row mb-0 small">
+                  <dt className="col-sm-5 text-muted">User ID:</dt>
+                  <dd className="col-sm-7 font-monospace text-truncate">
+                    {user._id}
+                  </dd>
 
-          {/* Card 4: Danger Zone */}
-          <OLCard className="border-danger">
-            <div className="card-header bg-danger text-white py-3 px-3">
-              <h2 className="h4 mb-0 text-white">Danger Zone</h2>
-            </div>
-            <div className="card-body">
-              <p className="small text-muted mb-3">
-                Soft-deleting this account will archive all projects owned by the
-                user and revoke all active login sessions.
-              </p>
-              <OLButton
-                variant="danger"
-                className="w-100"
-                onClick={() => setShowDeleteModal(true)}
-              >
-                Delete User Account
-              </OLButton>
-            </div>
-          </OLCard>
-        </OLCol>
-      </OLRow>
+                  <dt className="col-sm-5 text-muted">Signed Up:</dt>
+                  <dd className="col-sm-7">
+                    {user.signUpDate
+                      ? new Date(user.signUpDate).toLocaleString()
+                      : '—'}
+                  </dd>
 
-      {/* Owned Projects Section */}
-      <OLRow className="mt-4">
-        <OLCol xs={12}>
-          <AdminUserProjectsCard
-            userId={user._id}
-            userEmail={user.email}
-            onError={handleError}
-            onSuccess={handleSuccess}
-          />
-        </OLCol>
-      </OLRow>
+                  <dt className="col-sm-5 text-muted">Last Active:</dt>
+                  <dd className="col-sm-7">
+                    {user.lastActive || user.lastLoggedIn
+                      ? new Date(
+                          user.lastActive || user.lastLoggedIn!
+                        ).toLocaleString()
+                      : 'Never'}
+                  </dd>
 
-      {/* Security Audit Trail Section */}
-      <OLRow className="mt-4">
-        <OLCol xs={12}>
-          <AdminUserAuditTrailCard userId={targetUserId} />
-        </OLCol>
-      </OLRow>
+                  <dt className="col-sm-5 text-muted">Total Logins:</dt>
+                  <dd className="col-sm-7">{user.loginCount || 0}</dd>
 
-      {/* Delete Confirmation Modal */}
-      <DeleteUserModal
-        show={showDeleteModal}
-        userId={user._id}
-        userEmail={user.email}
-        retentionDays={retentionDays}
-        onHide={() => setShowDeleteModal(false)}
-        onSuccess={handleDeleteSuccess}
-      />
+                  <dt className="col-sm-5 text-muted">Affiliation:</dt>
+                  <dd className="col-sm-7">
+                    {user.institution || user.role || '—'}
+                  </dd>
+                </dl>
+              </div>
+            </OLCard>
+
+            {/* Card 4: Danger Zone */}
+            <OLCard className="border-danger">
+              <div className="card-header bg-danger text-white py-3 px-3">
+                <h2 className="h4 mb-0 text-white">Danger Zone</h2>
+              </div>
+              <div className="card-body">
+                <p className="small text-muted mb-3">
+                  Soft-deleting this account will archive all projects owned by
+                  the user and revoke all active login sessions.
+                </p>
+                <OLButton
+                  variant="danger"
+                  className="w-100"
+                  onClick={() => setShowDeleteModal(true)}
+                >
+                  Delete User Account
+                </OLButton>
+              </div>
+            </OLCard>
+          </OLCol>
+        </OLRow>
+
+        {/* Owned Projects Section */}
+        <OLRow className="mt-4">
+          <OLCol xs={12}>
+            <AdminUserProjectsCard
+              userId={user._id}
+              userEmail={user.email}
+              onError={handleError}
+              onSuccess={handleSuccess}
+            />
+          </OLCol>
+        </OLRow>
+
+        {/* Security Audit Trail Section */}
+        <OLRow className="mt-4">
+          <OLCol xs={12}>
+            <AdminUserAuditTrailCard userId={targetUserId} />
+          </OLCol>
+        </OLRow>
+
+        {/* Delete Confirmation Modal */}
+        <DeleteUserModal
+          show={showDeleteModal}
+          userId={user._id}
+          userEmail={user.email}
+          retentionDays={retentionDays}
+          onHide={() => setShowDeleteModal(false)}
+          onSuccess={handleDeleteSuccess}
+        />
       </div>
     </div>
   )

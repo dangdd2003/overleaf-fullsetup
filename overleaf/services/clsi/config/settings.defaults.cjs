@@ -227,10 +227,10 @@ if ((process.env.DOCKER_RUNNER || process.env.SANDBOXED_COMPILES) === 'true') {
 
   if (process.env.ALLOWED_IMAGES) {
     try {
-      module.exports.clsi.docker.allowedImages = process.env.ALLOWED_IMAGES
-        .split(/[ ,]+/)
-        .map(s => s.trim())
-        .filter(Boolean)
+      module.exports.clsi.docker.allowedImages =
+        process.env.ALLOWED_IMAGES.split(/[ ,]+/)
+          .map(s => s.trim())
+          .filter(Boolean)
     } catch (error) {
       console.error(error, 'could not apply allowed images setting')
       process.exit(1)

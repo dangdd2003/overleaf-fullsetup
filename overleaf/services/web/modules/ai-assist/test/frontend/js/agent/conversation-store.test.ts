@@ -83,7 +83,9 @@ describe('conversation-store', function () {
     }
 
     const finalLoaded = loadConversation(PROJECT)
-    const rawResult = JSON.stringify((finalLoaded[0] as any).toolCalls[0].result)
+    const rawResult = JSON.stringify(
+      (finalLoaded[0] as any).toolCalls[0].result
+    )
     // Must NOT contain nested stringified preview JSON wrappers
     expect(rawResult).to.not.include('\\"preview\\"')
   })
@@ -122,16 +124,68 @@ describe('conversation-store', function () {
         role: 'assistant',
         text: 'Working on it',
         toolCalls: [
-          { id: 'call_1', name: 'read_file', args: { path: 'main.tex' }, result: 'content 1' },
-          { id: 'call_1', name: 'read_file', args: { path: 'main.tex' }, result: 'content 1' },
-          { id: 'call_2', name: 'edit_file', args: { path: 'main.tex' }, result: 'content 2' },
-          { id: 'call_2', name: 'edit_file', args: { path: 'main.tex' }, result: 'content 2' },
+          {
+            id: 'call_1',
+            name: 'read_file',
+            args: { path: 'main.tex' },
+            result: 'content 1',
+          },
+          {
+            id: 'call_1',
+            name: 'read_file',
+            args: { path: 'main.tex' },
+            result: 'content 1',
+          },
+          {
+            id: 'call_2',
+            name: 'edit_file',
+            args: { path: 'main.tex' },
+            result: 'content 2',
+          },
+          {
+            id: 'call_2',
+            name: 'edit_file',
+            args: { path: 'main.tex' },
+            result: 'content 2',
+          },
         ],
         blocks: [
-          { type: 'tool_call', call: { id: 'call_1', name: 'read_file', args: { path: 'main.tex' }, result: 'content 1' } },
-          { type: 'tool_call', call: { id: 'call_1', name: 'read_file', args: { path: 'main.tex' }, result: 'content 1' } },
-          { type: 'tool_call', call: { id: 'call_2', name: 'edit_file', args: { path: 'main.tex' }, result: 'content 2' } },
-          { type: 'tool_call', call: { id: 'call_2', name: 'edit_file', args: { path: 'main.tex' }, result: 'content 2' } },
+          {
+            type: 'tool_call',
+            call: {
+              id: 'call_1',
+              name: 'read_file',
+              args: { path: 'main.tex' },
+              result: 'content 1',
+            },
+          },
+          {
+            type: 'tool_call',
+            call: {
+              id: 'call_1',
+              name: 'read_file',
+              args: { path: 'main.tex' },
+              result: 'content 1',
+            },
+          },
+          {
+            type: 'tool_call',
+            call: {
+              id: 'call_2',
+              name: 'edit_file',
+              args: { path: 'main.tex' },
+              result: 'content 2',
+            },
+          },
+          {
+            type: 'tool_call',
+            call: {
+              id: 'call_2',
+              name: 'edit_file',
+              args: { path: 'main.tex' },
+              result: 'content 2',
+            },
+          },
         ],
       },
     ]
@@ -154,9 +208,11 @@ describe('conversation-store', function () {
     it('returns transcript as-is when size is within limit', function () {
       const transcript: TranscriptEntry[] = [
         { id: '1', role: 'user', text: 'hello' },
-        { id: '2', role: 'assistant', text: 'hi' },
+        { id: '2', role: 'assistant', text: 'hi', toolCalls: [] },
       ]
-      expect(prepareTranscriptForRun(transcript, 10000)).to.deep.equal(transcript)
+      expect(prepareTranscriptForRun(transcript, 10000)).to.deep.equal(
+        transcript
+      )
     })
 
     it('shrinks older assistant tool results while preserving the latest turn intact if it fits', function () {
@@ -169,7 +225,12 @@ describe('conversation-store', function () {
           role: 'assistant',
           text: 'here is old file',
           toolCalls: [
-            { id: 'call_1', name: 'read_file', args: { path: 'old.tex' }, result: largeResult },
+            {
+              id: 'call_1',
+              name: 'read_file',
+              args: { path: 'old.tex' },
+              result: largeResult,
+            },
           ],
         },
         { id: '3', role: 'user', text: 'read latest file' },
@@ -178,7 +239,12 @@ describe('conversation-store', function () {
           role: 'assistant',
           text: 'here is latest file',
           toolCalls: [
-            { id: 'call_2', name: 'read_file', args: { path: 'latest.tex' }, result: smallResult },
+            {
+              id: 'call_2',
+              name: 'read_file',
+              args: { path: 'latest.tex' },
+              result: smallResult,
+            },
           ],
         },
       ]
@@ -190,7 +256,9 @@ describe('conversation-store', function () {
       expect(oldAssistant.toolCalls[0].result._shrunk).to.be.true
       expect(oldAssistant.toolCalls[0].result.truncated).to.be.true
       expect(latestAssistant.toolCalls[0].result._shrunk).to.be.undefined
-      expect(latestAssistant.toolCalls[0].result.content).to.equal(smallResult.content)
+      expect(latestAssistant.toolCalls[0].result.content).to.equal(
+        smallResult.content
+      )
     })
 
     it('shrinks all assistant turns if older shrinking alone is not enough', function () {
@@ -202,7 +270,12 @@ describe('conversation-store', function () {
           role: 'assistant',
           text: 'one',
           toolCalls: [
-            { id: 'c1', name: 'read_file', args: { path: '1.tex' }, result: largeResult1 },
+            {
+              id: 'c1',
+              name: 'read_file',
+              args: { path: '1.tex' },
+              result: largeResult1,
+            },
           ],
         },
         {
@@ -210,7 +283,12 @@ describe('conversation-store', function () {
           role: 'assistant',
           text: 'two',
           toolCalls: [
-            { id: 'c2', name: 'read_file', args: { path: '2.tex' }, result: largeResult2 },
+            {
+              id: 'c2',
+              name: 'read_file',
+              args: { path: '2.tex' },
+              result: largeResult2,
+            },
           ],
         },
       ]

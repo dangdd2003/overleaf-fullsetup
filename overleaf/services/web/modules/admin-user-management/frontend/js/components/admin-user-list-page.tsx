@@ -59,12 +59,13 @@ interface DeletedUserRecord {
   }
 }
 
+const PAGE_SIZE = 20
+
 export default function AdminUserListPage() {
   const [tab, setTab] = useState<'active' | 'deleted'>('active')
   const [search, setSearch] = useState('')
   const [searchInput, setSearchInput] = useState('')
   const [page, setPage] = useState(1)
-  const [limit, setLimit] = useState(20)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [successMessage, setSuccessMessage] = useState<string | null>(null)
@@ -108,8 +109,8 @@ export default function AdminUserListPage() {
   const currentUserId = getMeta('ol-user_id') as string | undefined
 
   // Indeterminate refs for header checkboxes
-  const activeHeaderCheckboxRef = useRef<HTMLInputElement>(null)
-  const deletedHeaderCheckboxRef = useRef<HTMLInputElement>(null)
+  const activeHeaderCheckboxRef = useRef<HTMLInputElement | null>(null)
+  const deletedHeaderCheckboxRef = useRef<HTMLInputElement | null>(null)
 
   // Debounce search input
   useEffect(() => {
@@ -128,7 +129,7 @@ export default function AdminUserListPage() {
         const queryParams = new URLSearchParams({
           search,
           page: page.toString(),
-          limit: limit.toString(),
+          limit: PAGE_SIZE.toString(),
           sortBy: 'signUpDate',
           sortOrder: 'desc',
         })
@@ -150,7 +151,7 @@ export default function AdminUserListPage() {
         const queryParams = new URLSearchParams({
           search,
           page: page.toString(),
-          limit: limit.toString(),
+          limit: PAGE_SIZE.toString(),
         })
         const [deletedRes, activeRes] = await Promise.all([
           getJSON<{
@@ -172,7 +173,7 @@ export default function AdminUserListPage() {
     } finally {
       setIsLoading(false)
     }
-  }, [tab, search, page, limit])
+  }, [tab, search, page])
 
   useEffect(() => {
     fetchData()
@@ -189,10 +190,16 @@ export default function AdminUserListPage() {
     setPage(newPage)
   }
 
-  function handleRestoreSuccess(msg?: string) {
+  function handleRestoreSuccess(msgOrCount?: string | number) {
     setUserToRestore(null)
-    if (msg) {
-      setSuccessMessage(msg)
+    if (typeof msgOrCount === 'number') {
+      setSuccessMessage(
+        `User restored successfully (${msgOrCount} project${
+          msgOrCount === 1 ? '' : 's'
+        } restored)`
+      )
+    } else if (msgOrCount) {
+      setSuccessMessage(msgOrCount)
     } else {
       setSuccessMessage('User restored successfully')
     }
@@ -439,7 +446,7 @@ export default function AdminUserListPage() {
                       <tr>
                         <th style={{ width: '40px' }}>
                           <OLFormCheckbox
-                            ref={activeHeaderCheckboxRef}
+                            inputRef={activeHeaderCheckboxRef}
                             autoComplete="off"
                             checked={allVisibleActiveSelected}
                             onChange={handleToggleSelectAllActive}
@@ -519,11 +526,7 @@ export default function AdminUserListPage() {
                                   : 'Never'}
                               </td>
                               <td className="text-end">
-                                <OLDropdown
-                                  as={OLButtonGroup}
-                                  align="end"
-                                  size="sm"
-                                >
+                                <OLDropdown as={OLButtonGroup} align="end">
                                   <OLButton
                                     href={`/admin/users/${user._id}`}
                                     variant="secondary"
@@ -602,7 +605,7 @@ export default function AdminUserListPage() {
                       <tr>
                         <th style={{ width: '40px' }}>
                           <OLFormCheckbox
-                            ref={deletedHeaderCheckboxRef}
+                            inputRef={deletedHeaderCheckboxRef}
                             autoComplete="off"
                             checked={allVisibleDeletedSelected}
                             onChange={handleToggleSelectAllDeleted}
@@ -658,9 +661,7 @@ export default function AdminUserListPage() {
                                   aria-label={`Select deleted user ${email}`}
                                 />
                               </td>
-                              <td className="fw-bold text-truncate">
-                                {email}
-                              </td>
+                              <td className="fw-bold text-truncate">{email}</td>
                               <td className="text-truncate">
                                 {fullName || (
                                   <span className="text-muted">—</span>
@@ -668,11 +669,7 @@ export default function AdminUserListPage() {
                               </td>
                               <td>{deletedAt}</td>
                               <td className="text-end">
-                                <OLDropdown
-                                  as={OLButtonGroup}
-                                  align="end"
-                                  size="sm"
-                                >
+                                <OLDropdown as={OLButtonGroup} align="end">
                                   <OLButton
                                     variant="secondary"
                                     size="sm"

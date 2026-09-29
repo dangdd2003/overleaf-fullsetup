@@ -267,8 +267,6 @@ describe('<GoogleDriveLinkingWidget />', function () {
         .to.exist
     })
 
-
-
     it('handles unlink error and displays user-facing error message', async function () {
       fetchMock.post('/auth/google-drive/unlink', {
         status: 500,
@@ -477,7 +475,6 @@ describe('<GoogleDriveLinkingWidget />', function () {
     })
   })
 
-
   describe('Scan for existing projects (Import table)', function () {
     const folders = [
       {
@@ -555,7 +552,9 @@ describe('<GoogleDriveLinkingWidget />', function () {
     })
 
     it('shows scan button loading when an import job is active', async function () {
-      fetchMock.get('/auth/google-drive/import-job', { job: runningImportJob() })
+      fetchMock.get('/auth/google-drive/import-job', {
+        job: runningImportJob(),
+      })
       render(
         <GoogleDriveLinkingWidget
           initialIsLinked={true}

@@ -19,13 +19,18 @@ export function SettingsApprovalCard({
   const [note, setNote] = useState('')
   const locked = Boolean(decided)
 
-  const entries = Object.entries(args).filter(([_, v]) => v !== undefined && v !== null)
+  const entries = Object.entries(args).filter(
+    ([_, v]) => v !== undefined && v !== null
+  )
 
   return (
     <div className="ai-assist-edit-approval ai-assist-settings-approval">
       <div className="ai-assist-edit-approval-header">
         <span className="ai-assist-edit-approval-prompt">
-          {t('ai_assist_confirm_settings_title', 'Review proposed settings change:')}
+          {t(
+            'ai_assist_confirm_settings_title',
+            'Review proposed settings change:'
+          )}
         </span>
         <OLBadge bg="info" className="ms-2">
           {t('ai_assist_settings_badge', 'settings')}
@@ -69,7 +74,9 @@ export function SettingsApprovalCard({
           variant="secondary"
           size="sm"
           disabled={locked}
-          onClick={() => onDecision({ accepted: false, note: note || undefined })}
+          onClick={() =>
+            onDecision({ accepted: false, note: note || undefined })
+          }
         >
           {t('reject', 'Reject')}
         </OLButton>

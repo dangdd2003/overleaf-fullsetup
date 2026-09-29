@@ -118,7 +118,11 @@ describe('reduceAgentEvent', function () {
     const initialState = {
       ...emptyAgentState([]),
       running: true,
-      pendingApproval: { id: 'call_1', edit: { path: 'main.tex', oldText: 'a', newText: 'b' } },
+      pendingApproval: {
+        id: 'call_1',
+        kind: 'edit' as const,
+        edit: { path: 'main.tex', oldText: 'a', newText: 'b' },
+      },
     }
     const state = reduceAgentEvent(initialState, {
       type: 'turnFinished',
@@ -169,7 +173,11 @@ describe('reduceAgentEvent', function () {
     const initialState = {
       ...emptyAgentState([]),
       running: true,
-      pendingApproval: { id: 'call_1', edit: { path: 'main.tex', oldText: 'a', newText: 'b' } },
+      pendingApproval: {
+        id: 'call_1',
+        kind: 'edit' as const,
+        edit: { path: 'main.tex', oldText: 'a', newText: 'b' },
+      },
     }
     const state = reduceAgentEvent(initialState, {
       type: 'error',
@@ -277,10 +285,12 @@ describe('reduceAgentEvent', function () {
 
   it('updates chatTitle on chatTitle event', () => {
     const initial = emptyAgentState([])
+    expect(initial.isTitleGenerated).to.be.false
     const next = reduceAgentEvent(initial, {
       type: 'chatTitle',
       title: 'Smart Generated Title',
     })
     expect(next.chatTitle).to.equal('Smart Generated Title')
+    expect(next.isTitleGenerated).to.be.true
   })
 })

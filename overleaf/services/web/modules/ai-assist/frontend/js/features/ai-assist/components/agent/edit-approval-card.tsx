@@ -29,33 +29,43 @@ export function EditApprovalCard({
     typeof raw.oldText === 'string'
       ? raw.oldText
       : typeof raw.old_text === 'string'
-      ? raw.old_text
-      : typeof raw.old_string === 'string'
-      ? raw.old_string
-      : ''
+        ? raw.old_text
+        : typeof raw.old_string === 'string'
+          ? raw.old_string
+          : ''
   const newText =
     typeof raw.newText === 'string'
       ? raw.newText
       : typeof raw.new_text === 'string'
-      ? raw.new_text
-      : typeof raw.new_string === 'string'
-      ? raw.new_string
-      : typeof raw.content === 'string'
-      ? raw.content
-      : ''
+        ? raw.new_text
+        : typeof raw.new_string === 'string'
+          ? raw.new_string
+          : typeof raw.content === 'string'
+            ? raw.content
+            : ''
 
   const action: 'create' | 'append' | 'delete' | 'edit' =
     raw.action ??
     (raw.toolName === 'create_file'
       ? 'create'
       : raw.toolName === 'edit_file'
-      ? (!oldText ? 'append' : !newText ? 'delete' : 'edit')
-      : (!oldText ? 'create' : !newText ? 'delete' : 'edit'))
+        ? !oldText
+          ? 'append'
+          : !newText
+            ? 'delete'
+            : 'edit'
+        : !oldText
+          ? 'create'
+          : !newText
+            ? 'delete'
+            : 'edit')
 
   const safeStartLine =
     typeof startLine === 'number' && Number.isFinite(startLine) && startLine > 0
       ? startLine
-      : (typeof raw.startLine === 'number' && raw.startLine > 0 ? raw.startLine : 1)
+      : typeof raw.startLine === 'number' && raw.startLine > 0
+        ? raw.startLine
+        : 1
 
   const handleOpen = () => {
     if (path) {
@@ -67,26 +77,38 @@ export function EditApprovalCard({
     switch (action) {
       case 'create':
         return {
-          title: t('ai_assist_confirm_create_title', 'Review new file before adding:'),
+          title: t(
+            'ai_assist_confirm_create_title',
+            'Review new file before adding:'
+          ),
           badgeText: t('ai_assist_new_file_badge', 'new file'),
           badgeBg: 'info' as const,
         }
       case 'append':
         return {
-          title: t('ai_assist_confirm_append_title', 'Review text to append to file:'),
+          title: t(
+            'ai_assist_confirm_append_title',
+            'Review text to append to file:'
+          ),
           badgeText: t('ai_assist_append_text_badge', 'append text'),
           badgeBg: 'primary' as const,
         }
       case 'delete':
         return {
-          title: t('ai_assist_confirm_delete_title', 'Review text to delete from file:'),
+          title: t(
+            'ai_assist_confirm_delete_title',
+            'Review text to delete from file:'
+          ),
           badgeText: t('ai_assist_delete_text_badge', 'delete text'),
           badgeBg: 'danger' as const,
         }
       case 'edit':
       default:
         return {
-          title: t('ai_assist_confirm_edit_title', 'Review proposed change before applying:'),
+          title: t(
+            'ai_assist_confirm_edit_title',
+            'Review proposed change before applying:'
+          ),
           badgeText: t('ai_assist_edit_file_badge', 'edit file'),
           // Overleaf's $secondary is white, so a secondary badge is white on white.
           badgeBg: 'light' as const,
@@ -137,6 +159,7 @@ export function EditApprovalCard({
         oldText={oldText}
         newText={newText}
         startLine={safeStartLine}
+        path={path}
         onLineClick={line => {
           if (path) openFile(path, line)
         }}
@@ -160,7 +183,9 @@ export function EditApprovalCard({
           variant="secondary"
           size="sm"
           disabled={locked}
-          onClick={() => onDecision({ accepted: false, note: note || undefined })}
+          onClick={() =>
+            onDecision({ accepted: false, note: note || undefined })
+          }
         >
           {t('reject', 'Reject')}
         </OLButton>

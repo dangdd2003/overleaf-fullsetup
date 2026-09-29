@@ -2,11 +2,11 @@ import { AgentMessage, ToolSpec } from '../../providers/types'
 import { Limits } from './types'
 
 /**
- * Conservative for LaTeX, which tokenises worse than prose because of
- * backslashes and braces. A real tokenizer is not worth shipping to the
- * browser: the three providers do not share one.
+ * A rough estimate, the same ratio Claude Code uses for its counter. Every
+ * provider tokenises differently, so no single ratio is exact and a real
+ * tokenizer is not worth shipping to the browser.
  */
-export const CHARS_PER_TOKEN = 3.7
+export const CHARS_PER_TOKEN = 4
 
 /** Absorbs the gap between this estimate and the provider's real count. */
 export const MARGIN_FRACTION = 0.1
@@ -182,7 +182,9 @@ export function applyBudget({
   // is itself invalid and would be rejected the same way.
   const assistantIndexes = working
     .map((message, index) => ({ message, index }))
-    .filter(entry => entry.message.role === 'assistant' && entry.message.content)
+    .filter(
+      entry => entry.message.role === 'assistant' && entry.message.content
+    )
     .map(entry => entry.index)
 
   const elidableAssistants = assistantIndexes.slice(
@@ -191,11 +193,17 @@ export function applyBudget({
   )
 
   for (const index of elidableAssistants) {
-    const message = working[index] as Extract<AgentMessage, { role: 'assistant' }>
+    const message = working[index] as Extract<
+      AgentMessage,
+      { role: 'assistant' }
+    >
     // Symmetric to the pass-one guard above: a short reply (`'ok'`) is
     // already smaller than the marker that would replace it, so rewriting it
     // would grow the request instead of shrinking it.
-    if (estimateTokens(ASSISTANT_ELISION_MARKER) >= estimateTokens(message.content)) {
+    if (
+      estimateTokens(ASSISTANT_ELISION_MARKER) >=
+      estimateTokens(message.content)
+    ) {
       continue
     }
     replace(index, { ...message, content: ASSISTANT_ELISION_MARKER })

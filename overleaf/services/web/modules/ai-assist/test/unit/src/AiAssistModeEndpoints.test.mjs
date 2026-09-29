@@ -1,3 +1,4 @@
+import { describe, it, beforeEach, afterEach } from 'vitest'
 import { expect } from 'chai'
 import sinon from 'sinon'
 import fs from 'node:fs/promises'
@@ -28,9 +29,19 @@ describe('AiAssistModeEndpoints', () => {
 
   it('saves and retrieves chat with mode', async () => {
     const transcript = [{ role: 'user', text: 'Hello' }]
-    await AiAssistChatHistoryStore.saveChat(projectId, userId, chatId, transcript, 'plan')
+    await AiAssistChatHistoryStore.saveChat(
+      projectId,
+      userId,
+      chatId,
+      transcript,
+      'plan'
+    )
 
-    const chat = await AiAssistChatHistoryStore.getChat(projectId, userId, chatId)
+    const chat = await AiAssistChatHistoryStore.getChat(
+      projectId,
+      userId,
+      chatId
+    )
     expect(chat).to.not.be.null
     expect(chat.mode).to.equal('plan')
     expect(chat.title).to.equal('Hello')
@@ -38,9 +49,18 @@ describe('AiAssistModeEndpoints', () => {
 
   it('defaults mode to manual when omitted in saveChat', async () => {
     const transcript = [{ role: 'user', text: 'Default test' }]
-    await AiAssistChatHistoryStore.saveChat(projectId, userId, chatId, transcript)
+    await AiAssistChatHistoryStore.saveChat(
+      projectId,
+      userId,
+      chatId,
+      transcript
+    )
 
-    const chat = await AiAssistChatHistoryStore.getChat(projectId, userId, chatId)
+    const chat = await AiAssistChatHistoryStore.getChat(
+      projectId,
+      userId,
+      chatId
+    )
     expect(chat.mode).to.equal('manual')
   })
 
@@ -50,7 +70,10 @@ describe('AiAssistModeEndpoints', () => {
       const mockStore = {
         getRun: sinon.stub().resolves({ runId: 'run-1', projectId }),
       }
-      const controller = new AiAssistRunController({ manager: mockManager, store: mockStore })
+      const controller = new AiAssistRunController({
+        manager: mockManager,
+        store: mockStore,
+      })
 
       const req = {
         params: { Project_id: projectId, runId: 'run-1' },
@@ -72,7 +95,10 @@ describe('AiAssistModeEndpoints', () => {
       const mockStore = {
         getRun: sinon.stub().resolves({ runId: 'run-1', projectId }),
       }
-      const controller = new AiAssistRunController({ manager: mockManager, store: mockStore })
+      const controller = new AiAssistRunController({
+        manager: mockManager,
+        store: mockStore,
+      })
 
       const req = {
         params: { Project_id: projectId, runId: 'run-1' },
@@ -92,7 +118,10 @@ describe('AiAssistModeEndpoints', () => {
     it('returns 404 if run not found', async () => {
       const mockManager = { setMode: sinon.stub().resolves() }
       const mockStore = { getRun: sinon.stub().resolves(null) }
-      const controller = new AiAssistRunController({ manager: mockManager, store: mockStore })
+      const controller = new AiAssistRunController({
+        manager: mockManager,
+        store: mockStore,
+      })
 
       const req = {
         params: { Project_id: projectId, runId: 'nonexistent' },

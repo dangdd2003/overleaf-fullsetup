@@ -1,0 +1,14 @@
+{
+  "name": "@overleaf/ai-browser",
+  "description": "Google Chrome driven by Patchright for AI Assist web_fetch; all page traffic goes through a proxy that refuses private addresses",
+  "private": true,
+  "type": "module",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test test/proxy.test.mjs test/pacer.test.mjs test/app.test.mjs test/engine.test.mjs test/seccomp.test.mjs test/slots.test.mjs test/display.test.mjs"
+  },
+  "dependencies": {
+    "patchright": "1.63.0"
+  }
+}

@@ -1,4 +1,9 @@
-import { deleteJSON, getJSON, putJSON, patchJSON } from '@/infrastructure/fetch-json'
+import {
+  deleteJSON,
+  getJSON,
+  putJSON,
+  patchJSON,
+} from '@/infrastructure/fetch-json'
 import customLocalStorage from '@/infrastructure/local-storage'
 import { TranscriptEntry } from './agent-messages'
 import { prepareTranscriptForRun } from './conversation-store'
@@ -18,7 +23,32 @@ export type StoredChat = ChatSummary & {
 }
 
 const activeKeyFor = (projectId: string) => `ai-assist:chat-id:${projectId}`
+const modeKeyFor = (projectId: string, chatId: string) =>
+  `ai-assist:chat-mode:${projectId}:${chatId}`
 const base = (projectId: string) => `/ai-assist/projects/${projectId}/chats`
+
+export function getStoredChatMode(
+  projectId: string,
+  chatId: string
+): AgentMode | null {
+  const stored = customLocalStorage.getItem(modeKeyFor(projectId, chatId))
+  if (stored === 'manual' || stored === 'acceptEdits' || stored === 'plan') {
+    return stored
+  }
+  return null
+}
+
+export function setStoredChatMode(
+  projectId: string,
+  chatId: string,
+  mode: AgentMode
+) {
+  customLocalStorage.setItem(modeKeyFor(projectId, chatId), mode)
+}
+
+export function clearStoredChatMode(projectId: string, chatId: string) {
+  customLocalStorage.removeItem(modeKeyFor(projectId, chatId))
+}
 
 export function newChatId() {
   const random = Math.random().toString(36).slice(2, 10)
@@ -63,16 +93,13 @@ export function saveChat(
   })
 }
 
-export function renameChat(
-  projectId: string,
-  chatId: string,
-  title: string
-) {
+export function renameChat(projectId: string, chatId: string, title: string) {
   return patchJSON<ChatSummary>(`${base(projectId)}/${chatId}`, {
     body: { title },
   })
 }
 
 export function deleteChat(projectId: string, chatId: string) {
+  clearStoredChatMode(projectId, chatId)
   return deleteJSON(`${base(projectId)}/${chatId}`)
 }

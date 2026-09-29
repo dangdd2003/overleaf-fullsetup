@@ -70,6 +70,25 @@ const BINARY_EXTENSIONS = new Set([
 /**
  * Common MIME types by extension.
  */
+const TEXT_EXTENSIONS = new Set([
+  '.tex',
+  '.bib',
+  '.sty',
+  '.cls',
+  '.txt',
+  '.md',
+  '.csv',
+  '.json',
+  '.yaml',
+  '.yml',
+  '.xml',
+  '.html',
+  '.tikz',
+  '.dtx',
+  '.ins',
+  '.rnw',
+])
+
 const MIME_TYPES = {
   '.tex': 'text/x-tex',
   '.latex': 'text/x-tex',
@@ -293,25 +312,7 @@ function isBinaryFile(filePath, mimeType) {
       mimeType === 'application/zip' ||
       mimeType === 'application/octet-stream'
     ) {
-      const textExts = new Set([
-        '.tex',
-        '.bib',
-        '.sty',
-        '.cls',
-        '.txt',
-        '.md',
-        '.csv',
-        '.json',
-        '.yaml',
-        '.yml',
-        '.xml',
-        '.html',
-        '.tikz',
-        '.dtx',
-        '.ins',
-        '.rnw',
-      ])
-      if (textExts.has(ext)) {
+      if (TEXT_EXTENSIONS.has(ext)) {
         return false
       }
       return true
@@ -1286,10 +1287,7 @@ async function syncProject(projectId, userId, driveFolderId = null) {
           )
           const driveContent = driveBuffer.toString('utf8')
           const normalizeDocText = str =>
-            (str || '')
-              .replace(/\r\n/g, '\n')
-              .replace(/\r/g, '\n')
-              .trimEnd()
+            (str || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').trimEnd()
           if (normalizeDocText(driveContent) !== normalizeDocText(ovContent)) {
             needsPush = true
           }
@@ -1320,9 +1318,7 @@ async function syncProject(projectId, userId, driveFolderId = null) {
       } else {
         // Binary file: if missing in Drive or modified in Overleaf, push to Drive
         const needsPush =
-          !driveFile ||
-          !lastMapped ||
-          lastMapped.overleafHash !== ovEntity.hash
+          !driveFile || !lastMapped || lastMapped.overleafHash !== ovEntity.hash
         if (needsPush) {
           const pushRes = await handleOutboundFileUpdate(
             projectId,

@@ -1,4 +1,11 @@
-import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import getMeta from '@/utils/meta'
 import useEventListener from '@/shared/hooks/use-event-listener'
 import OLButton from '@/shared/components/ol/ol-button'
@@ -6,6 +13,7 @@ import MaterialIcon from '@/shared/components/material-icon'
 import { ProjectContext } from '@/shared/context/project-context'
 import { useAgentRun } from '../hooks/use-agent-run'
 import { FIX_TOOLS, buildFixTranscript } from '../agent/fix-run'
+import { emptyAgentState } from '../agent/agent-state'
 import { FIX_SYSTEM_PROMPT } from '../agent/context/fix-system-prompt'
 import {
   getStoredFix,
@@ -26,11 +34,11 @@ import { useChatBusy } from '../agent/chat-activity'
 import { useAiDock } from '../hooks/use-ai-dock'
 import { partitionBlocks } from './agent/agent-message'
 import { SubresultGroup } from './agent/subresult-group'
-import { ThinkingBlock } from './agent/thinking-block'
 import { AgentStatusLine } from './agent/agent-status-line'
 import { EditApprovalCard } from './agent/edit-approval-card'
 import { MarkdownContent } from './agent/markdown-content'
 import { isFixableLevel } from '../log-entry-levels'
+import { AiAssistant } from '../assistant'
 import '../../../../stylesheets/ai-assist.scss'
 
 /** The host the document window would be sent to, for the consent prompt. */
@@ -200,13 +208,14 @@ export default function SuggestFixPanel({
 
   // Seed state on mount from stored conversation if available
   const seededRef = useRef(false)
-  if (!seededRef.current && stored?.transcript && stored.transcript.length > 0) {
+  if (
+    !seededRef.current &&
+    stored?.transcript &&
+    stored.transcript.length > 0
+  ) {
     seededRef.current = true
     setState({
-      transcript: stored.transcript,
-      running: false,
-      stoppedByUser: false,
-      pendingApproval: null,
+      ...emptyAgentState(stored.transcript),
       error: stored.error ?? null,
     })
   }
@@ -278,6 +287,7 @@ export default function SuggestFixPanel({
       const detail = (event as CustomEvent<{ entryId?: string }>).detail ?? {}
       // A hidden panel must never start a run the user cannot see.
       if (!enabled || !entryId || detail.entryId !== entryId) return
+      if (!Boolean(AiAssistant.fromStoredSettings())) return
       setOpen(true)
       setCollapsed(false)
       setFeedback(null)
@@ -536,8 +546,9 @@ export default function SuggestFixPanel({
       {needsConsent ? (
         <div className="ai-assist-consent" role="alert">
           <p>
-            Sending this error to your AI provider will also send about forty lines
-            of your document to <strong>{providerHost() || 'the provider'}</strong>.
+            Sending this error to your AI provider will also send about forty
+            lines of your document to{' '}
+            <strong>{providerHost() || 'the provider'}</strong>.
           </p>
           <OLButton type="button" variant="primary" size="sm" onClick={onAllow}>
             Allow and continue
@@ -559,7 +570,9 @@ export default function SuggestFixPanel({
                     : 'AI Provider Error'}
             </span>
             {error.upstreamCode && (
-              <span className="ai-assist-error-badge">{error.upstreamCode}</span>
+              <span className="ai-assist-error-badge">
+                {error.upstreamCode}
+              </span>
             )}
           </div>
           <div className="ai-assist-error-body">
@@ -573,12 +586,16 @@ export default function SuggestFixPanel({
             )}
           </div>
           <div className="ai-assist-error-actions">
-            <OLButton type="button" variant="secondary" size="sm" onClick={handleRetry}>
+            <OLButton
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={handleRetry}
+            >
               Try again
             </OLButton>
             {(error.code === 'providerAuth' ||
-              error.code === 'modelsUnsupported' ||
-              error.code === 'noProvider') && (
+              error.code === 'modelsUnsupported') && (
               <OLButton
                 href="/user/settings"
                 target="_blank"
@@ -653,13 +670,20 @@ export default function SuggestFixPanel({
             const isLastEntry = entryIdx === assistantEntries.length - 1
 
             return (
-              <div key={entry.id || `entry-${entryIdx}`} className="ai-suggest-entry">
+              <div
+                key={entry.id || `entry-${entryIdx}`}
+                className="ai-suggest-entry"
+              >
                 {segments.map((segment, idx) => {
-                  const isLastSegment = isLastEntry && idx === segments.length - 1
+                  const isLastSegment =
+                    isLastEntry && idx === segments.length - 1
 
                   if (segment.type === 'text') {
                     return (
-                      <div key={`text-${idx}`} className="ai-suggest-explanation">
+                      <div
+                        key={`text-${idx}`}
+                        className="ai-suggest-explanation"
+                      >
                         <MarkdownContent
                           content={segment.text}
                           isLive={running && isLastSegment}
@@ -669,7 +693,9 @@ export default function SuggestFixPanel({
                   }
 
                   const editCalls = segment.items.filter(
-                    (item): item is Extract<AssistantBlock, { type: 'tool_call' }> =>
+                    (
+                      item
+                    ): item is Extract<AssistantBlock, { type: 'tool_call' }> =>
                       item.type === 'tool_call' &&
                       (item.call.name === 'edit_file' ||
                         item.call.name === 'create_file')
@@ -784,12 +810,10 @@ export default function SuggestFixPanel({
             <AgentStatusLine
               startedAt={runStartedAt}
               isRunning={state.running}
-              blocks={
-                (() => {
-                  const last = state.running ? state.transcript.at(-1) : null
-                  return last?.role === 'assistant' ? last.blocks ?? [] : []
-                })()
-              }
+              blocks={(() => {
+                const last = state.running ? state.transcript.at(-1) : null
+                return last?.role === 'assistant' ? (last.blocks ?? []) : []
+              })()}
             />
           )}
 
@@ -814,11 +838,16 @@ export default function SuggestFixPanel({
                 <button
                   type="button"
                   className={`icon-button ai-feedback-btn ${feedback === 'down' ? 'active' : ''}`}
-                  onClick={() => setFeedback(f => (f === 'down' ? null : 'down'))}
+                  onClick={() =>
+                    setFeedback(f => (f === 'down' ? null : 'down'))
+                  }
                   aria-label="Poor suggestion"
                   title="Poor suggestion"
                 >
-                  <MaterialIcon type="thumb_down" unfilled={feedback !== 'down'} />
+                  <MaterialIcon
+                    type="thumb_down"
+                    unfilled={feedback !== 'down'}
+                  />
                 </button>
 
                 <button

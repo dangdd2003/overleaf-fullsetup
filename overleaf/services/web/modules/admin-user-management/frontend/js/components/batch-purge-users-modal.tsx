@@ -15,7 +15,7 @@ export interface BatchPurgeUsersModalProps {
   show: boolean
   records: Array<{
     _id: string
-    user?: { _id: string; email: string }
+    user?: { _id?: string; email?: string }
     deletedUserEmail?: string
   }>
   onHide: () => void

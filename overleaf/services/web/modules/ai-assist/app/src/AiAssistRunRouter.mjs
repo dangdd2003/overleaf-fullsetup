@@ -4,13 +4,17 @@ export default {
   async apply(webRouter) {
     if (!Settings.aiAssist?.enabled) return
 
-    const { default: AiAssistRunController } = await import('./AiAssistRunController.mjs')
-    const { default: AuthenticationController } = await import('../../../../app/src/Features/Authentication/AuthenticationController.mjs')
-    const { default: AuthorizationMiddleware } = await import('../../../../app/src/Features/Authorization/AuthorizationMiddleware.mjs')
+    const { default: AiAssistRunController } =
+      await import('./AiAssistRunController.mjs')
+    const { default: AuthenticationController } =
+      await import('../../../../app/src/Features/Authentication/AuthenticationController.mjs')
+    const { default: AuthorizationMiddleware } =
+      await import('../../../../app/src/Features/Authorization/AuthorizationMiddleware.mjs')
 
     // 0. Provider requests (model list, connection test, in-page agent turns)
     // are made from the server so internal providers work behind a public domain.
-    const { default: AiAssistProviderController } = await import('./AiAssistProviderController.mjs')
+    const { default: AiAssistProviderController } =
+      await import('./AiAssistProviderController.mjs')
 
     webRouter.post(
       '/ai-assist/providers/models',
@@ -101,7 +105,8 @@ export default {
     )
 
     // Chat history: one JSON file per conversation, scoped to the logged-in user.
-    const { default: AiAssistChatHistoryController } = await import('./AiAssistChatHistoryController.mjs')
+    const { default: AiAssistChatHistoryController } =
+      await import('./AiAssistChatHistoryController.mjs')
 
     webRouter.get(
       '/ai-assist/projects/:Project_id/chats',
@@ -143,6 +148,22 @@ export default {
       AuthenticationController.requireLogin(),
       AuthorizationMiddleware.ensureUserCanReadProject,
       AiAssistChatHistoryController.generateTitle
+    )
+
+    // Composer preferences (effort level, thinking switch), per user.
+    const { default: AiAssistPreferencesController } =
+      await import('./AiAssistPreferencesController.mjs')
+
+    webRouter.get(
+      '/ai-assist/preferences',
+      AuthenticationController.requireLogin(),
+      AiAssistPreferencesController.get
+    )
+
+    webRouter.put(
+      '/ai-assist/preferences',
+      AuthenticationController.requireLogin(),
+      AiAssistPreferencesController.save
     )
 
     // 2. Legacy fallback routes (controller performs inline authorization check)

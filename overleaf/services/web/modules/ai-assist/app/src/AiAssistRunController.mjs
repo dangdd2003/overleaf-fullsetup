@@ -6,7 +6,10 @@ import defaultManager from './AiAssistRunManager.mjs'
 import defaultStore, { TERMINAL_STATUSES } from './AiAssistRunStore.mjs'
 import defaultSubscriber from './AiAssistRunSubscriber.mjs'
 import { validateSafeProviderBaseUrl } from './AiAssistProviders.mjs'
-import { normalizeWebSearchSettings } from './AiAssistWebTools.mjs'
+import {
+  fetchOnlyWebSettings,
+  normalizeWebSearchSettings,
+} from './AiAssistWebTools.mjs'
 import { MODES } from './AiAssistModePolicy.mjs'
 import SessionManager from '../../../../app/src/Features/Authentication/SessionManager.mjs'
 
@@ -31,16 +34,22 @@ export class AiAssistRunController {
     const { transcript, providerSettings, mode, chatId } = req.body || {}
 
     if (!transcript || !providerSettings) {
-      return res.status(400).json({ error: 'Missing transcript or providerSettings' })
+      return res
+        .status(400)
+        .json({ error: 'Missing transcript or providerSettings' })
     }
 
     const maxBytes = Settings.aiAssist?.maxTranscriptBytes ?? 5000000
     if (!Array.isArray(transcript) || transcript.length === 0) {
-      return res.status(400).json({ error: 'transcript must be a non-empty array' })
+      return res
+        .status(400)
+        .json({ error: 'transcript must be a non-empty array' })
     }
     const size = Buffer.byteLength(JSON.stringify(transcript))
     if (size > maxBytes) {
-      return res.status(400).json({ error: 'Conversation is too large to send' })
+      return res
+        .status(400)
+        .json({ error: 'Conversation is too large to send' })
     }
 
     const baseUrl = providerSettings.baseUrl || providerSettings.baseURL
@@ -53,13 +62,27 @@ export class AiAssistRunController {
     }
 
     // Ignored unless the instance turned the web tools on, so a client cannot
-    // switch them on by sending settings.
+    // switch them on by sending settings. A run with no search backend still
+    // reads pages; only a user who disabled web search gets neither tool.
     let webSearchSettings = null
     if (Settings.aiAssist?.webToolsEnabled) {
-      try {
-        webSearchSettings = normalizeWebSearchSettings(req.body?.webSearchSettings)
-      } catch (err) {
-        return res.status(400).json({ error: err.message })
+      const clientSettings = req.body?.webSearchSettings
+      if (clientSettings?.sourceMode !== 'disabled') {
+        if (
+          clientSettings?.sourceMode === 'server' ||
+          (!clientSettings && Settings.aiAssist?.serverWebSearch?.enabled)
+        ) {
+          webSearchSettings = Settings.aiAssist?.serverWebSearch?.enabled
+            ? Settings.aiAssist.serverWebSearch
+            : null
+        } else if (clientSettings) {
+          try {
+            webSearchSettings = normalizeWebSearchSettings(clientSettings)
+          } catch (err) {
+            return res.status(400).json({ error: err.message })
+          }
+        }
+        webSearchSettings ??= fetchOnlyWebSettings()
       }
     }
 
@@ -95,7 +118,9 @@ export class AiAssistRunController {
 
     const projectId = req.params.Project_id || req.params.project_id
     if (projectId && run.projectId !== projectId) {
-      return res.status(403).json({ error: 'Cross-project run access forbidden' })
+      return res
+        .status(403)
+        .json({ error: 'Cross-project run access forbidden' })
     }
 
     res.setHeader?.('Content-Type', 'text/event-stream')
@@ -124,7 +149,10 @@ export class AiAssistRunController {
         if (parsed.seq <= lastSentSeq) return
         lastSentSeq = parsed.seq
         res.write(`data: ${message}\n\n`)
-        if (parsed.event?.type === 'turnFinished' || parsed.event?.type === 'error') {
+        if (
+          parsed.event?.type === 'turnFinished' ||
+          parsed.event?.type === 'error'
+        ) {
           cleanup()
           res.end()
         }
@@ -196,7 +224,13 @@ export class AiAssistRunController {
     }
 
     const freshRun = await this.store.getRun(runId)
-    if (freshRun && (freshRun.status === 'done' || freshRun.status === 'stopped' || freshRun.status === 'error' || freshRun.status === 'interrupted')) {
+    if (
+      freshRun &&
+      (freshRun.status === 'done' ||
+        freshRun.status === 'stopped' ||
+        freshRun.status === 'error' ||
+        freshRun.status === 'interrupted')
+    ) {
       cleanup()
       res.end()
     }
@@ -211,7 +245,9 @@ export class AiAssistRunController {
 
     const projectId = req.params.Project_id || req.params.project_id
     if (projectId && run.projectId !== projectId) {
-      return res.status(403).json({ error: 'Cross-project run access forbidden' })
+      return res
+        .status(403)
+        .json({ error: 'Cross-project run access forbidden' })
     }
 
     await this.manager.stopRun(runId)
@@ -227,7 +263,9 @@ export class AiAssistRunController {
 
     const projectId = req.params.Project_id || req.params.project_id
     if (projectId && run.projectId !== projectId) {
-      return res.status(403).json({ error: 'Cross-project run access forbidden' })
+      return res
+        .status(403)
+        .json({ error: 'Cross-project run access forbidden' })
     }
 
     const decision = req.body || { accepted: false }
@@ -244,7 +282,9 @@ export class AiAssistRunController {
 
     const projectId = req.params.Project_id || req.params.project_id
     if (projectId && run.projectId !== projectId) {
-      return res.status(403).json({ error: 'Cross-project run access forbidden' })
+      return res
+        .status(403)
+        .json({ error: 'Cross-project run access forbidden' })
     }
 
     const { id, outcome } = req.body || {}
@@ -269,13 +309,16 @@ export class AiAssistRunController {
 
     const projectId = req.params.Project_id || req.params.project_id
     if (projectId && run.projectId !== projectId) {
-      return res.status(403).json({ error: 'Cross-project run access forbidden' })
+      return res
+        .status(403)
+        .json({ error: 'Cross-project run access forbidden' })
     }
 
     if (TERMINAL_STATUSES.includes(run.status)) {
-      return res
-        .status(409)
-        .json({ error: 'Run is no longer accepting messages', status: run.status })
+      return res.status(409).json({
+        error: 'Run is no longer accepting messages',
+        status: run.status,
+      })
     }
 
     const { id, text, contextText } = req.body || {}
@@ -302,12 +345,16 @@ export class AiAssistRunController {
 
     const projectId = req.params.Project_id || req.params.project_id
     if (projectId && run.projectId !== projectId) {
-      return res.status(403).json({ error: 'Cross-project run access forbidden' })
+      return res
+        .status(403)
+        .json({ error: 'Cross-project run access forbidden' })
     }
 
     const mode = req.body?.mode
     if (!MODES.includes(mode)) {
-      return res.status(400).json({ error: `Invalid mode: ${mode}. Allowed: ${MODES.join(', ')}` })
+      return res
+        .status(400)
+        .json({ error: `Invalid mode: ${mode}. Allowed: ${MODES.join(', ')}` })
     }
 
     await this.manager.setMode(runId, mode)

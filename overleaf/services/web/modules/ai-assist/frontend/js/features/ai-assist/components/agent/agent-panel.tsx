@@ -8,10 +8,18 @@ import useEventListener from '@/shared/hooks/use-event-listener'
 import { ArrowDown, NotePencil, SidebarSimple } from '@phosphor-icons/react'
 import { AiAssistant } from '../../assistant'
 import { TranscriptEntry } from '../../agent/agent-messages'
+import { AgentMode } from '../../agent/agent-mode'
 import { ProjectFile, ProjectHandle } from '../../agent/project-handle'
 import { TOOLS } from '../../agent/tools/registry'
-import { formatToday, renderEnvelope } from '../../agent/context/project-context'
-import { Attachment, AttachmentRef, ContextSnapshot } from '../../agent/context/types'
+import {
+  formatToday,
+  renderEnvelope,
+} from '../../agent/context/project-context'
+import {
+  Attachment,
+  AttachmentRef,
+  ContextSnapshot,
+} from '../../agent/context/types'
 import { resolveAttachments } from '../../agent/context/attachments'
 import {
   clearConversation,
@@ -22,10 +30,12 @@ import {
   deleteChat,
   fetchChat,
   getActiveChatId,
+  getStoredChatMode,
   newChatId,
   renameChat,
   saveChat,
   setActiveChatId,
+  setStoredChatMode,
 } from '../../agent/chat-history-client'
 import { ChatHistoryMenu } from './chat-history-menu'
 import { AgentMessageView } from './agent-message'
@@ -43,8 +53,10 @@ import type { FallbackProps } from 'react-error-boundary'
 import {
   getStoredActiveRunId,
   getStoredActiveRunStartedAt,
+  setDetachedRun,
   setStoredActiveRunId,
   stopBackgroundRun,
+  takeDetachedRun,
 } from '../../agent/background/background-run-client'
 import { useAiDock, DockPosition } from '../../hooks/use-ai-dock'
 
@@ -60,7 +72,12 @@ export async function buildUserEntry({
   transcript: TranscriptEntry[]
   text: string
   attachments?: Attachment[]
-  attachedSelection?: { path: string; from: number; to: number; text: string } | null
+  attachedSelection?: {
+    path: string
+    from: number
+    to: number
+    text: string
+  } | null
   /**
    * Context handed over from another panel, appended after the envelope.
    * Kept separate from `attachments` because it is not something the user
@@ -179,17 +196,24 @@ function AgentPanelInner({
   }, [activeDock, setDock, setIsRightOpen])
 
   const [chatId, setChatId] = useState(() => getActiveChatId(projectId))
-  const [chatTitle, setChatTitle] = useState<string>("")
+  const [chatTitle, setChatTitle] = useState<string>('')
+  const initialMode = useMemo(
+    () => getStoredChatMode(projectId, chatId) || 'manual',
+    [projectId, chatId]
+  )
 
   const {
     state,
     setState,
     setMode,
     chatTitle: eventChatTitle,
+    isTitleGenerated,
     handle,
     approvalContext,
     run,
     stop,
+    detach,
+    attach,
     onDecision,
     queueMessage,
     needsConsent,
@@ -198,6 +222,7 @@ function AgentPanelInner({
     tools: TOOLS,
     cacheKey: projectId,
     initialTranscript: loadConversation(projectId),
+    initialMode,
     chatId,
   })
 
@@ -206,21 +231,35 @@ function AgentPanelInner({
     let active = true
     fetchChat(projectId, chatId)
       .then(chat => {
-        if (active && chat?.title && chat.title !== "New chat" && chat.title !== "Untitled chat") {
+        if (!active || !chat) return
+        if (
+          chat.title &&
+          chat.title !== 'New chat' &&
+          chat.title !== 'Untitled chat'
+        ) {
           setChatTitle(chat.title)
+        }
+        if (chat.mode) {
+          setMode(chat.mode)
+          setStoredChatMode(projectId, chatId, chat.mode)
         }
       })
       .catch(() => {})
     return () => {
       active = false
     }
-  }, [projectId, chatId])
+  }, [projectId, chatId, setMode])
+
+  // Whether the next title change sweeps in over the old one: a freshly
+  // generated title, or the title of a chat opened from history
+  const [animateTitle, setAnimateTitle] = useState(false)
 
   useEffect(() => {
     if (eventChatTitle) {
       setChatTitle(eventChatTitle)
+      setAnimateTitle(Boolean(isTitleGenerated))
     }
-  }, [eventChatTitle])
+  }, [eventChatTitle, isTitleGenerated])
 
   const [files, setFiles] = useState<ProjectFile[]>([])
   // Stamped when a run begins so the status line can count from it;
@@ -254,6 +293,18 @@ function AgentPanelInner({
   const queuedIdsRef = useRef<Set<string>>(new Set())
   const runStartedAtRef = useRef<number | null>(runStartedAt)
   runStartedAtRef.current = runStartedAt
+  // Time the run spent waiting on the user, left out of its duration
+  const waitedMsRef = useRef(0)
+  const waitStartRef = useRef<number | null>(null)
+  const awaitingUser = Boolean(state.pendingApproval)
+  useEffect(() => {
+    if (awaitingUser) {
+      waitStartRef.current ??= Date.now()
+    } else if (waitStartRef.current !== null) {
+      waitedMsRef.current += Date.now() - waitStartRef.current
+      waitStartRef.current = null
+    }
+  }, [awaitingUser])
   const activeWordRef = useRef<string | null>(null)
   const handleWordChange = useCallback((word: string) => {
     activeWordRef.current = word
@@ -261,6 +312,7 @@ function AgentPanelInner({
 
   useEffect(() => {
     if (state.running) {
+      if (runStartedAtRef.current === null) waitedMsRef.current = 0
       setRunStartedAt(current => current ?? Date.now())
       setCompletedRun(null)
     } else if (prevRunningRef.current && !state.running) {
@@ -270,7 +322,10 @@ function AgentPanelInner({
         !state.pendingApproval &&
         runStartedAtRef.current
       ) {
-        const duration = Math.max(1000, Date.now() - runStartedAtRef.current)
+        const duration = Math.max(
+          1000,
+          Date.now() - runStartedAtRef.current - waitedMsRef.current
+        )
         const word = activeWordRef.current || undefined
         setCompletedRun({ durationMs: duration, word })
         setState(curr => {
@@ -290,11 +345,20 @@ function AgentPanelInner({
       setRunStartedAt(null)
     }
     prevRunningRef.current = state.running
-  }, [state.running, state.stoppedByUser, state.error, state.pendingApproval, setState])
+  }, [
+    state.running,
+    state.stoppedByUser,
+    state.error,
+    state.pendingApproval,
+    setState,
+  ])
   const transcriptRef = useRef<HTMLDivElement>(null)
 
-  const { onScroll: onTranscriptScroll, isAtBottom, scrollToBottom } =
-    useStickToBottom(transcriptRef)
+  const {
+    onScroll: onTranscriptScroll,
+    isAtBottom,
+    scrollToBottom,
+  } = useStickToBottom(transcriptRef)
 
   const promptHistory = useMemo(
     () =>
@@ -325,20 +389,46 @@ function AgentPanelInner({
     saveConversation(projectId, state.transcript)
   }, [projectId, state.transcript])
 
-  // Mirror the conversation to a JSON file on the server once a run settles.
+  // Mirror the conversation to a JSON file on the server once a run settles or mode changes.
   // The ref skips re-saving a chat that was just opened from history, which
   // would otherwise bump its timestamp without any change.
-  const lastSavedTranscriptRef = useRef(state.transcript)
+  const lastSavedRef = useRef({
+    transcript: state.transcript,
+    mode: state.mode,
+  })
   useEffect(() => {
     if (state.running || state.transcript.length === 0) return
-    if (lastSavedTranscriptRef.current === state.transcript) return
+    if (
+      lastSavedRef.current.transcript === state.transcript &&
+      lastSavedRef.current.mode === state.mode
+    ) {
+      return
+    }
     const transcript = state.transcript
+    const mode = state.mode
     const timer = window.setTimeout(() => {
-      lastSavedTranscriptRef.current = transcript
-      saveChat(projectId, chatId, transcript, state.mode, chatTitle || undefined).catch(() => {})
+      lastSavedRef.current = { transcript, mode }
+      saveChat(
+        projectId,
+        chatId,
+        transcript,
+        mode,
+        chatTitle || undefined
+      ).catch(() => {})
     }, 800)
     return () => window.clearTimeout(timer)
-  }, [projectId, chatId, state.running, state.transcript, state.mode, chatTitle])
+  }, [
+    projectId,
+    chatId,
+    state.running,
+    state.transcript,
+    state.mode,
+    chatTitle,
+  ])
+
+  useEffect(() => {
+    setStoredChatMode(projectId, chatId, state.mode)
+  }, [projectId, chatId, state.mode])
 
   useEffect(() => {
     let mounted = true
@@ -436,17 +526,22 @@ function AgentPanelInner({
         stoppedByUser: false,
         error: null,
       }))
+      // Sending from anywhere in the history jumps to the latest point and
+      // follows the reply, as the ↓ button does. Instant rather than smooth: a
+      // smooth scroll's own scroll events would switch following back off
+      // before it reached the new message.
+      scrollToBottom({ smooth: false })
 
       try {
         let attachmentsResolved: Attachment[] = []
         try {
-          attachmentsResolved = await resolveAttachments(
-            attachmentRefs,
-            handle
-          )
+          attachmentsResolved = await resolveAttachments(attachmentRefs, handle)
         } catch {
           // Never fail prompt send if attachment resolution fails
-          attachmentsResolved = attachmentRefs.map(r => ({ path: r.path, text: null }))
+          attachmentsResolved = attachmentRefs.map(r => ({
+            path: r.path,
+            text: null,
+          }))
         }
         const built = await buildUserEntry({
           handle,
@@ -480,7 +575,7 @@ function AgentPanelInner({
         }))
       }
     },
-    [handle, state.running, run, queueMessage, setState]
+    [handle, state.running, run, queueMessage, setState, scrollToBottom]
   )
 
   const onSend = useCallback(
@@ -491,22 +586,13 @@ function AgentPanelInner({
     ) => {
       const assistant = AiAssistant.fromStoredSettings()
       if (!assistant) {
-        setState(current => ({
-          ...current,
-          error: {
-            code: 'noProvider',
-            message: t(
-              'ai_assist_configure_provider',
-              'Configure an AI provider in Account Settings to use the assistant.'
-            ),
-          },
-        }))
         return
       }
 
       // If attachments/selection not explicitly provided (e.g. clicked from a suggestion),
       // bundle the user's @mention files and highlighted text together!
-      const finalAttachments = attachmentRefs !== undefined ? attachmentRefs : attachments
+      const finalAttachments =
+        attachmentRefs !== undefined ? attachmentRefs : attachments
       const finalSelection =
         selection !== undefined
           ? selection
@@ -537,7 +623,9 @@ function AgentPanelInner({
     if (state.running || state.stoppedByUser) return
     const transcript = liveTranscriptRef.current
     const lost = (entry: TranscriptEntry) =>
-      entry.role === 'user' && entry.pending && queuedIdsRef.current.has(entry.id)
+      entry.role === 'user' &&
+      entry.pending &&
+      queuedIdsRef.current.has(entry.id)
     if (!transcript.some(lost)) return
     const revived = transcript.map(entry => {
       if (!lost(entry)) return entry
@@ -607,6 +695,26 @@ function AgentPanelInner({
   )
 
   const [newChatSeed, setNewChatSeed] = useState(0)
+  const [hasProvider, setHasProvider] = useState(() =>
+    Boolean(AiAssistant.fromStoredSettings())
+  )
+
+  useEffect(() => {
+    const updateProviderStatus = () => {
+      setHasProvider(Boolean(AiAssistant.fromStoredSettings()))
+    }
+    window.addEventListener('storage', updateProviderStatus)
+    window.addEventListener('focus', updateProviderStatus)
+    window.addEventListener('aiAssist:providerChanged', updateProviderStatus)
+    return () => {
+      window.removeEventListener('storage', updateProviderStatus)
+      window.removeEventListener('focus', updateProviderStatus)
+      window.removeEventListener(
+        'aiAssist:providerChanged',
+        updateProviderStatus
+      )
+    }
+  }, [])
 
   const onPickStarter = useCallback(
     (picked: PickedStarter | string) => {
@@ -616,46 +724,90 @@ function AgentPanelInner({
     [onSend]
   )
 
+  const handleModeChange = useCallback(
+    (newMode: AgentMode) => {
+      setMode(newMode)
+      setStoredChatMode(projectId, chatId, newMode)
+      if (state.transcript.length > 0) {
+        saveChat(
+          projectId,
+          chatId,
+          state.transcript,
+          newMode,
+          chatTitle || undefined
+        ).catch(() => {})
+      }
+    },
+    [chatId, chatTitle, projectId, setMode, state.transcript]
+  )
+
+  /**
+   * Leaving a chat does not stop its run. The panel stops following it, so its
+   * events cannot land in the next chat, and the chat is saved as it stands;
+   * reopening it replays the run from the start and picks up the rest.
+   */
+  const leaveChat = useCallback(() => {
+    const now = Date.now()
+    // Moved forward by the time spent waiting on the user, which the clock
+    // leaves out when the chat is reopened
+    const waited =
+      waitedMsRef.current +
+      (waitStartRef.current !== null ? now - waitStartRef.current : 0)
+    waitedMsRef.current = 0
+    waitStartRef.current = null
+    const runId = detach()
+    if (!runId) return
+    setDetachedRun(projectId, chatId, {
+      runId,
+      startedAt: (runStartedAtRef.current ?? now) + waited,
+    })
+    saveChat(
+      projectId,
+      chatId,
+      liveTranscriptRef.current,
+      state.mode,
+      chatTitle || undefined
+    ).catch(() => {})
+  }, [chatId, chatTitle, detach, projectId, state.mode])
+
   const onNewChat = useCallback(() => {
-    // Stop first: the EventSource is still live, so clearing the transcript
-    // without cancelling would let the old run's events reduce into the new
-    // empty conversation and get saved over it.
-    // Unawaited: stop's setState runs before its first await, so React 18 batches
-    // both updates and emptyAgentState wins. If an await is ever moved before
-    // setState in stop(), onNewChat must be revisited.
     void stop()
+    leaveChat()
     clearConversation(projectId)
     const id = newChatId()
     setActiveChatId(projectId, id)
     setChatId(id)
-    setChatTitle("")
-    // The mode is the user's standing choice about how much they want to be
-    // asked, not a property of the conversation. Resetting it here is how
-    // Accept edits quietly became Manual again on every new chat.
-    setState(current => emptyAgentState([], current.mode, ""))
+    setChatTitle('')
+    setAnimateTitle(false)
+    setStoredChatMode(projectId, id, 'manual')
+    setState(emptyAgentState([], 'manual', ''))
     setNewChatSeed(s => s + 1)
     setCompletedRun(null)
     setRunStartedAt(null)
-  }, [projectId, setState, stop])
+  }, [leaveChat, projectId, setState, stop])
 
   const onOpenChat = useCallback(
     async (id: string) => {
       if (id === chatId) return
       const chat = await fetchChat(projectId, id).catch(() => null)
       if (!chat) return
-      // Same ordering as onNewChat: cancel the live run before swapping in
-      // the stored transcript so its events cannot land in the opened chat.
-      void stop()
-      lastSavedTranscriptRef.current = chat.transcript
+      leaveChat()
+      const mode = chat.mode || getStoredChatMode(projectId, id) || 'manual'
+      lastSavedRef.current = { transcript: chat.transcript, mode }
       saveConversation(projectId, chat.transcript)
       setActiveChatId(projectId, id)
       setChatId(id)
-      setChatTitle(chat.title || "")
-      setState(emptyAgentState(chat.transcript, chat.mode || 'manual', chat.title || ""))
+      setChatTitle(chat.title || '')
+      setAnimateTitle(true)
+      setStoredChatMode(projectId, id, mode)
+      setState(emptyAgentState(chat.transcript, mode, chat.title || ''))
       setCompletedRun(null)
-      setRunStartedAt(null)
+      // A run left going when this chat was last open carries on from here
+      const detached = takeDetachedRun(projectId, id)
+      setRunStartedAt(detached?.startedAt ?? null)
+      if (detached) attach(detached.runId, detached.startedAt)
     },
-    [chatId, projectId, setState, stop]
+    [attach, chatId, leaveChat, projectId, setState]
   )
 
   const onRenameChat = useCallback(
@@ -670,18 +822,27 @@ function AgentPanelInner({
     [chatId, projectId]
   )
 
+  // A deleted chat's run has nowhere to go, so it is stopped
   const onDeleteChat = useCallback(
     async (id: string) => {
+      if (id === chatId) {
+        void stop()
+      } else {
+        const detached = takeDetachedRun(projectId, id)
+        if (detached) void stopBackgroundRun(detached.runId).catch(() => {})
+      }
       await deleteChat(projectId, id)
       if (id === chatId) onNewChat()
     },
-    [chatId, onNewChat, projectId]
+    [chatId, onNewChat, projectId, stop]
   )
 
   return (
     <div className="ai-assist-panel">
       <AgentPanelHeader
         title={chatTitle || t('ai_assist_panel_title', 'AI assistant')}
+        isGeneratingTitle={animateTitle}
+        onTitleAnimationEnd={() => setAnimateTitle(false)}
         onRenameTitle={newTitle => void onRenameChat(chatId, newTitle)}
         actions={
           <div className="d-flex align-items-center gap-1">
@@ -729,7 +890,8 @@ function AgentPanelInner({
                   size={18}
                   weight="fill"
                   style={{
-                    transform: activeDock !== 'right' ? 'scaleX(-1)' : undefined,
+                    transform:
+                      activeDock !== 'right' ? 'scaleX(-1)' : undefined,
                     transformOrigin: 'center',
                   }}
                 />
@@ -748,177 +910,185 @@ function AgentPanelInner({
         >
           {state.transcript.length === 0 ? (
             <AgentEmptyState
-            onPick={onPickStarter}
-            handle={handle}
-            files={files}
-            projectId={projectId}
-            refreshSeed={newChatSeed}
-          />
-        ) : (
-          state.transcript.map((entry, entryIndex) => (
-            <AgentMessageView
-              key={entry.id}
-              entry={entry}
-              pendingApprovalId={state.pendingApproval?.id ?? null}
-              approvalContext={approvalContext}
-              onDecision={onDecision}
-              isRunning={
-                state.running && entryIndex === state.transcript.length - 1
-              }
-              webSources={webSources}
+              onPick={onPickStarter}
+              handle={handle}
+              files={files}
+              projectId={projectId}
+              refreshSeed={newChatSeed}
+              disabled={!hasProvider}
             />
-          ))
-        )}
+          ) : (
+            state.transcript.map((entry, entryIndex) => (
+              <AgentMessageView
+                key={entry.id}
+                entry={entry}
+                pendingApprovalId={state.pendingApproval?.id ?? null}
+                approvalContext={approvalContext}
+                onDecision={onDecision}
+                isRunning={
+                  state.running && entryIndex === state.transcript.length - 1
+                }
+                webSources={webSources}
+              />
+            ))
+          )}
 
-        {/*
+          {/*
           Below the activity rows, never inside one: the rows report what the
           agent did, this reports that it is still going or completed.
         */}
-        {runStartedAt !== null && state.running && !state.pendingApproval ? (
-          <AgentStatusLine
-            startedAt={runStartedAt}
-            isRunning={true}
-            onWordChange={handleWordChange}
-            blocks={
-              (() => {
+          {runStartedAt !== null && state.running ? (
+            <AgentStatusLine
+              startedAt={runStartedAt}
+              isRunning={true}
+              isPaused={Boolean(state.pendingApproval)}
+              onWordChange={handleWordChange}
+              blocks={(() => {
                 const last = state.running ? state.transcript.at(-1) : null
-                return last?.role === 'assistant' ? last.blocks ?? [] : []
-              })()
-            }
-          />
-        ) : completedRun &&
-          !state.running &&
-          !state.pendingApproval &&
-          !state.stoppedByUser &&
-          !state.error &&
-          state.transcript.length > 0 &&
-          state.transcript.at(-1)?.role === 'assistant' ? (
-          <AgentStatusLine
-            startedAt={Date.now() - completedRun.durationMs}
-            durationMs={completedRun.durationMs}
-            completedWord={completedRun.word}
-            isRunning={false}
-          />
-        ) : null}
+                return last?.role === 'assistant' ? (last.blocks ?? []) : []
+              })()}
+            />
+          ) : completedRun &&
+            !state.running &&
+            !state.pendingApproval &&
+            !state.stoppedByUser &&
+            !state.error &&
+            state.transcript.length > 0 &&
+            state.transcript.at(-1)?.role === 'assistant' ? (
+            <AgentStatusLine
+              startedAt={Date.now() - completedRun.durationMs}
+              durationMs={completedRun.durationMs}
+              completedWord={completedRun.word}
+              isRunning={false}
+            />
+          ) : null}
 
-        {state.stoppedByUser && (
-          <div className="ai-assist-stopped-notice" role="status">
-            <span>{t('ai_assist_stopped_by_user', 'Generation stopped')}</span>
-          </div>
-        )}
+          {state.stoppedByUser && (
+            <div className="ai-assist-stopped-notice" role="status">
+              <span>
+                {t('ai_assist_stopped_by_user', 'Generation stopped')}
+              </span>
+            </div>
+          )}
 
-        {needsConsent && (
-          <div className="ai-assist-consent" role="alert">
-            <p>
-              {t(
-                'ai_assist_consent_prompt',
-                'Using the assistant will send project contents and queries to your configured AI provider.'
-              )}
-            </p>
-            <OLButton type="button" variant="primary" size="sm" onClick={onAllowConsent}>
-              {t('allow_and_continue', 'Allow and continue')}
-            </OLButton>
-          </div>
-        )}
+          {needsConsent && (
+            <div className="ai-assist-consent" role="alert">
+              <p>
+                {t(
+                  'ai_assist_consent_prompt',
+                  'Using the assistant will send project contents and queries to your configured AI provider.'
+                )}
+              </p>
+              <OLButton
+                type="button"
+                variant="primary"
+                size="sm"
+                onClick={onAllowConsent}
+              >
+                {t('allow_and_continue', 'Allow and continue')}
+              </OLButton>
+            </div>
+          )}
 
-        {state.error && (
-          <div className="ai-assist-error" role="alert">
-            {state.error.code === 'contextExhausted' ? (
-              <div className="ai-assist-context-exhausted">
-                <p>{state.error.message}</p>
-                <OLButton
-                  type="button"
-                  variant="primary"
-                  size="sm"
-                  onClick={onNewChat}
-                >
-                  {t('ai_assist_start_new_chat', 'Start a new chat')}
-                </OLButton>
-              </div>
-            ) : (
-              <>
-                <div className="ai-assist-error-header">
-                  <span className="ai-assist-error-title">
-                    {state.error.status
-                      ? `Upstream Error (HTTP ${state.error.status})`
-                      : state.error.code === 'providerAuth'
-                        ? 'Authentication Error'
-                        : state.error.code === 'network'
-                          ? 'Connection Error'
-                          : state.error.code === 'runFailed'
-                            ? 'Failed to Start Run'
-                            : 'AI Provider Error'}
-                  </span>
-                  {state.error.upstreamCode && (
-                    <span className="ai-assist-error-badge">
-                      {state.error.upstreamCode}
-                    </span>
-                  )}
-                </div>
-                <div className="ai-assist-error-body">
-                  <p className="ai-assist-error-message">{state.error.message}</p>
-                  {state.error.hint && (
-                    <p className="ai-assist-error-hint">
-                      <strong>Where to fix:</strong> {state.error.hint}
-                    </p>
-                  )}
-                </div>
-                <div className="ai-assist-error-actions">
+          {state.error && (
+            <div className="ai-assist-error" role="alert">
+              {state.error.code === 'contextExhausted' ? (
+                <div className="ai-assist-context-exhausted">
+                  <p>{state.error.message}</p>
                   <OLButton
                     type="button"
-                    variant="secondary"
+                    variant="primary"
                     size="sm"
-                    onClick={() => void run(state.transcript)}
+                    onClick={onNewChat}
                   >
-                    {t('try_again', 'Try again')}
+                    {t('ai_assist_start_new_chat', 'Start a new chat')}
                   </OLButton>
-                  {(state.error.code === 'providerAuth' ||
-                    state.error.code === 'modelsUnsupported' ||
-                    state.error.code === 'noProvider') && (
+                </div>
+              ) : (
+                <>
+                  <div className="ai-assist-error-header">
+                    <span className="ai-assist-error-title">
+                      {state.error.status
+                        ? `Upstream Error (HTTP ${state.error.status})`
+                        : state.error.code === 'providerAuth'
+                          ? 'Authentication Error'
+                          : state.error.code === 'network'
+                            ? 'Connection Error'
+                            : state.error.code === 'runFailed'
+                              ? 'Failed to Start Run'
+                              : 'AI Provider Error'}
+                    </span>
+                    {state.error.upstreamCode && (
+                      <span className="ai-assist-error-badge">
+                        {state.error.upstreamCode}
+                      </span>
+                    )}
+                  </div>
+                  <div className="ai-assist-error-body">
+                    <p className="ai-assist-error-message">
+                      {state.error.message}
+                    </p>
+                    {state.error.hint && (
+                      <p className="ai-assist-error-hint">
+                        <strong>Where to fix:</strong> {state.error.hint}
+                      </p>
+                    )}
+                  </div>
+                  <div className="ai-assist-error-actions">
                     <OLButton
-                      href="/user/settings"
-                      target="_blank"
-                      rel="noopener noreferrer"
+                      type="button"
                       variant="secondary"
                       size="sm"
+                      onClick={() => void run(state.transcript)}
                     >
-                      {t('ai_assist_account_settings', 'Account Settings')}
+                      {t('try_again', 'Try again')}
                     </OLButton>
-                  )}
-                </div>
-              </>
-            )}
-          </div>
-        )}
+                    {(state.error.code === 'providerAuth' ||
+                      state.error.code === 'modelsUnsupported') && (
+                      <OLButton
+                        href="/user/settings"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        variant="secondary"
+                        size="sm"
+                      >
+                        {t('ai_assist_account_settings', 'Account Settings')}
+                      </OLButton>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+        </div>
 
+        {!isAtBottom && (
+          <button
+            type="button"
+            className="ai-assist-scroll-bottom-btn"
+            onClick={() => scrollToBottom({ smooth: true })}
+            aria-label={t('ai_assist_scroll_to_bottom', 'Jump to latest')}
+            title={t('ai_assist_scroll_to_bottom', 'Jump to latest')}
+          >
+            <ArrowDown size={16} weight="bold" />
+          </button>
+        )}
       </div>
 
-      {!isAtBottom && (
-        <button
-          type="button"
-          className="ai-assist-scroll-bottom-btn"
-          onClick={() => scrollToBottom({ smooth: true })}
-          aria-label={t('ai_assist_scroll_to_bottom', 'Jump to latest')}
-          title={t('ai_assist_scroll_to_bottom', 'Jump to latest')}
-        >
-          <ArrowDown size={16} weight="bold" />
-        </button>
-      )}
-    </div>
-
-    <AgentComposer
-      running={state.running}
-      mode={state.mode}
-      onModeChange={setMode}
-      paths={files.map(file => file.path)}
-      onSend={onSend}
-      onStop={stop}
-      attachments={attachments}
-      setAttachments={setAttachments}
-      attachedSelection={attachedSelection}
-      setAttachedSelection={setAttachedSelection}
-      history={promptHistory}
-    />
+      <AgentComposer
+        running={state.running}
+        disabled={!hasProvider}
+        mode={state.mode}
+        onModeChange={handleModeChange}
+        paths={files.map(file => file.path)}
+        onSend={onSend}
+        onStop={stop}
+        attachments={attachments}
+        setAttachments={setAttachments}
+        attachedSelection={attachedSelection}
+        setAttachedSelection={setAttachedSelection}
+        history={promptHistory}
+      />
     </div>
   )
 }
@@ -966,9 +1136,6 @@ export const AgentPanelFallback: React.FC<FallbackProps> = ({
   )
 }
 
-export const AgentPanel = withErrorBoundary(
-  AgentPanelInner,
-  AgentPanelFallback
-)
+export const AgentPanel = withErrorBoundary(AgentPanelInner, AgentPanelFallback)
 
 export default AgentPanel

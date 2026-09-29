@@ -14,8 +14,10 @@ function getCsrfHeaders(): Record<string, string> {
   return token ? { 'X-Csrf-Token': token } : {}
 }
 
-const ACTIVE_RUN_KEY = (projectId: string) => `ai-assist:active-run:${projectId}`
-const ACTIVE_RUN_START_KEY = (projectId: string) => `ai-assist:active-run-start:${projectId}`
+const ACTIVE_RUN_KEY = (projectId: string) =>
+  `ai-assist:active-run:${projectId}`
+const ACTIVE_RUN_START_KEY = (projectId: string) =>
+  `ai-assist:active-run-start:${projectId}`
 
 export function getStoredActiveRunId(projectId: string): string | null {
   return customLocalStorage.getItem(ACTIVE_RUN_KEY(projectId))
@@ -34,11 +36,49 @@ export function setStoredActiveRunId(
   if (runId) {
     customLocalStorage.setItem(ACTIVE_RUN_KEY(projectId), runId)
     const startTime = startedAt ?? Date.now()
-    customLocalStorage.setItem(ACTIVE_RUN_START_KEY(projectId), String(startTime))
+    customLocalStorage.setItem(
+      ACTIVE_RUN_START_KEY(projectId),
+      String(startTime)
+    )
   } else {
     customLocalStorage.removeItem(ACTIVE_RUN_KEY(projectId))
     customLocalStorage.removeItem(ACTIVE_RUN_START_KEY(projectId))
   }
+}
+
+/** A run still going on the server for a chat that is not on screen. */
+export type DetachedRun = { runId: string; startedAt: number }
+
+const DETACHED_RUNS_KEY = (projectId: string) =>
+  `ai-assist:detached-runs:${projectId}`
+
+function readDetachedRuns(projectId: string): Record<string, DetachedRun> {
+  const stored = customLocalStorage.getItem(DETACHED_RUNS_KEY(projectId))
+  return stored && typeof stored === 'object' ? stored : {}
+}
+
+export function setDetachedRun(
+  projectId: string,
+  chatId: string,
+  run: DetachedRun | null
+) {
+  const runs = readDetachedRuns(projectId)
+  if (run) {
+    runs[chatId] = run
+  } else {
+    delete runs[chatId]
+  }
+  customLocalStorage.setItem(DETACHED_RUNS_KEY(projectId), runs)
+}
+
+/** The chat's detached run, forgotten here since its chat now follows it. */
+export function takeDetachedRun(
+  projectId: string,
+  chatId: string
+): DetachedRun | null {
+  const run = readDetachedRuns(projectId)[chatId] ?? null
+  if (run) setDetachedRun(projectId, chatId, null)
+  return run
 }
 
 export async function startBackgroundRun({
@@ -196,9 +236,16 @@ export async function submitBackgroundCompile(
   projectId: string,
   runId: string,
   id: string,
-  outcome: { status: string; errors: unknown[]; warnings: unknown[]; rawLog?: string | null }
+  outcome: {
+    status: string
+    errors: unknown[]
+    warnings: unknown[]
+    rawLog?: string | null
+  }
 ): Promise<void> {
-  const rawLog = outcome.rawLog ? outcome.rawLog.slice(-MAX_REPORTED_LOG_CHARS) : ''
+  const rawLog = outcome.rawLog
+    ? outcome.rawLog.slice(-MAX_REPORTED_LOG_CHARS)
+    : ''
   await fetch(`/ai-assist/projects/${projectId}/runs/${runId}/compile`, {
     method: 'POST',
     headers: {
@@ -228,14 +275,17 @@ export async function setBackgroundRunMode(
   runId: string,
   mode: AgentMode
 ): Promise<void> {
-  const res = await fetch(`/ai-assist/projects/${projectId}/runs/${runId}/mode`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...getCsrfHeaders(),
-    },
-    body: JSON.stringify({ mode }),
-  })
+  const res = await fetch(
+    `/ai-assist/projects/${projectId}/runs/${runId}/mode`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getCsrfHeaders(),
+      },
+      body: JSON.stringify({ mode }),
+    }
+  )
   if (!res.ok) {
     throw new Error(`Failed to change mode: ${res.status}`)
   }

@@ -157,7 +157,11 @@ export async function* runAgent({
   })
 
   if (request.exhausted) {
-    yield { type: 'error', code: 'contextExhausted', message: CONTEXT_EXHAUSTED_MESSAGE }
+    yield {
+      type: 'error',
+      code: 'contextExhausted',
+      message: CONTEXT_EXHAUSTED_MESSAGE,
+    }
     return yield { type: 'turnFinished', reason: 'stop' }
   }
 
@@ -181,7 +185,11 @@ export async function* runAgent({
     // the budget is checked before every request, not only the first.
     const budgeted = applyBudget({ system, messages, limits, tools: specs })
     if (budgeted.exhausted) {
-      yield { type: 'error', code: 'contextExhausted', message: CONTEXT_EXHAUSTED_MESSAGE }
+      yield {
+        type: 'error',
+        code: 'contextExhausted',
+        message: CONTEXT_EXHAUSTED_MESSAGE,
+      }
       return yield { type: 'turnFinished', reason: 'stop' }
     }
     messages = budgeted.messages
@@ -224,7 +232,10 @@ export async function* runAgent({
                   calls.push(found.call)
                   convertedThisTurn = true
                   held = found.after
-                } else if (held.includes('```json') && !held.slice(held.indexOf('```json') + 7).includes('```')) {
+                } else if (
+                  held.includes('```json') &&
+                  !held.slice(held.indexOf('```json') + 7).includes('```')
+                ) {
                   // Fence open but not closed: yield what precedes it and hold
                   // the rest until the closing fence arrives.
                   const open = held.indexOf('```json')
@@ -293,7 +304,6 @@ export async function* runAgent({
     if (held) {
       yield { type: 'text', text: held }
       text += held
-      held = ''
     }
 
     if (calls.length === 0 && !convertedThisTurn) {
@@ -325,7 +335,9 @@ export async function* runAgent({
           role: 'user',
           content:
             FINAL_REPLY_NUDGE +
-            (rejectedEditPaths.length ? rejectedEditsNote(rejectedEditPaths) : ''),
+            (rejectedEditPaths.length
+              ? rejectedEditsNote(rejectedEditPaths)
+              : ''),
         })
         continue
       }
@@ -374,7 +386,11 @@ export async function* runAgent({
       } else {
         if (call.name === requireTool) requiredToolCalled = true
         if (tool.suspends) {
-          yield { type: 'awaitingApproval', id: call.id, edit: call.args as any }
+          yield {
+            type: 'awaitingApproval',
+            id: call.id,
+            edit: call.args as any,
+          }
         }
         try {
           const toolHandle = tool.mutates ? handle : readOnlyHandle(handle)
@@ -396,10 +412,7 @@ export async function* runAgent({
       ) {
         rejectedEditPaths.push(String((call.args as any)?.path ?? 'the file'))
       }
-      const isFailed =
-        isError ||
-        status === 'noMatch' ||
-        status === 'ambiguous'
+      const isFailed = isError || status === 'noMatch' || status === 'ambiguous'
       let stop: StopReason | null = null
 
       if (isFailed) {
@@ -413,7 +426,11 @@ export async function* runAgent({
             code: 'runawayToolLoop',
             message: `Stopped repeated failing call to ${call.name}. Please check the file contents or provide more specific instructions.`,
           }
-        } else if (repeats === IDENTICAL_FAILURE_LIMIT - 1 && result && typeof result === 'object') {
+        } else if (
+          repeats === IDENTICAL_FAILURE_LIMIT - 1 &&
+          result &&
+          typeof result === 'object'
+        ) {
           result = {
             ...(result as object),
             repeated: `This exact ${call.name} call has now failed ${repeats} times with the same arguments; one more identical failure ends the run. Change the arguments (re-read the file and copy its current text) or take a different approach.`,
@@ -473,7 +490,9 @@ export async function* runAgent({
             role: 'tool',
             toolCallId: skipped.id || nextToolCallId('call'),
             name: skipped.name,
-            content: JSON.stringify({ error: 'Not run: the turn was stopped.' }),
+            content: JSON.stringify({
+              error: 'Not run: the turn was stopped.',
+            }),
             isError: true,
           })
         }

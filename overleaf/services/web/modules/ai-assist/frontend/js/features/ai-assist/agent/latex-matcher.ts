@@ -40,7 +40,7 @@ export function cleanOldText(text: string): string {
   if (!text) return ''
   let cleaned = cleanLineNumbers(text)
   // Normalize double-escaped LaTeX backslashes e.g. \\centering -> \centering
-  cleaned = cleaned.replace(/\\\\([a-zA-Z@{}\[\]$%&_#\\]|\\\\)/g, '\\$1')
+  cleaned = cleaned.replace(/\\\\([a-zA-Z@{}[\]$%&_#\\]|\\\\)/g, '\\$1')
   return cleaned
 }
 
@@ -49,7 +49,8 @@ export function cleanOldText(text: string): string {
  */
 export function tokenizeCode(str: string): CodeToken[] {
   const tokens: CodeToken[] = []
-  const re = /\\[a-zA-Z@]+|\\end\{[^}]*\}|\\begin\{[^}]*\}|\{[^}]*\}|[^\s\\{}]+|\\/g
+  const re =
+    /\\[a-zA-Z@]+|\\end\{[^}]*\}|\\begin\{[^}]*\}|\{[^}]*\}|[^\s\\{}]+|\\/g
   let m: RegExpExecArray | null
   while ((m = re.exec(str)) !== null) {
     tokens.push({
@@ -68,11 +69,12 @@ export function countOccurrences(haystack: string, needle: string): number {
   if (!needle) return 0
   const normH = normalizeLines(haystack)
   const normN = normalizeLines(needle)
+  if (!normN) return 0
   let count = 0
   let index = normH.indexOf(normN)
   while (index !== -1) {
     count += 1
-    index = normH.indexOf(normN, index + normN.length)
+    index = normH.indexOf(normN, index + Math.max(1, normN.length))
   }
   if (count > 0) return count
 
@@ -85,10 +87,11 @@ export function countOccurrences(haystack: string, needle: string): number {
     .split('\n')
     .map(l => l.trimEnd())
     .join('\n')
+  if (!trimN) return 0
   index = trimH.indexOf(trimN)
   while (index !== -1) {
     count += 1
-    index = trimH.indexOf(trimN, index + trimN.length)
+    index = trimH.indexOf(trimN, index + Math.max(1, trimN.length))
   }
   return count
 }
@@ -144,7 +147,10 @@ export function findWhitespaceAgnosticAnchor(
 /**
  * Line-by-line fuzzy matching ignoring line prefixes and leading/trailing whitespace.
  */
-export function findFuzzyUniqueAnchor(haystack: string, needle: string): string | null {
+export function findFuzzyUniqueAnchor(
+  haystack: string,
+  needle: string
+): string | null {
   if (!needle) return null
   const normH = normalizeLines(haystack)
   const normN = normalizeLines(needle)
@@ -211,7 +217,10 @@ export function findFuzzyUniqueAnchor(haystack: string, needle: string): string 
  * 3. Fuzzy anchor matching
  * 4. Whitespace-agnostic token matching
  */
-export function locateAnchorInText(docText: string, anchor: string): MatchResult | null {
+export function locateAnchorInText(
+  docText: string,
+  anchor: string
+): MatchResult | null {
   if (!docText || !anchor) return null
 
   // 1. Exact match
@@ -226,11 +235,15 @@ export function locateAnchorInText(docText: string, anchor: string): MatchResult
   }
 
   // 3. Fuzzy anchor matching
-  const fuzzy = findFuzzyUniqueAnchor(docText, anchor) || (cleaned ? findFuzzyUniqueAnchor(docText, cleaned) : null)
+  const fuzzy =
+    findFuzzyUniqueAnchor(docText, anchor) ||
+    (cleaned ? findFuzzyUniqueAnchor(docText, cleaned) : null)
   if (fuzzy) return { type: 'fuzzy', anchor: fuzzy }
 
   // 4. Whitespace-agnostic token matching
-  const wsMatch = findWhitespaceAgnosticAnchor(docText, anchor) || (cleaned ? findWhitespaceAgnosticAnchor(docText, cleaned) : null)
+  const wsMatch =
+    findWhitespaceAgnosticAnchor(docText, anchor) ||
+    (cleaned ? findWhitespaceAgnosticAnchor(docText, cleaned) : null)
   if (wsMatch) {
     return {
       type: 'whitespace',
@@ -241,7 +254,9 @@ export function locateAnchorInText(docText: string, anchor: string): MatchResult
   }
 
   // 5. Fuzzy word window matching
-  const wordMatch = findFuzzyWordWindow(docText, anchor) || (cleaned ? findFuzzyWordWindow(docText, cleaned) : null)
+  const wordMatch =
+    findFuzzyWordWindow(docText, anchor) ||
+    (cleaned ? findFuzzyWordWindow(docText, cleaned) : null)
   if (wordMatch) {
     return {
       type: 'fuzzy_words',
@@ -268,7 +283,12 @@ export function findFuzzyWordWindow(
   docText: string,
   needleText: string,
   threshold = 0.75
-): { anchor: string; charStart: number; charEnd: number; score: number } | null {
+): {
+  anchor: string
+  charStart: number
+  charEnd: number
+  score: number
+} | null {
   if (!docText || !needleText) return null
 
   // Tokenize doc into words with character offsets
@@ -310,7 +330,10 @@ export function findFuzzyWordWindow(
           d += 2
           n++
           matches += 0.8
-        } else if (n + 1 < nLen && docWords[i + d].clean === needleWords[n + 1]) {
+        } else if (
+          n + 1 < nLen &&
+          docWords[i + d].clean === needleWords[n + 1]
+        ) {
           d++
           n += 2
           matches += 0.8
@@ -330,11 +353,16 @@ export function findFuzzyWordWindow(
 
   // Cluster overlapping hits (overlapping index ranges correspond to the same document occurrence)
   hits.sort((a, b) => b.score - a.score)
-  const clusters: Array<{ best: { startIdx: number; endIdx: number; score: number } }> = []
+  const clusters: Array<{
+    best: { startIdx: number; endIdx: number; score: number }
+  }> = []
   for (const hit of hits) {
     let merged = false
     for (const cluster of clusters) {
-      if (Math.max(hit.startIdx, cluster.best.startIdx) <= Math.min(hit.endIdx, cluster.best.endIdx)) {
+      if (
+        Math.max(hit.startIdx, cluster.best.startIdx) <=
+        Math.min(hit.endIdx, cluster.best.endIdx)
+      ) {
         merged = true
         break
       }
@@ -392,7 +420,10 @@ export function findMatchingLines(haystack: string, needle: string): number[] {
   const normH = normalizeLines(haystack)
   const normN = cleanOldText(normalizeLines(needle))
   const hLines = normH.split('\n')
-  const nLines = normN.split('\n').map(l => l.trim()).filter(Boolean)
+  const nLines = normN
+    .split('\n')
+    .map(l => l.trim())
+    .filter(Boolean)
   if (nLines.length === 0) return []
 
   const targetLine = nLines[0]
@@ -401,7 +432,10 @@ export function findMatchingLines(haystack: string, needle: string): number[] {
   // Check exact line match or substring match for first line
   for (let i = 0; i < hLines.length; i++) {
     const trimmedH = hLines[i].trim()
-    if (trimmedH === targetLine || (targetLine.length > 5 && trimmedH.includes(targetLine))) {
+    if (
+      trimmedH === targetLine ||
+      (targetLine.length > 5 && trimmedH.includes(targetLine))
+    ) {
       results.push(i + 1)
     }
   }
@@ -416,7 +450,10 @@ export function findMatchingLines(haystack: string, needle: string): number[] {
  * 1. oldTextWasStripped is true (the model was confirmed to be quoting numbered lines), OR
  * 2. A majority (>= 50%) of non-empty lines match the /^\s*\d+[:|]\s?/ pattern.
  */
-export function cleanLineNumberPrefixes(text: string, oldTextWasStripped = false): string {
+export function cleanLineNumberPrefixes(
+  text: string,
+  oldTextWasStripped = false
+): string {
   if (!text) return ''
   const lines = text.split('\n')
   const nonEmptyLines = lines.filter(l => l.trim().length > 0)
@@ -477,4 +514,3 @@ export function nearestLines(
     .slice(0, limit)
     .map(({ line, text: lineText }) => ({ line, text: lineText }))
 }
-

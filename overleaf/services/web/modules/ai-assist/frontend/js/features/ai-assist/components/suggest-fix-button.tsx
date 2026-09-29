@@ -1,10 +1,11 @@
-import { MouseEvent, useCallback, useContext, useState } from 'react'
+import { MouseEvent, useCallback, useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import getMeta from '@/utils/meta'
 import type { LogEntry } from '@/features/pdf-preview/util/types'
 import OLTooltip from '@/shared/components/ol/ol-tooltip'
 import OLButton from '@/shared/components/ol/ol-button'
 import useEventListener from '@/shared/hooks/use-event-listener'
-import { ProjectContext } from '@/shared/context/project-context'
+import { AiAssistant } from '../assistant'
 import { isFixableLevel } from '../log-entry-levels'
 import '../../../../stylesheets/ai-assist.scss'
 
@@ -29,15 +30,33 @@ export default function SuggestFixButton({
     Boolean(getMeta('ol-aiAssistEnabled')) &&
     getMeta('ol-showAiFeatures') !== false
 
-  const projectContext = useContext(ProjectContext)
-  const projectId = projectContext?.projectId || 'default'
-
   // A LogEntry identifies itself with `key`, not `id` (pdf-preview/util/types.ts).
   // The pane passes that same value as the `id` prop, so either source works;
   // reading only `logEntry.id` renders nothing at all.
   const entryId = id ?? logEntry?.key ?? logEntry?.id
+  const { t } = useTranslation()
   // Note: a remount mid-run shows a non-loading button (pre-existing cosmetic defect).
   const [loading, setLoading] = useState(false)
+  const [hasProvider, setHasProvider] = useState(() =>
+    Boolean(AiAssistant.fromStoredSettings())
+  )
+
+  useEffect(() => {
+    const updateProviderStatus = () => {
+      setHasProvider(Boolean(AiAssistant.fromStoredSettings()))
+    }
+    window.addEventListener('storage', updateProviderStatus)
+    window.addEventListener('focus', updateProviderStatus)
+    window.addEventListener('aiAssist:providerChanged', updateProviderStatus)
+    return () => {
+      window.removeEventListener('storage', updateProviderStatus)
+      window.removeEventListener('focus', updateProviderStatus)
+      window.removeEventListener(
+        'aiAssist:providerChanged',
+        updateProviderStatus
+      )
+    }
+  }, [])
 
   const onSuggestFix = useCallback(
     (event: Event) => {
@@ -64,6 +83,12 @@ export default function SuggestFixButton({
 
   const onClick = useCallback(
     (event: MouseEvent<HTMLButtonElement>) => {
+      if (!hasProvider) {
+        event.preventDefault()
+        event.stopPropagation()
+        return
+      }
+
       // The panel that renders the suggestion lives in this entry's content,
       // which the pane keeps mounted but hidden while the entry is collapsed.
       // Only the first entry auto-expands, so expand ourselves first — the same
@@ -82,7 +107,7 @@ export default function SuggestFixButton({
         })
       )
     },
-    [entryId]
+    [entryId, hasProvider]
   )
 
   // Info/typesetting/success/raw entries are not actionable errors — offering
@@ -92,18 +117,26 @@ export default function SuggestFixButton({
 
   if (!enabled || !entryId || !isFixable) return null
 
+  const label = hasProvider
+    ? t('suggest_fix', 'Suggest fix')
+    : t(
+        'ai_assist_configure_provider_tooltip',
+        'Configure an AI provider in Account Settings to suggest fixes'
+      )
+
   return (
     <OLTooltip
       id={`suggest-fix-${entryId}`}
-      description="Suggest fix"
+      description={label}
       overlayProps={{ placement: 'bottom' }}
     >
       <OLButton
         type="button"
         variant="ghost"
-        className={`icon-button ai-suggest-fix-button ${loading ? 'is-loading' : ''}`}
+        disabled={!hasProvider}
+        className={`icon-button ai-suggest-fix-button ${loading ? 'is-loading' : ''} ${!hasProvider ? 'is-disabled' : ''}`}
         data-action="suggest-fix"
-        aria-label="Suggest fix"
+        aria-label={label}
         onClick={onClick}
       >
         <span className="button-content">

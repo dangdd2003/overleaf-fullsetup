@@ -57,11 +57,14 @@ vi.mock('../../../../../app/src/infrastructure/mongodb.mjs', () => {
   }
 })
 
-vi.mock('../../../../../app/src/Features/Authentication/SessionManager.mjs', () => ({
-  default: {
-    getLoggedInUserId: vi.fn(),
-  },
-}))
+vi.mock(
+  '../../../../../app/src/Features/Authentication/SessionManager.mjs',
+  () => ({
+    default: {
+      getLoggedInUserId: vi.fn(),
+    },
+  })
+)
 
 vi.mock('../../../../../app/src/models/Project.mjs', () => ({
   Project: {
@@ -153,19 +156,25 @@ vi.mock('../../../../../app/src/Features/User/UserCreator.mjs', () => ({
   },
 }))
 
-vi.mock('../../../../../app/src/Features/Authentication/AuthenticationManager.mjs', () => ({
-  default: {
-    hashPassword: vi.fn(),
-  },
-}))
-
-vi.mock('../../../../../app/src/Features/Security/OneTimeTokenHandler.mjs', () => ({
-  default: {
-    promises: {
-      getNewToken: vi.fn(),
+vi.mock(
+  '../../../../../app/src/Features/Authentication/AuthenticationManager.mjs',
+  () => ({
+    default: {
+      hashPassword: vi.fn(),
     },
-  },
-}))
+  })
+)
+
+vi.mock(
+  '../../../../../app/src/Features/Security/OneTimeTokenHandler.mjs',
+  () => ({
+    default: {
+      promises: {
+        getNewToken: vi.fn(),
+      },
+    },
+  })
+)
 
 vi.mock('../../../../../app/src/Features/Helpers/EmailHelper.mjs', () => ({
   default: {
@@ -173,14 +182,17 @@ vi.mock('../../../../../app/src/Features/Helpers/EmailHelper.mjs', () => ({
   },
 }))
 
-vi.mock('../../../../../app/src/Features/Collaborators/OwnershipTransferHandler.mjs', () => ({
-  default: {
-    promises: {
-      transferOwnership: vi.fn(),
-      transferAllProjectsToUser: vi.fn(),
+vi.mock(
+  '../../../../../app/src/Features/Collaborators/OwnershipTransferHandler.mjs',
+  () => ({
+    default: {
+      promises: {
+        transferOwnership: vi.fn(),
+        transferAllProjectsToUser: vi.fn(),
+      },
     },
-  },
-}))
+  })
+)
 
 vi.mock('../../../app/src/AdminUserRestorer.mjs', () => ({
   default: {
@@ -254,7 +266,8 @@ describe('AdminUserBatchActive', () => {
       getUserById.mockImplementation(async id => {
         if (id === user1Id) return { _id: user1Id, email: 'u1@example.com' }
         if (id === user2Id) return { _id: user2Id, email: 'u2@example.com' }
-        if (id === callerId) return { _id: callerId, email: 'admin@example.com', isAdmin: true }
+        if (id === callerId)
+          return { _id: callerId, email: 'admin@example.com', isAdmin: true }
         return null
       })
 
@@ -323,7 +336,9 @@ describe('AdminUserBatchActive', () => {
         userIds: [user1Id, callerId],
       }
 
-      UserSessionsManager.promises.removeSessionsFromRedis.mockResolvedValue(true)
+      UserSessionsManager.promises.removeSessionsFromRedis.mockResolvedValue(
+        true
+      )
       UserAuditLogHandler.promises.addEntry.mockResolvedValue(true)
 
       await AdminUserManagementController.batchRevokeUserSessions(req, res)
@@ -331,14 +346,18 @@ describe('AdminUserBatchActive', () => {
       expect(
         UserSessionsManager.promises.removeSessionsFromRedis
       ).toHaveBeenCalledWith(
-        expect.objectContaining({ _id: expect.objectContaining({ id: user1Id }) }),
+        expect.objectContaining({
+          _id: expect.objectContaining({ id: user1Id }),
+        }),
         {}
       )
 
       expect(
         UserSessionsManager.promises.removeSessionsFromRedis
       ).toHaveBeenCalledWith(
-        expect.objectContaining({ _id: expect.objectContaining({ id: callerId }) }),
+        expect.objectContaining({
+          _id: expect.objectContaining({ id: callerId }),
+        }),
         { retainSessionID: 'sess-12345' }
       )
 

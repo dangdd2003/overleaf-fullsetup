@@ -25,11 +25,13 @@ export const configureCompilerSettingsTool: AgentTool = {
         },
         draft: {
           type: 'boolean',
-          description: 'Toggle draft mode compilation (faster builds by omitting images)',
+          description:
+            'Toggle draft mode compilation (faster builds by omitting images)',
         },
         stopOnFirstError: {
           type: 'boolean',
-          description: 'Toggle stopping compilation immediately on the first error',
+          description:
+            'Toggle stopping compilation immediately on the first error',
         },
       },
       required: [],

@@ -1,3 +1,4 @@
+import { describe, it } from 'vitest'
 import { expect } from 'chai'
 import sinon from 'sinon'
 import {
@@ -15,14 +16,22 @@ import {
 describe('AiAssistProviders', function () {
   describe('validateSafeProviderBaseUrl', function () {
     it('allows standard public cloud LLM endpoints', function () {
-      expect(() => validateSafeProviderBaseUrl('https://api.openai.com/v1')).to.not.throw()
-      expect(() => validateSafeProviderBaseUrl('https://api.anthropic.com')).to.not.throw()
-      expect(() => validateSafeProviderBaseUrl('https://generativelanguage.googleapis.com')).to.not.throw()
+      expect(() =>
+        validateSafeProviderBaseUrl('https://api.openai.com/v1')
+      ).to.not.throw()
+      expect(() =>
+        validateSafeProviderBaseUrl('https://api.anthropic.com')
+      ).to.not.throw()
+      expect(() =>
+        validateSafeProviderBaseUrl('https://generativelanguage.googleapis.com')
+      ).to.not.throw()
     })
 
     it('allows Docker host gateway for local Ollama', function () {
       const gateway = process.env.DOCKER_HOST_GATEWAY || '172.20.0.1'
-      expect(() => validateSafeProviderBaseUrl(`http://${gateway}:11434`)).to.not.throw()
+      expect(() =>
+        validateSafeProviderBaseUrl(`http://${gateway}:11434`)
+      ).to.not.throw()
     })
 
     it('blocks internal Docker container hostnames', function () {
@@ -42,18 +51,31 @@ describe('AiAssistProviders', function () {
         'http://project-history:3054',
       ]
       for (const url of blocked) {
-        expect(() => validateSafeProviderBaseUrl(url), `Should block ${url}`).to.throw(ProviderError)
+        expect(
+          () => validateSafeProviderBaseUrl(url),
+          `Should block ${url}`
+        ).to.throw(ProviderError)
       }
     })
 
     it('blocks cloud metadata endpoints', function () {
-      expect(() => validateSafeProviderBaseUrl('http://169.254.169.254/latest/meta-data')).to.throw(ProviderError)
-      expect(() => validateSafeProviderBaseUrl('http://metadata.google.internal/computeMetadata/v1')).to.throw(ProviderError)
+      expect(() =>
+        validateSafeProviderBaseUrl('http://169.254.169.254/latest/meta-data')
+      ).to.throw(ProviderError)
+      expect(() =>
+        validateSafeProviderBaseUrl(
+          'http://metadata.google.internal/computeMetadata/v1'
+        )
+      ).to.throw(ProviderError)
     })
 
     it('blocks non-HTTP protocols', function () {
-      expect(() => validateSafeProviderBaseUrl('file:///etc/passwd')).to.throw(ProviderError)
-      expect(() => validateSafeProviderBaseUrl('gopher://127.0.0.1:6379')).to.throw(ProviderError)
+      expect(() => validateSafeProviderBaseUrl('file:///etc/passwd')).to.throw(
+        ProviderError
+      )
+      expect(() =>
+        validateSafeProviderBaseUrl('gopher://127.0.0.1:6379')
+      ).to.throw(ProviderError)
     })
   })
 
@@ -138,7 +160,10 @@ describe('AiAssistProviders', function () {
 
       let error = null
       try {
-        for await (const event of client.streamChat({ system: 'x', messages: [] })) {
+        for await (const event of client.streamChat({
+          system: 'x',
+          messages: [],
+        })) {
           if (event) break
         }
       } catch (err) {
@@ -173,10 +198,66 @@ describe('AiAssistProviders', function () {
       for await (const _ of client.streamChat({
         system: 'test',
         messages: [{ role: 'user', content: 'hello' }],
-      })) {}
+      })) {
+      }
       const calledBody = JSON.parse(fetchStub.firstCall.args[1]?.body)
       expect(calledBody).to.not.have.property('thinking')
       expect(calledBody.model).to.equal('qwen3.7 max (free)')
+    })
+
+    it('sends adaptive thinking with the chosen effort level', async function () {
+      const fetchStub = sinon.stub().resolves({
+        ok: true,
+        status: 200,
+        body: (async function* () {
+          yield new TextEncoder().encode(
+            'event: message_stop\ndata: {"type":"message_stop"}\n\n'
+          )
+        })(),
+      })
+      const client = createProviderClient({
+        type: 'anthropic',
+        apiKey: 'test-key',
+        model: 'Qwen3.8 Max',
+        reasoningEffort: 'max',
+        fetchFn: fetchStub,
+      })
+      for await (const _ of client.streamChat({
+        system: 'test',
+        messages: [{ role: 'user', content: 'hello' }],
+      })) {
+      }
+      const calledBody = JSON.parse(fetchStub.firstCall.args[1]?.body)
+      expect(calledBody.thinking).to.deep.equal({ type: 'adaptive' })
+      expect(calledBody.output_config).to.deep.equal({ effort: 'max' })
+    })
+
+    it('sends no thinking field when the switch is off', async function () {
+      const fetchStub = sinon.stub().resolves({
+        ok: true,
+        status: 200,
+        body: (async function* () {
+          yield new TextEncoder().encode(
+            'event: message_stop\ndata: {"type":"message_stop"}\n\n'
+          )
+        })(),
+      })
+      const client = createProviderClient({
+        type: 'anthropic',
+        apiKey: 'test-key',
+        model: 'Qwen3.8 Max',
+        reasoningEffort: 'low',
+        thinking: false,
+        fetchFn: fetchStub,
+      })
+      for await (const _ of client.streamChat({
+        system: 'test',
+        messages: [{ role: 'user', content: 'hello' }],
+      })) {
+      }
+      const calledBody = JSON.parse(fetchStub.firstCall.args[1]?.body)
+      expect(calledBody).to.not.have.property('thinking')
+      expect(calledBody.output_config).to.deep.equal({ effort: 'low' })
     })
 
     it('surfaces Anthropic error event frame as a thrown ProviderError', async function () {
@@ -201,7 +282,11 @@ describe('AiAssistProviders', function () {
 
       let error = null
       try {
-        for await (const _ of client.streamChat({ system: 'x', messages: [] })) {}
+        for await (const _ of client.streamChat({
+          system: 'x',
+          messages: [],
+        })) {
+        }
       } catch (err) {
         error = err
       }
@@ -248,16 +333,23 @@ describe('AiAssistProviders', function () {
           cacheTools: true,
           lastStableMessage: 1,
         },
-      })) {}
+      })) {
+      }
 
       expect(sentPayload).to.exist
       // 1. System prompt cached
       expect(sentPayload.system).to.deep.equal([
-        { type: 'text', text: 'You are an assistant.', cache_control: { type: 'ephemeral' } },
+        {
+          type: 'text',
+          text: 'You are an assistant.',
+          cache_control: { type: 'ephemeral' },
+        },
       ])
       // 2. Only the last tool is marked
       expect(sentPayload.tools[0].cache_control).to.be.undefined
-      expect(sentPayload.tools[1].cache_control).to.deep.equal({ type: 'ephemeral' })
+      expect(sentPayload.tools[1].cache_control).to.deep.equal({
+        type: 'ephemeral',
+      })
       // 3. The newest message, and the message before the newest assistant
       //    turn (the previous request's breakpoint)
       expect(sentPayload.messages[2].content).to.deep.equal([
@@ -321,7 +413,9 @@ describe('AiAssistProviders', function () {
       markMessageCacheBreakpoints(wire)
 
       const marked = wire.filter(
-        message => Array.isArray(message.content) && message.content.some(block => block.cache_control)
+        message =>
+          Array.isArray(message.content) &&
+          message.content.some(block => block.cache_control)
       )
       expect(marked).to.have.length(2)
       expect(wire.at(-1).content[0].cache_control).to.deep.equal(ephemeral)
@@ -340,7 +434,12 @@ describe('AiAssistProviders', function () {
           })(),
         })
       })
-      const client = createProviderClient({ type: 'anthropic', apiKey: 'k', model: 'claude-opus-5', fetchFn: fakeFetch })
+      const client = createProviderClient({
+        type: 'anthropic',
+        apiKey: 'k',
+        model: 'claude-opus-5',
+        fetchFn: fakeFetch,
+      })
 
       for await (const _ of client.streamChat({
         system: 'sys',
@@ -358,12 +457,20 @@ describe('AiAssistProviders', function () {
           { role: 'tool', toolCallId: 't2', name: 'read_file', content: 'b' },
         ],
         tools: [{ name: 'read_file', description: 'r', parameters: {} }],
-        cacheHints: { cacheSystem: true, cacheTools: true, lastStableMessage: 2 },
-      })) {}
+        cacheHints: {
+          cacheSystem: true,
+          cacheTools: true,
+          lastStableMessage: 2,
+        },
+      })) {
+      }
 
       expect(sentPayload.messages).to.have.length(3)
-      expect(sentPayload.messages[2].content.at(-1).cache_control).to.deep.equal(ephemeral)
-      const count = JSON.stringify(sentPayload).split('"cache_control"').length - 1
+      expect(
+        sentPayload.messages[2].content.at(-1).cache_control
+      ).to.deep.equal(ephemeral)
+      const count =
+        JSON.stringify(sentPayload).split('"cache_control"').length - 1
       expect(count).to.be.at.most(4)
     })
   })
@@ -379,86 +486,170 @@ describe('AiAssistProviders', function () {
     }
 
     function jsonResponse(body, status = 200) {
-      return { ok: status >= 200 && status < 300, status, json: async () => body }
+      return {
+        ok: status >= 200 && status < 300,
+        status,
+        json: async () => body,
+      }
     }
 
     it('lists Ollama models from native /api/tags', async function () {
       const fetchFn = sinon.stub().resolves(
-        jsonResponse({ models: [{ name: 'qwen3:8b' }, { name: 'gemma4:cloud', details: { context_length: 256000 } }] })
+        jsonResponse({
+          models: [
+            { name: 'qwen3:8b' },
+            { name: 'gemma4:cloud', details: { context_length: 256000 } },
+          ],
+        })
       )
-      const client = createProviderClient({ type: 'ollama', baseUrl: 'http://ollama.lan:11434/v1', model: 'x', fetchFn })
+      const client = createProviderClient({
+        type: 'ollama',
+        baseUrl: 'http://ollama.lan:11434/v1',
+        model: 'x',
+        fetchFn,
+      })
       const models = await client.listModels()
-      expect(fetchFn.firstCall.args[0]).to.equal('http://ollama.lan:11434/api/tags')
+      expect(fetchFn.firstCall.args[0]).to.equal(
+        'http://ollama.lan:11434/api/tags'
+      )
       expect(models.map(m => m.id)).to.deep.equal(['gemma4:cloud', 'qwen3:8b'])
-      expect(models[0]).to.include({ contextWindow: 256000, maxOutputTokens: 65536 })
+      expect(models[0]).to.include({
+        contextWindow: 256000,
+        maxOutputTokens: 65536,
+      })
     })
 
     it('lists OpenAI-compatible models under /v1/models', async function () {
-      const fetchFn = sinon.stub().resolves(jsonResponse({ data: [{ id: 'gpt-b' }, { id: 'gpt-a' }] }))
-      const client = createProviderClient({ type: 'openai', baseUrl: 'https://gw.example.com', apiKey: 'k', model: 'x', fetchFn })
+      const fetchFn = sinon
+        .stub()
+        .resolves(jsonResponse({ data: [{ id: 'gpt-b' }, { id: 'gpt-a' }] }))
+      const client = createProviderClient({
+        type: 'openai',
+        baseUrl: 'https://gw.example.com',
+        apiKey: 'k',
+        model: 'x',
+        fetchFn,
+      })
       const models = await client.listModels()
-      expect(fetchFn.firstCall.args[0]).to.equal('https://gw.example.com/v1/models')
-      expect(fetchFn.firstCall.args[1].headers.Authorization).to.equal('Bearer k')
+      expect(fetchFn.firstCall.args[0]).to.equal(
+        'https://gw.example.com/v1/models'
+      )
+      expect(fetchFn.firstCall.args[1].headers.Authorization).to.equal(
+        'Bearer k'
+      )
       expect(models.map(m => m.id)).to.deep.equal(['gpt-a', 'gpt-b'])
     })
 
     it('pages through Anthropic models', async function () {
       const fetchFn = sinon.stub()
-      fetchFn.onFirstCall().resolves(jsonResponse({ data: [{ id: 'm1' }], has_more: true, last_id: 'm1' }))
-      fetchFn.onSecondCall().resolves(jsonResponse({ data: [{ id: 'm2', display_name: 'Model 2' }], has_more: false }))
-      const client = createProviderClient({ type: 'anthropic', baseUrl: 'https://api.anthropic.com', apiKey: 'k', model: 'x', fetchFn })
+      fetchFn
+        .onFirstCall()
+        .resolves(
+          jsonResponse({ data: [{ id: 'm1' }], has_more: true, last_id: 'm1' })
+        )
+      fetchFn.onSecondCall().resolves(
+        jsonResponse({
+          data: [{ id: 'm2', display_name: 'Model 2' }],
+          has_more: false,
+        })
+      )
+      const client = createProviderClient({
+        type: 'anthropic',
+        baseUrl: 'https://api.anthropic.com',
+        apiKey: 'k',
+        model: 'x',
+        fetchFn,
+      })
       const models = await client.listModels()
       expect(fetchFn.secondCall.args[0]).to.include('after_id=m1')
-      expect(models).to.deep.equal([{ id: 'm1', label: 'm1' }, { id: 'm2', label: 'Model 2' }])
+      expect(models).to.deep.equal([
+        { id: 'm1', label: 'm1' },
+        { id: 'm2', label: 'Model 2' },
+      ])
     })
 
     it('keeps only Gemini models that generate content', async function () {
       const fetchFn = sinon.stub().resolves(
         jsonResponse({
           models: [
-            { name: 'models/gemini-2.5-pro', supportedGenerationMethods: ['generateContent'] },
-            { name: 'models/embedding-001', supportedGenerationMethods: ['embedContent'] },
+            {
+              name: 'models/gemini-2.5-pro',
+              supportedGenerationMethods: ['generateContent'],
+            },
+            {
+              name: 'models/embedding-001',
+              supportedGenerationMethods: ['embedContent'],
+            },
           ],
         })
       )
-      const client = createProviderClient({ type: 'google', apiKey: 'k', model: 'x', fetchFn })
+      const client = createProviderClient({
+        type: 'google',
+        apiKey: 'k',
+        model: 'x',
+        fetchFn,
+      })
       const models = await client.listModels()
       expect(models.map(m => m.id)).to.deep.equal(['gemini-2.5-pro'])
     })
 
     it('maps upstream failures to provider error codes', async function () {
       const auth = createProviderClient({
-        type: 'openai', baseUrl: 'https://gw.example.com/v1', apiKey: 'bad', model: 'x',
-        fetchFn: sinon.stub().resolves(jsonResponse({ error: { message: 'bad key' } }, 401)),
+        type: 'openai',
+        baseUrl: 'https://gw.example.com/v1',
+        apiKey: 'bad',
+        model: 'x',
+        fetchFn: sinon
+          .stub()
+          .resolves(jsonResponse({ error: { message: 'bad key' } }, 401)),
       })
-      expect(await rejectionOf(auth.listModels())).to.include({ code: 'providerAuth', message: 'bad key' })
+      expect(await rejectionOf(auth.listModels())).to.include({
+        code: 'providerAuth',
+        message: 'bad key',
+      })
 
       const missing = createProviderClient({
-        type: 'openai', baseUrl: 'https://gw.example.com/v1', apiKey: 'k', model: 'x',
+        type: 'openai',
+        baseUrl: 'https://gw.example.com/v1',
+        apiKey: 'k',
+        model: 'x',
         fetchFn: sinon.stub().resolves(jsonResponse({}, 404)),
       })
-      expect(await rejectionOf(missing.listModels())).to.include({ code: 'modelsUnsupported' })
+      expect(await rejectionOf(missing.listModels())).to.include({
+        code: 'modelsUnsupported',
+      })
 
       const unreachable = createProviderClient({
-        type: 'ollama', baseUrl: 'http://10.0.0.5:11434', model: 'x',
+        type: 'ollama',
+        baseUrl: 'http://10.0.0.5:11434',
+        model: 'x',
         fetchFn: sinon.stub().rejects(new TypeError('fetch failed')),
       })
-      expect(await rejectionOf(unreachable.listModels())).to.include({ code: 'network' })
+      expect(await rejectionOf(unreachable.listModels())).to.include({
+        code: 'network',
+      })
     })
   })
 
   describe('Ollama Provider Client', function () {
     it('streams thinking, text, and tool calls from native /api/chat', async function () {
       const ndjsonBody = [
-        JSON.stringify({ message: { role: 'assistant', thinking: 'Analyzing the paper...' } }) + '\n',
-        JSON.stringify({ message: { role: 'assistant', content: 'Here is the answer' } }) + '\n',
+        JSON.stringify({
+          message: { role: 'assistant', thinking: 'Analyzing the paper...' },
+        }) + '\n',
+        JSON.stringify({
+          message: { role: 'assistant', content: 'Here is the answer' },
+        }) + '\n',
         JSON.stringify({
           message: {
             role: 'assistant',
             tool_calls: [
               {
                 id: 'call_1',
-                function: { name: 'read_file', arguments: { path: 'main.tex' } },
+                function: {
+                  name: 'read_file',
+                  arguments: { path: 'main.tex' },
+                },
               },
             ],
           },
@@ -488,8 +679,14 @@ describe('AiAssistProviders', function () {
         chunks.push(chunk)
       }
 
-      expect(chunks).to.deep.include({ type: 'thinking', text: 'Analyzing the paper...' })
-      expect(chunks).to.deep.include({ type: 'text', text: 'Here is the answer' })
+      expect(chunks).to.deep.include({
+        type: 'thinking',
+        text: 'Analyzing the paper...',
+      })
+      expect(chunks).to.deep.include({
+        type: 'text',
+        text: 'Here is the answer',
+      })
       expect(chunks).to.deep.include({
         type: 'tool_call',
         id: 'call_1',
@@ -534,6 +731,31 @@ describe('AiAssistProviders', function () {
       expect(chunks).to.deep.include({ type: 'text', text: 'Done' })
     })
 
+    it('sends only the chosen reasoning_effort, with no thinking switch', async function () {
+      const fetchStub = sinon.stub().resolves({
+        ok: true,
+        status: 200,
+        body: (async function* () {
+          yield new TextEncoder().encode('data: [DONE]\n\n')
+        })(),
+      })
+      const client = createProviderClient({
+        type: 'openai',
+        apiKey: 'key',
+        model: 'gpt-5.5',
+        reasoningEffort: 'high',
+        thinking: false,
+        fetchFn: fetchStub,
+      })
+      for await (const _ of client.streamChat({
+        system: 'test',
+        messages: [{ role: 'user', content: 'hi' }],
+      })) {
+      }
+      const calledBody = JSON.parse(fetchStub.firstCall.args[1]?.body)
+      expect(calledBody.reasoning_effort).to.equal('high')
+    })
+
     it('extracts <think>...</think> tags embedded in delta content', async function () {
       const sseBody = [
         'data: {"choices":[{"delta":{"content":"<thi"}}]}\n\n',
@@ -565,7 +787,10 @@ describe('AiAssistProviders', function () {
         chunks.push(chunk)
       }
 
-      expect(chunks).to.deep.include({ type: 'thinking', text: 'Internal thought' })
+      expect(chunks).to.deep.include({
+        type: 'thinking',
+        text: 'Internal thought',
+      })
       expect(chunks).to.deep.include({ type: 'text', text: 'Final response' })
     })
   })
@@ -603,12 +828,21 @@ describe('AiAssistProviders', function () {
         chunks.push(chunk)
       }
 
-      expect(chunks).to.deep.include({ type: 'thinking', text: 'Thinking about solution...' })
-      expect(chunks).to.deep.include({ type: 'text', text: 'Hello from native Gemini' })
-      expect(chunks.some(c => c.type === 'tool_call' && c.name === 'read_file')).to.be.true
+      expect(chunks).to.deep.include({
+        type: 'thinking',
+        text: 'Thinking about solution...',
+      })
+      expect(chunks).to.deep.include({
+        type: 'text',
+        text: 'Hello from native Gemini',
+      })
+      expect(chunks.some(c => c.type === 'tool_call' && c.name === 'read_file'))
+        .to.be.true
       expect(fetchStub.calledOnce).to.be.true
       const calledUrl = fetchStub.firstCall.args[0]
-      expect(calledUrl).to.include('generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:streamGenerateContent?alt=sse')
+      expect(calledUrl).to.include(
+        'generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:streamGenerateContent?alt=sse'
+      )
       const calledHeaders = fetchStub.firstCall.args[1]?.headers
       expect(calledHeaders['x-goog-api-key']).to.equal('gemini-key')
       const calledBody = JSON.parse(fetchStub.firstCall.args[1]?.body)
@@ -617,7 +851,8 @@ describe('AiAssistProviders', function () {
     })
 
     it('properly URL-encodes model names containing parentheses and spaces', async function () {
-      const sseBody = 'data: {"candidates":[{"content":{"parts":[{"text":"ok"}]}}]}\n\ndata: [DONE]\n\n'
+      const sseBody =
+        'data: {"candidates":[{"content":{"parts":[{"text":"ok"}]}}]}\n\ndata: [DONE]\n\n'
       const fakeResponse = {
         ok: true,
         status: 200,
@@ -635,10 +870,13 @@ describe('AiAssistProviders', function () {
       for await (const _ of client.streamChat({
         system: 'test',
         messages: [{ role: 'user', content: 'hello' }],
-      })) {}
+      })) {
+      }
       expect(fetchStub.calledOnce).to.be.true
       const calledUrl = fetchStub.firstCall.args[0]
-      expect(calledUrl).to.include('models/qwen3.8%20max%20%28free%29:streamGenerateContent?alt=sse')
+      expect(calledUrl).to.include(
+        'models/qwen3.8%20max%20%28free%29:streamGenerateContent?alt=sse'
+      )
     })
   })
 
@@ -660,12 +898,17 @@ describe('AiAssistProviders', function () {
       fetchStub.onFirstCall().resolves(failResponse)
       fetchStub.onSecondCall().resolves(successResponse)
 
-      const { fetchWithRetry } = await import('../../../app/src/AiAssistProviders.mjs')
-      const res = await fetchWithRetry('https://api.example.com', {}, {
-        maxRetries: 2,
-        initialDelayMs: 10,
-        fetchFn: fetchStub,
-      })
+      const { fetchWithRetry } =
+        await import('../../../app/src/AiAssistProviders.mjs')
+      const res = await fetchWithRetry(
+        'https://api.example.com',
+        {},
+        {
+          maxRetries: 2,
+          initialDelayMs: 10,
+          fetchFn: fetchStub,
+        }
+      )
 
       expect(res.status).to.equal(200)
       expect(fetchStub.calledTwice).to.be.true
@@ -682,11 +925,15 @@ describe('AiAssistProviders', function () {
       const fetchStub = sinon.stub().resolves(failResponse)
       const controller = new AbortController()
 
-      const promise = fetchWithRetry('https://api.example.com', { signal: controller.signal }, {
-        maxRetries: 2,
-        initialDelayMs: 200,
-        fetchFn: fetchStub,
-      })
+      const promise = fetchWithRetry(
+        'https://api.example.com',
+        { signal: controller.signal },
+        {
+          maxRetries: 2,
+          initialDelayMs: 200,
+          fetchFn: fetchStub,
+        }
+      )
 
       // Abort while waiting in backoff
       await new Promise(r => setTimeout(r, 20))
@@ -718,13 +965,20 @@ describe('AiAssistProviders', function () {
       fetchStub.onSecondCall().resolves(successResponse)
 
       const controller = new AbortController()
-      const removeListenerSpy = sinon.spy(controller.signal, 'removeEventListener')
+      const removeListenerSpy = sinon.spy(
+        controller.signal,
+        'removeEventListener'
+      )
 
-      await fetchWithRetry('https://api.example.com', { signal: controller.signal }, {
-        maxRetries: 2,
-        initialDelayMs: 10,
-        fetchFn: fetchStub,
-      })
+      await fetchWithRetry(
+        'https://api.example.com',
+        { signal: controller.signal },
+        {
+          maxRetries: 2,
+          initialDelayMs: 10,
+          fetchFn: fetchStub,
+        }
+      )
 
       expect(removeListenerSpy.calledWith('abort')).to.be.true
     })
@@ -750,7 +1004,11 @@ describe('AiAssistProviders', function () {
 
       let error = null
       try {
-        for await (const _ of client.streamChat({ system: 'x', messages: [] })) {}
+        for await (const _ of client.streamChat({
+          system: 'x',
+          messages: [],
+        })) {
+        }
       } catch (err) {
         error = err
       }
@@ -764,7 +1022,9 @@ describe('AiAssistProviders', function () {
         const stream = new ReadableStream({
           start(controller) {
             controller.enqueue(
-              new TextEncoder().encode('data: {"choices":[{"delta":{"content":"start"}}]}\n\n')
+              new TextEncoder().encode(
+                'data: {"choices":[{"delta":{"content":"start"}}]}\n\n'
+              )
             )
             opts?.signal?.addEventListener('abort', () => {
               const err = new Error('The operation was aborted')
@@ -790,7 +1050,10 @@ describe('AiAssistProviders', function () {
       let error = null
       const chunks = []
       try {
-        for await (const chunk of client.streamChat({ system: 'x', messages: [] })) {
+        for await (const chunk of client.streamChat({
+          system: 'x',
+          messages: [],
+        })) {
           chunks.push(chunk)
         }
       } catch (err) {
@@ -808,9 +1071,13 @@ describe('AiAssistProviders', function () {
         ok: true,
         status: 200,
         body: (async function* () {
-          yield new TextEncoder().encode('data: {"choices":[{"delta":{"content":"chunk1"}}]}\n\n')
+          yield new TextEncoder().encode(
+            'data: {"choices":[{"delta":{"content":"chunk1"}}]}\n\n'
+          )
           await new Promise(r => setTimeout(r, 10))
-          yield new TextEncoder().encode('data: {"choices":[{"delta":{"content":"chunk2"}}]}\n\n')
+          yield new TextEncoder().encode(
+            'data: {"choices":[{"delta":{"content":"chunk2"}}]}\n\n'
+          )
           yield new TextEncoder().encode('data: [DONE]\n\n')
         })(),
       }
@@ -823,7 +1090,10 @@ describe('AiAssistProviders', function () {
       })
 
       const chunks = []
-      for await (const chunk of client.streamChat({ system: 'x', messages: [] })) {
+      for await (const chunk of client.streamChat({
+        system: 'x',
+        messages: [],
+      })) {
         chunks.push(chunk)
       }
 
@@ -837,9 +1107,15 @@ describe('AiAssistProviders', function () {
         ok: true,
         status: 200,
         body: (async function* () {
-          yield new TextEncoder().encode('data: {"choices":[{"delta":{"reasoning_content":"thinking about edit"}}]}\n\n')
-          yield new TextEncoder().encode('data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_123","function":{"name":"edit_file","arguments":"{\\"path\\":\\"main.tex\\"}"}}]}}]}\n\n')
-          yield new TextEncoder().encode('data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n')
+          yield new TextEncoder().encode(
+            'data: {"choices":[{"delta":{"reasoning_content":"thinking about edit"}}]}\n\n'
+          )
+          yield new TextEncoder().encode(
+            'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_123","function":{"name":"edit_file","arguments":"{\\"path\\":\\"main.tex\\"}"}}]}}]}\n\n'
+          )
+          yield new TextEncoder().encode(
+            'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n'
+          )
           // Never emits [DONE], but stream shouldn't hang
         })(),
       }
@@ -852,7 +1128,10 @@ describe('AiAssistProviders', function () {
       })
 
       const chunks = []
-      for await (const chunk of client.streamChat({ system: 'x', messages: [] })) {
+      for await (const chunk of client.streamChat({
+        system: 'x',
+        messages: [],
+      })) {
         chunks.push(chunk)
       }
 
@@ -869,10 +1148,18 @@ describe('AiAssistProviders', function () {
         ok: true,
         status: 200,
         body: (async function* () {
-          yield new TextEncoder().encode('data: {"type":"message_start","message":{"id":"msg_1"}}\n\n')
-          yield new TextEncoder().encode('data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"read_file"}}\n\n')
-          yield new TextEncoder().encode('data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\\"path\\":\\"main.tex\\"}"}}\n\n')
-          yield new TextEncoder().encode('data: {"type":"content_block_stop","index":0}\n\n')
+          yield new TextEncoder().encode(
+            'data: {"type":"message_start","message":{"id":"msg_1"}}\n\n'
+          )
+          yield new TextEncoder().encode(
+            'data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"read_file"}}\n\n'
+          )
+          yield new TextEncoder().encode(
+            'data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\\"path\\":\\"main.tex\\"}"}}\n\n'
+          )
+          yield new TextEncoder().encode(
+            'data: {"type":"content_block_stop","index":0}\n\n'
+          )
           yield new TextEncoder().encode('data: {"type":"message_stop"}\n\n')
         })(),
       }
@@ -885,7 +1172,10 @@ describe('AiAssistProviders', function () {
       })
 
       const chunks = []
-      for await (const chunk of client.streamChat({ system: 'x', messages: [] })) {
+      for await (const chunk of client.streamChat({
+        system: 'x',
+        messages: [],
+      })) {
         chunks.push(chunk)
       }
 
@@ -900,8 +1190,12 @@ describe('AiAssistProviders', function () {
         ok: true,
         status: 200,
         body: (async function* () {
-          yield new TextEncoder().encode('{"message":{"thinking":"analyzing"}}\n')
-          yield new TextEncoder().encode('{"message":{"tool_calls":[{"function":{"name":"read_file","arguments":{"path":"main.tex"}}}]},"done":true}\n')
+          yield new TextEncoder().encode(
+            '{"message":{"thinking":"analyzing"}}\n'
+          )
+          yield new TextEncoder().encode(
+            '{"message":{"tool_calls":[{"function":{"name":"read_file","arguments":{"path":"main.tex"}}}]},"done":true}\n'
+          )
         })(),
       }
 
@@ -913,7 +1207,10 @@ describe('AiAssistProviders', function () {
       })
 
       const chunks = []
-      for await (const chunk of client.streamChat({ system: 'x', messages: [] })) {
+      for await (const chunk of client.streamChat({
+        system: 'x',
+        messages: [],
+      })) {
         chunks.push(chunk)
       }
 
@@ -926,7 +1223,9 @@ describe('AiAssistProviders', function () {
 
   describe('safeParseToolArgs', function () {
     it('parses valid JSON string', function () {
-      expect(safeParseToolArgs('{"path":"main.tex","oldText":"a"}')).to.deep.equal({
+      expect(
+        safeParseToolArgs('{"path":"main.tex","oldText":"a"}')
+      ).to.deep.equal({
         path: 'main.tex',
         oldText: 'a',
       })
@@ -946,17 +1245,22 @@ describe('AiAssistProviders', function () {
     })
 
     it('does not mark complete JSON as repaired', function () {
-      expect(safeParseToolArgs('{"path":"main.tex"}')).to.not.have.property('_repaired')
+      expect(safeParseToolArgs('{"path":"main.tex"}')).to.not.have.property(
+        '_repaired'
+      )
     })
 
     it('returns _parseError flag for unrecoverable malformed JSON', function () {
-      const bad = safeParseToolArgs('{something invalid without quotes or values')
+      const bad = safeParseToolArgs(
+        '{something invalid without quotes or values'
+      )
       expect(bad._parseError).to.be.true
     })
   })
 
   describe('output limit signal', function () {
-    const sse = events => events.map(event => `data: ${JSON.stringify(event)}\n\n`).join('')
+    const sse = events =>
+      events.map(event => `data: ${JSON.stringify(event)}\n\n`).join('')
     const streamOf = text => ({
       ok: true,
       status: 200,
@@ -966,7 +1270,11 @@ describe('AiAssistProviders', function () {
     })
     const collect = async client => {
       const chunks = []
-      for await (const chunk of client.streamChat({ system: 'x', messages: [{ role: 'user', content: 'hi' }], maxTokens: 50 })) {
+      for await (const chunk of client.streamChat({
+        system: 'x',
+        messages: [{ role: 'user', content: 'hi' }],
+        maxTokens: 50,
+      })) {
         chunks.push(chunk)
       }
       return chunks
@@ -975,28 +1283,60 @@ describe('AiAssistProviders', function () {
     it('Anthropic: yields stop after a tool call cut off at max_tokens', async function () {
       const body = sse([
         { type: 'message_start', message: { id: 'm1' } },
-        { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 'toolu_1', name: 'edit_file' } },
-        { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '{"path":"main.tex","newText":"abc' } },
+        {
+          type: 'content_block_start',
+          index: 0,
+          content_block: { type: 'tool_use', id: 'toolu_1', name: 'edit_file' },
+        },
+        {
+          type: 'content_block_delta',
+          index: 0,
+          delta: {
+            type: 'input_json_delta',
+            partial_json: '{"path":"main.tex","newText":"abc',
+          },
+        },
         { type: 'content_block_stop', index: 0 },
         { type: 'message_delta', delta: { stop_reason: 'max_tokens' } },
         { type: 'message_stop' },
       ])
-      const client = createProviderClient({ type: 'anthropic', apiKey: 'k', model: 'claude-opus-5', fetchFn: sinon.stub().resolves(streamOf(body)) })
+      const client = createProviderClient({
+        type: 'anthropic',
+        apiKey: 'k',
+        model: 'claude-opus-5',
+        fetchFn: sinon.stub().resolves(streamOf(body)),
+      })
 
       const chunks = await collect(client)
 
-      expect(chunks.at(-1)).to.deep.equal({ type: 'stop', reason: 'max_tokens' })
+      expect(chunks.at(-1)).to.deep.equal({
+        type: 'stop',
+        reason: 'max_tokens',
+      })
       const call = chunks.find(chunk => chunk.type === 'tool_call')
-      expect(call.args).to.deep.equal({ path: 'main.tex', newText: 'abc', _repaired: true })
+      expect(call.args).to.deep.equal({
+        path: 'main.tex',
+        newText: 'abc',
+        _repaired: true,
+      })
     })
 
     it('Anthropic: yields no stop chunk for a normal end_turn', async function () {
       const body = sse([
-        { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'done' } },
+        {
+          type: 'content_block_delta',
+          index: 0,
+          delta: { type: 'text_delta', text: 'done' },
+        },
         { type: 'message_delta', delta: { stop_reason: 'end_turn' } },
         { type: 'message_stop' },
       ])
-      const client = createProviderClient({ type: 'anthropic', apiKey: 'k', model: 'claude-opus-5', fetchFn: sinon.stub().resolves(streamOf(body)) })
+      const client = createProviderClient({
+        type: 'anthropic',
+        apiKey: 'k',
+        model: 'claude-opus-5',
+        fetchFn: sinon.stub().resolves(streamOf(body)),
+      })
 
       const chunks = await collect(client)
 
@@ -1008,34 +1348,70 @@ describe('AiAssistProviders', function () {
         { choices: [{ delta: { content: 'partial' } }] },
         { choices: [{ delta: {}, finish_reason: 'length' }] },
       ])
-      const client = createProviderClient({ type: 'openai', apiKey: 'k', model: 'gpt-4o', fetchFn: sinon.stub().resolves(streamOf(body)) })
+      const client = createProviderClient({
+        type: 'openai',
+        apiKey: 'k',
+        model: 'gpt-4o',
+        fetchFn: sinon.stub().resolves(streamOf(body)),
+      })
 
       const chunks = await collect(client)
 
-      expect(chunks.at(-1)).to.deep.equal({ type: 'stop', reason: 'max_tokens' })
+      expect(chunks.at(-1)).to.deep.equal({
+        type: 'stop',
+        reason: 'max_tokens',
+      })
     })
 
     it('Gemini: yields stop when finishReason is MAX_TOKENS', async function () {
       const body = sse([
-        { candidates: [{ content: { parts: [{ text: 'partial' }] }, finishReason: 'MAX_TOKENS' }] },
+        {
+          candidates: [
+            {
+              content: { parts: [{ text: 'partial' }] },
+              finishReason: 'MAX_TOKENS',
+            },
+          ],
+        },
       ])
-      const client = createProviderClient({ type: 'google', apiKey: 'k', model: 'gemini-2.0-flash', fetchFn: sinon.stub().resolves(streamOf(body)) })
+      const client = createProviderClient({
+        type: 'google',
+        apiKey: 'k',
+        model: 'gemini-2.0-flash',
+        fetchFn: sinon.stub().resolves(streamOf(body)),
+      })
 
       const chunks = await collect(client)
 
-      expect(chunks.at(-1)).to.deep.equal({ type: 'stop', reason: 'max_tokens' })
+      expect(chunks.at(-1)).to.deep.equal({
+        type: 'stop',
+        reason: 'max_tokens',
+      })
     })
 
     it('Ollama: yields stop when done_reason is length', async function () {
-      const body = [
-        JSON.stringify({ message: { content: 'partial' } }),
-        JSON.stringify({ message: { content: '' }, done: true, done_reason: 'length' }),
-      ].join('\n') + '\n'
-      const client = createProviderClient({ type: 'ollama', baseUrl: 'http://localhost:11434', model: 'qwen3:8b', fetchFn: sinon.stub().resolves(streamOf(body)) })
+      const body =
+        [
+          JSON.stringify({ message: { content: 'partial' } }),
+          JSON.stringify({
+            message: { content: '' },
+            done: true,
+            done_reason: 'length',
+          }),
+        ].join('\n') + '\n'
+      const client = createProviderClient({
+        type: 'ollama',
+        baseUrl: 'http://localhost:11434',
+        model: 'qwen3:8b',
+        fetchFn: sinon.stub().resolves(streamOf(body)),
+      })
 
       const chunks = await collect(client)
 
-      expect(chunks.at(-1)).to.deep.equal({ type: 'stop', reason: 'max_tokens' })
+      expect(chunks.at(-1)).to.deep.equal({
+        type: 'stop',
+        reason: 'max_tokens',
+      })
     })
   })
 
@@ -1044,7 +1420,9 @@ describe('AiAssistProviders', function () {
       ok: true,
       status: 200,
       body: (async function* () {
-        yield new TextEncoder().encode('data: {"choices":[{"delta":{"content":"hi"},"finish_reason":"stop"}]}\n\n')
+        yield new TextEncoder().encode(
+          'data: {"choices":[{"delta":{"content":"hi"},"finish_reason":"stop"}]}\n\n'
+        )
       })(),
     })
     const send = async settings => {
@@ -1053,27 +1431,43 @@ describe('AiAssistProviders', function () {
         body = JSON.parse(opts.body)
         return Promise.resolve(okStream())
       })
-      const client = createProviderClient({ type: 'openai', apiKey: 'k', model: 'gpt-5', fetchFn, ...settings })
+      const client = createProviderClient({
+        type: 'openai',
+        apiKey: 'k',
+        model: 'gpt-5',
+        fetchFn,
+        ...settings,
+      })
       for await (const _ of client.streamChat({
         system: 'x',
         messages: [{ role: 'user', content: 'hi' }],
         maxTokens: 1000,
-        cacheHints: { cacheSystem: true, cacheTools: true, lastStableMessage: null, cacheKey: 'project-1' },
-      })) {}
+        cacheHints: {
+          cacheSystem: true,
+          cacheTools: true,
+          lastStableMessage: null,
+          cacheKey: 'project-1',
+        },
+      })) {
+      }
       return body
     }
 
     it('recognises only api.openai.com as the official API', function () {
       expect(isOfficialOpenAiUrl('https://api.openai.com')).to.equal(true)
       expect(isOfficialOpenAiUrl('https://api.openai.com/v1')).to.equal(true)
-      expect(isOfficialOpenAiUrl('https://openrouter.ai/api/v1')).to.equal(false)
+      expect(isOfficialOpenAiUrl('https://openrouter.ai/api/v1')).to.equal(
+        false
+      )
       expect(isOfficialOpenAiUrl('not a url')).to.equal(false)
     })
 
     it('hashes the cache key to 32 hex characters', function () {
       expect(promptCacheKey('project-1')).to.match(/^[0-9a-f]{32}$/)
       expect(promptCacheKey('project-1')).to.equal(promptCacheKey('project-1'))
-      expect(promptCacheKey('project-1')).to.not.equal(promptCacheKey('project-2'))
+      expect(promptCacheKey('project-1')).to.not.equal(
+        promptCacheKey('project-2')
+      )
     })
 
     it('sends max_completion_tokens and prompt_cache_key to api.openai.com', async function () {
@@ -1097,7 +1491,13 @@ describe('AiAssistProviders', function () {
       ok: true,
       status: 200,
       body: (async function* () {
-        yield new TextEncoder().encode(JSON.stringify({ message: { content: 'hi' }, done: true, done_reason: 'stop' }) + '\n')
+        yield new TextEncoder().encode(
+          JSON.stringify({
+            message: { content: 'hi' },
+            done: true,
+            done_reason: 'stop',
+          }) + '\n'
+        )
       })(),
     })
 
@@ -1107,9 +1507,20 @@ describe('AiAssistProviders', function () {
         body = JSON.parse(opts.body)
         return Promise.resolve(okStream())
       })
-      const client = createProviderClient({ type: 'ollama', baseUrl: 'http://localhost:11434', model: 'qwen3:8b', fetchFn })
+      const client = createProviderClient({
+        type: 'ollama',
+        baseUrl: 'http://localhost:11434',
+        model: 'qwen3:8b',
+        fetchFn,
+      })
 
-      for await (const _ of client.streamChat({ system: 'x', messages: [{ role: 'user', content: 'hi' }], maxTokens: 512, contextWindow: 32768 })) {}
+      for await (const _ of client.streamChat({
+        system: 'x',
+        messages: [{ role: 'user', content: 'hi' }],
+        maxTokens: 512,
+        contextWindow: 32768,
+      })) {
+      }
 
       expect(body.options).to.deep.equal({ num_predict: 512, num_ctx: 32768 })
     })
@@ -1120,9 +1531,19 @@ describe('AiAssistProviders', function () {
         body = JSON.parse(opts.body)
         return Promise.resolve(okStream())
       })
-      const client = createProviderClient({ type: 'ollama', baseUrl: 'http://localhost:11434', model: 'qwen3:8b', fetchFn })
+      const client = createProviderClient({
+        type: 'ollama',
+        baseUrl: 'http://localhost:11434',
+        model: 'qwen3:8b',
+        fetchFn,
+      })
 
-      for await (const _ of client.streamChat({ system: 'x', messages: [{ role: 'user', content: 'hi' }], maxTokens: 512 })) {}
+      for await (const _ of client.streamChat({
+        system: 'x',
+        messages: [{ role: 'user', content: 'hi' }],
+        maxTokens: 512,
+      })) {
+      }
 
       expect(body.options).to.deep.equal({ num_predict: 512 })
     })
@@ -1136,15 +1557,25 @@ describe('AiAssistProviders', function () {
           return Promise.resolve({
             ok: false,
             status: 400,
-            json: async () => ({ error: '"no-think-test:1b" does not support thinking' }),
+            json: async () => ({
+              error: '"no-think-test:1b" does not support thinking',
+            }),
           })
         }
         return Promise.resolve(okStream())
       })
-      const settings = { type: 'ollama', baseUrl: 'http://localhost:11434', model: 'no-think-test:1b', fetchFn }
+      const settings = {
+        type: 'ollama',
+        baseUrl: 'http://localhost:11434',
+        model: 'no-think-test:1b',
+        fetchFn,
+      }
 
       const chunks = []
-      for await (const chunk of createProviderClient(settings).streamChat({ system: 'x', messages: [{ role: 'user', content: 'hi' }] })) {
+      for await (const chunk of createProviderClient(settings).streamChat({
+        system: 'x',
+        messages: [{ role: 'user', content: 'hi' }],
+      })) {
         chunks.push(chunk)
       }
       expect(chunks).to.deep.include({ type: 'text', text: 'hi' })
@@ -1153,7 +1584,11 @@ describe('AiAssistProviders', function () {
       expect(bodies[1]).to.not.have.property('think')
 
       // A new client for the same model skips the failing attempt.
-      for await (const _ of createProviderClient(settings).streamChat({ system: 'x', messages: [{ role: 'user', content: 'hi' }] })) {}
+      for await (const _ of createProviderClient(settings).streamChat({
+        system: 'x',
+        messages: [{ role: 'user', content: 'hi' }],
+      })) {
+      }
       expect(bodies).to.have.length(3)
       expect(bodies[2]).to.not.have.property('think')
     })
@@ -1164,11 +1599,20 @@ describe('AiAssistProviders', function () {
         status: 400,
         json: async () => ({ error: 'model "missing:7b" not found' }),
       })
-      const client = createProviderClient({ type: 'ollama', baseUrl: 'http://localhost:11434', model: 'missing:7b', fetchFn })
+      const client = createProviderClient({
+        type: 'ollama',
+        baseUrl: 'http://localhost:11434',
+        model: 'missing:7b',
+        fetchFn,
+      })
 
       let error = null
       try {
-        for await (const _ of client.streamChat({ system: 'x', messages: [{ role: 'user', content: 'hi' }] })) {}
+        for await (const _ of client.streamChat({
+          system: 'x',
+          messages: [{ role: 'user', content: 'hi' }],
+        })) {
+        }
       } catch (err) {
         error = err
       }

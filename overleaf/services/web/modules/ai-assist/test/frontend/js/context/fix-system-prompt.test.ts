@@ -47,7 +47,9 @@ describe('FIX_SYSTEM_PROMPT', function () {
 
   it('answers with an edit, never with only an explanation', function () {
     expect(FIX_SYSTEM_PROMPT).to.match(/Your answer is an edit/)
-    expect(FIX_SYSTEM_PROMPT).to.match(/Never answer with only an\s+explanation/)
+    expect(FIX_SYSTEM_PROMPT).to.match(
+      /Never answer with only an\s+explanation/
+    )
     expect(FIX_SYSTEM_PROMPT).to.not.match(/Not\s+every entry is a defect/i)
   })
 

@@ -38,7 +38,9 @@ describe('configure_compiler_settings tool', function () {
     expect(res.updatedSettings.draft).to.be.true
     expect(res.updatedSettings.stopOnFirstError).to.be.true
 
-    const configCalls = calls.filter(c => c.name === 'configureCompilerSettings')
+    const configCalls = calls.filter(
+      c => c.name === 'configureCompilerSettings'
+    )
     expect(configCalls).to.have.lengthOf(1)
     expect(configCalls[0].args).to.deep.include({
       compiler: 'lualatex',
@@ -64,7 +66,10 @@ describe('configure_compiler_settings tool', function () {
     const { handle, calls } = createFakeHandle()
 
     const res: any = await TOOLS.configure_compiler_settings.execute({}, handle)
-    expect(res.error).to.include('Supply at least one compiler setting to configure')
-    expect(calls.filter(c => c.name === 'configureCompilerSettings')).to.be.empty
+    expect(res.error).to.include(
+      'Supply at least one compiler setting to configure'
+    )
+    expect(calls.filter(c => c.name === 'configureCompilerSettings')).to.be
+      .empty
   })
 })

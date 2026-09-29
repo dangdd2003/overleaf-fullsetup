@@ -21,8 +21,8 @@ export default function CodeView({
   const rawLines = Array.isArray(lines)
     ? lines
     : typeof content === 'string'
-    ? content.split('\n')
-    : []
+      ? content.split('\n')
+      : []
 
   const safeStartLine =
     typeof startLine === 'number' && Number.isFinite(startLine) && startLine > 0
@@ -43,7 +43,9 @@ export default function CodeView({
         <div className="cm-content">
           {rawLines.map((line, index) => {
             const match = line.match(/^(\d+):\s?(.*)$/)
-            const lineNo = match ? parseInt(match[1], 10) : safeStartLine + index
+            const lineNo = match
+              ? parseInt(match[1], 10)
+              : safeStartLine + index
             const codeText = match ? match[2] : line
 
             return (

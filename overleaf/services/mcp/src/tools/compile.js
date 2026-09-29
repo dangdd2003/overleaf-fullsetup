@@ -1,11 +1,6 @@
 import * as z from 'zod/v4'
 import { runTool, textResult, tokenFrom } from '../context.js'
-import {
-  binaryFields,
-  looseObject,
-  projectId,
-  READ_ONLY,
-} from '../schemas.js'
+import { binaryFields, looseObject, projectId, READ_ONLY } from '../schemas.js'
 
 const outputFile = looseObject({
   path: z.string().describe('Output file name, e.g. output.pdf or output.log'),
@@ -13,7 +8,9 @@ const outputFile = looseObject({
 })
 
 function definedOnly(object) {
-  return Object.fromEntries(Object.entries(object).filter(([, v]) => v !== undefined))
+  return Object.fromEntries(
+    Object.entries(object).filter(([, v]) => v !== undefined)
+  )
 }
 
 /**
@@ -42,7 +39,10 @@ export function registerCompileTools(server, { client, staticToken }) {
           .enum(['pdflatex', 'latex', 'xelatex', 'lualatex'])
           .optional()
           .describe('Override the project compiler for this run'),
-        draft: z.boolean().optional().describe('Compile in draft mode (skips images)'),
+        draft: z
+          .boolean()
+          .optional()
+          .describe('Compile in draft mode (skips images)'),
         stopOnFirstError: z
           .boolean()
           .optional()
@@ -108,10 +108,14 @@ export function registerCompileTools(server, { client, staticToken }) {
     },
     runTool(async ({ projectId: id, buildId, maxLines }, ctx) =>
       textResult(
-        await client.get(tokenFrom(ctx, staticToken), `/projects/${id}/compile/log`, {
-          buildId,
-          maxLines,
-        })
+        await client.get(
+          tokenFrom(ctx, staticToken),
+          `/projects/${id}/compile/log`,
+          {
+            buildId,
+            maxLines,
+          }
+        )
       )
     )
   )
@@ -174,28 +178,52 @@ export function registerCompileTools(server, { client, staticToken }) {
         file: z
           .string()
           .optional()
-          .describe('Count one document instead of the whole project, e.g. /chapters/intro.tex'),
+          .describe(
+            'Count one document instead of the whole project, e.g. /chapters/intro.tex'
+          ),
       }),
       outputSchema: looseObject({
         wordCount: looseObject({
           textWords: z.number().optional().describe('Words in body text'),
           headWords: z.number().optional().describe('Words in headings'),
-          outside: z.number().optional().describe('Words outside the document body'),
+          outside: z
+            .number()
+            .optional()
+            .describe('Words outside the document body'),
           headers: z.number().optional().describe('Number of headers'),
-          elements: z.number().optional().describe('Number of floats and other elements'),
-          mathInline: z.number().optional().describe('Inline maths expressions'),
-          mathDisplay: z.number().optional().describe('Displayed maths expressions'),
-          errors: z.number().optional().describe('Errors the counter encountered'),
+          elements: z
+            .number()
+            .optional()
+            .describe('Number of floats and other elements'),
+          mathInline: z
+            .number()
+            .optional()
+            .describe('Inline maths expressions'),
+          mathDisplay: z
+            .number()
+            .optional()
+            .describe('Displayed maths expressions'),
+          errors: z
+            .number()
+            .optional()
+            .describe('Errors the counter encountered'),
           encode: z.string().optional().describe('Character encoding assumed'),
-          messages: z.string().optional().describe('Warnings emitted by the counter'),
+          messages: z
+            .string()
+            .optional()
+            .describe('Warnings emitted by the counter'),
         }).describe('The TeX-aware counts'),
       }),
     },
     runTool(async ({ projectId: id, file }, ctx) =>
       textResult(
-        await client.get(tokenFrom(ctx, staticToken), `/projects/${id}/wordcount`, {
-          file,
-        })
+        await client.get(
+          tokenFrom(ctx, staticToken),
+          `/projects/${id}/wordcount`,
+          {
+            file,
+          }
+        )
       )
     )
   )

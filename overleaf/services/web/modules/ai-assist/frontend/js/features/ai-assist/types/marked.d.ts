@@ -8,6 +8,7 @@ declare module 'marked' {
   export namespace marked {
     function setOptions(options: MarkedOptions): void
     function parse(src: string, options?: MarkedOptions): string
+    function parseInline(src: string, options?: MarkedOptions): string
     function use(...args: any[]): void
   }
 }

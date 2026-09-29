@@ -1,5 +1,8 @@
 import { expect } from 'chai'
-import { parseBibtex, searchBibtex } from '../../../../src/parsers/bibtexParser.js'
+import {
+  parseBibtex,
+  searchBibtex,
+} from '../../../../src/parsers/bibtexParser.js'
 
 const BIB = [
   '% a comment',
@@ -41,12 +44,18 @@ describe('bibtexParser', function () {
     })
 
     it('handles escaped braces without disrupting depth counting', function () {
-      const [entry] = parseBibtex('@article{k, title = {The set $\\{x\\}$ and left brace \\{}}')
-      expect(entry.fields.title).to.equal('The set $\\{x\\}$ and left brace \\{')
+      const [entry] = parseBibtex(
+        '@article{k, title = {The set $\\{x\\}$ and left brace \\{}}'
+      )
+      expect(entry.fields.title).to.equal(
+        'The set $\\{x\\}$ and left brace \\{'
+      )
     })
 
     it('handles escaped quotes inside quote-delimited values', function () {
-      const [entry] = parseBibtex('@article{k, author = "Kurt G\\"{o}del", note = "A \\"quoted\\" text"}')
+      const [entry] = parseBibtex(
+        '@article{k, author = "Kurt G\\"{o}del", note = "A \\"quoted\\" text"}'
+      )
       expect(entry.fields.author).to.equal('Kurt G\\"{o}del')
       expect(entry.fields.note).to.equal('A \\"quoted\\" text')
     })

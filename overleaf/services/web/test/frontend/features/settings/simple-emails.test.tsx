@@ -76,7 +76,10 @@ describe('SimpleEmailsRow', function () {
     const ctx = mockContextValue()
     render(
       <UserEmailsContext.Provider value={ctx as any}>
-        <SimpleEmailsRow userEmailData={secondaryEmail} primary={primaryEmail} />
+        <SimpleEmailsRow
+          userEmailData={secondaryEmail}
+          primary={primaryEmail}
+        />
       </UserEmailsContext.Provider>
     )
 
@@ -92,7 +95,10 @@ describe('SimpleEmailsRow', function () {
     const ctx = mockContextValue()
     render(
       <UserEmailsContext.Provider value={ctx as any}>
-        <SimpleEmailsRow userEmailData={unconfirmedEmail} primary={primaryEmail} />
+        <SimpleEmailsRow
+          userEmailData={unconfirmedEmail}
+          primary={primaryEmail}
+        />
       </UserEmailsContext.Provider>
     )
 
@@ -255,9 +261,8 @@ describe('SimpleAddEmailForm', function () {
     fireEvent.click(screen.getByRole('button', { name: 'Add email' }))
 
     await waitFor(() => {
-      expect(
-        screen.getByText(/maximum of.*email addresses|limit reached/i)
-      ).to.exist
+      expect(screen.getByText(/maximum of.*email addresses|limit reached/i)).to
+        .exist
     })
   })
 

@@ -25,7 +25,9 @@ function Probe() {
     name => typeof (handle as any)[name] !== 'function'
   )
 
-  return <div data-testid="probe">{missing.length ? missing.join(',') : 'ok'}</div>
+  return (
+    <div data-testid="probe">{missing.length ? missing.join(',') : 'ok'}</div>
+  )
 }
 
 describe('useProjectHandle inside the compile log pane', function () {

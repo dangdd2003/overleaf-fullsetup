@@ -33,17 +33,23 @@ export function handleValidationError(err, req, res, next) {
 export class InvalidParamsError extends Error {}
 export class InvalidRequestError extends Error {}
 
-export const z = new Proxy({}, {
-  get(target, prop) {
-    return () => createSchema()
-  },
-})
+export const z = new Proxy(
+  {},
+  {
+    get(target, prop) {
+      return () => createSchema()
+    },
+  }
+)
 
-export const zz = new Proxy({}, {
-  get(target, prop) {
-    return () => createSchema()
-  },
-})
+export const zz = new Proxy(
+  {},
+  {
+    get(target, prop) {
+      return () => createSchema()
+    },
+  }
+)
 
 export default {
   parseReq,

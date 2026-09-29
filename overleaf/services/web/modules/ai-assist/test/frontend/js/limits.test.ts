@@ -23,7 +23,10 @@ describe('resolveLimits', function () {
       apiKey: '',
       model: 'gemma4:cloud',
     })
-    expect(limits).to.deep.equal({ contextWindow: 256000, maxOutputTokens: 65536 })
+    expect(limits).to.deep.equal({
+      contextWindow: 256000,
+      maxOutputTokens: 65536,
+    })
   })
 
   it('prefers explicit settings over the default', function () {
@@ -35,7 +38,10 @@ describe('resolveLimits', function () {
       contextWindow: 32000,
       maxOutputTokens: 2048,
     })
-    expect(limits).to.deep.equal({ contextWindow: 32000, maxOutputTokens: 2048 })
+    expect(limits).to.deep.equal({
+      contextWindow: 32000,
+      maxOutputTokens: 2048,
+    })
   })
 
   it('ignores nonsense values rather than sending a request that cannot work', function () {

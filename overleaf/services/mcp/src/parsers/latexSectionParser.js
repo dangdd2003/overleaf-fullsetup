@@ -21,7 +21,15 @@ const CITE_COMMANDS = [
   'nocite',
 ]
 
-const REF_COMMANDS = ['ref', 'eqref', 'autoref', 'cref', 'Cref', 'pageref', 'nameref']
+const REF_COMMANDS = [
+  'ref',
+  'eqref',
+  'autoref',
+  'cref',
+  'Cref',
+  'pageref',
+  'nameref',
+]
 
 const INCLUDE_COMMANDS = [
   'input',
@@ -67,7 +75,8 @@ function readBraceGroup(text, openIndex) {
     if (ch === '{') depth++
     else if (ch === '}') {
       depth--
-      if (depth === 0) return { content: text.slice(openIndex + 1, i), endIndex: i }
+      if (depth === 0)
+        return { content: text.slice(openIndex + 1, i), endIndex: i }
     }
   }
   return null
@@ -134,7 +143,10 @@ export function stripComments(text) {
  */
 export function parseSections(text) {
   const source = stripComments(text)
-  const pattern = new RegExp(`\\\\(${[...SECTION_LEVELS.keys()].join('|')})(\\*)?`, 'g')
+  const pattern = new RegExp(
+    `\\\\(${[...SECTION_LEVELS.keys()].join('|')})(\\*)?`,
+    'g'
+  )
   const sections = []
   for (const match of source.matchAll(pattern)) {
     const braceIndex = skipOptional(source, match.index + match[0].length)
@@ -152,7 +164,9 @@ export function parseSections(text) {
   // stripComments preserves line breaks, so line numbers agree with the source.
   const totalLines = source.split('\n').length
   for (const [index, section] of sections.entries()) {
-    const next = sections.slice(index + 1).find(later => later.level <= section.level)
+    const next = sections
+      .slice(index + 1)
+      .find(later => later.level <= section.level)
     section.endLine = next ? next.startLine - 1 : totalLines
   }
   return sections
@@ -193,7 +207,10 @@ export function parseIncludes(text) {
  */
 export function parseCitations(text) {
   const source = stripComments(text)
-  const pattern = new RegExp(`\\\\(${CITE_COMMANDS.join('|')})\\s*(?:\\[[^\\]]*\\])*\\s*\\{`, 'g')
+  const pattern = new RegExp(
+    `\\\\(${CITE_COMMANDS.join('|')})\\s*(?:\\[[^\\]]*\\])*\\s*\\{`,
+    'g'
+  )
   const citations = []
   for (const match of source.matchAll(pattern)) {
     const group = readBraceGroup(source, match.index + match[0].length - 1)
@@ -226,7 +243,10 @@ export function parseLabelsAndRefs(text) {
   for (const match of source.matchAll(/\\label\s*\{/g)) {
     const group = readBraceGroup(source, match.index + match[0].length - 1)
     if (group) {
-      labels.push({ name: group.content.trim(), line: lineAt(source, match.index) })
+      labels.push({
+        name: group.content.trim(),
+        line: lineAt(source, match.index),
+      })
     }
   }
 
@@ -237,7 +257,11 @@ export function parseLabelsAndRefs(text) {
     for (const name of group.content.split(',')) {
       const trimmed = name.trim()
       if (trimmed) {
-        refs.push({ name: trimmed, command: match[1], line: lineAt(source, match.index) })
+        refs.push({
+          name: trimmed,
+          command: match[1],
+          line: lineAt(source, match.index),
+        })
       }
     }
   }
@@ -275,7 +299,8 @@ export function parseEnvironments(text, names) {
     const pairs = []
     let s = 0
     for (const e of ends) {
-      while (s < starts.length && starts[s].index < e.index) open.push(starts[s++])
+      while (s < starts.length && starts[s].index < e.index)
+        open.push(starts[s++])
       const start = open.pop()
       if (start) pairs.push({ start, end: e })
     }

@@ -56,7 +56,11 @@ const FINISHED_TRANSCRIPT = [
     blocks: [
       {
         type: 'tool_call' as const,
-        call: { id: 'c1', name: 'edit_file', args: { path: 'main.tex', from: 3 } },
+        call: {
+          id: 'c1',
+          name: 'edit_file',
+          args: { path: 'main.tex', from: 3 },
+        },
       },
       { type: 'text' as const, text: 'The graphicx package is missing.' },
     ],
@@ -159,7 +163,9 @@ describe('SuggestFixPanel handoff to the main chat', function () {
       .returns(['main.tex', 'chapter3.tex'])
     sinon
       .stub(ProjectSnapshot.prototype, 'getDocContents')
-      .callsFake(() => '\\documentclass{article}\n\\begin{document}\nhi\n\\end{document}')
+      .callsFake(
+        () => '\\documentclass{article}\n\\begin{document}\nhi\n\\end{document}'
+      )
     sinon
       .stub(ProjectSnapshot.prototype, 'getBinaryFilePathsWithHash')
       .returns([])
@@ -192,9 +198,9 @@ describe('SuggestFixPanel handoff to the main chat', function () {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /stop/i })).to.exist
     })
-    expect(screen.queryByRole('button', { name: /continue in chat/i })).to.equal(
-      null
-    )
+    expect(
+      screen.queryByRole('button', { name: /continue in chat/i })
+    ).to.equal(null)
   })
 
   it('offers nothing to hand off before a run has produced anything', function () {
@@ -203,9 +209,9 @@ describe('SuggestFixPanel handoff to the main chat', function () {
       new CustomEvent('aiAssist:suggestFix', { detail: { entryId: 'entry-1' } })
     )
 
-    expect(screen.queryByRole('button', { name: /continue in chat/i })).to.equal(
-      null
-    )
+    expect(
+      screen.queryByRole('button', { name: /continue in chat/i })
+    ).to.equal(null)
   })
 
   it('parks the whole run, original context included, for the chat', function () {

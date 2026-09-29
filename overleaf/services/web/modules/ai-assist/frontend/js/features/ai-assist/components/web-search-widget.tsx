@@ -3,49 +3,208 @@ import { Globe } from '@phosphor-icons/react'
 import OLButton from '@/shared/components/ol/ol-button'
 import LinkingStatus from '@/features/settings/components/linking/status'
 import WebSearchForm, { WEB_SEARCH_LABELS } from './web-search-form'
-import { WEB_SEARCH_DEFAULTS, WebSearchSettings } from '../providers/types'
+import {
+  MultiWebSearchSettings,
+  WEB_SEARCH_DEFAULTS,
+  WebSearchPreferences,
+} from '../providers/types'
 import {
   clearWebSearchSettings,
+  isServerWebSearchAvailable,
   readWebSearchSettings,
   writeWebSearchSettings,
 } from '../provider-store'
 
+function plural(count: number, noun: string, nouns = `${noun}s`) {
+  return `${count} ${count === 1 ? noun : nouns}`
+}
+
+/** How long results are kept, and how many searches and pages the cache holds. */
+function cacheNotes(preferences: WebSearchPreferences = {}) {
+  const hours = preferences.cacheHours ?? WEB_SEARCH_DEFAULTS.cacheHours.value
+  if (hours === 0) return ['Results are not cached.']
+  const searches =
+    preferences.maxCachedSearches ?? WEB_SEARCH_DEFAULTS.maxCachedSearches.value
+  const pages =
+    preferences.maxCachedPages ?? WEB_SEARCH_DEFAULTS.maxCachedPages.value
+  return [
+    `Results are cached for ${plural(hours, 'hour')}, keeping up to ${plural(searches, 'search', 'searches')} and ${plural(pages, 'read page')}.`,
+  ]
+}
+
 /**
- * Account Settings row for the agent's web search backend, laid out like the
- * other linking widgets: logo, title and description, action on the right.
+ * What web search is using: a lead-in line, one bullet per enabled provider,
+ * and plain lines for how searches are spread and cached. `configured` is
+ * whether at least one provider is set up to answer.
  */
-function cacheSummary(settings: WebSearchSettings) {
-  const hours = settings.cacheHours ?? WEB_SEARCH_DEFAULTS.cacheHours.value
-  return hours === 0
-    ? 'results not cached'
-    : `results cached for ${hours} hour${hours === 1 ? '' : 's'}`
+function statusSummary(settings: MultiWebSearchSettings) {
+  if (settings.sourceMode === 'server') {
+    return {
+      lead: "Using this server's pre-configured web search.",
+      providers: [],
+      notes: [],
+      configured: true,
+    }
+  }
+
+  const providers: string[] = []
+  const searxng = settings.providers?.searxng
+  if (searxng?.enabled && searxng.baseUrls?.length) {
+    providers.push(`SearXNG (${plural(searxng.baseUrls.length, 'instance')})`)
+  }
+  const ollama = settings.providers?.ollama
+  if (ollama?.enabled && ollama.apiKeys?.length) {
+    providers.push(`Ollama (${plural(ollama.apiKeys.length, 'API key')})`)
+  }
+  const websearchapi = settings.providers?.websearchapi
+  if (websearchapi?.enabled && websearchapi.apiKeys?.length) {
+    providers.push(
+      `WebSearchAPI.ai (${plural(websearchapi.apiKeys.length, 'API key')})`
+    )
+  }
+  const tavily = settings.providers?.tavily
+  if (tavily?.enabled && tavily.apiKeys?.length) {
+    providers.push(`Tavily (${plural(tavily.apiKeys.length, 'API key')})`)
+  }
+  const firecrawl = settings.providers?.firecrawl
+  if (firecrawl?.enabled && firecrawl.apiKeys?.length) {
+    providers.push(`Firecrawl (${plural(firecrawl.apiKeys.length, 'API key')})`)
+  }
+  const firecrawlSelfHosted = settings.providers?.firecrawlSelfHosted
+  if (firecrawlSelfHosted?.enabled && firecrawlSelfHosted.baseUrls?.length) {
+    providers.push(
+      `Firecrawl self-hosted (${plural(firecrawlSelfHosted.baseUrls.length, 'instance')})`
+    )
+  }
+  const jina = settings.providers?.jina
+  if (jina?.enabled && jina.apiKeys?.length) {
+    providers.push(`Jina AI (${plural(jina.apiKeys.length, 'API key')})`)
+  }
+  const langsearch = settings.providers?.langsearch
+  if (langsearch?.enabled && langsearch.apiKeys?.length) {
+    providers.push(
+      `LangSearch (${plural(langsearch.apiKeys.length, 'API key')})`
+    )
+  }
+  const exa = settings.providers?.exa
+  if (exa?.enabled && exa.apiKeys?.length) {
+    providers.push(`Exa (${plural(exa.apiKeys.length, 'API key')})`)
+  }
+
+  const primary =
+    settings.primaryProvider === 'ollama'
+      ? 'Ollama'
+      : settings.primaryProvider === 'websearchapi'
+        ? 'WebSearchAPI.ai'
+        : settings.primaryProvider === 'tavily'
+          ? 'Tavily'
+          : settings.primaryProvider === 'firecrawl'
+            ? 'Firecrawl'
+            : settings.primaryProvider === 'firecrawlSelfHosted'
+              ? 'Firecrawl self-hosted'
+              : settings.primaryProvider === 'jina'
+                ? 'Jina AI'
+                : settings.primaryProvider === 'langsearch'
+                  ? 'LangSearch'
+                  : settings.primaryProvider === 'exa'
+                    ? 'Exa'
+                    : 'SearXNG'
+  const rotation =
+    settings.rotationStrategy === 'provider-priority'
+      ? `Searches go to ${primary} first, then the others.`
+      : settings.rotationStrategy === 'sticky'
+        ? 'Searches stay on one endpoint until it is rate-limited.'
+        : 'Searches take turns across all endpoints.'
+  return {
+    lead: 'Using your own web search:',
+    providers,
+    notes: [rotation, ...cacheNotes(settings)],
+    configured: providers.length > 0,
+  }
+}
+
+function WebSearchStatus({
+  lead,
+  providers,
+  notes,
+  configured,
+}: {
+  lead: string
+  providers: string[]
+  notes: string[]
+  configured: boolean
+}) {
+  return (
+    <div className="web-search-status">
+      <p>
+        {configured ? (
+          <LinkingStatus status="success" description={lead} />
+        ) : (
+          <span className="small">{lead}</span>
+        )}
+      </p>
+      <ul className="small">
+        {providers.map(provider => (
+          <li key={provider}>{provider}</li>
+        ))}
+      </ul>
+      {notes.map(note => (
+        <p key={note} className="small">
+          {note}
+        </p>
+      ))}
+    </div>
+  )
 }
 
 export default function WebSearchWidget() {
-  const [settings, setSettings] = useState<WebSearchSettings | null>(null)
+  const [settings, setSettings] = useState<MultiWebSearchSettings | null>(null)
   const [editing, setEditing] = useState(false)
+  const serverAvailable = isServerWebSearchAvailable()
 
   useEffect(() => {
     setSettings(readWebSearchSettings())
   }, [])
 
-  const save = useCallback((values: WebSearchSettings) => {
+  const save = useCallback((values: MultiWebSearchSettings) => {
     writeWebSearchSettings(values)
     setSettings(values)
     setEditing(false)
   }, [])
 
+  const disable = useCallback(() => {
+    const disabledSettings: MultiWebSearchSettings = {
+      sourceMode: 'disabled',
+      providers: {},
+    }
+    writeWebSearchSettings(disabledSettings)
+    setSettings(disabledSettings)
+  }, [])
+
+  const useServerSearch = useCallback(() => {
+    const serverSettings: MultiWebSearchSettings = {
+      sourceMode: 'server',
+      providers: {},
+    }
+    writeWebSearchSettings(serverSettings)
+    setSettings(serverSettings)
+  }, [])
+
   const remove = useCallback(() => {
     clearWebSearchSettings()
-    setSettings(null)
+    setSettings(readWebSearchSettings())
   }, [])
+
+  const isDisabled = settings?.sourceMode === 'disabled'
+  const isServer = settings?.sourceMode === 'server'
+  const isCustom = settings?.sourceMode === 'custom'
 
   return (
     <div
       className="settings-widget-container"
       data-testid="web-search-settings"
     >
-      <div className={editing ? 'linking-icon-fixed-position' : undefined}>
+      <div className="linking-icon-fixed-position">
         <Globe size={40} aria-hidden="true" />
       </div>
       <div className="description-container">
@@ -53,20 +212,11 @@ export default function WebSearchWidget() {
           <h4 id="ai-web-search">Web search</h4>
         </div>
         <p className="small">
-          Lets the AI assistant search the web and read pages for package
-          documentation, command syntax and templates. Searches are sent from
-          this Overleaf server through Ollama web search or your own SearXNG
-          instance.
+          Enables the AI assistant to fetch the latest data, information and
+          documentation.
         </p>
-        {settings && !editing ? (
-          <LinkingStatus
-            status="success"
-            description={`${
-              settings.type === 'searxng'
-                ? `Using ${WEB_SEARCH_LABELS.searxng} at ${settings.baseUrl}`
-                : `Using ${WEB_SEARCH_LABELS.ollama}`
-            } · ${cacheSummary(settings)}`}
-          />
+        {settings && !editing && !isDisabled ? (
+          <WebSearchStatus {...statusSummary(settings)} />
         ) : null}
         {editing ? (
           <WebSearchForm
@@ -77,17 +227,48 @@ export default function WebSearchWidget() {
         ) : null}
       </div>
       <div>
-        {editing ? null : settings ? (
+        {editing ? null : settings && !isDisabled ? (
           <div className="d-flex gap-2">
             <OLButton
               variant="secondary"
               onClick={() => setEditing(true)}
-              aria-label="Edit web search"
+              aria-label={isServer ? 'Customize web search' : 'Edit web search'}
             >
-              Edit
+              {isServer ? 'Customize' : 'Edit'}
             </OLButton>
-            <OLButton variant="danger-ghost" onClick={remove}>
-              Remove
+            {isCustom ? (
+              <OLButton
+                variant="secondary"
+                onClick={useServerSearch}
+                aria-label="Use server default web search"
+              >
+                Use server default
+              </OLButton>
+            ) : null}
+            <OLButton
+              variant="danger-ghost"
+              onClick={serverAvailable ? disable : remove}
+            >
+              {serverAvailable ? 'Disable' : 'Remove'}
+            </OLButton>
+          </div>
+        ) : isDisabled ? (
+          <div className="d-flex gap-2">
+            <OLButton
+              variant="secondary"
+              onClick={
+                serverAvailable ? useServerSearch : () => setEditing(true)
+              }
+              aria-label="Enable web search"
+            >
+              Enable
+            </OLButton>
+            <OLButton
+              variant="secondary"
+              onClick={() => setEditing(true)}
+              aria-label="Configure custom web search"
+            >
+              Customize
             </OLButton>
           </div>
         ) : (

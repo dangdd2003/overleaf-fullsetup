@@ -14,7 +14,10 @@ const BINARY_EXTENSIONS = [
 ]
 
 /** Returns an error message, or null when the path is acceptable. */
-export function validateNewPath(path: string, existing: string[]): string | null {
+export function validateNewPath(
+  path: string,
+  existing: string[]
+): string | null {
   if (!path || !path.trim()) return 'A path is required.'
   if (path.startsWith('/')) {
     return 'The path must be relative to the project root, not absolute.'
@@ -25,7 +28,9 @@ export function validateNewPath(path: string, existing: string[]): string | null
   if (existing.includes(path)) {
     return `${path} already exists. To edit ${path}, call read_file to inspect it, then call edit_file with oldText containing the exact lines to replace and newText containing the replacement.`
   }
-  if (BINARY_EXTENSIONS.some(extension => path.toLowerCase().endsWith(extension))) {
+  if (
+    BINARY_EXTENSIONS.some(extension => path.toLowerCase().endsWith(extension))
+  ) {
     return `${path} looks like a binary file, which this tool cannot create.`
   }
   return null
@@ -44,9 +49,13 @@ export const createFileTool: AgentTool = {
       properties: {
         path: {
           type: 'string',
-          description: 'Path relative to the project root, e.g. sections/new.tex',
+          description:
+            'Path relative to the project root, e.g. sections/new.tex',
         },
-        content: { type: 'string', description: 'The full contents of the new file' },
+        content: {
+          type: 'string',
+          description: 'The full contents of the new file',
+        },
       },
       required: ['path', 'content'],
     },
@@ -58,7 +67,10 @@ export const createFileTool: AgentTool = {
     }
 
     const files = await handle.listFiles()
-    const problem = validateNewPath(path, files.map(file => file.path))
+    const problem = validateNewPath(
+      path,
+      files.map(file => file.path)
+    )
     if (problem) return { error: problem }
 
     const outcome = await handle.createFile({ path, content })
@@ -89,8 +101,7 @@ export const createFileTool: AgentTool = {
         return {
           status: 'error',
           message:
-            outcome.message ||
-            `An error occurred while creating ${path}.`,
+            outcome.message || `An error occurred while creating ${path}.`,
         }
       default:
         return outcome

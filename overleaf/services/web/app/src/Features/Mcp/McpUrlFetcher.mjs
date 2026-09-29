@@ -14,16 +14,19 @@ const TIMEOUT_MS = 10000
  */
 function parseIpLiteral(host) {
   if (!host) return null
-  let h = String(host).replace(/^\[/, '').replace(/\]$/, '')
+  const h = String(host).replace(/^\[/, '').replace(/\]$/, '')
   if (net.isIP(h)) return h
 
   // bare integer, e.g. 2130706433 or 0x7f000001 -> 127.0.0.1
   if (/^(\d+|0x[0-9a-f]+)$/i.test(h)) {
     const n = Number(h)
     if (Number.isInteger(n) && n >= 0 && n <= 0xffffffff) {
-      return [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255].join(
-        '.'
-      )
+      return [
+        (n >>> 24) & 255,
+        (n >>> 16) & 255,
+        (n >>> 8) & 255,
+        n & 255,
+      ].join('.')
     }
     return null
   }
@@ -202,7 +205,9 @@ async function fetchToBuffer(url, { maxBytes }) {
           if (total > maxBytes) {
             res.destroy()
             return fail(
-              new OError('response body exceeded maxBytes', { code: 'too_large' })
+              new OError('response body exceeded maxBytes', {
+                code: 'too_large',
+              })
             )
           }
           chunks.push(chunk)

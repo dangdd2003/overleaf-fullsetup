@@ -11,5 +11,7 @@ export default function NewProjectGithubMenu({ onClick }: Props) {
 
 function NewProjectGithubMenuInner({ onClick }: Props) {
   const { t } = useTranslation()
-  return <OLDropdownItem onClick={onClick}>{t('github', 'GitHub')}</OLDropdownItem>
+  return (
+    <OLDropdownItem onClick={onClick}>{t('github', 'GitHub')}</OLDropdownItem>
+  )
 }

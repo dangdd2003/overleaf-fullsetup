@@ -20,6 +20,7 @@ export type AgentState = {
   running: boolean
   mode: AgentMode
   chatTitle?: string
+  isTitleGenerated?: boolean
   stoppedByUser: boolean
   pendingApproval: PendingApproval | null
   error: {
@@ -42,6 +43,7 @@ export function emptyAgentState(
     running: false,
     mode,
     chatTitle,
+    isTitleGenerated: false,
     stoppedByUser: false,
     pendingApproval: null,
     error: null,
@@ -180,7 +182,9 @@ export function appendToolCall(
 
   // If this tool call is already registered in last.toolCalls, update it rather than duplicating
   if (last.toolCalls.some(c => c.id === call.id)) {
-    const updatedCalls = last.toolCalls.map(c => c.id === call.id ? { ...c, ...call } : c)
+    const updatedCalls = last.toolCalls.map(c =>
+      c.id === call.id ? { ...c, ...call } : c
+    )
     const updatedBlocks = last.blocks?.map(b =>
       b.type === 'tool_call' && b.call.id === call.id
         ? { ...b, call: { ...b.call, ...call } }
@@ -258,7 +262,11 @@ export function cancelPendingToolCalls(
         changed = true
         return {
           ...block,
-          call: { ...block.call, result: { status: 'stopped' }, isError: false },
+          call: {
+            ...block.call,
+            result: { status: 'stopped' },
+            isError: false,
+          },
         }
       }
       return block
@@ -308,9 +316,12 @@ export function reduceAgentEvent(
     case 'modeChanged':
       return { ...state, mode: event.mode }
     case 'userMessage':
-      return { ...state, transcript: deliverUserMessage(state.transcript, event) }
+      return {
+        ...state,
+        transcript: deliverUserMessage(state.transcript, event),
+      }
     case 'chatTitle':
-      return { ...state, chatTitle: event.title }
+      return { ...state, chatTitle: event.title, isTitleGenerated: true }
     case 'awaitingApproval':
       return {
         ...state,
@@ -364,8 +375,12 @@ export function reduceAgentEvent(
           message: event.message,
           ...(event.status != null ? { status: event.status } : {}),
           ...(event.hint != null ? { hint: event.hint } : {}),
-          ...(event.upstreamCode != null ? { upstreamCode: event.upstreamCode } : {}),
-          ...(event.upstreamType != null ? { upstreamType: event.upstreamType } : {}),
+          ...(event.upstreamCode != null
+            ? { upstreamCode: event.upstreamCode }
+            : {}),
+          ...(event.upstreamType != null
+            ? { upstreamType: event.upstreamType }
+            : {}),
         },
       }
     default:

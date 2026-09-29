@@ -181,9 +181,7 @@ export function GoogleDriveImportPanel({
 
   const toggleAll = useCallback(() => {
     setSelected(
-      allSelected
-        ? new Set()
-        : new Set((folders || []).map(f => f.folderId))
+      allSelected ? new Set() : new Set((folders || []).map(f => f.folderId))
     )
   }, [allSelected, folders])
 
@@ -304,7 +302,9 @@ export function GoogleDriveImportPanel({
       {folders === null ? (
         <div className="d-flex align-items-center gap-2 py-3">
           <OLSpinner size="sm" />
-          <span>{t('scanning_drive_folders', 'Scanning Google Drive folders…')}</span>
+          <span>
+            {t('scanning_drive_folders', 'Scanning Google Drive folders…')}
+          </span>
         </div>
       ) : folders.length === 0 ? (
         <p className="small text-muted py-2 mb-0">
@@ -330,7 +330,10 @@ export function GoogleDriveImportPanel({
                     inputRef={selectAllRef}
                     onChange={toggleAll}
                     disabled={active}
-                    aria-label={t('select_all_drive_folders', 'Select all folders')}
+                    aria-label={t(
+                      'select_all_drive_folders',
+                      'Select all folders'
+                    )}
                     data-testid="google-drive-import-select-all"
                   />
                 </th>

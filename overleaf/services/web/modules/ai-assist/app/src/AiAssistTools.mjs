@@ -106,8 +106,12 @@ export function computeErrorDelta(currentErrors = [], previousErrors = []) {
   const previousSignatures = new Set(previousErrors.map(errorSignature))
   const currentSignatures = new Set(currentErrors.map(errorSignature))
 
-  const newErrors = currentErrors.filter(e => !previousSignatures.has(errorSignature(e)))
-  const resolvedErrors = previousErrors.filter(e => !currentSignatures.has(errorSignature(e)))
+  const newErrors = currentErrors.filter(
+    e => !previousSignatures.has(errorSignature(e))
+  )
+  const resolvedErrors = previousErrors.filter(
+    e => !currentSignatures.has(errorSignature(e))
+  )
 
   const countDelta = currentErrors.length - previousErrors.length
 
@@ -124,11 +128,12 @@ export function countOccurrences(haystack, needle) {
   if (!needle) return 0
   const normH = normalizeLines(haystack)
   const normN = normalizeLines(needle)
+  if (!normN) return 0
   let count = 0
   let index = normH.indexOf(normN)
   while (index !== -1) {
     count += 1
-    index = normH.indexOf(normN, index + normN.length)
+    index = normH.indexOf(normN, index + Math.max(1, normN.length))
   }
   if (count > 0) return count
 
@@ -140,10 +145,11 @@ export function countOccurrences(haystack, needle) {
     .split('\n')
     .map(l => l.trimEnd())
     .join('\n')
+  if (!trimN) return 0
   index = trimH.indexOf(trimN)
   while (index !== -1) {
     count += 1
-    index = trimH.indexOf(trimN, index + trimN.length)
+    index = trimH.indexOf(trimN, index + Math.max(1, trimN.length))
   }
   return count
 }
@@ -152,13 +158,14 @@ export function cleanOldText(text) {
   if (!text) return ''
   let cleaned = cleanLineNumbers(text)
   // Normalize double-escaped LaTeX backslashes e.g. \\centering -> \centering
-  cleaned = cleaned.replace(/\\\\([a-zA-Z@{}\[\]$%&_#\\]|\\\\)/g, '\\$1')
+  cleaned = cleaned.replace(/\\\\([a-zA-Z@{}[\]$%&_#\\]|\\\\)/g, '\\$1')
   return cleaned
 }
 
 export function tokenizeCode(str) {
   const tokens = []
-  const re = /\\[a-zA-Z@]+|\\end\{[^}]*\}|\\begin\{[^}]*\}|\{[^}]*\}|[^\s\\{}]+|\\/g
+  const re =
+    /\\[a-zA-Z@]+|\\end\{[^}]*\}|\\begin\{[^}]*\}|\{[^}]*\}|[^\s\\{}]+|\\/g
   let m
   while ((m = re.exec(str)) !== null) {
     tokens.push({
@@ -227,11 +234,15 @@ export function locateAnchorInText(docText, anchor) {
   }
 
   // 3. Fuzzy anchor matching
-  const fuzzy = findFuzzyUniqueAnchor(docText, anchor) || (cleaned ? findFuzzyUniqueAnchor(docText, cleaned) : null)
+  const fuzzy =
+    findFuzzyUniqueAnchor(docText, anchor) ||
+    (cleaned ? findFuzzyUniqueAnchor(docText, cleaned) : null)
   if (fuzzy) return { type: 'fuzzy', anchor: fuzzy }
 
   // 4. Whitespace-agnostic token matching
-  const wsMatch = findWhitespaceAgnosticAnchor(docText, anchor) || (cleaned ? findWhitespaceAgnosticAnchor(docText, cleaned) : null)
+  const wsMatch =
+    findWhitespaceAgnosticAnchor(docText, anchor) ||
+    (cleaned ? findWhitespaceAgnosticAnchor(docText, cleaned) : null)
   if (wsMatch) {
     return {
       type: 'whitespace',
@@ -242,7 +253,9 @@ export function locateAnchorInText(docText, anchor) {
   }
 
   // 5. Fuzzy word window matching
-  const wordMatch = findFuzzyWordWindow(docText, anchor) || (cleaned ? findFuzzyWordWindow(docText, cleaned) : null)
+  const wordMatch =
+    findFuzzyWordWindow(docText, anchor) ||
+    (cleaned ? findFuzzyWordWindow(docText, cleaned) : null)
   if (wordMatch) {
     return {
       type: 'fuzzy_words',
@@ -300,7 +313,10 @@ export function findFuzzyWordWindow(docText, needleText, threshold = 0.75) {
           d += 2
           n++
           matches += 0.8
-        } else if (n + 1 < nLen && docWords[i + d].clean === needleWords[n + 1]) {
+        } else if (
+          n + 1 < nLen &&
+          docWords[i + d].clean === needleWords[n + 1]
+        ) {
           d++
           n += 2
           matches += 0.8
@@ -323,7 +339,10 @@ export function findFuzzyWordWindow(docText, needleText, threshold = 0.75) {
   for (const hit of hits) {
     let merged = false
     for (const cluster of clusters) {
-      if (Math.max(hit.startIdx, cluster.best.startIdx) <= Math.min(hit.endIdx, cluster.best.endIdx)) {
+      if (
+        Math.max(hit.startIdx, cluster.best.startIdx) <=
+        Math.min(hit.endIdx, cluster.best.endIdx)
+      ) {
         merged = true
         break
       }
@@ -348,7 +367,11 @@ export function findFuzzyWordWindow(docText, needleText, threshold = 0.75) {
   return null
 }
 
-export function formatAmbiguousOccurrences(docText, lineNumbers, maxOccurrences = 4) {
+export function formatAmbiguousOccurrences(
+  docText,
+  lineNumbers,
+  maxOccurrences = 4
+) {
   const lines = (docText || '').split('\n')
   const shown = (lineNumbers || []).slice(0, maxOccurrences)
   const previews = shown.map(lineNo => {
@@ -370,7 +393,10 @@ export function findMatchingLines(haystack, needle) {
   const normH = normalizeLines(haystack)
   const normN = cleanOldText(normalizeLines(needle))
   const hLines = normH.split('\n')
-  const nLines = normN.split('\n').map(l => l.trim()).filter(Boolean)
+  const nLines = normN
+    .split('\n')
+    .map(l => l.trim())
+    .filter(Boolean)
   if (nLines.length === 0) return []
 
   const targetLine = nLines[0]
@@ -378,7 +404,10 @@ export function findMatchingLines(haystack, needle) {
 
   for (let i = 0; i < hLines.length; i++) {
     const trimmedH = hLines[i].trim()
-    if (trimmedH === targetLine || (targetLine.length > 5 && trimmedH.includes(targetLine))) {
+    if (
+      trimmedH === targetLine ||
+      (targetLine.length > 5 && trimmedH.includes(targetLine))
+    ) {
       results.push(i + 1)
     }
   }
@@ -604,7 +633,9 @@ export class AiAssistTools {
   async _getRootFolderId(projectId) {
     try {
       if (this.projectGetter?.getProject) {
-        const project = await this.projectGetter.getProject(projectId, { rootFolder: true })
+        const project = await this.projectGetter.getProject(projectId, {
+          rootFolder: true,
+        })
         return project?.rootFolder?.[0]?._id ?? null
       }
     } catch {
@@ -694,7 +725,11 @@ export class AiAssistTools {
       : await Promise.all(
           listed.map(async doc => {
             try {
-              const fetched = await this.docUpdater.getDocument(projectId, doc._id, -1)
+              const fetched = await this.docUpdater.getDocument(
+                projectId,
+                doc._id,
+                -1
+              )
               if (fetched?.lines) return { ...doc, lines: fetched.lines }
             } catch {
               // keep the docstore copy
@@ -705,9 +740,13 @@ export class AiAssistTools {
 
     let rootPath = null
     try {
-      const project = await this.projectGetter.getProject(projectId, { rootDoc_id: 1 })
+      const project = await this.projectGetter.getProject(projectId, {
+        rootDoc_id: 1,
+      })
       if (project?.rootDoc_id) {
-        const root = docs.find(doc => String(doc._id) === String(project.rootDoc_id))
+        const root = docs.find(
+          doc => String(doc._id) === String(project.rootDoc_id)
+        )
         rootPath = root ? root.path : null
       }
     } catch {
@@ -736,14 +775,23 @@ export class AiAssistTools {
   }
 
   async resolveEditTarget(args, { projectId }) {
-    if (!args || !args.oldText || typeof args.oldText !== 'string' || !args.oldText.trim()) {
+    if (
+      !args ||
+      !args.oldText ||
+      typeof args.oldText !== 'string' ||
+      !args.oldText.trim()
+    ) {
       return null
     }
     const doc = await this._resolveDoc(projectId, args.path)
     if (doc) {
       let docText = (doc.lines || []).join('\n')
       try {
-        const fetched = await this.docUpdater.getDocument(projectId, doc._id, -1)
+        const fetched = await this.docUpdater.getDocument(
+          projectId,
+          doc._id,
+          -1
+        )
         if (fetched?.lines) docText = fetched.lines.join('\n')
       } catch {}
       const match = locateAnchorInText(docText, args.oldText)
@@ -756,7 +804,11 @@ export class AiAssistTools {
       if (doc && String(other._id) === String(doc._id)) continue
       let otherText = (other.lines || []).join('\n')
       try {
-        const fetched = await this.docUpdater.getDocument(projectId, other._id, -1)
+        const fetched = await this.docUpdater.getDocument(
+          projectId,
+          other._id,
+          -1
+        )
         if (fetched?.lines) otherText = fetched.lines.join('\n')
       } catch {}
       const match = locateAnchorInText(otherText, args.oldText)
@@ -774,12 +826,20 @@ export class AiAssistTools {
     const normalized = targetPath.trim().replace(/^\//, '')
     if (this.entityHandler.getDocIdByPath) {
       try {
-        const docId = await this.entityHandler.getDocIdByPath(projectId, normalized)
+        const docId = await this.entityHandler.getDocIdByPath(
+          projectId,
+          normalized
+        )
         if (docId) {
           const docs = await this._getDocsList(projectId)
           const found = docs.find(d => String(d._id) === String(docId))
           if (found) return found
-          return { _id: docId, path: normalized, name: normalized.split('/').pop(), lines: [] }
+          return {
+            _id: docId,
+            path: normalized,
+            name: normalized.split('/').pop(),
+            lines: [],
+          }
         }
       } catch {
         // Fall back to scanning the docs list
@@ -813,12 +873,18 @@ export class AiAssistTools {
       return {
         result: {
           status: 'error',
-          error: 'Tool arguments were truncated or invalid JSON. Please perform smaller edits or edit one section at a time.',
+          error:
+            'Tool arguments were truncated or invalid JSON. Please perform smaller edits or edit one section at a time.',
         },
       }
     }
     if (!args.path || typeof args.path !== 'string' || !args.path.trim()) {
-      return { result: { status: 'error', error: "Parameter 'path' is required for edit_file." } }
+      return {
+        result: {
+          status: 'error',
+          error: "Parameter 'path' is required for edit_file.",
+        },
+      }
     }
 
     const doc = await this._resolveDoc(projectId, args.path)
@@ -833,8 +899,12 @@ export class AiAssistTools {
     }
 
     const strippedOld = cleanLineNumbers(args.oldText || '')
-    const oldTextWasStripped = strippedOld !== args.oldText && strippedOld.length > 0
-    const sanitizedNewText = cleanLineNumberPrefixes(args.newText || '', oldTextWasStripped)
+    const oldTextWasStripped =
+      strippedOld !== args.oldText && strippedOld.length > 0
+    const sanitizedNewText = cleanLineNumberPrefixes(
+      args.newText || '',
+      oldTextWasStripped
+    )
 
     // Line-range mode: startLine..endLine name the block, so replacing or
     // deleting a long block does not require copying it into oldText. Copying
@@ -843,16 +913,30 @@ export class AiAssistTools {
     // loop re-executes with the resolved oldText, which equals the range text.
     // Some gateways send numeric arguments as strings.
     const lineArg = v =>
-      typeof v === 'number' || (typeof v === 'string' && v.trim() !== '') ? Number(v) : NaN
+      typeof v === 'number' || (typeof v === 'string' && v.trim() !== '')
+        ? Number(v)
+        : NaN
     const from = lineArg(args.startLine)
     const until = lineArg(args.endLine)
     if (Number.isInteger(from) && Number.isInteger(until)) {
       const docLines = docText.split('\n')
       const to = Math.min(until, docLines.length)
-      const rangeText = doc ? docLines.slice(Math.max(0, from - 1), to).join('\n') : ''
-      if (args.oldText === undefined || args.oldText === null || args.oldText === '' || args.oldText === rangeText) {
+      const rangeText = doc
+        ? docLines.slice(Math.max(0, from - 1), to).join('\n')
+        : ''
+      if (
+        args.oldText === undefined ||
+        args.oldText === null ||
+        args.oldText === '' ||
+        args.oldText === rangeText
+      ) {
         if (!doc) {
-          return { result: { status: 'error', error: `File not found: ${args.path}. Use list_files to see the project's paths.` } }
+          return {
+            result: {
+              status: 'error',
+              error: `File not found: ${args.path}. Use list_files to see the project's paths.`,
+            },
+          }
         }
         // startLine one past the last line appends: the range is empty and
         // newText lands after the file's last line.
@@ -868,7 +952,11 @@ export class AiAssistTools {
         const inserted = rangeNewText === '' ? [] : rangeNewText.split('\n')
         return {
           doc,
-          lines: [...docLines.slice(0, from - 1), ...inserted, ...docLines.slice(to)],
+          lines: [
+            ...docLines.slice(0, from - 1),
+            ...inserted,
+            ...docLines.slice(to),
+          ],
           path: doc.path,
           oldText: rangeText,
           newText: rangeNewText,
@@ -881,12 +969,23 @@ export class AiAssistTools {
     // Whole file replacement: only when oldText matches the full file or file is empty
     const isDocEmpty = !doc || docText.trim().length === 0
     const isFullFileReplace =
-      (typeof args.oldText === 'string' && args.oldText.trim().length > 0 && normalizeLines(args.oldText).trim() === normalizeLines(docText).trim()) ||
+      (typeof args.oldText === 'string' &&
+        args.oldText.trim().length > 0 &&
+        normalizeLines(args.oldText).trim() ===
+          normalizeLines(docText).trim()) ||
       (isDocEmpty && typeof args.oldText === 'string')
 
     if (isFullFileReplace && doc) {
       const updatedLines = sanitizedNewText.split('\n')
-      return { doc, lines: updatedLines, path: doc.path, oldText: args.oldText, newText: sanitizedNewText, startLine: 1, previousLineCount: docText.split('\n').length }
+      return {
+        doc,
+        lines: updatedLines,
+        path: doc.path,
+        oldText: args.oldText,
+        newText: sanitizedNewText,
+        startLine: 1,
+        previousLineCount: docText.split('\n').length,
+      }
     }
 
     // Append mode: when oldText is explicitly empty string ""
@@ -900,11 +999,21 @@ export class AiAssistTools {
           },
         }
       }
-      const appended = docText.endsWith('\n') || docText.length === 0
-        ? docText + sanitizedNewText
-        : docText + '\n' + sanitizedNewText
-      const startLine = appended.split('\n').length - sanitizedNewText.split('\n').length + 1
-      return { doc, lines: appended.split('\n'), path: doc.path, oldText: '', newText: sanitizedNewText, startLine, previousLineCount: docText.split('\n').length }
+      const appended =
+        docText.endsWith('\n') || docText.length === 0
+          ? docText + sanitizedNewText
+          : docText + '\n' + sanitizedNewText
+      const startLine =
+        appended.split('\n').length - sanitizedNewText.split('\n').length + 1
+      return {
+        doc,
+        lines: appended.split('\n'),
+        path: doc.path,
+        oldText: '',
+        newText: sanitizedNewText,
+        startLine,
+        previousLineCount: docText.split('\n').length,
+      }
     }
 
     if (typeof args.oldText !== 'string') {
@@ -933,7 +1042,9 @@ export class AiAssistTools {
       const anchorLineCount = targetAnchor.split('\n').length
       const windowRadius = Math.max(2, anchorLineCount + 1)
       const hasEnd = Number.isInteger(until) && until >= from
-      const localEndIdx = hasEnd ? until : Math.min(docLines.length, startIdx + windowRadius)
+      const localEndIdx = hasEnd
+        ? until
+        : Math.min(docLines.length, startIdx + windowRadius)
       const localSearchText = docLines.slice(startIdx, localEndIdx).join('\n')
       const localMatch = locateAnchorInText(localSearchText, targetAnchor)
 
@@ -947,7 +1058,9 @@ export class AiAssistTools {
       }
     }
 
-    let targetMatch = doc ? locateAnchorInText(searchDocText, targetAnchor) : null
+    let targetMatch = doc
+      ? locateAnchorInText(searchDocText, targetAnchor)
+      : null
 
     // If scoped search didn't match, fall back to searching the full document
     if (!targetMatch && searchDocText !== resolvedDocText && doc) {
@@ -961,15 +1074,25 @@ export class AiAssistTools {
     // the snapshot (one flush and one bulk read), and the chosen file is
     // confirmed against its live text before anything is planned on it.
     if (!targetMatch) {
-      const isExact = match => match && (match.type === 'exact' || match.type === 'cleaned')
+      const isExact = match =>
+        match && (match.type === 'exact' || match.type === 'cleaned')
       const snapshot = await this._getSnapshot(projectId)
       for (const other of snapshot.docs) {
         if (doc && String(other._id) === String(doc._id)) continue
-        if (!isExact(locateAnchorInText((other.lines || []).join('\n'), targetAnchor))) continue
+        if (
+          !isExact(
+            locateAnchorInText((other.lines || []).join('\n'), targetAnchor)
+          )
+        )
+          continue
 
         let liveText = (other.lines || []).join('\n')
         try {
-          const fetched = await this.docUpdater.getDocument(projectId, other._id, -1)
+          const fetched = await this.docUpdater.getDocument(
+            projectId,
+            other._id,
+            -1
+          )
           if (fetched?.lines) liveText = fetched.lines.join('\n')
         } catch {}
         const liveMatch = locateAnchorInText(liveText, targetAnchor)
@@ -986,13 +1109,17 @@ export class AiAssistTools {
     if (!targetMatch || !resolvedDoc) {
       if (resolvedDocText) {
         const cleanedOld = cleanOldText(targetAnchor)
-        const checkAnchor = countOccurrences(resolvedDocText, cleanedOld) > 0 ? cleanedOld : targetAnchor
+        const checkAnchor =
+          countOccurrences(resolvedDocText, cleanedOld) > 0
+            ? cleanedOld
+            : targetAnchor
         const matches = countOccurrences(resolvedDocText, checkAnchor)
         if (matches > 1) {
           const occurrences = findMatchingLines(resolvedDocText, checkAnchor)
-          const contextPreviews = occurrences.length > 0
-            ? `:\n${formatAmbiguousOccurrences(resolvedDocText, occurrences)}\n\nTo disambiguate, include unique surrounding text in oldText, or pass startLine to target a specific line (e.g. startLine: ${occurrences[0]}).`
-            : '. Include more surrounding context lines or use startLine/endLine to disambiguate.'
+          const contextPreviews =
+            occurrences.length > 0
+              ? `:\n${formatAmbiguousOccurrences(resolvedDocText, occurrences)}\n\nTo disambiguate, include unique surrounding text in oldText, or pass startLine to target a specific line (e.g. startLine: ${occurrences[0]}).`
+              : '. Include more surrounding context lines or use startLine/endLine to disambiguate.'
           return {
             result: {
               status: 'ambiguous',
@@ -1002,13 +1129,19 @@ export class AiAssistTools {
           }
         }
       }
-      const hints = resolvedDocText ? nearestLines(resolvedDocText, targetAnchor) : []
-      const candidateLines = resolvedDocText ? findMatchingLines(resolvedDocText, targetAnchor) : []
-      let candidateHint = ''
+      const hints = resolvedDocText
+        ? nearestLines(resolvedDocText, targetAnchor)
+        : []
+      const candidateLines = resolvedDocText
+        ? findMatchingLines(resolvedDocText, targetAnchor)
+        : []
+      let candidateHint
       if (hints.length > 0) {
         candidateHint = ` The closest lines in ${args.path} right now are:\n${hints
           .map(h => `${h.line}: ${h.text}`)
-          .join('\n')}\nCopy the anchor from those exact lines (without line-number prefixes), or call read_file on ${args.path} first.`
+          .join(
+            '\n'
+          )}\nCopy the anchor from those exact lines (without line-number prefixes), or call read_file on ${args.path} first.`
       } else if (candidateLines.length > 0) {
         candidateHint = ` (Found similar line around line(s) ${candidateLines.join(', ')}). Use read_file to inspect the file around those lines.`
       } else {
@@ -1034,11 +1167,17 @@ export class AiAssistTools {
     let replaced
     let matchStartOffset
     let resolvedOldText
-    if (targetMatch.charStart !== undefined && targetMatch.charEnd !== undefined) {
+    if (
+      targetMatch.charStart !== undefined &&
+      targetMatch.charEnd !== undefined
+    ) {
       matchStartOffset = searchDocOffset + targetMatch.charStart
       const matchEndOffset = searchDocOffset + targetMatch.charEnd
       resolvedOldText = resolvedDocText.slice(matchStartOffset, matchEndOffset)
-      replaced = resolvedDocText.slice(0, matchStartOffset) + sanitizedNewText + resolvedDocText.slice(matchEndOffset)
+      replaced =
+        resolvedDocText.slice(0, matchStartOffset) +
+        sanitizedNewText +
+        resolvedDocText.slice(matchEndOffset)
     } else {
       const matchedAnchor = targetMatch.anchor
       resolvedOldText = matchedAnchor
@@ -1047,7 +1186,10 @@ export class AiAssistTools {
         matchStartOffset = resolvedDocText.indexOf(matchedAnchor)
       }
       if (matchStartOffset !== -1) {
-        replaced = resolvedDocText.slice(0, matchStartOffset) + sanitizedNewText + resolvedDocText.slice(matchStartOffset + matchedAnchor.length)
+        replaced =
+          resolvedDocText.slice(0, matchStartOffset) +
+          sanitizedNewText +
+          resolvedDocText.slice(matchStartOffset + matchedAnchor.length)
       } else {
         const normDoc = normalizeLines(resolvedDocText)
         const normAnchor = normalizeLines(matchedAnchor)
@@ -1055,11 +1197,14 @@ export class AiAssistTools {
         replaced = normDoc.replace(normAnchor, sanitizedNewText)
       }
     }
-    const startLine = resolvedDocText.slice(0, Math.max(0, matchStartOffset)).split('\n').length
+    const startLine = resolvedDocText
+      .slice(0, Math.max(0, matchStartOffset))
+      .split('\n').length
 
-    const note = doc && resolvedDoc.path !== doc.path
-      ? `Text was located in '${resolvedDoc.path}' (redirected from '${args.path}').`
-      : undefined
+    const note =
+      doc && resolvedDoc.path !== doc.path
+        ? `Text was located in '${resolvedDoc.path}' (redirected from '${args.path}').`
+        : undefined
     return {
       doc: resolvedDoc,
       lines: replaced.split('\n'),
@@ -1096,7 +1241,11 @@ export class AiAssistTools {
   _traversalError(args) {
     if (args?.path && typeof args.path === 'string') {
       const normalized = args.path.replace(/\\/g, '/').replace(/^\/+/, '')
-      if (normalized.startsWith('../') || normalized.includes('/../') || normalized === '..') {
+      if (
+        normalized.startsWith('../') ||
+        normalized.includes('/../') ||
+        normalized === '..'
+      ) {
         return 'Path traversal forbidden: file path cannot reference parent directories.'
       }
     }
@@ -1126,17 +1275,21 @@ export class AiAssistTools {
 
     let message
     if (status === 'skipped') {
-      message = 'No compile ran: another build was still in progress and did not finish in time. Try again.'
+      message =
+        'No compile ran: another build was still in progress and did not finish in time. Try again.'
     } else if (status === 'timedout') {
-      message = 'The compile timed out. Call compile_project with clean set to true to clear the cached build and rebuild from scratch.'
+      message =
+        'The compile timed out. Call compile_project with clean set to true to clear the cached build and rebuild from scratch.'
     } else if (status === 'no-output') {
-      message = 'The compile produced no parsable output. Call compile_project with clean set to true to clear the cached build and rebuild from scratch.'
+      message =
+        'The compile produced no parsable output. Call compile_project with clean set to true to clear the cached build and rebuild from scratch.'
     } else if (errors.length === 0 && status !== 'success') {
       message = `The build ended as "${status}" with no errors in the log. Nothing was verified.`
     } else if (errors.length === 0) {
-      message = warnings.length > 0
-        ? `The project compiled with 0 errors and ${warnings.length} warning(s).`
-        : 'The project compiled without errors.'
+      message =
+        warnings.length > 0
+          ? `The project compiled with 0 errors and ${warnings.length} warning(s).`
+          : 'The project compiled without errors.'
     } else if (previous && delta.regressed) {
       message = `WARNING: Compilation worsened. Error count changed by ${delta.countDelta >= 0 ? `+${delta.countDelta}` : delta.countDelta} (${delta.newErrorsCount} new error(s) introduced, ${delta.resolvedErrorsCount} resolved). Recent edits likely introduced invalid LaTeX syntax. Focus on fixing the primary error first.`
     } else if (previous && delta.resolvedErrorsCount > 0) {
@@ -1163,10 +1316,17 @@ export class AiAssistTools {
     }
   }
 
-  async execute(name, args = {}, { projectId, userId: rawUserId, callId, compileInEditor }) {
+  async execute(
+    name,
+    args = {},
+    { projectId, userId: rawUserId, callId, compileInEditor }
+  ) {
     const userId = await this._resolveValidUserId(projectId, rawUserId)
     if (!userId) {
-      return { error: 'A valid authenticated user context is required to execute tools.' }
+      return {
+        error:
+          'A valid authenticated user context is required to execute tools.',
+      }
     }
 
     // Path sanitization for file operations
@@ -1180,21 +1340,33 @@ export class AiAssistTools {
           const wanted = String(args.path || '').replace(/^\//, '')
           const files = await this._getFilesList(projectId).catch(() => [])
           if (files.some(file => file.path === wanted)) {
-            return { error: `${wanted} is a binary file and cannot be read as text.` }
+            return {
+              error: `${wanted} is a binary file and cannot be read as text.`,
+            }
           }
           const baseName = wanted.split('/').pop()
-          const candidates = (await this._getDocsList(projectId).catch(() => []))
+          const candidates = (
+            await this._getDocsList(projectId).catch(() => [])
+          )
             .map(d => d.path)
-            .filter(path => path !== wanted && path.split('/').pop() === baseName)
+            .filter(
+              path => path !== wanted && path.split('/').pop() === baseName
+            )
           if (candidates.length > 1) {
-            return { error: `File not found: ${args.path}. Did you mean ${candidates.join(' or ')}?` }
+            return {
+              error: `File not found: ${args.path}. Did you mean ${candidates.join(' or ')}?`,
+            }
           }
           return { error: `File not found: ${args.path}` }
         }
         let lines = doc.lines || []
         try {
           // The live document, not the snapshot: the user may be typing.
-          const fetched = await this.docUpdater.getDocument(projectId, doc._id, -1)
+          const fetched = await this.docUpdater.getDocument(
+            projectId,
+            doc._id,
+            -1
+          )
           if (fetched?.lines) lines = fetched.lines
         } catch {
           // keep fallback lines
@@ -1202,13 +1374,17 @@ export class AiAssistTools {
         const totalLines = lines.length
         const hasRange = Number(args.from) > 0 || Number(args.to) > 0
         const windowSize = hasRange ? MAX_READ_LINES : DEFAULT_READ_LINES
-        const start = Math.max(1, Math.min(Number(args.from) || 1, totalLines || 1))
+        const start = Math.max(
+          1,
+          Math.min(Number(args.from) || 1, totalLines || 1)
+        )
         const requestedEnd = Math.min(Number(args.to) || totalLines, totalLines)
         const capped = lines.slice(start - 1, requestedEnd).slice(0, windowSize)
         const end = start + capped.length - 1
-        const nextRange = end < totalLines
-          ? { from: end + 1, to: Math.min(end + windowSize, totalLines) }
-          : undefined
+        const nextRange =
+          end < totalLines
+            ? { from: end + 1, to: Math.min(end + windowSize, totalLines) }
+            : undefined
         return {
           path: args.path,
           from: start,
@@ -1226,9 +1402,12 @@ export class AiAssistTools {
           return { error: "Parameter 'query' is required for search_text." }
         }
         const snapshot = await this._getSnapshot(projectId)
-        const pattern = typeof args.glob === 'string' && args.glob
-          ? args.glob
-          : (typeof args.path === 'string' && args.path ? args.path : null)
+        const pattern =
+          typeof args.glob === 'string' && args.glob
+            ? args.glob
+            : typeof args.path === 'string' && args.path
+              ? args.path
+              : null
         const docs = pattern
           ? snapshot.docs.filter(doc => matchesGlob(doc.path, pattern))
           : snapshot.docs
@@ -1249,22 +1428,28 @@ export class AiAssistTools {
             if (err.code === 'regexTimeout') return { error: err.message }
             // A SyntaxError message already reads "Invalid regular expression: /(/i: …".
             return {
-              error: err instanceof SyntaxError
-                ? err.message
-                : `Invalid regular expression: ${err.message}`,
+              error:
+                err instanceof SyntaxError
+                  ? err.message
+                  : `Invalid regular expression: ${err.message}`,
             }
           }
         } else {
-          const needle = args.caseSensitive ? args.query : args.query.toLowerCase()
+          const needle = args.caseSensitive
+            ? args.query
+            : args.query.toLowerCase()
           const hits = []
           let total = 0
           for (const doc of docs) {
             const lines = doc.lines || []
             for (let i = 0; i < lines.length; i++) {
-              const haystack = args.caseSensitive ? lines[i] : lines[i].toLowerCase()
+              const haystack = args.caseSensitive
+                ? lines[i]
+                : lines[i].toLowerCase()
               if (haystack.includes(needle)) {
                 total++
-                if (hits.length < MAX_SEARCH_HITS) hits.push({ path: doc.path, line: i + 1 })
+                if (hits.length < MAX_SEARCH_HITS)
+                  hits.push({ path: doc.path, line: i + 1 })
               }
             }
           }
@@ -1281,7 +1466,10 @@ export class AiAssistTools {
               text: lines[line - 1] ?? '',
               ...(contextLines > 0
                 ? {
-                    before: lines.slice(Math.max(0, line - 1 - contextLines), line - 1),
+                    before: lines.slice(
+                      Math.max(0, line - 1 - contextLines),
+                      line - 1
+                    ),
                     after: lines.slice(line, line + contextLines),
                   }
                 : {}),
@@ -1296,20 +1484,35 @@ export class AiAssistTools {
       case 'project_map': {
         const snapshot = await this._getSnapshot(projectId)
         const all = [
-          ...snapshot.docs.map(doc => ({ path: doc.path, type: 'doc', lines: (doc.lines || []).length })),
+          ...snapshot.docs.map(doc => ({
+            path: doc.path,
+            type: 'doc',
+            lines: (doc.lines || []).length,
+          })),
           ...snapshot.files.map(file => ({ path: file.path, type: 'binary' })),
         ].sort((a, b) => a.path.localeCompare(b.path))
-        const listed = typeof args.glob === 'string' && args.glob
-          ? all.filter(file => matchesGlob(file.path, args.glob))
-          : all
+        const listed =
+          typeof args.glob === 'string' && args.glob
+            ? all.filter(file => matchesGlob(file.path, args.glob))
+            : all
         const shown = listed.slice(0, MAX_FILE_ROWS)
-        return { files: shown, total: listed.length, truncated: listed.length > shown.length }
+        return {
+          files: shown,
+          total: listed.length,
+          truncated: listed.length > shown.length,
+        }
       }
 
       case 'edit_file': {
         const plan = await this._planEdit(projectId, args)
         if (plan.result) return plan.result
-        await this.docUpdater.setDocument(projectId, plan.doc._id, userId, plan.lines, 'ai-assist')
+        await this.docUpdater.setDocument(
+          projectId,
+          plan.doc._id,
+          userId,
+          plan.lines,
+          'ai-assist'
+        )
         this.invalidateSnapshot(projectId)
         return {
           status: 'applied',
@@ -1339,7 +1542,8 @@ export class AiAssistTools {
           }
         }
 
-        const rootFolderId = (await this._getRootFolderId(projectId)) || 'root-folder'
+        const rootFolderId =
+          (await this._getRootFolderId(projectId)) || 'root-folder'
         return new Promise((resolve, reject) => {
           this.editorController.addDoc(
             projectId,
@@ -1351,7 +1555,11 @@ export class AiAssistTools {
             (err, newDoc) => {
               if (err) return reject(err)
               this.invalidateSnapshot(projectId)
-              resolve({ status: 'applied', path: args.path, docId: newDoc?._id })
+              resolve({
+                status: 'applied',
+                path: args.path,
+                docId: newDoc?._id,
+              })
             }
           )
         })
@@ -1389,8 +1597,14 @@ export class AiAssistTools {
         let errors = []
         let warnings = []
 
-        const logFile = (result.outputFiles || []).find(f => f.path === 'output.log' || f.path?.endsWith('.log'))
-        if (logFile && result.buildId && this.clsiManager?.getOutputFileStream) {
+        const logFile = (result.outputFiles || []).find(
+          f => f.path === 'output.log' || f.path?.endsWith('.log')
+        )
+        if (
+          logFile &&
+          result.buildId &&
+          this.clsiManager?.getOutputFileStream
+        ) {
           try {
             const stream = await this.clsiManager.getOutputFileStream(
               projectId,
@@ -1402,11 +1616,16 @@ export class AiAssistTools {
             const chunks = []
             for await (const chunk of stream) chunks.push(chunk)
             const rawLog = Buffer.concat(chunks).toString('utf8')
-            const parsed = LatexLogParser.parse(rawLog, { ignoreDuplicates: true })
+            const parsed = LatexLogParser.parse(rawLog, {
+              ignoreDuplicates: true,
+            })
             errors = (parsed.errors || []).map(e => {
               const summary = {
                 file: e.file || null,
-                line: typeof e.line === 'number' ? e.line : (parseInt(e.line, 10) || null),
+                line:
+                  typeof e.line === 'number'
+                    ? e.line
+                    : parseInt(e.line, 10) || null,
                 message: e.message || '',
               }
               const excerpt = errorExcerpt(e)
@@ -1415,7 +1634,10 @@ export class AiAssistTools {
             })
             warnings = (parsed.warnings || []).map(w => ({
               file: w.file || null,
-              line: typeof w.line === 'number' ? w.line : (parseInt(w.line, 10) || null),
+              line:
+                typeof w.line === 'number'
+                  ? w.line
+                  : parseInt(w.line, 10) || null,
               message: w.message || '',
             }))
           } catch (err) {
@@ -1423,7 +1645,12 @@ export class AiAssistTools {
           }
         }
 
-        const compileStatus = errors.length > 0 ? 'failure' : (result.status === 'success' ? 'success' : result.status)
+        const compileStatus =
+          errors.length > 0
+            ? 'failure'
+            : result.status === 'success'
+              ? 'success'
+              : result.status
         return this._compileToolResult(
           projectId,
           { status: compileStatus, errors, warnings },
@@ -1439,14 +1666,16 @@ export class AiAssistTools {
         if (!compile) {
           return {
             status: 'none',
-            message: 'No compile has run in this chat yet. Call compile_project to build the project.',
+            message:
+              'No compile has run in this chat yet. Call compile_project to build the project.',
           }
         }
 
         const severity = args.severity || 'all'
         const requestedLimit = Number(args.limit || args.maxEntries)
         const limit = requestedLimit > 0 ? Math.floor(requestedLimit) : 20
-        const includeRaw = args.includeRaw !== false && args.includeRaw !== 'false'
+        const includeRaw =
+          args.includeRaw !== false && args.includeRaw !== 'false'
 
         const errors = compile.errors.slice(0, limit).map(entry => {
           if (includeRaw || !entry.excerpt) return entry
@@ -1462,7 +1691,8 @@ export class AiAssistTools {
           warningCount: compile.warnings.length,
           primaryError: errors.length > 0 ? errors[0] : null,
           cascadingErrorsCount: Math.max(0, compile.errors.length - 1),
-          truncated: compile.errors.length > limit || compile.warnings.length > limit,
+          truncated:
+            compile.errors.length > limit || compile.warnings.length > limit,
         }
 
         if (severity === 'all' || severity === 'errors') {
@@ -1498,7 +1728,11 @@ export class AiAssistTools {
         if (match.kind === 'ambiguous') {
           return {
             error: `"${section}" matches more than one section. Pick one.`,
-            candidates: match.candidates.map(c => ({ title: c.title, path: c.path, line: c.line })),
+            candidates: match.candidates.map(c => ({
+              title: c.title,
+              path: c.path,
+              line: c.line,
+            })),
           }
         }
         const target = match.section
@@ -1509,9 +1743,16 @@ export class AiAssistTools {
           .find(candidate => candidate.level <= target.level)
         const nextPeerInFile = siblings
           .slice(startIndex + 1)
-          .find(candidate => candidate.path === target.path && candidate.level <= target.level)
-        const end = nextPeerInFile ? nextPeerInFile.line - 1 : Number.MAX_SAFE_INTEGER
-        const nextIndex = nextPeer ? siblings.indexOf(nextPeer) : siblings.length
+          .find(
+            candidate =>
+              candidate.path === target.path && candidate.level <= target.level
+          )
+        const end = nextPeerInFile
+          ? nextPeerInFile.line - 1
+          : Number.MAX_SAFE_INTEGER
+        const nextIndex = nextPeer
+          ? siblings.indexOf(nextPeer)
+          : siblings.length
         return {
           range: { from: target.line, to: end },
           sections: siblings.slice(startIndex, nextIndex),
@@ -1533,20 +1774,28 @@ export class AiAssistTools {
         const index = await this._getIndex(projectId)
         const refs = index.references
         const kind = typeof args.kind === 'string' ? args.kind : 'all'
-        const pick = {
-          labels: { labels: refs.labels, duplicateLabels: refs.duplicateLabels },
-          refs: { refs: refs.refs },
-          citations: { citations: refs.citations, bibKeys: refs.bibKeys },
-          all: refs,
-        }[kind] ?? refs
+        const pick =
+          {
+            labels: {
+              labels: refs.labels,
+              duplicateLabels: refs.duplicateLabels,
+            },
+            refs: { refs: refs.refs },
+            citations: { citations: refs.citations, bibKeys: refs.bibKeys },
+            all: refs,
+          }[kind] ?? refs
 
         if (!args.unresolvedOnly) return pick
 
         const filterUnresolved = uses => uses.filter(use => !use.resolved)
         return {
           ...('refs' in pick ? { refs: filterUnresolved(pick.refs) } : {}),
-          ...('citations' in pick ? { citations: filterUnresolved(pick.citations) } : {}),
-          ...('labels' in pick ? { labels: pick.labels, duplicateLabels: pick.duplicateLabels } : {}),
+          ...('citations' in pick
+            ? { citations: filterUnresolved(pick.citations) }
+            : {}),
+          ...('labels' in pick
+            ? { labels: pick.labels, duplicateLabels: pick.duplicateLabels }
+            : {}),
           ...('bibKeys' in pick ? { bibKeys: pick.bibKeys } : {}),
         }
       }
@@ -1568,7 +1817,9 @@ export class AiAssistTools {
         try {
           const allDocs = await this._getDocsList(projectId)
           if (project.rootDoc_id) {
-            const root = allDocs.find(d => String(d._id) === String(project.rootDoc_id))
+            const root = allDocs.find(
+              d => String(d._id) === String(project.rootDoc_id)
+            )
             if (root) rootDocPath = root.path
           }
         } catch {}
@@ -1623,20 +1874,29 @@ export class AiAssistTools {
       }
 
       case 'configure_appearance_settings': {
-        if (!userId) return { error: 'User context is required to configure appearance settings.' }
+        if (!userId)
+          return {
+            error: 'User context is required to configure appearance settings.',
+          }
 
         // Security guardrail: explicitly block account credentials and settings
         const providedKeys = Object.keys(args || {})
-        const forbiddenFound = providedKeys.filter(k => FORBIDDEN_ACCOUNT_KEYS.has(k.toLowerCase()))
+        const forbiddenFound = providedKeys.filter(k =>
+          FORBIDDEN_ACCOUNT_KEYS.has(k.toLowerCase())
+        )
         if (forbiddenFound.length > 0) {
           return {
             error: `Cannot modify account settings (${forbiddenFound.join(', ')}). Only appearance preferences may be changed.`,
           }
         }
 
-        const validKeys = providedKeys.filter(k => ALLOWED_APPEARANCE_KEYS.has(k))
+        const validKeys = providedKeys.filter(k =>
+          ALLOWED_APPEARANCE_KEYS.has(k)
+        )
         if (validKeys.length === 0) {
-          return { error: 'Supply at least one valid appearance setting to configure.' }
+          return {
+            error: 'Supply at least one valid appearance setting to configure.',
+          }
         }
 
         let user = null
@@ -1707,7 +1967,9 @@ export class AiAssistTools {
           return { error: 'Supply at least one compiler setting to configure.' }
         }
 
-        const project = await this.projectGetter.getProject(projectId, { _id: 1 })
+        const project = await this.projectGetter.getProject(projectId, {
+          _id: 1,
+        })
         if (!project) return { error: 'Project not found' }
 
         const updated = {}
@@ -1735,15 +1997,25 @@ export class AiAssistTools {
         let effectiveRootDocId = args.rootDocId
         if (!effectiveRootDocId && args.rootDocPath) {
           const doc = await this._resolveDoc(projectId, args.rootDocPath)
-          if (!doc) return { error: `Root document not found at path: ${args.rootDocPath}` }
+          if (!doc)
+            return {
+              error: `Root document not found at path: ${args.rootDocPath}`,
+            }
           effectiveRootDocId = doc._id
         }
         if (effectiveRootDocId != null) {
           if (this.editorController?.promises?.setRootDoc) {
-            await this.editorController.promises.setRootDoc(projectId, effectiveRootDocId)
+            await this.editorController.promises.setRootDoc(
+              projectId,
+              effectiveRootDocId
+            )
           } else if (this.editorController?.setRootDoc) {
             await new Promise((resolve, reject) => {
-              this.editorController.setRootDoc(projectId, effectiveRootDocId, err => (err ? reject(err) : resolve()))
+              this.editorController.setRootDoc(
+                projectId,
+                effectiveRootDocId,
+                err => (err ? reject(err) : resolve())
+              )
             })
           }
           updated.rootDocId = String(effectiveRootDocId)
@@ -1761,7 +2033,10 @@ export class AiAssistTools {
         if (args.stopOnFirstError !== undefined) {
           const stopVal = Boolean(args.stopOnFirstError)
           if (this.projectOptionsHandler?.setStopOnFirstError) {
-            await this.projectOptionsHandler.setStopOnFirstError(projectId, stopVal)
+            await this.projectOptionsHandler.setStopOnFirstError(
+              projectId,
+              stopVal
+            )
           }
           updated.stopOnFirstError = stopVal
         }
@@ -1775,11 +2050,16 @@ export class AiAssistTools {
       }
 
       case 'configure_editor_settings': {
-        if (!userId) return { error: 'User context is required to configure editor settings.' }
+        if (!userId)
+          return {
+            error: 'User context is required to configure editor settings.',
+          }
 
         // Security guardrail: explicitly block account credentials and settings
         const providedKeys = Object.keys(args || {})
-        const forbiddenFound = providedKeys.filter(k => FORBIDDEN_ACCOUNT_KEYS.has(k.toLowerCase()))
+        const forbiddenFound = providedKeys.filter(k =>
+          FORBIDDEN_ACCOUNT_KEYS.has(k.toLowerCase())
+        )
         if (forbiddenFound.length > 0) {
           return {
             error: `Cannot modify account settings (${forbiddenFound.join(', ')}). Only editor preferences may be changed by AI tools.`,
@@ -1788,7 +2068,9 @@ export class AiAssistTools {
 
         const validKeys = providedKeys.filter(k => ALLOWED_EDITOR_KEYS.has(k))
         if (validKeys.length === 0) {
-          return { error: 'Supply at least one valid editor setting to configure.' }
+          return {
+            error: 'Supply at least one valid editor setting to configure.',
+          }
         }
 
         let user = null
@@ -1849,16 +2131,25 @@ export class AiAssistTools {
       }
 
       case 'list_available_settings': {
-        const compilers = this.settings?.safeCompilers || ['pdflatex', 'latex', 'xelatex', 'lualatex']
-        const imageNames = (this.settings?.allowedImageNames || []).map(img => ({
-          imageName: img.imageName,
-          imageDesc: img.imageDesc || img.imageName,
-          default: Boolean(img.default),
-        }))
-        const spellCheckLanguages = (this.settings?.languages || []).map(lang => ({
-          code: lang.code,
-          name: lang.name,
-        }))
+        const compilers = this.settings?.safeCompilers || [
+          'pdflatex',
+          'latex',
+          'xelatex',
+          'lualatex',
+        ]
+        const imageNames = (this.settings?.allowedImageNames || []).map(
+          img => ({
+            imageName: img.imageName,
+            imageDesc: img.imageDesc || img.imageName,
+            default: Boolean(img.default),
+          })
+        )
+        const spellCheckLanguages = (this.settings?.languages || []).map(
+          lang => ({
+            code: lang.code,
+            name: lang.name,
+          })
+        )
         const fontFamilies = [
           { name: 'monaco', label: 'Monaco / Menlo / Consolas' },
           { name: 'lucida', label: 'Lucida / Source Code Pro' },
@@ -1914,7 +2205,13 @@ export class AiAssistTools {
             imageNames:
               imageNames.length > 0
                 ? imageNames
-                : [{ imageName: 'texlive-2024.1', imageDesc: 'TeX Live 2024', default: true }],
+                : [
+                    {
+                      imageName: 'texlive-2024.1',
+                      imageDesc: 'TeX Live 2024',
+                      default: true,
+                    },
+                  ],
             spellCheckLanguages:
               spellCheckLanguages.length > 0
                 ? spellCheckLanguages
@@ -2022,11 +2319,13 @@ export class AiAssistTools {
             query: { type: 'string' },
             glob: {
               type: 'string',
-              description: 'Only search files matching this glob, e.g. sections/*.tex',
+              description:
+                'Only search files matching this glob, e.g. sections/*.tex',
             },
             contextLines: {
               type: 'number',
-              description: 'Lines of surrounding context per hit. Defaults to 1.',
+              description:
+                'Lines of surrounding context per hit. Defaults to 1.',
             },
             caseSensitive: { type: 'boolean' },
             regexp: { type: 'boolean' },
@@ -2094,7 +2393,8 @@ export class AiAssistTools {
       },
       {
         name: 'get_compile_result',
-        description: 'The errors and warnings of the last compile_project in this chat, without rebuilding.',
+        description:
+          'The errors and warnings of the last compile_project in this chat, without rebuilding.',
         parameters: {
           type: 'object',
           properties: {
@@ -2109,7 +2409,8 @@ export class AiAssistTools {
             },
             includeRaw: {
               type: 'boolean',
-              description: 'Include the TeX log lines of each error. Defaults to true.',
+              description:
+                'Include the TeX log lines of each error. Defaults to true.',
             },
           },
         },
@@ -2184,7 +2485,8 @@ export class AiAssistTools {
             },
             imageName: {
               type: 'string',
-              description: 'TeX Live version/image name (e.g. "texlive-2024.1")',
+              description:
+                'TeX Live version/image name (e.g. "texlive-2024.1")',
             },
             rootDocPath: {
               type: 'string',
@@ -2192,11 +2494,13 @@ export class AiAssistTools {
             },
             draft: {
               type: 'boolean',
-              description: 'Toggle draft mode compilation (faster builds by omitting images)',
+              description:
+                'Toggle draft mode compilation (faster builds by omitting images)',
             },
             stopOnFirstError: {
               type: 'boolean',
-              description: 'Toggle stopping compilation immediately on the first error',
+              description:
+                'Toggle stopping compilation immediately on the first error',
             },
           },
         },
@@ -2244,7 +2548,8 @@ export class AiAssistTools {
             },
             spellCheckLanguage: {
               type: 'string',
-              description: 'Default user spell-check language code (e.g. "en", "fr")',
+              description:
+                'Default user spell-check language code (e.g. "en", "fr")',
             },
           },
         },

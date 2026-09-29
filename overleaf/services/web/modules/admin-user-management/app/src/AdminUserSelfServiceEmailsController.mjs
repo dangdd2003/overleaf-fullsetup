@@ -83,7 +83,11 @@ const AdminUserSelfServiceEmailsController = {
         return res.status(409).json({ error: 'email_already_registered' })
       }
       logger.error(
-        { err, sessionUserId: SessionManager.getLoggedInUserId(req.session), body: req.body },
+        {
+          err,
+          sessionUserId: SessionManager.getLoggedInUserId(req.session),
+          body: req.body,
+        },
         'Failed to add self-service secondary email'
       )
       return res.status(500).json({ error: 'failed_to_add_email' })
@@ -166,7 +170,11 @@ const AdminUserSelfServiceEmailsController = {
       return res.status(200).json({ success: true })
     } catch (err) {
       logger.error(
-        { err, sessionUserId: SessionManager.getLoggedInUserId(req.session), body: req.body },
+        {
+          err,
+          sessionUserId: SessionManager.getLoggedInUserId(req.session),
+          body: req.body,
+        },
         'Failed to set default email'
       )
       return res.status(500).json({ error: 'failed_to_set_default_email' })
@@ -196,7 +204,9 @@ const AdminUserSelfServiceEmailsController = {
         return res.status(400).json({ error: 'cannot_delete_primary_email' })
       }
 
-      const emailExistsInAccount = user.emails?.some(e => e.email === parsedEmail)
+      const emailExistsInAccount = user.emails?.some(
+        e => e.email === parsedEmail
+      )
       if (!emailExistsInAccount) {
         return res.status(404).json({ error: 'email_not_found' })
       }
@@ -226,7 +236,11 @@ const AdminUserSelfServiceEmailsController = {
         return res.status(400).json({ error: 'cannot_delete_primary_email' })
       }
       logger.error(
-        { err, sessionUserId: SessionManager.getLoggedInUserId(req.session), body: req.body },
+        {
+          err,
+          sessionUserId: SessionManager.getLoggedInUserId(req.session),
+          body: req.body,
+        },
         'Failed to delete secondary email'
       )
       return res.status(500).json({ error: 'failed_to_delete_email' })

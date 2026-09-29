@@ -19,7 +19,12 @@ describe('toAgentMessages', function () {
 
   it('prefixes the frozen context block onto the user turn', function () {
     const messages = toAgentMessages([
-      { id: 'u1', role: 'user', text: 'fix it', contextText: '<project-context turn="1"></project-context>' },
+      {
+        id: 'u1',
+        role: 'user',
+        text: 'fix it',
+        contextText: '<project-context turn="1"></project-context>',
+      },
     ])
     expect(messages[0].content).to.equal(
       '<project-context turn="1"></project-context>\n\nfix it'

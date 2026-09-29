@@ -48,11 +48,14 @@ vi.mock('../../../../../app/src/infrastructure/mongodb.mjs', () => {
   }
 })
 
-vi.mock('../../../../../app/src/Features/Authentication/SessionManager.mjs', () => ({
-  default: {
-    getLoggedInUserId: vi.fn(),
-  },
-}))
+vi.mock(
+  '../../../../../app/src/Features/Authentication/SessionManager.mjs',
+  () => ({
+    default: {
+      getLoggedInUserId: vi.fn(),
+    },
+  })
+)
 
 vi.mock('../../../../../app/src/Features/User/UserSessionsManager.mjs', () => ({
   default: {
@@ -101,26 +104,32 @@ vi.mock('../../../../../app/src/Features/User/UserCreator.mjs', () => ({
   },
 }))
 
-vi.mock('../../../../../app/src/Features/Authentication/AuthenticationManager.mjs', () => {
-  const hashPassword = vi.fn()
-  return {
-    default: {
-      hashPassword,
-      promises: {
+vi.mock(
+  '../../../../../app/src/Features/Authentication/AuthenticationManager.mjs',
+  () => {
+    const hashPassword = vi.fn()
+    return {
+      default: {
         hashPassword,
+        promises: {
+          hashPassword,
+        },
       },
-    },
+    }
   }
-})
+)
 
-vi.mock('../../../../../app/src/Features/Security/OneTimeTokenHandler.mjs', () => ({
-  default: {
-    promises: {
+vi.mock(
+  '../../../../../app/src/Features/Security/OneTimeTokenHandler.mjs',
+  () => ({
+    default: {
+      promises: {
+        getNewToken: vi.fn(),
+      },
       getNewToken: vi.fn(),
     },
-    getNewToken: vi.fn(),
-  },
-}))
+  })
+)
 
 vi.mock('../../../../../app/src/Features/User/UserAuditLogHandler.mjs', () => ({
   default: {
@@ -151,14 +160,17 @@ vi.mock('../../../app/src/AdminUserRestorer.mjs', () => ({
   restoreUserAndProjects: vi.fn(),
 }))
 
-vi.mock('../../../../../app/src/Features/Collaborators/OwnershipTransferHandler.mjs', () => ({
-  default: {
-    promises: {
-      transferOwnership: vi.fn(),
-      transferAllProjectsToUser: vi.fn(),
+vi.mock(
+  '../../../../../app/src/Features/Collaborators/OwnershipTransferHandler.mjs',
+  () => ({
+    default: {
+      promises: {
+        transferOwnership: vi.fn(),
+        transferAllProjectsToUser: vi.fn(),
+      },
     },
-  },
-}))
+  })
+)
 
 vi.mock('../../../app/src/AdminUserQuery.mjs', () => ({
   getActiveUsers: vi.fn(),
@@ -328,7 +340,9 @@ describe('AdminUserBulkCreate Controller', () => {
 
       UserGetter.promises.getUserByAnyEmail.mockResolvedValue(null)
       UserCreator.promises.createNewUser.mockResolvedValue(mockCreatedUser)
-      OneTimeTokenHandler.promises.getNewToken.mockResolvedValue('token-xyz-123')
+      OneTimeTokenHandler.promises.getNewToken.mockResolvedValue(
+        'token-xyz-123'
+      )
 
       req.body.users = [
         {

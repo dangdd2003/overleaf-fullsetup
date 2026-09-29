@@ -108,7 +108,9 @@ describe('AdminUserRestorer', () => {
         user: { email: 'alice@example.com', emails: [] },
       }),
     })
-    UserGetter.promises.getUserByAnyEmail.mockResolvedValue({ _id: 'active-user-2' })
+    UserGetter.promises.getUserByAnyEmail.mockResolvedValue({
+      _id: 'active-user-2',
+    })
 
     await expect(
       restoreUserAndProjects(validId, 'admin-1', '127.0.0.1')
@@ -150,8 +152,12 @@ describe('AdminUserRestorer', () => {
 
     expect(db.users.insertOne).toHaveBeenCalled()
     expect(DeletedUser.deleteOne).toHaveBeenCalledWith({ _id: 'del-doc-1' })
-    expect(ProjectDeleter.promises.undeleteProject).toHaveBeenCalledWith('proj-1')
-    expect(ProjectDeleter.promises.undeleteProject).toHaveBeenCalledWith('proj-2')
+    expect(ProjectDeleter.promises.undeleteProject).toHaveBeenCalledWith(
+      'proj-1'
+    )
+    expect(ProjectDeleter.promises.undeleteProject).toHaveBeenCalledWith(
+      'proj-2'
+    )
     expect(UserAuditLogHandler.promises.addEntry).toHaveBeenCalledWith(
       expect.anything(),
       'admin-restore-user',
@@ -202,4 +208,3 @@ describe('AdminUserRestorer', () => {
     })
   })
 })
-

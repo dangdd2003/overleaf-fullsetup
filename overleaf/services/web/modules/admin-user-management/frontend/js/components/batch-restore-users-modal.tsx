@@ -15,7 +15,7 @@ export interface BatchRestoreUsersModalProps {
   show: boolean
   records: Array<{
     _id: string
-    user?: { _id: string; email: string }
+    user?: { _id?: string; email?: string }
     deletedUserEmail?: string
   }>
   onHide: () => void
@@ -99,7 +99,11 @@ export default function BatchRestoreUsersModal({
         <OLButton variant="secondary" onClick={onHide} disabled={isLoading}>
           Cancel
         </OLButton>
-        <OLButton variant="primary" onClick={handleRestore} disabled={isLoading}>
+        <OLButton
+          variant="primary"
+          onClick={handleRestore}
+          disabled={isLoading}
+        >
           {isLoading
             ? 'Restoring...'
             : `Restore ${records.length} Account${records.length !== 1 ? 's' : ''}`}

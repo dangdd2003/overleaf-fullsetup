@@ -22,7 +22,9 @@ describe('AiAssistRunManager', function () {
       updateStatus: sinon.stub().resolves(),
       setPendingApproval: sinon.stub().resolves(),
       clearPendingApproval: sinon.stub().resolves(),
-      getPendingApproval: sinon.stub().resolves({ id: 'c1', edit: { path: 'a.tex' } }),
+      getPendingApproval: sinon
+        .stub()
+        .resolves({ id: 'c1', edit: { path: 'a.tex' } }),
       getRun: sinon.stub().resolves({ status: 'running' }),
       touchHeartbeat: sinon.stub().resolves(),
     }
@@ -48,7 +50,12 @@ describe('AiAssistRunManager', function () {
     mockClient.streamChat.callsFake(async function* (opts) {
       callCount++
       if (callCount === 1) {
-        yield { type: 'tool_call', id: 'r1', name: 'read_file', args: { path: 'missing.tex' } }
+        yield {
+          type: 'tool_call',
+          id: 'r1',
+          name: 'read_file',
+          args: { path: 'missing.tex' },
+        }
       } else {
         secondRequest = opts
         yield { type: 'text', text: 'done' }
@@ -61,11 +68,19 @@ describe('AiAssistRunManager', function () {
       projectId: 'p1',
       userId: 'u1',
       transcript: [{ role: 'user', content: 'read it' }],
-      providerSettings: { type: 'google', apiKey: 'k', model: 'gemini-2.5-pro' },
+      providerSettings: {
+        type: 'google',
+        apiKey: 'k',
+        model: 'gemini-2.5-pro',
+      },
     })
 
     const toolMessage = secondRequest.messages.find(m => m.role === 'tool')
-    expect(toolMessage).to.include({ toolCallId: 'r1', name: 'read_file', isError: true })
+    expect(toolMessage).to.include({
+      toolCallId: 'r1',
+      name: 'read_file',
+      isError: true,
+    })
   })
 
   it('does not stop an edit-compile style loop whose calls change between rounds', async function () {
@@ -98,14 +113,20 @@ describe('AiAssistRunManager', function () {
       .getCalls()
       .filter(c => c.args[1]?.code === 'runawayToolLoop')
     expect(loopErrors).to.have.lengthOf(0)
-    expect(mockStore.appendEvent.calledWith('run-progress', sinon.match({ type: 'text', text: 'All fixed.' }))).to.be.true
+    expect(
+      mockStore.appendEvent.calledWith(
+        'run-progress',
+        sinon.match({ type: 'text', text: 'All fixed.' })
+      )
+    ).to.be.true
   })
 
   it('stops an alternating loop whose calls repeat exactly', async function () {
     let callCount = 0
     mockClient.streamChat.callsFake(async function* () {
       callCount++
-      const name = callCount % 2 === 1 ? 'compile_project' : 'get_compile_result'
+      const name =
+        callCount % 2 === 1 ? 'compile_project' : 'get_compile_result'
       yield { type: 'tool_call', id: `c${callCount}`, name, args: {} }
     })
 
@@ -117,7 +138,12 @@ describe('AiAssistRunManager', function () {
       providerSettings: { type: 'openai', apiKey: 'k', model: 'gpt-4o' },
     })
 
-    expect(mockStore.appendEvent.calledWith('run-spin', sinon.match({ type: 'error', code: 'runawayToolLoop' }))).to.be.true
+    expect(
+      mockStore.appendEvent.calledWith(
+        'run-spin',
+        sinon.match({ type: 'error', code: 'runawayToolLoop' })
+      )
+    ).to.be.true
     expect(callCount).to.equal(4)
   })
 
@@ -137,9 +163,24 @@ describe('AiAssistRunManager', function () {
 
     await runPromise
 
-    expect(mockStore.appendEvent.calledWith('run-1', sinon.match({ type: 'thinking', text: 'pondering' }))).to.be.true
-    expect(mockStore.appendEvent.calledWith('run-1', sinon.match({ type: 'text', text: 'Hello from server' }))).to.be.true
-    expect(mockStore.appendEvent.calledWith('run-1', sinon.match({ type: 'turnFinished', reason: 'stop' }))).to.be.true
+    expect(
+      mockStore.appendEvent.calledWith(
+        'run-1',
+        sinon.match({ type: 'thinking', text: 'pondering' })
+      )
+    ).to.be.true
+    expect(
+      mockStore.appendEvent.calledWith(
+        'run-1',
+        sinon.match({ type: 'text', text: 'Hello from server' })
+      )
+    ).to.be.true
+    expect(
+      mockStore.appendEvent.calledWith(
+        'run-1',
+        sinon.match({ type: 'turnFinished', reason: 'stop' })
+      )
+    ).to.be.true
     expect(mockStore.updateStatus.calledWith('run-1', 'done')).to.be.true
   })
 
@@ -164,7 +205,9 @@ describe('AiAssistRunManager', function () {
     }
 
     const serverError = () =>
-      Object.assign(new Error('Internal Server Error (ref: abc)'), { status: 500 })
+      Object.assign(new Error('Internal Server Error (ref: abc)'), {
+        status: 500,
+      })
 
     it('keeps retrying a step through five failures in a row', async function () {
       let calls = 0
@@ -204,7 +247,8 @@ describe('AiAssistRunManager', function () {
       await runPromise
 
       expect(mockClient.streamChat.callCount).to.equal(6)
-      expect(mockStore.updateStatus.calledWith('run-give-up', 'error')).to.be.true
+      expect(mockStore.updateStatus.calledWith('run-give-up', 'error')).to.be
+        .true
     })
   })
 
@@ -213,7 +257,12 @@ describe('AiAssistRunManager', function () {
     mockClient.streamChat.callsFake(async function* () {
       callCount++
       if (callCount === 1) {
-        yield { type: 'tool_call', id: 'edit-1', name: 'edit_file', args: { path: 'main.tex', oldText: 'a', newText: 'b' } }
+        yield {
+          type: 'tool_call',
+          id: 'edit-1',
+          name: 'edit_file',
+          args: { path: 'main.tex', oldText: 'a', newText: 'b' },
+        }
       } else {
         yield { type: 'text', text: 'Edit completed.' }
       }
@@ -236,7 +285,16 @@ describe('AiAssistRunManager', function () {
     await runPromise
 
     expect(mockTools.execute.calledWith('edit_file')).to.be.true
-    expect(mockStore.appendEvent.calledWith('run-2', sinon.match({ type: 'toolCallFinished', id: 'edit-1', name: 'edit_file' }))).to.be.true
+    expect(
+      mockStore.appendEvent.calledWith(
+        'run-2',
+        sinon.match({
+          type: 'toolCallFinished',
+          id: 'edit-1',
+          name: 'edit_file',
+        })
+      )
+    ).to.be.true
   })
 
   describe('compile_project with an editor watching', function () {
@@ -245,13 +303,21 @@ describe('AiAssistRunManager', function () {
       mockClient.streamChat.callsFake(async function* () {
         callCount++
         if (callCount === 1) {
-          yield { type: 'tool_call', id: 'comp-1', name: 'compile_project', args: { clean: true } }
+          yield {
+            type: 'tool_call',
+            id: 'comp-1',
+            name: 'compile_project',
+            args: { clean: true },
+          }
         } else {
           yield { type: 'text', text: 'done' }
         }
       })
       mockTools.execute.callsFake(async (name, args, context) => ({
-        outcome: await context.compileInEditor({ id: context.callId, clean: args.clean }),
+        outcome: await context.compileInEditor({
+          id: context.callId,
+          clean: args.clean,
+        }),
       }))
     }
 
@@ -268,27 +334,44 @@ describe('AiAssistRunManager', function () {
       })
 
       await new Promise(r => setTimeout(r, 10))
-      expect(mockStore.appendEvent.calledWith('run-compile', { type: 'awaitingCompile', id: 'comp-1', clean: true })).to.be.true
+      expect(
+        mockStore.appendEvent.calledWith('run-compile', {
+          type: 'awaitingCompile',
+          id: 'comp-1',
+          clean: true,
+        })
+      ).to.be.true
 
-      await manager.submitCompileResult('run-compile', { id: 'stale', outcome: { status: 'success' } })
+      await manager.submitCompileResult('run-compile', {
+        id: 'stale',
+        outcome: { status: 'success' },
+      })
       await manager.submitCompileResult('run-compile', {
         id: 'comp-1',
-        outcome: { status: 'failure', errors: [{ file: 'main.tex', line: 2, message: 'Bad', extra: 'x' }] },
+        outcome: {
+          status: 'failure',
+          errors: [{ file: 'main.tex', line: 2, message: 'Bad', extra: 'x' }],
+        },
       })
       await runPromise
 
-      expect(mockStore.appendEvent.calledWith('run-compile', sinon.match({
-        type: 'toolCallFinished',
-        id: 'comp-1',
-        result: {
-          outcome: {
-            status: 'failure',
-            errors: [{ file: 'main.tex', line: 2, message: 'Bad' }],
-            warnings: [],
-            rawLog: '',
-          },
-        },
-      }))).to.be.true
+      expect(
+        mockStore.appendEvent.calledWith(
+          'run-compile',
+          sinon.match({
+            type: 'toolCallFinished',
+            id: 'comp-1',
+            result: {
+              outcome: {
+                status: 'failure',
+                errors: [{ file: 'main.tex', line: 2, message: 'Bad' }],
+                warnings: [],
+                rawLog: '',
+              },
+            },
+          })
+        )
+      ).to.be.true
     })
 
     it('leaves the compile to the server when nobody is watching', async function () {
@@ -303,11 +386,21 @@ describe('AiAssistRunManager', function () {
         providerSettings: { type: 'openai', apiKey: 'k', model: 'gpt-4o' },
       })
 
-      expect(mockStore.appendEvent.calledWith('run-compile-headless', sinon.match({ type: 'awaitingCompile' }))).to.be.false
-      expect(mockStore.appendEvent.calledWith('run-compile-headless', sinon.match({
-        type: 'toolCallFinished',
-        result: { outcome: null },
-      }))).to.be.true
+      expect(
+        mockStore.appendEvent.calledWith(
+          'run-compile-headless',
+          sinon.match({ type: 'awaitingCompile' })
+        )
+      ).to.be.false
+      expect(
+        mockStore.appendEvent.calledWith(
+          'run-compile-headless',
+          sinon.match({
+            type: 'toolCallFinished',
+            result: { outcome: null },
+          })
+        )
+      ).to.be.true
     })
   })
 
@@ -316,7 +409,12 @@ describe('AiAssistRunManager', function () {
     mockClient.streamChat.callsFake(async function* () {
       callCount++
       if (callCount === 1) {
-        yield { type: 'tool_call', id: 'read-1', name: 'read_file', args: { path: 'main.tex' } }
+        yield {
+          type: 'tool_call',
+          id: 'read-1',
+          name: 'read_file',
+          args: { path: 'main.tex' },
+        }
       } else {
         yield { type: 'text', text: 'File read.' }
       }
@@ -365,8 +463,15 @@ describe('AiAssistRunManager', function () {
     await manager.stopRun('run-3')
     await runPromise
 
-    expect(mockStore.appendEvent.calledWith('run-3', sinon.match({ type: 'turnFinished', reason: 'aborted' }))).to.be.true
-    expect(mockStore.appendEvent.calledWith('run-3', sinon.match({ type: 'error' }))).to.be.false
+    expect(
+      mockStore.appendEvent.calledWith(
+        'run-3',
+        sinon.match({ type: 'turnFinished', reason: 'aborted' })
+      )
+    ).to.be.true
+    expect(
+      mockStore.appendEvent.calledWith('run-3', sinon.match({ type: 'error' }))
+    ).to.be.false
     expect(mockStore.updateStatus.calledWith('run-3', 'stopped')).to.be.true
   })
 
@@ -399,7 +504,12 @@ describe('AiAssistRunManager', function () {
       .getCalls()
       .filter(c => c.args[1]?.type === 'turnFinished')
     expect(turnFinishedCalls).to.have.lengthOf(1)
-    expect(mockStore.appendEvent.calledWith('run-fail', sinon.match({ type: 'error', code: 'runawayToolLoop' }))).to.be.true
+    expect(
+      mockStore.appendEvent.calledWith(
+        'run-fail',
+        sinon.match({ type: 'error', code: 'runawayToolLoop' })
+      )
+    ).to.be.true
     expect(mockStore.updateStatus.calledWith('run-fail', 'done')).to.be.true
   })
 
@@ -446,9 +556,22 @@ describe('AiAssistRunManager', function () {
 
     // The tool list never changes during a run: changing it would throw away
     // the provider's prompt cache. Further edits are refused by the loop.
-    expect(passedToolsInSecondCall.map(t => t.name)).to.deep.equal(['read_file', 'search_text', 'edit_file', 'create_file'])
+    expect(passedToolsInSecondCall.map(t => t.name)).to.deep.equal([
+      'read_file',
+      'search_text',
+      'edit_file',
+      'create_file',
+    ])
     expect(mockStore.setPendingApproval.calledOnce).to.be.true
-    expect(mockStore.appendEvent.calledWith('run-reject', sinon.match({ type: 'text', text: 'Understood, I will not modify the file.' }))).to.be.true
+    expect(
+      mockStore.appendEvent.calledWith(
+        'run-reject',
+        sinon.match({
+          type: 'text',
+          text: 'Understood, I will not modify the file.',
+        })
+      )
+    ).to.be.true
     expect(mockStore.updateStatus.calledWith('run-reject', 'done')).to.be.true
   })
 
@@ -480,11 +603,16 @@ describe('AiAssistRunManager', function () {
     })
 
     await new Promise(r => setTimeout(r, 10))
-    await manager.approveEdit('run-note', { accepted: false, note: 'Prefer keeping original wording' })
+    await manager.approveEdit('run-note', {
+      accepted: false,
+      note: 'Prefer keeping original wording',
+    })
     await runPromise
 
     expect(secondCallMessages).to.be.an('array')
-    const toolMsg = secondCallMessages.find(m => m.role === 'tool' && m.toolCallId === 'edit-note')
+    const toolMsg = secondCallMessages.find(
+      m => m.role === 'tool' && m.toolCallId === 'edit-note'
+    )
     expect(toolMsg).to.exist
     const parsed = JSON.parse(toolMsg.content)
     expect(parsed.status).to.equal('rejected')
@@ -525,11 +653,19 @@ describe('AiAssistRunManager', function () {
 
     await runPromise
 
-    expect(mockStore.appendEvent.calledWith('run-timeout', sinon.match({
-      type: 'toolCallFinished',
-      id: 'edit-timeout',
-      result: sinon.match({ status: 'rejected', note: 'Approval timed out' }),
-    }))).to.be.true
+    expect(
+      mockStore.appendEvent.calledWith(
+        'run-timeout',
+        sinon.match({
+          type: 'toolCallFinished',
+          id: 'edit-timeout',
+          result: sinon.match({
+            status: 'rejected',
+            note: 'Approval timed out',
+          }),
+        })
+      )
+    ).to.be.true
     expect(mockStore.updateStatus.calledWith('run-timeout', 'done')).to.be.true
   })
 
@@ -554,9 +690,15 @@ describe('AiAssistRunManager', function () {
 
     const turnFinishedCalls = mockStore.appendEvent
       .getCalls()
-      .filter(c => c.args[0] === 'run-single-term' && c.args[1]?.type === 'turnFinished')
+      .filter(
+        c =>
+          c.args[0] === 'run-single-term' && c.args[1]?.type === 'turnFinished'
+      )
     expect(turnFinishedCalls).to.have.lengthOf(1)
-    expect(turnFinishedCalls[0].args[1]).to.deep.include({ type: 'turnFinished', reason: 'aborted' })
+    expect(turnFinishedCalls[0].args[1]).to.deep.include({
+      type: 'turnFinished',
+      reason: 'aborted',
+    })
   })
 
   it('forwards resolved maxTokens and cacheHints to provider client', async function () {
@@ -575,7 +717,11 @@ describe('AiAssistRunManager', function () {
         { role: 'assistant', content: 'reply 1' },
         { role: 'user', content: 'turn 2' },
       ],
-      providerSettings: { type: 'anthropic', apiKey: 'k', model: 'claude-3-7-sonnet' },
+      providerSettings: {
+        type: 'anthropic',
+        apiKey: 'k',
+        model: 'claude-3-7-sonnet',
+      },
     })
 
     expect(capturedOpts).to.exist
@@ -608,8 +754,8 @@ describe('AiAssistRunManager', function () {
       .getCalls()
       .filter(c => c.args[0] === 'run-coalesce' && c.args[1]?.type === 'text')
 
-    // 100 1-char chunks flushed at 100 chars or 50ms should produce far fewer than 100 writes
-    expect(textEvents.length).to.be.lessThan(5)
+    // 100 1-char chunks flushed every 8 chars (or 16ms) take at most 13 writes
+    expect(textEvents.length).to.be.at.most(Math.ceil(100 / 8))
     const combined = textEvents.map(c => c.args[1].text).join('')
     expect(combined).to.equal('x'.repeat(100))
   })
@@ -637,7 +783,9 @@ describe('AiAssistRunManager', function () {
     expect(thinkingEvents.length).to.be.lessThan(30)
     expect(thinkingEvents.map(e => e.text).join('')).to.equal('t'.repeat(30))
     expect(streamed.at(-1)).to.deep.equal({ type: 'text', text: 'answer' })
-    expect(streamed.findIndex(e => e.type === 'text')).to.equal(streamed.length - 1)
+    expect(streamed.findIndex(e => e.type === 'text')).to.equal(
+      streamed.length - 1
+    )
   })
 
   it('preserves ordering and does not merge text across non-text boundaries', async function () {
@@ -672,7 +820,9 @@ describe('AiAssistRunManager', function () {
       .filter(c => c.args[0] === 'run-order')
       .map(c => c.args[1])
 
-    const summary = eventTypes.map(e => e.type === 'text' ? `text:${e.text.trim()}` : e.type)
+    const summary = eventTypes.map(e =>
+      e.type === 'text' ? `text:${e.text.trim()}` : e.type
+    )
     expect(summary).to.deep.equal([
       'text:before tool',
       'toolCallStarted',
@@ -708,7 +858,12 @@ describe('AiAssistRunManager', function () {
       providerSettings: { type: 'openai', apiKey: 'k' },
     })
 
-    expect(mockStore.appendEvent.calledWith('run-unlimited', sinon.match({ type: 'turnFinished', reason: 'stop' }))).to.be.true
+    expect(
+      mockStore.appendEvent.calledWith(
+        'run-unlimited',
+        sinon.match({ type: 'turnFinished', reason: 'stop' })
+      )
+    ).to.be.true
     expect(callCount).to.equal(26)
   })
 
@@ -730,17 +885,53 @@ describe('AiAssistRunManager', function () {
     it('elides older tool results to fit budget while preserving recent ones', function () {
       const messages = [
         { role: 'user', content: 'run tool 1' },
-        { role: 'assistant', content: 'calling', toolCalls: [{ id: '1', name: 'read_file' }] },
-        { role: 'tool', toolCallId: '1', name: 'read_file', content: 'x'.repeat(4000) },
+        {
+          role: 'assistant',
+          content: 'calling',
+          toolCalls: [{ id: '1', name: 'read_file' }],
+        },
+        {
+          role: 'tool',
+          toolCallId: '1',
+          name: 'read_file',
+          content: 'x'.repeat(4000),
+        },
         { role: 'user', content: 'run tool 2' },
-        { role: 'assistant', content: 'calling', toolCalls: [{ id: '2', name: 'read_file' }] },
-        { role: 'tool', toolCallId: '2', name: 'read_file', content: 'x'.repeat(4000) },
+        {
+          role: 'assistant',
+          content: 'calling',
+          toolCalls: [{ id: '2', name: 'read_file' }],
+        },
+        {
+          role: 'tool',
+          toolCallId: '2',
+          name: 'read_file',
+          content: 'x'.repeat(4000),
+        },
         { role: 'user', content: 'run tool 3' },
-        { role: 'assistant', content: 'calling', toolCalls: [{ id: '3', name: 'read_file' }] },
-        { role: 'tool', toolCallId: '3', name: 'read_file', content: 'x'.repeat(4000) },
+        {
+          role: 'assistant',
+          content: 'calling',
+          toolCalls: [{ id: '3', name: 'read_file' }],
+        },
+        {
+          role: 'tool',
+          toolCallId: '3',
+          name: 'read_file',
+          content: 'x'.repeat(4000),
+        },
         { role: 'user', content: 'run tool 4' },
-        { role: 'assistant', content: 'calling', toolCalls: [{ id: '4', name: 'read_file' }] },
-        { role: 'tool', toolCallId: '4', name: 'read_file', content: 'x'.repeat(4000) },
+        {
+          role: 'assistant',
+          content: 'calling',
+          toolCalls: [{ id: '4', name: 'read_file' }],
+        },
+        {
+          role: 'tool',
+          toolCallId: '4',
+          name: 'read_file',
+          content: 'x'.repeat(4000),
+        },
       ]
 
       const result = applyContextBudget({
@@ -767,9 +958,9 @@ describe('AiAssistRunManager', function () {
 
     it('drops oldest turns when eliding tool results is still not enough to fit budget', function () {
       const messages = [
-        { role: 'user', content: 'huge prompt 1 ' + 'a'.repeat(4000) },
+        { role: 'user', content: 'huge prompt 1 ' + 'a'.repeat(5000) },
         { role: 'assistant', content: 'reply 1' },
-        { role: 'user', content: 'huge prompt 2 ' + 'b'.repeat(4000) },
+        { role: 'user', content: 'huge prompt 2 ' + 'b'.repeat(5000) },
         { role: 'assistant', content: 'reply 2' },
         { role: 'user', content: 'latest message' },
       ]
@@ -787,13 +978,20 @@ describe('AiAssistRunManager', function () {
 
     it('drops whole turns so the trimmed conversation still opens with a user message', function () {
       const messages = [
-        { role: 'user', content: 'first request ' + 'a'.repeat(6000) },
+        { role: 'user', content: 'first request ' + 'a'.repeat(7000) },
         {
           role: 'assistant',
           content: '',
-          toolCalls: [{ id: 't1', name: 'read_file', args: { path: 'main.tex' } }],
+          toolCalls: [
+            { id: 't1', name: 'read_file', args: { path: 'main.tex' } },
+          ],
         },
-        { role: 'tool', toolCallId: 't1', name: 'read_file', content: 'x'.repeat(400) },
+        {
+          role: 'tool',
+          toolCallId: 't1',
+          name: 'read_file',
+          content: 'x'.repeat(400),
+        },
         { role: 'user', content: 'second request' },
         { role: 'assistant', content: 'second reply' },
         { role: 'user', content: 'latest message' },
@@ -818,9 +1016,16 @@ describe('AiAssistRunManager', function () {
         {
           role: 'assistant',
           content: '',
-          toolCalls: [{ id: 't1', name: 'read_file', args: { path: 'main.tex' } }],
+          toolCalls: [
+            { id: 't1', name: 'read_file', args: { path: 'main.tex' } },
+          ],
         },
-        { role: 'tool', toolCallId: 't1', name: 'read_file', content: 'x'.repeat(20000) },
+        {
+          role: 'tool',
+          toolCallId: 't1',
+          name: 'read_file',
+          content: 'x'.repeat(20000),
+        },
       ]
 
       const result = applyContextBudget({
@@ -837,8 +1042,19 @@ describe('AiAssistRunManager', function () {
       const messages = []
       for (let i = 0; i < 8; i++) {
         messages.push({ role: 'user', content: `q${i}` })
-        messages.push({ role: 'assistant', content: '', toolCalls: [{ id: `${i}`, name: 'read_file', args: { path: 'main.tex' } }] })
-        messages.push({ role: 'tool', toolCallId: `${i}`, name: 'read_file', content: 'x'.repeat(8000) })
+        messages.push({
+          role: 'assistant',
+          content: '',
+          toolCalls: [
+            { id: `${i}`, name: 'read_file', args: { path: 'main.tex' } },
+          ],
+        })
+        messages.push({
+          role: 'tool',
+          toolCallId: `${i}`,
+          name: 'read_file',
+          content: 'x'.repeat(8800),
+        })
       }
       messages.push({ role: 'user', content: 'latest' })
       // budget = 20000 - 1000 - 2000 = 17000; target = 11900
@@ -846,15 +1062,29 @@ describe('AiAssistRunManager', function () {
 
       const result = applyContextBudget({ system: 'Sys', messages, limits })
 
-      const elided = result.messages.filter(m => m.role === 'tool' && m.content.includes('"elided":true'))
+      const elided = result.messages.filter(
+        m => m.role === 'tool' && m.content.includes('"elided":true')
+      )
       expect(result.exhausted).to.equal(false)
       expect(elided).to.have.length(3)
-      expect(estimateMessagesTokens('Sys', result.messages)).to.be.at.most(Math.floor(17000 * TRIM_TARGET_FRACTION))
+      expect(estimateMessagesTokens('Sys', result.messages)).to.be.at.most(
+        Math.floor(17000 * TRIM_TARGET_FRACTION)
+      )
 
       // The next step appends a small turn: nothing earlier changes.
-      const next = [...result.messages, { role: 'assistant', content: 'ok' }, { role: 'user', content: 'more' }]
-      const again = applyContextBudget({ system: 'Sys', messages: next, limits })
-      expect(again.messages.slice(0, result.messages.length)).to.deep.equal(result.messages)
+      const next = [
+        ...result.messages,
+        { role: 'assistant', content: 'ok' },
+        { role: 'user', content: 'more' },
+      ]
+      const again = applyContextBudget({
+        system: 'Sys',
+        messages: next,
+        limits,
+      })
+      expect(again.messages.slice(0, result.messages.length)).to.deep.equal(
+        result.messages
+      )
     })
   })
 
@@ -873,84 +1103,131 @@ describe('AiAssistRunManager', function () {
       },
     })
 
-    expect(mockStore.appendEvent.calledWith('run-exhausted', sinon.match({
-      type: 'error',
-      code: 'contextExhausted',
-    }))).to.be.true
-    expect(mockStore.appendEvent.calledWith('run-exhausted', sinon.match({
-      type: 'turnFinished',
-      reason: 'stop',
-    }))).to.be.true
-    expect(mockStore.updateStatus.calledWith('run-exhausted', 'done')).to.be.true
+    expect(
+      mockStore.appendEvent.calledWith(
+        'run-exhausted',
+        sinon.match({
+          type: 'error',
+          code: 'contextExhausted',
+        })
+      )
+    ).to.be.true
+    expect(
+      mockStore.appendEvent.calledWith(
+        'run-exhausted',
+        sinon.match({
+          type: 'turnFinished',
+          reason: 'stop',
+        })
+      )
+    ).to.be.true
+    expect(mockStore.updateStatus.calledWith('run-exhausted', 'done')).to.be
+      .true
     expect(mockClient.streamChat.called).to.be.false
   })
 
-  it("does not ask for approval of an edit that cannot apply", async function () {
+  it('does not ask for approval of an edit that cannot apply', async function () {
     let callCount = 0
     mockClient.streamChat.callsFake(async function* () {
       callCount++
       if (callCount === 1) {
-        yield { type: "tool_call", id: "e1", name: "edit_file", args: { path: "main.tex", oldText: "nope", newText: "x" } }
+        yield {
+          type: 'tool_call',
+          id: 'e1',
+          name: 'edit_file',
+          args: { path: 'main.tex', oldText: 'nope', newText: 'x' },
+        }
       } else {
-        yield { type: "text", text: "Let me read the file first." }
+        yield { type: 'text', text: 'Let me read the file first.' }
       }
     })
-    mockTools.checkEdit = sinon.stub().resolves({ status: "noMatch", error: "Could not find target text" })
+    mockTools.checkEdit = sinon
+      .stub()
+      .resolves({ status: 'noMatch', error: 'Could not find target text' })
 
     await manager.startRun({
-      runId: "run-nomatch",
-      projectId: "p1",
-      userId: "u1",
-      transcript: [{ role: "user", content: "edit" }],
-      providerSettings: { type: "openai", apiKey: "k", model: "gpt-4o" },
+      runId: 'run-nomatch',
+      projectId: 'p1',
+      userId: 'u1',
+      transcript: [{ role: 'user', content: 'edit' }],
+      providerSettings: { type: 'openai', apiKey: 'k', model: 'gpt-4o' },
     })
 
     expect(mockStore.setPendingApproval.called).to.equal(false)
-    expect(mockTools.execute.calledWith("edit_file")).to.equal(false)
-    expect(mockStore.appendEvent.calledWith("run-nomatch", sinon.match({
-      type: "toolCallFinished",
-      id: "e1",
-      result: sinon.match({ status: "noMatch" }),
-    }))).to.be.true
+    expect(mockTools.execute.calledWith('edit_file')).to.equal(false)
+    expect(
+      mockStore.appendEvent.calledWith(
+        'run-nomatch',
+        sinon.match({
+          type: 'toolCallFinished',
+          id: 'e1',
+          result: sinon.match({ status: 'noMatch' }),
+        })
+      )
+    ).to.be.true
   })
 
-  it("follows a planned edit to the file that actually contains the anchor", async function () {
+  it('follows a planned edit to the file that actually contains the anchor', async function () {
     let callCount = 0
     mockClient.streamChat.callsFake(async function* () {
       callCount++
       if (callCount === 1) {
-        yield { type: "tool_call", id: "e2", name: "edit_file", args: { path: "main.tex", oldText: "intro", newText: "x" } }
+        yield {
+          type: 'tool_call',
+          id: 'e2',
+          name: 'edit_file',
+          args: { path: 'main.tex', oldText: 'intro', newText: 'x' },
+        }
       } else {
-        yield { type: "text", text: "ok" }
+        yield { type: 'text', text: 'ok' }
       }
     })
-    mockTools.checkEdit = sinon.stub().resolves({ status: "ok", path: "chapters/intro.tex" })
+    mockTools.checkEdit = sinon
+      .stub()
+      .resolves({ status: 'ok', path: 'chapters/intro.tex' })
 
     const runPromise = manager.startRun({
-      runId: "run-redirect",
-      projectId: "p1",
-      userId: "u1",
-      transcript: [{ role: "user", content: "edit" }],
-      providerSettings: { type: "openai", apiKey: "k", model: "gpt-4o" },
+      runId: 'run-redirect',
+      projectId: 'p1',
+      userId: 'u1',
+      transcript: [{ role: 'user', content: 'edit' }],
+      providerSettings: { type: 'openai', apiKey: 'k', model: 'gpt-4o' },
     })
     await new Promise(r => setTimeout(r, 10))
 
-    expect(mockStore.setPendingApproval.calledWith("run-redirect", sinon.match({
-      edit: sinon.match({ path: "chapters/intro.tex" }),
-    }))).to.be.true
+    expect(
+      mockStore.setPendingApproval.calledWith(
+        'run-redirect',
+        sinon.match({
+          edit: sinon.match({ path: 'chapters/intro.tex' }),
+        })
+      )
+    ).to.be.true
 
-    await manager.approveEdit("run-redirect", { accepted: true })
+    await manager.approveEdit('run-redirect', { accepted: true })
     await runPromise
   })
 
   it('renders tool results as text for the provider and renders history the same way', async function () {
-    const readResult = { path: 'main.tex', from: 1, to: 1, totalLines: 1, content: '1: hi', truncated: false }
+    const readResult = {
+      path: 'main.tex',
+      from: 1,
+      to: 1,
+      totalLines: 1,
+      content: '1: hi',
+      truncated: false,
+    }
     let secondRequest = null
     let callCount = 0
     mockClient.streamChat.callsFake(async function* (opts) {
       callCount++
       if (callCount === 1) {
-        yield { type: 'tool_call', id: 'r1', name: 'read_file', args: { path: 'main.tex' } }
+        yield {
+          type: 'tool_call',
+          id: 'r1',
+          name: 'read_file',
+          args: { path: 'main.tex' },
+        }
       } else {
         secondRequest = opts
         yield { type: 'text', text: 'done' }
@@ -969,10 +1246,22 @@ describe('AiAssistRunManager', function () {
     const live = secondRequest.messages.find(m => m.role === 'tool')
     expect(live.content).to.equal('main.tex lines 1-1 of 1\n```\n1: hi\n```')
 
-    const { toAgentMessages } = await import('../../../app/src/AiAssistRunManager.mjs')
+    const { toAgentMessages } =
+      await import('../../../app/src/AiAssistRunManager.mjs')
     const rebuilt = toAgentMessages([
       { role: 'user', text: 'read' },
-      { role: 'assistant', text: '', toolCalls: [{ id: 'r1', name: 'read_file', args: { path: 'main.tex' }, result: readResult }] },
+      {
+        role: 'assistant',
+        text: '',
+        toolCalls: [
+          {
+            id: 'r1',
+            name: 'read_file',
+            args: { path: 'main.tex' },
+            result: readResult,
+          },
+        ],
+      },
     ]).find(m => m.role === 'tool')
     expect(rebuilt.content).to.equal(live.content)
     expect(rebuilt).to.include({ name: 'read_file', isError: false })
@@ -983,8 +1272,18 @@ describe('AiAssistRunManager', function () {
     mockClient.streamChat.callsFake(async function* () {
       callCount++
       if (callCount === 1) {
-        yield { type: 'tool_call', id: 'a', name: 'read_file', args: { path: 'a.tex' } }
-        yield { type: 'tool_call', id: 'b', name: 'search_text', args: { query: 'x' } }
+        yield {
+          type: 'tool_call',
+          id: 'a',
+          name: 'read_file',
+          args: { path: 'a.tex' },
+        }
+        yield {
+          type: 'tool_call',
+          id: 'b',
+          name: 'search_text',
+          args: { query: 'x' },
+        }
         yield { type: 'tool_call', id: 'c', name: 'get_outline', args: {} }
       } else {
         yield { type: 'text', text: 'done' }
@@ -1023,8 +1322,18 @@ describe('AiAssistRunManager', function () {
     mockClient.streamChat.callsFake(async function* () {
       callCount++
       if (callCount === 1) {
-        yield { type: 'tool_call', id: 'e', name: 'edit_file', args: { path: 'a.tex', oldText: 'x', newText: 'y' } }
-        yield { type: 'tool_call', id: 'r', name: 'read_file', args: { path: 'a.tex' } }
+        yield {
+          type: 'tool_call',
+          id: 'e',
+          name: 'edit_file',
+          args: { path: 'a.tex', oldText: 'x', newText: 'y' },
+        }
+        yield {
+          type: 'tool_call',
+          id: 'r',
+          name: 'read_file',
+          args: { path: 'a.tex' },
+        }
       } else {
         yield { type: 'text', text: 'done' }
       }
@@ -1051,11 +1360,16 @@ describe('AiAssistRunManager', function () {
     const specs = [{ name: 'edit_file' }, { name: 'read_file' }]
 
     it('extracts fenced JSON tool call and preserves leading prose', function () {
-      const text = 'I will now edit the document.\n```json\n{\n  "name": "edit_file",\n  "arguments": { "path": "main.tex", "oldText": "a", "newText": "b" }\n}\n```'
+      const text =
+        'I will now edit the document.\n```json\n{\n  "name": "edit_file",\n  "arguments": { "path": "main.tex", "oldText": "a", "newText": "b" }\n}\n```'
       const extracted = extractTextToolCall(text, specs)
       expect(extracted).to.exist
       expect(extracted.call.name).to.equal('edit_file')
-      expect(extracted.call.args).to.deep.equal({ path: 'main.tex', oldText: 'a', newText: 'b' })
+      expect(extracted.call.args).to.deep.equal({
+        path: 'main.tex',
+        oldText: 'a',
+        newText: 'b',
+      })
       expect(extracted.prose).to.equal('I will now edit the document.')
     })
 
@@ -1083,9 +1397,14 @@ describe('AiAssistRunManager', function () {
       })
       await new Promise(r => setTimeout(r, 10))
 
-      expect(mockStore.setPendingApproval.calledWith('run-text-rescue', sinon.match({
-        edit: sinon.match({ path: 'main.tex' }),
-      }))).to.be.true
+      expect(
+        mockStore.setPendingApproval.calledWith(
+          'run-text-rescue',
+          sinon.match({
+            edit: sinon.match({ path: 'main.tex' }),
+          })
+        )
+      ).to.be.true
 
       await manager.approveEdit('run-text-rescue', { accepted: true })
       await runPromise
@@ -1114,7 +1433,12 @@ describe('AiAssistRunManager', function () {
       let toolExecuted = false
       const fakeTools = {
         getToolSpecs: () => [{ name: 'edit_file' }],
-        checkEdit: async () => ({ status: 'ok', path: 'main.tex', oldText: 'a', newText: 'b' }),
+        checkEdit: async () => ({
+          status: 'ok',
+          path: 'main.tex',
+          oldText: 'a',
+          newText: 'b',
+        }),
         execute: async (name, args) => {
           if (name === 'edit_file') toolExecuted = true
           return { status: 'applied' }
@@ -1132,7 +1456,12 @@ describe('AiAssistRunManager', function () {
         streamChat: async function* () {
           turn++
           if (turn === 1) {
-            yield { type: 'tool_call', id: 'call_1', name: 'edit_file', args: { path: 'main.tex', oldText: 'a', newText: 'b' } }
+            yield {
+              type: 'tool_call',
+              id: 'call_1',
+              name: 'edit_file',
+              args: { path: 'main.tex', oldText: 'a', newText: 'b' },
+            }
           } else {
             yield { type: 'text', text: 'Done' }
           }
@@ -1163,7 +1492,9 @@ describe('AiAssistRunManager', function () {
       let toolExecuted = false
       const fakeTools = {
         getToolSpecs: () => [{ name: 'read_file' }, { name: 'edit_file' }],
-        execute: async () => { toolExecuted = true },
+        execute: async () => {
+          toolExecuted = true
+        },
       }
       const fakeStore = createMockStore()
       const capturedEvents = []
@@ -1177,7 +1508,12 @@ describe('AiAssistRunManager', function () {
           capturedTools = options.tools
           turn++
           if (turn === 1) {
-            yield { type: 'tool_call', id: 'call_edit', name: 'edit_file', args: { path: 'main.tex', newText: 'foo' } }
+            yield {
+              type: 'tool_call',
+              id: 'call_edit',
+              name: 'edit_file',
+              args: { path: 'main.tex', newText: 'foo' },
+            }
           } else {
             yield { type: 'text', text: 'I understand.' }
           }
@@ -1205,7 +1541,9 @@ describe('AiAssistRunManager', function () {
       expect(names).to.include('present_plan')
       expect(names).to.not.include('edit_file')
 
-      const finishedCall = capturedEvents.find(e => e.type === 'toolCallFinished' && e.id === 'call_edit')
+      const finishedCall = capturedEvents.find(
+        e => e.type === 'toolCallFinished' && e.id === 'call_edit'
+      )
       expect(finishedCall).to.exist
       expect(finishedCall.result.status).to.equal('denied')
     })
@@ -1226,7 +1564,12 @@ describe('AiAssistRunManager', function () {
         streamChat: async function* () {
           turn++
           if (turn === 1) {
-            yield { type: 'tool_call', id: 'call_plan', name: 'present_plan', args: { plan: 'Step 1: edit main.tex' } }
+            yield {
+              type: 'tool_call',
+              id: 'call_plan',
+              name: 'present_plan',
+              args: { plan: 'Step 1: edit main.tex' },
+            }
           } else {
             yield { type: 'text', text: 'Executing plan.' }
           }
@@ -1250,10 +1593,15 @@ describe('AiAssistRunManager', function () {
 
       // Wait for awaitingApproval event
       await new Promise(resolve => setTimeout(resolve, 50))
-      await manager.approveEdit('test_present_plan', { accepted: true, nextMode: 'acceptEdits' })
+      await manager.approveEdit('test_present_plan', {
+        accepted: true,
+        nextMode: 'acceptEdits',
+      })
       await runPromise
 
-      const modeChangedEvent = capturedEvents.find(e => e.type === 'modeChanged')
+      const modeChangedEvent = capturedEvents.find(
+        e => e.type === 'modeChanged'
+      )
       expect(modeChangedEvent).to.exist
       expect(modeChangedEvent.mode).to.equal('acceptEdits')
       expect(modeChangedEvent.source).to.equal('planApproval')
@@ -1268,7 +1616,12 @@ describe('AiAssistRunManager', function () {
         turn++
         sentMessages.push(opts.messages.map(m => m.content))
         if (turn === 1) {
-          yield { type: 'tool_call', id: 'r1', name: 'read_file', args: { path: 'main.tex' } }
+          yield {
+            type: 'tool_call',
+            id: 'r1',
+            name: 'read_file',
+            args: { path: 'main.tex' },
+          }
           // Sent while this turn was still streaming.
           await manager.queueMessage('run-queue', {
             id: 'q1',
@@ -1295,7 +1648,11 @@ describe('AiAssistRunManager', function () {
       expect(
         mockStore.appendEvent.calledWith(
           'run-queue',
-          sinon.match({ type: 'userMessage', id: 'q1', text: 'also check the bibliography' })
+          sinon.match({
+            type: 'userMessage',
+            id: 'q1',
+            text: 'also check the bibliography',
+          })
         )
       ).to.be.true
     })
@@ -1306,7 +1663,10 @@ describe('AiAssistRunManager', function () {
         turn++
         if (turn === 1) {
           yield { type: 'text', text: 'Done.' }
-          await manager.queueMessage('run-late', { id: 'q1', text: 'one more thing' })
+          await manager.queueMessage('run-late', {
+            id: 'q1',
+            text: 'one more thing',
+          })
         } else {
           yield { type: 'text', text: 'And that too.' }
         }
@@ -1323,7 +1683,9 @@ describe('AiAssistRunManager', function () {
       expect(mockClient.streamChat.callCount).to.equal(2)
       // One run, so exactly one terminal event.
       expect(
-        mockStore.appendEvent.getCalls().filter(c => c.args[1]?.type === 'turnFinished')
+        mockStore.appendEvent
+          .getCalls()
+          .filter(c => c.args[1]?.type === 'turnFinished')
       ).to.have.lengthOf(1)
     })
 
@@ -1332,12 +1694,25 @@ describe('AiAssistRunManager', function () {
       mockClient.streamChat.callsFake(async function* () {
         turn++
         if (turn === 1) {
-          yield { type: 'tool_call', id: 'e1', name: 'edit_file', args: { path: 'main.tex', oldText: 'a', newText: 'b' } }
+          yield {
+            type: 'tool_call',
+            id: 'e1',
+            name: 'edit_file',
+            args: { path: 'main.tex', oldText: 'a', newText: 'b' },
+          }
         } else if (turn === 2) {
-          await manager.queueMessage('run-unblock', { id: 'q1', text: 'try this instead' })
+          await manager.queueMessage('run-unblock', {
+            id: 'q1',
+            text: 'try this instead',
+          })
           yield { type: 'text', text: 'Understood.' }
         } else if (turn === 3) {
-          yield { type: 'tool_call', id: 'e2', name: 'edit_file', args: { path: 'main.tex', oldText: 'a', newText: 'c' } }
+          yield {
+            type: 'tool_call',
+            id: 'e2',
+            name: 'edit_file',
+            args: { path: 'main.tex', oldText: 'a', newText: 'c' },
+          }
         } else {
           yield { type: 'text', text: 'Applied.' }
         }
@@ -1357,7 +1732,9 @@ describe('AiAssistRunManager', function () {
       // The second edit was not refused as "declined earlier in this turn".
       const secondEdit = mockStore.appendEvent
         .getCalls()
-        .find(c => c.args[1]?.type === 'toolCallFinished' && c.args[1]?.id === 'e2')
+        .find(
+          c => c.args[1]?.type === 'toolCallFinished' && c.args[1]?.id === 'e2'
+        )
       expect(secondEdit?.args[1]?.result?.status).to.not.equal('rejected')
     })
   })
@@ -1378,9 +1755,19 @@ describe('AiAssistRunManager', function () {
       mockClient.streamChat.callsFake(async function* () {
         turn++
         if (turn === 1) {
-          yield { type: 'tool_call', id: 'e1', name: 'edit_file', args: { path: 'main.tex', oldText: 'a', newText: 'b' } }
+          yield {
+            type: 'tool_call',
+            id: 'e1',
+            name: 'edit_file',
+            args: { path: 'main.tex', oldText: 'a', newText: 'b' },
+          }
         } else if (turn === 2) {
-          yield { type: 'tool_call', id: 'e2', name: 'edit_file', args: { path: 'main.tex', oldText: 'a', newText: 'c' } }
+          yield {
+            type: 'tool_call',
+            id: 'e2',
+            name: 'edit_file',
+            args: { path: 'main.tex', oldText: 'a', newText: 'c' },
+          }
         } else {
           yield { type: 'text', text: 'I will leave it as it is.' }
         }
@@ -1393,13 +1780,19 @@ describe('AiAssistRunManager', function () {
 
       expect(mockStore.setPendingApproval.calledOnce).to.be.true
       expect(mockClient.streamChat.callCount).to.equal(3)
-      expect(mockStore.appendEvent.calledWith('run-blocked', sinon.match({
-        type: 'toolCallFinished',
-        id: 'e2',
-        result: sinon.match({ status: 'rejected' }),
-      }))).to.be.true
+      expect(
+        mockStore.appendEvent.calledWith(
+          'run-blocked',
+          sinon.match({
+            type: 'toolCallFinished',
+            id: 'e2',
+            result: sinon.match({ status: 'rejected' }),
+          })
+        )
+      ).to.be.true
       expect(mockTools.execute.calledWith('edit_file')).to.be.false
-      expect(mockStore.updateStatus.calledWith('run-blocked', 'done')).to.be.true
+      expect(mockStore.updateStatus.calledWith('run-blocked', 'done')).to.be
+        .true
     })
 
     it('counts a turn whose calls all failed once, however many calls it made', async function () {
@@ -1407,7 +1800,12 @@ describe('AiAssistRunManager', function () {
       mockClient.streamChat.callsFake(async function* () {
         turn++
         for (let i = 0; i < 3; i++) {
-          yield { type: 'tool_call', id: `r${turn}-${i}`, name: 'read_file', args: { path: `missing-${turn}-${i}.tex` } }
+          yield {
+            type: 'tool_call',
+            id: `r${turn}-${i}`,
+            name: 'read_file',
+            args: { path: `missing-${turn}-${i}.tex` },
+          }
         }
       })
       mockTools.execute.resolves({ error: 'File not found' })
@@ -1415,8 +1813,17 @@ describe('AiAssistRunManager', function () {
       await start('run-turns')
 
       expect(mockClient.streamChat.callCount).to.equal(4)
-      expect(mockStore.appendEvent.calledWith('run-turns', sinon.match({ type: 'error', code: 'consecutiveToolFailures' }))).to.be.true
-      expect(mockStore.appendEvent.getCalls().filter(c => c.args[1]?.type === 'turnFinished')).to.have.lengthOf(1)
+      expect(
+        mockStore.appendEvent.calledWith(
+          'run-turns',
+          sinon.match({ type: 'error', code: 'consecutiveToolFailures' })
+        )
+      ).to.be.true
+      expect(
+        mockStore.appendEvent
+          .getCalls()
+          .filter(c => c.args[1]?.type === 'turnFinished')
+      ).to.have.lengthOf(1)
     })
 
     it('forgets earlier failures once a call changes the project', async function () {
@@ -1424,15 +1831,27 @@ describe('AiAssistRunManager', function () {
       mockClient.streamChat.callsFake(async function* () {
         turn++
         if (turn === 3) {
-          yield { type: 'tool_call', id: `s${turn}`, name: 'configure_editor_settings', args: { mode: 'vim' } }
+          yield {
+            type: 'tool_call',
+            id: `s${turn}`,
+            name: 'configure_editor_settings',
+            args: { mode: 'vim' },
+          }
         } else if (turn <= 5) {
-          yield { type: 'tool_call', id: `r${turn}`, name: 'read_file', args: { path: 'missing.tex' } }
+          yield {
+            type: 'tool_call',
+            id: `r${turn}`,
+            name: 'read_file',
+            args: { path: 'missing.tex' },
+          }
         } else {
           yield { type: 'text', text: 'done' }
         }
       })
       mockTools.execute.callsFake(async name =>
-        name === 'configure_editor_settings' ? { status: 'applied' } : { error: 'File not found' }
+        name === 'configure_editor_settings'
+          ? { status: 'applied' }
+          : { error: 'File not found' }
       )
 
       const runPromise = start('run-forget')
@@ -1441,7 +1860,12 @@ describe('AiAssistRunManager', function () {
       await runPromise
 
       expect(mockClient.streamChat.callCount).to.equal(6)
-      expect(mockStore.appendEvent.calledWith('run-forget', sinon.match({ type: 'error' }))).to.be.false
+      expect(
+        mockStore.appendEvent.calledWith(
+          'run-forget',
+          sinon.match({ type: 'error' })
+        )
+      ).to.be.false
     })
 
     it('does not count get_compile_result with nothing compiled as a failure', async function () {
@@ -1449,17 +1873,30 @@ describe('AiAssistRunManager', function () {
       mockClient.streamChat.callsFake(async function* () {
         turn++
         if (turn <= 3) {
-          yield { type: 'tool_call', id: `g${turn}`, name: 'get_compile_result', args: {} }
+          yield {
+            type: 'tool_call',
+            id: `g${turn}`,
+            name: 'get_compile_result',
+            args: {},
+          }
         } else {
           yield { type: 'text', text: 'Nothing has been compiled yet.' }
         }
       })
-      mockTools.execute.resolves({ status: 'none', message: 'No compile has run in this chat yet.' })
+      mockTools.execute.resolves({
+        status: 'none',
+        message: 'No compile has run in this chat yet.',
+      })
 
       await start('run-none')
 
       expect(mockClient.streamChat.callCount).to.equal(4)
-      expect(mockStore.appendEvent.calledWith('run-none', sinon.match({ type: 'error' }))).to.be.false
+      expect(
+        mockStore.appendEvent.calledWith(
+          'run-none',
+          sinon.match({ type: 'error' })
+        )
+      ).to.be.false
     })
   })
 
@@ -1480,13 +1917,25 @@ describe('AiAssistRunManager', function () {
         turn++
         requests.push(JSON.parse(JSON.stringify(opts.messages)))
         if (turn === 1) {
-          yield { type: 'tool_call', id: 'e1', name: 'edit_file', args: { path: 'main.tex', oldText: 'a', newText: 'half of it', _repaired: true } }
+          yield {
+            type: 'tool_call',
+            id: 'e1',
+            name: 'edit_file',
+            args: {
+              path: 'main.tex',
+              oldText: 'a',
+              newText: 'half of it',
+              _repaired: true,
+            },
+          }
           yield { type: 'stop', reason: 'max_tokens' }
         } else {
           yield { type: 'text', text: 'ok' }
         }
       })
-      mockTools.checkEdit = sinon.stub().resolves({ status: 'ok', path: 'main.tex' })
+      mockTools.checkEdit = sinon
+        .stub()
+        .resolves({ status: 'ok', path: 'main.tex' })
 
       await start('run-cut')
 
@@ -1504,7 +1953,12 @@ describe('AiAssistRunManager', function () {
       mockClient.streamChat.callsFake(async function* () {
         turn++
         if (turn === 1) {
-          yield { type: 'tool_call', id: 'c1', name: 'create_file', args: { path: 'new.tex', content: 'x', _repaired: true } }
+          yield {
+            type: 'tool_call',
+            id: 'c1',
+            name: 'create_file',
+            args: { path: 'new.tex', content: 'x', _repaired: true },
+          }
         } else {
           yield { type: 'text', text: 'ok' }
         }
@@ -1521,7 +1975,12 @@ describe('AiAssistRunManager', function () {
       mockClient.streamChat.callsFake(async function* () {
         turn++
         if (turn === 1) {
-          yield { type: 'tool_call', id: 'r1', name: 'read_file', args: { path: 'main.tex', _repaired: true } }
+          yield {
+            type: 'tool_call',
+            id: 'r1',
+            name: 'read_file',
+            args: { path: 'main.tex', _repaired: true },
+          }
         } else {
           yield { type: 'text', text: 'ok' }
         }
@@ -1529,7 +1988,8 @@ describe('AiAssistRunManager', function () {
 
       await start('run-repaired-read')
 
-      expect(mockTools.execute.calledWith('read_file', { path: 'main.tex' })).to.be.true
+      expect(mockTools.execute.calledWith('read_file', { path: 'main.tex' })).to
+        .be.true
     })
 
     it('reports a text reply cut off at the output limit', async function () {
@@ -1540,8 +2000,14 @@ describe('AiAssistRunManager', function () {
 
       await start('run-cut-text')
 
-      expect(mockStore.appendEvent.calledWith('run-cut-text', sinon.match({ type: 'error', code: 'outputTruncated' }))).to.be.true
-      expect(mockStore.updateStatus.calledWith('run-cut-text', 'done')).to.be.true
+      expect(
+        mockStore.appendEvent.calledWith(
+          'run-cut-text',
+          sinon.match({ type: 'error', code: 'outputTruncated' })
+        )
+      ).to.be.true
+      expect(mockStore.updateStatus.calledWith('run-cut-text', 'done')).to.be
+        .true
     })
   })
 
@@ -1551,14 +2017,25 @@ describe('AiAssistRunManager', function () {
         runId,
         projectId: 'p1',
         userId: 'u1',
-        transcript: [{ role: 'user', content: 'which siunitx option sets the range word?' }],
+        transcript: [
+          {
+            role: 'user',
+            content: 'which siunitx option sets the range word?',
+          },
+        ],
         providerSettings: { type: 'openai', apiKey: 'k', model: 'gpt-4o' },
         ...extra,
       })
 
     it('offers web_search and web_fetch only to runs with web search settings', async function () {
       const webTools = {
-        getToolSpecs: () => [{ name: 'web_search', description: 'd', parameters: { type: 'object', properties: {} } }],
+        getToolSpecs: () => [
+          {
+            name: 'web_search',
+            description: 'd',
+            parameters: { type: 'object', properties: {} },
+          },
+        ],
         execute: sinon.stub(),
       }
       const webToolsFactory = sinon.stub().returns(webTools)
@@ -1578,9 +2055,20 @@ describe('AiAssistRunManager', function () {
       expect(withoutWeb.system).not.to.include('# Web research')
       expect(webToolsFactory.called).to.be.false
 
-      await start('run-web', { webSearchSettings: { type: 'searxng', baseUrl: 'http://searxng:8080' } })
+      await start('run-web', {
+        webSearchSettings: { type: 'searxng', baseUrl: 'http://searxng:8080' },
+      })
       const withWeb = mockClient.streamChat.secondCall.args[0]
-      expect(webToolsFactory.calledOnceWith({ type: 'searxng', baseUrl: 'http://searxng:8080' })).to.be.true
+      expect(
+        webToolsFactory.calledOnceWith({
+          type: 'searxng',
+          baseUrl: 'http://searxng:8080',
+        })
+      ).to.be.true
+      expect(webToolsFactory.firstCall.args[1]).to.deep.equal({
+        userId: 'u1',
+        contextWindow: 200000,
+      })
       expect(withWeb.tools.map(t => t.name)).to.include('web_search')
       expect(withWeb.system).to.include('# Web research')
     })
@@ -1588,9 +2076,19 @@ describe('AiAssistRunManager', function () {
     it('runs web calls through the web tools, in parallel with project reads', async function () {
       const webTools = {
         getToolSpecs: () => [
-          { name: 'web_search', description: 'd', parameters: { type: 'object', properties: { query: { type: 'string' } } } },
+          {
+            name: 'web_search',
+            description: 'd',
+            parameters: {
+              type: 'object',
+              properties: { query: { type: 'string' } },
+            },
+          },
         ],
-        execute: sinon.stub().resolves({ query: 'siunitx', results: [{ title: 'T', url: 'https://ctan.org', snippet: 's' }] }),
+        execute: sinon.stub().resolves({
+          query: 'siunitx',
+          results: [{ title: 'T', url: 'https://ctan.org', snippet: 's' }],
+        }),
       }
       manager = new AiAssistRunManager({
         store: mockStore,
@@ -1603,7 +2101,12 @@ describe('AiAssistRunManager', function () {
       mockClient.streamChat.callsFake(async function* (opts) {
         turn++
         if (turn === 1) {
-          yield { type: 'tool_call', id: 'w1', name: 'web_search', args: { query: 'siunitx' } }
+          yield {
+            type: 'tool_call',
+            id: 'w1',
+            name: 'web_search',
+            args: { query: 'siunitx' },
+          }
           yield { type: 'tool_call', id: 'g1', name: 'get_packages', args: {} }
         } else {
           secondRequest = opts
@@ -1611,13 +2114,21 @@ describe('AiAssistRunManager', function () {
         }
       })
 
-      await start('run-web-call', { webSearchSettings: { type: 'ollama', apiKey: 'k' } })
+      await start('run-web-call', {
+        webSearchSettings: { type: 'ollama', apiKey: 'k' },
+      })
 
-      expect(webTools.execute.calledOnceWith('web_search', { query: 'siunitx' })).to.be.true
-      expect(webTools.execute.firstCall.args[2].signal).to.be.an.instanceOf(AbortSignal)
+      expect(
+        webTools.execute.calledOnceWith('web_search', { query: 'siunitx' })
+      ).to.be.true
+      expect(webTools.execute.firstCall.args[2].signal).to.be.an.instanceOf(
+        AbortSignal
+      )
       expect(mockTools.execute.calledWith('web_search')).to.be.false
       expect(mockTools.execute.calledWith('get_packages')).to.be.true
-      const toolMessage = secondRequest.messages.find(m => m.role === 'tool' && m.name === 'web_search')
+      const toolMessage = secondRequest.messages.find(
+        m => m.role === 'tool' && m.name === 'web_search'
+      )
       expect(toolMessage.content).to.include('<web_results query="siunitx">')
     })
   })

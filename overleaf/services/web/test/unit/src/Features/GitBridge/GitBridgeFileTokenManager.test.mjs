@@ -123,7 +123,11 @@ describe('GitBridgeFileTokenManager', function () {
 
     it('returns false for malformed tokens', function () {
       expect(
-        GitBridgeFileTokenManager.verifyFileToken('not-a-token', projectId, fileId)
+        GitBridgeFileTokenManager.verifyFileToken(
+          'not-a-token',
+          projectId,
+          fileId
+        )
       ).toBe(false)
       expect(
         GitBridgeFileTokenManager.verifyFileToken(
@@ -147,7 +151,11 @@ describe('GitBridgeFileTokenManager', function () {
         )
       ).toBe(false)
       expect(
-        GitBridgeFileTokenManager.verifyFileToken(['token-array'], projectId, fileId)
+        GitBridgeFileTokenManager.verifyFileToken(
+          ['token-array'],
+          projectId,
+          fileId
+        )
       ).toBe(false)
       expect(
         GitBridgeFileTokenManager.verifyFileToken(null, projectId, fileId)

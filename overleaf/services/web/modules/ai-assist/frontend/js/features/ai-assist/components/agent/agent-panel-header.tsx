@@ -5,6 +5,29 @@ import React, { useCallback, useState, useRef, useEffect } from 'react'
 import OLTooltip from '@/shared/components/ol/ol-tooltip'
 import { PencilSimple, Check, X } from '@phosphor-icons/react'
 
+type TitleTransition = { from: string; to: string }
+
+/**
+ * How fast the green edge moves: about 1.9× the status line's shimmer, whose
+ * band crosses two widths of the word ("Brewing…", about 60px) in 1.2s.
+ */
+const STATUS_SHIMMER_PX_PER_S = 188
+
+/**
+ * The masks are 2.5× the title wide, so the green edge travels 1.5 of its
+ * widths; the duration is set from the rendered width so the edge moves at
+ * the status line's speed whatever the title's length.
+ */
+function setSweepDuration(container: HTMLElement | null) {
+  if (!container) return
+  const travel = 1.5 * container.getBoundingClientRect().width
+  const seconds = Math.max(0.32, travel / STATUS_SHIMMER_PX_PER_S)
+  container.style.setProperty(
+    '--ai-title-animation-duration',
+    `${seconds.toFixed(2)}s`
+  )
+}
+
 /**
  * Same markup as the core RailPanelHeader, but a supplied onClose replaces
  * collapsing the rail pane. The right-docked panel is not in the rail, so
@@ -16,11 +39,15 @@ export default function AgentPanelHeader({
   actions,
   onClose,
   onRenameTitle,
+  isGeneratingTitle = false,
+  onTitleAnimationEnd,
 }: {
   title: React.ReactNode
   actions?: React.ReactElement
   onClose?: () => void
   onRenameTitle?: (newTitle: string) => void
+  isGeneratingTitle?: boolean
+  onTitleAnimationEnd?: () => void
 }) {
   const { t } = useTranslation()
   const { handlePaneCollapse } = useRailContext()
@@ -28,6 +55,37 @@ export default function AgentPanelHeader({
   const titleText = typeof title === 'string' ? title : ''
   const [draft, setDraft] = useState(titleText)
   const inputRef = useRef<HTMLInputElement>(null)
+  const titleRef = useRef<HTMLHeadingElement>(null)
+
+  const defaultTitle = t('ai_assist_panel_title', 'AI assistant')
+  const [shownTitle, setShownTitle] = useState(titleText)
+  const [transition, setTransition] = useState<TitleTransition | null>(() =>
+    isGeneratingTitle && titleText && titleText !== defaultTitle
+      ? { from: defaultTitle, to: titleText }
+      : null
+  )
+
+  // Set during render, not in an effect, so the new title is never painted
+  // on its own for a frame before the sweep starts
+  if (titleText !== shownTitle) {
+    setShownTitle(titleText)
+    const from = shownTitle || defaultTitle
+    setTransition(
+      isGeneratingTitle && titleText && titleText !== from
+        ? { from, to: titleText }
+        : null
+    )
+  }
+
+  const finishTransition = useCallback(() => {
+    setTransition(null)
+    onTitleAnimationEnd?.()
+  }, [onTitleAnimationEnd])
+
+  const startEditing = useCallback(() => {
+    if (transition) finishTransition()
+    setIsEditing(true)
+  }, [finishTransition, transition])
 
   useEffect(() => {
     setDraft(titleText)
@@ -116,13 +174,50 @@ export default function AgentPanelHeader({
       ) : (
         <div className="ai-assist-header-title-wrapper">
           <h4
+            ref={titleRef}
             className={`rail-panel-title ai-assist-panel-title-text ${
               onRenameTitle ? 'is-editable' : ''
             }`}
             title={titleText || undefined}
-            onClick={() => onRenameTitle && setIsEditing(true)}
+            onClick={() => onRenameTitle && startEditing()}
           >
-            {title}
+            {transition ? (
+              <span
+                // A swap that starts mid-sweep (switching chats quickly)
+                // remounts, so its animation starts over from the left
+                key={`${transition.from}\u0000${transition.to}`}
+                ref={setSweepDuration}
+                className="ai-assist-title-transform-container"
+                onAnimationEnd={event => {
+                  // Every layer ends together; one call is enough
+                  const target = event.target as HTMLElement
+                  if (
+                    target === event.currentTarget ||
+                    target.classList?.contains('ai-assist-title-layer-new')
+                  ) {
+                    finishTransition()
+                  }
+                }}
+              >
+                <span
+                  className="ai-assist-title-layer ai-assist-title-layer-old"
+                  aria-hidden="true"
+                >
+                  {transition.from}
+                </span>
+                <span className="ai-assist-title-layer ai-assist-title-layer-new">
+                  {transition.to}
+                </span>
+                <span
+                  className="ai-assist-title-layer ai-assist-title-layer-edge"
+                  aria-hidden="true"
+                >
+                  {transition.to}
+                </span>
+              </span>
+            ) : (
+              title
+            )}
           </h4>
           {onRenameTitle && Boolean(titleText) && (
             <OLTooltip
@@ -134,7 +229,7 @@ export default function AgentPanelHeader({
                 type="button"
                 className="ai-assist-header-rename-btn"
                 aria-label={t('rename', 'Rename')}
-                onClick={() => setIsEditing(true)}
+                onClick={startEditing}
               >
                 <PencilSimple size={13} weight="bold" />
               </button>

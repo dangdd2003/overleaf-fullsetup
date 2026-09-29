@@ -11,7 +11,9 @@ function fakeHandle() {
     configureAppearanceSettings: sinon.stub().resolves({ status: 'applied' }),
     configureCompilerSettings: sinon.stub().resolves({ status: 'applied' }),
     configureEditorSettings: sinon.stub().resolves({ status: 'applied' }),
-    getProjectSettings: sinon.stub().resolves({ compiler: { compiler: 'pdflatex' } }),
+    getProjectSettings: sinon
+      .stub()
+      .resolves({ compiler: { compiler: 'pdflatex' } }),
     listAvailableSettings: sinon.stub().resolves({ compilers: ['pdflatex'] }),
     rootDocPath: () => 'main.tex',
   } as any
@@ -47,7 +49,9 @@ describe('readOnlyHandle', function () {
   it('refuses configureAppearanceSettings', async function () {
     const inner = fakeHandle()
     try {
-      await readOnlyHandle(inner).configureAppearanceSettings({ overallTheme: 'dark' })
+      await readOnlyHandle(inner).configureAppearanceSettings({
+        overallTheme: 'dark',
+      })
       expect.fail('should have thrown')
     } catch (error: any) {
       expect(error.message).to.match(/not permitted to modify/i)
@@ -58,7 +62,9 @@ describe('readOnlyHandle', function () {
   it('refuses configureCompilerSettings', async function () {
     const inner = fakeHandle()
     try {
-      await readOnlyHandle(inner).configureCompilerSettings({ compiler: 'xelatex' })
+      await readOnlyHandle(inner).configureCompilerSettings({
+        compiler: 'xelatex',
+      })
       expect.fail('should have thrown')
     } catch (error: any) {
       expect(error.message).to.match(/not permitted to modify/i)

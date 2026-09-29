@@ -20,9 +20,7 @@ function SimpleEmailsRow({ userEmailData, primary }: SimpleEmailsRowProps) {
       <OLCol lg={8}>
         <EmailCell>
           <span className="me-2">{userEmailData.email}</span>
-          {isPrimary && (
-            <OLBadge bg="info">{t('primary', 'Primary')}</OLBadge>
-          )}
+          {isPrimary && <OLBadge bg="info">{t('primary', 'Primary')}</OLBadge>}
           {!userEmailData.confirmedAt && (
             <span className="text-muted small ms-2">
               ({t('unconfirmed', 'Unconfirmed')})

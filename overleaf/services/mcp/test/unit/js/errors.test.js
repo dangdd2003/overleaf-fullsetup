@@ -34,7 +34,10 @@ describe('errors', function () {
     })
 
     it('redacts anything that looks like a token', function () {
-      const message = sanitiseMessage('bad token olp_0123456789abcdef', 'http://web:3000')
+      const message = sanitiseMessage(
+        'bad token olp_0123456789abcdef',
+        'http://web:3000'
+      )
       expect(message).to.not.include('olp_0123456789abcdef')
       expect(message).to.include('[redacted]')
     })
@@ -48,13 +51,17 @@ describe('errors', function () {
     })
 
     it('leaves a clean message untouched', function () {
-      expect(sanitiseMessage('not found', 'http://web:3000')).to.equal('not found')
+      expect(sanitiseMessage('not found', 'http://web:3000')).to.equal(
+        'not found'
+      )
     })
   })
 
   describe('toToolError', function () {
     it('preserves the upstream code in the payload', function () {
-      const result = toToolError(new OverleafApiError('forbidden', 'read-only', 403))
+      const result = toToolError(
+        new OverleafApiError('forbidden', 'read-only', 403)
+      )
       expect(result.isError).to.be.true
       expect(JSON.parse(result.content[0].text)).to.deep.equal({
         code: 'forbidden',
@@ -63,7 +70,9 @@ describe('errors', function () {
     })
 
     it('maps an unknown error to upstream_error without leaking its message', function () {
-      const result = toToolError(new TypeError('fetch failed for http://web:3000'))
+      const result = toToolError(
+        new TypeError('fetch failed for http://web:3000')
+      )
       const payload = JSON.parse(result.content[0].text)
       expect(payload.code).to.equal('upstream_error')
       expect(payload.message).to.not.include('web:3000')

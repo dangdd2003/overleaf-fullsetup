@@ -7,12 +7,14 @@ const loggerError = vi.fn()
 vi.mock('@overleaf/logger', () => ({
   default: { error: (...a) => loggerError(...a), warn: vi.fn(), info: vi.fn() },
 }))
-vi.mock('../../../../../app/src/Features/Authorization/AuthorizationManager.mjs', () => ({
-  default: { promises: { canUserReadProject, canUserWriteProjectContent } },
-}))
-const { requireMcpProjectRead, requireMcpProjectWrite } = await import(
-  '../../../../../app/src/Features/Mcp/McpAuthorizationMiddleware.mjs'
+vi.mock(
+  '../../../../../app/src/Features/Authorization/AuthorizationManager.mjs',
+  () => ({
+    default: { promises: { canUserReadProject, canUserWriteProjectContent } },
+  })
 )
+const { requireMcpProjectRead, requireMcpProjectWrite } =
+  await import('../../../../../app/src/Features/Mcp/McpAuthorizationMiddleware.mjs')
 
 function ctx(projectId = '507f1f77bcf86cd799439011') {
   const req = { mcpUserId: 'u1', params: { projectId } }

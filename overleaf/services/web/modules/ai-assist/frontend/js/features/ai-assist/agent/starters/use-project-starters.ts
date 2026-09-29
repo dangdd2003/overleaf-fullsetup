@@ -66,7 +66,7 @@ export function useProjectStarters({
         const [loadedFiles, loadedIndex] = await Promise.all([
           files && files.length > 0
             ? Promise.resolve(files)
-            : handle?.listFiles?.().catch(() => []) ?? Promise.resolve([]),
+            : (handle?.listFiles?.().catch(() => []) ?? Promise.resolve([])),
           handle?.index?.().catch(() => null) ?? Promise.resolve(null),
         ])
 

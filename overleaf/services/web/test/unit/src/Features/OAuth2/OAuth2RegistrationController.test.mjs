@@ -94,17 +94,29 @@ describe('OAuth2RegistrationController', () => {
 
     await OAuth2RegistrationController.register(req, res)
     expect(status).to.equal(201)
-    expect(responseData).to.have.property('client_id').that.is.a('string').and.match(/^client_[0-9a-f]{32}$/)
+    expect(responseData)
+      .to.have.property('client_id')
+      .that.is.a('string')
+      .and.match(/^client_[0-9a-f]{32}$/)
     expect(responseData.client_name).to.equal('Third Party AI Client')
-    expect(responseData.redirect_uris).to.deep.equal(['http://127.0.0.1:8000/cb', 'http://localhost:8000/cb'])
-    expect(responseData.grant_types).to.deep.equal(['authorization_code', 'refresh_token'])
+    expect(responseData.redirect_uris).to.deep.equal([
+      'http://127.0.0.1:8000/cb',
+      'http://localhost:8000/cb',
+    ])
+    expect(responseData.grant_types).to.deep.equal([
+      'authorization_code',
+      'refresh_token',
+    ])
     expect(responseData.scope).to.equal('mcp')
     expect(responseData.token_endpoint_auth_method).to.equal('none')
 
     expect(createdDoc).to.exist
     expect(createdDoc.id).to.equal(responseData.client_id)
     expect(createdDoc.name).to.equal('Third Party AI Client')
-    expect(createdDoc.redirectUris).to.deep.equal(['http://127.0.0.1:8000/cb', 'http://localhost:8000/cb'])
+    expect(createdDoc.redirectUris).to.deep.equal([
+      'http://127.0.0.1:8000/cb',
+      'http://localhost:8000/cb',
+    ])
     expect(createdDoc.pkceEnabled).to.be.true
   })
 
@@ -133,7 +145,10 @@ describe('OAuth2RegistrationController', () => {
 
     await OAuth2RegistrationController.register(req, res)
     expect(status).to.equal(201)
-    expect(responseData.grant_types).to.deep.equal(['authorization_code', 'refresh_token'])
+    expect(responseData.grant_types).to.deep.equal([
+      'authorization_code',
+      'refresh_token',
+    ])
     expect(responseData.scope).to.equal('mcp')
   })
 

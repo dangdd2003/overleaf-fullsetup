@@ -1,4 +1,4 @@
-import { fetchPublicUrl } from './AiAssistWebTools.mjs'
+import { fetchPublicUrl } from './web-fetch/transport.mjs'
 
 /**
  * Site icons for the web result rows. The browser cannot find most of them on
@@ -21,7 +21,8 @@ const MISSING_TTL_MS = 60 * 60 * 1000
 const HEADERS = {
   'User-Agent':
     'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-  Accept: 'text/html,application/xhtml+xml,image/avif,image/webp,image/*;q=0.9,*/*;q=0.8',
+  Accept:
+    'text/html,application/xhtml+xml,image/avif,image/webp,image/*;q=0.9,*/*;q=0.8',
   'Accept-Language': 'en-US,en;q=0.9',
 }
 
@@ -43,12 +44,18 @@ export function normalizeOrigin(raw) {
 export function sniffImageType(body) {
   if (!body || body.length < 4) return null
   const ascii = (from, to) => body.subarray(from, to).toString('latin1')
-  if (body[0] === 0 && body[1] === 0 && (body[2] === 1 || body[2] === 2) && body[3] === 0) {
+  if (
+    body[0] === 0 &&
+    body[1] === 0 &&
+    (body[2] === 1 || body[2] === 2) &&
+    body[3] === 0
+  ) {
     return 'image/x-icon'
   }
   if (ascii(0, 8) === '\x89PNG\r\n\x1a\n') return 'image/png'
   if (ascii(0, 4) === 'GIF8') return 'image/gif'
-  if (body[0] === 0xff && body[1] === 0xd8 && body[2] === 0xff) return 'image/jpeg'
+  if (body[0] === 0xff && body[1] === 0xd8 && body[2] === 0xff)
+    return 'image/jpeg'
   if (ascii(0, 4) === 'RIFF' && ascii(8, 12) === 'WEBP') return 'image/webp'
   if (ascii(4, 12) === 'ftypavif') return 'image/avif'
   const head = body.subarray(0, 2048).toString('utf8').trimStart()
@@ -89,8 +96,15 @@ export function iconLinksIn(html, baseUrl) {
       continue
     }
     if (url.protocol !== 'http:' && url.protocol !== 'https:') continue
-    const size = parseInt(/(\d+)x\d+/i.exec(attribute(tag, 'sizes') || '')?.[1], 10)
-    icons.push({ url: url.toString(), rank, fit: size ? Math.abs(size - 32) : 16 })
+    const size = parseInt(
+      /(\d+)x\d+/i.exec(attribute(tag, 'sizes') || '')?.[1],
+      10
+    )
+    icons.push({
+      url: url.toString(),
+      rank,
+      fit: size ? Math.abs(size - 32) : 16,
+    })
   }
   return icons
     .sort((a, b) => a.rank - b.rank || a.fit - b.fit)
@@ -167,13 +181,17 @@ export default {
     // An SVG opened directly must not run as a page on Overleaf's origin.
     res.set({
       'X-Content-Type-Options': 'nosniff',
-      'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+      'Content-Security-Policy':
+        "default-src 'none'; style-src 'unsafe-inline'; sandbox",
     })
     if (!icon) {
       res.set('Cache-Control', 'private, max-age=3600')
       return res.sendStatus(404)
     }
-    res.set({ 'Content-Type': icon.type, 'Cache-Control': 'private, max-age=86400' })
+    res.set({
+      'Content-Type': icon.type,
+      'Cache-Control': 'private, max-age=86400',
+    })
     res.send(icon.body)
   },
 }

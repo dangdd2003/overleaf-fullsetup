@@ -48,11 +48,16 @@ describe('OAuth2TokenController', () => {
         .replace(/\+/g, '-')
         .replace(/\//g, '_')
 
-      expect(OAuth2TokenController.verifyPkce(verifier, expectedChallenge)).to.be.true
-      expect(OAuth2TokenController.verifyPkce('wrong_verifier', expectedChallenge)).to.be.false
-      expect(OAuth2TokenController.verifyPkce('', expectedChallenge)).to.be.false
+      expect(OAuth2TokenController.verifyPkce(verifier, expectedChallenge)).to
+        .be.true
+      expect(
+        OAuth2TokenController.verifyPkce('wrong_verifier', expectedChallenge)
+      ).to.be.false
+      expect(OAuth2TokenController.verifyPkce('', expectedChallenge)).to.be
+        .false
       expect(OAuth2TokenController.verifyPkce(verifier, '')).to.be.false
-      expect(OAuth2TokenController.verifyPkce(null, expectedChallenge)).to.be.false
+      expect(OAuth2TokenController.verifyPkce(null, expectedChallenge)).to.be
+        .false
       expect(OAuth2TokenController.verifyPkce(verifier, null)).to.be.false
     })
 
@@ -66,7 +71,8 @@ describe('OAuth2TokenController', () => {
         .replace(/\+/g, '-')
         .replace(/\//g, '_')
 
-      expect(OAuth2TokenController.verifyPkce(shortVerifier, challenge)).to.be.false
+      expect(OAuth2TokenController.verifyPkce(shortVerifier, challenge)).to.be
+        .false
     })
 
     it('returns false for code_verifier longer than 128 chars', () => {
@@ -79,7 +85,8 @@ describe('OAuth2TokenController', () => {
         .replace(/\+/g, '-')
         .replace(/\//g, '_')
 
-      expect(OAuth2TokenController.verifyPkce(longVerifier, challenge)).to.be.false
+      expect(OAuth2TokenController.verifyPkce(longVerifier, challenge)).to.be
+        .false
     })
 
     it('returns false for code_verifier with invalid characters', () => {
@@ -91,7 +98,8 @@ describe('OAuth2TokenController', () => {
         .replace(/=/g, '')
         .replace(/\+/g, '-')
         .replace(/\//g, '_')
-      expect(OAuth2TokenController.verifyPkce(verifierWithSpaces, challenge1)).to.be.false
+      expect(OAuth2TokenController.verifyPkce(verifierWithSpaces, challenge1))
+        .to.be.false
 
       const verifierWithAt = 'a'.repeat(42) + '@'
       const challenge2 = crypto
@@ -101,7 +109,8 @@ describe('OAuth2TokenController', () => {
         .replace(/=/g, '')
         .replace(/\+/g, '-')
         .replace(/\//g, '_')
-      expect(OAuth2TokenController.verifyPkce(verifierWithAt, challenge2)).to.be.false
+      expect(OAuth2TokenController.verifyPkce(verifierWithAt, challenge2)).to.be
+        .false
 
       const verifierWithExclamation = 'a'.repeat(42) + '!'
       const challenge3 = crypto
@@ -111,11 +120,14 @@ describe('OAuth2TokenController', () => {
         .replace(/=/g, '')
         .replace(/\+/g, '-')
         .replace(/\//g, '_')
-      expect(OAuth2TokenController.verifyPkce(verifierWithExclamation, challenge3)).to.be.false
+      expect(
+        OAuth2TokenController.verifyPkce(verifierWithExclamation, challenge3)
+      ).to.be.false
     })
 
     it('returns true for valid 43-128 char unreserved string matching challenge', () => {
-      const validChars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~'
+      const validChars =
+        'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~'
       const valid43 = validChars.slice(0, 43)
       const challenge43 = crypto
         .createHash('sha256')
@@ -134,7 +146,8 @@ describe('OAuth2TokenController', () => {
         .replace(/=/g, '')
         .replace(/\+/g, '-')
         .replace(/\//g, '_')
-      expect(OAuth2TokenController.verifyPkce(valid128, challenge128)).to.be.true
+      expect(OAuth2TokenController.verifyPkce(valid128, challenge128)).to.be
+        .true
     })
   })
 
@@ -151,7 +164,8 @@ describe('OAuth2TokenController', () => {
       expect(res.statusCode).to.equal(400)
       expect(res.responseData).to.deep.equal({
         error: 'unsupported_grant_type',
-        error_description: 'grant_type must be authorization_code or refresh_token',
+        error_description:
+          'grant_type must be authorization_code or refresh_token',
       })
     })
 
@@ -204,7 +218,9 @@ describe('OAuth2TokenController', () => {
     })
 
     it('rejects when authorization code is not found', async () => {
-      vi.spyOn(OauthAuthorizationCode, 'findOneAndDelete').mockResolvedValue(null)
+      vi.spyOn(OauthAuthorizationCode, 'findOneAndDelete').mockResolvedValue(
+        null
+      )
 
       const req = {
         body: {
@@ -239,10 +255,12 @@ describe('OAuth2TokenController', () => {
       }
 
       let deletedQuery = null
-      vi.spyOn(OauthAuthorizationCode, 'findOneAndDelete').mockImplementation(async query => {
-        deletedQuery = query
-        return mockAuthRecord
-      })
+      vi.spyOn(OauthAuthorizationCode, 'findOneAndDelete').mockImplementation(
+        async query => {
+          deletedQuery = query
+          return mockAuthRecord
+        }
+      )
       const deleteOneSpy = vi.spyOn(OauthAuthorizationCode, 'deleteOne')
       let createdTokenDoc = null
       vi.spyOn(OauthAccessToken, 'create').mockImplementation(async doc => {
@@ -281,7 +299,9 @@ describe('OAuth2TokenController', () => {
         expiresAt: new Date(Date.now() - 10000), // Expired 10s ago
       }
 
-      vi.spyOn(OauthAuthorizationCode, 'findOneAndDelete').mockResolvedValue(mockAuthRecord)
+      vi.spyOn(OauthAuthorizationCode, 'findOneAndDelete').mockResolvedValue(
+        mockAuthRecord
+      )
 
       const req = {
         body: {
@@ -313,7 +333,9 @@ describe('OAuth2TokenController', () => {
         expiresAt: new Date(Date.now() + 60000),
       }
 
-      vi.spyOn(OauthAuthorizationCode, 'findOneAndDelete').mockResolvedValue(mockAuthRecord)
+      vi.spyOn(OauthAuthorizationCode, 'findOneAndDelete').mockResolvedValue(
+        mockAuthRecord
+      )
 
       // Wrong client_id
       const req1 = {
@@ -359,7 +381,9 @@ describe('OAuth2TokenController', () => {
         expiresAt: new Date(Date.now() + 60000),
       }
 
-      vi.spyOn(OauthAuthorizationCode, 'findOneAndDelete').mockResolvedValue(mockAuthRecord)
+      vi.spyOn(OauthAuthorizationCode, 'findOneAndDelete').mockResolvedValue(
+        mockAuthRecord
+      )
 
       const req = {
         body: {
@@ -393,7 +417,9 @@ describe('OAuth2TokenController', () => {
         expiresAt: new Date(Date.now() + 60000),
       }
 
-      vi.spyOn(OauthAuthorizationCode, 'findOneAndDelete').mockResolvedValue(mockAuthRecord)
+      vi.spyOn(OauthAuthorizationCode, 'findOneAndDelete').mockResolvedValue(
+        mockAuthRecord
+      )
 
       let createdTokenDoc = null
       vi.spyOn(OauthAccessToken, 'create').mockImplementation(async doc => {
@@ -416,19 +442,28 @@ describe('OAuth2TokenController', () => {
 
       await OAuth2TokenController.token(req, res)
       expect(res.statusCode).to.equal(200)
-      expect(res.responseData).to.have.property('access_token').that.is.a('string')
+      expect(res.responseData)
+        .to.have.property('access_token')
+        .that.is.a('string')
       expect(res.responseData.token_type).to.equal('Bearer')
       expect(res.responseData.expires_in).to.equal(3600)
-      expect(res.responseData).to.have.property('refresh_token').that.is.a('string').and.match(/^oar_[0-9a-f]{64}$/)
+      expect(res.responseData)
+        .to.have.property('refresh_token')
+        .that.is.a('string')
+        .and.match(/^oar_[0-9a-f]{64}$/)
       expect(res.responseData.scope).to.equal('mcp')
 
       // Verify the minted JWT with OAuth2KeyManager
-      const decodedPayload = await OAuth2KeyManager.verifyJwt(res.responseData.access_token)
+      const decodedPayload = await OAuth2KeyManager.verifyJwt(
+        res.responseData.access_token
+      )
       expect(decodedPayload.sub).to.equal('user_abc_789')
       expect(decodedPayload.aud).to.equal('http://localhost:3050/mcp')
       expect(decodedPayload.client_id).to.equal('claude')
       expect(decodedPayload.scope).to.equal('mcp')
-      expect(decodedPayload).to.have.property('jti').that.match(/^jwt_[0-9a-f]{32}$/)
+      expect(decodedPayload)
+        .to.have.property('jti')
+        .that.match(/^jwt_[0-9a-f]{32}$/)
 
       // Verify token DB record: only the hash is persisted, never the raw token
       expect(createdTokenDoc).to.exist
@@ -527,7 +562,9 @@ describe('OAuth2TokenController', () => {
       await OAuth2TokenController.token(req, res)
       expect(res.statusCode).to.equal(400)
       expect(res.responseData.error).to.equal('invalid_grant')
-      expect(res.responseData.error_description).to.include('client_id mismatch')
+      expect(res.responseData.error_description).to.include(
+        'client_id mismatch'
+      )
     })
 
     it('rejects refresh_token when requested resource does not match audience', async () => {
@@ -554,7 +591,9 @@ describe('OAuth2TokenController', () => {
       await OAuth2TokenController.token(req, res)
       expect(res.statusCode).to.equal(400)
       expect(res.responseData.error).to.equal('invalid_target')
-      expect(res.responseData.error_description).to.include('Requested resource does not match')
+      expect(res.responseData.error_description).to.include(
+        'Requested resource does not match'
+      )
     })
 
     it('performs token rotation: mints new RS256 JWT, rotates refresh token, and updates DB', async () => {
@@ -586,13 +625,20 @@ describe('OAuth2TokenController', () => {
 
       await OAuth2TokenController.token(req, res)
       expect(res.statusCode).to.equal(200)
-      expect(res.responseData).to.have.property('access_token').that.is.a('string')
-      expect(res.responseData).to.have.property('refresh_token').that.is.a('string').and.not.equal('oar_old_token')
+      expect(res.responseData)
+        .to.have.property('access_token')
+        .that.is.a('string')
+      expect(res.responseData)
+        .to.have.property('refresh_token')
+        .that.is.a('string')
+        .and.not.equal('oar_old_token')
       expect(res.responseData.expires_in).to.equal(3600)
       expect(res.responseData.token_type).to.equal('Bearer')
 
       // Verify new token
-      const decodedPayload = await OAuth2KeyManager.verifyJwt(res.responseData.access_token)
+      const decodedPayload = await OAuth2KeyManager.verifyJwt(
+        res.responseData.access_token
+      )
       expect(decodedPayload.sub).to.equal('user_rotation_123')
       expect(decodedPayload.aud).to.equal('http://localhost:3050/mcp')
       expect(decodedPayload.client_id).to.equal('claude')

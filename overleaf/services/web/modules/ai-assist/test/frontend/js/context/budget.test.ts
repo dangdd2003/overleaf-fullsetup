@@ -21,7 +21,9 @@ function conversation(toolResults: number): AgentMessage[] {
     messages.push({
       role: 'assistant',
       content: '',
-      toolCalls: [{ id: `call-${index}`, name: 'read_file', args: { path: 'main.tex' } }],
+      toolCalls: [
+        { id: `call-${index}`, name: 'read_file', args: { path: 'main.tex' } },
+      ],
     })
     messages.push({
       role: 'tool',
@@ -56,16 +58,26 @@ describe('applyBudget', function () {
   })
 
   it('elides old tool results while keeping the most recent verbatim', function () {
-    const result = applyBudget({ system: 'sys', messages: conversation(6), limits })
+    const result = applyBudget({
+      system: 'sys',
+      messages: conversation(6),
+      limits,
+    })
 
-    const toolMessages = result.messages.filter(message => message.role === 'tool')
+    const toolMessages = result.messages.filter(
+      message => message.role === 'tool'
+    )
     const intact = toolMessages.filter(message => message.content === BIG)
     expect(intact).to.have.length(KEEP_RECENT_TOOL_RESULTS)
     expect(result.elided).to.be.greaterThan(0)
   })
 
   it('names the tool and how to get the content back in the stub', function () {
-    const result = applyBudget({ system: 'sys', messages: conversation(6), limits })
+    const result = applyBudget({
+      system: 'sys',
+      messages: conversation(6),
+      limits,
+    })
     const stub = result.messages.find(
       message => message.role === 'tool' && message.content !== BIG
     )
@@ -75,17 +87,31 @@ describe('applyBudget', function () {
   })
 
   it('elides oldest first', function () {
-    const result = applyBudget({ system: 'sys', messages: conversation(6), limits })
-    const toolMessages = result.messages.filter(message => message.role === 'tool')
-    const firstIntact = toolMessages.findIndex(message => message.content === BIG)
+    const result = applyBudget({
+      system: 'sys',
+      messages: conversation(6),
+      limits,
+    })
+    const toolMessages = result.messages.filter(
+      message => message.role === 'tool'
+    )
+    const firstIntact = toolMessages.findIndex(
+      message => message.content === BIG
+    )
     expect(firstIntact).to.equal(toolMessages.length - KEEP_RECENT_TOOL_RESULTS)
   })
 
   it('never orphans a tool call from its result', function () {
-    const result = applyBudget({ system: 'sys', messages: conversation(6), limits })
+    const result = applyBudget({
+      system: 'sys',
+      messages: conversation(6),
+      limits,
+    })
     const callIds = result.messages
       .filter(message => message.role === 'assistant')
-      .flatMap(message => (message as { toolCalls?: { id: string }[] }).toolCalls ?? [])
+      .flatMap(
+        message => (message as { toolCalls?: { id: string }[] }).toolCalls ?? []
+      )
       .map(call => call.id)
     const resultIds = result.messages
       .filter(message => message.role === 'tool')
@@ -94,27 +120,46 @@ describe('applyBudget', function () {
   })
 
   it('never elides user messages', function () {
-    const result = applyBudget({ system: 'sys', messages: conversation(6), limits })
+    const result = applyBudget({
+      system: 'sys',
+      messages: conversation(6),
+      limits,
+    })
     const users = result.messages.filter(message => message.role === 'user')
     expect(users).to.have.length(7)
     expect(users[users.length - 1].content).to.equal('the newest question')
   })
 
   it('is monotonic — eliding an already-elided array changes nothing', function () {
-    const once = applyBudget({ system: 'sys', messages: conversation(6), limits })
-    const twice = applyBudget({ system: 'sys', messages: once.messages, limits })
+    const once = applyBudget({
+      system: 'sys',
+      messages: conversation(6),
+      limits,
+    })
+    const twice = applyBudget({
+      system: 'sys',
+      messages: once.messages,
+      limits,
+    })
     expect(twice.messages).to.deep.equal(once.messages)
   })
 
   it('reports exhaustion rather than sending a request that will 400', function () {
     const tiny = { contextWindow: 200, maxOutputTokens: 100 }
-    const result = applyBudget({ system: 'sys', messages: conversation(6), limits: tiny })
+    const result = applyBudget({
+      system: 'sys',
+      messages: conversation(6),
+      limits: tiny,
+    })
     expect(result.exhausted).to.equal(true)
   })
 })
 
 /** Mirrors the internal `budget` computation so boundary specs can target it exactly. */
-function budgetFor(theLimits: { contextWindow: number; maxOutputTokens: number }): number {
+function budgetFor(theLimits: {
+  contextWindow: number
+  maxOutputTokens: number
+}): number {
   return (
     theLimits.contextWindow -
     theLimits.maxOutputTokens -
@@ -154,8 +199,14 @@ describe('applyBudget boundaries', function () {
   })
 
   it('does not touch tool results when there are fewer than KEEP_RECENT_TOOL_RESULTS', function () {
-    const result = applyBudget({ system: 'sys', messages: conversation(2), limits })
-    const toolMessages = result.messages.filter(message => message.role === 'tool')
+    const result = applyBudget({
+      system: 'sys',
+      messages: conversation(2),
+      limits,
+    })
+    const toolMessages = result.messages.filter(
+      message => message.role === 'tool'
+    )
     const intact = toolMessages.filter(message => message.content === BIG)
     expect(intact).to.have.length(2)
     expect(result.elided).to.equal(0)
@@ -164,7 +215,11 @@ describe('applyBudget boundaries', function () {
 
   it('elision can succeed: a request too big to send untrimmed fits after eliding', function () {
     const roomy = { contextWindow: 50000, maxOutputTokens: 1000 }
-    const result = applyBudget({ system: 'sys', messages: conversation(6), limits: roomy })
+    const result = applyBudget({
+      system: 'sys',
+      messages: conversation(6),
+      limits: roomy,
+    })
     // Two elisions would already fit the 44,000 budget; trimming continues
     // toward 70% of it (30,800) so the next steps keep the cached prefix.
     // Only three results are elidable (the newest three are kept).
@@ -174,11 +229,20 @@ describe('applyBudget boundaries', function () {
 
   it('trims no further than needed to reach the target', function () {
     const roomy = { contextWindow: 50000, maxOutputTokens: 1000 }
-    const once = applyBudget({ system: 'sys', messages: conversation(6), limits: roomy })
-    const next = [...once.messages, { role: 'user', content: 'another question' } as AgentMessage]
+    const once = applyBudget({
+      system: 'sys',
+      messages: conversation(6),
+      limits: roomy,
+    })
+    const next = [
+      ...once.messages,
+      { role: 'user', content: 'another question' } as AgentMessage,
+    ]
     const twice = applyBudget({ system: 'sys', messages: next, limits: roomy })
     expect(twice.elided).to.equal(0)
-    expect(twice.messages.slice(0, once.messages.length)).to.deep.equal(once.messages)
+    expect(twice.messages.slice(0, once.messages.length)).to.deep.equal(
+      once.messages
+    )
   })
 })
 
@@ -216,8 +280,14 @@ describe('applyBudget — assistant elision never produces an invalid message', 
       messages.push({ role: 'user', content: `question ${index}` })
       messages.push({
         role: 'assistant',
-        content: 'y'.repeat(4000),
-        toolCalls: [{ id: `call-${index}`, name: 'read_file', args: { path: 'main.tex' } }],
+        content: 'y'.repeat(4400),
+        toolCalls: [
+          {
+            id: `call-${index}`,
+            name: 'read_file',
+            args: { path: 'main.tex' },
+          },
+        ],
       })
       messages.push({
         role: 'tool',
@@ -235,7 +305,7 @@ describe('applyBudget — assistant elision never produces an invalid message', 
       message => message.role === 'assistant'
     ) as Extract<AgentMessage, { role: 'assistant' }>[]
     const rewritten = assistants.filter(
-      message => message.content !== 'y'.repeat(4000)
+      message => message.content !== 'y'.repeat(4400)
     )
     expect(rewritten.length).to.be.greaterThan(0)
     for (const message of rewritten) {
@@ -257,7 +327,13 @@ describe('applyBudget — eliding an assistant reply never grows the request', f
       messages.push({
         role: 'assistant',
         content: 'ok',
-        toolCalls: [{ id: `call-${index}`, name: 'read_file', args: { path: 'main.tex' } }],
+        toolCalls: [
+          {
+            id: `call-${index}`,
+            name: 'read_file',
+            args: { path: 'main.tex' },
+          },
+        ],
       })
       messages.push({
         role: 'tool',
@@ -375,7 +451,12 @@ describe('applyBudget with tool specs', function () {
     const withoutTools = applyBudget({ system: 'sys', messages, limits: tight })
     expect(withoutTools.exhausted).to.equal(false)
 
-    const withTools = applyBudget({ system: 'sys', messages, limits: tight, tools })
+    const withTools = applyBudget({
+      system: 'sys',
+      messages,
+      limits: tight,
+      tools,
+    })
     expect(withTools.exhausted).to.equal(true)
   })
 })
@@ -385,14 +466,22 @@ describe('applyBudget with a misconfigured budget', function () {
     const messages: AgentMessage[] = [{ role: 'user', content: 'hi' }]
     // maxOutputTokens plus the margin already consume the whole window.
     const misconfigured = { contextWindow: 2048, maxOutputTokens: 2048 }
-    const result = applyBudget({ system: 'sys', messages, limits: misconfigured })
+    const result = applyBudget({
+      system: 'sys',
+      messages,
+      limits: misconfigured,
+    })
     expect(result.exhausted).to.equal(true)
     expect(result.reason).to.equal('budget-non-positive')
   })
 
   it('does not misreport a genuinely oversized conversation as misconfigured', function () {
     const limits = { contextWindow: 200, maxOutputTokens: 100 }
-    const result = applyBudget({ system: 'sys', messages: conversation(6), limits })
+    const result = applyBudget({
+      system: 'sys',
+      messages: conversation(6),
+      limits,
+    })
     expect(result.exhausted).to.equal(true)
     expect(result.reason).to.equal(undefined)
   })
@@ -400,6 +489,6 @@ describe('applyBudget with a misconfigured budget', function () {
 
 describe('estimateTokens ratio', function () {
   it('pins the CHARS_PER_TOKEN ratio', function () {
-    expect(estimateTokens('x'.repeat(37))).to.equal(10)
+    expect(estimateTokens('x'.repeat(40))).to.equal(10)
   })
 })
