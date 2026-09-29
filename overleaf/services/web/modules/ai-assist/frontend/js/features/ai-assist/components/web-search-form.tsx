@@ -64,18 +64,6 @@ import { isServerWebSearchAvailable } from '../provider-store'
 
 export { WEB_SEARCH_LABELS }
 
-type PreferenceKey = keyof WebSearchPreferences
-
-const PREFERENCE_FIELDS: {
-  key: PreferenceKey
-  label: string
-  unit?: string
-}[] = [
-  { key: 'cacheHours', label: 'Keep results for', unit: 'hours' },
-  { key: 'maxCachedSearches', label: 'Searches to keep' },
-  { key: 'maxCachedPages', label: 'Pages to keep' },
-]
-
 const ALL_PROVIDERS: WebSearchProviderType[] = [
   'searxng',
   'ollama',
@@ -90,14 +78,6 @@ const ALL_PROVIDERS: WebSearchProviderType[] = [
 
 function plural(count: number, noun: string, nouns = `${noun}s`) {
   return `${count} ${count === 1 ? noun : nouns}`
-}
-
-function preferenceValue(key: PreferenceKey, raw: string): number | undefined {
-  if (raw.trim() === '') return undefined
-  const parsed = Math.trunc(Number(raw))
-  if (!Number.isFinite(parsed)) return undefined
-  const { min, max } = WEB_SEARCH_DEFAULTS[key]
-  return Math.min(max, Math.max(min, parsed))
 }
 
 type Probe =
@@ -414,15 +394,6 @@ export default function WebSearchForm({
   )
   const [exaDraft, setExaDraft] = useState(() => draftFromExa(initialExa))
 
-  const [preferences, setPreferences] = useState<Record<PreferenceKey, string>>(
-    () =>
-      Object.fromEntries(
-        PREFERENCE_FIELDS.map(({ key }) => [
-          key,
-          initial?.[key] === undefined ? '' : String(initial[key]),
-        ])
-      ) as Record<PreferenceKey, string>
-  )
   const [probe, setProbe] = useState<Probe>({ state: 'idle' })
 
   const validSearxngUrls = searxngUrls.map(u => u.trim()).filter(Boolean)
@@ -561,12 +532,6 @@ export default function WebSearchForm({
       }
     }
 
-    const chosen: WebSearchPreferences = {}
-    for (const { key } of PREFERENCE_FIELDS) {
-      const value = preferenceValue(key, preferences[key])
-      if (value !== undefined) chosen[key] = value
-    }
-
     const providers: MultiWebSearchSettings['providers'] = {}
 
     if (effectiveProviders.includes('searxng')) {
@@ -683,11 +648,9 @@ export default function WebSearchForm({
       providers,
       rotationStrategy,
       primaryProvider: effectivePrimary,
-      ...chosen,
     }
   }, [
     sourceMode,
-    preferences,
     effectiveProviders,
     addedProviders,
     searxngEnabled,
@@ -1568,46 +1531,6 @@ export default function WebSearchForm({
             </div>
           )}
 
-          <details className="web-search-cache-details mt-2">
-            <summary className="small text-muted">
-              Cache settings (optional)
-            </summary>
-            <div className="pt-2">
-              <OLRow className="g-2">
-                {PREFERENCE_FIELDS.map(({ key, label, unit }) => {
-                  const { value, min, max } = WEB_SEARCH_DEFAULTS[key]
-                  return (
-                    <OLCol key={key} xs={12} sm={4}>
-                      <OLFormGroup
-                        controlId={`ai-web-search-${key}`}
-                        className="mb-0"
-                      >
-                        <OLFormLabel className="small">
-                          {label}
-                          {unit ? ` (${unit})` : ''}
-                        </OLFormLabel>
-                        <OLFormControl
-                          size="sm"
-                          type="number"
-                          min={min}
-                          max={max}
-                          step={1}
-                          value={preferences[key]}
-                          placeholder={String(value)}
-                          onChange={e =>
-                            setPreferences(prev => ({
-                              ...prev,
-                              [key]: e.target.value,
-                            }))
-                          }
-                        />
-                      </OLFormGroup>
-                    </OLCol>
-                  )
-                })}
-              </OLRow>
-            </div>
-          </details>
         </div>
       )}
 

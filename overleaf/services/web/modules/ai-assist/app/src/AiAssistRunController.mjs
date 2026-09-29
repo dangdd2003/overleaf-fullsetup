@@ -31,7 +31,14 @@ export function resolveWebSearchSettings(clientSettings) {
       ? Settings.aiAssist.serverWebSearch
       : null
   } else if (clientSettings) {
-    settings = normalizeWebSearchSettings(clientSettings)
+    // Force server cache configuration regardless of what client sent
+    const { cacheHours, maxCachedSearches, maxCachedPages } = Settings.aiAssist || {}
+    settings = normalizeWebSearchSettings({
+      ...clientSettings,
+      ...(cacheHours !== undefined ? { cacheHours } : {}),
+      ...(maxCachedSearches !== undefined ? { maxCachedSearches } : {}),
+      ...(maxCachedPages !== undefined ? { maxCachedPages } : {}),
+    })
   }
   return settings ?? fetchOnlyWebSettings()
 }

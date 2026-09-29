@@ -1,4 +1,4 @@
-import { FC, useLayoutEffect, useRef, useState } from 'react'
+import { FC, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Brain } from '@phosphor-icons/react'
 import { useStickToBottom } from '../../hooks/use-stick-to-bottom'
@@ -7,6 +7,8 @@ import {
   MAX_FADE_LEAD_MS,
   useStreamReveal,
 } from '../../hooks/use-stream-reveal'
+import { subresultExpansionStore } from './subresult-group'
+import { renderMarkdown } from './markdown-content'
 
 type FadeChunk = { start: number; at: number }
 type FadeState = { text: string; chunks: FadeChunk[] }
@@ -86,12 +88,28 @@ export const ThinkingBlock: FC<{
   thinking: string
   isLive?: boolean
   elapsedMs?: number
-}> = ({ thinking, isLive = false, elapsedMs }) => {
+  groupId?: string
+  blockId?: string
+}> = ({ thinking, isLive = false, elapsedMs, groupId, blockId }) => {
   const { t } = useTranslation()
-  const [expanded, setExpanded] = useState(false)
-  const bodyRef = useRef<HTMLDivElement>(null)
+  const storageKey = blockId
+    ? `think-${blockId}`
+    : groupId
+      ? `think-${groupId}`
+      : null
+
+  const [expanded, setExpanded] = useState<boolean>(() => {
+    if (storageKey && subresultExpansionStore.has(storageKey)) {
+      return subresultExpansionStore.get(storageKey)!
+    }
+    if (groupId && subresultExpansionStore.has(groupId)) {
+      return subresultExpansionStore.get(groupId)!
+    }
+    return false
+  })
+
   const contentRef = useRef<HTMLDivElement>(null)
-  const { onScroll, scrollToBottom } = useStickToBottom(bodyRef)
+  const { onScroll, scrollToBottom } = useStickToBottom(contentRef)
 
   const { text: revealedText, animating } = useStreamReveal(
     thinking,
@@ -99,30 +117,52 @@ export const ThinkingBlock: FC<{
   )
   const displayText = isLive && expanded ? revealedText : thinking
 
+  const html = useMemo(() => renderMarkdown(displayText), [displayText])
+
   const fadeState = useRef<FadeState | null>(
     isLive ? { text: '', chunks: [] } : null
   )
 
   useLayoutEffect(() => {
-    if (expanded && isLive) {
-      scrollToBottom({ smooth: false })
-    }
-  }, [expanded, isLive, displayText, scrollToBottom])
-
-  useLayoutEffect(() => {
-    if (!animating || !expanded) {
-      fadeState.current = null
-      return
-    }
+    if (!expanded) return
     const container = contentRef.current
     if (!container) return
-    fadeState.current ??= {
-      text: container.textContent ?? '',
-      chunks: [],
+
+    const template = document.createElement('template')
+    template.innerHTML = html
+    const newNodes = Array.from(template.content.childNodes)
+    const currentNodes = Array.from(container.childNodes)
+
+    let i = 0
+    const maxCommon = Math.min(currentNodes.length, newNodes.length)
+    while (i < maxCommon && currentNodes[i].isEqualNode(newNodes[i])) {
+      i++
     }
-    applyChunkFades(container, fadeState.current)
-    scrollToBottom({ smooth: false })
-  }, [displayText, animating, expanded, isLive, scrollToBottom])
+
+    for (let j = i; j < newNodes.length; j++) {
+      if (j < container.childNodes.length) {
+        if (!container.childNodes[j].isEqualNode(newNodes[j])) {
+          container.replaceChild(newNodes[j], container.childNodes[j])
+        }
+      } else {
+        container.appendChild(newNodes[j])
+      }
+    }
+
+    while (container.childNodes.length > newNodes.length) {
+      container.removeChild(container.lastChild!)
+    }
+
+    if (animating) {
+      fadeState.current ??= {
+        text: container.textContent ?? '',
+        chunks: [],
+      }
+      applyChunkFades(container, fadeState.current)
+    } else {
+      fadeState.current = null
+    }
+  }, [html, expanded, animating])
 
   if (!thinking) return null
 
@@ -142,8 +182,15 @@ export const ThinkingBlock: FC<{
   const handleToggle = () => {
     setExpanded(prev => {
       const next = !prev
+      if (storageKey) {
+        subresultExpansionStore.set(storageKey, next)
+      }
+      if (groupId) {
+        subresultExpansionStore.set(groupId, next)
+      }
       if (next) {
         window.dispatchEvent(new CustomEvent('aiAssist:stickToBottom'))
+        setTimeout(() => scrollToBottom({ smooth: false }), 0)
       }
       return next
     })
@@ -157,17 +204,15 @@ export const ThinkingBlock: FC<{
         aria-expanded={expanded}
         onClick={handleToggle}
       >
-        <span className="ai-assist-thinking-left">
-          <span className="ai-assist-thinking-icon" aria-hidden="true">
-            {isLive ? (
-              <span className="ai-assist-thinking-pulse" />
-            ) : (
-              <Brain size={14} />
-            )}
-          </span>
-
-          <span className="ai-assist-thinking-title">{title}</span>
+        <span className="ai-assist-thinking-icon" aria-hidden="true">
+          {isLive ? (
+            <span className="ai-assist-thinking-pulse" />
+          ) : (
+            <Brain size={14} />
+          )}
         </span>
+
+        <span className="ai-assist-thinking-title">{title}</span>
 
         <svg
           className={`ai-assist-thinking-chevron ${expanded ? 'is-expanded' : ''}`}
@@ -187,14 +232,14 @@ export const ThinkingBlock: FC<{
       </button>
 
       <div
-        ref={bodyRef}
-        onScroll={onScroll}
         className={`ai-assist-thinking-body ${expanded ? 'is-expanded' : ''}`}
         aria-hidden={!expanded}
       >
-        <div ref={contentRef} className="ai-assist-thinking-content">
-          {displayText}
-        </div>
+        <div
+          ref={contentRef}
+          onScroll={onScroll}
+          className="ai-assist-thinking-content"
+        />
       </div>
     </div>
   )

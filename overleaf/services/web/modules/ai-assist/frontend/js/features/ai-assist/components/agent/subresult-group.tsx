@@ -279,12 +279,40 @@ function getSafeEdit(call: any) {
 }
 
 /**
- * Global store for user fold/unfold intent keyed by group ID.
- * This guarantees that when a user unfolds or folds an activity group,
- * subsequent AI actions (new tool calls, chunk streams, UI re-renders)
+ * Persistent store for user fold/unfold intent keyed by group ID.
+ * This guarantees that when a user unfolds or folds an activity group or thinking block,
+ * subsequent AI actions (new tool calls, chunk streams, UI re-renders, mode transitions)
  * never automatically flip or collapse the user's chosen expansion state.
  */
-export const subresultExpansionStore = new Map<string, boolean>()
+export const subresultExpansionStore = {
+  get(key: string): boolean {
+    if (typeof window === 'undefined') return false
+    try {
+      const val = window.sessionStorage.getItem(`ai-assist:expand:${key}`)
+      return val === '1'
+    } catch {
+      return false
+    }
+  },
+  set(key: string, value: boolean) {
+    if (typeof window === 'undefined') return
+    try {
+      if (value) {
+        window.sessionStorage.setItem(`ai-assist:expand:${key}`, '1')
+      } else {
+        window.sessionStorage.removeItem(`ai-assist:expand:${key}`)
+      }
+    } catch {}
+  },
+  has(key: string): boolean {
+    if (typeof window === 'undefined') return false
+    try {
+      return window.sessionStorage.getItem(`ai-assist:expand:${key}`) !== null
+    } catch {
+      return false
+    }
+  },
+}
 
 export const SubresultGroup: FC<{
   groupId?: string
@@ -365,6 +393,8 @@ export const SubresultGroup: FC<{
             return (
               <ThinkingBlock
                 key={`thinking-${idx}`}
+                groupId={groupId}
+                blockId={`${groupId}-think-${idx}`}
                 thinking={item.thinking}
                 isLive={isLive && !item.elapsedMs}
                 elapsedMs={item.elapsedMs}
@@ -394,6 +424,8 @@ export const SubresultGroup: FC<{
           {thinkingItems.map((item, idx) => (
             <ThinkingBlock
               key={`thinking-${idx}`}
+              groupId={groupId}
+              blockId={`${groupId}-think-${idx}`}
               thinking={item.thinking}
               isLive={isLive && !item.elapsedMs}
               elapsedMs={item.elapsedMs}
@@ -446,6 +478,8 @@ export const SubresultGroup: FC<{
                 return (
                   <div key={`think-${idx}`} className="ai-assist-subresult-item">
                     <ThinkingBlock
+                      groupId={groupId}
+                      blockId={`${groupId}-think-${idx}`}
                       thinking={item.thinking}
                       isLive={isLive && !item.elapsedMs}
                       elapsedMs={item.elapsedMs}

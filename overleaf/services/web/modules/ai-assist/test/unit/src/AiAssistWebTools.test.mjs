@@ -850,30 +850,14 @@ describe('AiAssistWebTools', function () {
   })
 
   describe('cache configuration', function () {
-    it('clamps cache configuration parameters to valid ranges', function () {
-      const clamped = normalizeWebSearchSettings({
+    it('enforces server cache configuration', function () {
+      const settings = normalizeWebSearchSettings({
         type: 'ollama',
         apiKey: 'k',
-        cacheHours: -10,
-        maxCachedSearches: 2000,
-        maxCachedPages: 500,
       })
-      expect(clamped.cacheHours).to.equal(0)
-      expect(clamped.maxCachedSearches).to.equal(1000)
-      expect(clamped.maxCachedPages).to.equal(200)
-    })
-
-    it('accepts numeric strings for cache parameters', function () {
-      const settings = normalizeWebSearchSettings({
-        type: 'searxng',
-        baseUrl: 'http://search.local',
-        cacheHours: '48',
-        maxCachedSearches: '500',
-        maxCachedPages: '100',
-      })
-      expect(settings.cacheHours).to.equal(48)
-      expect(settings.maxCachedSearches).to.equal(500)
-      expect(settings.maxCachedPages).to.equal(100)
+      expect(settings.cacheHours).to.equal(24)
+      expect(settings.maxCachedSearches).to.equal(256)
+      expect(settings.maxCachedPages).to.equal(64)
     })
 
     it('skips caching searches when cacheHours is 0', async function () {

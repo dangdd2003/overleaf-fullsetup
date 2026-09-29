@@ -42,15 +42,39 @@ const listeners = new Map<string, Set<() => void>>()
 // starts clean rather than resurrecting a banner for a page that has moved on.
 const lastCompletedFixByProject = new Map<string, LastFixSummary>()
 
+const lastFixKey = (projectId: string) => `ai-assist:last-fix:${projectId}`
+
 export function recordLastCompletedFix(
   projectId: string,
   summary: LastFixSummary
 ): void {
   lastCompletedFixByProject.set(projectId, summary)
+  if (typeof window !== 'undefined' && window.sessionStorage) {
+    try {
+      window.sessionStorage.setItem(
+        lastFixKey(projectId),
+        JSON.stringify(summary)
+      )
+    } catch {}
+  }
 }
 
 export function getLastCompletedFix(projectId: string): LastFixSummary | null {
-  return lastCompletedFixByProject.get(projectId) ?? null
+  const inMem = lastCompletedFixByProject.get(projectId)
+  if (inMem) return inMem
+  if (typeof window !== 'undefined' && window.sessionStorage) {
+    try {
+      const raw = window.sessionStorage.getItem(lastFixKey(projectId))
+      if (raw) {
+        const parsed = JSON.parse(raw) as LastFixSummary
+        if (parsed && parsed.entryId && parsed.fingerprint) {
+          lastCompletedFixByProject.set(projectId, parsed)
+          return parsed
+        }
+      }
+    } catch {}
+  }
+  return null
 }
 
 const keyFor = (projectId: string) => `ai-assist:fixes:${projectId}`
@@ -59,6 +83,11 @@ export function clearFixStore(projectId?: string): void {
   inMemoryFixes.clear()
   listeners.clear()
   lastCompletedFixByProject.clear()
+  if (typeof window !== 'undefined' && window.sessionStorage && projectId) {
+    try {
+      window.sessionStorage.removeItem(lastFixKey(projectId))
+    } catch {}
+  }
   if (projectId) {
     try {
       customLocalStorage.removeItem(keyFor(projectId))

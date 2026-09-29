@@ -108,15 +108,54 @@ export function AgentComposer({
   const autoResize = useCallback(() => {
     const el = textareaRef.current
     if (!el) return
+
+    const originalValue = el.value
+    if (!originalValue && el.placeholder) {
+      el.value = el.placeholder
+    }
+
     el.style.height = 'auto'
     const scrollHeight = el.scrollHeight
-    const nextHeight = Math.max(24, Math.min(scrollHeight, 180))
+
+    if (!originalValue) {
+      el.value = ''
+    }
+
+    const panelEl = el.closest('.ai-assist-panel')
+    const panelHeight = panelEl?.clientHeight || window.innerHeight
+    const maxAllowedHeight = Math.max(80, Math.floor(panelHeight / 3))
+    const nextHeight = Math.max(24, Math.min(scrollHeight, maxAllowedHeight))
     el.style.height = `${nextHeight}px`
+    el.style.overflowY = scrollHeight > maxAllowedHeight ? 'auto' : 'hidden'
   }, [])
 
   useEffect(() => {
     autoResize()
-  }, [value, autoResize])
+    const el = textareaRef.current
+    if (!el) return
+
+    let rafId: number | null = null
+    const handleResize = () => {
+      if (rafId !== null) cancelAnimationFrame(rafId)
+      rafId = requestAnimationFrame(() => {
+        autoResize()
+      })
+    }
+
+    window.addEventListener('resize', handleResize)
+
+    let ro: ResizeObserver | null = null
+    if (typeof ResizeObserver !== 'undefined' && el.parentElement) {
+      ro = new ResizeObserver(handleResize)
+      ro.observe(el.parentElement)
+    }
+
+    return () => {
+      if (rafId !== null) cancelAnimationFrame(rafId)
+      window.removeEventListener('resize', handleResize)
+      if (ro) ro.disconnect()
+    }
+  }, [value, disabled, autoResize])
 
   const modeConfig: Record<
     AgentMode,
@@ -126,7 +165,7 @@ export function AgentComposer({
       label: t('ai_assist_mode_manual', 'Manual'),
       desc: t(
         'ai_assist_mode_manual_desc',
-        'Approve each change before it applies'
+        'Always ask before making changes'
       ),
       num: '1',
       icon: <HandPalm size={15} weight="bold" />,
@@ -135,7 +174,7 @@ export function AgentComposer({
       label: t('ai_assist_mode_accept_edits', 'Accept edits'),
       desc: t(
         'ai_assist_mode_accept_edits_desc',
-        'Apply file edits without asking'
+        'Automatically accept all file edits'
       ),
       num: '2',
       icon: <PencilSimple size={15} weight="bold" />,
@@ -144,7 +183,7 @@ export function AgentComposer({
       label: t('ai_assist_mode_plan', 'Plan'),
       desc: t(
         'ai_assist_mode_plan_desc',
-        'Research first, then propose a plan'
+        'Create a plan before making changes'
       ),
       num: '3',
       icon: <ListChecks size={15} weight="bold" />,
@@ -398,33 +437,6 @@ export function AgentComposer({
           </ul>
         )}
 
-        <label
-          htmlFor="ai-assist-composer-textarea"
-          className="visually-hidden"
-        >
-          {t('ai_assist_composer_placeholder', 'What would you like to do?')}
-        </label>
-        <textarea
-          ref={textareaRef}
-          id="ai-assist-composer-textarea"
-          value={value}
-          disabled={disabled}
-          onChange={onChange}
-          onKeyDown={onKeyDown}
-          placeholder={
-            disabled
-              ? t(
-                  'ai_assist_composer_no_provider_placeholder',
-                  'Configure an AI provider in Account Settings to chat'
-                )
-              : t(
-                  'ai_assist_composer_placeholder',
-                  'What would you like to do?'
-                )
-          }
-          rows={1}
-        />
-
         {(attachedSelection || attachments.length > 0) && (
           <div className="ai-assist-selection-chip-wrapper">
             {attachedSelection && (
@@ -433,19 +445,7 @@ export function AgentComposer({
                   className="ai-assist-selection-chip-icon"
                   aria-hidden="true"
                 >
-                  <svg
-                    viewBox="0 0 16 16"
-                    width="12"
-                    height="12"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.75"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <polyline points="5 4 1 8 5 12" />
-                    <polyline points="11 4 15 8 11 12" />
-                  </svg>
+                  &lt;&gt;
                 </span>
                 <span className="ai-assist-selection-chip-label">
                   {attachedSelection.path}: {attachedSelection.from}-
@@ -460,16 +460,16 @@ export function AgentComposer({
                 >
                   <svg
                     viewBox="0 0 16 16"
-                    width="10"
-                    height="10"
+                    width="12"
+                    height="12"
                     fill="none"
                     stroke="currentColor"
                     strokeWidth="2"
                     strokeLinecap="round"
-                    strokeLinejoin="round"
+                    aria-hidden="true"
                   >
-                    <line x1="3" y1="3" x2="13" y2="13" />
-                    <line x1="13" y1="3" x2="3" y2="13" />
+                    <line x1="4" y1="4" x2="12" y2="12" />
+                    <line x1="12" y1="4" x2="4" y2="12" />
                   </svg>
                 </button>
               </span>
@@ -502,22 +502,49 @@ export function AgentComposer({
                 >
                   <svg
                     viewBox="0 0 16 16"
-                    width="10"
-                    height="10"
+                    width="12"
+                    height="12"
                     fill="none"
                     stroke="currentColor"
                     strokeWidth="2"
                     strokeLinecap="round"
-                    strokeLinejoin="round"
+                    aria-hidden="true"
                   >
-                    <line x1="3" y1="3" x2="13" y2="13" />
-                    <line x1="13" y1="3" x2="3" y2="13" />
+                    <line x1="4" y1="4" x2="12" y2="12" />
+                    <line x1="12" y1="4" x2="4" y2="12" />
                   </svg>
                 </button>
               </span>
             ))}
           </div>
         )}
+
+        <label
+          htmlFor="ai-assist-composer-textarea"
+          className="visually-hidden"
+        >
+          {t('ai_assist_composer_placeholder', 'What would you like to do?')}
+        </label>
+        <textarea
+          ref={textareaRef}
+          id="ai-assist-composer-textarea"
+          value={value}
+          disabled={disabled}
+          onChange={onChange}
+          onKeyDown={onKeyDown}
+          placeholder={
+            disabled
+              ? t(
+                  'ai_assist_composer_no_provider_placeholder',
+                  'Configure an AI provider in Account Settings to chat'
+                )
+              : t(
+                  'ai_assist_composer_placeholder',
+                  'What would you like to do?'
+                )
+          }
+          rows={1}
+        />
 
         <div className="ai-assist-composer-actions">
           <div className="ai-assist-composer-left-actions">
@@ -575,7 +602,26 @@ export function AgentComposer({
                   className="ai-assist-mode-caret"
                 />
               </OLDropdownToggle>
-              <OLDropdownMenu className="ai-assist-mode-menu">
+              <OLDropdownMenu
+                className="ai-assist-mode-menu"
+                popperConfig={{
+                  modifiers: [
+                    {
+                      name: 'offset',
+                      options: {
+                        offset: [0, 6],
+                      },
+                    },
+                    {
+                      name: 'preventOverflow',
+                      options: {
+                        altAxis: false,
+                        mainAxis: false,
+                      },
+                    },
+                  ],
+                }}
+              >
                 <div className="ai-assist-mode-menu-header">Mode</div>
                 {(['manual', 'acceptEdits', 'plan'] as AgentMode[]).map(m => (
                   <OLDropdownItem
@@ -586,7 +632,7 @@ export function AgentComposer({
                     <span className="ai-assist-mode-item-icon">
                       {modeConfig[m].icon}
                     </span>
-                    <div className="ai-assist-mode-item-text">
+                    <div className="ai-assist-mode-item-content">
                       <span className="ai-assist-mode-item-title">
                         {modeConfig[m].label}
                       </span>

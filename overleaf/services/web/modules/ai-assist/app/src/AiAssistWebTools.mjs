@@ -1,3 +1,4 @@
+import Settings from '@overleaf/settings'
 import {
   ProviderError,
   resolveDockerHostUrl,
@@ -123,7 +124,13 @@ export const EXA_API_BASE = 'https://api.exa.ai'
 
 /** Settings for a run with no search backend: web_fetch only, default caching. */
 export function fetchOnlyWebSettings() {
-  return { providers: {}, ...WEB_SEARCH_DEFAULTS }
+  const { cacheHours, maxCachedSearches, maxCachedPages } = Settings.aiAssist || {}
+  return {
+    providers: {},
+    cacheHours: cacheHours ?? WEB_SEARCH_DEFAULTS.cacheHours,
+    maxCachedSearches: maxCachedSearches ?? WEB_SEARCH_DEFAULTS.maxCachedSearches,
+    maxCachedPages: maxCachedPages ?? WEB_SEARCH_DEFAULTS.maxCachedPages,
+  }
 }
 
 /** Ollama's web search returns at most 10 results. */
@@ -319,7 +326,7 @@ export function normalizeFirecrawlBaseUrl(raw) {
  * Validates the web search settings a client sent with a run. Returns null
  * when none were sent, which leaves the web tools out of the run.
  */
-function clampCacheParam(value, min, max, defaultValue) {
+function clampCacheParam(value, min, defaultValue) {
   const num =
     typeof value === 'string'
       ? parseInt(value, 10)
@@ -327,7 +334,7 @@ function clampCacheParam(value, min, max, defaultValue) {
         ? value
         : null
   if (num === null || Number.isNaN(num)) return defaultValue
-  return Math.max(min, Math.min(max, num))
+  return Math.max(min, num)
 }
 
 function optionalChoice(value, choices) {
@@ -808,29 +815,12 @@ export function normalizeWebSearchSettings(raw) {
   if (typeof raw !== 'object')
     throw settingsError('Invalid web search settings.')
 
-  // Extract cache configuration parameters
-  const cacheHours = clampCacheParam(
-    raw.cacheHours,
-    0,
-    168,
-    WEB_SEARCH_DEFAULTS.cacheHours
-  )
-  const maxCachedSearches = clampCacheParam(
-    raw.maxCachedSearches,
-    0,
-    1000,
-    WEB_SEARCH_DEFAULTS.maxCachedSearches
-  )
-  const maxCachedPages = clampCacheParam(
-    raw.maxCachedPages,
-    0,
-    200,
-    WEB_SEARCH_DEFAULTS.maxCachedPages
-  )
+  // Always enforce server cache configuration (no upper caps for server owner)
+  const serverCfg = Settings.aiAssist || {}
   const preferences = {
-    cacheHours,
-    maxCachedSearches,
-    maxCachedPages,
+    cacheHours: clampCacheParam(serverCfg.cacheHours, 0, WEB_SEARCH_DEFAULTS.cacheHours),
+    maxCachedSearches: clampCacheParam(serverCfg.maxCachedSearches, 0, WEB_SEARCH_DEFAULTS.maxCachedSearches),
+    maxCachedPages: clampCacheParam(serverCfg.maxCachedPages, 0, WEB_SEARCH_DEFAULTS.maxCachedPages),
   }
 
   // Legacy single-provider format

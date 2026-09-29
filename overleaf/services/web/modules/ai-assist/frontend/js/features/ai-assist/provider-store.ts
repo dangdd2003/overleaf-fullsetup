@@ -87,11 +87,6 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
 
-/** How the server-provided search caches results, as the server is set up. */
-export function getServerWebSearchCache(): WebSearchPreferences | undefined {
-  return getMeta('ol-aiAssistServerWebSearchCache')
-}
-
 export function migrateLegacyWebSearchSettings(
   parsed: any
 ): MultiWebSearchSettings | null {

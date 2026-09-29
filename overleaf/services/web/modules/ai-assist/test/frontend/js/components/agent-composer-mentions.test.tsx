@@ -211,7 +211,7 @@ describe('AgentComposer attachments', function () {
     expect(screen.queryByText(/main\.tex: 10-15/)).to.equal(null)
   })
 
-  it('renders selection chip below textarea so top of composer does not expand', function () {
+  it('renders selection chip at the top of the chatbox above the textarea', function () {
     renderComposer()
 
     act(() => {
@@ -232,7 +232,7 @@ describe('AgentComposer attachments', function () {
     expect(
       Boolean(
         textarea!.compareDocumentPosition(chipWrapper!) &
-        Node.DOCUMENT_POSITION_FOLLOWING
+        Node.DOCUMENT_POSITION_PRECEDING
       )
     ).to.be.true
   })

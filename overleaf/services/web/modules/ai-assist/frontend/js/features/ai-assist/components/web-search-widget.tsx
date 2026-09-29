@@ -19,19 +19,6 @@ function plural(count: number, noun: string, nouns = `${noun}s`) {
   return `${count} ${count === 1 ? noun : nouns}`
 }
 
-/** How long results are kept, and how many searches and pages the cache holds. */
-function cacheNotes(preferences: WebSearchPreferences = {}) {
-  const hours = preferences.cacheHours ?? WEB_SEARCH_DEFAULTS.cacheHours.value
-  if (hours === 0) return ['Results are not cached.']
-  const searches =
-    preferences.maxCachedSearches ?? WEB_SEARCH_DEFAULTS.maxCachedSearches.value
-  const pages =
-    preferences.maxCachedPages ?? WEB_SEARCH_DEFAULTS.maxCachedPages.value
-  return [
-    `Results are cached for ${plural(hours, 'hour')}, keeping up to ${plural(searches, 'search', 'searches')} and ${plural(pages, 'read page')}.`,
-  ]
-}
-
 /**
  * What web search is using: a lead-in line, one bullet per enabled provider,
  * and plain lines for how searches are spread and cached. `configured` is
@@ -118,7 +105,7 @@ function statusSummary(settings: MultiWebSearchSettings) {
   return {
     lead: 'Using your own web search:',
     providers,
-    notes: [rotation, ...cacheNotes(settings)],
+    notes: [rotation],
     configured: providers.length > 0,
   }
 }

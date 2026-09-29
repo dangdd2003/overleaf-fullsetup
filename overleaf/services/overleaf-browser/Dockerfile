@@ -1,6 +1,7 @@
 # Google Chrome on Xvfb, driven by Patchright, for Overleaf AI Assist web_fetch.
 # Node matches Overleaf's own (NODE_VERSION in overleaf/server-ce/Dockerfile-base).
-FROM node:24.20.0-bookworm-slim
+ARG NODE_VERSION=24.20.0
+FROM node:${NODE_VERSION}-bookworm-slim
 
 ENV NODE_ENV=production \
     HOME=/tmp/home

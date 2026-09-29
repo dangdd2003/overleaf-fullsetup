@@ -93,6 +93,8 @@ jobs:
         run: |
           echo "date=$(TZ=Asia/Ho_Chi_Minh date +"%Y-%m-%d")" >> "$GITHUB_OUTPUT"
           echo "MONOREPO_REVISION=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          NODE_VER="${{ vars.NODE_VERSION || '24.20.0' }}"
+          echo "NODE_VERSION=${NODE_VER#v}" >> "$GITHUB_OUTPUT"
         shell: bash
 
       - name: Check build env
@@ -152,6 +154,8 @@ jobs:
         run: |
           echo "date=$(TZ=Asia/Ho_Chi_Minh date +"%Y-%m-%d")" >> "$GITHUB_OUTPUT"
           echo "MONOREPO_REVISION=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          NODE_VER="${{ vars.NODE_VERSION || '24.20.0' }}"
+          echo "NODE_VERSION=${NODE_VER#v}" >> "$GITHUB_OUTPUT"
         shell: bash
 
       - name: Docker Setup Buildx
@@ -209,6 +213,8 @@ jobs:
         run: |
           echo "date=$(TZ=Asia/Ho_Chi_Minh date +"%Y-%m-%d")" >> "$GITHUB_OUTPUT"
           echo "MONOREPO_REVISION=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          NODE_VER="${{ vars.NODE_VERSION || '24.20.0' }}"
+          echo "NODE_VERSION=${NODE_VER#v}" >> "$GITHUB_OUTPUT"
         shell: bash
 
       - name: Docker Setup Buildx
@@ -355,6 +361,8 @@ jobs:
         run: |
           echo "date=$(TZ=Asia/Ho_Chi_Minh date +"%Y-%m-%d")" >> "$GITHUB_OUTPUT"
           echo "MONOREPO_REVISION=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          NODE_VER="${{ vars.NODE_VERSION || '24.20.0' }}"
+          echo "NODE_VERSION=${NODE_VER#v}" >> "$GITHUB_OUTPUT"
         shell: bash
 
       - name: Check build env
@@ -414,6 +422,8 @@ jobs:
         run: |
           echo "date=$(TZ=Asia/Ho_Chi_Minh date +"%Y-%m-%d")" >> "$GITHUB_OUTPUT"
           echo "MONOREPO_REVISION=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          NODE_VER="${{ vars.NODE_VERSION || '24.20.0' }}"
+          echo "NODE_VERSION=${NODE_VER#v}" >> "$GITHUB_OUTPUT"
         shell: bash
 
       - name: Check build env
@@ -424,7 +434,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
-          node-version: "24.20.0"
+          node-version: ${{ steps.build_env.outputs.NODE_VERSION }}
 
       - name: Run unit tests
         run: |
@@ -440,6 +450,8 @@ jobs:
         with:
           context: ./overleaf/services/overleaf-browser
           file: ./overleaf/services/overleaf-browser/Dockerfile
+          build-args: |
+            NODE_VERSION=${{ steps.build_env.outputs.NODE_VERSION }}
           platforms: linux/amd64
           cache-from: type=gha,scope=overleaf-browser
           cache-to: type=gha,mode=max,scope=overleaf-browser
@@ -494,6 +506,8 @@ jobs:
         with:
           context: ./overleaf/services/overleaf-browser
           file: ./overleaf/services/overleaf-browser/Dockerfile
+          build-args: |
+            NODE_VERSION=${{ steps.build_env.outputs.NODE_VERSION }}
           platforms: linux/amd64
           cache-from: type=gha,scope=overleaf-browser
           labels: |

@@ -48,6 +48,13 @@ function intFromEnv(name, fallback) {
 // 0 disables the corresponding reaper, restoring "runs always finish".
 // Merge into Settings.aiAssist — settings.defaults.js may already define
 // { enabled, webToolsEnabled } before this module runs.
+const cacheHours = intFromEnv('AI_ASSIST_WEB_SEARCH_CACHE_HOURS', 24)
+const maxCachedSearches = intFromEnv(
+  'AI_ASSIST_WEB_SEARCH_MAX_CACHED_SEARCHES',
+  256
+)
+const maxCachedPages = intFromEnv('AI_ASSIST_WEB_SEARCH_MAX_CACHED_PAGES', 64)
+
 const serverWebSearchEnabled =
   process.env.AI_ASSIST_WEB_SEARCH_SERVER_ENABLED === 'true'
 
@@ -177,12 +184,6 @@ if (serverWebSearchEnabled) {
     ? process.env.AI_ASSIST_WEB_SEARCH_PRIMARY_PROVIDER
     : 'searxng'
 
-  const cacheHours = intFromEnv('AI_ASSIST_WEB_SEARCH_CACHE_HOURS', 24)
-  const maxCachedSearches = intFromEnv(
-    'AI_ASSIST_WEB_SEARCH_MAX_CACHED_SEARCHES',
-    256
-  )
-  const maxCachedPages = intFromEnv('AI_ASSIST_WEB_SEARCH_MAX_CACHED_PAGES', 64)
 
   const searxngEnabled = searxngUrls.length > 0
   const ollamaEnabled = ollamaKeys.length > 0
@@ -261,6 +262,9 @@ Settings.aiAssist = {
   enabled: process.env.AI_ASSIST_ENABLED === 'true',
   webToolsEnabled: process.env.AI_ASSIST_WEB_TOOLS_ENABLED === 'true',
   serverWebSearch,
+  cacheHours,
+  maxCachedSearches,
+  maxCachedPages,
   // The headless-browser sidecar (services/overleaf-browser); unset leaves it out
   browser: (() => {
     const obj = {

@@ -36,8 +36,7 @@ export default function LastFixBanner() {
 
   useEffect(() => {
     refresh()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId])
+  }, [projectId, logEntries])
 
   // The fingerprint (file+line+message) is still present in the current
   // compile log, meaning the error it was for hasn't actually gone away —

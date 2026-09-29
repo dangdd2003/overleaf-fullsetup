@@ -898,6 +898,62 @@ export function renderMarkdown(
   }
 }
 
+/**
+ * Checks if two DOM nodes represent the same static content, ignoring
+ * transient interactive classes like is-flipped / is-above on hover cards.
+ */
+function nodesMatch(a: Node, b: Node): boolean {
+  if (a.isEqualNode(b)) return true
+  if (a.nodeType !== b.nodeType) return false
+  if (a instanceof HTMLElement && b instanceof HTMLElement) {
+    if (a.tagName !== b.tagName) return false
+    if (a.textContent === b.textContent && a.children.length === b.children.length) {
+      const cleanA = a.innerHTML.replace(/\b(is-flipped|is-above|is-inserted|is-copied)\b/g, '').trim()
+      const cleanB = b.innerHTML.replace(/\b(is-flipped|is-above|is-inserted|is-copied)\b/g, '').trim()
+      if (cleanA === cleanB) return true
+    }
+  }
+  return false
+}
+
+/**
+ * Reconciles the container's top-level child elements with new HTML,
+ * preserving unchanged leading blocks so earlier text, citations, and tables
+ * never get destroyed or re-rendered while streaming continues below them.
+ */
+function reconcileContainerHtml(container: HTMLElement, newHtml: string) {
+  const template = document.createElement('template')
+  template.innerHTML = newHtml
+  const newNodes = Array.from(template.content.childNodes)
+  const currentNodes = Array.from(container.childNodes)
+
+  let i = 0
+  const maxCommon = Math.min(currentNodes.length, newNodes.length)
+
+  // Fast skip for all leading static blocks that are already identical
+  while (i < maxCommon && nodesMatch(currentNodes[i], newNodes[i])) {
+    i++
+  }
+
+  // Update or append only the modified/new blocks from index i onwards (sliding window)
+  for (let j = i; j < newNodes.length; j++) {
+    if (j < container.childNodes.length) {
+      const current = container.childNodes[j]
+      const next = newNodes[j]
+      if (!nodesMatch(current, next)) {
+        container.replaceChild(next, current)
+      }
+    } else {
+      container.appendChild(newNodes[j])
+    }
+  }
+
+  // Clean up any extra trailing nodes if content shrank
+  while (container.childNodes.length > newNodes.length) {
+    container.removeChild(container.lastChild!)
+  }
+}
+
 type FadeChunk = { start: number; at: number }
 type FadeState = { text: string; chunks: FadeChunk[] }
 
@@ -1036,21 +1092,23 @@ export const MarkdownContent: FC<{
     isLive ? { text: '', chunks: [] } : null
   )
 
-  // Runs after React swaps in the new markup and before it is painted
+  // Runs after React renders and before browser paint to incrementally update DOM
   useLayoutEffect(() => {
-    if (!animating) {
-      fadeState.current = null
-      return
-    }
     const container = containerRef.current
     if (!container) return
-    // Resuming a finished message: what is already on screen stays put
-    fadeState.current ??= {
-      text: container.textContent ?? '',
-      chunks: [],
+
+    reconcileContainerHtml(container, html)
+
+    if (animating) {
+      fadeState.current ??= {
+        text: container.textContent ?? '',
+        chunks: [],
+      }
+      applyChunkFades(container, fadeState.current)
+      window.dispatchEvent(new CustomEvent('aiAssist:stickToBottom'))
+    } else {
+      fadeState.current = null
     }
-    applyChunkFades(container, fadeState.current)
-    window.dispatchEvent(new CustomEvent('aiAssist:stickToBottom'))
   }, [html, animating])
 
   const handleClick = useCallback(
@@ -1279,7 +1337,6 @@ export const MarkdownContent: FC<{
       onPointerDown={handlePointerDown}
       onKeyDown={handleKeyDown}
       onMouseOver={handleMouseOver}
-      dangerouslySetInnerHTML={{ __html: html }}
     />
   )
 }

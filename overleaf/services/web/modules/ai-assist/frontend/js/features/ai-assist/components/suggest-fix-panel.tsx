@@ -98,7 +98,7 @@ export default function SuggestFixPanel({
   const enabled =
     Boolean(getMeta('ol-aiAssistEnabled')) &&
     getMeta('ol-showAiFeatures') !== false &&
-    isFixableLevel(logEntry?.level)
+    (forceCollapsed || isFixableLevel(logEntry?.level))
 
   const projectContext = useContext(ProjectContext)
   const projectId = projectContext?.projectId || 'default'
@@ -117,7 +117,9 @@ export default function SuggestFixPanel({
     [projectId, entryId, fingerprint]
   )
 
-  const [open, setOpen] = useState(() => Boolean(stored?.open))
+  const [open, setOpen] = useState(() =>
+    forceCollapsed ? true : Boolean(stored?.open)
+  )
   const [collapsed, setCollapsed] = useState(() => {
     if (forceCollapsed) return true
     if (stored?.collapsed !== undefined) return stored.collapsed
@@ -640,7 +642,13 @@ export default function SuggestFixPanel({
 
       {/* Folded summary of a previously finished fix */}
       {!error && !needsConsent && collapsed && !running ? (
-        <div className="ai-suggest-fix-card ai-suggest-fix-folded">
+        <div
+          className="ai-suggest-fix-card ai-suggest-fix-folded"
+          role="button"
+          tabIndex={0}
+          onClick={() => setCollapsed(false)}
+          onKeyDown={e => e.key === 'Enter' && setCollapsed(false)}
+        >
           <span className="ai-suggest-fix-folded-icon" aria-hidden="true">
             <MaterialIcon type="history" />
           </span>
@@ -653,7 +661,10 @@ export default function SuggestFixPanel({
               {logEntry?.line != null ? `, ${logEntry.line}` : ''}
             </div>
           </div>
-          <div className="ai-suggest-fix-folded-actions">
+          <div
+            className="ai-suggest-fix-folded-actions"
+            onClick={e => e.stopPropagation()}
+          >
             {handoffButton}
             <OLButton
               type="button"

@@ -80,11 +80,13 @@ describe('AI panel docking', function () {
       expect(container.firstChild).to.be.null
     })
 
-    it('renders null when right panel is closed', function () {
+    it('renders panel and resize handle when docked to right', function () {
       localStorage.setItem('ai-assist:dock-position', 'right')
-      localStorage.setItem('ai-assist:right-open', 'false')
       const { container } = render(<AiAssistRightPanel order={3} />)
-      expect(container.firstChild).to.be.null
+      expect(container.querySelector('#ide-redesign-ai-assist-resize-handle')).to
+        .exist
+      expect(container.querySelector('#ide-redesign-ai-assist-right-panel')).to
+        .exist
     })
 
     it('renders null when AI feature is disabled', function () {

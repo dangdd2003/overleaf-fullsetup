@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { KeyboardEvent, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Brain, CaretUp } from '@phosphor-icons/react'
 import {
@@ -52,6 +52,12 @@ export function ReasoningEffortPicker() {
   }, [type])
 
   const levels = type ? REASONING_EFFORTS[type] : undefined
+
+  const effortOptions = useMemo(
+    () => (levels ? [undefined, ...levels] : []),
+    [levels]
+  )
+
   if (!type || !levels) return null
 
   const labels: Record<ReasoningEffort, string> = {
@@ -77,6 +83,14 @@ export function ReasoningEffortPicker() {
     setThinking(enabled)
   }
 
+  const onEffortMenuKeyDown = (event: KeyboardEvent) => {
+    const num = parseInt(event.key, 10)
+    if (!isNaN(num) && num >= 1 && num <= effortOptions.length) {
+      event.preventDefault()
+      choose(effortOptions[num - 1])
+    }
+  }
+
   return (
     <OLDropdown
       drop="up"
@@ -84,6 +98,7 @@ export function ReasoningEffortPicker() {
       className="d-inline-flex"
       show={open}
       onToggle={setOpen}
+      onKeyDown={onEffortMenuKeyDown}
       autoClose="outside"
     >
       <OLDropdownToggle
@@ -101,24 +116,40 @@ export function ReasoningEffortPicker() {
         </span>
         <CaretUp size={10} weight="bold" className="ai-assist-mode-caret" />
       </OLDropdownToggle>
-      <OLDropdownMenu className="ai-assist-mode-menu is-compact">
+      <OLDropdownMenu
+        className="ai-assist-mode-menu is-compact"
+        popperConfig={{
+          modifiers: [
+            {
+              name: 'offset',
+              options: {
+                offset: [0, 6],
+              },
+            },
+          ],
+        }}
+      >
         <div className="ai-assist-mode-menu-header">
           {t('ai_assist_effort', 'Effort')}
         </div>
-        {[undefined, ...levels].map(level => (
-          <OLDropdownItem
-            key={level ?? 'auto'}
-            className={`ai-assist-mode-menu-row ${level === effort ? 'is-selected' : ''}`}
-            trailingIcon={level === effort ? 'check' : undefined}
-            onClick={() => choose(level)}
-          >
-            <div className="ai-assist-mode-item-text">
-              <span className="ai-assist-mode-item-title">
-                {level ? labels[level] : autoLabel}
-              </span>
-            </div>
-          </OLDropdownItem>
-        ))}
+        {effortOptions.map((level, index) => {
+          const num = String(index + 1)
+          const isSelected = level === effort
+          return (
+            <OLDropdownItem
+              key={level ?? 'auto'}
+              className={`ai-assist-mode-menu-row ${isSelected ? 'is-selected' : ''}`}
+              onClick={() => choose(level)}
+            >
+              <div className="ai-assist-mode-item-text">
+                <span className="ai-assist-mode-item-title">
+                  {level ? labels[level] : autoLabel}
+                </span>
+              </div>
+              <span className="ai-assist-mode-item-num">{num}</span>
+            </OLDropdownItem>
+          )
+        })}
         {hasThinkingSwitch(type) && (
           <>
             <OLDropdownDivider />
