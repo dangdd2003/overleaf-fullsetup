@@ -1,5 +1,10 @@
 import { expect } from 'chai'
-import { FIX_SYSTEM_PROMPT } from '../../../../frontend/js/features/ai-assist/agent/context/fix-system-prompt'
+import {
+  FIX_SYSTEM_PROMPT,
+  FIX_WEB_PROMPT,
+  FIX_FETCH_PROMPT,
+  fixSystemPromptFor,
+} from '../../../../frontend/js/features/ai-assist/agent/context/fix-system-prompt'
 import { SYSTEM_PROMPT } from '../../../../frontend/js/features/ai-assist/agent/context/system-prompt'
 import { buildRequest } from '../../../../frontend/js/features/ai-assist/agent/context/build-request'
 
@@ -47,9 +52,7 @@ describe('FIX_SYSTEM_PROMPT', function () {
 
   it('answers with an edit, never with only an explanation', function () {
     expect(FIX_SYSTEM_PROMPT).to.match(/Your answer is an edit/)
-    expect(FIX_SYSTEM_PROMPT).to.match(
-      /Never answer with only an\s+explanation/
-    )
+    expect(FIX_SYSTEM_PROMPT).to.match(/Never answer with only an\s+explanation/)
     expect(FIX_SYSTEM_PROMPT).to.not.match(/Not\s+every entry is a defect/i)
   })
 
@@ -77,5 +80,24 @@ describe('FIX_SYSTEM_PROMPT', function () {
     expect(fixRun.system).to.equal(FIX_SYSTEM_PROMPT)
     // Still cached as a stable prefix, exactly like the rail's.
     expect(fixRun.cacheHints.cacheSystem).to.equal(true)
+  })
+})
+
+describe('fixSystemPromptFor', function () {
+  it('adds a web section only when the fix has web tools', function () {
+    expect(fixSystemPromptFor(null)).to.equal(FIX_SYSTEM_PROMPT)
+    expect(fixSystemPromptFor('search')).to.equal(
+      `${FIX_SYSTEM_PROMPT}\n\n${FIX_WEB_PROMPT}`
+    )
+    expect(fixSystemPromptFor('fetch')).to.equal(
+      `${FIX_SYSTEM_PROMPT}\n\n${FIX_FETCH_PROMPT}`
+    )
+  })
+
+  it('keeps the fix web section one-shot and site-free', function () {
+    expect(FIX_WEB_PROMPT).to.include('This is one fix, not research.')
+    for (const text of [FIX_WEB_PROMPT, FIX_FETCH_PROMPT]) {
+      expect(text).not.to.match(/ctan|stackexchange|github|https?:\/\//i)
+    }
   })
 })

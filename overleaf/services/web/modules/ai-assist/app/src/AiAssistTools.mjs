@@ -1,3 +1,4 @@
+import logger from '@overleaf/logger'
 import DocumentUpdaterHandler from '../../../../app/src/Features/DocumentUpdater/DocumentUpdaterHandler.mjs'
 import ProjectEntityHandler from '../../../../app/src/Features/Project/ProjectEntityHandler.mjs'
 import ProjectGetter from '../../../../app/src/Features/Project/ProjectGetter.mjs'
@@ -772,6 +773,26 @@ export class AiAssistTools {
     )
     this._indexes.set(key, index)
     return index
+  }
+
+  /**
+   * The project's root AGENTS.md, or null. Read from the live snapshot, so an
+   * edit the agent or the user just made is seen on the next step.
+   */
+  async getProjectInstructions(projectId) {
+    try {
+      const snapshot = await this._getSnapshot(projectId)
+      const doc = snapshot.docs.find(
+        d => !d.path.includes('/') && d.path.toLowerCase() === 'agents.md'
+      )
+      if (!doc) return null
+      const full = snapshot.docTexts[doc.path] ?? ''
+      if (!full.trim()) return null
+      return { path: doc.path, text: full }
+    } catch (err) {
+      logger.warn({ err, projectId }, '[AiAssist] Could not read AGENTS.md')
+      return null
+    }
   }
 
   async resolveEditTarget(args, { projectId }) {
@@ -2242,7 +2263,7 @@ export class AiAssistTools {
       {
         name: 'get_outline',
         description:
-          "The section tree with each section's file and line range, plus the \\input graph. Pass section to get one subtree. Use this before read_file to find where something lives — it costs a fraction of reading the file.",
+          "The section tree with each section's file and line range, plus the \\input graph. Pass section for one subtree.",
         parameters: {
           type: 'object',
           properties: {
@@ -2256,7 +2277,7 @@ export class AiAssistTools {
       {
         name: 'get_packages',
         description:
-          "The documentclass and every \\usepackage in the project, with the file and line that loads it. Use this to check whether a command's package is available before assuming it is missing.",
+          'The documentclass and every \\usepackage, with the file and line that loads it.',
         parameters: {
           type: 'object',
           properties: {},
@@ -2284,7 +2305,7 @@ export class AiAssistTools {
       {
         name: 'list_files',
         description:
-          'List the files in the project with their type and line count. Pass glob to narrow the listing, for example sections/*.tex. Answered from a prebuilt index, so it is far cheaper than reading files.',
+          "The project's files with type and line count. Pass glob to narrow it, e.g. sections/*.tex.",
         parameters: {
           type: 'object',
           properties: {
@@ -2298,7 +2319,7 @@ export class AiAssistTools {
       {
         name: 'read_file',
         description:
-          'Read one text file, or a line range of one, as numbered lines. Without from/to it returns the first 500 lines. Get the range from get_outline or search_text first rather than guessing it.',
+          'Read a text file, or a line range of it, as numbered lines; without from/to, the first 500 lines. Take the range from get_outline or search_text.',
         parameters: {
           type: 'object',
           properties: {
@@ -2312,7 +2333,7 @@ export class AiAssistTools {
       {
         name: 'search_text',
         description:
-          "Find a string or regular expression across the project's text files, with surrounding context lines. Pass glob to search only matching files. Use this to locate something whose file you do not know.",
+          "Find a string or regular expression across the project's text files, with context lines. Pass glob to search only matching files.",
         parameters: {
           type: 'object',
           properties: {
@@ -2379,14 +2400,14 @@ export class AiAssistTools {
       {
         name: 'compile_project',
         description:
-          'Compile the project and check for build errors and warnings. Set clean to true to clear the cached build first (the .aux/.fls/.fdb_latexmk files and the previous output), which forces a full rebuild from scratch. Clean when a build produced no output, timed out, or behaved inconsistently with the source, or after changing the root document, bibliography or a package that caches state.',
+          'Compile the project and return its errors and warnings. Set clean to rebuild from scratch: after a build with no output, a timeout, output that contradicts the source, or a change to the root document, bibliography or a package that caches state.',
         parameters: {
           type: 'object',
           properties: {
             clean: {
               type: 'boolean',
               description:
-                'Clear the cached build output and auxiliary files before compiling, forcing a full rebuild. Defaults to false. Slower than an incremental build, so reach for it when the incremental one is untrustworthy rather than as a habit.',
+                'Clear cached build files first. Slower; use only when the incremental build is untrustworthy.',
             },
           },
         },

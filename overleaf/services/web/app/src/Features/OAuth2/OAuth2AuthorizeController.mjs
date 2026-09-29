@@ -137,7 +137,7 @@ const OAuth2AuthorizeController = {
 
     // Render consent page
     return res.render('oauth/authorize', {
-      title: req.i18n.translate('oauth_authorization_request'),
+      title: req.i18n?.translate?.('oauth_authorization_request') || 'OAuth Authorization Request',
       client,
       user,
       scope: scope || 'mcp',
@@ -212,8 +212,7 @@ const OAuth2AuthorizeController = {
     if (!code_challenge || code_challenge_method !== 'S256') {
       const redirectParams = {
         error: 'invalid_request',
-        error_description:
-          'code_challenge and S256 code_challenge_method are required',
+        error_description: 'code_challenge and S256 code_challenge_method are required',
       }
       if (state) redirectParams.state = state
       const redirectUrl = appendQueryParams(redirect_uri, redirectParams)

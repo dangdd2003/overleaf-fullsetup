@@ -11,10 +11,7 @@ describe('createJwtVerifier', () => {
     keys: [{ ...jwk, kid: 'test-key', alg: 'RS256', use: 'sig' }],
   }
 
-  function signTestJwt(
-    payload,
-    { kid = 'test-key', alg = 'RS256', key = privateKey } = {}
-  ) {
+  function signTestJwt(payload, { kid = 'test-key', alg = 'RS256', key = privateKey } = {}) {
     const header = Buffer.from(
       JSON.stringify({ alg, typ: 'JWT', kid })
     ).toString('base64url')
@@ -202,9 +199,7 @@ describe('createJwtVerifier', () => {
   })
 
   it('rejects a token with invalid signature', async () => {
-    const otherKeypair = crypto.generateKeyPairSync('rsa', {
-      modulusLength: 2048,
-    })
+    const otherKeypair = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 })
     const verifier = createJwtVerifier({
       fetchJwks: async () => mockJwks,
       resourceUri: 'http://localhost:3050/mcp',
@@ -257,7 +252,10 @@ describe('createJwtVerifier', () => {
     expect(err2).to.exist
     expect(err2.message).to.match(/malformed/i)
 
-    const noneAlgToken = signTestJwt({ sub: '123' }, { alg: 'none' })
+    const noneAlgToken = signTestJwt(
+      { sub: '123' },
+      { alg: 'none' }
+    )
     let err3
     try {
       await verifier.verifyToken(noneAlgToken)

@@ -68,18 +68,13 @@ function EmailsSectionContent({ isSimpleMode }: EmailsSectionContentProps) {
             <>
               {sortedUserEmails.map(userEmail => (
                 <Fragment key={userEmail.email}>
-                  <SimpleEmailsRow
-                    userEmailData={userEmail}
-                    primary={primary}
-                  />
+                  <SimpleEmailsRow userEmailData={userEmail} primary={primary} />
                   <div className="horizontal-divider" />
                 </Fragment>
               ))}
             </>
           )}
-          {isInitializingSuccess && !hideAddSecondaryEmail && (
-            <SimpleAddEmailForm />
-          )}
+          {isInitializingSuccess && !hideAddSecondaryEmail && <SimpleAddEmailForm />}
           {isInitializingError && (
             <div className="notification-list">
               <Notification
@@ -152,7 +147,7 @@ function EmailsSection() {
   const hasAffiliationsFeature = Boolean(exposedSettings.hasAffiliationsFeature)
   const hasAdminUserManagement = Boolean(
     exposedSettings.hasAdminUserManagement ||
-    (getMeta as (key: string) => unknown)('ol-adminUserManagementEnabled')
+      (getMeta as (key: string) => unknown)('ol-adminUserManagementEnabled')
   )
 
   if (!hasAffiliationsFeature && !hasAdminUserManagement) {

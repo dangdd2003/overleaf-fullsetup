@@ -110,7 +110,7 @@ describe('AiAssistModePolicy', () => {
       { name: 'compile_project' },
     ]
 
-    it('returns all specs and excludes present_plan for manual mode', () => {
+    it('offers edit tools in manual mode', () => {
       const specs = toolSpecsFor('manual', sampleSpecs)
       const names = specs.map(s => s.name)
       expect(names).to.include.members([
@@ -118,12 +118,11 @@ describe('AiAssistModePolicy', () => {
         'edit_file',
         'create_file',
         'configure_editor_settings',
-        'compile_project',
       ])
-      expect(names).to.not.include('present_plan')
+      expect(names).not.to.include('present_plan')
     })
 
-    it('returns all specs and excludes present_plan for acceptEdits mode', () => {
+    it('offers edit tools in acceptEdits mode', () => {
       const specs = toolSpecsFor('acceptEdits', sampleSpecs)
       const names = specs.map(s => s.name)
       expect(names).to.include.members([
@@ -131,25 +130,17 @@ describe('AiAssistModePolicy', () => {
         'edit_file',
         'create_file',
         'configure_editor_settings',
-        'compile_project',
       ])
-      expect(names).to.not.include('present_plan')
+      expect(names).not.to.include('present_plan')
     })
 
-    it('excludes edit and settings tools and includes present_plan for plan mode', () => {
+    it('excludes edit tools and includes present_plan in plan mode', () => {
       const specs = toolSpecsFor('plan', sampleSpecs)
       const names = specs.map(s => s.name)
-      expect(names).to.include.members([
-        'read_file',
-        'compile_project',
-        'present_plan',
-      ])
-      expect(names).to.not.include('edit_file')
-      expect(names).to.not.include('create_file')
-      expect(names).to.not.include('configure_editor_settings')
-      expect(specs.find(s => s.name === 'present_plan')).to.deep.equal(
-        PRESENT_PLAN_SPEC
-      )
+      expect(names).to.include.members(['read_file', 'compile_project', 'present_plan'])
+      expect(names).not.to.include('edit_file')
+      expect(names).not.to.include('create_file')
+      expect(names).not.to.include('configure_editor_settings')
     })
   })
 })

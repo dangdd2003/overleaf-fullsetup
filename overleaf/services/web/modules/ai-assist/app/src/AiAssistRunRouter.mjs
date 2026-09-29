@@ -49,6 +49,22 @@ export default {
         AuthenticationController.requireLogin(),
         AiAssistFavicon.serve
       )
+
+      // web_search / web_fetch for the compile-log fix, which runs in the page
+      const { default: AiAssistWebToolsController } =
+        await import('./AiAssistWebToolsController.mjs')
+      webRouter.post(
+        '/ai-assist/projects/:Project_id/web-tools',
+        AuthenticationController.requireLogin(),
+        AuthorizationMiddleware.ensureUserCanReadProject,
+        AiAssistWebToolsController.specs
+      )
+      webRouter.post(
+        '/ai-assist/projects/:Project_id/web-tools/:name',
+        AuthenticationController.requireLogin(),
+        AuthorizationMiddleware.ensureUserCanReadProject,
+        AiAssistWebToolsController.execute
+      )
     }
 
     // 1. Primary project-scoped routes with strict authorization

@@ -39,10 +39,7 @@ describe('web tool cards', function () {
       },
       fakeT
     )
-    expect(summary1).to.deep.equal({
-      action: 'Fetched',
-      target: 'CTAN: siunitx',
-    })
+    expect(summary1).to.deep.equal({ action: 'Fetched', target: 'CTAN: siunitx' })
 
     const summary2 = summarise(
       {

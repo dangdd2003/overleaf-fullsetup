@@ -34,10 +34,7 @@ function assistantEntry(
 describe('renderFixHandoff', function () {
   it('carries the original fix context through verbatim', function () {
     const out = renderFixHandoff({
-      transcript: [
-        userEntry(),
-        assistantEntry([{ type: 'text', text: 'Done.' }]),
-      ],
+      transcript: [userEntry(), assistantEntry([{ type: 'text', text: 'Done.' }])],
       decidedEdits: {},
     })
 
@@ -90,10 +87,7 @@ describe('renderFixHandoff', function () {
       transcript: [
         userEntry(),
         assistantEntry([
-          {
-            type: 'thinking',
-            thinking: 'Hmm, let me reconsider the preamble.',
-          },
+          { type: 'thinking', thinking: 'Hmm, let me reconsider the preamble.' },
           { type: 'text', text: 'The package is missing.' },
         ]),
       ],
@@ -133,11 +127,7 @@ describe('renderFixHandoff', function () {
         assistantEntry([
           {
             type: 'tool_call',
-            call: {
-              id: 'c1',
-              name: 'edit_file',
-              args: { path: 'main.tex', from: 3 },
-            },
+            call: { id: 'c1', name: 'edit_file', args: { path: 'main.tex', from: 3 } },
           },
         ]),
       ],
@@ -156,11 +146,7 @@ describe('renderFixHandoff', function () {
         assistantEntry([
           {
             type: 'tool_call',
-            call: {
-              id: 'c1',
-              name: 'edit_file',
-              args: { path: 'main.tex', from: 3 },
-            },
+            call: { id: 'c1', name: 'edit_file', args: { path: 'main.tex', from: 3 } },
           },
         ]),
       ],
@@ -182,10 +168,7 @@ describe('renderFixHandoff', function () {
 
   it('tells the model its harness has changed', function () {
     const out = renderFixHandoff({
-      transcript: [
-        userEntry(),
-        assistantEntry([{ type: 'text', text: 'Done.' }]),
-      ],
+      transcript: [userEntry(), assistantEntry([{ type: 'text', text: 'Done.' }])],
       decidedEdits: {},
     })
 
@@ -217,10 +200,7 @@ describe('renderFixHandoff', function () {
   })
 
   it('survives a transcript with no assistant turns at all', function () {
-    const out = renderFixHandoff({
-      transcript: [userEntry()],
-      decidedEdits: {},
-    })
+    const out = renderFixHandoff({ transcript: [userEntry()], decidedEdits: {} })
 
     expect(out).to.contain(ORIGINAL_CONTEXT)
     expect(out).to.contain('<handoff>')

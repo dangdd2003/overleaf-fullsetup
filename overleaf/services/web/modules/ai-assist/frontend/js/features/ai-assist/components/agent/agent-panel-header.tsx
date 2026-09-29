@@ -20,7 +20,10 @@ const STATUS_SHIMMER_PX_PER_S = 188
  */
 function setSweepDuration(container: HTMLElement | null) {
   if (!container) return
-  const travel = 1.5 * container.getBoundingClientRect().width
+  const measuredWidth = container.getBoundingClientRect().width
+  const fallbackWidth = (container.textContent?.length || 10) * 8
+  const width = measuredWidth > 0 ? measuredWidth : fallbackWidth
+  const travel = 1.5 * width
   const seconds = Math.max(0.32, travel / STATUS_SHIMMER_PX_PER_S)
   container.style.setProperty(
     '--ai-title-animation-duration',

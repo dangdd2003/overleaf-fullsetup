@@ -42,14 +42,10 @@ export function registerAllPrompts(server) {
   server.registerPrompt(
     'fix_compile_errors',
     {
-      description:
-        'Diagnose and surgically fix LaTeX compile errors from build logs',
+      description: 'Diagnose and surgically fix LaTeX compile errors from build logs',
       argsSchema: z.object({
         projectId,
-        buildId: z
-          .string()
-          .optional()
-          .describe('Build ID from a failed compile run'),
+        buildId: z.string().optional().describe('Build ID from a failed compile run'),
       }),
     },
     ({ projectId: id, buildId }) => ({
@@ -79,14 +75,8 @@ export function registerAllPrompts(server) {
         'Locate a section using outline line ranges, read its content, and prepare targeted edits',
       argsSchema: z.object({
         projectId,
-        path: z
-          .string()
-          .min(1)
-          .describe('Path to LaTeX document, e.g. /main.tex'),
-        title: z
-          .string()
-          .min(1)
-          .describe('Section heading title to inspect and edit'),
+        path: z.string().min(1).describe('Path to LaTeX document, e.g. /main.tex'),
+        title: z.string().min(1).describe('Section heading title to inspect and edit'),
       }),
     },
     ({ projectId: id, path, title }) => ({

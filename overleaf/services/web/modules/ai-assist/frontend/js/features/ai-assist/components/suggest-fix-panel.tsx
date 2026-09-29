@@ -14,7 +14,13 @@ import { ProjectContext } from '@/shared/context/project-context'
 import { useAgentRun } from '../hooks/use-agent-run'
 import { FIX_TOOLS, buildFixTranscript } from '../agent/fix-run'
 import { emptyAgentState } from '../agent/agent-state'
-import { FIX_SYSTEM_PROMPT } from '../agent/context/fix-system-prompt'
+import {
+  FIX_SYSTEM_PROMPT,
+  fixSystemPromptFor,
+} from '../agent/context/fix-system-prompt'
+import { prepareFixWebTools } from '../agent/tools/fix-web-tools'
+import { collectWebSources } from '../agent/web-sources'
+import { resolveLimits } from '../providers/types'
 import {
   getStoredFix,
   saveStoredFix,
@@ -279,8 +285,24 @@ export default function SuggestFixPanel({
       others,
     })
 
-    await run(transcript)
-  }, [handle, logEntry, run])
+    // Fresh per run: the web budget and known sources belong to one fix
+    const assistant = AiAssistant.fromStoredSettings()
+    const web = assistant
+      ? await prepareFixWebTools({
+          projectId,
+          contextWindow: resolveLimits(assistant.settings).contextWindow,
+        })
+      : null
+    await run(
+      transcript,
+      web
+        ? {
+            tools: { ...FIX_TOOLS, ...web.tools },
+            systemPrompt: fixSystemPromptFor(web.search ? 'search' : 'fetch'),
+          }
+        : {}
+    )
+  }, [handle, logEntry, run, projectId])
 
   const onSuggestFix = useCallback(
     async (event: Event) => {
@@ -368,6 +390,12 @@ export default function SuggestFixPanel({
   )
 
   const pendingEdit = state.pendingApproval?.edit
+
+  // Citations in the fix's explanation resolve against its own web results
+  const webSources = useMemo(
+    () => collectWebSources(state.transcript),
+    [state.transcript]
+  )
 
   const assistantEntries = useMemo(() => {
     return state.transcript.filter(
@@ -687,6 +715,7 @@ export default function SuggestFixPanel({
                         <MarkdownContent
                           content={segment.text}
                           isLive={running && isLastSegment}
+                          sources={webSources}
                         />
                       </div>
                     )
@@ -701,9 +730,18 @@ export default function SuggestFixPanel({
                         item.call.name === 'create_file')
                   )
 
+                  const firstItem = segment.items[0]
+                  const firstItemId =
+                    firstItem?.type === 'tool_call'
+                      ? firstItem.call?.id
+                      : firstItem?.startedAt
+                        ? `think-${firstItem.startedAt}`
+                        : null
+                  const groupId = `${entry.id || `entry-${entryIdx}`}-${firstItemId || `subresults-${idx}`}`
+
                   return (
                     <div
-                      key={`subresults-${idx}`}
+                      key={groupId}
                       className="ai-suggest-segment-group"
                     >
                       {/*
@@ -714,6 +752,7 @@ export default function SuggestFixPanel({
                         would draw the card twice.
                       */}
                       <SubresultGroup
+                        groupId={groupId}
                         items={segment.items}
                         isLive={running && isLastSegment}
                         onDecision={onDecision}
@@ -862,11 +901,14 @@ export default function SuggestFixPanel({
               </div>
 
               <div className="ai-suggest-apply-action">
-                {running ? (
+                {requesting || running ? (
                   <button
                     type="button"
                     className="ai-suggest-stop-btn"
-                    onClick={stop}
+                    onClick={() => {
+                      setRequesting(false)
+                      void stop()
+                    }}
                   >
                     Stop
                   </button>

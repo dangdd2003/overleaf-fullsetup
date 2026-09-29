@@ -55,9 +55,7 @@ describe('<GitBridgeModal />', function () {
   it('displays the git clone command with project ID and copy button', async function () {
     renderModal()
 
-    const cloneCode = screen.getByText(
-      new RegExp(`git clone .*\/git\/${projectId}`)
-    )
+    const cloneCode = screen.getByText(new RegExp(`git clone .*\/git\/${projectId}`))
     expect(cloneCode).to.exist
     expect(cloneCode.textContent).to.include(`/git/${projectId}`)
     expect(cloneCode.textContent).to.match(/^git clone https?:\/\//)

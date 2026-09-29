@@ -47,9 +47,9 @@ describe('MCP OAuth Protected Resource', () => {
     })
 
     it('omits the path segment for a root resource', () => {
-      expect(
-        buildProtectedResourceMetadataUrl('https://example.com/')
-      ).to.equal('https://example.com/.well-known/oauth-protected-resource')
+      expect(buildProtectedResourceMetadataUrl('https://example.com/')).to.equal(
+        'https://example.com/.well-known/oauth-protected-resource'
+      )
       expect(buildProtectedResourceMetadataUrl('https://example.com')).to.equal(
         'https://example.com/.well-known/oauth-protected-resource'
       )

@@ -23,11 +23,7 @@ describe('compile tools', function () {
   let server, client
 
   beforeEach(function () {
-    client = {
-      get: sinon.stub(),
-      post: sinon.stub(),
-      requestBinary: sinon.stub(),
-    }
+    client = { get: sinon.stub(), post: sinon.stub(), requestBinary: sinon.stub() }
     server = fakeServer()
     registerCompileTools(server, { client, staticToken: '' })
   })
@@ -51,9 +47,7 @@ describe('compile tools', function () {
   it('compile_project clears cache first when clearCache is true', async function () {
     client.post.resolves({ status: 'success', outputFiles: [] })
     await server.call('compile_project', { projectId: 'p1', clearCache: true })
-    expect(client.post.firstCall.args[1]).to.equal(
-      '/projects/p1/compile/clear-cache'
-    )
+    expect(client.post.firstCall.args[1]).to.equal('/projects/p1/compile/clear-cache')
     expect(client.post.secondCall.args[1]).to.equal('/projects/p1/compile')
   })
 
@@ -65,21 +59,12 @@ describe('compile tools', function () {
       maxLines: 500,
     })
     expect(client.get.firstCall.args[1]).to.equal('/projects/p1/compile/log')
-    expect(client.get.firstCall.args[2]).to.deep.equal({
-      buildId: 'b1',
-      maxLines: 500,
-    })
+    expect(client.get.firstCall.args[2]).to.deep.equal({ buildId: 'b1', maxLines: 500 })
   })
 
   it('get_compile_pdf returns the bytes as a resource block', async function () {
-    client.requestBinary.resolves({
-      contentType: 'application/pdf',
-      base64: 'JVBERi0=',
-    })
-    const result = await server.call('get_compile_pdf', {
-      projectId: 'p1',
-      buildId: 'b1',
-    })
+    client.requestBinary.resolves({ contentType: 'application/pdf', base64: 'JVBERi0=' })
+    const result = await server.call('get_compile_pdf', { projectId: 'p1', buildId: 'b1' })
     const block = result.content[0]
     expect(block.type).to.equal('resource')
     expect(block.resource.mimeType).to.equal('application/pdf')
@@ -95,19 +80,12 @@ describe('compile tools', function () {
 
   it('get_word_count can be limited to one file', async function () {
     client.get.resolves({ wordCount: { textWords: 300 } })
-    await server.call('get_word_count', {
-      projectId: 'p1',
-      file: '/chapters/intro.tex',
-    })
-    expect(client.get.firstCall.args[2]).to.deep.equal({
-      file: '/chapters/intro.tex',
-    })
+    await server.call('get_word_count', { projectId: 'p1', file: '/chapters/intro.tex' })
+    expect(client.get.firstCall.args[2]).to.deep.equal({ file: '/chapters/intro.tex' })
   })
 
   it('preserves upstream_error from a failed compile_project', async function () {
-    client.post.rejects(
-      new OverleafApiError('upstream_error', 'clsi unavailable', 502)
-    )
+    client.post.rejects(new OverleafApiError('upstream_error', 'clsi unavailable', 502))
     const result = await server.call('compile_project', { projectId: 'p1' })
     expect(JSON.parse(result.content[0].text).code).to.equal('upstream_error')
   })

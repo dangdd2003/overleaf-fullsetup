@@ -64,21 +64,20 @@ export const getOutlineTool: AgentTool = {
     // Bound to file line count if no next peer in file
     let fileLines: number | undefined
     try {
-      const fileEntry = (await handle.listFiles()).find(
-        f => f.path === target.path
-      )
+      const fileEntry = (await handle.listFiles()).find(f => f.path === target.path)
       fileLines = fileEntry?.lines
     } catch {
       // ignore
     }
 
-    const end = nextPeerInFile ? nextPeerInFile.line - 1 : fileLines
+    const end = nextPeerInFile
+      ? nextPeerInFile.line - 1
+      : fileLines
 
     const nextIndex = nextPeer ? siblings.indexOf(nextPeer) : siblings.length
-    const hint =
-      end !== undefined
-        ? `read_file with path=${target.path} from=${target.line} to=${end} for the body`
-        : `read_file with path=${target.path} from=${target.line} for the body`
+    const hint = end !== undefined
+      ? `read_file with path=${target.path} from=${target.line} to=${end} for the body`
+      : `read_file with path=${target.path} from=${target.line} for the body`
 
     return {
       range: { from: target.line, ...(end !== undefined ? { to: end } : {}) },
@@ -94,8 +93,7 @@ export const getOutlineTool: AgentTool = {
       return [
         `section lines ${result.range.from}-${result.range.to}`,
         ...result.sections.map(
-          (s: any) =>
-            `${'  '.repeat(s.level + 1)}${s.path}:${s.line} ${s.title}`
+          (s: any) => `${'  '.repeat(s.level + 1)}${s.path}:${s.line} ${s.title}`
         ),
         result.hint ?? '',
       ]
@@ -107,8 +105,7 @@ export const getOutlineTool: AgentTool = {
       return [
         `documentclass: ${result.documentClass ?? 'unknown'}`,
         ...result.sections.map(
-          (s: any) =>
-            `${'  '.repeat(s.level + 1)}${s.path}:${s.line} ${s.title}`
+          (s: any) => `${'  '.repeat(s.level + 1)}${s.path}:${s.line} ${s.title}`
         ),
         ...result.includes.map(
           (i: any) =>

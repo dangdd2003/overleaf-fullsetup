@@ -6,8 +6,8 @@ import defaultTools from './AiAssistTools.mjs'
 import defaultChatHistoryStore from './AiAssistChatHistoryStore.mjs'
 import { generateChatTitle } from './AiAssistChatTitler.mjs'
 import { createProviderClient } from './AiAssistProviders.mjs'
-import { renderToolResult } from './AiAssistToolRender.mjs'
-import { systemPromptFor } from './AiAssistSystemPrompt.mjs'
+import { renderToolResult, withNotice } from './AiAssistToolRender.mjs'
+import { systemBlocksFor, joinSystemBlocks, systemPromptFor } from './AiAssistSystemPrompt.mjs'
 import { coerceToolArgs } from './AiAssistToolSchema.mjs'
 import { AiAssistWebTools, WEB_TOOL_NAMES } from './AiAssistWebTools.mjs'
 import {
@@ -72,7 +72,7 @@ export function toAgentMessages(transcript) {
             ? call.result
             : renderToolResult(call.name, call.result)
           : 'This tool call did not complete.',
-        isError: finished ? Boolean(call.isError || call.result?.error) : true,
+        isError: finished ? toolMessageIsError(call.result, call.isError) : true,
       })
     }
   })
@@ -158,6 +158,9 @@ export const IDENTICAL_FAILURE_LIMIT = 3
 // per call: one reply with three parallel guesses that all miss is one wrong
 // decision, not three.
 export const FAILED_TURN_LIMIT = 4
+// Web calls for one instruction after which the model is told, once, to answer
+// with what it has. Nothing is blocked: a hard question may need more.
+export const WEB_CALL_NUDGE = 8
 
 export function estimateTokens(text) {
   return Math.ceil(
@@ -182,6 +185,20 @@ export function estimateMessagesTokens(system, messages, tools = []) {
     total += estimateTokens(JSON.stringify(tools))
   }
   return total
+}
+
+/**
+ * Whether a tool message tells the provider the call failed. The live run and
+ * a transcript rebuilt on the next run both use this, so the same call gives
+ * the same bytes and the cached prefix survives.
+ */
+export function toolMessageIsError(result, isError) {
+  return Boolean(
+    (isError && result?.status !== 'denied') ||
+      result?.error ||
+      result?.status === 'noMatch' ||
+      result?.status === 'ambiguous'
+  )
 }
 
 export function isElided(message) {
@@ -513,6 +530,17 @@ export class AiAssistRunManager {
     this.control = control
   }
 
+  /** The project's AGENTS.md for this step, or null. Never fails a run. */
+  async _projectInstructions(projectId) {
+    if (typeof this.tools?.getProjectInstructions !== 'function') return null
+    try {
+      return await this.tools.getProjectInstructions(projectId)
+    } catch (err) {
+      logger.warn({ err, projectId }, '[AiAssist] AGENTS.md not loaded')
+      return null
+    }
+  }
+
   async startRun({
     runId,
     projectId,
@@ -781,6 +809,7 @@ export class AiAssistRunManager {
       let failedTurns = 0
       const failedCallSignatures = new Map()
       const recentCallSignatures = []
+      let webCalls = 0
       let shouldStop = false
       let userDeclinedEdit = false
       // The user reads the reply, not the tool cards. A model that spends the
@@ -789,7 +818,7 @@ export class AiAssistRunManager {
       let toolsRanThisRun = false
       let finalReplyNudged = false
       const executedTools = []
-      // Neither list depends on the mode, so it is built once per run
+      // Tool specs filtered by mode (plan mode excludes edit tools)
       const allToolSpecs = [
         ...(this.tools?.getToolSpecs ? this.tools.getToolSpecs() : []),
         ...(webTools ? webTools.getToolSpecs() : []),
@@ -824,6 +853,7 @@ export class AiAssistRunManager {
           failedTurns = 0
           failedCallSignatures.clear()
           recentCallSignatures.length = 0
+          webCalls = 0
         }
 
         const calls = []
@@ -831,13 +861,14 @@ export class AiAssistRunManager {
         let truncated = false
 
         const currentMode = this.activeRuns.get(runId)?.mode || 'manual'
-        const currentSystemPrompt = systemPromptFor(currentMode, {
+        const systemBlocks = systemBlocksFor(currentMode, {
           webTools: Boolean(webTools),
           webSearch: webTools?.canSearch
             ? webTools.canSearch()
             : Boolean(webTools),
+          projectInstructions: await this._projectInstructions(projectId),
         })
-
+        const currentSystemPrompt = joinSystemBlocks(systemBlocks)
         const modeToolSpecs = toolSpecsFor(currentMode, allToolSpecs)
 
         const budgeted = applyContextBudget({
@@ -864,6 +895,8 @@ export class AiAssistRunManager {
           // exactly the prefix worth caching. Same reasoning as build-request.ts.
           lastStableMessage: messages.length >= 2 ? messages.length - 2 : null,
           cacheKey: String(projectId),
+          // The shared block, cached on its own where the provider allows it
+          systemPrefix: systemBlocks.shared,
         }
 
         let streamSucceeded = false
@@ -1249,34 +1282,13 @@ export class AiAssistRunManager {
             }
           }
 
-          await emitEvent({
-            type: 'toolCallFinished',
-            id: call.id,
-            name: call.name,
-            result,
-            isError,
-          })
-
           // "nothing compiled yet" (status 'none') is an answer, not a failure.
-          const isFailed = Boolean(
-            (isError && result?.status !== 'denied') ||
-            result?.error ||
-            result?.status === 'noMatch' ||
-            result?.status === 'ambiguous'
-          )
-
+          const isFailed = toolMessageIsError(result, isError)
           const callSig = `${call.name}:${JSON.stringify(call.args ?? {})}`
+          let repeats = 0
           if (isFailed) {
-            turnFailed = true
-            const repeats = (failedCallSignatures.get(callSig) ?? 0) + 1
+            repeats = (failedCallSignatures.get(callSig) ?? 0) + 1
             failedCallSignatures.set(callSig, repeats)
-            if (repeats >= IDENTICAL_FAILURE_LIMIT) {
-              await finishWithError(
-                'runawayToolLoop',
-                `Stopped repeated failing call to ${call.name}. Please check the file contents or provide more specific instructions.`
-              )
-              break
-            }
             if (
               repeats === IDENTICAL_FAILURE_LIMIT - 1 &&
               result &&
@@ -1286,6 +1298,46 @@ export class AiAssistRunManager {
                 ...result,
                 repeated: `This exact ${call.name} call has now failed ${repeats} times with the same arguments; one more identical failure ends the run. Change the arguments (re-read the file and copy its current text) or take a different approach.`,
               }
+            }
+          }
+
+          // Everything the model is told about this call is in `result` before
+          // it is emitted, so the stored transcript rebuilds the same message.
+          const notices = []
+          const liveRun = this.activeRuns.get(runId)
+          if (liveRun?.modeNotice) {
+            notices.push(
+              `The user switched to ${modeLabel(liveRun.modeNotice)} mode.`
+            )
+            liveRun.modeNotice = null
+          }
+          if (
+            webTools &&
+            WEB_TOOL_NAMES.has(call.name) &&
+            ++webCalls === WEB_CALL_NUDGE
+          ) {
+            notices.push(
+              `That is ${WEB_CALL_NUDGE} web calls for this request. Answer with what you have unless one missing fact is essential.`
+            )
+          }
+          if (notices.length) result = withNotice(result, notices.join(' '))
+
+          await emitEvent({
+            type: 'toolCallFinished',
+            id: call.id,
+            name: call.name,
+            result,
+            isError,
+          })
+
+          if (isFailed) {
+            turnFailed = true
+            if (repeats >= IDENTICAL_FAILURE_LIMIT) {
+              await finishWithError(
+                'runawayToolLoop',
+                `Stopped repeated failing call to ${call.name}. Please check the file contents or provide more specific instructions.`
+              )
+              break
             }
           } else {
             turnSucceeded = true
@@ -1324,7 +1376,7 @@ export class AiAssistRunManager {
             // a successful call to a function named "tool".
             name: call.name,
             content: renderToolResult(call.name, result),
-            isError: Boolean(isFailed),
+            isError: isFailed,
           })
         }
 
@@ -1472,6 +1524,7 @@ export class AiAssistRunManager {
     const active = this.activeRuns.get(runId)
     if (active) {
       active.mode = normalized
+      active.modeNotice = normalized
       await this.store.setMode(runId, normalized)
       await this.store.appendEvent(runId, {
         type: 'modeChanged',
@@ -1532,6 +1585,7 @@ export class AiAssistRunManager {
       const active = this.activeRuns.get(runId)
       if (active) {
         active.mode = mode
+        active.modeNotice = mode
         void this.store.setMode(runId, mode).catch(() => {})
         void this.store
           .appendEvent(runId, { type: 'modeChanged', mode, source: 'user' })

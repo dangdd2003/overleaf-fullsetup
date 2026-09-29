@@ -22,15 +22,15 @@ describe('ModuleSettings', function () {
     process.env.GITHUB_SYNC_ENABLED = 'true'
     process.env.GITHUB_CLIENT_ID = 'test-client-id'
     process.env.GITHUB_CLIENT_SECRET = 'test-client-secret'
-    process.env.GITHUB_REDIRECT_URI =
-      'https://custom.site.com/auth/github/callback'
+    process.env.GITHUB_REDIRECT_URI = 'https://custom.site.com/auth/github/callback'
     process.env.GITHUB_TOKEN_SECRET = 'test-token-secret'
     process.env.GITHUB_SYNC_REPOS_DIR = '/custom/repos/dir'
     process.env.GITHUB_API_BASE = 'https://custom.api.github.com'
     process.env.GITHUB_GIT_BASE = 'https://custom.github.com'
 
-    const { default: githubSync } =
-      await import('../../../app/src/ModuleSettings.mjs')
+    const { default: githubSync } = await import(
+      '../../../app/src/ModuleSettings.mjs'
+    )
 
     expect(mockSettings.enableGithubSync).to.equal(true)
     expect(mockSettings.githubSync).to.deep.equal({

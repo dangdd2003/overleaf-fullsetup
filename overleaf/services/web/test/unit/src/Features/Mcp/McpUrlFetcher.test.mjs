@@ -12,8 +12,9 @@ const httpsRequest = vi.fn()
 vi.mock('node:http', () => ({ default: { request: httpRequest } }))
 vi.mock('node:https', () => ({ default: { request: httpsRequest } }))
 
-const { default: McpUrlFetcher } =
-  await import('../../../../../app/src/Features/Mcp/McpUrlFetcher.mjs')
+const { default: McpUrlFetcher } = await import(
+  '../../../../../app/src/Features/Mcp/McpUrlFetcher.mjs'
+)
 
 function fakeRes({ statusCode = 200, headers = {}, chunks = [] }) {
   const res = new EventEmitter()

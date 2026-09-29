@@ -1,10 +1,7 @@
 import { expect } from 'chai'
 import { McpServer } from '@modelcontextprotocol/server'
 import { registerAllPrompts } from '../../../src/prompts.js'
-import {
-  OVERLEAF_INSTRUCTIONS,
-  createMcpServerFactory,
-} from '../../../src/server.js'
+import { OVERLEAF_INSTRUCTIONS, createMcpServerFactory } from '../../../src/server.js'
 
 describe('prompts', function () {
   let server
@@ -28,10 +25,7 @@ describe('prompts', function () {
     const result = await handler(
       {
         method: 'prompts/get',
-        params: {
-          name: 'review_project',
-          arguments: { projectId: 'proj-123' },
-        },
+        params: { name: 'review_project', arguments: { projectId: 'proj-123' } },
       },
       ctx
     )

@@ -72,12 +72,8 @@ function withPortableSchemas(server) {
         name,
         {
           ...config,
-          ...(config.inputSchema
-            ? { inputSchema: portable(config.inputSchema) }
-            : {}),
-          ...(config.outputSchema
-            ? { outputSchema: portable(config.outputSchema) }
-            : {}),
+          ...(config.inputSchema ? { inputSchema: portable(config.inputSchema) } : {}),
+          ...(config.outputSchema ? { outputSchema: portable(config.outputSchema) } : {}),
         },
         handler
       )

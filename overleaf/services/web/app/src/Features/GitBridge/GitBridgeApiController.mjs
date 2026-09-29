@@ -62,10 +62,7 @@ async function requireGitBridgeAuth(req, res, next) {
   // A personal access token must carry the `git_bridge` scope to use the
   // git-bridge API. An `mcp`-only token is rejected here rather than silently
   // granting full git-bridge access. Session / oauth callers skip this check.
-  if (
-    req.gitBridgeViaPat &&
-    !(req.gitBridgePatScopes || []).includes('git_bridge')
-  ) {
+  if (req.gitBridgeViaPat && !(req.gitBridgePatScopes || []).includes('git_bridge')) {
     return res.status(403).json({
       code: 'insufficient_scope',
       message: 'token is missing the required git_bridge scope',

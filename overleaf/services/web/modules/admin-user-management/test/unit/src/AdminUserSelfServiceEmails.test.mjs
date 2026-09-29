@@ -41,16 +41,13 @@ vi.mock('../../../../../app/src/infrastructure/mongodb.mjs', () => {
   }
 })
 
-vi.mock(
-  '../../../../../app/src/Features/Authentication/SessionManager.mjs',
-  () => ({
-    default: {
-      getLoggedInUserId: vi.fn(),
-      setInSessionUser: vi.fn(),
-      getSessionUser: vi.fn(),
-    },
-  })
-)
+vi.mock('../../../../../app/src/Features/Authentication/SessionManager.mjs', () => ({
+  default: {
+    getLoggedInUserId: vi.fn(),
+    setInSessionUser: vi.fn(),
+    getSessionUser: vi.fn(),
+  },
+}))
 
 vi.mock('../../../../../app/src/Features/User/UserGetter.mjs', () => ({
   default: {
@@ -111,11 +108,7 @@ vi.mock('../../../../../app/src/Features/User/UserAuditLogHandler.mjs', () => ({
   },
 }))
 
-function createMockReqRes({
-  sessionUserId = '507f1f77bcf86cd799439011',
-  body = {},
-  query = {},
-} = {}) {
+function createMockReqRes({ sessionUserId = '507f1f77bcf86cd799439011', body = {}, query = {} } = {}) {
   const req = {
     session: {
       user: { _id: sessionUserId, email: 'primary@example.com' },
@@ -145,10 +138,7 @@ function createMockReqRes({
   }
 
   SessionManager.getLoggedInUserId.mockReturnValue(sessionUserId)
-  SessionManager.getSessionUser.mockReturnValue({
-    _id: sessionUserId,
-    email: 'primary@example.com',
-  })
+  SessionManager.getSessionUser.mockReturnValue({ _id: sessionUserId, email: 'primary@example.com' })
 
   return { req, res }
 }
@@ -160,9 +150,7 @@ describe('AdminUserSelfServiceEmailsController', () => {
 
   describe('addSecondaryEmail', () => {
     it('returns 400 if email is missing or invalid', async () => {
-      const { req, res } = createMockReqRes({
-        body: { email: 'invalid-email' },
-      })
+      const { req, res } = createMockReqRes({ body: { email: 'invalid-email' } })
 
       await AdminUserSelfServiceEmailsController.addSecondaryEmail(req, res)
 
@@ -171,9 +159,7 @@ describe('AdminUserSelfServiceEmailsController', () => {
     })
 
     it('returns 404 if user is not found', async () => {
-      const { req, res } = createMockReqRes({
-        body: { email: 'secondary@example.com' },
-      })
+      const { req, res } = createMockReqRes({ body: { email: 'secondary@example.com' } })
       UserGetter.promises.getUser.mockResolvedValue(null)
 
       await AdminUserSelfServiceEmailsController.addSecondaryEmail(req, res)
@@ -183,12 +169,8 @@ describe('AdminUserSelfServiceEmailsController', () => {
     })
 
     it('returns 422 if user exceeds emailAddressLimit', async () => {
-      const { req, res } = createMockReqRes({
-        body: { email: 'secondary@example.com' },
-      })
-      const tenEmails = Array.from({ length: 10 }, (_, i) => ({
-        email: `email${i}@example.com`,
-      }))
+      const { req, res } = createMockReqRes({ body: { email: 'secondary@example.com' } })
+      const tenEmails = Array.from({ length: 10 }, (_, i) => ({ email: `email${i}@example.com` }))
       UserGetter.promises.getUser.mockResolvedValue({
         _id: '507f1f77bcf86cd799439011',
         email: 'primary@example.com',
@@ -202,9 +184,7 @@ describe('AdminUserSelfServiceEmailsController', () => {
     })
 
     it('returns 409 if email already exists in system', async () => {
-      const { req, res } = createMockReqRes({
-        body: { email: 'existing@example.com' },
-      })
+      const { req, res } = createMockReqRes({ body: { email: 'existing@example.com' } })
       UserGetter.promises.getUser.mockResolvedValue({
         _id: '507f1f77bcf86cd799439011',
         email: 'primary@example.com',
@@ -222,9 +202,7 @@ describe('AdminUserSelfServiceEmailsController', () => {
     })
 
     it('adds and auto-confirms secondary email and returns 200', async () => {
-      const { req, res } = createMockReqRes({
-        body: { email: 'secondary@example.com' },
-      })
+      const { req, res } = createMockReqRes({ body: { email: 'secondary@example.com' } })
       UserGetter.promises.getUser.mockResolvedValue({
         _id: '507f1f77bcf86cd799439011',
         email: 'primary@example.com',
@@ -238,10 +216,7 @@ describe('AdminUserSelfServiceEmailsController', () => {
       await AdminUserSelfServiceEmailsController.addSecondaryEmail(req, res)
 
       expect(res.statusCode).toBe(200)
-      expect(res.body).toEqual({
-        success: true,
-        email: 'secondary@example.com',
-      })
+      expect(res.body).toEqual({ success: true, email: 'secondary@example.com' })
       expect(UserUpdater.promises.addEmailAddress).toHaveBeenCalledWith(
         '507f1f77bcf86cd799439011',
         'secondary@example.com',
@@ -273,9 +248,7 @@ describe('AdminUserSelfServiceEmailsController', () => {
     })
 
     it('returns 404 if email does not belong to user', async () => {
-      const { req, res } = createMockReqRes({
-        body: { email: 'unknown@example.com' },
-      })
+      const { req, res } = createMockReqRes({ body: { email: 'unknown@example.com' } })
       UserGetter.promises.getUser.mockResolvedValue({
         _id: '507f1f77bcf86cd799439011',
         email: 'primary@example.com',
@@ -289,9 +262,7 @@ describe('AdminUserSelfServiceEmailsController', () => {
     })
 
     it('returns 400 if email is not confirmed', async () => {
-      const { req, res } = createMockReqRes({
-        body: { email: 'unconfirmed@example.com' },
-      })
+      const { req, res } = createMockReqRes({ body: { email: 'unconfirmed@example.com' } })
       UserGetter.promises.getUser.mockResolvedValue({
         _id: '507f1f77bcf86cd799439011',
         email: 'primary@example.com',
@@ -336,12 +307,9 @@ describe('AdminUserSelfServiceEmailsController', () => {
         true,
         false
       )
-      expect(SessionManager.setInSessionUser).toHaveBeenCalledWith(
-        req.session,
-        {
-          email: 'secondary@example.com',
-        }
-      )
+      expect(SessionManager.setInSessionUser).toHaveBeenCalledWith(req.session, {
+        email: 'secondary@example.com',
+      })
       expect(UserAuditLogHandler.promises.addEntry).toHaveBeenCalledWith(
         expect.anything(),
         'set-default-email',
@@ -363,9 +331,7 @@ describe('AdminUserSelfServiceEmailsController', () => {
     })
 
     it('returns 400 when attempting to delete the primary email', async () => {
-      const { req, res } = createMockReqRes({
-        body: { email: 'primary@example.com' },
-      })
+      const { req, res } = createMockReqRes({ body: { email: 'primary@example.com' } })
       UserGetter.promises.getUser.mockResolvedValue({
         _id: '507f1f77bcf86cd799439011',
         email: 'primary@example.com',
@@ -382,9 +348,7 @@ describe('AdminUserSelfServiceEmailsController', () => {
     })
 
     it('returns 404 if email is not found in user emails', async () => {
-      const { req, res } = createMockReqRes({
-        body: { email: 'missing@example.com' },
-      })
+      const { req, res } = createMockReqRes({ body: { email: 'missing@example.com' } })
       UserGetter.promises.getUser.mockResolvedValue({
         _id: '507f1f77bcf86cd799439011',
         email: 'primary@example.com',
@@ -398,9 +362,7 @@ describe('AdminUserSelfServiceEmailsController', () => {
     })
 
     it('deletes secondary email and returns 200', async () => {
-      const { req, res } = createMockReqRes({
-        body: { email: 'secondary@example.com' },
-      })
+      const { req, res } = createMockReqRes({ body: { email: 'secondary@example.com' } })
       UserGetter.promises.getUser.mockResolvedValue({
         _id: '507f1f77bcf86cd799439011',
         email: 'primary@example.com',

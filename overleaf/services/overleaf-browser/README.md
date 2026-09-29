@@ -1,15 +1,15 @@
-# ai-browser
+# overleaf-browser
 
 An optional container that provides Patchright + Google Chrome page reading for Overleaf AI Assist `web_fetch`.
 
 ## Deployment
 
 ### Same Server (Docker Compose)
-Runs under the `ai-browser` profile:
+Runs under the `overleaf-browser` profile:
 ```bash
-docker compose --profile ai-browser up -d
+docker compose --profile overleaf-browser up -d
 ```
-Requires `AI_ASSIST_BROWSER_URL=http://ai-browser:3000` and `AI_ASSIST_BROWSER_TOKEN=<min 32 chars>` in `variable.env`.
+Requires `AI_ASSIST_BROWSER_URL=http://overleaf-browser:3000` and `AI_ASSIST_BROWSER_TOKEN=<min 32 chars>` in `variable.env`.
 
 ### Settings
 - `BROWSER_TOKEN`: required, at least 32 characters, the same value as `AI_ASSIST_BROWSER_TOKEN`.
@@ -24,8 +24,8 @@ To run the sidecar on another host (e.g. at home for residential IP bypass):
 1. Run `docker compose` on the remote host binding `3000` **strictly** to the Tailscale/WireGuard interface:
 ```yaml
 services:
-  ai-browser:
-    image: dangdoan2003/ai-browser:latest
+  overleaf-browser:
+    image: dangdoan2003/overleaf-browser:latest
     ports:
       - "100.x.y.z:3000:3000"
     environment:

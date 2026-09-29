@@ -14,7 +14,9 @@ export function excerptAround(
   const index = lines.findIndex(line => line.includes(needle))
   if (index === -1) return null
 
-  return lines.slice(Math.max(0, index - radius), index + radius + 1).join('\n')
+  return lines
+    .slice(Math.max(0, index - radius), index + radius + 1)
+    .join('\n')
 }
 
 const MAX_EXCERPT_LINES = 8
@@ -77,8 +79,7 @@ export const compileResultTool: AgentTool = {
         },
         includeRaw: {
           type: 'boolean',
-          description:
-            'Include the TeX log lines of each error. Defaults to true.',
+          description: 'Include the TeX log lines of each error. Defaults to true.',
         },
       },
       required: [],
@@ -153,9 +154,7 @@ export const compileResultTool: AgentTool = {
           const where = entry.file
             ? `${entry.file}:${entry.line ?? '?'}`
             : 'unknown location'
-          const excerpt = entry.excerpt
-            ? `\n    ${entry.excerpt.split('\n').join('\n    ')}`
-            : ''
+          const excerpt = entry.excerpt ? `\n    ${entry.excerpt.split('\n').join('\n    ')}` : ''
           return `  ${where}  ${entry.message}${excerpt}`
         }),
       ]

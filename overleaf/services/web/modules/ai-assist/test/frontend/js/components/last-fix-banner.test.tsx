@@ -138,8 +138,8 @@ describe('LastFixBanner', function () {
     recordLastCompletedFix(PROJECT_ID, SUMMARY)
     fireEvent(window, new CustomEvent('aiAssist:suggestDone', { detail: {} }))
 
-    await waitFor(
-      () => expect(screen.getByText(/Last suggested fix/i)).to.exist
+    await waitFor(() =>
+      expect(screen.getByText(/Last suggested fix/i)).to.exist
     )
     expect(screen.getByText('./chapter3.tex, 87')).to.exist
     // Folded: the full explanation is not shown until Re-open is clicked.
@@ -147,11 +147,10 @@ describe('LastFixBanner', function () {
 
     fireEvent.click(screen.getByRole('button', { name: /re-open/i }))
 
-    await waitFor(
-      () =>
-        expect(
-          screen.getByText(/Add \\usepackage\{graphicx\} to the preamble\./)
-        ).to.exist
+    await waitFor(() =>
+      expect(
+        screen.getByText(/Add \\usepackage\{graphicx\} to the preamble\./)
+      ).to.exist
     )
   })
 

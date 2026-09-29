@@ -312,7 +312,6 @@ export default function GitBridgeModal({ show, onHide }: GitBridgeModalProps) {
           type="button"
           className="btn btn-primary rounded-pill px-4"
           onClick={handleClose}
-          aria-label="Close dialog"
         >
           {t('close', 'Close')}
         </button>

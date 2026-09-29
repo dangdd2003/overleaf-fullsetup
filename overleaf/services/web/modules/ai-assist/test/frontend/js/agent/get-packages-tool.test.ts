@@ -39,8 +39,7 @@ describe('get_packages', function () {
   it('returns package options and compiler settings', async function () {
     const { handle } = createFakeHandle({
       docs: {
-        'main.tex':
-          '\\documentclass{article}\n\\usepackage[table,dvipsnames]{xcolor}\n',
+        'main.tex': '\\documentclass{article}\n\\usepackage[table,dvipsnames]{xcolor}\n',
       },
     })
     const result: any = await getPackagesTool.execute({}, handle)

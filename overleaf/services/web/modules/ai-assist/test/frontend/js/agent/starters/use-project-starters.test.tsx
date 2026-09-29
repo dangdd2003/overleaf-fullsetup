@@ -34,9 +34,7 @@ describe('useProjectStarters recomputation', function () {
     )
 
     await waitFor(() => {
-      expect(result.current.some(s => s.id === 'fix_compile_errors')).to.equal(
-        true
-      )
+      expect(result.current.some(s => s.id === 'fix_compile_errors')).to.equal(true)
     })
 
     // Now compile passes cleanly
@@ -45,9 +43,7 @@ describe('useProjectStarters recomputation', function () {
     rerender({ seed: 0 })
 
     await waitFor(() => {
-      expect(result.current.some(s => s.id === 'fix_compile_errors')).to.equal(
-        false
-      )
+      expect(result.current.some(s => s.id === 'fix_compile_errors')).to.equal(false)
     })
   })
 })

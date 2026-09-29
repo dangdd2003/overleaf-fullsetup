@@ -11,10 +11,7 @@ import {
   ProjectSettingsSummary,
   SearchHit,
 } from '../../../../../frontend/js/features/ai-assist/agent/project-handle'
-import {
-  buildProjectIndex,
-  ProjectIndex,
-} from '../../../../../frontend/js/features/ai-assist/agent/context/project-index'
+import { buildProjectIndex, ProjectIndex } from '../../../../../frontend/js/features/ai-assist/agent/context/project-index'
 import { matchesGlob } from '../../../../../frontend/js/features/ai-assist/agent/tools/search-text'
 
 export type FakeHandleOptions = {
@@ -51,18 +48,17 @@ export function createFakeHandle(options: FakeHandleOptions = {}) {
       stopOnFirstError: false,
     }
 
-  let currentAppearanceSettings: AppearanceSettings =
-    options.appearanceSettings ??
-      options.projectSettingsSummary?.appearance ?? {
-        overallTheme: 'system',
-        editorTheme: 'textmate',
-        editorLightTheme: 'textmate',
-        editorDarkTheme: 'overleaf_dark',
-        darkModePdf: false,
-        fontSize: 12,
-        fontFamily: null,
-        lineHeight: 'normal',
-      }
+  let currentAppearanceSettings: AppearanceSettings = options.appearanceSettings ??
+    options.projectSettingsSummary?.appearance ?? {
+      overallTheme: 'system',
+      editorTheme: 'textmate',
+      editorLightTheme: 'textmate',
+      editorDarkTheme: 'overleaf_dark',
+      darkModePdf: false,
+      fontSize: 12,
+      fontFamily: null,
+      lineHeight: 'normal',
+    }
 
   let currentEditorSettings: EditorSettings = options.editorSettings ??
     options.projectSettingsSummary?.editor ?? {
@@ -85,11 +81,7 @@ export function createFakeHandle(options: FakeHandleOptions = {}) {
   let projectDescription = options.projectSettingsSummary?.description ?? ''
 
   const handle: ProjectHandle = {
-    rootDocPath: () =>
-      currentCompilerSettings.rootDocPath ??
-      options.rootDoc ??
-      Object.keys(docs)[0] ??
-      null,
+    rootDocPath: () => currentCompilerSettings.rootDocPath ?? options.rootDoc ?? Object.keys(docs)[0] ?? null,
 
     async listFiles() {
       calls.push({ name: 'listFiles', args: null })
@@ -124,8 +116,7 @@ export function createFakeHandle(options: FakeHandleOptions = {}) {
       for (const [path, text] of Object.entries(docs)) {
         if (pattern && !matchesGlob(path.replace(/^\//, ''), pattern)) continue
         text.split('\n').forEach((line, index) => {
-          if (line.includes(query))
-            hits.push({ path, line: index + 1, text: line })
+          if (line.includes(query)) hits.push({ path, line: index + 1, text: line })
         })
       }
       return hits
@@ -166,9 +157,7 @@ export function createFakeHandle(options: FakeHandleOptions = {}) {
 
     async createFile(request) {
       calls.push({ name: 'createFile', args: request })
-      return options.onCreate
-        ? options.onCreate(request)
-        : { status: 'applied' }
+      return options.onCreate ? options.onCreate(request) : { status: 'applied' }
     },
 
     async getProjectSettings() {
@@ -186,31 +175,19 @@ export function createFakeHandle(options: FakeHandleOptions = {}) {
     async configureAppearanceSettings(settings: Partial<AppearanceSettings>) {
       calls.push({ name: 'configureAppearanceSettings', args: settings })
       currentAppearanceSettings = { ...currentAppearanceSettings, ...settings }
-      return {
-        status: 'applied',
-        updatedSettings: settings,
-        message: 'Appearance settings updated.',
-      }
+      return { status: 'applied', updatedSettings: settings, message: 'Appearance settings updated.' }
     },
 
     async configureCompilerSettings(settings: Partial<CompilerSettings>) {
       calls.push({ name: 'configureCompilerSettings', args: settings })
       currentCompilerSettings = { ...currentCompilerSettings, ...settings }
-      return {
-        status: 'applied',
-        updatedSettings: settings,
-        message: 'Compiler settings updated.',
-      }
+      return { status: 'applied', updatedSettings: settings, message: 'Compiler settings updated.' }
     },
 
     async configureEditorSettings(settings: Partial<EditorSettings>) {
       calls.push({ name: 'configureEditorSettings', args: settings })
       currentEditorSettings = { ...currentEditorSettings, ...settings }
-      return {
-        status: 'applied',
-        updatedSettings: settings,
-        message: 'Editor settings updated.',
-      }
+      return { status: 'applied', updatedSettings: settings, message: 'Editor settings updated.' }
     },
 
     async listAvailableSettings() {
@@ -218,13 +195,7 @@ export function createFakeHandle(options: FakeHandleOptions = {}) {
       return (
         options.availableSettings ?? {
           compilers: ['pdflatex', 'latex', 'xelatex', 'lualatex'],
-          imageNames: [
-            {
-              imageName: 'texlive-2024.1',
-              imageDesc: 'TeX Live 2024',
-              default: true,
-            },
-          ],
+          imageNames: [{ imageName: 'texlive-2024.1', imageDesc: 'TeX Live 2024', default: true }],
           spellCheckLanguages: [
             { code: 'en', name: 'English' },
             { code: 'fr', name: 'French' },

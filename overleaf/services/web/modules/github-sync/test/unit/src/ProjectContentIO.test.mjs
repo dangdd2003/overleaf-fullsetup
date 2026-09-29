@@ -79,8 +79,10 @@ describe('ProjectContentIO', function () {
       '../../../../../app/src/Features/History/HistoryManager.mjs',
       () => historyManagerMock
     )
-    ;({ default: ProjectContentIO } =
-      await import('../../../app/src/ProjectContentIO.mjs'))
+
+    ;({ default: ProjectContentIO } = await import(
+      '../../../app/src/ProjectContentIO.mjs'
+    ))
   })
 
   afterEach(async function () {
@@ -165,10 +167,8 @@ describe('ProjectContentIO', function () {
     expect(manifest.sort()).to.deep.equal(['img/logo.png', 'main.tex'])
 
     // Old files should be removed
-    expect(await fs.stat(path.join(workDir, 'old-file.tex')).catch(() => null))
-      .to.be.null
-    expect(await fs.stat(path.join(oldSubDir, 'nested.tex')).catch(() => null))
-      .to.be.null
+    expect(await fs.stat(path.join(workDir, 'old-file.tex')).catch(() => null)).to.be.null
+    expect(await fs.stat(path.join(oldSubDir, 'nested.tex')).catch(() => null)).to.be.null
 
     // .git file should remain
     expect(await fs.readFile(path.join(gitDir, 'HEAD'), 'utf8')).to.equal(
@@ -190,18 +190,12 @@ describe('ProjectContentIO', function () {
 
     await ProjectContentIO.promises.materializeProject('proj1', workDir)
 
-    expect(await fs.readFile(path.join(wfDir, 'ci.yml'), 'utf8')).to.equal(
-      'on: push'
-    )
-    expect(
-      await fs.readFile(path.join(workDir, '.gitignore'), 'utf8')
-    ).to.equal('*.aux\n')
-    expect(await fs.lstat(path.join(workDir, 'link.txt')).catch(() => null)).to
-      .not.be.null
+    expect(await fs.readFile(path.join(wfDir, 'ci.yml'), 'utf8')).to.equal('on: push')
+    expect(await fs.readFile(path.join(workDir, '.gitignore'), 'utf8')).to.equal('*.aux\n')
+    expect(await fs.lstat(path.join(workDir, 'link.txt')).catch(() => null)).to.not.be.null
 
     // a plain stale file is still pruned
-    expect(await fs.stat(path.join(workDir, 'stale.tex')).catch(() => null)).to
-      .be.null
+    expect(await fs.stat(path.join(workDir, 'stale.tex')).catch(() => null)).to.be.null
   })
 
   it('keeps oversized repo files that exceed the sync limit', async function () {
@@ -230,11 +224,7 @@ describe('ProjectContentIO', function () {
       workDir
     )
     expect(manifest.sort()).to.deep.equal(['empty.tex', 'missing.tex'])
-    expect(await fs.readFile(path.join(workDir, 'empty.tex'), 'utf8')).to.equal(
-      '\n'
-    )
-    expect(
-      await fs.readFile(path.join(workDir, 'missing.tex'), 'utf8')
-    ).to.equal('\n')
+    expect(await fs.readFile(path.join(workDir, 'empty.tex'), 'utf8')).to.equal('\n')
+    expect(await fs.readFile(path.join(workDir, 'missing.tex'), 'utf8')).to.equal('\n')
   })
 })

@@ -22,10 +22,7 @@ describe('get_outline', function () {
           '\\title{T}\n\\section{Intro}\nhello\n\\section{Method}\nworld\n',
       },
     })
-    const result: any = await getOutlineTool.execute(
-      { section: 'Intro' },
-      handle
-    )
+    const result: any = await getOutlineTool.execute({ section: 'Intro' }, handle)
     expect(result.range.from).to.be.a('number')
     expect(result.range.to).to.be.at.least(result.range.from)
   })

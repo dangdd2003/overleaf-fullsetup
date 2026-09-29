@@ -42,10 +42,7 @@ describe('the activity line is a tally, not a live status', function () {
   })
 
   it('names no verb when completed while another is in flight', function () {
-    const title = live([
-      finished('edit_file', { path: 'main.tex' }),
-      running('read_file', { path: 'chapter3.tex' }),
-    ])
+    const title = live([finished('edit_file', { path: 'main.tex' }), running('read_file', { path: 'chapter3.tex' })])
 
     expect(title).to.equal('Edited 1 file')
     expect(title).to.not.contain('main.tex')
@@ -89,7 +86,9 @@ describe('the activity line is a tally, not a live status', function () {
 
   it('summarizes completed tool calls when finished', function () {
     const { title } = formatSubresultsSummary(
-      [finished('read_file', { path: 'a.tex' })] as any,
+      [
+        finished('read_file', { path: 'a.tex' }),
+      ] as any,
       false,
       fakeT
     )

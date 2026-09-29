@@ -60,7 +60,7 @@ try {
 const app = createApp({ token: TOKEN, engine, capacity: CAPACITY })
 
 await new Promise(resolve => app.listen(PORT, '0.0.0.0', resolve))
-console.log(`ai-browser listening on port ${PORT} (${CAPACITY} pages at once)`)
+console.log(`overleaf-browser listening on port ${PORT} (${CAPACITY} pages at once)`)
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, async () => {

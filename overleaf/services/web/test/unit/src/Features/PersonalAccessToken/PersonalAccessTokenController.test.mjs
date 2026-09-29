@@ -51,33 +51,39 @@ describe('PersonalAccessTokenController', () => {
 
   it('createToken passes through the requested scopes', async () => {
     req.body = { name: 'AI', scopes: ['mcp'] }
-    const spy = sinon.stub(PersonalAccessTokenManager, 'createToken').resolves({
-      token: 'olp_x',
-      tokenPrefix: 'olp_x',
-      record: { _id: 'r', name: 'AI', scopes: ['mcp'] },
-    })
+    const spy = sinon
+      .stub(PersonalAccessTokenManager, 'createToken')
+      .resolves({
+        token: 'olp_x',
+        tokenPrefix: 'olp_x',
+        record: { _id: 'r', name: 'AI', scopes: ['mcp'] },
+      })
     await PersonalAccessTokenController.createToken(req, res)
     expect(spy.calledWith('user-123', 'AI', ['mcp'])).toBe(true)
   })
 
   it('createToken coerces a bare string scope to an array', async () => {
     req.body = { name: 'AI', scopes: 'mcp' }
-    const spy = sinon.stub(PersonalAccessTokenManager, 'createToken').resolves({
-      token: 'olp_x',
-      tokenPrefix: 'olp_x',
-      record: { _id: 'r', name: 'AI', scopes: ['mcp'] },
-    })
+    const spy = sinon
+      .stub(PersonalAccessTokenManager, 'createToken')
+      .resolves({
+        token: 'olp_x',
+        tokenPrefix: 'olp_x',
+        record: { _id: 'r', name: 'AI', scopes: ['mcp'] },
+      })
     await PersonalAccessTokenController.createToken(req, res)
     expect(spy.calledWith('user-123', 'AI', ['mcp'])).toBe(true)
   })
 
   it('createToken defaults to git_bridge when scopes absent', async () => {
     req.body = { name: 'AI' }
-    const spy = sinon.stub(PersonalAccessTokenManager, 'createToken').resolves({
-      token: 'olp_x',
-      tokenPrefix: 'olp_x',
-      record: { _id: 'r', name: 'AI', scopes: ['git_bridge'] },
-    })
+    const spy = sinon
+      .stub(PersonalAccessTokenManager, 'createToken')
+      .resolves({
+        token: 'olp_x',
+        tokenPrefix: 'olp_x',
+        record: { _id: 'r', name: 'AI', scopes: ['git_bridge'] },
+      })
     await PersonalAccessTokenController.createToken(req, res)
     expect(spy.calledWith('user-123', 'AI', ['git_bridge'])).toBe(true)
   })
@@ -92,11 +98,9 @@ describe('PersonalAccessTokenController', () => {
   })
 
   it('lists tokens for user', async () => {
-    sinon
-      .stub(PersonalAccessTokenManager, 'listTokens')
-      .resolves([
-        { _id: 'rec-1', name: 'Work Laptop', tokenPrefix: 'olp_secr' },
-      ])
+    sinon.stub(PersonalAccessTokenManager, 'listTokens').resolves([
+      { _id: 'rec-1', name: 'Work Laptop', tokenPrefix: 'olp_secr' },
+    ])
 
     await PersonalAccessTokenController.listTokens(req, res)
     expect(
@@ -115,36 +119,24 @@ describe('PersonalAccessTokenController', () => {
   })
 
   it('returns 500 when createToken throws error', async () => {
-    sinon
-      .stub(PersonalAccessTokenManager, 'createToken')
-      .rejects(new Error('DB failure'))
+    sinon.stub(PersonalAccessTokenManager, 'createToken').rejects(new Error('DB failure'))
     await PersonalAccessTokenController.createToken(req, res)
     expect(res.status.calledWith(500)).toBe(true)
-    expect(res.json.calledWith({ code: 'error', message: 'DB failure' })).toBe(
-      true
-    )
+    expect(res.json.calledWith({ code: 'error', message: 'DB failure' })).toBe(true)
   })
 
   it('returns 500 when listTokens throws error', async () => {
-    sinon
-      .stub(PersonalAccessTokenManager, 'listTokens')
-      .rejects(new Error('DB failure'))
+    sinon.stub(PersonalAccessTokenManager, 'listTokens').rejects(new Error('DB failure'))
     await PersonalAccessTokenController.listTokens(req, res)
     expect(res.status.calledWith(500)).toBe(true)
-    expect(res.json.calledWith({ code: 'error', message: 'DB failure' })).toBe(
-      true
-    )
+    expect(res.json.calledWith({ code: 'error', message: 'DB failure' })).toBe(true)
   })
 
   it('returns 500 when revokeToken throws error', async () => {
     req.params.tokenId = 'rec-1'
-    sinon
-      .stub(PersonalAccessTokenManager, 'revokeToken')
-      .rejects(new Error('DB failure'))
+    sinon.stub(PersonalAccessTokenManager, 'revokeToken').rejects(new Error('DB failure'))
     await PersonalAccessTokenController.revokeToken(req, res)
     expect(res.status.calledWith(500)).toBe(true)
-    expect(res.json.calledWith({ code: 'error', message: 'DB failure' })).toBe(
-      true
-    )
+    expect(res.json.calledWith({ code: 'error', message: 'DB failure' })).toBe(true)
   })
 })

@@ -24,6 +24,23 @@ describe('buildUserEntry', function () {
   beforeEach(function () {
     resetMeta()
   })
+  it('freezes the composer mode into the envelope', async function () {
+    const { handle } = createFakeHandle({ docs: { 'main.tex': 'hello' } })
+    const entry = await buildUserEntry({
+      handle,
+      transcript: [],
+      text: 'hi',
+      mode: 'acceptEdits',
+    })
+    expect((entry as any).contextText).to.include('<mode>Accept edits</mode>')
+  })
+
+  it('renders no mode without one, as older entries were', async function () {
+    const { handle } = createFakeHandle({ docs: { 'main.tex': 'hello' } })
+    const entry = await buildUserEntry({ handle, transcript: [], text: 'hi' })
+    expect((entry as any).contextText).not.to.include('<mode>')
+  })
+
   it('renders and freezes the envelope onto the user entry', async function () {
     const { handle } = createFakeHandle({ docs: { 'main.tex': 'hello' } })
     const entry = await buildUserEntry({

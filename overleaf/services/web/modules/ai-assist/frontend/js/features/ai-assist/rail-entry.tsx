@@ -51,5 +51,6 @@ export default {
   tab: AiRailTab,
   component: <LeftRailAgentPanel />,
   hide: () =>
-    !getMeta('ol-aiAssistEnabled') || getMeta('ol-showAiFeatures') === false,
+    !getMeta('ol-aiAssistEnabled') ||
+    getMeta('ol-showAiFeatures') === false,
 }

@@ -121,9 +121,9 @@ describe('provider tool schemas on the wire', function () {
       expect(compile.function.parameters.properties.includeRaw.type).to.equal(
         'boolean'
       )
-      expect(
-        compile.function.parameters.properties.severity.enum
-      ).to.deep.equal(['errors', 'warnings', 'all'])
+      expect(compile.function.parameters.properties.severity.enum).to.deep.equal(
+        ['errors', 'warnings', 'all']
+      )
     })
   })
 

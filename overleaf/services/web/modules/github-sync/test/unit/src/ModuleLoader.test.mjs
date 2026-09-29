@@ -4,10 +4,8 @@ const INDEX = '../../../index.mjs'
 
 function fakeWebRouter() {
   const registered = []
-  const record =
-    method =>
-    (path, ...handlers) =>
-      registered.push({ method, path, handlers })
+  const record = method => (path, ...handlers) =>
+    registered.push({ method, path, handlers })
   return {
     registered,
     get: record('get'),
@@ -43,18 +41,10 @@ describe('github-sync module', function () {
       __esModule: true,
     }))
     vi.doMock('../../../app/src/ModuleSettings.mjs', () => ({ default: {} }))
-    vi.doMock('../../../app/src/GitHubOAuthRouter.mjs', () => ({
-      default: oauthRouter,
-    }))
-    vi.doMock('../../../app/src/GitHubSyncRouter.mjs', () => ({
-      default: syncRouter,
-    }))
-    vi.doMock('../../../app/src/GitHubSyncManager.mjs', () => ({
-      default: syncManager,
-    }))
-    vi.doMock('../../../app/src/GitHubPassportStrategy.mjs', () => ({
-      createStrategy,
-    }))
+    vi.doMock('../../../app/src/GitHubOAuthRouter.mjs', () => ({ default: oauthRouter }))
+    vi.doMock('../../../app/src/GitHubSyncRouter.mjs', () => ({ default: syncRouter }))
+    vi.doMock('../../../app/src/GitHubSyncManager.mjs', () => ({ default: syncManager }))
+    vi.doMock('../../../app/src/GitHubPassportStrategy.mjs', () => ({ createStrategy }))
   })
 
   afterEach(function () {

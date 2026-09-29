@@ -1247,14 +1247,14 @@ export function buildEndpointPool(settings) {
 const WEB_SEARCH_SPEC = {
   name: 'web_search',
   description:
-    'Search the web. Returns the top results, each numbered as a source [n], with title, URL, publication date when known, and a snippet. Use it for anything outside this project that you cannot state reliably from memory: facts that change over time (news, people in office, releases, prices, events), package options and syntax, unfamiliar errors, journal or conference requirements. Snippets are pointers: read the page with web_fetch before relying on a detail.',
+    'Search the web for current information, including LaTeX packages, syntax and changes. Call it first whenever you are unsure a fact is correct or current, before relying on memory. Returns the top results, each numbered as a source [n] that you cite by that number, with title, URL, publication date when known and a snippet. Snippets are pointers: read the page with web_fetch before relying on a detail.',
   parameters: {
     type: 'object',
     properties: {
       query: {
         type: 'string',
         description:
-          'What to search for, in the words a page answering it would use. Include the year for time-sensitive questions, e.g. "Vietnam president 2026" or "siunitx range-phrase option".',
+          'What to search for, in the words a page answering it would use. One topic per query, a few words long. Include the year for time-sensitive questions, e.g. "Vietnam president 2026" or "siunitx range-phrase option".',
       },
     },
     required: ['query'],
@@ -1263,14 +1263,14 @@ const WEB_SEARCH_SPEC = {
 
 const WEB_FETCH_SPEC = {
   name: 'web_fetch',
-  description: `Read a web page, PDF or text file as Markdown. Long documents come in pages, and the result says which page you got and how many there are. Pass find to jump to the passages about a command, option or phrase anywhere in the document, most relevant first, instead of paging through it. A page that blocks automated readers is retried through other routes automatically.`,
+  description: `Read a web page, PDF or text file as Markdown. Long documents come in pages, and the result says which page you got and how many there are. Pass find to jump to the passages about a command, option or phrase anywhere in the document, most relevant first, instead of paging through it. A page that blocks automated readers is retried through other routes automatically. The page keeps its source number [n] for citing.`,
   parameters: {
     type: 'object',
     properties: {
       url: {
         type: 'string',
         description:
-          'The http or https URL to read, usually one from web_search.',
+          'The http or https URL to read: one from a search result, the user or the project.',
       },
       page: {
         type: 'integer',
@@ -1287,6 +1287,10 @@ const WEB_FETCH_SPEC = {
 }
 
 export const WEB_TOOL_SPECS = [WEB_SEARCH_SPEC, WEB_FETCH_SPEC]
+
+/** Added to a search this conversation already ran, to push a new angle. */
+export const REPEATED_SEARCH_NOTICE =
+  'You already ran this search. Use these results or try a different angle.'
 
 export const MAX_DOCUMENT_CACHE_BYTES = Infinity
 
@@ -1391,6 +1395,8 @@ export class AiAssistWebTools {
     this.nextSource = 1
     // searchCacheText(query) -> the search in flight for it
     this.pending = new Map()
+    // Queries this conversation already searched, as the search cache keys them
+    this.searchedQueries = new Set()
   }
 
   /** Whether a search backend is configured; page readers alone only read pages. */
@@ -1408,6 +1414,16 @@ export class AiAssistWebTools {
       for (const call of Array.isArray(entry?.toolCalls)
         ? entry.toolCalls
         : []) {
+        if (
+          call?.name === 'web_search' &&
+          typeof call.args?.query === 'string' &&
+          call.result &&
+          typeof call.result === 'object' &&
+          !call.result.error
+        ) {
+          const key = searchCacheText(call.args.query)
+          if (key) this.searchedQueries.add(key)
+        }
         const result = call?.result
         if (!result || typeof result !== 'object') continue
         const items =
@@ -1451,10 +1467,16 @@ export class AiAssistWebTools {
               'Web search is not set up. Read pages with web_fetch instead.',
           }
         }
-        return await this._shared(
-          searchCacheText(typeof args?.query === 'string' ? args.query : ''),
-          () => this.search(args, { signal })
+        const key = searchCacheText(
+          typeof args?.query === 'string' ? args.query : ''
         )
+        const repeated = Boolean(key) && this.searchedQueries.has(key)
+        const result = await this._shared(key, () =>
+          this.search(args, { signal })
+        )
+        if (result?.error) return result
+        if (key) this.searchedQueries.add(key)
+        return repeated ? { ...result, notice: REPEATED_SEARCH_NOTICE } : result
       }
       if (name === 'web_fetch') return await this.fetch(args, { signal })
       return { error: `Unknown tool: ${name}` }

@@ -184,6 +184,50 @@ describe('SuggestFixPanel on the agent harness', function () {
     customLocalStorage.clear()
   })
 
+  it('offers web tools and the fix web section when the instance has them', async function () {
+    window.metaAttributesCache.set('ol-aiAssistWebToolsEnabled', true)
+    fetchMock.post('express:/ai-assist/projects/:projectId/web-tools', {
+      specs: [
+        {
+          name: 'web_search',
+          description: 's',
+          parameters: { type: 'object', properties: {} },
+        },
+        {
+          name: 'web_fetch',
+          description: 'f',
+          parameters: { type: 'object', properties: {} },
+        },
+      ],
+    })
+    fetchMock.post(CHAT, ndjson({ type: 'text', text: 'No edit.' }))
+
+    renderPanel()
+    open()
+
+    await waitFor(() => {
+      expect(fetchMock.callHistory.calls(CHAT)).to.have.length.greaterThan(0)
+    })
+    const body = String(fetchMock.callHistory.calls(CHAT)[0].options.body)
+    expect(body).to.include('"web_search"')
+    expect(body).to.include('# Web research')
+    expect(body).to.include('This is one fix, not research.')
+  })
+
+  it('keeps the fix run web-free when the instance has no web tools', async function () {
+    fetchMock.post(CHAT, ndjson({ type: 'text', text: 'No edit.' }))
+
+    renderPanel()
+    open()
+
+    await waitFor(() => {
+      expect(fetchMock.callHistory.calls(CHAT)).to.have.length.greaterThan(0)
+    })
+    const body = String(fetchMock.callHistory.calls(CHAT)[0].options.body)
+    expect(body).not.to.include('"web_search"')
+    expect(body).not.to.include('# Web research')
+  })
+
   it('never starts a hidden run for an entry the logs pane offers no fix for', async function () {
     fetchMock.post(CHAT, ndjson({ type: 'text', text: 'should not run' }))
     for (const level of ['info', 'typesetting']) {

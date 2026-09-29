@@ -732,9 +732,7 @@ const GoogleDriveController = {
         job: GoogleDriveImportManager.serializeJob(job),
       })
     } catch (err) {
-      if (
-        err instanceof GoogleDriveImportManager.ImportJobAlreadyRunningError
-      ) {
+      if (err instanceof GoogleDriveImportManager.ImportJobAlreadyRunningError) {
         return res
           .status(409)
           .json({ code: 'already_running', message: err.message })

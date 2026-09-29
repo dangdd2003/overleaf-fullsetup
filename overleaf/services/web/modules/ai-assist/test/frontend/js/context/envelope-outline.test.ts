@@ -21,20 +21,8 @@ describe('renderEnvelope outline section', function () {
         includes: [],
         notes: [],
         sections: [
-          {
-            path: 'main.tex',
-            line: 5,
-            level: 1,
-            title: 'Introduction',
-            numbered: true,
-          },
-          {
-            path: 'main.tex',
-            line: 15,
-            level: 2,
-            title: 'Background',
-            numbered: true,
-          },
+          { path: 'main.tex', line: 5, level: 1, title: 'Introduction', numbered: true },
+          { path: 'main.tex', line: 15, level: 2, title: 'Background', numbered: true },
         ],
       },
     }
@@ -63,13 +51,7 @@ describe('renderEnvelope outline section', function () {
         includes: [],
         notes: [],
         sections: [
-          {
-            path: 'main.tex',
-            line: 5,
-            level: 1,
-            title: 'Introduction',
-            numbered: true,
-          },
+          { path: 'main.tex', line: 5, level: 1, title: 'Introduction', numbered: true },
         ],
       },
     }

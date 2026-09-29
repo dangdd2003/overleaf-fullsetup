@@ -42,9 +42,7 @@ describe('configure_appearance_settings tool', function () {
     expect(res.updatedSettings.fontFamily).to.equal('consolas')
     expect(res.updatedSettings.lineHeight).to.equal('spacious')
 
-    const configCalls = calls.filter(
-      c => c.name === 'configureAppearanceSettings'
-    )
+    const configCalls = calls.filter(c => c.name === 'configureAppearanceSettings')
     expect(configCalls).to.have.lengthOf(1)
     expect(configCalls[0].args).to.deep.include({
       overallTheme: 'dark',
@@ -71,14 +69,8 @@ describe('configure_appearance_settings tool', function () {
   it('refuses empty settings arguments', async function () {
     const { handle, calls } = createFakeHandle()
 
-    const res: any = await TOOLS.configure_appearance_settings.execute(
-      {},
-      handle
-    )
-    expect(res.error).to.include(
-      'Supply at least one appearance setting to configure'
-    )
-    expect(calls.filter(c => c.name === 'configureAppearanceSettings')).to.be
-      .empty
+    const res: any = await TOOLS.configure_appearance_settings.execute({}, handle)
+    expect(res.error).to.include('Supply at least one appearance setting to configure')
+    expect(calls.filter(c => c.name === 'configureAppearanceSettings')).to.be.empty
   })
 })

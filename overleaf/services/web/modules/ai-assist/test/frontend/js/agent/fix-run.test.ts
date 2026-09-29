@@ -43,12 +43,8 @@ describe('fix-run', function () {
 
   it('demands an edit, never an explanation in its place', function () {
     expect(FIX_TASK_BLOCK).to.include('Call edit_file')
-    expect(FIX_TASK_BLOCK).to.match(
-      /being unsure is not a reason to withhold it/
-    )
-    expect(FIX_TASK_BLOCK).to.match(
-      /never replace\s+the edit with instructions/
-    )
+    expect(FIX_TASK_BLOCK).to.match(/being unsure is not a reason to withhold it/)
+    expect(FIX_TASK_BLOCK).to.match(/never replace\s+the edit with instructions/)
     expect(FIX_TASK_BLOCK).to.not.match(/make no edit/)
   })
 
@@ -75,8 +71,7 @@ describe('fix-run', function () {
   it('builds one user entry carrying the code, not a project summary', async function () {
     const { handle } = createFakeHandle({
       docs: {
-        'main.tex':
-          '\\documentclass{article}\n\\begin{document}\nhello\n\\end{document}',
+        'main.tex': '\\documentclass{article}\n\\begin{document}\nhello\n\\end{document}',
         'chapter3.tex': Array.from(
           { length: 100 },
           (_, i) => `line ${i + 1}`

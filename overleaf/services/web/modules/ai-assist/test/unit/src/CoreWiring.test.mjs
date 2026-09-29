@@ -45,9 +45,9 @@ describe('ai-assist core wiring', () => {
 
   it('points every registered slot path at a file that exists', () => {
     const settings = read('config/settings.defaults.js')
-    const paths = [
-      ...settings.matchAll(/'(\.\.\/modules\/ai-assist\/[^']+)'/g),
-    ].map(m => m[1])
+    const paths = [...settings.matchAll(/'(\.\.\/modules\/ai-assist\/[^']+)'/g)].map(
+      m => m[1]
+    )
     expect(paths.length).toBeGreaterThanOrEqual(3)
     for (const relative of paths) {
       const resolved = path.join(WEB_ROOT, 'config', relative)
@@ -94,13 +94,9 @@ describe('ai-assist core wiring', () => {
   it('includes aiAssistEnabled in haslangFeedbackLinkingWidgets', () => {
     // Controls the AI features section so the provider widget renders on CE
     // without forcing the project synchronisation section open.
-    const section = read(
-      'frontend/js/features/settings/components/linking-section.tsx'
-    )
+    const section = read('frontend/js/features/settings/components/linking-section.tsx')
     expect(section).toContain("getMeta('ol-aiAssistEnabled')")
-    expect(section).toMatch(
-      /haslangFeedbackLinkingWidgets[\s\S]{0,300}aiAssistEnabled/
-    )
+    expect(section).toMatch(/haslangFeedbackLinkingWidgets[\s\S]{0,300}aiAssistEnabled/)
   })
 
   it('leaves no AI route for nginx to special-case', () => {

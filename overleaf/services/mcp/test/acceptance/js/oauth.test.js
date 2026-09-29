@@ -8,11 +8,7 @@ import { createJwtVerifier } from '../../../src/oauth.js'
 function startServer(app) {
   return new Promise(resolve => {
     const server = app.listen(0, '127.0.0.1', () => {
-      resolve({
-        server,
-        port: server.address().port,
-        url: `http://127.0.0.1:${server.address().port}/mcp`,
-      })
+      resolve({ server, port: server.address().port, url: `http://127.0.0.1:${server.address().port}/mcp` })
     })
   })
 }
@@ -23,11 +19,7 @@ async function rpc(url, body, { token } = {}) {
     Accept: 'application/json, text/event-stream',
   }
   if (token) headers.Authorization = `Bearer ${token}`
-  const response = await fetch(url, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(body),
-  })
+  const response = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) })
   const text = await response.text()
   const line = text.split('\n').find(l => l.startsWith('data: '))
   return {
@@ -69,10 +61,7 @@ describe('OAuth 2.1 Complete Handshake Acceptance Test', function () {
         return
       }
 
-      if (
-        req.method === 'GET' &&
-        url.pathname === '/.well-known/oauth-authorization-server'
-      ) {
+      if (req.method === 'GET' && url.pathname === '/.well-known/oauth-authorization-server') {
         res.writeHead(200, { 'Content-Type': 'application/json' })
         res.end(
           JSON.stringify({
@@ -95,9 +84,7 @@ describe('OAuth 2.1 Complete Handshake Acceptance Test', function () {
         const clientId = url.searchParams.get('client_id')
         const redirectUri = url.searchParams.get('redirect_uri')
         const codeChallenge = url.searchParams.get('code_challenge')
-        const codeChallengeMethod = url.searchParams.get(
-          'code_challenge_method'
-        )
+        const codeChallengeMethod = url.searchParams.get('code_challenge_method')
         const state = url.searchParams.get('state')
         const resource = url.searchParams.get('resource')
         const scope = url.searchParams.get('scope') || 'mcp'
@@ -130,11 +117,7 @@ describe('OAuth 2.1 Complete Handshake Acceptance Test', function () {
           bodyText += chunk
         }
         let params = {}
-        if (
-          req.headers['content-type']?.includes(
-            'application/x-www-form-urlencoded'
-          )
-        ) {
+        if (req.headers['content-type']?.includes('application/x-www-form-urlencoded')) {
           params = Object.fromEntries(new URLSearchParams(bodyText))
         } else {
           try {
@@ -144,8 +127,7 @@ describe('OAuth 2.1 Complete Handshake Acceptance Test', function () {
           }
         }
 
-        const { grant_type, code, code_verifier, client_id, redirect_uri } =
-          params
+        const { grant_type, code, code_verifier, client_id, redirect_uri } = params
 
         if (grant_type !== 'authorization_code') {
           res.writeHead(400, { 'Content-Type': 'application/json' })
@@ -156,12 +138,7 @@ describe('OAuth 2.1 Complete Handshake Acceptance Test', function () {
         const authRecord = authCodes.get(code)
         if (!authRecord || authRecord.expiresAt < Date.now()) {
           res.writeHead(400, { 'Content-Type': 'application/json' })
-          res.end(
-            JSON.stringify({
-              error: 'invalid_grant',
-              error_description: 'Code invalid or expired',
-            })
-          )
+          res.end(JSON.stringify({ error: 'invalid_grant', error_description: 'Code invalid or expired' }))
           return
         }
 
@@ -176,19 +153,14 @@ describe('OAuth 2.1 Complete Handshake Acceptance Test', function () {
 
         if (hash !== authRecord.codeChallenge) {
           res.writeHead(400, { 'Content-Type': 'application/json' })
-          res.end(
-            JSON.stringify({
-              error: 'invalid_grant',
-              error_description: 'PKCE verification failed',
-            })
-          )
+          res.end(JSON.stringify({ error: 'invalid_grant', error_description: 'PKCE verification failed' }))
           return
         }
 
         // Mint RS256 JWT
-        const header = Buffer.from(
-          JSON.stringify({ alg: 'RS256', typ: 'JWT', kid: 'auth-key-1' })
-        ).toString('base64url')
+        const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT', kid: 'auth-key-1' })).toString(
+          'base64url'
+        )
         const payload = Buffer.from(
           JSON.stringify({
             sub: authRecord.userId,
@@ -203,10 +175,7 @@ describe('OAuth 2.1 Complete Handshake Acceptance Test', function () {
         ).toString('base64url')
 
         const input = `${header}.${payload}`
-        const sig = crypto
-          .createSign('SHA256')
-          .update(input)
-          .sign(keyPair.privateKey, 'base64url')
+        const sig = crypto.createSign('SHA256').update(input).sign(keyPair.privateKey, 'base64url')
         const accessToken = `${input}.${sig}`
         const refreshToken = `oar_${crypto.randomBytes(32).toString('hex')}`
 
@@ -306,31 +275,22 @@ describe('OAuth 2.1 Complete Handshake Acceptance Test', function () {
     expect(resMetaResp.status).to.equal(200)
     const resourceMetadata = await resMetaResp.json()
     expect(resourceMetadata.resource).to.equal(mcpRunning.url)
-    expect(resourceMetadata.authorization_servers).to.deep.equal([
-      `http://127.0.0.1:${webPort}`,
-    ])
+    expect(resourceMetadata.authorization_servers).to.deep.equal([`http://127.0.0.1:${webPort}`])
     expect(resourceMetadata.scopes_supported).to.include('mcp')
 
     const authServerUrl = resourceMetadata.authorization_servers[0]
 
     // STEP 3: Discovery of authorization server metadata (RFC 8414)
-    const asMetaResp = await fetch(
-      `${authServerUrl}/.well-known/oauth-authorization-server`
-    )
+    const asMetaResp = await fetch(`${authServerUrl}/.well-known/oauth-authorization-server`)
     expect(asMetaResp.status).to.equal(200)
     const asMetadata = await asMetaResp.json()
-    expect(asMetadata.authorization_endpoint).to.equal(
-      `${authServerUrl}/oauth/authorize`
-    )
+    expect(asMetadata.authorization_endpoint).to.equal(`${authServerUrl}/oauth/authorize`)
     expect(asMetadata.token_endpoint).to.equal(`${authServerUrl}/oauth/token`)
     expect(asMetadata.code_challenge_methods_supported).to.include('S256')
 
     // STEP 4: PKCE code generation (RFC 7636) & Authorize request
     const codeVerifier = crypto.randomBytes(32).toString('base64url')
-    const codeChallenge = crypto
-      .createHash('sha256')
-      .update(codeVerifier)
-      .digest('base64url')
+    const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url')
     const clientRedirectUri = 'http://127.0.0.1:54321/oauth/callback'
     const state = 'test_state_xyz_123'
 
@@ -348,9 +308,7 @@ describe('OAuth 2.1 Complete Handshake Acceptance Test', function () {
     const authResp = await fetch(authUrl.toString(), { redirect: 'manual' })
     expect(authResp.status).to.equal(302)
     const redirectLocation = new URL(authResp.headers.get('location'))
-    expect(redirectLocation.origin + redirectLocation.pathname).to.equal(
-      clientRedirectUri
-    )
+    expect(redirectLocation.origin + redirectLocation.pathname).to.equal(clientRedirectUri)
     expect(redirectLocation.searchParams.get('state')).to.equal(state)
     const authorizationCode = redirectLocation.searchParams.get('code')
     expect(authorizationCode).to.match(/^code_/)

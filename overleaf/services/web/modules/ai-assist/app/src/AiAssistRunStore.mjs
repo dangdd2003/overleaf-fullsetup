@@ -35,13 +35,7 @@ export class AiAssistRunStore {
     return `ai-assist:run:${runId}:channel`
   }
 
-  async createRun({
-    runId,
-    projectId,
-    userId,
-    metadata = {},
-    mode = 'manual',
-  }) {
+  async createRun({ runId, projectId, userId, metadata = {}, mode = 'manual' }) {
     const rclient = this.getClient()
     if (!rclient) return
     const key = this._key(runId)
@@ -115,9 +109,7 @@ export class AiAssistRunStore {
   async removeWatcher(runId) {
     const rclient = this.getClient()
     if (!rclient) return 0
-    const count = Number(
-      await rclient.hincrby(this._key(runId), 'watchers', -1)
-    )
+    const count = Number(await rclient.hincrby(this._key(runId), 'watchers', -1))
     // A connection that never finished subscribing must not drive this below 0,
     // or a later reconnect would look like a watcher that is not there.
     if (count < 0) {
@@ -125,8 +117,7 @@ export class AiAssistRunStore {
       return 0
     }
     // Watchers just hit zero: start the orphan clock now. The reaper reads this.
-    if (count === 0)
-      await rclient.hset(this._key(runId), 'zeroSince', String(Date.now()))
+    if (count === 0) await rclient.hset(this._key(runId), 'zeroSince', String(Date.now()))
     return count
   }
 
@@ -162,24 +153,15 @@ export class AiAssistRunStore {
     for (const runId of runIds) {
       const run = await this.getRun(runId)
       // A run missing from its hash is already gone; drop it from the index.
-      if (!run) {
-        await rclient.srem(ACTIVE_RUNS_KEY, runId)
-        continue
-      }
+      if (!run) { await rclient.srem(ACTIVE_RUNS_KEY, runId); continue }
       const terminal = TERMINAL_STATUSES.includes(run.status)
-      if (terminal) {
-        await rclient.srem(ACTIVE_RUNS_KEY, runId)
-        continue
-      }
+      if (terminal) { await rclient.srem(ACTIVE_RUNS_KEY, runId); continue }
       if (now - (run.heartbeat || 0) < heartbeatStaleMs) continue
       // Nothing has emitted for a very long time: the process driving this run
       // is gone. Mark it so a reconnecting client stops showing "thinking"
       // forever. This never aborts a live loop — see the heartbeat trap.
       await this.updateStatus(runId, 'interrupted')
-      await this.appendEvent(runId, {
-        type: 'turnFinished',
-        reason: 'interrupted',
-      })
+      await this.appendEvent(runId, { type: 'turnFinished', reason: 'interrupted' })
       await rclient.srem(ACTIVE_RUNS_KEY, runId)
       acted.push(runId)
     }

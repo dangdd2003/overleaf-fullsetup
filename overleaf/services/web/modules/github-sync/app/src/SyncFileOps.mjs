@@ -10,7 +10,8 @@ export const SYNC_SOURCE = 'github'
 
 function _deepestFirst(paths) {
   return [...paths].sort(
-    (a, b) => b.split('/').length - a.split('/').length || b.length - a.length
+    (a, b) =>
+      b.split('/').length - a.split('/').length || b.length - a.length
   )
 }
 
@@ -30,7 +31,8 @@ async function _upsertFromRepo(projectId, userId, repoDir, relPath, warnings) {
     tmpDir = staged.tmpDir
   }
   try {
-    const effectiveStat = stat || (await fs.lstat(fsPath).catch(() => null))
+    const effectiveStat =
+      stat || (await fs.lstat(fsPath).catch(() => null))
     const symlinkTarget = effectiveStat?.isSymbolicLink()
       ? await fs.readlink(fsPath)
       : null
@@ -64,8 +66,7 @@ async function _upsertFromRepo(projectId, userId, repoDir, relPath, warnings) {
       )
     }
   } finally {
-    if (tmpDir)
-      await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {})
+    if (tmpDir) await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {})
   }
 }
 

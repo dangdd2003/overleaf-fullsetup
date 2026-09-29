@@ -97,9 +97,7 @@ describe('McpRouter', function () {
       )
     ).toBe(true)
     expect(
-      publicApiRouter.get.calledWith(
-        '/api/v0/mcp/projects/:projectId/wordcount'
-      )
+      publicApiRouter.get.calledWith('/api/v0/mcp/projects/:projectId/wordcount')
     ).toBe(true)
     expect(
       publicApiRouter.get.calledWith('/api/v0/mcp/projects/:projectId/zip')

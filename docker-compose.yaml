@@ -46,6 +46,33 @@ services:
       - "/etc/localtime:/etc/localtime:ro"
       - "./data/redis:/data"
 
+  # Google Chrome (Patchright) for AI Assist web_fetch. Starts only with
+  # `docker compose --profile overleaf-browser up -d`, and is used only when
+  # AI_ASSIST_BROWSER_URL and AI_ASSIST_BROWSER_TOKEN are configured.
+  overleaf-browser:
+    profiles: ["overleaf-browser"]
+    restart: always
+    image: dangdoan2003/overleaf-browser:latest
+    container_name: overleaf-browser
+    environment:
+      BROWSER_TOKEN: "${BROWSER_TOKEN:-}"
+      TZ: "${TZ:-UTC}"
+      BROWSER_LANG: "${BROWSER_LANG:-en-US}"
+      PROXY_PORT: "8080"
+    volumes:
+      - "overleaf-browser-profile:/data/profile"
+    security_opt:
+      - "seccomp=./overleaf/services/overleaf-browser/seccomp.json"
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    shm_size: 1gb
+    mem_limit: 2g
+    pids_limit: 512
+
   # nginx:
   #   restart: always
   #   image: nginx:latest
@@ -58,3 +85,6 @@ services:
   #     - "/var/run/docker.sock:/tmp/docker.sock:ro"
   #     - "/etc/letsencrypt:/etc/letsencrypt:ro"
   #     - "./nginx.conf:/etc/nginx/nginx.conf:ro"
+
+volumes:
+  overleaf-browser-profile:

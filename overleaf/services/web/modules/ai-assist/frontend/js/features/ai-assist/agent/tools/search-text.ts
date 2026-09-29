@@ -38,13 +38,11 @@ export const searchTextTool: AgentTool = {
         query: { type: 'string' },
         glob: {
           type: 'string',
-          description:
-            'Only search files matching this glob, e.g. sections/*.tex',
+          description: 'Only search files matching this glob, e.g. sections/*.tex',
         },
         path: {
           type: 'string',
-          description:
-            'Specific file path or glob pattern to search in (alias for glob)',
+          description: 'Specific file path or glob pattern to search in (alias for glob)',
         },
         contextLines: {
           type: 'number',
@@ -76,14 +74,8 @@ export const searchTextTool: AgentTool = {
     handle
   ) {
     const pattern = glob ?? legacyPath
-    const all = await handle.search(query, {
-      caseSensitive,
-      regexp,
-      glob: pattern,
-    })
-    const filtered = pattern
-      ? all.filter(hit => matchesGlob(hit.path, pattern))
-      : all
+    const all = await handle.search(query, { caseSensitive, regexp, glob: pattern })
+    const filtered = pattern ? all.filter(hit => matchesGlob(hit.path, pattern)) : all
     const shown = filtered.slice(0, MAX_SEARCH_HITS)
 
     const cache = new Map<string, string[]>()
@@ -104,19 +96,12 @@ export const searchTextTool: AgentTool = {
       const lines = await linesOf(hit.path)
       hits.push({
         ...hit,
-        before: lines.slice(
-          Math.max(0, hit.line - 1 - contextLines),
-          hit.line - 1
-        ),
+        before: lines.slice(Math.max(0, hit.line - 1 - contextLines), hit.line - 1),
         after: lines.slice(hit.line, hit.line + contextLines),
       })
     }
 
-    return {
-      hits,
-      total: filtered.length,
-      truncated: filtered.length > shown.length,
-    }
+    return { hits, total: filtered.length, truncated: filtered.length > shown.length }
   },
 
   render(result: any) {
@@ -128,20 +113,11 @@ export const searchTextTool: AgentTool = {
         lines.push(hit)
       } else {
         if (Array.isArray(hit.before) && hit.before.length > 0) {
-          lines.push(
-            ...hit.before.map(
-              (l: string, i: number) =>
-                `  ${hit.line - hit.before.length + i}: ${l}`
-            )
-          )
+          lines.push(...hit.before.map((l: string, i: number) => `  ${hit.line - hit.before.length + i}: ${l}`))
         }
         lines.push(`${hit.path}:${hit.line}: ${hit.text}`)
         if (Array.isArray(hit.after) && hit.after.length > 0) {
-          lines.push(
-            ...hit.after.map(
-              (l: string, i: number) => `  ${hit.line + 1 + i}: ${l}`
-            )
-          )
+          lines.push(...hit.after.map((l: string, i: number) => `  ${hit.line + 1 + i}: ${l}`))
         }
       }
     }

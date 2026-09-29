@@ -27,8 +27,8 @@ describe('listToolMetadata', function () {
       expect(tool.name, 'name').to.be.a('string').and.not.be.empty
       expect(tool.title, `${tool.name} title`).to.be.a('string').and.not.be
         .empty
-      expect(tool.description, `${tool.name} description`).to.be.a('string').and
-        .not.be.empty
+      expect(tool.description, `${tool.name} description`).to.be.a('string')
+        .and.not.be.empty
       expect(tool.params, `${tool.name} params`).to.be.an('array')
     }
   })

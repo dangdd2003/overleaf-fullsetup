@@ -1,9 +1,4 @@
-import {
-  CODES,
-  OverleafApiError,
-  codeForStatus,
-  sanitiseMessage,
-} from './errors.js'
+import { CODES, OverleafApiError, codeForStatus, sanitiseMessage } from './errors.js'
 
 const API_PREFIX = '/api/v0/mcp'
 const DEFAULT_TIMEOUT_MS = 30000
@@ -39,11 +34,7 @@ function filenameFromDisposition(header) {
  * forwards it as a bearer header. All authorization happens in `web`.
  */
 export class OverleafClient {
-  constructor({
-    baseUrl,
-    fetchImpl = globalThis.fetch,
-    timeoutMs = DEFAULT_TIMEOUT_MS,
-  }) {
+  constructor({ baseUrl, fetchImpl = globalThis.fetch, timeoutMs = DEFAULT_TIMEOUT_MS }) {
     this.baseUrl = String(baseUrl || '').replace(/\/+$/, '')
     this.fetchImpl = fetchImpl
     this.timeoutMs = timeoutMs
@@ -105,11 +96,7 @@ export class OverleafClient {
     } catch {
       // A malformed body must not mask the status-derived code above.
     }
-    throw new OverleafApiError(
-      code,
-      sanitiseMessage(message, this.baseUrl),
-      response.status
-    )
+    throw new OverleafApiError(code, sanitiseMessage(message, this.baseUrl), response.status)
   }
 
   /**

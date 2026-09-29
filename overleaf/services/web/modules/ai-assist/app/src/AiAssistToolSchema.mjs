@@ -88,8 +88,7 @@ function sanitizeNode(node) {
         if (value.includes('null')) result.nullable = true
         continue
       }
-      if (typeof value === 'string' && KNOWN_TYPES.has(value))
-        result.type = value
+      if (typeof value === 'string' && KNOWN_TYPES.has(value)) result.type = value
       continue
     }
 

@@ -55,9 +55,7 @@ export function renderSourceWindow({
   if (lines.length === 0) return ''
   const to = from + lines.length - 1
   const caretAttribute =
-    caret !== null && caret >= from && caret <= to
-      ? ` entry-line="${caret}"`
-      : ''
+    caret !== null && caret >= from && caret <= to ? ` entry-line="${caret}"` : ''
   return [
     `<source file="${escapeAttribute(path)}" lines="${from}-${to}"${caretAttribute}>`,
     numbered(lines, from),

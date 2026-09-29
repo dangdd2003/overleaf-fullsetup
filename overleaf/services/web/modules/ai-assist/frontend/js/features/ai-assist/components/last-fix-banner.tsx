@@ -3,11 +3,7 @@ import getMeta from '@/utils/meta'
 import useEventListener from '@/shared/hooks/use-event-listener'
 import { ProjectContext } from '@/shared/context/project-context'
 import { useDetachCompileContext } from '@/shared/context/detach-compile-context'
-import {
-  getLastCompletedFix,
-  LastFixSummary,
-  buildLogEntryFingerprint,
-} from '../agent/fix-store'
+import { getLastCompletedFix, LastFixSummary, buildLogEntryFingerprint } from '../agent/fix-store'
 import SuggestFixPanel from './suggest-fix-panel'
 import '../../../../stylesheets/ai-assist.scss'
 
@@ -26,8 +22,7 @@ import '../../../../stylesheets/ai-assist.scss'
  */
 export default function LastFixBanner() {
   const enabled =
-    Boolean(getMeta('ol-aiAssistEnabled')) &&
-    getMeta('ol-showAiFeatures') !== false
+    Boolean(getMeta('ol-aiAssistEnabled')) && getMeta('ol-showAiFeatures') !== false
 
   const projectContext = useContext(ProjectContext)
   const projectId = projectContext?.projectId || 'default'

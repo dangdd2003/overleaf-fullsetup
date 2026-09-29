@@ -6,14 +6,17 @@ if (Settings.enableGithubSync === undefined) {
 
 if (Settings.githubSync === undefined) {
   const siteUrl =
-    Settings.siteUrl || process.env.OVERLEAF_SITE_URL || 'http://localhost'
+    Settings.siteUrl ||
+    process.env.OVERLEAF_SITE_URL ||
+    'http://localhost'
   const tokenSecret = process.env.GITHUB_TOKEN_SECRET || ''
 
   Settings.githubSync = {
     clientId: process.env.GITHUB_CLIENT_ID || '',
     clientSecret: process.env.GITHUB_CLIENT_SECRET || '',
     redirectUri:
-      process.env.GITHUB_REDIRECT_URI || `${siteUrl}/auth/github/callback`,
+      process.env.GITHUB_REDIRECT_URI ||
+      `${siteUrl}/auth/github/callback`,
     tokenSecret,
     reposDir:
       process.env.GITHUB_SYNC_REPOS_DIR ||

@@ -236,7 +236,7 @@ export class BrowserEngine {
     } catch (err) {
       if (/sandbox/i.test(String(err?.message || err))) {
         console.error(
-          "Chrome's sandbox could not start. Run the container with services/ai-browser/seccomp.json (see README), or set BROWSER_SANDBOX=off to run without it."
+          "Chrome's sandbox could not start. Run the container with services/overleaf-browser/seccomp.json (see README), or set BROWSER_SANDBOX=off to run without it."
         )
       }
       throw err

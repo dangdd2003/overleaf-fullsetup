@@ -10,8 +10,7 @@ const turnOne: TranscriptEntry[] = [
     id: 'u1',
     role: 'user',
     text: 'why does this not build?',
-    contextText:
-      '<project-context turn="1">\n<files>main.tex</files>\n</project-context>',
+    contextText: '<project-context turn="1">\n<files>main.tex</files>\n</project-context>',
   },
 ]
 
@@ -22,20 +21,14 @@ const turnTwo: TranscriptEntry[] = [
     role: 'assistant',
     text: 'Let me look.',
     toolCalls: [
-      {
-        id: 'c1',
-        name: 'read_file',
-        args: { path: 'main.tex' },
-        result: { content: '1: hi' },
-      },
+      { id: 'c1', name: 'read_file', args: { path: 'main.tex' }, result: { content: '1: hi' } },
     ],
   },
   {
     id: 'u2',
     role: 'user',
     text: 'and now?',
-    contextText:
-      '<project-context turn="2">\n<files>unchanged since turn 1</files>\n</project-context>',
+    contextText: '<project-context turn="2">\n<files>unchanged since turn 1</files>\n</project-context>',
   },
 ]
 
@@ -89,10 +82,7 @@ describe('buildRequest', function () {
   })
 
   it('places the stable breakpoint just before the newest user turn', function () {
-    const { messages, cacheHints } = buildRequest({
-      transcript: turnTwo,
-      limits,
-    })
+    const { messages, cacheHints } = buildRequest({ transcript: turnTwo, limits })
     expect(cacheHints.lastStableMessage).to.equal(messages.length - 2)
   })
 
@@ -156,9 +146,7 @@ describe('buildRequest', function () {
 
   it('does not invent a user turn in front of an assistant-first transcript', function () {
     const { messages, cacheHints } = buildRequest({
-      transcript: [
-        { id: 'a1', role: 'assistant', text: 'unprompted', toolCalls: [] },
-      ],
+      transcript: [{ id: 'a1', role: 'assistant', text: 'unprompted', toolCalls: [] }],
       limits,
     })
     expect(messages.map(message => message.role)).to.deep.equal(['assistant'])
@@ -179,12 +167,7 @@ describe('buildRequest', function () {
           role: 'assistant',
           text: 'Found it.',
           toolCalls: [
-            {
-              id: 'c2',
-              name: 'read_file',
-              args: { path: 'main.tex' },
-              result: { content: '1: hi' },
-            },
+            { id: 'c2', name: 'read_file', args: { path: 'main.tex' }, result: { content: '1: hi' } },
           ],
         },
       ],

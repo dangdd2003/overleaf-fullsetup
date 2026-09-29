@@ -8,7 +8,7 @@ import {
 } from '../../../../app/src/web-fetch/routes/browser.mjs'
 
 const TOKEN = 't'.repeat(32)
-const BASE_URL = 'http://ai-browser:3000'
+const BASE_URL = 'http://overleaf-browser:3000'
 
 function fakeFetch({
   status = 200,
@@ -58,7 +58,7 @@ describe('BrowserRoute (HTTP client)', function () {
 
     expect(fetchFn.calledOnce).to.equal(true)
     const [callUrl, callInit] = fetchFn.firstCall.args
-    expect(callUrl).to.equal('http://ai-browser:3000/v1/raw')
+    expect(callUrl).to.equal('http://overleaf-browser:3000/v1/raw')
     expect(callInit.headers.Authorization).to.equal(`Bearer ${TOKEN}`)
     expect(JSON.parse(callInit.body)).to.deep.equal({
       url: 'https://example.com/src',
@@ -78,7 +78,7 @@ describe('BrowserRoute (HTTP client)', function () {
     )
 
     const [callUrl] = fetchFn.firstCall.args
-    expect(callUrl).to.equal('http://ai-browser:3000/v1/render')
+    expect(callUrl).to.equal('http://overleaf-browser:3000/v1/render')
   })
 
   it('maps page HTTP status >= 400 to webError with status and http kind', async function () {
@@ -138,7 +138,7 @@ describe('BrowserRoute (HTTP client)', function () {
     try {
       Settings.aiAssist = {
         ...original,
-        browser: { url: 'http://ai-browser:3000', token: null, concurrency: 2 },
+        browser: { url: 'http://overleaf-browser:3000', token: null, concurrency: 2 },
       }
       expect(sharedBrowserRoute()).to.equal(null)
 
@@ -151,7 +151,7 @@ describe('BrowserRoute (HTTP client)', function () {
       Settings.aiAssist = {
         ...original,
         browser: {
-          url: 'http://ai-browser:3000',
+          url: 'http://overleaf-browser:3000',
           token: TOKEN,
           concurrency: 3,
         },

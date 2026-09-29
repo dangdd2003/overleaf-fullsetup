@@ -96,9 +96,7 @@ export function parseOutline({ docs, rootPath }) {
         const open = section.index + section[0].length - 1
         const group = readBraceGroup(line, open)
         if (!group) {
-          notes.push(
-            `${path}:${lineNumber}: unterminated section title, skipped`
-          )
+          notes.push(`${path}:${lineNumber}: unterminated section title, skipped`)
         } else {
           sections.push({
             path,
@@ -278,8 +276,7 @@ export function scanPackages(content) {
   const uses = []
   content.split('\n').forEach((rawLine, index) => {
     const line = rawLine.replace(/(?<!\\)%.*/, '')
-    const re =
-      /\\(?:usepackage|RequirePackage)\s*(?:\[([^\]]*)\])?\s*\{([^}]*)\}/g
+    const re = /\\(?:usepackage|RequirePackage)\s*(?:\[([^\]]*)\])?\s*\{([^}]*)\}/g
     let match = re.exec(line)
     while (match) {
       const options = match[1]?.trim() || undefined
@@ -389,15 +386,11 @@ export function matchSection(outline, query) {
   }))
 
   const exactHits = normalised.filter(e => e.title === wanted)
-  if (exactHits.length === 1)
-    return { kind: 'exact', section: exactHits[0].section }
-  if (exactHits.length > 1)
-    return { kind: 'ambiguous', candidates: exactHits.map(e => e.section) }
+  if (exactHits.length === 1) return { kind: 'exact', section: exactHits[0].section }
+  if (exactHits.length > 1) return { kind: 'ambiguous', candidates: exactHits.map(e => e.section) }
 
   const prefixes = normalised.filter(e => e.title.startsWith(wanted))
-  if (prefixes.length === 1)
-    return { kind: 'exact', section: prefixes[0].section }
-  if (prefixes.length > 1)
-    return { kind: 'ambiguous', candidates: prefixes.map(e => e.section) }
+  if (prefixes.length === 1) return { kind: 'exact', section: prefixes[0].section }
+  if (prefixes.length > 1) return { kind: 'ambiguous', candidates: prefixes.map(e => e.section) }
   return { kind: 'none' }
 }

@@ -69,8 +69,7 @@ export async function resolveAttachments(
       if (!file || file.type === 'binary') return { ...ref, text: null }
 
       try {
-        const range =
-          ref.from && ref.to ? { from: ref.from, to: ref.to } : undefined
+        const range = ref.from && ref.to ? { from: ref.from, to: ref.to } : undefined
         const { lines } = await handle.readFile(ref.path, range)
         return { ...ref, text: lines.join('\n') }
       } catch {

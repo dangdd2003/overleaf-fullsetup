@@ -2692,12 +2692,20 @@ $code-font-family: var(
     }
   }
 
+  // The divider colour matches the table background in dark mode, so the grid
+  // uses the same stronger border as the focused composer
+  $table-rule: color-mix(
+    in srgb,
+    var(--border-primary-themed) 35%,
+    var(--border-divider-themed)
+  );
+
   // Tables: the header stays put, only the table scrolls
   .ai-assist-table-wrapper {
     width: 100%;
     overflow: hidden;
     margin: var(--spacing-02, 8px) 0;
-    border: 1px solid var(--border-divider-themed);
+    border: 1px solid $table-rule;
     border-radius: 6px;
     background-color: var(--bg-secondary-themed);
 
@@ -2718,23 +2726,29 @@ $code-font-family: var(
       justify-content: space-between;
       padding: 4px 8px 4px 12px;
       background: var(--bg-tertiary-themed);
-      border-bottom: 1px solid var(--border-divider-themed);
+      border-bottom: 1px solid $table-rule;
       font-size: 0.6875rem;
       color: var(--content-secondary-themed);
       user-select: none;
 
+      // The table's title stays on one line
       .ai-assist-table-label {
-        font-family: $font-family-monospace;
-        font-size: 0.6875rem;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-        opacity: 0.8;
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: var(--font-size-01);
+        font-weight: 600;
+        color: var(--content-primary-themed);
       }
 
       .ai-assist-table-actions {
         display: inline-flex;
+        flex-shrink: 0;
         align-items: center;
         gap: 4px;
+        margin-left: var(--spacing-02);
       }
 
       .ai-assist-table-insert-btn {
@@ -2799,7 +2813,7 @@ $code-font-family: var(
 
     thead {
       background-color: var(--bg-tertiary-themed);
-      border-bottom: 2px solid var(--border-divider-themed);
+      border-bottom: 2px solid $table-rule;
     }
 
     th {
@@ -2807,8 +2821,8 @@ $code-font-family: var(
       font-weight: 600;
       font-size: var(--font-size-01);
       color: var(--content-primary-themed);
-      border-bottom: 2px solid var(--border-divider-themed);
-      border-right: 1px solid var(--border-divider-themed);
+      border-bottom: 2px solid $table-rule;
+      border-right: 1px solid $table-rule;
       white-space: nowrap;
 
       &:last-child {
@@ -2818,7 +2832,7 @@ $code-font-family: var(
 
     tbody {
       tr {
-        border-bottom: 1px solid var(--border-divider-themed);
+        border-bottom: 1px solid $table-rule;
         transition: background-color 0.15s ease;
 
         &:nth-child(even) {
@@ -2837,8 +2851,8 @@ $code-font-family: var(
 
     td {
       padding: 8px 12px;
-      border-bottom: 1px solid var(--border-divider-themed);
-      border-right: 1px solid var(--border-divider-themed);
+      border-bottom: 1px solid $table-rule;
+      border-right: 1px solid $table-rule;
       vertical-align: top;
       color: var(--content-primary-themed);
 
@@ -2864,6 +2878,64 @@ $code-font-family: var(
       }
     }
 
+    th,
+    td {
+      position: relative;
+      // Wrap between words, and inside one only when it cannot fit
+      word-break: normal;
+      overflow-wrap: break-word;
+    }
+
+    // Once a column is dragged the widths are fixed; headers and code wrap
+    &.is-sized {
+      table-layout: fixed;
+      min-width: 0;
+
+      th,
+      td code {
+        white-space: normal;
+      }
+    }
+
+    &.is-resizing {
+      user-select: none;
+    }
+
+    .ai-assist-col-resizer,
+    .ai-assist-row-resizer {
+      position: absolute;
+      z-index: 1;
+      touch-action: none;
+    }
+
+    .ai-assist-col-resizer {
+      top: 0;
+      right: -4px;
+      bottom: 0;
+      width: 8px;
+      cursor: col-resize;
+    }
+
+    .ai-assist-row-resizer {
+      right: 0;
+      bottom: -4px;
+      left: 0;
+      height: 8px;
+      cursor: row-resize;
+    }
+
+    // Handles on the outer edges stay inside the box so they add no scrollbar
+    th:last-child > .ai-assist-col-resizer,
+    td:last-child > .ai-assist-col-resizer {
+      right: 0;
+      width: 5px;
+    }
+
+    tr:last-child .ai-assist-row-resizer {
+      bottom: 0;
+      height: 5px;
+    }
+
     th[align='center'],
     td[align='center'] {
       text-align: center;
@@ -2881,7 +2953,7 @@ $code-font-family: var(
     max-width: 100%;
     overflow-x: auto;
     margin: var(--spacing-03) 0;
-    border: 1px solid var(--border-divider-themed);
+    border: 1px solid $table-rule;
     border-radius: 6px;
     background-color: var(--bg-secondary-themed);
   }

@@ -20,10 +20,7 @@ const projectSummary = looseObject({
     .string()
     .optional()
     .describe('ISO timestamp of the last change'),
-  compiler: z
-    .string()
-    .optional()
-    .describe('LaTeX engine the project compiles with'),
+  compiler: z.string().optional().describe('LaTeX engine the project compiles with'),
   archived: z
     .boolean()
     .optional()
@@ -85,10 +82,7 @@ export function registerProjectTools(server, { client, staticToken }) {
     },
     runTool(async ({ query, status }, ctx) =>
       textResult(
-        await client.get(tokenFrom(ctx, staticToken), '/projects', {
-          query,
-          status,
-        })
+        await client.get(tokenFrom(ctx, staticToken), '/projects', { query, status })
       )
     )
   )
@@ -105,10 +99,7 @@ export function registerProjectTools(server, { client, staticToken }) {
         initialFiles: z
           .array(
             z.object({
-              path: z
-                .string()
-                .min(1)
-                .describe('Path within the project, e.g. main.tex'),
+              path: z.string().min(1).describe('Path within the project, e.g. main.tex'),
               content: z.string().describe('The initial file contents'),
             })
           )
@@ -134,7 +125,7 @@ export function registerProjectTools(server, { client, staticToken }) {
     {
       title: 'Get project details',
       description:
-        "Read one project's settings: name, compiler, root document id, spell-check language and archived/trashed state. Use it to discover which engine a project compiles with or which file is its root document before compiling.",
+        'Read one project\'s settings: name, compiler, root document id, spell-check language and archived/trashed state. Use it to discover which engine a project compiles with or which file is its root document before compiling.',
       annotations: READ_ONLY,
       inputSchema: z.object({ projectId }),
       outputSchema: looseObject({
@@ -142,9 +133,7 @@ export function registerProjectTools(server, { client, staticToken }) {
       }),
     },
     runTool(async ({ projectId: id }, ctx) =>
-      textResult(
-        await client.get(tokenFrom(ctx, staticToken), `/projects/${id}`)
-      )
+      textResult(await client.get(tokenFrom(ctx, staticToken), `/projects/${id}`))
     )
   )
 
@@ -153,7 +142,7 @@ export function registerProjectTools(server, { client, staticToken }) {
     {
       title: 'Update project settings',
       description:
-        "Change a project's compiler, root document or spell-check language. Supply only the settings to change; the rest are left alone. Returns an acknowledgement, not the updated project.",
+        'Change a project\'s compiler, root document or spell-check language. Supply only the settings to change; the rest are left alone. Returns an acknowledgement, not the updated project.',
       annotations: { ...WRITES, destructiveHint: false, idempotentHint: true },
       inputSchema: z
         .object({
@@ -169,19 +158,14 @@ export function registerProjectTools(server, { client, staticToken }) {
           spellCheckLanguage: z
             .string()
             .optional()
-            .describe(
-              'Spell-check language code, e.g. en or fr; empty string disables it'
-            ),
+            .describe('Spell-check language code, e.g. en or fr; empty string disables it'),
         })
         .refine(
           args =>
             args.compiler !== undefined ||
             args.rootDocId !== undefined ||
             args.spellCheckLanguage !== undefined,
-          {
-            message:
-              'supply at least one of compiler, rootDocId or spellCheckLanguage',
-          }
+          { message: 'supply at least one of compiler, rootDocId or spellCheckLanguage' }
         ),
       outputSchema: looseObject({ status: okStatus }),
     },
@@ -190,11 +174,7 @@ export function registerProjectTools(server, { client, staticToken }) {
         Object.entries(settings).filter(([, value]) => value !== undefined)
       )
       return textResult(
-        await client.patch(
-          tokenFrom(ctx, staticToken),
-          `/projects/${id}/settings`,
-          body
-        )
+        await client.patch(tokenFrom(ctx, staticToken), `/projects/${id}/settings`, body)
       )
     })
   )
@@ -204,7 +184,7 @@ export function registerProjectTools(server, { client, staticToken }) {
     {
       title: 'Export projects as ZIP',
       description:
-        "Download projects as a single ZIP archive, the same archive the download button in the Overleaf UI produces. One project id returns that project's own zip, named after the project. Several project ids return one bundle zip holding a zip per project, named after the moment it was exported. Either way exactly one binary ZIP resource comes back, plus its metadata. Use it to back up or hand off whole projects rather than reading files one at a time.",
+        'Download projects as a single ZIP archive, the same archive the download button in the Overleaf UI produces. One project id returns that project\'s own zip, named after the project. Several project ids return one bundle zip holding a zip per project, named after the moment it was exported. Either way exactly one binary ZIP resource comes back, plus its metadata. Use it to back up or hand off whole projects rather than reading files one at a time.',
       annotations: READ_ONLY,
       inputSchema: z.object({
         projectIds: z
@@ -271,7 +251,8 @@ export function registerProjectTools(server, { client, staticToken }) {
       const sizeBytes = Buffer.byteLength(base64, 'base64')
       const sizeKb = Math.round((sizeBytes / 1024) * 10) / 10
       const name =
-        filename || (bundled ? 'Overleaf Projects.zip' : `${projectIds[0]}.zip`)
+        filename ||
+        (bundled ? 'Overleaf Projects.zip' : `${projectIds[0]}.zip`)
       const uri = bundled
         ? `overleaf://exports/${encodeURIComponent(name)}`
         : `overleaf://projects/${projectIds[0]}/project.zip`

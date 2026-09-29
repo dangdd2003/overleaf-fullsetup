@@ -193,9 +193,7 @@ describe('file tools', function () {
       path: '/figures/a.pdf',
       url: 'https://example.com/a.pdf',
     })
-    expect(client.post.firstCall.args[2].url).to.equal(
-      'https://example.com/a.pdf'
-    )
+    expect(client.post.firstCall.args[2].url).to.equal('https://example.com/a.pdf')
   })
 
   it('upload_asset rejects oversize base64 locally before calling web', async function () {
@@ -211,10 +209,7 @@ describe('file tools', function () {
   })
 
   it('upload_asset requires exactly one of contentBase64 or url', async function () {
-    const neither = await server.call('upload_asset', {
-      projectId: 'p1',
-      path: '/a.png',
-    })
+    const neither = await server.call('upload_asset', { projectId: 'p1', path: '/a.png' })
     expect(neither.isError).to.be.true
     const both = await server.call('upload_asset', {
       projectId: 'p1',

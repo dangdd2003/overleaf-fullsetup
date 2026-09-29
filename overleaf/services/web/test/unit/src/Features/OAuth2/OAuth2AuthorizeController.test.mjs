@@ -190,8 +190,7 @@ describe('OAuth2AuthorizeController', () => {
           code_challenge_method: 'S256',
           state: 'xyz123',
         },
-        originalUrl:
-          '/oauth/authorize?client_id=claude&redirect_uri=http%3A%2F%2Flocalhost%3A8080%2Fcallback&response_type=code&code_challenge=E9Melhoa2OwvFrGMTJguCH5rtx64LxPU67A5CdFbW74&code_challenge_method=S256&state=xyz123',
+        originalUrl: '/oauth/authorize?client_id=claude&redirect_uri=http%3A%2F%2Flocalhost%3A8080%2Fcallback&response_type=code&code_challenge=E9Melhoa2OwvFrGMTJguCH5rtx64LxPU67A5CdFbW74&code_challenge_method=S256&state=xyz123',
       }
       const res = createMockRes()
 
@@ -223,9 +222,7 @@ describe('OAuth2AuthorizeController', () => {
       expect(res.renderedData.user.email).to.equal('test@example.com')
       expect(res.renderedData.scope).to.equal('mcp')
       expect(res.renderedData.state).to.equal('xyz123')
-      expect(res.renderedData.code_challenge).to.equal(
-        'E9Melhoa2OwvFrGMTJguCH5rtx64LxPU67A5CdFbW74'
-      )
+      expect(res.renderedData.code_challenge).to.equal('E9Melhoa2OwvFrGMTJguCH5rtx64LxPU67A5CdFbW74')
       expect(res.renderedData.code_challenge_method).to.equal('S256')
     })
 
@@ -318,12 +315,10 @@ describe('OAuth2AuthorizeController', () => {
     it('issues an authorization code (oac_ prefix, 5m TTL) and redirects with code, state, and iss', async () => {
       vi.spyOn(SessionManager, 'getSessionUser').mockReturnValue(dummyUser)
       let createdDoc = null
-      vi.spyOn(OauthAuthorizationCode, 'create').mockImplementation(
-        async doc => {
-          createdDoc = doc
-          return doc
-        }
-      )
+      vi.spyOn(OauthAuthorizationCode, 'create').mockImplementation(async doc => {
+        createdDoc = doc
+        return doc
+      })
 
       const req = {
         body: {
@@ -346,9 +341,7 @@ describe('OAuth2AuthorizeController', () => {
       expect(createdDoc.redirectUri).to.equal('http://localhost:8080/callback')
       expect(createdDoc.scope).to.equal('mcp')
       expect(createdDoc.user_id).to.equal(dummyUser._id)
-      expect(createdDoc.codeChallenge).to.equal(
-        'E9Melhoa2OwvFrGMTJguCH5rtx64LxPU67A5CdFbW74'
-      )
+      expect(createdDoc.codeChallenge).to.equal('E9Melhoa2OwvFrGMTJguCH5rtx64LxPU67A5CdFbW74')
       expect(createdDoc.codeChallengeMethod).to.equal('S256')
 
       // 5 min TTL check

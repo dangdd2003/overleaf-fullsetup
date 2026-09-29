@@ -69,9 +69,7 @@ describe('ProviderForm', function () {
     })
     // A page on a public domain cannot reach providers on a private network.
     expect(
-      fetchMock.callHistory
-        .calls()
-        .every(call => call.url.includes('/ai-assist/providers/'))
+      fetchMock.callHistory.calls().every(call => call.url.includes('/ai-assist/providers/'))
     ).to.be.true
   })
 
@@ -113,8 +111,7 @@ describe('ProviderForm', function () {
       expect(screen.getByTestId('ai-provider-model-select')).to.exist
     })
     expect(
-      (screen.getByTestId('ai-provider-model-select') as HTMLSelectElement)
-        .value
+      (screen.getByTestId('ai-provider-model-select') as HTMLSelectElement).value
     ).to.equal('gpt-4o-mini')
   })
 
@@ -133,10 +130,7 @@ describe('ProviderForm', function () {
 
   it('stays on manual entry when the endpoint has no models route', async function () {
     // Azure OpenAI and similar gateways have no /v1/models.
-    fetchMock.post(
-      MODELS,
-      serverError('modelsUnsupported', 'Provider returned 404')
-    )
+    fetchMock.post(MODELS, serverError('modelsUnsupported', 'Provider returned 404'))
     renderForm({ initial: STORED })
 
     fireEvent.click(screen.getByRole('button', { name: /load models/i }))
@@ -183,10 +177,7 @@ describe('ProviderForm', function () {
     await waitFor(() => {
       expect(fetchMock.callHistory.calls(TEST)).to.have.length(1)
     })
-    expect(sentSettings(TEST)).to.include({
-      model: 'gpt-4o-mini',
-      apiKey: 'sk-test',
-    })
+    expect(sentSettings(TEST)).to.include({ model: 'gpt-4o-mini', apiKey: 'sk-test' })
   })
 
   it('surfaces the reason a connection test failed', async function () {
@@ -263,12 +254,7 @@ describe('ProviderForm', function () {
   it('falls back to Google default base URL when base URL is blank', function () {
     let saved: any = null
     renderForm({
-      initial: {
-        type: 'google',
-        baseUrl: '',
-        apiKey: 'g-key',
-        model: 'gemini-2.0-flash',
-      },
+      initial: { type: 'google', baseUrl: '', apiKey: 'g-key', model: 'gemini-2.0-flash' },
       onSave: (v: any) => (saved = v),
     })
 
@@ -276,9 +262,7 @@ describe('ProviderForm', function () {
       screen.getByRole('button', { name: 'Save' }).closest('form')!
     )
 
-    expect(saved.baseUrl).to.equal(
-      'https://generativelanguage.googleapis.com/v1beta'
-    )
+    expect(saved.baseUrl).to.equal('https://generativelanguage.googleapis.com/v1beta')
   })
 
   it('falls back to http://localhost:11434 for Ollama when base URL is blank', function () {
@@ -340,9 +324,7 @@ describe('ProviderForm', function () {
 
   it('leaves the fields empty when the provider uses its defaults', function () {
     renderForm({})
-    expect(
-      (screen.getByLabelText(/context window/i) as HTMLInputElement).value
-    ).to.equal('')
+    expect((screen.getByLabelText(/context window/i) as HTMLInputElement).value).to.equal('')
   })
 
   it('omits both limit keys when the fields are left blank', function () {
@@ -361,9 +343,7 @@ describe('ProviderForm', function () {
       initial: { ...STORED, contextWindow: 64000, maxOutputTokens: 4096 },
       onSave,
     })
-    expect(
-      (screen.getByLabelText(/context window/i) as HTMLInputElement).value
-    ).to.equal('64000')
+    expect((screen.getByLabelText(/context window/i) as HTMLInputElement).value).to.equal('64000')
 
     fireEvent.change(screen.getByLabelText(/context window/i), {
       target: { value: '' },
@@ -388,10 +368,7 @@ describe('ProviderForm', function () {
     // only TypeScript, not a JSON round-trip, enforces.
     const onSave = sinon.stub()
     renderForm({
-      initial: {
-        ...STORED,
-        contextWindow: 'not-a-number' as unknown as number,
-      },
+      initial: { ...STORED, contextWindow: 'not-a-number' as unknown as number },
       onSave,
     })
 
@@ -416,8 +393,7 @@ describe('ProviderForm', function () {
       expect(screen.getByTestId('ai-provider-model-select')).to.exist
     })
     expect(
-      (screen.getByTestId('ai-provider-model-select') as HTMLSelectElement)
-        .value
+      (screen.getByTestId('ai-provider-model-select') as HTMLSelectElement).value
     ).to.equal('qwen/qwen3.8-max:free')
 
     fireEvent.click(screen.getByRole('button', { name: /test connection/i }))

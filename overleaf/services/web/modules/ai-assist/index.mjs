@@ -15,13 +15,12 @@ const AiAssistModule = {
   async start() {
     if (!Settings.aiAssist?.enabled) return
 
-    const { default: control } =
-      await import('./app/src/AiAssistRunControl.mjs')
+    const { default: control } = await import('./app/src/AiAssistRunControl.mjs')
     const { default: reaper } = await import('./app/src/AiAssistRunReaper.mjs')
-    const { default: manager } =
-      await import('./app/src/AiAssistRunManager.mjs')
-    const { addRequiredCleanupHandlerBeforeDrainingConnections } =
-      await import('../../app/src/infrastructure/GracefulShutdown.mjs')
+    const { default: manager } = await import('./app/src/AiAssistRunManager.mjs')
+    const {
+      addRequiredCleanupHandlerBeforeDrainingConnections,
+    } = await import('../../app/src/infrastructure/GracefulShutdown.mjs')
 
     manager.attachControl(control)
 

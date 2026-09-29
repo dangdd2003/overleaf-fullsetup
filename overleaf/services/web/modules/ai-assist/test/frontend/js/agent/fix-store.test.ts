@@ -43,10 +43,7 @@ describe('getStoredFix', function () {
   })
 
   it('returns the fix for a matching entryId when the fingerprint still matches', function () {
-    saveStoredFix(
-      projectId,
-      makeFix('entry-1', 'main.tex:47:Undefined control sequence.')
-    )
+    saveStoredFix(projectId, makeFix('entry-1', 'main.tex:47:Undefined control sequence.'))
 
     const found = getStoredFix(
       projectId,
@@ -84,8 +81,6 @@ describe('getStoredFix', function () {
       'entry-2',
       'main.tex:47:Undefined control sequence.'
     )
-    expect(found?.fingerprint).to.equal(
-      'main.tex:47:Undefined control sequence.'
-    )
+    expect(found?.fingerprint).to.equal('main.tex:47:Undefined control sequence.')
   })
 })

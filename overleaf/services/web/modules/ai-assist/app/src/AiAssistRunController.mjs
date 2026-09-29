@@ -13,6 +13,29 @@ import {
 import { MODES } from './AiAssistModePolicy.mjs'
 import SessionManager from '../../../../app/src/Features/Authentication/SessionManager.mjs'
 
+/**
+ * The web settings a run may use, from what the browser sent. Null when the
+ * instance has no web tools or the user disabled web search. A client cannot
+ * switch the tools on by sending settings; a run with no search backend
+ * still reads pages. Throws on invalid client settings.
+ */
+export function resolveWebSearchSettings(clientSettings) {
+  if (!Settings.aiAssist?.webToolsEnabled) return null
+  if (clientSettings?.sourceMode === 'disabled') return null
+  let settings = null
+  if (
+    clientSettings?.sourceMode === 'server' ||
+    (!clientSettings && Settings.aiAssist?.serverWebSearch?.enabled)
+  ) {
+    settings = Settings.aiAssist?.serverWebSearch?.enabled
+      ? Settings.aiAssist.serverWebSearch
+      : null
+  } else if (clientSettings) {
+    settings = normalizeWebSearchSettings(clientSettings)
+  }
+  return settings ?? fetchOnlyWebSettings()
+}
+
 export class AiAssistRunController {
   constructor({
     manager = defaultManager,
@@ -61,29 +84,11 @@ export class AiAssistRunController {
       }
     }
 
-    // Ignored unless the instance turned the web tools on, so a client cannot
-    // switch them on by sending settings. A run with no search backend still
-    // reads pages; only a user who disabled web search gets neither tool.
-    let webSearchSettings = null
-    if (Settings.aiAssist?.webToolsEnabled) {
-      const clientSettings = req.body?.webSearchSettings
-      if (clientSettings?.sourceMode !== 'disabled') {
-        if (
-          clientSettings?.sourceMode === 'server' ||
-          (!clientSettings && Settings.aiAssist?.serverWebSearch?.enabled)
-        ) {
-          webSearchSettings = Settings.aiAssist?.serverWebSearch?.enabled
-            ? Settings.aiAssist.serverWebSearch
-            : null
-        } else if (clientSettings) {
-          try {
-            webSearchSettings = normalizeWebSearchSettings(clientSettings)
-          } catch (err) {
-            return res.status(400).json({ error: err.message })
-          }
-        }
-        webSearchSettings ??= fetchOnlyWebSettings()
-      }
+    let webSearchSettings
+    try {
+      webSearchSettings = resolveWebSearchSettings(req.body?.webSearchSettings)
+    } catch (err) {
+      return res.status(400).json({ error: err.message })
     }
 
     const runId = `run_${Date.now()}_${crypto.randomBytes(16).toString('hex')}`

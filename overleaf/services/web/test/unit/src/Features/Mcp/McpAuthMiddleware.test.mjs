@@ -6,8 +6,9 @@ vi.mock(
   '../../../../../app/src/Features/PersonalAccessToken/PersonalAccessTokenManager.mjs',
   () => ({ default: { validateToken }, validateToken })
 )
-const { requireMcpAuth } =
-  await import('../../../../../app/src/Features/Mcp/McpAuthMiddleware.mjs')
+const { requireMcpAuth } = await import(
+  '../../../../../app/src/Features/Mcp/McpAuthMiddleware.mjs'
+)
 
 function ctx(headers = {}) {
   const req = {
@@ -53,14 +54,8 @@ describe('requireMcpAuth', () => {
     })
 
     it('accepts lowercase "bearer <token>" headers', async () => {
-      validateToken.mockResolvedValue({
-        userId: 'u1',
-        email: 'e',
-        scopes: ['mcp'],
-      })
-      const { req, res, next } = ctx({
-        authorization: 'bearer olp_good12345678',
-      })
+      validateToken.mockResolvedValue({ userId: 'u1', email: 'e', scopes: ['mcp'] })
+      const { req, res, next } = ctx({ authorization: 'bearer olp_good12345678' })
       await requireMcpAuth(req, res, next)
       expect(next).toHaveBeenCalled()
       expect(req.mcpUserId).toBe('u1')
@@ -106,14 +101,8 @@ describe('requireMcpAuth', () => {
     })
 
     it('passes and sets req.mcpUserId when token has mcp scope', async () => {
-      validateToken.mockResolvedValue({
-        userId: 'u1',
-        email: 'e',
-        scopes: ['mcp'],
-      })
-      const { req, res, next } = ctx({
-        authorization: 'Bearer olp_good12345678',
-      })
+      validateToken.mockResolvedValue({ userId: 'u1', email: 'e', scopes: ['mcp'] })
+      const { req, res, next } = ctx({ authorization: 'Bearer olp_good12345678' })
       req.method = 'POST'
       await requireMcpAuth(req, res, next)
       expect(next).toHaveBeenCalled()
@@ -133,9 +122,7 @@ describe('requireMcpAuth', () => {
 
     it('does not leak the token in the error body', async () => {
       validateToken.mockResolvedValue(null)
-      const { req, res, next } = ctx({
-        authorization: 'Bearer olp_secretvalue',
-      })
+      const { req, res, next } = ctx({ authorization: 'Bearer olp_secretvalue' })
       await requireMcpAuth(req, res, next)
       expect(JSON.stringify(res.body)).not.toContain('olp_secretvalue')
       expect(next).not.toHaveBeenCalled()

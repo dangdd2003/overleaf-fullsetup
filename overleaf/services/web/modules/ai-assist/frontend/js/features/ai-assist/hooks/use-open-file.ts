@@ -47,10 +47,7 @@ function resolveEntity(
 
   // 1. Direct path lookup from path context
   const direct = fileTreeContext?.findEntityByPath?.(clean)
-  if (
-    direct?.entity?._id &&
-    (direct.type === 'doc' || direct.type === 'fileRef')
-  ) {
+  if (direct?.entity?._id && (direct.type === 'doc' || direct.type === 'fileRef')) {
     return { _id: direct.entity._id, type: direct.type }
   }
 

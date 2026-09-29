@@ -2,6 +2,7 @@ import { describe, it } from 'vitest'
 import { expect } from 'chai'
 import sinon from 'sinon'
 import {
+  anthropicSystemField,
   createProviderClient,
   ProviderError,
   fetchWithRetry,
@@ -1619,6 +1620,80 @@ describe('AiAssistProviders', function () {
       expect(error).to.be.an.instanceOf(ProviderError)
       expect(error.message).to.include('not found')
       expect(fetchFn.callCount).to.equal(1)
+    })
+  })
+
+  describe('anthropicSystemField', function () {
+    const ephemeral = { type: 'ephemeral' }
+
+    it('is one cached block without a prefix hint', function () {
+      expect(anthropicSystemField('S', { cacheSystem: true })).to.deep.equal([
+        { type: 'text', text: 'S', cache_control: ephemeral },
+      ])
+    })
+
+    it('caches the shared prefix and leaves the project block after it', function () {
+      expect(
+        anthropicSystemField('SHARED\n\nAGENTS', {
+          cacheSystem: true,
+          systemPrefix: 'SHARED',
+        })
+      ).to.deep.equal([
+        { type: 'text', text: 'SHARED', cache_control: ephemeral },
+        { type: 'text', text: 'AGENTS' },
+      ])
+    })
+
+    it('ignores a hint that is not a prefix', function () {
+      expect(
+        anthropicSystemField('OTHER', { cacheSystem: true, systemPrefix: 'X' })
+      ).to.deep.equal([{ type: 'text', text: 'OTHER', cache_control: ephemeral }])
+    })
+
+    it('sends a plain string when caching is off', function () {
+      expect(anthropicSystemField('S', null)).to.equal('S')
+    })
+
+    it('keeps within four cache breakpoints with a split system prompt', async function () {
+      let sentPayload = null
+      const fakeFetch = sinon.stub().callsFake((_url, opts) => {
+        sentPayload = JSON.parse(opts.body)
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          body: (async function* () {
+            yield new TextEncoder().encode('data: {"type":"message_stop"}\n\n')
+          })(),
+        })
+      })
+      const client = createProviderClient({
+        type: 'anthropic',
+        apiKey: 'key',
+        model: 'claude-x',
+        fetchFn: fakeFetch,
+      })
+      for await (const _ of client.streamChat({
+        system: 'SHARED\n\nAGENTS',
+        messages: [
+          { role: 'user', content: 'Turn 1' },
+          { role: 'assistant', content: 'Reply 1' },
+          { role: 'user', content: 'Turn 2' },
+        ],
+        tools: [{ name: 'tool_a', description: 'a', parameters: {} }],
+        cacheHints: {
+          cacheSystem: true,
+          cacheTools: true,
+          systemPrefix: 'SHARED',
+          lastStableMessage: 1,
+        },
+      })) {
+      }
+      const marks = JSON.stringify(sentPayload).match(/"cache_control"/g)
+      expect(marks).to.have.length(4)
+      expect(sentPayload.system[1]).to.deep.equal({
+        type: 'text',
+        text: 'AGENTS',
+      })
     })
   })
 })

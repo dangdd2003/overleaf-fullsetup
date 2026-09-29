@@ -62,14 +62,8 @@ const OAuth2Router = {
     )
 
     // Authorization & Consent (Session-authenticated on webRouter)
-    webRouter.get(
-      '/oauth/authorize',
-      OAuth2AuthorizeController.showAuthorizePage
-    )
-    webRouter.post(
-      '/oauth/authorize',
-      OAuth2AuthorizeController.handleAuthorize
-    )
+    webRouter.get('/oauth/authorize', OAuth2AuthorizeController.showAuthorizePage)
+    webRouter.post('/oauth/authorize', OAuth2AuthorizeController.handleAuthorize)
   },
 }
 

@@ -24,6 +24,8 @@ import {
   getOwnerCaches,
   openWebCache,
   searchCacheText,
+  REPEATED_SEARCH_NOTICE,
+  WEB_TOOL_SPECS,
 } from '../../../app/src/AiAssistWebTools.mjs'
 import { renderToolResult } from '../../../app/src/AiAssistToolRender.mjs'
 import { webError } from '../../../app/src/web-fetch/util.mjs'
@@ -324,6 +326,63 @@ describe('AiAssistWebTools', function () {
   })
 
   describe('web_search', function () {
+    it('marks a search this run already ran', async function () {
+      const fetchFn = sinon.stub().callsFake(async () =>
+        jsonResponse({
+          results: [{ title: 'T', url: 'https://example.org/a', content: 's' }],
+        })
+      )
+      const tools = new AiAssistWebTools(
+        { type: 'searxng', baseUrl: 'https://search.example.org' },
+        { fetchFn, cacheOwner: 'repeat-test-1' }
+      )
+      const first = await tools.execute('web_search', { query: 'siunitx range' })
+      const second = await tools.execute('web_search', {
+        query: 'Siunitx  range',
+      })
+      expect(first).not.to.have.property('notice')
+      expect(second.notice).to.equal(
+        'You already ran this search. Use these results or try a different angle.'
+      )
+      expect(second.results).to.deep.equal(first.results)
+      expect(REPEATED_SEARCH_NOTICE).to.equal(
+        'You already ran this search. Use these results or try a different angle.'
+      )
+    })
+
+    it('counts searches from earlier turns as already run', async function () {
+      const fetchFn = sinon.stub().callsFake(async () =>
+        jsonResponse({ results: [] })
+      )
+      const tools = new AiAssistWebTools(
+        { type: 'searxng', baseUrl: 'https://search.example.org' },
+        { fetchFn, cacheOwner: 'repeat-test-2' }
+      )
+      tools.rememberSources([
+        {
+          role: 'assistant',
+          toolCalls: [
+            {
+              name: 'web_search',
+              args: { query: 'biblatex' },
+              result: { results: [] },
+            },
+          ],
+        },
+      ])
+      const result = await tools.execute('web_search', { query: 'biblatex' })
+      expect(result.notice).to.equal(
+        'You already ran this search. Use these results or try a different angle.'
+      )
+    })
+
+    it('tells the model when to search', function () {
+      const spec = WEB_TOOL_SPECS.find(s => s.name === 'web_search')
+      expect(spec.description).to.match(
+        /^Search the web for current information, including LaTeX packages, syntax and changes\. Call it first whenever you are unsure a fact is correct or current, before relying on memory\./
+      )
+    })
+
     it('queries SearXNG for JSON and keeps title, URL and snippet', async function () {
       const fetchFn = sinon.stub().resolves(
         jsonResponse({
@@ -1203,6 +1262,22 @@ describe('AiAssistWebTools', function () {
         expect(params('web_search')).to.deep.equal(['query'])
         expect(params('web_fetch')).to.deep.equal(['url', 'page', 'find'])
       }
+    })
+
+    it('describes web_fetch without web_search, for runs that cannot search', function () {
+      const [spec] = new AiAssistWebTools(fetchOnlyWebSettings()).getToolSpecs()
+      expect(JSON.stringify(spec)).not.to.include('web_search')
+      expect(spec.description).to.include('source number')
+    })
+
+    it('leaves when to search to the system prompt', function () {
+      const specs = new AiAssistWebTools({
+        type: 'ollama',
+        apiKey: 'k',
+      }).getToolSpecs()
+      const search = specs.find(s => s.name === 'web_search')
+      expect(search.description).to.include('[n]')
+      expect(search.description).not.to.match(/use it for/i)
     })
   })
 

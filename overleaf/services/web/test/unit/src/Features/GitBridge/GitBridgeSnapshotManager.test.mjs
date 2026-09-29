@@ -9,6 +9,7 @@ import DocumentUpdaterHandler from '../../../../../app/src/Features/DocumentUpda
 import EditorController from '../../../../../app/src/Features/Editor/EditorController.mjs'
 import Settings from '@overleaf/settings'
 import { fetchNothing } from '@overleaf/fetch-utils'
+import { db } from '../../../../../app/src/infrastructure/mongodb.mjs'
 
 describe('GitBridgeSnapshotManager', function () {
   const projectId = '60f1b4a9e1b2c3d4e5f6a7b8'
@@ -32,6 +33,7 @@ describe('GitBridgeSnapshotManager', function () {
   let origUpsertDocWithPath
   let origUpsertFileWithPath
   let origDeleteEntityWithPath
+  let origProjectHistoryLabels
 
   function setMockProject(fn) {
     ProjectGetter.getProjectWithoutLock = fn
@@ -67,7 +69,8 @@ describe('GitBridgeSnapshotManager', function () {
     origDocstorePromisesGetAllDocVersions =
       DocstoreManager.promises?.getAllDocVersions
     origGetAllDocs = DocstoreManager.getAllDocs
-    origDocstorePromisesGetAllDocs = DocstoreManager.promises?.getAllDocs
+    origDocstorePromisesGetAllDocs =
+      DocstoreManager.promises?.getAllDocs
     origFlushProjectToMongo =
       DocumentUpdaterHandler.promises?.flushProjectToMongo
     origFetch = globalThis.fetch
@@ -79,10 +82,19 @@ describe('GitBridgeSnapshotManager', function () {
     origUpsertDocWithPath = EditorController.promises.upsertDocWithPath
     origUpsertFileWithPath = EditorController.promises.upsertFileWithPath
     origDeleteEntityWithPath = EditorController.promises.deleteEntityWithPath
+    origProjectHistoryLabels = db.projectHistoryLabels
+    db.projectHistoryLabels = {
+      find: () => ({
+        sort: () => ({
+          toArray: async () => [],
+        }),
+      }),
+    }
   })
 
   afterEach(function () {
     sinon.restore()
+    db.projectHistoryLabels = origProjectHistoryLabels
     Settings.security = origSecurity
     ProjectGetter.getProjectWithoutLock = origGetProjectWithoutLock
     if (ProjectGetter.promises) {
@@ -106,7 +118,8 @@ describe('GitBridgeSnapshotManager', function () {
     }
     DocstoreManager.getAllDocs = origGetAllDocs
     if (DocstoreManager.promises) {
-      DocstoreManager.promises.getAllDocs = origDocstorePromisesGetAllDocs
+      DocstoreManager.promises.getAllDocs =
+        origDocstorePromisesGetAllDocs
     }
     if (DocumentUpdaterHandler.promises) {
       DocumentUpdaterHandler.promises.flushProjectToMongo =
@@ -303,9 +316,7 @@ describe('GitBridgeSnapshotManager', function () {
       expect(Array.isArray(snapshot.atts)).toBe(true)
       expect(snapshot.atts.length).toBe(1)
       expect(snapshot.atts[0][1]).toContain('figure.png')
-      expect(snapshot.atts[0][0]).toContain(
-        `/api/v0/docs/${projectId}/file/file-1`
-      )
+      expect(snapshot.atts[0][0]).toContain(`/api/v0/docs/${projectId}/file/file-1`)
       expect(snapshot.atts[0][0]).toContain('token=')
     })
 
@@ -511,9 +522,7 @@ describe('GitBridgeSnapshotManager', function () {
           return {
             ok: true,
             arrayBuffer: async () =>
-              Buffer.from(
-                '\\documentclass{article}\n\\begin{document}Hello\\end{document}'
-              ),
+              Buffer.from('\\documentclass{article}\n\\begin{document}Hello\\end{document}'),
           }
         }
         if (url === 'http://git-bridge/raw/image.png') {
@@ -535,10 +544,7 @@ describe('GitBridgeSnapshotManager', function () {
         upsertDocCalled = true
         expect(pId).toBe(projectId)
         expect(filePath).toBe('/main.tex')
-        expect(lines).toEqual([
-          '\\documentclass{article}',
-          '\\begin{document}Hello\\end{document}',
-        ])
+        expect(lines).toEqual(['\\documentclass{article}', '\\begin{document}Hello\\end{document}'])
         expect(source).toBe('git-bridge')
         expect(uId).toBe(userId)
       }
@@ -640,7 +646,12 @@ describe('GitBridgeSnapshotManager', function () {
         { name: 'new-file.tex', url: 'http://git-bridge/raw/new-file.tex' },
       ]
 
-      await GitBridgeSnapshotManager.processPush(projectId, userId, files, null)
+      await GitBridgeSnapshotManager.processPush(
+        projectId,
+        userId,
+        files,
+        null
+      )
 
       const firstDeleteIdx = callOrder.indexOf('delete')
       const lastFetchIdx = callOrder.lastIndexOf('fetch')
@@ -659,20 +670,17 @@ describe('GitBridgeSnapshotManager', function () {
             docs: [],
             fileRefs: [],
             folders: [
-              {
-                _id: 'f1',
-                name: 'images',
-                docs: [],
-                fileRefs: [],
-                folders: [],
-              },
+              { _id: 'f1', name: 'images', docs: [], fileRefs: [], folders: [] },
             ],
           },
         ],
       }))
       DocstoreManager.promises.getAllDocVersions = async () => []
 
-      EditorController.promises.deleteEntityWithPath = async (pId, path) => {
+      EditorController.promises.deleteEntityWithPath = async (
+        pId,
+        path
+      ) => {
         deletedPaths.push(path)
       }
 

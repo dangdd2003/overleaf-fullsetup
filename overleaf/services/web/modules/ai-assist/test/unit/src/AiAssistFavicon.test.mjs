@@ -35,31 +35,22 @@ describe('AiAssistFavicon', function () {
   it('knows images by their bytes, not their label', function () {
     expect(sniffImageType(ICO)).to.equal('image/x-icon')
     expect(sniffImageType(PNG)).to.equal('image/png')
-    expect(
-      sniffImageType(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>'))
-    ).to.equal('image/svg+xml')
-    expect(
-      sniffImageType(Buffer.from('<!doctype html><html>Not found</html>'))
-    ).to.equal(null)
+    expect(sniffImageType(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>'))).to.equal('image/svg+xml')
+    expect(sniffImageType(Buffer.from('<!doctype html><html>Not found</html>'))).to.equal(null)
   })
 
   it('accepts only http(s) origins', function () {
-    expect(normalizeOrigin('https://en.nhandan.vn/some/page')).to.equal(
-      'https://en.nhandan.vn'
-    )
+    expect(normalizeOrigin('https://en.nhandan.vn/some/page')).to.equal('https://en.nhandan.vn')
     expect(normalizeOrigin('javascript:alert(1)')).to.equal(null)
     expect(normalizeOrigin('not a url')).to.equal(null)
   })
 
   it('follows the icon the home page declares', async function () {
     const fetch = fakeFetch({
-      'https://news.example/':
-        '<link rel="shortcut icon" href="https://cdn.example/f.ico">',
+      'https://news.example/': '<link rel="shortcut icon" href="https://cdn.example/f.ico">',
       'https://cdn.example/f.ico': ICO,
     })
-    const icon = await new FaviconResolver({ fetch }).get(
-      'https://news.example'
-    )
+    const icon = await new FaviconResolver({ fetch }).get('https://news.example')
     expect(icon.type).to.equal('image/x-icon')
   })
 
@@ -69,9 +60,7 @@ describe('AiAssistFavicon', function () {
       'https://site.example/missing.png': '<html>soft 404</html>',
       'https://site.example/favicon.ico': PNG,
     })
-    const icon = await new FaviconResolver({ fetch }).get(
-      'https://site.example'
-    )
+    const icon = await new FaviconResolver({ fetch }).get('https://site.example')
     expect(icon.type).to.equal('image/png')
   })
 

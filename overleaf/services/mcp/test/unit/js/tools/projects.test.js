@@ -46,16 +46,10 @@ describe('project tools', function () {
 
   it('list_projects forwards the token and the query and status filters', async function () {
     client.get.resolves({ projects: [{ id: 'p1', name: 'Paper' }] })
-    const result = await server.call('list_projects', {
-      query: 'draft',
-      status: 'trashed',
-    })
+    const result = await server.call('list_projects', { query: 'draft', status: 'trashed' })
     expect(client.get.firstCall.args[0]).to.equal(TOKEN)
     expect(client.get.firstCall.args[1]).to.equal('/projects')
-    expect(client.get.firstCall.args[2]).to.deep.equal({
-      query: 'draft',
-      status: 'trashed',
-    })
+    expect(client.get.firstCall.args[2]).to.deep.equal({ query: 'draft', status: 'trashed' })
     expect(JSON.parse(result.content[0].text).projects[0].id).to.equal('p1')
   })
 
@@ -78,14 +72,9 @@ describe('project tools', function () {
 
   it('update_project patches only the fields supplied', async function () {
     client.patch.resolves({ status: 'ok' })
-    await server.call('update_project', {
-      projectId: 'p1',
-      compiler: 'xelatex',
-    })
+    await server.call('update_project', { projectId: 'p1', compiler: 'xelatex' })
     expect(client.patch.firstCall.args[1]).to.equal('/projects/p1/settings')
-    expect(client.patch.firstCall.args[2]).to.deep.equal({
-      compiler: 'xelatex',
-    })
+    expect(client.patch.firstCall.args[2]).to.deep.equal({ compiler: 'xelatex' })
   })
 
   it('surfaces the upstream code as a tool error', async function () {
@@ -104,10 +93,7 @@ describe('project tools', function () {
 
   it('uses the stdio fallback token when there is no HTTP context', async function () {
     const stdioServer = fakeServer()
-    registerProjectTools(stdioServer, {
-      client,
-      staticToken: 'olp_stdio000000',
-    })
+    registerProjectTools(stdioServer, { client, staticToken: 'olp_stdio000000' })
     client.get.resolves({ projects: [] })
     await stdioServer.call('list_projects', {}, {})
     expect(client.get.firstCall.args[0]).to.equal('olp_stdio000000')
@@ -204,9 +190,7 @@ describe('project tools', function () {
       projectIds: Array.from({ length: 51 }, (_, i) => `p${i}`),
     })
     expect(tooMany.isError).to.be.true
-    expect(JSON.parse(tooMany.content[0].text).message).to.include(
-      'more than 50'
-    )
+    expect(JSON.parse(tooMany.content[0].text).message).to.include('more than 50')
 
     expect(client.requestBinary.called).to.be.false
   })

@@ -24,16 +24,13 @@ describe('AdminUserGuards', () => {
     it('throws BadRequestError if an admin tries to remove their own admin status', async () => {
       await expect(
         ensureCanModifyAdmin('user-1', 'user-1', false)
-      ).rejects.toThrow(BadRequestError)
-      await expect(
-        ensureCanModifyAdmin('user-1', 'user-1', false)
-      ).rejects.toThrow('cannot_demote_self')
+      ).to.be.rejectedWith(BadRequestError, 'cannot_demote_self')
     })
 
     it('allows an admin to keep their own admin status', async () => {
       await expect(
         ensureCanModifyAdmin('user-1', 'user-1', true)
-      ).resolves.not.toThrow()
+      ).to.be.fulfilled
     })
 
     it('throws ForbiddenError if demoting the last active administrator', async () => {
@@ -41,10 +38,7 @@ describe('AdminUserGuards', () => {
 
       await expect(
         ensureCanModifyAdmin('admin-1', 'admin-2', false)
-      ).rejects.toThrow(ForbiddenError)
-      await expect(
-        ensureCanModifyAdmin('admin-1', 'admin-2', false)
-      ).rejects.toThrow('cannot_modify_last_admin')
+      ).to.be.rejectedWith(ForbiddenError, 'cannot_modify_last_admin')
 
       expect(db.users.countDocuments).toHaveBeenCalledWith({
         isAdmin: true,
@@ -57,13 +51,13 @@ describe('AdminUserGuards', () => {
 
       await expect(
         ensureCanModifyAdmin('admin-1', 'admin-2', false)
-      ).resolves.not.toThrow()
+      ).to.be.fulfilled
     })
 
     it('allows promoting any user to administrator without checking count', async () => {
       await expect(
         ensureCanModifyAdmin('admin-1', 'user-2', true)
-      ).resolves.not.toThrow()
+      ).to.be.fulfilled
       expect(db.users.countDocuments).not.toHaveBeenCalled()
     })
   })
@@ -71,24 +65,18 @@ describe('AdminUserGuards', () => {
   describe('ensureCanDeleteUser', () => {
     it('throws BadRequestError if an admin tries to delete their own account', async () => {
       const selfUser = { _id: 'admin-1', isAdmin: true }
-      await expect(ensureCanDeleteUser('admin-1', selfUser)).rejects.toThrow(
-        BadRequestError
-      )
-      await expect(ensureCanDeleteUser('admin-1', selfUser)).rejects.toThrow(
-        'cannot_delete_self'
-      )
+      await expect(
+        ensureCanDeleteUser('admin-1', selfUser)
+      ).to.be.rejectedWith(BadRequestError, 'cannot_delete_self')
     })
 
     it('throws ForbiddenError if deleting the last active administrator', async () => {
       db.users.countDocuments.mockResolvedValue(1)
       const targetAdmin = { _id: 'admin-2', isAdmin: true }
 
-      await expect(ensureCanDeleteUser('admin-1', targetAdmin)).rejects.toThrow(
-        ForbiddenError
-      )
-      await expect(ensureCanDeleteUser('admin-1', targetAdmin)).rejects.toThrow(
-        'cannot_modify_last_admin'
-      )
+      await expect(
+        ensureCanDeleteUser('admin-1', targetAdmin)
+      ).to.be.rejectedWith(ForbiddenError, 'cannot_modify_last_admin')
     })
 
     it('allows deleting an administrator when multiple active admins exist', async () => {
@@ -97,7 +85,7 @@ describe('AdminUserGuards', () => {
 
       await expect(
         ensureCanDeleteUser('admin-1', targetAdmin)
-      ).resolves.not.toThrow()
+      ).to.be.fulfilled
     })
 
     it('allows deleting a regular non-admin user without querying admin count', async () => {

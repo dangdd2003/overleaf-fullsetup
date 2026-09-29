@@ -40,18 +40,14 @@ describe('background-run-client', function () {
     })
 
     expect(runId).to.equal('run-abc')
-    expect(fakeFetch.firstCall.args[0]).to.equal(
-      '/ai-assist/projects/proj-1/runs'
-    )
+    expect(fakeFetch.firstCall.args[0]).to.equal('/ai-assist/projects/proj-1/runs')
   })
 
   it('surfaces server error message when create run endpoint returns non-ok with error json', async function () {
     fakeFetch.resolves({
       ok: false,
       status: 400,
-      json: sinon
-        .stub()
-        .resolves({ error: 'Conversation is too large to send' }),
+      json: sinon.stub().resolves({ error: 'Conversation is too large to send' }),
     })
 
     try {
@@ -104,9 +100,7 @@ describe('background-run-client', function () {
   it('posts approval decisions', async function () {
     fakeFetch.resolves({ ok: true, json: sinon.stub().resolves({ ok: true }) })
     await approveBackgroundEdit('run-abc', { accepted: true })
-    expect(fakeFetch.firstCall.args[0]).to.equal(
-      '/ai-assist/runs/run-abc/approve'
-    )
+    expect(fakeFetch.firstCall.args[0]).to.equal('/ai-assist/runs/run-abc/approve')
   })
 
   it('connects to project-scoped stream endpoint', function () {
@@ -154,9 +148,7 @@ describe('background-run-client', function () {
     })
 
     expect(messageHandler).to.be.a('function')
-    messageHandler!({
-      data: JSON.stringify({ event: { type: 'text', text: 'hi' } }),
-    })
+    messageHandler!({ data: JSON.stringify({ event: { type: 'text', text: 'hi' } }) })
 
     expect(closeStub.calledOnce).to.be.true
     expect(onErrorSpy.calledOnce).to.be.true
@@ -227,9 +219,7 @@ describe('background-run-client', function () {
       })
       instances[0].onerror(new Event('error'))
 
-      expect(
-        customLocalStorage.getItem('ai-assist:active-run:proj-1')
-      ).to.equal('run-1')
+      expect(customLocalStorage.getItem('ai-assist:active-run:proj-1')).to.equal('run-1')
     } finally {
       clock.restore()
       customLocalStorage.removeItem('ai-assist:active-run:proj-1')

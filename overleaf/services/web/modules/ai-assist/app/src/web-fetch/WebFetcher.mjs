@@ -375,7 +375,7 @@ export class WebFetcher {
     let errorMsg = `Could not read ${url}: ${tried.join(' · ')}.`
     if (sawBrowserChallenge && (!this.browser || !this.browser.available())) {
       errorMsg +=
-        ' This page needs a real browser (it runs a bot check or renders in JavaScript); the ai-browser sidecar can read it.'
+        ' This page needs a real browser (it runs a bot check or renders in JavaScript); the overleaf-browser sidecar can read it.'
     }
 
     throw webError(errorMsg, {

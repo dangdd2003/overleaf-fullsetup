@@ -531,6 +531,51 @@ describe('holdBackIncomplete', function () {
     expect(olItems[0].textContent).to.equal('First CJK item')
   })
 
+  it('titles a table with the heading above it and drops it from the prose', function () {
+    const md = [
+      '### Model summary:',
+      '',
+      '| Item | Details |',
+      '|---|---|',
+      '| Base | Tools |',
+    ].join('\n')
+    const { container } = render(<MarkdownContent content={md} />)
+    expect(
+      container.querySelector('.ai-assist-table-label')?.textContent
+    ).to.equal('Model summary')
+    expect(container.querySelector('h3')).to.not.exist
+  })
+
+  it('titles a table with a caption written below it', function () {
+    const md = [
+      '| Package | Purpose |',
+      '|---|---|',
+      '| amsmath | Maths |',
+      '',
+      'Table 2: Loaded packages.',
+    ].join('\n')
+    const { container } = render(<MarkdownContent content={md} />)
+    expect(
+      container.querySelector('.ai-assist-table-label')?.textContent
+    ).to.equal('Loaded packages')
+    expect(container.textContent).to.not.contain('Table 2')
+  })
+
+  it('titles an unlabelled table with its column names', function () {
+    const md = [
+      'Compare them:',
+      '',
+      '| Option | Cost |',
+      '|---|---|',
+      '| X | 1 |',
+    ].join('\n')
+    const { container } = render(<MarkdownContent content={md} />)
+    expect(
+      container.querySelector('.ai-assist-table-label')?.textContent
+    ).to.equal('Option · Cost')
+    expect(container.querySelector('p')?.textContent).to.equal('Compare them:')
+  })
+
   it('separates tables immediately following prose without a blank line', function () {
     const md = [
       'Summary table:',

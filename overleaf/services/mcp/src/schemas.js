@@ -44,12 +44,7 @@ const PORTABLE_FORMATS = new Set([
 ])
 
 /** Keys whose values are maps of names to schemas, not nested keywords. */
-const SCHEMA_MAPS = new Set([
-  'properties',
-  'patternProperties',
-  '$defs',
-  'definitions',
-])
+const SCHEMA_MAPS = new Set(['properties', 'patternProperties', '$defs', 'definitions'])
 
 function portableNode(node) {
   if (Array.isArray(node)) return node.map(portableNode)
@@ -79,16 +74,12 @@ function portableNode(node) {
   // advertised range — validation still rejects it.
   if (node.exclusiveMinimum !== undefined) {
     const bound =
-      node.type === 'integer'
-        ? node.exclusiveMinimum + 1
-        : node.exclusiveMinimum
+      node.type === 'integer' ? node.exclusiveMinimum + 1 : node.exclusiveMinimum
     out.minimum = Math.max(bound, node.minimum ?? -Infinity)
   }
   if (node.exclusiveMaximum !== undefined) {
     const bound =
-      node.type === 'integer'
-        ? node.exclusiveMaximum - 1
-        : node.exclusiveMaximum
+      node.type === 'integer' ? node.exclusiveMaximum - 1 : node.exclusiveMaximum
     out.maximum = Math.min(bound, node.maximum ?? Infinity)
   }
   return out
@@ -121,10 +112,7 @@ export function portable(schema) {
       version: 1,
       vendor: 'overleaf-mcp',
       validate: value => schema['~standard'].validate(value),
-      jsonSchema: {
-        input: () => jsonSchema('input'),
-        output: () => jsonSchema('output'),
-      },
+      jsonSchema: { input: () => jsonSchema('input'), output: () => jsonSchema('output') },
     },
   }
 }

@@ -8,7 +8,7 @@ import useEventListener from '@/shared/hooks/use-event-listener'
 import { ArrowDown, NotePencil, SidebarSimple } from '@phosphor-icons/react'
 import { AiAssistant } from '../../assistant'
 import { TranscriptEntry } from '../../agent/agent-messages'
-import { AgentMode } from '../../agent/agent-mode'
+import { AgentMode, MODE_LABELS } from '../../agent/agent-mode'
 import { ProjectFile, ProjectHandle } from '../../agent/project-handle'
 import { TOOLS } from '../../agent/tools/registry'
 import {
@@ -67,6 +67,7 @@ export async function buildUserEntry({
   attachments = [],
   attachedSelection,
   extraContext,
+  mode,
 }: {
   handle: ProjectHandle
   transcript: TranscriptEntry[]
@@ -84,6 +85,8 @@ export async function buildUserEntry({
    * pinned — the transcript must not render a chip for it.
    */
   extraContext?: string
+  /** The composer's mode, frozen into the envelope. */
+  mode?: AgentMode
 }): Promise<TranscriptEntry> {
   const id = `u${transcript.length}`
   const previousUser = [...transcript]
@@ -124,6 +127,7 @@ export async function buildUserEntry({
       selection: activeSel,
       outline: index?.outline ?? null,
       today: formatToday(),
+      ...(mode ? { mode: MODE_LABELS[mode] } : {}),
       compile: compile
         ? {
             status: compile.status,
@@ -550,6 +554,7 @@ function AgentPanelInner({
           attachments: attachmentsResolved,
           attachedSelection: selectionRef,
           extraContext,
+          mode: state.mode,
         })
         const userEntry: TranscriptEntry = { ...built, id: entryId }
 
@@ -575,7 +580,15 @@ function AgentPanelInner({
         }))
       }
     },
-    [handle, state.running, run, queueMessage, setState, scrollToBottom]
+    [
+      handle,
+      state.running,
+      state.mode,
+      run,
+      queueMessage,
+      setState,
+      scrollToBottom,
+    ]
   )
 
   const onSend = useCallback(

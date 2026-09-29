@@ -87,9 +87,7 @@ describe('OAuth2ToolCatalog', () => {
   })
 
   it('returns an empty array when the fetch rejects', async () => {
-    globalThis.fetch = vi
-      .fn()
-      .mockRejectedValue(new Error('connect ECONNREFUSED'))
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error('connect ECONNREFUSED'))
 
     const categories = await getToolCategories()
 

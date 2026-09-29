@@ -48,10 +48,7 @@ export function buildProtectedResourceMetadataUrl(resourceUri) {
  */
 export function buildWwwAuthenticateHeader(config, error, description) {
   let resourceUri = config?.resourceUri || 'http://localhost:3050/mcp'
-  if (
-    !resourceUri.startsWith('http://') &&
-    !resourceUri.startsWith('https://')
-  ) {
+  if (!resourceUri.startsWith('http://') && !resourceUri.startsWith('https://')) {
     resourceUri = `http://${resourceUri}`
   }
   const metaUrl = buildProtectedResourceMetadataUrl(resourceUri)
@@ -114,9 +111,7 @@ export function createJwtVerifier({
 
     const response = await fetchImpl(jwksUrl)
     if (!response.ok) {
-      throw new Error(
-        `Failed to fetch JWKS from ${jwksUrl}: ${response.status}`
-      )
+      throw new Error(`Failed to fetch JWKS from ${jwksUrl}: ${response.status}`)
     }
     cachedJwks = await response.json()
     jwksExpiresAt = now + jwksTtlMs
@@ -143,9 +138,7 @@ export function createJwtVerifier({
     }
 
     if (!header || header.alg !== 'RS256') {
-      throw new Error(
-        `Unsupported JWT algorithm: ${header?.alg || 'unknown'}, expected RS256`
-      )
+      throw new Error(`Unsupported JWT algorithm: ${header?.alg || 'unknown'}, expected RS256`)
     }
 
     const jwks = await getJwks()
@@ -205,25 +198,18 @@ export function createJwtVerifier({
     }
 
     if (issuer && payload.iss !== issuer) {
-      throw new Error(
-        `JWT issuer mismatch: expected "${issuer}", got "${payload.iss}"`
-      )
+      throw new Error(`JWT issuer mismatch: expected "${issuer}", got "${payload.iss}"`)
     }
 
     if (resourceUri) {
       const audList = Array.isArray(payload.aud) ? payload.aud : [payload.aud]
       if (!audList.includes(resourceUri)) {
-        throw new Error(
-          `JWT audience mismatch: expected "${resourceUri}", got "${payload.aud}"`
-        )
+        throw new Error(`JWT audience mismatch: expected "${resourceUri}", got "${payload.aud}"`)
       }
     }
 
     if (payload.scope) {
-      const scopes =
-        typeof payload.scope === 'string'
-          ? payload.scope.split(' ')
-          : payload.scope
+      const scopes = typeof payload.scope === 'string' ? payload.scope.split(' ') : payload.scope
       if (!scopes.includes('mcp')) {
         throw new Error('JWT missing required "mcp" scope')
       }

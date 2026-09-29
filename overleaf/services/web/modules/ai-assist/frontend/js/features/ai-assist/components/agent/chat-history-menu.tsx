@@ -1,12 +1,6 @@
 import React, { useCallback, useState, useRef, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
-import {
-  ClockCounterClockwise,
-  Trash,
-  PencilSimple,
-  Check,
-  X,
-} from '@phosphor-icons/react'
+import { ClockCounterClockwise, Trash, PencilSimple, Check, X } from '@phosphor-icons/react'
 import {
   OLDropdown,
   OLDropdownMenu,
@@ -70,9 +64,7 @@ export function ChatHistoryMenu({
       setEditingChatId(null)
       if (!trimmed) return
       setChats(current =>
-        current
-          ? current.map(c => (c.id === id ? { ...c, title: trimmed } : c))
-          : current
+        current ? current.map(c => (c.id === id ? { ...c, title: trimmed } : c)) : current
       )
       onRename?.(id, trimmed)?.catch(() => {})
     },
@@ -105,9 +97,7 @@ export function ChatHistoryMenu({
             {t('ai_assist_chat_history_failed', 'Could not load chat history')}
           </li>
         ) : chats === null ? (
-          <li className="ai-assist-history-empty">
-            {t('loading', 'Loading')}…
-          </li>
+          <li className="ai-assist-history-empty">{t('loading', 'Loading')}…</li>
         ) : chats.length === 0 ? (
           <li className="ai-assist-history-empty">
             {t('ai_assist_chat_history_empty', 'No saved chats yet')}
@@ -165,14 +155,10 @@ export function ChatHistoryMenu({
                       type="button"
                       className="ai-assist-history-item-btn"
                       onClick={() => onOpen(chat.id)}
-                      title={
-                        chat.title ||
-                        t('ai_assist_untitled_chat', 'Untitled chat')
-                      }
+                      title={chat.title || t('ai_assist_untitled_chat', 'Untitled chat')}
                     >
                       <span className="ai-assist-history-title">
-                        {chat.title ||
-                          t('ai_assist_untitled_chat', 'Untitled chat')}
+                        {chat.title || t('ai_assist_untitled_chat', 'Untitled chat')}
                       </span>
                       <span className="ai-assist-history-when">
                         {formatWhen(chat.updatedAt)}
@@ -203,9 +189,7 @@ export function ChatHistoryMenu({
                           event.stopPropagation()
                           void onDelete(chat.id).then(() =>
                             setChats(current =>
-                              current
-                                ? current.filter(c => c.id !== chat.id)
-                                : current
+                              current ? current.filter(c => c.id !== chat.id) : current
                             )
                           )
                         }}

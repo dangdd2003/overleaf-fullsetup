@@ -91,11 +91,7 @@ describe('edit_file', function () {
     })
 
     const result: any = await TOOLS.edit_file.execute(
-      {
-        path: 'bib.tex',
-        oldText: '@article{one,\n    title = {First}\n}',
-        newText: 'REPLACED',
-      },
+      { path: 'bib.tex', oldText: '@article{one,\n    title = {First}\n}', newText: 'REPLACED' },
       handle
     )
 
@@ -165,10 +161,7 @@ describe('edit_file', function () {
   it('reports a timeout status with an actionable message', async function () {
     const { handle } = createFakeHandle({
       docs: DOCS,
-      onEdit: () => ({
-        status: 'timeout',
-        message: 'Editor bridge timed out.',
-      }),
+      onEdit: () => ({ status: 'timeout', message: 'Editor bridge timed out.' }),
     })
 
     const result: any = await TOOLS.edit_file.execute(
@@ -213,11 +206,7 @@ describe('edit_file', function () {
     })
 
     const result: any = await TOOLS.edit_file.execute(
-      {
-        path: 'doc.tex',
-        oldText: '\\\\begin{equation}\nx = 1',
-        newText: '\\begin{equation}\nx = 2',
-      },
+      { path: 'doc.tex', oldText: '\\\\begin{equation}\nx = 1', newText: '\\begin{equation}\nx = 2' },
       handle
     )
 
@@ -227,9 +216,7 @@ describe('edit_file', function () {
 
   it('sanitizes line-number prefixes from newText when contaminated by read_file', async function () {
     const { handle, calls } = createFakeHandle({
-      docs: {
-        'packages.tex': '\\usepackage{amsmath}\n\\usepackage{amssymb}\n',
-      },
+      docs: { 'packages.tex': '\\usepackage{amsmath}\n\\usepackage{amssymb}\n' },
       onEdit: () => ({ status: 'applied' }),
     })
 
@@ -237,8 +224,7 @@ describe('edit_file', function () {
       {
         path: 'packages.tex',
         oldText: '\\usepackage{amsmath}\n\\usepackage{amssymb}',
-        newText:
-          '1: \\usepackage{amsmath}\n2: \\usepackage{amssymb}\n3: \\usepackage{graphicx}',
+        newText: '1: \\usepackage{amsmath}\n2: \\usepackage{amssymb}\n3: \\usepackage{graphicx}',
       },
       handle
     )
@@ -266,18 +252,11 @@ describe('edit_file', function () {
 
   it('reports ambiguous when double-escaped or line-prefixed anchor appears multiple times', async function () {
     const { handle, calls } = createFakeHandle({
-      docs: {
-        'multi.tex':
-          'line 1\n\\section{Beta}\nline 3\n\\section{Beta}\nline 5\n',
-      },
+      docs: { 'multi.tex': 'line 1\n\\section{Beta}\nline 3\n\\section{Beta}\nline 5\n' },
     })
 
     const result: any = await TOOLS.edit_file.execute(
-      {
-        path: 'multi.tex',
-        oldText: '\\\\section{Beta}',
-        newText: '\\section{Beta 2}',
-      },
+      { path: 'multi.tex', oldText: '\\\\section{Beta}', newText: '\\section{Beta 2}' },
       handle
     )
 
@@ -290,11 +269,7 @@ describe('edit_file', function () {
     const { handle, calls } = createFakeHandle({ docs: DOCS })
 
     const result: any = await TOOLS.edit_file.execute(
-      {
-        path: 'main.tex',
-        oldText: 'gamma\nnonexistent line',
-        newText: 'REPLACED',
-      },
+      { path: 'main.tex', oldText: 'gamma\nnonexistent line', newText: 'REPLACED' },
       handle
     )
 
@@ -310,13 +285,7 @@ describe('edit_file', function () {
     })
 
     const result: any = await TOOLS.edit_file.execute(
-      {
-        path: 'main.tex',
-        oldText: 'beta',
-        newText: 'BETA_SECOND',
-        startLine: 3,
-        endLine: 5,
-      },
+      { path: 'main.tex', oldText: 'beta', newText: 'BETA_SECOND', startLine: 3, endLine: 5 },
       handle
     )
 
@@ -332,12 +301,7 @@ describe('edit_file', function () {
     })
 
     const result: any = await TOOLS.edit_file.execute(
-      {
-        path: 'main.tex',
-        oldText: 'beta',
-        newText: 'BETA_FIRST',
-        startLine: 2,
-      },
+      { path: 'main.tex', oldText: 'beta', newText: 'BETA_FIRST', startLine: 2 },
       handle
     )
 
@@ -365,11 +329,7 @@ describe('edit_file', function () {
       'Our empirical results on the LogicBench dataset indicate a significant improvement over baseline models, particularly in tasks requiring recursive reasoning and adherence to strict constraints. The 15% increase in consistency suggests that the HLT architecture effectively bridges the gap between pattern recognition and symbolic manipulation.'
 
     const result: any = await TOOLS.edit_file.execute(
-      {
-        path: 'conclusion.tex',
-        oldText: singleLineQuery,
-        newText: 'New empirical summary.',
-      },
+      { path: 'conclusion.tex', oldText: singleLineQuery, newText: 'New empirical summary.' },
       handle
     )
 
@@ -391,9 +351,7 @@ describe('edit_file', function () {
     expect(result.status).to.equal('ambiguous')
     expect(result.message).to.include('Occurrence around line 2:')
     expect(result.message).to.include('Occurrence around line 4:')
-    expect(result.message).to.include(
-      'pass startLine to target a specific line'
-    )
+    expect(result.message).to.include('pass startLine to target a specific line')
   })
 
   it('rejects call when oldText parameter is missing or non-string', async function () {

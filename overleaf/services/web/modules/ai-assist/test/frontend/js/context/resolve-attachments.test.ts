@@ -36,9 +36,7 @@ describe('parseAttachmentRef', function () {
   })
 
   it('treats a colon with no numbers as part of the path', function () {
-    expect(parseAttachmentRef('odd:name.tex')).to.deep.equal({
-      path: 'odd:name.tex',
-    })
+    expect(parseAttachmentRef('odd:name.tex')).to.deep.equal({ path: 'odd:name.tex' })
   })
 
   it('swaps a reversed range rather than returning nothing', function () {
@@ -53,10 +51,7 @@ describe('parseAttachmentRef', function () {
 describe('resolveAttachments', function () {
   it('resolves a whole file', async function () {
     const { handle } = createFakeHandle({ docs: DOCS })
-    const [attachment] = await resolveAttachments(
-      [{ path: 'refs.bib' }],
-      handle
-    )
+    const [attachment] = await resolveAttachments([{ path: 'refs.bib' }], handle)
 
     expect(attachment.text).to.equal('@book{a}')
   })
@@ -73,10 +68,7 @@ describe('resolveAttachments', function () {
 
   it('marks a missing file as gone instead of throwing', async function () {
     const { handle } = createFakeHandle({ docs: DOCS })
-    const [attachment] = await resolveAttachments(
-      [{ path: 'ghost.tex' }],
-      handle
-    )
+    const [attachment] = await resolveAttachments([{ path: 'ghost.tex' }], handle)
 
     expect(attachment.text).to.equal(null)
     expect(attachment.path).to.equal('ghost.tex')
@@ -84,10 +76,7 @@ describe('resolveAttachments', function () {
 
   it('marks a binary as gone rather than sending bytes to the model', async function () {
     const { handle } = createFakeHandle({ docs: DOCS, binaries: ['plot.pdf'] })
-    const [attachment] = await resolveAttachments(
-      [{ path: 'plot.pdf' }],
-      handle
-    )
+    const [attachment] = await resolveAttachments([{ path: 'plot.pdf' }], handle)
 
     expect(attachment.text).to.equal(null)
   })
@@ -99,10 +88,7 @@ describe('resolveAttachments', function () {
       handle
     )
 
-    expect(resolved.map(entry => entry.path)).to.deep.equal([
-      'refs.bib',
-      'main.tex',
-    ])
+    expect(resolved.map(entry => entry.path)).to.deep.equal(['refs.bib', 'main.tex'])
     expect(resolved[1].text).to.equal('one')
   })
 

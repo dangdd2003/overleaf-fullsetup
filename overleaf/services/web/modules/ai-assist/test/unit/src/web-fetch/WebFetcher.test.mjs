@@ -497,7 +497,7 @@ describe('WebFetcher', function () {
     }
     expect(error).to.exist
     expect(error.message).to.include(
-      'This page needs a real browser (it runs a bot check or renders in JavaScript); the ai-browser sidecar can read it.'
+      'This page needs a real browser (it runs a bot check or renders in JavaScript); the overleaf-browser sidecar can read it.'
     )
   })
 })

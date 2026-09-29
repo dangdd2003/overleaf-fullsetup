@@ -23,9 +23,7 @@ describe('validateNewPath', function () {
   })
 
   it('rejects an absolute path', function () {
-    expect(validateNewPath('/etc/passwd', existing)).to.match(
-      /absolute|relative/i
-    )
+    expect(validateNewPath('/etc/passwd', existing)).to.match(/absolute|relative/i)
   })
 
   it('rejects a binary extension', function () {
@@ -66,10 +64,7 @@ describe('create_file', function () {
 
   it('requires content', async function () {
     const { handle } = createFakeHandle({ docs: DOCS })
-    const result: any = await createFileTool.execute(
-      { path: 'new.tex', content: '' },
-      handle
-    )
+    const result: any = await createFileTool.execute({ path: 'new.tex', content: '' }, handle)
     expect(result.error).to.match(/content/i)
   })
 
@@ -92,8 +87,7 @@ describe('create_file', function () {
   it('reports a timeout when creating a file', async function () {
     const { handle } = createFakeHandle({
       docs: DOCS,
-      onCreate: () =>
-        ({ status: 'timeout', message: 'Bridge timed out.' }) as any,
+      onCreate: () => ({ status: 'timeout', message: 'Bridge timed out.' } as any),
     })
 
     const result: any = await createFileTool.execute(
@@ -108,8 +102,7 @@ describe('create_file', function () {
   it('reports an error when entity creation fails', async function () {
     const { handle } = createFakeHandle({
       docs: DOCS,
-      onCreate: () =>
-        ({ status: 'error', message: 'Failed to create folder.' }) as any,
+      onCreate: () => ({ status: 'error', message: 'Failed to create folder.' } as any),
     })
 
     const result: any = await createFileTool.execute(

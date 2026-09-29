@@ -82,10 +82,7 @@ function GithubSyncPanelInner() {
   const incoming = status.incoming ?? 0
 
   return (
-    <div
-      className="integrations-panel-card-button"
-      style={{ cursor: 'default' }}
-    >
+    <div className="integrations-panel-card-button" style={{ cursor: 'default' }}>
       <div className="integrations-panel-card-contents">
         <div className="integrations-panel-card-icon">
           <GitLogoOrange size={24} />
@@ -103,16 +100,9 @@ function GithubSyncPanelInner() {
                 ? `${incoming}`
                 : t('no_new_commits_in_github')}
           </p>
-          <div
-            className="btn-toolbar"
-            style={{ gap: '4px', display: 'flex', flexWrap: 'wrap' }}
-          >
+          <div className="btn-toolbar" style={{ gap: '4px', display: 'flex', flexWrap: 'wrap' }}>
             {status.syncState === 'conflict' ? (
-              <OLButton
-                size="sm"
-                disabled={busy}
-                onClick={() => post('continue-merge')}
-              >
+              <OLButton size="sm" disabled={busy} onClick={() => post('continue-merge')}>
                 {t('continue_github_merge')}
               </OLButton>
             ) : (
@@ -120,19 +110,10 @@ function GithubSyncPanelInner() {
                 {t('pull_github_changes_into_sharelatex')}
               </OLButton>
             )}
-            <OLButton
-              size="sm"
-              disabled={busy}
-              onClick={() => setShowPushPrompt(true)}
-            >
+            <OLButton size="sm" disabled={busy} onClick={() => setShowPushPrompt(true)}>
               {t('push_sharelatex_changes_to_github')}
             </OLButton>
-            <OLButton
-              size="sm"
-              variant="link"
-              disabled={busy}
-              onClick={() => post('unlink')}
-            >
+            <OLButton size="sm" variant="link" disabled={busy} onClick={() => post('unlink')}>
               {t('unlink_github_repository')}
             </OLButton>
           </div>

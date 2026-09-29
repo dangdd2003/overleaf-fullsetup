@@ -89,16 +89,17 @@ describe('GoogleDriveImportWorker', () => {
 
     // Folder 0 skipped (already synced)
     // Folder 1 synced
-    expect(
-      GoogleDriveSyncManager.downloadDriveFolderToOverleaf
-    ).toHaveBeenCalledWith('existing-proj-1', 'user-1', 'folder-1')
+    expect(GoogleDriveSyncManager.downloadDriveFolderToOverleaf).toHaveBeenCalledWith(
+      'existing-proj-1',
+      'user-1',
+      'folder-1'
+    )
     // Folder 2 created as new project
-    expect(
-      GoogleDriveSyncManager._createProjectFromDriveFolder
-    ).toHaveBeenCalledWith('user-1', 'user-1', {
-      id: 'folder-2',
-      name: 'Folder 2',
-    })
+    expect(GoogleDriveSyncManager._createProjectFromDriveFolder).toHaveBeenCalledWith(
+      'user-1',
+      'user-1',
+      { id: 'folder-2', name: 'Folder 2' }
+    )
 
     const finalUpdate = guardedUpdates().at(-1)[1]
     expect(finalUpdate.$set.status).toBe('completed')
@@ -122,35 +123,24 @@ describe('GoogleDriveImportWorker', () => {
         },
       }
     )
-    expect(
-      GoogleDriveSyncManager._createProjectFromDriveFolder
-    ).toHaveBeenCalledTimes(2)
+    expect(GoogleDriveSyncManager._createProjectFromDriveFolder).toHaveBeenCalledTimes(2)
     expect(guardedUpdates().at(-1)[1].$set.status).toBe('completed')
   })
 
   it('aborts immediately if token decryption fails', async () => {
     const job = makeJob(['queued', 'queued'])
-    const err = new Error(
-      'Failed to decrypt token: authentication tag verification failed'
-    )
+    const err = new Error('Failed to decrypt token: authentication tag verification failed')
     err.code = 'token_decryption_failed'
-    GoogleDriveSyncManager._createProjectFromDriveFolder.mockRejectedValueOnce(
-      err
-    )
+    GoogleDriveSyncManager._createProjectFromDriveFolder.mockRejectedValueOnce(err)
 
     await GoogleDriveImportWorker.processJob(job)
 
-    expect(
-      GoogleDriveSyncManager._createProjectFromDriveFolder
-    ).toHaveBeenCalledTimes(1)
+    expect(GoogleDriveSyncManager._createProjectFromDriveFolder).toHaveBeenCalledTimes(1)
     const abortUpdate = db.googleDriveImportJobs.updateOne.mock.calls.find(
-      ([query, update]) =>
-        query._id === 'job-1' && update.$set?.status === 'failed'
+      ([query, update]) => query._id === 'job-1' && update.$set?.status === 'failed'
     )
     expect(abortUpdate).toBeDefined()
-    expect(abortUpdate[1].$set.error).toMatch(
-      /Google Drive authorization has expired or changed/
-    )
+    expect(abortUpdate[1].$set.error).toMatch(/Google Drive authorization has expired or changed/)
     expect(abortUpdate[1].$unset).toEqual({ active: '', leaseExpiresAt: '' })
   })
 
@@ -165,9 +155,7 @@ describe('GoogleDriveImportWorker', () => {
 
     await GoogleDriveImportWorker.processJob(job)
 
-    expect(
-      GoogleDriveSyncManager._createProjectFromDriveFolder
-    ).toHaveBeenCalledTimes(1)
+    expect(GoogleDriveSyncManager._createProjectFromDriveFolder).toHaveBeenCalledTimes(1)
     const completed = guardedUpdates().some(
       ([, update]) => update.$set?.status === 'completed'
     )
@@ -182,12 +170,11 @@ describe('GoogleDriveImportWorker', () => {
     GoogleDriveImportWorker.kick()
 
     await vi.waitFor(() => {
-      expect(
-        GoogleDriveSyncManager._createProjectFromDriveFolder
-      ).toHaveBeenCalledWith('user-1', 'user-1', {
-        id: 'folder-0',
-        name: 'Folder 0',
-      })
+      expect(GoogleDriveSyncManager._createProjectFromDriveFolder).toHaveBeenCalledWith(
+        'user-1',
+        'user-1',
+        { id: 'folder-0', name: 'Folder 0' }
+      )
     })
   })
 })

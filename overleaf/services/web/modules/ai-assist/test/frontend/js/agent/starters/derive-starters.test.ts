@@ -5,10 +5,7 @@ import {
   StarterSignals,
 } from '../../../../../frontend/js/features/ai-assist/agent/starters/derive-starters'
 import { buildProjectIndex } from '../../../../../frontend/js/features/ai-assist/agent/context/project-index'
-import {
-  LastCompile,
-  ProjectFile,
-} from '../../../../../frontend/js/features/ai-assist/agent/project-handle'
+import { LastCompile, ProjectFile } from '../../../../../frontend/js/features/ai-assist/agent/project-handle'
 
 function filesFor(docs: Record<string, string>): ProjectFile[] {
   return Object.entries(docs).map(([path, text]) => ({
@@ -65,11 +62,7 @@ describe('deriveStarters', function () {
         lastCompile: {
           status: 'failure',
           errors: [
-            {
-              message: 'Undefined control sequence.',
-              file: 'main.tex',
-              line: 6,
-            },
+            { message: 'Undefined control sequence.', file: 'main.tex', line: 6 },
             { message: 'Missing $ inserted.', file: 'main.tex', line: 7 },
           ],
           warnings: [],
@@ -159,9 +152,7 @@ describe('deriveStarters', function () {
     )
 
     expect(starters[0].id).to.equal('resolve_warnings')
-    expect(starters.map(starter => starter.id)).to.not.include(
-      'fix_compile_errors'
-    )
+    expect(starters.map(starter => starter.id)).to.not.include('fix_compile_errors')
   })
 
   it('offers a first draft for a skeleton project', function () {
@@ -197,10 +188,7 @@ describe('deriveStarters', function () {
         'We study things.',
         '\\end{abstract}',
         '\\section{Introduction}',
-        ...Array.from(
-          { length: 50 },
-          (_, i) => `Line ${i} of prose about things.`
-        ),
+        ...Array.from({ length: 50 }, (_, i) => `Line ${i} of prose about things.`),
         '\\section{Methods}',
         'See \\ref{fig:arch} and \\cite{vaswani2017attention}.',
         '\\begin{figure}',
@@ -216,12 +204,7 @@ describe('deriveStarters', function () {
 
     const starters = deriveStarters(
       signals(healthy, {
-        lastCompile: {
-          status: 'success',
-          errors: [],
-          warnings: [],
-          rawLog: null,
-        },
+        lastCompile: { status: 'success', errors: [], warnings: [], rawLog: null },
         openFile: { path: 'main.tex', cursorLine: 10 },
       })
     )
@@ -260,22 +243,14 @@ describe('deriveStarters', function () {
         '\\documentclass{article}',
         '\\title{On Things}',
         '\\begin{document}',
-        ...Array.from(
-          { length: 60 },
-          (_, i) => `Line ${i} of passive prose was written.`
-        ),
+        ...Array.from({ length: 60 }, (_, i) => `Line ${i} of passive prose was written.`),
         '\\end{document}',
       ].join('\n'),
     }
 
     const ids = deriveStarters(
       signals(healthy, {
-        lastCompile: {
-          status: 'success',
-          errors: [],
-          warnings: [],
-          rawLog: null,
-        },
+        lastCompile: { status: 'success', errors: [], warnings: [], rawLog: null },
         openFile: { path: 'main.tex', cursorLine: 10 },
       })
     ).map(starter => starter.id)

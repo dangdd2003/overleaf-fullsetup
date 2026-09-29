@@ -22,8 +22,7 @@ const MAIN = [
 ].join('\n')
 
 const METHOD = '\\subsection{Method}\nWe cite \\cite{lamport1994}.'
-const BIB =
-  '@article{knuth1984,\n author = {Donald E. Knuth},\n title = {Literate Programming}\n}'
+const BIB = '@article{knuth1984,\n author = {Donald E. Knuth},\n title = {Literate Programming}\n}'
 
 const TREE = {
   docs: [
@@ -98,9 +97,7 @@ describe('latex semantic tools', function () {
     // The range must stop before the next same-level heading, so that slicing
     // main.tex on it yields the Introduction body and nothing after it.
     expect(intro.endLine).to.equal(results.startLine - 1)
-    const body = MAIN.split('\n')
-      .slice(intro.startLine - 1, intro.endLine)
-      .join('\n')
+    const body = MAIN.split('\n').slice(intro.startLine - 1, intro.endLine).join('\n')
     expect(body).to.include('\\cite{knuth1984}')
     expect(body).to.not.include('\\section{Results}')
   })
@@ -133,17 +130,12 @@ describe('latex semantic tools', function () {
       aspect: 'citations',
       path: '/main.tex',
     })
-    expect(payload(result).citations.map(c => c.key)).to.deep.equal([
-      'knuth1984',
-    ])
+    expect(payload(result).citations.map(c => c.key)).to.deep.equal(['knuth1984'])
   })
 
   it('scan_latex with aspect: citations never reads a .bib file as LaTeX', async function () {
     await server.call('scan_latex', { projectId: 'p1', aspect: 'citations' })
-    const paths = client.get
-      .getCalls()
-      .map(call => call.args[2]?.path)
-      .filter(Boolean)
+    const paths = client.get.getCalls().map(call => call.args[2]?.path).filter(Boolean)
     expect(paths).to.not.include('/refs.bib')
   })
 
@@ -219,11 +211,7 @@ describe('latex semantic tools', function () {
   })
 
   it('fails closed when no token is present', async function () {
-    const result = await server.call(
-      'scan_latex',
-      { projectId: 'p1', aspect: 'citations' },
-      {}
-    )
+    const result = await server.call('scan_latex', { projectId: 'p1', aspect: 'citations' }, {})
     expect(result.isError).to.be.true
     expect(payload(result).code).to.equal('unauthorized')
     expect(client.get.called).to.be.false

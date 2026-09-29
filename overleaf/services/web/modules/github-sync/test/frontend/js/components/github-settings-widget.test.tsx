@@ -38,9 +38,9 @@ describe('GithubSettingsWidget', function () {
     await waitFor(() => {
       screen.getByRole('link', { name: /link to your github account/i })
     })
-    expect(
-      screen.getByRole('link', { name: /link/i }).getAttribute('href')
-    ).to.equal('/auth/github/oauth')
+    expect(screen.getByRole('link', { name: /link/i }).getAttribute('href')).to.equal(
+      '/auth/github/oauth'
+    )
   })
 
   it('shows the linked username and unlinks with CSRF token', async function () {
@@ -53,17 +53,11 @@ describe('GithubSettingsWidget', function () {
     // the component renders "@{username} — {description}" as one text node,
     // so an exact-string matcher cannot match it
     await screen.findByText(/octocat/)
+    fireEvent.click(screen.getByRole('button', { name: /unlink github repository/i }))
     fireEvent.click(
-      screen.getByRole('button', { name: /unlink github repository/i })
+      await screen.findAllByRole('button', { name: /unlink github repository/i }).then(btns => btns[btns.length - 1])
     )
-    fireEvent.click(
-      await screen
-        .findAllByRole('button', { name: /unlink github repository/i })
-        .then(btns => btns[btns.length - 1])
-    )
-    await waitFor(() =>
-      expect(fetchMock.callHistory.called('/auth/github/unlink')).to.equal(true)
-    )
+    await waitFor(() => expect(fetchMock.callHistory.called('/auth/github/unlink')).to.equal(true))
     const call = fetchMock.callHistory.lastCall('/auth/github/unlink')
     // fetch-mock normalizes header names to lower case; read them through
     // Headers so the assertion is case-insensitive

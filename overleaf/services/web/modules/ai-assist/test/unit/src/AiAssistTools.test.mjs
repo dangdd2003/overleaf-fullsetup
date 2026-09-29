@@ -1539,3 +1539,51 @@ describe('AiAssistTools', function () {
     })
   })
 })
+
+describe('project instructions (AGENTS.md)', function () {
+  function toolsWith(docs, { failDocs = false } = {}) {
+    return new AiAssistTools({
+      docUpdater: { flushProjectToMongo: async () => {} },
+      entityHandler: {
+        getAllDocs: async () => {
+          if (failDocs) throw new Error('mongo down')
+          return docs
+        },
+        getAllFiles: async () => ({}),
+      },
+      projectGetter: { getProject: async () => ({}) },
+    })
+  }
+  const doc = lines => ({ _id: 'd1', name: 'x', lines })
+
+  it('reads the root AGENTS.md whatever its case', async function () {
+    const tools = toolsWith({ '/Agents.MD': doc(['Use British spelling.']) })
+    expect(await tools.getProjectInstructions('p1')).to.deep.equal({
+      path: 'Agents.MD',
+      text: 'Use British spelling.',
+    })
+  })
+
+  it('reads full file content without size limit', async function () {
+    const longLines = Array.from({ length: 5000 }, (_, i) => `Line ${i}`)
+    const tools = toolsWith({ '/AGENTS.md': doc(longLines) })
+    const result = await tools.getProjectInstructions('p1')
+    expect(result.path).to.equal('AGENTS.md')
+    expect(result.text).to.equal(longLines.join('\n'))
+  })
+
+  it('ignores an AGENTS.md in a folder', async function () {
+    const tools = toolsWith({ '/chapters/AGENTS.md': doc(['x']) })
+    expect(await tools.getProjectInstructions('p2')).to.equal(null)
+  })
+
+  it('treats a blank file as none', async function () {
+    const tools = toolsWith({ '/AGENTS.md': doc(['', '   ']) })
+    expect(await tools.getProjectInstructions('p3')).to.equal(null)
+  })
+
+  it('returns null when the project cannot be read', async function () {
+    const tools = toolsWith({}, { failDocs: true })
+    expect(await tools.getProjectInstructions('p5')).to.equal(null)
+  })
+})

@@ -65,15 +65,11 @@ describe('OAuth2Router', () => {
   it('registers dynamic client registration and token endpoints on publicApiRouter', () => {
     OAuth2Router.apply(webRouter, privateApiRouter, publicApiRouter)
 
-    const regRoute = publicApiRouter.routes.post.find(
-      r => r.path === '/oauth/register'
-    )
+    const regRoute = publicApiRouter.routes.post.find(r => r.path === '/oauth/register')
     expect(regRoute).to.exist
     expect(regRoute.handlers).to.include(OAuth2RegistrationController.register)
 
-    const tokenRoute = publicApiRouter.routes.post.find(
-      r => r.path === '/oauth/token'
-    )
+    const tokenRoute = publicApiRouter.routes.post.find(r => r.path === '/oauth/token')
     expect(tokenRoute).to.exist
     expect(tokenRoute.handlers).to.include(OAuth2TokenController.token)
   })
@@ -81,20 +77,12 @@ describe('OAuth2Router', () => {
   it('registers authorize endpoints on webRouter', () => {
     OAuth2Router.apply(webRouter, privateApiRouter, publicApiRouter)
 
-    const authGetRoute = webRouter.routes.get.find(
-      r => r.path === '/oauth/authorize'
-    )
+    const authGetRoute = webRouter.routes.get.find(r => r.path === '/oauth/authorize')
     expect(authGetRoute).to.exist
-    expect(authGetRoute.handlers).to.include(
-      OAuth2AuthorizeController.showAuthorizePage
-    )
+    expect(authGetRoute.handlers).to.include(OAuth2AuthorizeController.showAuthorizePage)
 
-    const authPostRoute = webRouter.routes.post.find(
-      r => r.path === '/oauth/authorize'
-    )
+    const authPostRoute = webRouter.routes.post.find(r => r.path === '/oauth/authorize')
     expect(authPostRoute).to.exist
-    expect(authPostRoute.handlers).to.include(
-      OAuth2AuthorizeController.handleAuthorize
-    )
+    expect(authPostRoute.handlers).to.include(OAuth2AuthorizeController.handleAuthorize)
   })
 })

@@ -29,8 +29,7 @@ export const getProjectSettingsTool: AgentTool = {
   render(result: any) {
     if (result?.error) return JSON.stringify(result)
     if (result?.settings) {
-      const { compiler, appearance, editor, spelling, name, description } =
-        result.settings
+      const { compiler, appearance, editor, spelling, name, description } = result.settings
       const lines: string[] = []
       if (name) lines.push(`Project Name: ${name}`)
       if (description) lines.push(`Description: ${description}`)
@@ -39,47 +38,29 @@ export const getProjectSettingsTool: AgentTool = {
         lines.push('--- Compiler Settings ---')
         lines.push(`Compiler: ${compiler.compiler || 'pdflatex'}`)
         lines.push(`TeX Live: ${compiler.imageName || 'default'}`)
-        lines.push(
-          `Root Document: ${compiler.rootDocPath || compiler.rootDocId || '(none)'}`
-        )
+        lines.push(`Root Document: ${compiler.rootDocPath || compiler.rootDocId || '(none)'}`)
         if (compiler.draft) lines.push(`Draft: true`)
         if (compiler.stopOnFirstError) lines.push(`Stop on First Error: true`)
       }
 
       if (appearance) {
         lines.push('--- Appearance Settings ---')
-        lines.push(
-          `Theme: ${appearance.editorTheme || 'textmate'} (UI: ${appearance.overallTheme || 'system'})`
-        )
+        lines.push(`Theme: ${appearance.editorTheme || 'textmate'} (UI: ${appearance.overallTheme || 'system'})`)
         lines.push(`Font Size: ${appearance.fontSize ?? 12}px`)
-        if (appearance.fontFamily)
-          lines.push(`Font Family: ${appearance.fontFamily}`)
-        if (appearance.lineHeight)
-          lines.push(`Line Spacing: ${appearance.lineHeight}`)
-        lines.push(
-          `Dark Mode PDF: ${appearance.darkModePdf ? 'enabled' : 'disabled'}`
-        )
+        if (appearance.fontFamily) lines.push(`Font Family: ${appearance.fontFamily}`)
+        if (appearance.lineHeight) lines.push(`Line Spacing: ${appearance.lineHeight}`)
+        lines.push(`Dark Mode PDF: ${appearance.darkModePdf ? 'enabled' : 'disabled'}`)
       }
 
       if (editor) {
         lines.push('--- Editor Settings ---')
         lines.push(`Keybindings: ${editor.mode || 'none'}`)
-        lines.push(
-          `Auto-complete: ${editor.autoComplete ? 'enabled' : 'disabled'}`
-        )
-        lines.push(
-          `Auto-close Brackets: ${editor.autoPairDelimiters ? 'enabled' : 'disabled'}`
-        )
-        lines.push(
-          `Syntax Validation: ${editor.syntaxValidation ? 'enabled' : 'disabled'}`
-        )
+        lines.push(`Auto-complete: ${editor.autoComplete ? 'enabled' : 'disabled'}`)
+        lines.push(`Auto-close Brackets: ${editor.autoPairDelimiters ? 'enabled' : 'disabled'}`)
+        lines.push(`Syntax Validation: ${editor.syntaxValidation ? 'enabled' : 'disabled'}`)
         lines.push(`PDF Viewer: ${editor.pdfViewer || 'pdfjs'}`)
-        lines.push(
-          `Math Preview: ${editor.mathPreview ? 'enabled' : 'disabled'}`
-        )
-        lines.push(
-          `Breadcrumbs: ${editor.breadcrumbs ? 'enabled' : 'disabled'}`
-        )
+        lines.push(`Math Preview: ${editor.mathPreview ? 'enabled' : 'disabled'}`)
+        lines.push(`Breadcrumbs: ${editor.breadcrumbs ? 'enabled' : 'disabled'}`)
         lines.push(`Editor Tabs: ${editor.editorTabs ? 'enabled' : 'disabled'}`)
       }
 

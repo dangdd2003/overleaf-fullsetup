@@ -56,9 +56,7 @@ describe('AdminUserQuery', () => {
     })
 
     it('does not include sensitive fields in DELETED_USER_ADMIN_LIST_PROJECTION', () => {
-      expect(
-        DELETED_USER_ADMIN_LIST_PROJECTION['user.hashedPassword']
-      ).toBeUndefined()
+      expect(DELETED_USER_ADMIN_LIST_PROJECTION['user.hashedPassword']).toBeUndefined()
       expect(DELETED_USER_ADMIN_LIST_PROJECTION.deleterData).toBe(1)
       expect(DELETED_USER_ADMIN_LIST_PROJECTION['user.email']).toBe(1)
     })
@@ -72,9 +70,7 @@ describe('AdminUserQuery', () => {
 
   describe('getActiveUsers', () => {
     it('escapes regex search strings to avoid ReDoS and searches across fields', async () => {
-      const mockToArray = vi
-        .fn()
-        .mockResolvedValue([{ _id: '1', email: 'test@example.com' }])
+      const mockToArray = vi.fn().mockResolvedValue([{ _id: '1', email: 'test@example.com' }])
       const mockLimit = vi.fn().mockReturnValue({ toArray: mockToArray })
       const mockSkip = vi.fn().mockReturnValue({ limit: mockLimit })
       const mockSort = vi.fn().mockReturnValue({ skip: mockSkip })
@@ -109,9 +105,7 @@ describe('AdminUserQuery', () => {
       await getActiveUsers({ search: validId })
 
       const query = db.users.find.mock.calls[0][0]
-      expect(query.$or.some(c => c._id && c._id.toString() === validId)).toBe(
-        true
-      )
+      expect(query.$or.some(c => c._id && c._id.toString() === validId)).toBe(true)
     })
 
     it('clamps pagination parameters within safe ranges', async () => {
@@ -133,28 +127,17 @@ describe('AdminUserQuery', () => {
 
   describe('getDeletedUsers', () => {
     it('queries deletedUsers collection with deleterData.deletedAt sorting', async () => {
-      const mockToArray = vi
-        .fn()
-        .mockResolvedValue([
-          { _id: 'del-1', deleterData: { deletedAt: new Date() } },
-        ])
+      const mockToArray = vi.fn().mockResolvedValue([{ _id: 'del-1', deleterData: { deletedAt: new Date() } }])
       const mockLimit = vi.fn().mockReturnValue({ toArray: mockToArray })
       const mockSkip = vi.fn().mockReturnValue({ limit: mockLimit })
       const mockSort = vi.fn().mockReturnValue({ skip: mockSkip })
       db.deletedUsers.find.mockReturnValue({ sort: mockSort })
       db.deletedUsers.countDocuments.mockResolvedValue(1)
 
-      const result = await getDeletedUsers({
-        search: 'alice',
-        page: 1,
-        limit: 10,
-      })
+      const result = await getDeletedUsers({ search: 'alice', page: 1, limit: 10 })
 
       expect(db.deletedUsers.find).toHaveBeenCalled()
-      expect(mockSort).toHaveBeenCalledWith({
-        'deleterData.deletedAt': -1,
-        _id: -1,
-      })
+      expect(mockSort).toHaveBeenCalledWith({ 'deleterData.deletedAt': -1, _id: -1 })
       expect(result.deletedUsers.length).toBe(1)
       expect(result.total).toBe(1)
     })
@@ -169,17 +152,10 @@ describe('AdminUserQuery', () => {
 
     it('finds user with USER_DETAIL_PROJECTION when id is valid', async () => {
       const validId = new ObjectId().toString()
-      db.users.findOne.mockResolvedValue({
-        _id: validId,
-        email: 'user@example.com',
-      })
+      db.users.findOne.mockResolvedValue({ _id: validId, email: 'user@example.com' })
 
       const result = await getUserById(validId)
-      expect(result).toEqual({
-        _id: validId,
-        email: 'user@example.com',
-        lastActive: null,
-      })
+      expect(result).toEqual({ _id: validId, email: 'user@example.com', lastActive: null })
       expect(db.users.findOne).toHaveBeenCalledWith(
         { _id: new ObjectId(validId) },
         { projection: USER_DETAIL_PROJECTION }
@@ -189,11 +165,7 @@ describe('AdminUserQuery', () => {
     it('normalizes lastLoggedIn to lastActive when lastActive is not present', async () => {
       const validId = new ObjectId().toString()
       const loginDate = new Date('2026-08-29T10:00:00Z')
-      db.users.findOne.mockResolvedValue({
-        _id: validId,
-        email: 'user@example.com',
-        lastLoggedIn: loginDate,
-      })
+      db.users.findOne.mockResolvedValue({ _id: validId, email: 'user@example.com', lastLoggedIn: loginDate })
 
       const result = await getUserById(validId)
       expect(result.lastActive).toEqual(loginDate)

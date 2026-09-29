@@ -32,11 +32,7 @@ export class ConflictError extends Error {
   }
 }
 
-export async function ensureCanModifyAdmin(
-  callerUserId,
-  targetUserId,
-  newIsAdmin
-) {
+export async function ensureCanModifyAdmin(callerUserId, targetUserId, newIsAdmin) {
   if (String(callerUserId) === String(targetUserId) && !newIsAdmin) {
     throw new BadRequestError('cannot_demote_self')
   }

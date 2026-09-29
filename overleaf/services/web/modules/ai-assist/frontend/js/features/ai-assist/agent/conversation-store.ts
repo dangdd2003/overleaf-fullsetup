@@ -14,12 +14,7 @@ export function cleanStoredResult(res: unknown): unknown {
   if (!res || typeof res !== 'object') return res
   let curr: any = res
   for (let i = 0; i < 20; i++) {
-    if (
-      curr &&
-      typeof curr === 'object' &&
-      curr.truncated &&
-      typeof curr.preview === 'string'
-    ) {
+    if (curr && typeof curr === 'object' && curr.truncated && typeof curr.preview === 'string') {
       try {
         const parsed = JSON.parse(curr.preview)
         if (parsed && typeof parsed === 'object') {
@@ -29,15 +24,10 @@ export function cleanStoredResult(res: unknown): unknown {
       } catch {}
 
       // If preview is a sliced JSON string containing "content" e.g. {"content":"...
-      const contentMatch = curr.preview.match(
-        /"content"\s*:\s*"((?:\\.|[^"\\])*)/
-      )
+      const contentMatch = curr.preview.match(/"content"\s*:\s*"((?:\\.|[^"\\])*)/)
       if (contentMatch) {
         try {
-          return {
-            content: JSON.parse(`"${contentMatch[1]}"`),
-            truncated: true,
-          }
+          return { content: JSON.parse(`"${contentMatch[1]}"`), truncated: true }
         } catch {
           return {
             content: contentMatch[1]
@@ -68,10 +58,7 @@ export function shrinkCall(call: ToolCallRecord): ToolCallRecord {
   // Handle read_file: preserve structured fields so the UI can still render lines!
   if (call.name === 'read_file' && typeof call.result === 'object') {
     const res = call.result as any
-    if (
-      typeof res.content === 'string' &&
-      res.content.length > MAX_RESULT_CHARS
-    ) {
+    if (typeof res.content === 'string' && res.content.length > MAX_RESULT_CHARS) {
       return {
         ...call,
         result: {
@@ -137,11 +124,7 @@ export function shrinkCall(call: ToolCallRecord): ToolCallRecord {
   // Handle list_files: keep file paths and lines, avoid raw blob
   if (call.name === 'list_files' && typeof call.result === 'object') {
     const res = call.result as any
-    const files = Array.isArray(res)
-      ? res
-      : Array.isArray(res.files)
-        ? res.files
-        : []
+    const files = Array.isArray(res) ? res : Array.isArray(res.files) ? res.files : []
     return {
       ...call,
       result: {
@@ -190,9 +173,7 @@ export function shrinkCall(call: ToolCallRecord): ToolCallRecord {
   }
 }
 
-export function deduplicateToolCalls(
-  calls: ToolCallRecord[]
-): ToolCallRecord[] {
+export function deduplicateToolCalls(calls: ToolCallRecord[]): ToolCallRecord[] {
   const seen = new Set<string>()
   const result: ToolCallRecord[] = []
   for (const call of calls) {
@@ -212,9 +193,7 @@ export function deduplicateBlocks(blocks?: any[]): any[] | undefined {
   for (const block of blocks) {
     if (!block || typeof block !== 'object') continue
     if (block.type === 'tool_call') {
-      const key =
-        block.call?.id ||
-        `${block.call?.name}:${JSON.stringify(block.call?.args)}`
+      const key = block.call?.id || `${block.call?.name}:${JSON.stringify(block.call?.args)}`
       if (!seen.has(key)) {
         seen.add(key)
         result.push(block)
@@ -283,9 +262,7 @@ export function prepareTranscriptForRun(
   }
 
   // Second pass: shrink all assistant turns
-  result = result.map(entry =>
-    entry.role === 'assistant' ? shrink(entry) : entry
-  )
+  result = result.map(entry => (entry.role === 'assistant' ? shrink(entry) : entry))
 
   if (JSON.stringify(result).length <= maxBytes) {
     return result
@@ -319,10 +296,7 @@ export function loadConversation(projectId: string): TranscriptEntry[] {
       const dedupedBlocks = deduplicateBlocks(entry.blocks)
       const cleanBlocks = dedupedBlocks?.map(b =>
         b && b.type === 'tool_call' && b.call
-          ? {
-              ...b,
-              call: { ...b.call, result: cleanStoredResult(b.call?.result) },
-            }
+          ? { ...b, call: { ...b.call, result: cleanStoredResult(b.call?.result) } }
           : b
       )
       return {
@@ -342,7 +316,8 @@ export function saveConversation(
 ) {
   try {
     customLocalStorage.setItem(keyFor(projectId), fit(transcript))
-  } catch (err) {}
+  } catch (err) {
+  }
 }
 
 export function clearConversation(projectId: string) {

@@ -305,7 +305,17 @@ export function useAgentRun({
   }, [projectId, systemPrompt])
 
   const run = useCallback(
-    async (transcript: TranscriptEntry[]) => {
+    async (
+      transcript: TranscriptEntry[],
+      // A one-click fix hands in what it prepared for this run (web tools and
+      // the prompt that matches them); everything else uses the hook's own.
+      overrides: {
+        tools?: Record<string, AgentTool>
+        systemPrompt?: string
+      } = {}
+    ) => {
+      const runTools = overrides.tools ?? tools
+      const runSystemPrompt = overrides.systemPrompt ?? systemPrompt
       const assistant = AiAssistant.fromStoredSettings()
       if (!assistant) {
         return
@@ -335,7 +345,7 @@ export function useAgentRun({
       }))
 
       // If a narrow system prompt was supplied (e.g. compile-log fix), keep in-page
-      if (systemPrompt) {
+      if (runSystemPrompt) {
         abortRef.current?.abort()
         const controller = new AbortController()
         abortRef.current = controller
@@ -344,11 +354,11 @@ export function useAgentRun({
           for await (const event of runAgent({
             client: assistant.client,
             handle,
-            tools,
+            tools: runTools,
             transcript,
             limits: resolveLimits(assistant.settings),
             cacheKey,
-            systemPrompt,
+            systemPrompt: runSystemPrompt,
             requireTool,
             signal: controller.signal,
           })) {

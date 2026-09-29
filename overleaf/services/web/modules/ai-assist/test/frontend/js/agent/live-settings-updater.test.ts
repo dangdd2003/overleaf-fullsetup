@@ -101,9 +101,7 @@ describe('live-settings-updater', function () {
     window.removeEventListener('storage', storageSpy)
 
     expect(updateProject.calledOnce).to.be.true
-    expect(updateProject.firstCall.args[0]).to.deep.equal({
-      compiler: 'lualatex',
-    })
+    expect(updateProject.firstCall.args[0]).to.deep.equal({ compiler: 'lualatex' })
     expect(storageSpy.calledTwice).to.be.true
   })
 
@@ -172,12 +170,8 @@ describe('live-settings-updater', function () {
   })
 
   it('safely handles exceptions thrown from context setters', function () {
-    const throwingSetUserSettings = sinon
-      .stub()
-      .throws(new Error('setter failed'))
-    const throwingUpdateProject = sinon
-      .stub()
-      .throws(new Error('update project failed'))
+    const throwingSetUserSettings = sinon.stub().throws(new Error('setter failed'))
+    const throwingUpdateProject = sinon.stub().throws(new Error('update project failed'))
 
     expect(() => {
       applyLiveSettingsUpdate(
@@ -185,10 +179,7 @@ describe('live-settings-updater', function () {
         { mode: 'vim', spellCheckLanguage: 'fr' },
         {
           userSettingsContext: { setUserSettings: throwingSetUserSettings },
-          projectContext: {
-            updateProject: throwingUpdateProject,
-            project: { spellCheckLanguage: 'en' },
-          },
+          projectContext: { updateProject: throwingUpdateProject, project: { spellCheckLanguage: 'en' } },
           projectId: 'p1',
         }
       )

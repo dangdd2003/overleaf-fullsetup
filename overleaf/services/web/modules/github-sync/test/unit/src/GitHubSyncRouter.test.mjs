@@ -55,24 +55,21 @@ describe('GitHubSyncRouter', function () {
     )
     vi.doMock('../../../app/src/GitHubSyncManager.mjs', syncManagerMock)
 
-    const { default: GitHubSyncRouter } =
-      await import('../../../app/src/GitHubSyncRouter.mjs')
+    const { default: GitHubSyncRouter } = await import(
+      '../../../app/src/GitHubSyncRouter.mjs'
+    )
 
     routes = {}
-    const record =
-      method =>
-      (path, ...handlers) => {
-        routes[`${method} ${path}`] = handlers[handlers.length - 1]
-      }
+    const record = method => (path, ...handlers) => {
+      routes[`${method} ${path}`] = handlers[handlers.length - 1]
+    }
     GitHubSyncRouter.apply({ get: record('get'), post: record('post') })
   }
 
   function handler(key) {
     const fn = routes[key]
     if (!fn) {
-      throw new Error(
-        `route not registered: ${key}. Have: ${Object.keys(routes).join(', ')}`
-      )
+      throw new Error(`route not registered: ${key}. Have: ${Object.keys(routes).join(', ')}`)
     }
     return fn
   }
@@ -101,10 +98,7 @@ describe('GitHubSyncRouter', function () {
     ['post /project/:projectId/github/pull', 'pull'],
     ['post /project/:projectId/github/push', 'push'],
     ['post /project/:projectId/github/unlink', 'unlinkProject'],
-    [
-      'post /project/:projectId/github/continue-merge',
-      'continueAfterManualMerge',
-    ],
+    ['post /project/:projectId/github/continue-merge', 'continueAfterManualMerge'],
   ]
 
   describe('write authorization on mutating routes', function () {
@@ -134,9 +128,7 @@ describe('GitHubSyncRouter', function () {
     }
 
     it('create-repo rejects a user without write access', async function () {
-      authorizationManager.promises.canUserWriteProjectContent.mockResolvedValue(
-        false
-      )
+      authorizationManager.promises.canUserWriteProjectContent.mockResolvedValue(false)
       syncManager.promises.getState.mockResolvedValue(null)
       await loadRouter()
 
@@ -167,9 +159,7 @@ describe('GitHubSyncRouter', function () {
 
   describe('existing guards still apply', function () {
     it('rejects a user who is not the linked owner', async function () {
-      syncManager.promises.getState.mockResolvedValue({
-        user_id: 'someone-else',
-      })
+      syncManager.promises.getState.mockResolvedValue({ user_id: 'someone-else' })
       await loadRouter()
 
       const res = fakeRes()
@@ -191,9 +181,7 @@ describe('GitHubSyncRouter', function () {
     })
 
     it('status only requires read access', async function () {
-      authorizationManager.promises.canUserWriteProjectContent.mockResolvedValue(
-        false
-      )
+      authorizationManager.promises.canUserWriteProjectContent.mockResolvedValue(false)
       await loadRouter()
 
       const res = fakeRes()

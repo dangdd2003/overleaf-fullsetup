@@ -118,11 +118,7 @@ function envCount(counts: Map<string, number>, ...names: string[]): number {
 
 function sectionTitles(index: ProjectIndex): string[] {
   return index.outline.sections.map(section =>
-    section.title
-      .replace(/\\[a-zA-Z]+\*?(\{[^}]*\})?/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .toLowerCase()
+    section.title.replace(/\\[a-zA-Z]+\*?(\{[^}]*\})?/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase()
   )
 }
 
@@ -163,9 +159,7 @@ const RULES: Array<(signals: StarterSignals) => StarterRuleResult | null> = [
     const provided = CLASS_PROVIDES[index.outline.documentClass ?? ''] ?? []
     const missing = Object.entries(ENV_PACKAGE).find(
       ([env, pkg]) =>
-        (counts.get(env) ?? 0) > 0 &&
-        !loaded.has(pkg) &&
-        !provided.includes(env)
+        (counts.get(env) ?? 0) > 0 && !loaded.has(pkg) && !provided.includes(env)
     )
     if (!missing) return null
     const [env, pkg] = missing
@@ -263,10 +257,7 @@ const RULES: Array<(signals: StarterSignals) => StarterRuleResult | null> = [
     if (files.length === 0) return null
     const texFiles = files.filter(file => file.path.endsWith('.tex'))
     if (texFiles.length !== 1 || docLines(files) > 15) return null
-    if (
-      index &&
-      (index.outline.sections.length > 0 || index.outline.hasTitle)
-    ) {
+    if (index && (index.outline.sections.length > 0 || index.outline.hasTitle)) {
       return null
     }
     const root = index?.rootPath ?? texFiles[0]?.path ?? 'main.tex'

@@ -369,7 +369,29 @@ function renderFetchFailure(result) {
   ].join('\n')
 }
 
+/** Adds a harness note for the model to a tool result, after any it has. */
+export function withNotice(result, notice) {
+  if (!notice || !result || typeof result !== 'object' || Array.isArray(result))
+    return result
+  return {
+    ...result,
+    notice: result.notice ? `${result.notice} ${notice}` : notice,
+  }
+}
+
 export function renderToolResult(name, result) {
+  // A notice is the harness talking, not the tool: it goes after the result,
+  // and lives in the result object so a rebuilt transcript renders the same.
+  if (
+    result &&
+    typeof result === 'object' &&
+    !Array.isArray(result) &&
+    typeof result.notice === 'string' &&
+    result.notice
+  ) {
+    const { notice, ...rest } = result
+    return `${renderToolResult(name, rest)}\n\n${notice}`
+  }
   if (name === 'web_fetch' && result?.error && result.snippet && result.url) {
     return renderFetchFailure(result)
   }

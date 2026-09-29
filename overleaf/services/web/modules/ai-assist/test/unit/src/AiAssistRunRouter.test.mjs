@@ -24,6 +24,8 @@ describe('AiAssistRunRouter', function () {
     Settings.aiAssist.enabled = origEnabled
   })
 
+  // The first apply imports the web app's controllers and middleware cold,
+  // which alone takes most of the default 5 s under a full parallel run.
   it('registers project-scoped routes with authorization middleware', async function () {
     await routerModule.apply(webRouter)
 
@@ -43,6 +45,37 @@ describe('AiAssistRunRouter', function () {
     expect(postRoutes).to.include(
       '/ai-assist/projects/:Project_id/runs/:runId/compile'
     )
+  }, 20000)
+
+  it('registers the fix run web tool routes only with web tools on', async function () {
+    const origWeb = Settings.aiAssist.webToolsEnabled
+    try {
+      Settings.aiAssist.webToolsEnabled = false
+      await routerModule.apply(webRouter)
+      let postRoutes = webRouter.post.args.map(call => call[0])
+      expect(postRoutes).not.to.include(
+        '/ai-assist/projects/:Project_id/web-tools'
+      )
+
+      webRouter.post.resetHistory()
+      // The first apply imported ModuleSettings.mjs, which rebuilds
+      // Settings.aiAssist from the environment
+      Settings.aiAssist.enabled = true
+      Settings.aiAssist.webToolsEnabled = true
+      await routerModule.apply(webRouter)
+      postRoutes = webRouter.post.args.map(call => call[0])
+      expect(postRoutes).to.include('/ai-assist/projects/:Project_id/web-tools')
+      expect(postRoutes).to.include(
+        '/ai-assist/projects/:Project_id/web-tools/:name'
+      )
+      // Project-scoped: login, then read access to the project
+      const route = webRouter.post.args.find(
+        call => call[0] === '/ai-assist/projects/:Project_id/web-tools/:name'
+      )
+      expect(route).to.have.length(4)
+    } finally {
+      Settings.aiAssist.webToolsEnabled = origWeb
+    }
   })
 
   it('registers server-side provider routes', async function () {

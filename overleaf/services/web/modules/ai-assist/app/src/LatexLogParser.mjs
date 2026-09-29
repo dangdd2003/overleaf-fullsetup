@@ -57,10 +57,7 @@ class LogText {
     while (true) {
       const nextLine = this.nextLine()
       if (nextLine === false) break
-      if (
-        stopAtError &&
-        (nextLine.match(/^! /) || FILE_LINE_ERROR_REGEX.test(nextLine))
-      ) {
+      if (stopAtError && (nextLine.match(/^! /) || FILE_LINE_ERROR_REGEX.test(nextLine))) {
         this.rewindLine()
         break
       }
@@ -224,13 +221,9 @@ export class LatexLogParser {
       content: '',
       raw: this.currentLine + '\n',
     }
-    this.currentError.content += this.log
-      .linesUpToNextWhitespaceLine()
-      .join('\n')
+    this.currentError.content += this.log.linesUpToNextWhitespaceLine().join('\n')
     this.currentError.content += '\n'
-    this.currentError.content += this.log
-      .linesUpToNextWhitespaceLine()
-      .join('\n')
+    this.currentError.content += this.log.linesUpToNextWhitespaceLine().join('\n')
     this.currentError.raw += this.currentError.content
     const lineNo = this.currentError.raw.match(/l\.([0-9]+)/)
     if (lineNo) {
@@ -262,10 +255,7 @@ export class LatexLogParser {
     let line = lineMatch ? parseInt(lineMatch[1], 10) : null
     const packageMatch = this.currentLine.match(PACKAGE_REGEX)
     const packageName = packageMatch ? packageMatch[1] : ''
-    const prefixRegex = new RegExp(
-      '(?:\\(' + packageName + '\\))*[\\s]*(.*)',
-      'i'
-    )
+    const prefixRegex = new RegExp('(?:\\(' + packageName + '\\))*[\\s]*(.*)', 'i')
 
     let currentLine
     while ((currentLine = this.log.nextLine())) {

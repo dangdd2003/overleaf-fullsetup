@@ -195,7 +195,9 @@ const OAuth2KeyManager = {
       if (payload.iss !== expectedIssuer) {
         throw new Error('Invalid JWT issuer')
       }
-      const audiences = Array.isArray(payload.aud) ? payload.aud : [payload.aud]
+      const audiences = Array.isArray(payload.aud)
+        ? payload.aud
+        : [payload.aud]
       if (!audiences.includes(expectedAudience)) {
         throw new Error('Invalid JWT audience')
       }

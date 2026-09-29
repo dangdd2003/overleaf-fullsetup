@@ -28,12 +28,7 @@ const PORTABLE_KEYWORDS = new Set([
 ])
 
 /** Keys whose values are maps of names to schemas, not nested keywords. */
-const SCHEMA_MAPS = new Set([
-  'properties',
-  'patternProperties',
-  '$defs',
-  'definitions',
-])
+const SCHEMA_MAPS = new Set(['properties', 'patternProperties', '$defs', 'definitions'])
 
 /**
  * Collect the paths of every keyword outside the portable set.
@@ -45,9 +40,7 @@ const SCHEMA_MAPS = new Set([
 export function offendingKeywords(node, path = '$', inMap = false, hits = []) {
   if (!node || typeof node !== 'object') return hits
   if (Array.isArray(node)) {
-    node.forEach((item, i) =>
-      offendingKeywords(item, `${path}[${i}]`, false, hits)
-    )
+    node.forEach((item, i) => offendingKeywords(item, `${path}[${i}]`, false, hits))
     return hits
   }
   for (const [key, value] of Object.entries(node)) {

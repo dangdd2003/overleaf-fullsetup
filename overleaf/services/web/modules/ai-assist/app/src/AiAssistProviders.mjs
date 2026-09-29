@@ -621,6 +621,33 @@ function geminiThinkingBudget(effort, model) {
   return budget === 0 && model.includes('pro') ? 128 : budget
 }
 
+/**
+ * The Anthropic `system` field. With a `systemPrefix` hint the prefix is its
+ * own cached block, so it is shared by every chat that has it, and what
+ * follows (the project's AGENTS.md) is a second, uncached block covered by
+ * the message breakpoints. Other providers get the joined string.
+ */
+export function anthropicSystemField(system, cacheHints) {
+  if (!cacheHints?.cacheSystem) return system
+  const ephemeral = { type: 'ephemeral' }
+  const prefix = cacheHints.systemPrefix
+  if (
+    typeof prefix === 'string' &&
+    prefix &&
+    system.length > prefix.length &&
+    system.startsWith(prefix)
+  ) {
+    const rest = system.slice(prefix.length).replace(/^\n+/, '')
+    if (rest) {
+      return [
+        { type: 'text', text: prefix, cache_control: ephemeral },
+        { type: 'text', text: rest },
+      ]
+    }
+  }
+  return [{ type: 'text', text: system, cache_control: ephemeral }]
+}
+
 class AnthropicServerClient {
   constructor({
     apiKey,
@@ -696,9 +723,7 @@ class AnthropicServerClient {
     })
 
     const ephemeral = { type: 'ephemeral' }
-    const systemField = cacheHints?.cacheSystem
-      ? [{ type: 'text', text: system, cache_control: ephemeral }]
-      : system
+    const systemField = anthropicSystemField(system, cacheHints)
 
     const wire = []
 

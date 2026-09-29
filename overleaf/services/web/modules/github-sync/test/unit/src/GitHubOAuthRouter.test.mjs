@@ -150,8 +150,7 @@ const authManagerMock = () => ({
 const syncManagerMock = () => ({
   default: {
     promises: {
-      getState: async projectId =>
-        db.projectStates.get(String(projectId)) || null,
+      getState: async projectId => db.projectStates.get(String(projectId)) || null,
       getStatus: async projectId => ({ status: 'synced', projectId }),
       pull: async projectId => {
         if (db.syncBusy) {
@@ -180,10 +179,7 @@ const syncManagerMock = () => ({
         db.importedProjects.push({ userId, opts })
         return { projectId: 'imported-proj-1' }
       },
-      continueAfterManualMerge: async projectId => ({
-        status: 'continued',
-        projectId,
-      }),
+      continueAfterManualMerge: async projectId => ({ status: 'continued', projectId }),
       createRepoAndLink: async (userId, projectId, opts) => {
         db.createdRepos.push({ userId, projectId, opts })
         return { repoUrl: `https://github.com/${opts.owner}/${opts.name}` }
@@ -211,18 +207,9 @@ function mockAll(customSettings = settingsMock) {
   vi.doMock('../../../app/src/GitHubApiManager.mjs', apiMock)
   vi.doMock('../../../app/src/GitHubSyncManager.mjs', syncManagerMock)
   vi.doMock('../../../../../app/src/models/User.mjs', userMock)
-  vi.doMock(
-    '../../../../../app/src/Features/User/UserAuditLogHandler.mjs',
-    auditMock
-  )
-  vi.doMock(
-    '../../../../../app/src/Features/Authentication/AuthenticationController.mjs',
-    authControllerMock
-  )
-  vi.doMock(
-    '../../../../../app/src/Features/Authorization/AuthorizationManager.mjs',
-    authManagerMock
-  )
+  vi.doMock('../../../../../app/src/Features/User/UserAuditLogHandler.mjs', auditMock)
+  vi.doMock('../../../../../app/src/Features/Authentication/AuthenticationController.mjs', authControllerMock)
+  vi.doMock('../../../../../app/src/Features/Authorization/AuthorizationManager.mjs', authManagerMock)
 }
 
 mockAll()
@@ -259,9 +246,7 @@ describe('GitHub OAuth verify callback', function () {
       externalUserId: '42',
     })
     expect(db.audit[0][1]).to.equal('link-github')
-    expect(req.session.projectSyncSuccessMessage).to.equal(
-      'GitHub account linked'
-    )
+    expect(req.session.projectSyncSuccessMessage).to.equal('GitHub account linked')
   })
 })
 
@@ -269,8 +254,7 @@ describe('GitHubPassportStrategy createStrategy', function () {
   it('registers strategy with passport when enabled and credentials present', async function () {
     vi.resetModules()
     mockAll()
-    const { createStrategy } =
-      await import('../../../app/src/GitHubPassportStrategy.mjs')
+    const { createStrategy } = await import('../../../app/src/GitHubPassportStrategy.mjs')
     const mockPassport = { use: vi.fn() }
     createStrategy(mockPassport)
     expect(mockPassport.use).toHaveBeenCalledOnce()
@@ -287,8 +271,7 @@ describe('GitHubPassportStrategy createStrategy', function () {
       },
       __esModule: true,
     }))
-    const { createStrategy } =
-      await import('../../../app/src/GitHubPassportStrategy.mjs')
+    const { createStrategy } = await import('../../../app/src/GitHubPassportStrategy.mjs')
     const mockPassport = { use: vi.fn() }
     createStrategy(mockPassport)
     expect(mockPassport.use).not.toHaveBeenCalled()
@@ -303,8 +286,7 @@ describe('GitHubPassportStrategy createStrategy', function () {
       },
       __esModule: true,
     }))
-    const { createStrategy } =
-      await import('../../../app/src/GitHubPassportStrategy.mjs')
+    const { createStrategy } = await import('../../../app/src/GitHubPassportStrategy.mjs')
     const mockPassport = { use: vi.fn() }
     createStrategy(mockPassport)
     expect(mockPassport.use).not.toHaveBeenCalled()
@@ -329,10 +311,8 @@ describe('GitHubOAuthRouter routes', function () {
   it('applies routes to webRouter and nonCsrfRouter', function () {
     const routes = []
     const webRouter = {
-      get: (path, ...handlers) =>
-        routes.push({ method: 'GET', path, handlers }),
-      post: (path, ...handlers) =>
-        routes.push({ method: 'POST', path, handlers }),
+      get: (path, ...handlers) => routes.push({ method: 'GET', path, handlers }),
+      post: (path, ...handlers) => routes.push({ method: 'POST', path, handlers }),
     }
     router.apply(webRouter)
     router.applyNonCsrfRouter(webRouter)
@@ -353,50 +333,31 @@ describe('GitHubOAuthRouter routes', function () {
   it('status returns { linked: false, username: null } when unlinked', async function () {
     const routes = {}
     const webRouter = {
-      get: (path, auth, handler) => {
-        routes[path] = handler
-      },
-      post: (path, auth, handler) => {
-        routes[path] = handler
-      },
+      get: (path, auth, handler) => { routes[path] = handler },
+      post: (path, auth, handler) => { routes[path] = handler },
     }
     router.apply(webRouter)
 
     const req = { user: { _id: 'user-unlinked' } }
     let jsonResult
-    const res = {
-      json: data => {
-        jsonResult = data
-      },
-    }
+    const res = { json: data => { jsonResult = data } }
 
     await routes['/auth/github/status'](req, res)
     expect(jsonResult).to.deep.equal({ linked: false, username: null })
   })
 
   it('status returns { linked: true, username } when linked', async function () {
-    db.users.set('user-linked', {
-      githubUsername: 'octocat',
-      accessToken: 'tok',
-    })
+    db.users.set('user-linked', { githubUsername: 'octocat', accessToken: 'tok' })
     const routes = {}
     const webRouter = {
-      get: (path, auth, handler) => {
-        routes[path] = handler
-      },
-      post: (path, auth, handler) => {
-        routes[path] = handler
-      },
+      get: (path, auth, handler) => { routes[path] = handler },
+      post: (path, auth, handler) => { routes[path] = handler },
     }
     router.apply(webRouter)
 
     const req = { user: { _id: 'user-linked' } }
     let jsonResult
-    const res = {
-      json: data => {
-        jsonResult = data
-      },
-    }
+    const res = { json: data => { jsonResult = data } }
 
     await routes['/auth/github/status'](req, res)
     expect(jsonResult).to.deep.equal({ linked: true, username: 'octocat' })
@@ -406,22 +367,14 @@ describe('GitHubOAuthRouter routes', function () {
     db.users.set('user-1', { accessToken: 'tok' })
     const routes = {}
     const webRouter = {
-      get: (path, auth, handler) => {
-        routes[path] = handler
-      },
-      post: (path, auth, handler) => {
-        routes[path] = handler
-      },
+      get: (path, auth, handler) => { routes[path] = handler },
+      post: (path, auth, handler) => { routes[path] = handler },
     }
     router.apply(webRouter)
 
     const req = { user: { _id: 'user-1' } }
     let jsonResult
-    const res = {
-      json: data => {
-        jsonResult = data
-      },
-    }
+    const res = { json: data => { jsonResult = data } }
 
     await routes['/auth/github/repos'](req, res)
     expect(jsonResult).to.deep.equal({ repos: [{ id: 1, name: 'repo-1' }] })
@@ -431,22 +384,14 @@ describe('GitHubOAuthRouter routes', function () {
     db.users.set('user-1', { accessToken: 'tok' })
     const routes = {}
     const webRouter = {
-      get: (path, auth, handler) => {
-        routes[path] = handler
-      },
-      post: (path, auth, handler) => {
-        routes[path] = handler
-      },
+      get: (path, auth, handler) => { routes[path] = handler },
+      post: (path, auth, handler) => { routes[path] = handler },
     }
     router.apply(webRouter)
 
     const req = { user: { _id: 'user-1' } }
     let jsonResult
-    const res = {
-      json: data => {
-        jsonResult = data
-      },
-    }
+    const res = { json: data => { jsonResult = data } }
 
     await routes['/user/github/orgs'](req, res)
     expect(jsonResult).to.deep.equal({ orgs: [{ id: 1, login: 'org-1' }] })
@@ -455,22 +400,14 @@ describe('GitHubOAuthRouter routes', function () {
   it('unlink unlinks all projects, updates user, adds audit entry', async function () {
     const routes = {}
     const webRouter = {
-      get: (path, auth, handler) => {
-        routes[path] = handler
-      },
-      post: (path, auth, handler) => {
-        routes[path] = handler
-      },
+      get: (path, auth, handler) => { routes[path] = handler },
+      post: (path, auth, handler) => { routes[path] = handler },
     }
     router.apply(webRouter)
 
     const req = { user: { _id: 'user-1' }, ip: '1.2.3.4' }
     let jsonResult
-    const res = {
-      json: data => {
-        jsonResult = data
-      },
-    }
+    const res = { json: data => { jsonResult = data } }
 
     await routes['/user/github/unlink'](req, res)
     expect(jsonResult).to.deep.equal({ ok: true })
@@ -485,31 +422,17 @@ describe('GitHubOAuthRouter routes', function () {
   it('importProject validates repoOwner/repoName and imports', async function () {
     const routes = {}
     const webRouter = {
-      get: (path, auth, handler) => {
-        routes[path] = handler
-      },
-      post: (path, auth, handler) => {
-        routes[path] = handler
-      },
+      get: (path, auth, handler) => { routes[path] = handler },
+      post: (path, auth, handler) => { routes[path] = handler },
     }
     router.apply(webRouter)
 
     const req = {
       user: { _id: 'user-1' },
-      body: {
-        repoOwner: 'octo',
-        repoName: 'test',
-        branch: 'main',
-        projectName: 'My Proj',
-      },
+      body: { repoOwner: 'octo', repoName: 'test', branch: 'main', projectName: 'My Proj' },
     }
     let jsonResult
-    const res = {
-      json: data => {
-        jsonResult = data
-      },
-      status: () => res,
-    }
+    const res = { json: data => { jsonResult = data }, status: () => res }
 
     await routes['/user/github/import'](req, res)
     expect(jsonResult).to.deep.equal({ projectId: 'imported-proj-1' })
@@ -524,12 +447,8 @@ describe('GitHubOAuthRouter routes', function () {
   it('importProject returns 400 when parameters missing', async function () {
     const routes = {}
     const webRouter = {
-      get: (path, auth, handler) => {
-        routes[path] = handler
-      },
-      post: (path, auth, handler) => {
-        routes[path] = handler
-      },
+      get: (path, auth, handler) => { routes[path] = handler },
+      post: (path, auth, handler) => { routes[path] = handler },
     }
     router.apply(webRouter)
 
@@ -538,11 +457,7 @@ describe('GitHubOAuthRouter routes', function () {
     const res = {
       status: s => {
         statusSet = s
-        return {
-          json: data => {
-            jsonResult = data
-          },
-        }
+        return { json: data => { jsonResult = data } }
       },
     }
 
@@ -554,19 +469,13 @@ describe('GitHubOAuthRouter routes', function () {
   it('callback handles auth failure by setting error flag in session', async function () {
     const routes = {}
     const webRouter = {
-      get: (path, auth, handler) => {
-        routes[path] = handler
-      },
+      get: (path, auth, handler) => { routes[path] = handler },
     }
     router.applyNonCsrfRouter(webRouter)
 
     const req = { mockAuthError: new Error('oauth failed'), session: {} }
     let redirectedTo
-    const res = {
-      redirect: url => {
-        redirectedTo = url
-      },
-    }
+    const res = { redirect: url => { redirectedTo = url } }
 
     routes['/user/github/callback'](req, res, () => {})
     expect(req.session.githubSyncError).to.equal(true)
@@ -592,22 +501,14 @@ describe('GitHubSyncRouter routes', function () {
   it('status returns project sync status if user can read project', async function () {
     const routes = {}
     const webRouter = {
-      get: (path, auth, handler) => {
-        routes[path] = handler
-      },
-      post: (path, auth, handler) => {
-        routes[path] = handler
-      },
+      get: (path, auth, handler) => { routes[path] = handler },
+      post: (path, auth, handler) => { routes[path] = handler },
     }
     router.apply(webRouter)
 
     const req = { user: { _id: 'user-1' }, params: { projectId: 'proj-1' } }
     let jsonResult
-    const res = {
-      json: data => {
-        jsonResult = data
-      },
-    }
+    const res = { json: data => { jsonResult = data } }
 
     await routes['/project/:projectId/github/status'](req, res)
     expect(jsonResult).to.deep.equal({ status: 'synced', projectId: 'proj-1' })
@@ -617,12 +518,8 @@ describe('GitHubSyncRouter routes', function () {
     db.canReadProject = false
     const routes = {}
     const webRouter = {
-      get: (path, auth, handler) => {
-        routes[path] = handler
-      },
-      post: (path, auth, handler) => {
-        routes[path] = handler
-      },
+      get: (path, auth, handler) => { routes[path] = handler },
+      post: (path, auth, handler) => { routes[path] = handler },
     }
     router.apply(webRouter)
 
@@ -631,11 +528,7 @@ describe('GitHubSyncRouter routes', function () {
     const res = {
       status: s => {
         statusSet = s
-        return {
-          json: data => {
-            jsonResult = data
-          },
-        }
+        return { json: data => { jsonResult = data } }
       },
     }
 
@@ -647,12 +540,8 @@ describe('GitHubSyncRouter routes', function () {
   it('pull returns 404 notLinked when project is not linked', async function () {
     const routes = {}
     const webRouter = {
-      get: (path, auth, handler) => {
-        routes[path] = handler
-      },
-      post: (path, auth, handler) => {
-        routes[path] = handler
-      },
+      get: (path, auth, handler) => { routes[path] = handler },
+      post: (path, auth, handler) => { routes[path] = handler },
     }
     router.apply(webRouter)
 
@@ -661,11 +550,7 @@ describe('GitHubSyncRouter routes', function () {
     const res = {
       status: s => {
         statusSet = s
-        return {
-          json: data => {
-            jsonResult = data
-          },
-        }
+        return { json: data => { jsonResult = data } }
       },
     }
 
@@ -678,12 +563,8 @@ describe('GitHubSyncRouter routes', function () {
     db.projectStates.set('proj-1', { user_id: 'other-user' })
     const routes = {}
     const webRouter = {
-      get: (path, auth, handler) => {
-        routes[path] = handler
-      },
-      post: (path, auth, handler) => {
-        routes[path] = handler
-      },
+      get: (path, auth, handler) => { routes[path] = handler },
+      post: (path, auth, handler) => { routes[path] = handler },
     }
     router.apply(webRouter)
 
@@ -692,11 +573,7 @@ describe('GitHubSyncRouter routes', function () {
     const res = {
       status: s => {
         statusSet = s
-        return {
-          json: data => {
-            jsonResult = data
-          },
-        }
+        return { json: data => { jsonResult = data } }
       },
     }
 
@@ -710,12 +587,8 @@ describe('GitHubSyncRouter routes', function () {
     db.syncBusy = true
     const routes = {}
     const webRouter = {
-      get: (path, auth, handler) => {
-        routes[path] = handler
-      },
-      post: (path, auth, handler) => {
-        routes[path] = handler
-      },
+      get: (path, auth, handler) => { routes[path] = handler },
+      post: (path, auth, handler) => { routes[path] = handler },
     }
     router.apply(webRouter)
 
@@ -724,11 +597,7 @@ describe('GitHubSyncRouter routes', function () {
     const res = {
       status: s => {
         statusSet = s
-        return {
-          json: data => {
-            jsonResult = data
-          },
-        }
+        return { json: data => { jsonResult = data } }
       },
     }
 
@@ -741,12 +610,8 @@ describe('GitHubSyncRouter routes', function () {
     db.projectStates.set('proj-1', { user_id: 'user-1' })
     const routes = {}
     const webRouter = {
-      get: (path, auth, handler) => {
-        routes[path] = handler
-      },
-      post: (path, auth, handler) => {
-        routes[path] = handler
-      },
+      get: (path, auth, handler) => { routes[path] = handler },
+      post: (path, auth, handler) => { routes[path] = handler },
     }
     router.apply(webRouter)
 
@@ -756,11 +621,7 @@ describe('GitHubSyncRouter routes', function () {
       body: { message: 'commit msg' },
     }
     let jsonResult
-    const res = {
-      json: data => {
-        jsonResult = data
-      },
-    }
+    const res = { json: data => { jsonResult = data } }
 
     await routes['/project/:projectId/github/push'](req, res)
     expect(jsonResult).to.deep.equal({
@@ -774,22 +635,14 @@ describe('GitHubSyncRouter routes', function () {
     db.projectStates.set('proj-1', { user_id: 'user-1' })
     const routes = {}
     const webRouter = {
-      get: (path, auth, handler) => {
-        routes[path] = handler
-      },
-      post: (path, auth, handler) => {
-        routes[path] = handler
-      },
+      get: (path, auth, handler) => { routes[path] = handler },
+      post: (path, auth, handler) => { routes[path] = handler },
     }
     router.apply(webRouter)
 
     const req = { user: { _id: 'user-1' }, params: { projectId: 'proj-1' } }
     let jsonResult
-    const res = {
-      json: data => {
-        jsonResult = data
-      },
-    }
+    const res = { json: data => { jsonResult = data } }
 
     await routes['/project/:projectId/github/unlink'](req, res)
     expect(jsonResult).to.deep.equal({ ok: true })
@@ -799,12 +652,8 @@ describe('GitHubSyncRouter routes', function () {
   it('createRepo validates name and checks alreadyLinked', async function () {
     const routes = {}
     const webRouter = {
-      get: (path, auth, handler) => {
-        routes[path] = handler
-      },
-      post: (path, auth, handler) => {
-        routes[path] = handler
-      },
+      get: (path, auth, handler) => { routes[path] = handler },
+      post: (path, auth, handler) => { routes[path] = handler },
     }
     router.apply(webRouter)
 
@@ -817,15 +666,9 @@ describe('GitHubSyncRouter routes', function () {
     const res = {
       status: s => {
         statusSet = s
-        return {
-          json: data => {
-            jsonResult = data
-          },
-        }
+        return { json: data => { jsonResult = data } }
       },
-      json: data => {
-        jsonResult = data
-      },
+      json: data => { jsonResult = data },
     }
 
     await routes['/project/:projectId/github/create-repo'](reqMissingName, res)
@@ -838,10 +681,7 @@ describe('GitHubSyncRouter routes', function () {
       params: { projectId: 'proj-1' },
       body: { name: 'new-repo' },
     }
-    await routes['/project/:projectId/github/create-repo'](
-      reqAlreadyLinked,
-      res
-    )
+    await routes['/project/:projectId/github/create-repo'](reqAlreadyLinked, res)
     expect(statusSet).to.equal(409)
     expect(jsonResult.code).to.equal('alreadyLinked')
   })

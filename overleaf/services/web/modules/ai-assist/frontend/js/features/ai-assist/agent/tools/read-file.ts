@@ -51,9 +51,7 @@ export const readFileTool: AgentTool = {
     const totalLines = lines.length
 
     const windowSize =
-      from !== undefined || to !== undefined
-        ? MAX_READ_LINES
-        : DEFAULT_READ_LINES
+      from !== undefined || to !== undefined ? MAX_READ_LINES : DEFAULT_READ_LINES
     const start = Math.max(1, from ?? 1)
     const requestedEnd = Math.min(to ?? totalLines, totalLines)
     const capped = lines.slice(start - 1, requestedEnd).slice(0, windowSize)

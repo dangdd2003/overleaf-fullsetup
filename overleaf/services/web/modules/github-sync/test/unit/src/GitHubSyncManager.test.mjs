@@ -1,14 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-const state = {
-  doc: null,
-  engine: {},
-  fileOps: {},
-  contentIO: {},
-  creds: {},
-  api: {},
-  mockBusy: false,
-}
+const state = { doc: null, engine: {}, fileOps: {}, contentIO: {}, creds: {}, api: {}, mockBusy: false }
 
 const syncEngineMock = () => ({
   default: {
@@ -114,41 +106,26 @@ vi.doMock('../../../app/src/GitHubCredentialsManager.mjs', credsMock)
 vi.doMock('../../../app/src/GitHubApiManager.mjs', apiMock)
 vi.doMock('../../../app/src/models/GithubSyncModels.mjs', modelsMock)
 
-vi.doMock(
-  '../../../../../app/src/Features/DocumentUpdater/DocumentUpdaterHandler.mjs',
-  () => ({
-    default: { promises: { flushProjectToMongo: async () => {} } },
-    __esModule: true,
-  })
-)
-vi.doMock('../../../../../app/src/Features/Project/ProjectGetter.mjs', () => ({
-  default: {
-    promises: {
-      getProject: async () => ({ _id: 'proj1', owner_ref: 'user1' }),
-    },
-  },
+vi.doMock('../../../../../app/src/Features/DocumentUpdater/DocumentUpdaterHandler.mjs', () => ({
+  default: { promises: { flushProjectToMongo: async () => {} } },
   __esModule: true,
 }))
-vi.doMock(
-  '../../../../../app/src/Features/Project/ProjectCreationHandler.mjs',
-  () => ({
-    default: {
-      promises: { createBlankProject: async () => ({ _id: 'newproj' }) },
-    },
-    __esModule: true,
-  })
-)
+vi.doMock('../../../../../app/src/Features/Project/ProjectGetter.mjs', () => ({
+  default: { promises: { getProject: async () => ({ _id: 'proj1', owner_ref: 'user1' }) } },
+  __esModule: true,
+}))
+vi.doMock('../../../../../app/src/Features/Project/ProjectCreationHandler.mjs', () => ({
+  default: { promises: { createBlankProject: async () => ({ _id: 'newproj' }) } },
+  __esModule: true,
+}))
 vi.doMock('../../../../../app/src/Features/Project/ProjectDeleter.mjs', () => ({
   default: { promises: { deleteProject: async () => {} } },
   __esModule: true,
 }))
-vi.doMock(
-  '../../../../../app/src/Features/Project/DeletedProjectReasons.mjs',
-  () => ({
-    DeletedProjectReasons: { GITHUB_IMPORT_FAILURE: 'github-import-failure' },
-    __esModule: true,
-  })
-)
+vi.doMock('../../../../../app/src/Features/Project/DeletedProjectReasons.mjs', () => ({
+  DeletedProjectReasons: { GITHUB_IMPORT_FAILURE: 'github-import-failure' },
+  __esModule: true,
+}))
 
 function resetEngine() {
   state.mockBusy = false
@@ -168,10 +145,7 @@ function resetEngine() {
     runGit: async () => ({ stdout: 'sha-base\n', stderr: '' }),
     deleteRepoDir: async () => {},
   }
-  state.fileOps = {
-    applyChangeSet: async () => [],
-    applyImportTree: async () => [],
-  }
+  state.fileOps = { applyChangeSet: async () => [], applyImportTree: async () => [] }
   state.contentIO = { materializeProject: async () => ['main.tex'] }
   state.creds = {
     getCredentials: async () => ({ githubUsername: 'octo', email: 'o@e.c' }),
@@ -181,18 +155,9 @@ function resetEngine() {
   }
   state.api = {
     compareCommits: async () => ({ ahead_by: 2, behind_by: 0 }),
-    getRepo: async () => ({
-      size: 1,
-      default_branch: 'main',
-      owner: { login: 'octo' },
-      name: 'paper',
-    }),
+    getRepo: async () => ({ size: 1, default_branch: 'main', owner: { login: 'octo' }, name: 'paper' }),
     getUser: async () => ({ login: 'user1' }),
-    createRepo: async () => ({
-      name: 'paper',
-      owner: { login: 'octo' },
-      default_branch: 'main',
-    }),
+    createRepo: async () => ({ name: 'paper', owner: { login: 'octo' }, default_branch: 'main' }),
   }
 }
 
@@ -283,9 +248,7 @@ describe('GitHubSyncManager', function () {
       err.code = 'TOKEN_DECRYPT_FAILED'
       throw err
     }
-    await expect(manager.promises.pull('proj1')).to.be.rejectedWith(
-      'token decryption failed'
-    )
+    await expect(manager.promises.pull('proj1')).to.be.rejectedWith('token decryption failed')
     expect(state.doc.syncState).to.equal('error')
     expect(state.doc.lastError.code).to.equal('TOKEN_DECRYPT_FAILED')
     expect(state.doc.syncLock).to.equal(null)

@@ -46,22 +46,19 @@ export function applyLiveSettingsUpdate(
     }
     if (
       settings.editorTheme !== undefined &&
-      (!currentUserSettings ||
-        currentUserSettings.editorTheme !== settings.editorTheme)
+      (!currentUserSettings || currentUserSettings.editorTheme !== settings.editorTheme)
     ) {
       userPayload.editorTheme = settings.editorTheme
     }
     if (
       settings.editorLightTheme !== undefined &&
-      (!currentUserSettings ||
-        currentUserSettings.editorLightTheme !== settings.editorLightTheme)
+      (!currentUserSettings || currentUserSettings.editorLightTheme !== settings.editorLightTheme)
     ) {
       userPayload.editorLightTheme = settings.editorLightTheme
     }
     if (
       settings.editorDarkTheme !== undefined &&
-      (!currentUserSettings ||
-        currentUserSettings.editorDarkTheme !== settings.editorDarkTheme)
+      (!currentUserSettings || currentUserSettings.editorDarkTheme !== settings.editorDarkTheme)
     ) {
       userPayload.editorDarkTheme = settings.editorDarkTheme
     }
@@ -73,15 +70,13 @@ export function applyLiveSettingsUpdate(
     }
     if (
       settings.fontFamily !== undefined &&
-      (!currentUserSettings ||
-        currentUserSettings.fontFamily !== settings.fontFamily)
+      (!currentUserSettings || currentUserSettings.fontFamily !== settings.fontFamily)
     ) {
       userPayload.fontFamily = settings.fontFamily
     }
     if (
       settings.lineHeight !== undefined &&
-      (!currentUserSettings ||
-        currentUserSettings.lineHeight !== settings.lineHeight)
+      (!currentUserSettings || currentUserSettings.lineHeight !== settings.lineHeight)
     ) {
       userPayload.lineHeight = settings.lineHeight
     }
@@ -92,23 +87,14 @@ export function applyLiveSettingsUpdate(
       }
       if (projectId && typeof localStorage !== 'undefined') {
         try {
-          localStorage.setItem(
-            `pdf_dark_mode:${projectId}`,
-            String(settings.darkModePdf)
-          )
+          localStorage.setItem(`pdf_dark_mode:${projectId}`, String(settings.darkModePdf))
         } catch {}
       }
     }
 
-    if (
-      Object.keys(userPayload).length > 0 &&
-      userSettingsContext?.setUserSettings
-    ) {
+    if (Object.keys(userPayload).length > 0 && userSettingsContext?.setUserSettings) {
       try {
-        userSettingsContext.setUserSettings((prev: any) => ({
-          ...prev,
-          ...userPayload,
-        }))
+        userSettingsContext.setUserSettings((prev: any) => ({ ...prev, ...userPayload }))
       } catch {}
     }
   }
@@ -149,10 +135,7 @@ export function applyLiveSettingsUpdate(
       projectPayload.rootDocPath = settings.rootDocPath
     }
 
-    if (
-      Object.keys(projectPayload).length > 0 &&
-      projectContext?.updateProject
-    ) {
+    if (Object.keys(projectPayload).length > 0 && projectContext?.updateProject) {
       try {
         projectContext.updateProject(projectPayload)
       } catch {}
@@ -184,9 +167,7 @@ export function applyLiveSettingsUpdate(
           if (typeof window !== 'undefined') {
             window.dispatchEvent(
               new StorageEvent('storage', {
-                key: projectId
-                  ? `stop_on_first_error:${projectId}`
-                  : 'stop_on_first_error',
+                key: projectId ? `stop_on_first_error:${projectId}` : 'stop_on_first_error',
                 newValue: val,
               })
             )
@@ -233,27 +214,18 @@ export function applyLiveSettingsUpdate(
         userPayload[k] = settings[k]
       }
     }
-    if (
-      Object.keys(userPayload).length > 0 &&
-      userSettingsContext?.setUserSettings
-    ) {
+    if (Object.keys(userPayload).length > 0 && userSettingsContext?.setUserSettings) {
       try {
-        userSettingsContext.setUserSettings((prev: any) => ({
-          ...prev,
-          ...userPayload,
-        }))
+        userSettingsContext.setUserSettings((prev: any) => ({ ...prev, ...userPayload }))
       } catch {}
     }
     if (
       settings.spellCheckLanguage !== undefined &&
-      (!currentProject ||
-        currentProject.spellCheckLanguage !== settings.spellCheckLanguage) &&
+      (!currentProject || currentProject.spellCheckLanguage !== settings.spellCheckLanguage) &&
       projectContext?.updateProject
     ) {
       try {
-        projectContext.updateProject({
-          spellCheckLanguage: settings.spellCheckLanguage,
-        })
+        projectContext.updateProject({ spellCheckLanguage: settings.spellCheckLanguage })
       } catch {}
     }
   }

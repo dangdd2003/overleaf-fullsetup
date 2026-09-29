@@ -53,11 +53,7 @@ describe('compile_project', function () {
     const failed: any = await TOOLS.compile_project.execute({}, handle)
     expect(failed.error).to.match(/clsi unreachable/i)
 
-    handle.compile = async () => ({
-      status: 'success',
-      errors: [],
-      warnings: [],
-    })
+    handle.compile = async () => ({ status: 'success', errors: [], warnings: [] })
     const recovered: any = await TOOLS.compile_project.execute({}, handle)
     expect(recovered.status).to.equal('success')
   })
@@ -67,27 +63,18 @@ describe('compile_project', function () {
     const { handle } = createFakeHandle()
     handle.compile = (options?: { signal?: AbortSignal }) => {
       return new Promise((resolve, reject) => {
-        if (options?.signal?.aborted)
-          return reject(new Error('Compile cancelled'))
-        options?.signal?.addEventListener('abort', () =>
-          reject(new Error('Compile cancelled'))
-        )
+        if (options?.signal?.aborted) return reject(new Error('Compile cancelled'))
+        options?.signal?.addEventListener('abort', () => reject(new Error('Compile cancelled')))
       })
     }
 
-    const compilePromise = (TOOLS.compile_project as any).execute({}, handle, {
-      signal: controller.signal,
-    })
+    const compilePromise = (TOOLS.compile_project as any).execute({}, handle, { signal: controller.signal })
     controller.abort()
     const result: any = await compilePromise
 
     expect(result.error).to.match(/cancelled/i)
 
-    handle.compile = async () => ({
-      status: 'success',
-      errors: [],
-      warnings: [],
-    })
+    handle.compile = async () => ({ status: 'success', errors: [], warnings: [] })
     const second: any = await TOOLS.compile_project.execute({}, handle)
     expect(second.status).to.equal('success')
   })
@@ -108,10 +95,7 @@ describe('compile_project', function () {
       compileResult: { status: 'success', errors: [], warnings: [] },
     })
 
-    const result: any = await TOOLS.compile_project.execute(
-      { clean: true },
-      handle
-    )
+    const result: any = await TOOLS.compile_project.execute({ clean: true }, handle)
 
     const compile = calls.find(call => call.name === 'compile')
     expect((compile?.args as any)?.clean).to.equal(true)
@@ -156,10 +140,7 @@ describe('a compile that produced nothing the model could act on', function () {
       compileResult: { status: 'no-output', errors: [], warnings: [] },
     })
 
-    const result: any = await TOOLS.compile_project.execute(
-      { clean: true },
-      handle
-    )
+    const result: any = await TOOLS.compile_project.execute({ clean: true }, handle)
 
     expect(result.message).to.match(/did not complete normally/i)
     expect(result.message).to.not.match(/with clean set to true/i)
@@ -204,9 +185,7 @@ describe('a compile that produced nothing the model could act on', function () {
     const { handle } = createFakeHandle({
       compileResult: {
         status: 'failure',
-        errors: [
-          { message: 'Undefined control sequence', file: 'main.tex', line: 3 },
-        ],
+        errors: [{ message: 'Undefined control sequence', file: 'main.tex', line: 3 }],
         warnings: [],
       },
     })
@@ -242,16 +221,10 @@ describe('wantsCleanCompile', function () {
 
   it('coerces the strings models send for booleans', function () {
     for (const value of ['true', 'TRUE', ' true ', '1', 'yes', 'on']) {
-      expect(
-        wantsCleanCompile({ clean: value }),
-        JSON.stringify(value)
-      ).to.equal(true)
+      expect(wantsCleanCompile({ clean: value }), JSON.stringify(value)).to.equal(true)
     }
     for (const value of ['false', '0', 'no', '']) {
-      expect(
-        wantsCleanCompile({ clean: value }),
-        JSON.stringify(value)
-      ).to.equal(false)
+      expect(wantsCleanCompile({ clean: value }), JSON.stringify(value)).to.equal(false)
     }
   })
 
@@ -317,22 +290,11 @@ describe('toCompileOutcome', function () {
   })
 
   it('takes each error excerpt from its own raw lines, so repeated messages keep their context', function () {
-    const rawLog =
-      '! Undefined control sequence.\nl.3 \\foo\n\n! Undefined control sequence.\nl.9 \\bar\n'
+    const rawLog = '! Undefined control sequence.\nl.3 \\foo\n\n! Undefined control sequence.\nl.9 \\bar\n'
     const entries = {
       errors: [
-        {
-          message: 'Undefined control sequence.',
-          file: 'main.tex',
-          line: 3,
-          raw: '! Undefined control sequence.\nl.3 \\foo\n',
-        },
-        {
-          message: 'Undefined control sequence.',
-          file: 'main.tex',
-          line: 9,
-          raw: '! Undefined control sequence.\nl.9 \\bar\n',
-        },
+        { message: 'Undefined control sequence.', file: 'main.tex', line: 3, raw: '! Undefined control sequence.\nl.3 \\foo\n' },
+        { message: 'Undefined control sequence.', file: 'main.tex', line: 9, raw: '! Undefined control sequence.\nl.9 \\bar\n' },
       ],
       warnings: [],
     }
@@ -349,11 +311,7 @@ describe('compile_project regression delta and primary error', function () {
     const previousCompile = {
       status: 'failure',
       errors: [
-        {
-          message: 'Undefined control sequence \\foo',
-          file: 'main.tex',
-          line: 10,
-        },
+        { message: 'Undefined control sequence \\foo', file: 'main.tex', line: 10 },
       ],
       warnings: [],
       rawLog: null,
@@ -362,13 +320,9 @@ describe('compile_project regression delta and primary error', function () {
     const newOutcome = {
       status: 'failure',
       errors: [
-        {
-          message: 'Undefined control sequence \\foo',
-          file: 'main.tex',
-          line: 15,
-        }, // shifted line, same error
-        { message: 'Missing $ inserted', file: 'main.tex', line: 20 }, // new error 1
-        { message: 'Extra }, or forgotten $', file: 'main.tex', line: 22 }, // new error 2
+        { message: 'Undefined control sequence \\foo', file: 'main.tex', line: 15 }, // shifted line, same error
+        { message: 'Missing $ inserted', file: 'main.tex', line: 20 },               // new error 1
+        { message: 'Extra }, or forgotten $', file: 'main.tex', line: 22 },           // new error 2
       ],
       warnings: [],
     }
@@ -387,9 +341,7 @@ describe('compile_project regression delta and primary error', function () {
     expect(result.resolvedErrorsCount).to.equal(0)
     expect(result.regressed).to.equal(true)
     expect(result.message).to.match(/WARNING: Compilation worsened/i)
-    expect(result.primaryError.message).to.equal(
-      'Undefined control sequence \\foo'
-    )
+    expect(result.primaryError.message).to.equal('Undefined control sequence \\foo')
     expect(result.cascadingErrorsCount).to.equal(2)
   })
 
@@ -397,11 +349,7 @@ describe('compile_project regression delta and primary error', function () {
     const previousCompile = {
       status: 'failure',
       errors: [
-        {
-          message: 'Undefined control sequence \\foo',
-          file: 'main.tex',
-          line: 10,
-        },
+        { message: 'Undefined control sequence \\foo', file: 'main.tex', line: 10 },
         { message: 'Missing $ inserted', file: 'main.tex', line: 20 },
       ],
       warnings: [],
@@ -411,11 +359,7 @@ describe('compile_project regression delta and primary error', function () {
     const newOutcome = {
       status: 'failure',
       errors: [
-        {
-          message: 'Undefined control sequence \\foo',
-          file: 'main.tex',
-          line: 10,
-        },
+        { message: 'Undefined control sequence \\foo', file: 'main.tex', line: 10 },
       ],
       warnings: [],
     }
@@ -435,11 +379,7 @@ describe('compile_project regression delta and primary error', function () {
   })
 
   it('uses get_compile_result in tool description', function () {
-    expect(TOOLS.compile_project.spec.description).to.include(
-      'get_compile_result'
-    )
-    expect(TOOLS.compile_project.spec.description).to.not.include(
-      'get_compile_log'
-    )
+    expect(TOOLS.compile_project.spec.description).to.include('get_compile_result')
+    expect(TOOLS.compile_project.spec.description).to.not.include('get_compile_log')
   })
 })

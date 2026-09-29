@@ -12,11 +12,7 @@ export function PlanApprovalCard({
   decided,
 }: {
   plan: string
-  onDecision: (decision: {
-    accepted: boolean
-    note?: string
-    nextMode?: AgentMode
-  }) => void
+  onDecision: (decision: { accepted: boolean; note?: string; nextMode?: AgentMode }) => void
   decided?: 'accepted' | 'rejected'
 }) {
   const { t } = useTranslation()
@@ -105,9 +101,7 @@ export function PlanApprovalCard({
             variant="primary"
             size="sm"
             disabled={locked}
-            onClick={() =>
-              onDecision({ accepted: true, nextMode: 'acceptEdits' })
-            }
+            onClick={() => onDecision({ accepted: true, nextMode: 'acceptEdits' })}
           >
             {t('ai_assist_plan_auto_edits', 'Yes, auto-accept edits')}
           </OLButton>

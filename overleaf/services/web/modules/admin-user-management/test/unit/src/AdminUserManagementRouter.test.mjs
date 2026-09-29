@@ -12,23 +12,17 @@ vi.mock('@overleaf/logger', () => ({
   },
 }))
 
-vi.mock(
-  '../../../../../app/src/Features/Authorization/AuthorizationMiddleware.mjs',
-  () => ({
-    default: {
-      ensureUserIsSiteAdmin: vi.fn((req, res, next) => next()),
-    },
-  })
-)
+vi.mock('../../../../../app/src/Features/Authorization/AuthorizationMiddleware.mjs', () => ({
+  default: {
+    ensureUserIsSiteAdmin: vi.fn((req, res, next) => next()),
+  },
+}))
 
-vi.mock(
-  '../../../../../app/src/Features/Authentication/AuthenticationController.mjs',
-  () => ({
-    default: {
-      requireLogin: vi.fn(() => (req, res, next) => next()),
-    },
-  })
-)
+vi.mock('../../../../../app/src/Features/Authentication/AuthenticationController.mjs', () => ({
+  default: {
+    requireLogin: vi.fn(() => (req, res, next) => next()),
+  },
+}))
 
 vi.mock('../../../app/src/AdminUserSelfServiceEmailsController.mjs', () => ({
   default: {
@@ -38,14 +32,11 @@ vi.mock('../../../app/src/AdminUserSelfServiceEmailsController.mjs', () => ({
   },
 }))
 
-vi.mock(
-  '../../../../../app/src/Features/Security/RateLimiterMiddleware.mjs',
-  () => ({
-    default: {
-      rateLimit: vi.fn(() => (req, res, next) => next()),
-    },
-  })
-)
+vi.mock('../../../../../app/src/Features/Security/RateLimiterMiddleware.mjs', () => ({
+  default: {
+    rateLimit: vi.fn(() => (req, res, next) => next()),
+  },
+}))
 
 vi.mock('../../../../../app/src/infrastructure/RateLimiter.mjs', () => {
   return {
@@ -141,14 +132,10 @@ describe('AdminUserManagementRouter', () => {
     expect(getPaths).toContain('/admin/users/:userId')
 
     expect(postPaths).toContain('/admin/users/api/users/bulk-create')
-    expect(postPaths).toContain(
-      '/admin/users/api/users/:userId/sessions/revoke'
-    )
+    expect(postPaths).toContain('/admin/users/api/users/:userId/sessions/revoke')
     expect(postPaths).toContain('/admin/users/api/users/:userId/profile')
     expect(postPaths).toContain('/admin/users/api/users/:userId/admin')
-    expect(postPaths).toContain(
-      '/admin/users/api/users/:userId/password-reset-link'
-    )
+    expect(postPaths).toContain('/admin/users/api/users/:userId/password-reset-link')
     expect(postPaths).toContain('/admin/users/api/users/:userId/delete')
     expect(postPaths).toContain('/admin/users/api/users/batch-delete')
     expect(postPaths).toContain('/admin/users/api/users/batch-revoke-sessions')
@@ -158,9 +145,7 @@ describe('AdminUserManagementRouter', () => {
     expect(postPaths).toContain('/admin/users/api/deleted-users/batch-purge')
     expect(postPaths).toContain('/admin/users/api/users/:userId/emails/add')
     expect(postPaths).toContain('/admin/users/api/users/:userId/emails/remove')
-    expect(postPaths).toContain(
-      '/admin/users/api/users/:userId/emails/set-primary'
-    )
+    expect(postPaths).toContain('/admin/users/api/users/:userId/emails/set-primary')
     expect(postPaths).toContain(
       '/admin/users/api/users/:userId/projects/:projectId/transfer'
     )

@@ -369,8 +369,7 @@ export function useEditorThemeStyles() {
   try {
     activeOverallTheme = useActiveOverallTheme() === 'dark' ? 'dark' : 'light'
   } catch {
-    activeOverallTheme =
-      (userSettings.overallTheme as string) === 'dark' ? 'dark' : 'light'
+    activeOverallTheme = (userSettings.overallTheme as string) === 'dark' ? 'dark' : 'light'
   }
 
   const {
@@ -394,10 +393,7 @@ export function useEditorThemeStyles() {
       }
       return EDITOR_THEME_PALETTES.overleaf_dark
     }
-    if (
-      EDITOR_THEME_PALETTES[editorTheme] &&
-      !EDITOR_THEME_PALETTES[editorTheme].dark
-    ) {
+    if (EDITOR_THEME_PALETTES[editorTheme] && !EDITOR_THEME_PALETTES[editorTheme].dark) {
       return EDITOR_THEME_PALETTES[editorTheme]
     }
     return EDITOR_THEME_PALETTES.textmate
@@ -419,14 +415,14 @@ export function useEditorThemeStyles() {
           palette.gutterBorder && palette.gutterBorder !== 'transparent'
             ? palette.gutterBorder
             : isDark
-              ? 'rgba(255, 255, 255, 0.08)'
-              : 'rgba(0, 0, 0, 0.08)',
+            ? 'rgba(255, 255, 255, 0.08)'
+            : 'rgba(0, 0, 0, 0.08)',
         fontFamily: styles.fontFamily,
         fontSize: styles.fontSize,
         lineHeight: styles.lineHeight,
         backgroundColor: palette.bg,
         color: palette.fg,
-      }) as React.CSSProperties,
+      } as React.CSSProperties),
     [styles, palette, isDark]
   )
 
@@ -439,9 +435,9 @@ export function useEditorThemeStyles() {
           palette.gutterBorder && palette.gutterBorder !== 'transparent'
             ? palette.gutterBorder
             : isDark
-              ? 'rgba(255, 255, 255, 0.08)'
-              : 'rgba(0, 0, 0, 0.08)',
-      }) as React.CSSProperties,
+            ? 'rgba(255, 255, 255, 0.08)'
+            : 'rgba(0, 0, 0, 0.08)',
+      } as React.CSSProperties),
     [palette, isDark]
   )
 
@@ -464,7 +460,7 @@ export function useEditorThemeStyles() {
         '--editor-fg': palette.fg,
         '--gutter-bg': palette.gutterBg,
         '--gutter-fg': palette.gutterFg,
-      }) as React.CSSProperties,
+      } as React.CSSProperties),
     [styles, palette]
   )
 

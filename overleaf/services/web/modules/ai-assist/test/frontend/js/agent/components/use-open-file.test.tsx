@@ -65,9 +65,7 @@ describe('useOpenFileInEditor', function () {
     const { result } = renderHook(() => useOpenFileInEditor(), { wrapper })
     result.current('tex/c2-materials_and_methods.tex', 16)
 
-    expect(
-      editorManager.openDocWithId.calledWith('d2', { gotoLine: 16 })
-    ).to.equal(true)
+    expect(editorManager.openDocWithId.calledWith('d2', { gotoLine: 16 })).to.equal(true)
     expect(editorManager.jumpToLine.calledWith({ gotoLine: 16 })).to.equal(true)
   })
 
@@ -75,9 +73,7 @@ describe('useOpenFileInEditor', function () {
     const { result } = renderHook(() => useOpenFileInEditor(), { wrapper })
     result.current('./tex/c2-materials_and_methods.tex', 16)
 
-    expect(
-      editorManager.openDocWithId.calledWith('d2', { gotoLine: 16 })
-    ).to.equal(true)
+    expect(editorManager.openDocWithId.calledWith('d2', { gotoLine: 16 })).to.equal(true)
   })
 
   it('falls back to finding file by name in tree when path context misses', function () {
@@ -86,9 +82,7 @@ describe('useOpenFileInEditor', function () {
     const { result } = renderHook(() => useOpenFileInEditor(), { wrapper })
     result.current('c2-materials_and_methods.tex', 16)
 
-    expect(
-      editorManager.openDocWithId.calledWith('d2', { gotoLine: 16 })
-    ).to.equal(true)
+    expect(editorManager.openDocWithId.calledWith('d2', { gotoLine: 16 })).to.equal(true)
   })
 
   it('opens binary files using openFileWithId', function () {
@@ -107,8 +101,6 @@ describe('useOpenFileInEditor', function () {
 
     window.removeEventListener('aiAssist:jumpToLine', listener)
     expect(listener.called).to.equal(true)
-    expect((listener.firstCall.args[0] as CustomEvent).detail).to.deep.equal({
-      line: 42,
-    })
+    expect((listener.firstCall.args[0] as CustomEvent).detail).to.deep.equal({ line: 42 })
   })
 })

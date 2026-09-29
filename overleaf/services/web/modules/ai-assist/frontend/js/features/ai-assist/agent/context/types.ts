@@ -26,6 +26,12 @@ export type ContextSnapshot = {
    * other way to know it, and needs it for anything about the present.
    */
   today?: string
+  /**
+   * The composer's mode when the message was sent, named as the model reads
+   * it. The system prompt no longer carries the mode, so this is where the
+   * model learns it.
+   */
+  mode?: string
 }
 
 /** Carried on a user entry so the next turn can delta-encode against it. */

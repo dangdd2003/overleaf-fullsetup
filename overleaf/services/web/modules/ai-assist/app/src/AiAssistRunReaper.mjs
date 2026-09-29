@@ -34,8 +34,7 @@ export class AiAssistRunReaper {
   async sweepOnce() {
     const graceMs = (Settings.aiAssist?.orphanGraceSeconds ?? 300) * 1000
     if (graceMs <= 0) return [] // reaping disabled
-    const heartbeatStaleMs =
-      (Settings.aiAssist?.heartbeatStaleSeconds ?? 1800) * 1000
+    const heartbeatStaleMs = (Settings.aiAssist?.heartbeatStaleSeconds ?? 1800) * 1000
 
     const cancelled = []
     for (const runId of await this.store.getActiveRuns()) {

@@ -10,12 +10,7 @@ const PROVIDER = 'github'
 const OAuth2Strategy = OAuth2Module?.Strategy || OAuth2Module
 
 // Core of the OAuth verify callback; exported separately for unit testing.
-export async function handleOAuthVerify(
-  req,
-  accessToken,
-  refreshToken,
-  profile
-) {
+export async function handleOAuthVerify(req, accessToken, refreshToken, profile) {
   const userId = req.user._id
   const email = await GitHubApiManager.promises.getPrimaryEmail(accessToken)
   await GitHubCredentialsManager.promises.storeCredentials(userId, {

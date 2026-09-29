@@ -28,12 +28,8 @@ describe('read tools', function () {
   })
 
   it('read_file description clarifies line numbers are for display only', function () {
-    expect(readFileTool.spec.description).to.include(
-      'Line numbers in the output'
-    )
-    expect(readFileTool.spec.description).to.include(
-      'never include line number prefixes in oldText or newText'
-    )
+    expect(readFileTool.spec.description).to.include('Line numbers in the output')
+    expect(readFileTool.spec.description).to.include('never include line number prefixes in oldText or newText')
   })
 
   it('list_files returns every path with its type', async function () {
@@ -83,22 +79,14 @@ describe('read tools', function () {
 
   it('read_file reports a missing path instead of throwing', async function () {
     const { handle } = createFakeHandle({ docs: DOCS })
-    const result: any = await TOOLS.read_file.execute(
-      { path: 'nope.tex' },
-      handle
-    )
+    const result: any = await TOOLS.read_file.execute({ path: 'nope.tex' }, handle)
     expect(result.error).to.match(/not found/i)
   })
 
   it('read_file truncates a file longer than the cap', async function () {
-    const long = Array.from({ length: 1200 }, (_, i) => `line ${i + 1}`).join(
-      '\n'
-    )
+    const long = Array.from({ length: 1200 }, (_, i) => `line ${i + 1}`).join('\n')
     const { handle } = createFakeHandle({ docs: { 'long.tex': long } })
-    const result: any = await TOOLS.read_file.execute(
-      { path: 'long.tex', from: 1 },
-      handle
-    )
+    const result: any = await TOOLS.read_file.execute({ path: 'long.tex', from: 1 }, handle)
     expect(result.truncated).to.equal(true)
     expect(result.content.split('\n')).to.have.length(1000)
   })
@@ -112,19 +100,13 @@ describe('read tools', function () {
     expect(result.to).to.equal(500)
     expect(result.nextRange).to.deep.equal({ from: 501, to: 1000 })
 
-    const ranged: any = await readFileTool.execute(
-      { path: 'long.tex', from: 1, to: 1200 },
-      handle
-    )
+    const ranged: any = await readFileTool.execute({ path: 'long.tex', from: 1, to: 1200 }, handle)
     expect(ranged.to).to.equal(1000)
   })
 
   it('search_text returns path, line and text', async function () {
     const { handle } = createFakeHandle({ docs: DOCS })
-    const result: any = await TOOLS.search_text.execute(
-      { query: 'Intro' },
-      handle
-    )
+    const result: any = await TOOLS.search_text.execute({ query: 'Intro' }, handle)
     expect(result.hits).to.deep.equal([
       {
         path: 'chapters/intro.tex',
@@ -148,18 +130,10 @@ describe('read tools', function () {
   })
 
   it('reports the total line count so the model can page', async function () {
-    const lines = Array.from(
-      { length: 20 },
-      (_unused, index) => `line ${index + 1}`
-    )
-    const { handle } = createFakeHandle({
-      docs: { 'main.tex': lines.join('\n') },
-    })
+    const lines = Array.from({ length: 20 }, (_unused, index) => `line ${index + 1}`)
+    const { handle } = createFakeHandle({ docs: { 'main.tex': lines.join('\n') } })
 
-    const result: any = await readFileTool.execute(
-      { path: 'main.tex', from: 5, to: 8 },
-      handle
-    )
+    const result: any = await readFileTool.execute({ path: 'main.tex', from: 5, to: 8 }, handle)
 
     expect(result.totalLines).to.equal(20)
     expect(result.from).to.equal(5)
@@ -170,18 +144,10 @@ describe('read tools', function () {
   })
 
   it('names the next range to request when it truncates', async function () {
-    const lines = Array.from(
-      { length: MAX_READ_LINES + 50 },
-      (_unused, index) => `l${index}`
-    )
-    const { handle } = createFakeHandle({
-      docs: { 'big.tex': lines.join('\n') },
-    })
+    const lines = Array.from({ length: MAX_READ_LINES + 50 }, (_unused, index) => `l${index}`)
+    const { handle } = createFakeHandle({ docs: { 'big.tex': lines.join('\n') } })
 
-    const result: any = await readFileTool.execute(
-      { path: 'big.tex', from: 1 },
-      handle
-    )
+    const result: any = await readFileTool.execute({ path: 'big.tex', from: 1 }, handle)
 
     expect(result.truncated).to.equal(true)
     expect(result.nextRange).to.deep.equal({
@@ -200,10 +166,7 @@ describe('read tools', function () {
 
   it('clamps a range that runs past the end of the file', async function () {
     const { handle } = createFakeHandle({ docs: { 'main.tex': 'a\nb\nc' } })
-    const result: any = await readFileTool.execute(
-      { path: 'main.tex', from: 2, to: 99 },
-      handle
-    )
+    const result: any = await readFileTool.execute({ path: 'main.tex', from: 2, to: 99 }, handle)
 
     expect(result.to).to.equal(3)
     expect(result.content).to.include('3: c')
@@ -223,9 +186,7 @@ describe('read tools', function () {
       handle
     )
 
-    expect(result.hits.map((hit: any) => hit.path)).to.deep.equal([
-      'sections/one.tex',
-    ])
+    expect(result.hits.map((hit: any) => hit.path)).to.deep.equal(['sections/one.tex'])
   })
 
   it('accepts path parameter as alias for glob', async function () {
@@ -241,9 +202,7 @@ describe('read tools', function () {
       handle
     )
 
-    expect(result.hits.map((hit: any) => hit.path)).to.deep.equal([
-      'sections/one.tex',
-    ])
+    expect(result.hits.map((hit: any) => hit.path)).to.deep.equal(['sections/one.tex'])
   })
 
   it('finds matches in targeted file even when another file contains 60+ matches', async function () {
@@ -260,9 +219,7 @@ describe('read tools', function () {
       handle
     )
 
-    expect(result.hits.map((hit: any) => hit.path)).to.deep.equal([
-      'target.tex',
-    ])
+    expect(result.hits.map((hit: any) => hit.path)).to.deep.equal(['target.tex'])
   })
 
   it('matches globs with and without directory crossing', function () {
@@ -292,10 +249,7 @@ describe('read tools', function () {
     const many = Array.from({ length: 80 }, () => 'needle').join('\n')
     const { handle } = createFakeHandle({ docs: { 'main.tex': many } })
 
-    const result: any = await searchTextTool.execute(
-      { query: 'needle' },
-      handle
-    )
+    const result: any = await searchTextTool.execute({ query: 'needle' }, handle)
 
     expect(result.truncated).to.equal(true)
     expect(result.total).to.equal(80)
@@ -332,15 +286,7 @@ describe('read tools', function () {
   it('search_text renders context lines in file order', function () {
     expect(
       searchTextTool.render!({
-        hits: [
-          {
-            path: 'main.tex',
-            line: 5,
-            text: 'hit',
-            before: ['b1', 'b2'],
-            after: ['a1'],
-          },
-        ],
+        hits: [{ path: 'main.tex', line: 5, text: 'hit', before: ['b1', 'b2'], after: ['a1'] }],
         total: 1,
         truncated: false,
       })

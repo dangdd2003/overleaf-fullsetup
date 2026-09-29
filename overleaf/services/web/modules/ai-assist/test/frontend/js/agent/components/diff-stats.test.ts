@@ -12,9 +12,9 @@ describe('diffStatsForCall', function () {
   })
 
   it('returns null while the call is still running', function () {
-    expect(diffStatsForCall({ id: '1', name: 'edit_file', args: {} })).to.equal(
-      null
-    )
+    expect(
+      diffStatsForCall({ id: '1', name: 'edit_file', args: {} })
+    ).to.equal(null)
   })
 
   it('returns null when the call errored', function () {

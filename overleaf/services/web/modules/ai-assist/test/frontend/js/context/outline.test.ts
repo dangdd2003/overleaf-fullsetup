@@ -54,9 +54,7 @@ describe('parseOutline', function () {
 
   it('records sections with file, line and level', function () {
     const outline = parseOutline({ docs, rootPath: 'main.tex' })
-    const intro = outline.sections.find(
-      section => section.title === 'Introduction'
-    )
+    const intro = outline.sections.find(section => section.title === 'Introduction')
     expect(intro).to.deep.include({ path: 'main.tex', line: 5, level: 1 })
   })
 
@@ -68,20 +66,14 @@ describe('parseOutline', function () {
 
   it('marks starred sections as unnumbered', function () {
     const outline = parseOutline({ docs, rootPath: 'main.tex' })
-    const starred = outline.sections.find(
-      section => section.title === 'Unnumbered'
-    )
+    const starred = outline.sections.find(section => section.title === 'Unnumbered')
     expect(starred?.numbered).to.equal(false)
   })
 
   it('levels subsections below sections', function () {
     const outline = parseOutline({ docs, rootPath: 'main.tex' })
-    const section = outline.sections.find(
-      entry => entry.title === 'Introduction'
-    )
-    const subsection = outline.sections.find(entry =>
-      entry.title.startsWith('Detail')
-    )
+    const section = outline.sections.find(entry => entry.title === 'Introduction')
+    const subsection = outline.sections.find(entry => entry.title.startsWith('Detail'))
     expect(subsection!.level).to.be.greaterThan(section!.level)
   })
 
@@ -112,9 +104,7 @@ describe('parseOutline', function () {
       docs: { 'main.tex': '% \\section{Hidden}\n\\section{Shown}' },
       rootPath: 'main.tex',
     })
-    expect(outline.sections.map(section => section.title)).to.deep.equal([
-      'Shown',
-    ])
+    expect(outline.sections.map(section => section.title)).to.deep.equal(['Shown'])
   })
 
   it('survives a malformed file and says so', function () {
@@ -123,9 +113,7 @@ describe('parseOutline', function () {
       rootPath: 'main.tex',
     })
     expect(outline.sections).to.deep.equal([])
-    expect(outline.notes.join(' ')).to.match(
-      /could not be parsed|unterminated/i
-    )
+    expect(outline.notes.join(' ')).to.match(/could not be parsed|unterminated/i)
   })
 
   it('works with no root document set', function () {

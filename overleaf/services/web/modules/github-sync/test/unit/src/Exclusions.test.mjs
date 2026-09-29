@@ -6,16 +6,10 @@ describe('Exclusions', function () {
   it('excludes .git, .overleaf and .github/workflows paths', async function () {
     ;({ default: Exclusions } = await import('../../../app/src/Exclusions.mjs'))
     expect(Exclusions.isExcludedSyncPath('.git/config')).to.equal(true)
-    expect(Exclusions.isExcludedSyncPath('submodule/.git/config')).to.equal(
-      true
-    )
+    expect(Exclusions.isExcludedSyncPath('submodule/.git/config')).to.equal(true)
     expect(Exclusions.isExcludedSyncPath('.overleaf/x')).to.equal(true)
-    expect(Exclusions.isExcludedSyncPath('nested/.overleaf/data')).to.equal(
-      true
-    )
-    expect(Exclusions.isExcludedSyncPath('.github/workflows/ci.yml')).to.equal(
-      true
-    )
+    expect(Exclusions.isExcludedSyncPath('nested/.overleaf/data')).to.equal(true)
+    expect(Exclusions.isExcludedSyncPath('.github/workflows/ci.yml')).to.equal(true)
     expect(Exclusions.isExcludedSyncPath('src/main.tex')).to.equal(false)
   })
 
@@ -69,13 +63,10 @@ describe('Exclusions', function () {
     expect(gitFile.verdict).to.equal('skip')
     expect(gitFile.code).to.equal('github_git_folder_error')
 
-    const workflow = Exclusions.classifySyncEntry(
-      '.github/workflows/deploy.yml',
-      {
-        sizeBytes: 10,
-        symlinkTarget: null,
-      }
-    )
+    const workflow = Exclusions.classifySyncEntry('.github/workflows/deploy.yml', {
+      sizeBytes: 10,
+      symlinkTarget: null,
+    })
     expect(workflow.verdict).to.equal('skip')
     expect(workflow.code).to.equal('github_workflow_files_error')
   })

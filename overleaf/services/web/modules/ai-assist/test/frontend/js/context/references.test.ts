@@ -64,12 +64,8 @@ describe('extractReferences', function () {
 
   it('resolves citations against the bib keys', function () {
     const refs = extractReferences({ docs })
-    expect(
-      refs.citations.find(entry => entry.key === 'knuth1984')?.resolved
-    ).to.equal(true)
-    expect(
-      refs.citations.find(entry => entry.key === 'missingkey')?.resolved
-    ).to.equal(false)
+    expect(refs.citations.find(entry => entry.key === 'knuth1984')?.resolved).to.equal(true)
+    expect(refs.citations.find(entry => entry.key === 'missingkey')?.resolved).to.equal(false)
   })
 
   it('treats \\citep as a citation', function () {

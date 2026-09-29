@@ -1,0 +1,20 @@
+# BuildKit uses this instead of the context .dockerignore when building with
+# --file server-ce/Dockerfile.slim, so it repeats that file's entries and adds
+# the node_modules exclusions the slim build needs: the checkout is Yarn PnP,
+# and any node_modules left over from an older install would otherwise be
+# copied in by the `COPY --parents services/ ...` step and shadow the image's
+# own install.
+.DS_Store
+.git/
+services/git-bridge
+services/overleaf-browser
+server-ce/server-ce
+server-ce/test
+
+# omit scripts with extra dependencies
+services/web/scripts/plan-prices
+services/web/scripts/translations
+services/web/scripts/ukamf
+
+# leftover installs from host-side development
+**/node_modules

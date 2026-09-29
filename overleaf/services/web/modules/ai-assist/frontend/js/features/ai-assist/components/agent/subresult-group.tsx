@@ -115,11 +115,7 @@ export function summariseToolCallActions(
   if (counts['get_references'] || counts['list_references']) {
     parts.push('checked references')
   }
-  if (
-    counts['get_outline'] ||
-    counts['project_map'] ||
-    counts['outline_project']
-  ) {
+  if (counts['get_outline'] || counts['project_map'] || counts['outline_project']) {
     parts.push('outlined project')
   }
   if (counts['list_files']) {
@@ -128,8 +124,7 @@ export function summariseToolCallActions(
   if (counts['get_packages']) {
     parts.push('checked packages')
   }
-  const searchCount =
-    (counts['search_text'] ?? 0) + (counts['search_project'] ?? 0)
+  const searchCount = (counts['search_text'] ?? 0) + (counts['search_project'] ?? 0)
   if (searchCount > 0) {
     parts.push(`searched project${searchCount > 1 ? ` (${searchCount})` : ''}`)
   }
@@ -146,9 +141,7 @@ export function summariseToolCallActions(
     (counts['get_compile_result'] ?? 0) +
     (counts['get_compile_log'] ?? 0)
   if (compileCount > 0) {
-    parts.push(
-      `compiled project${compileCount > 1 ? ` (${compileCount})` : ''}`
-    )
+    parts.push(`compiled project${compileCount > 1 ? ` (${compileCount})` : ''}`)
   }
   if (counts['edit_file']) {
     const n = counts['edit_file']
@@ -159,39 +152,19 @@ export function summariseToolCallActions(
     parts.push(`created ${n} file${n > 1 ? 's' : ''}`)
   }
   if (rejectedEdits > 0) {
-    parts.push(
-      rejectedEdits === 1
-        ? '1 edit rejected'
-        : `${rejectedEdits} edits rejected`
-    )
+    parts.push(rejectedEdits === 1 ? '1 edit rejected' : `${rejectedEdits} edits rejected`)
   }
   if (cancelledEdits > 0) {
-    parts.push(
-      cancelledEdits === 1
-        ? '1 edit cancelled'
-        : `${cancelledEdits} edits cancelled`
-    )
+    parts.push(cancelledEdits === 1 ? '1 edit cancelled' : `${cancelledEdits} edits cancelled`)
   }
   if (rejectedCreations > 0) {
-    parts.push(
-      rejectedCreations === 1
-        ? '1 file creation rejected'
-        : `${rejectedCreations} file creations rejected`
-    )
+    parts.push(rejectedCreations === 1 ? '1 file creation rejected' : `${rejectedCreations} file creations rejected`)
   }
   if (cancelledCreations > 0) {
-    parts.push(
-      cancelledCreations === 1
-        ? '1 file creation cancelled'
-        : `${cancelledCreations} file creations cancelled`
-    )
+    parts.push(cancelledCreations === 1 ? '1 file creation cancelled' : `${cancelledCreations} file creations cancelled`)
   }
   if (cancelledTools > 0 && parts.length === 0) {
-    parts.push(
-      cancelledTools === 1
-        ? '1 tool cancelled'
-        : `${cancelledTools} tools cancelled`
-    )
+    parts.push(cancelledTools === 1 ? '1 tool cancelled' : `${cancelledTools} tools cancelled`)
   }
   const configuredSettingsCount =
     (counts['configure_project_settings'] ?? 0) +
@@ -199,18 +172,14 @@ export function summariseToolCallActions(
     (counts['configure_appearance_settings'] ?? 0) +
     (counts['configure_compiler_settings'] ?? 0)
   if (configuredSettingsCount > 0) {
-    parts.push(
-      `configured settings${configuredSettingsCount > 1 ? ` (${configuredSettingsCount})` : ''}`
-    )
+    parts.push(`configured settings${configuredSettingsCount > 1 ? ` (${configuredSettingsCount})` : ''}`)
   }
   const checkedSettingsCount =
     (counts['get_project_settings'] ?? 0) +
     (counts['get_editor_settings'] ?? 0) +
     (counts['list_available_settings'] ?? 0)
   if (checkedSettingsCount > 0) {
-    parts.push(
-      `checked settings${checkedSettingsCount > 1 ? ` (${checkedSettingsCount})` : ''}`
-    )
+    parts.push(`checked settings${checkedSettingsCount > 1 ? ` (${checkedSettingsCount})` : ''}`)
   }
 
   if (parts.length > 0 && parts.length <= 2) {
@@ -240,8 +209,7 @@ export function formatSubresultsSummary(
   const diffStats = sumDiffStats(callsToTally)
 
   const thinkingBlocks = items.filter(
-    (i): i is Extract<AssistantBlock, { type: 'thinking' }> =>
-      i.type === 'thinking'
+    (i): i is Extract<AssistantBlock, { type: 'thinking' }> => i.type === 'thinking'
   )
 
   const totalThinkingMs = thinkingBlocks.reduce(
@@ -274,26 +242,31 @@ export function formatSubresultsSummary(
 function getSafeEdit(call: any) {
   const name = call.name || ''
   const isCreateTool = name === 'create_file'
-  const oldText = isCreateTool
-    ? ''
-    : (call.args?.oldText ?? call.args?.old_text ?? call.args?.old_string ?? '')
-  const newText = isCreateTool
-    ? (call.args?.content ?? call.args?.newText ?? '')
-    : (call.args?.newText ??
-      call.args?.new_text ??
-      call.args?.new_string ??
-      call.args?.content ??
-      '')
+  const oldText =
+    isCreateTool
+      ? ''
+      : (call.args?.oldText ??
+        call.args?.old_text ??
+        call.args?.old_string ??
+        '')
+  const newText =
+    isCreateTool
+      ? (call.args?.content ?? call.args?.newText ?? '')
+      : (call.args?.newText ??
+        call.args?.new_text ??
+        call.args?.new_string ??
+        call.args?.content ??
+        '')
 
   const action: 'create' | 'append' | 'delete' | 'edit' =
     call.args?.action ??
     (isCreateTool
       ? 'create'
       : !oldText
-        ? 'append'
-        : !newText
-          ? 'delete'
-          : 'edit')
+      ? 'append'
+      : !newText
+      ? 'delete'
+      : 'edit')
 
   return {
     path: call.args?.path ?? '',
@@ -380,8 +353,7 @@ export const SubresultGroup: FC<{
   }
 
   const toolCalls = pastItems.filter(
-    (i): i is Extract<AssistantBlock, { type: 'tool_call' }> =>
-      i.type === 'tool_call'
+    (i): i is Extract<AssistantBlock, { type: 'tool_call' }> => i.type === 'tool_call'
   )
 
   // If there are only thinking items and no tool calls yet
@@ -401,8 +373,7 @@ export const SubresultGroup: FC<{
           }
           return null
         })}
-        {pendingCallItem &&
-          renderApprovalCard(pendingCallItem.call, approvalContext, onDecision)}
+        {pendingCallItem && renderApprovalCard(pendingCallItem.call, approvalContext, onDecision)}
       </>
     )
   }
@@ -415,8 +386,7 @@ export const SubresultGroup: FC<{
   // If there is no title to summarize (e.g. live in-flight tool call before completion)
   if (!hasTitle) {
     const thinkingItems = pastItems.filter(
-      (i): i is Extract<AssistantBlock, { type: 'thinking' }> =>
-        i.type === 'thinking'
+      (i): i is Extract<AssistantBlock, { type: 'thinking' }> => i.type === 'thinking'
     )
     if (thinkingItems.length > 0) {
       return (
@@ -429,12 +399,7 @@ export const SubresultGroup: FC<{
               elapsedMs={item.elapsedMs}
             />
           ))}
-          {pendingCallItem &&
-            renderApprovalCard(
-              pendingCallItem.call,
-              approvalContext,
-              onDecision
-            )}
+          {pendingCallItem && renderApprovalCard(pendingCallItem.call, approvalContext, onDecision)}
         </>
       )
     }
@@ -479,10 +444,7 @@ export const SubresultGroup: FC<{
             {pastItems.map((item, idx) => {
               if (item.type === 'thinking') {
                 return (
-                  <div
-                    key={`think-${idx}`}
-                    className="ai-assist-subresult-item"
-                  >
+                  <div key={`think-${idx}`} className="ai-assist-subresult-item">
                     <ThinkingBlock
                       thinking={item.thinking}
                       isLive={isLive && !item.elapsedMs}

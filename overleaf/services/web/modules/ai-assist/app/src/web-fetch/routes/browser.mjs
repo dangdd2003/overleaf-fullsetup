@@ -3,7 +3,7 @@ import { ProviderError } from '../../AiAssistProviders.mjs'
 import { describeStatus, webError } from '../util.mjs'
 
 /**
- * HTTP client for the ai-browser sidecar (services/ai-browser).
+ * HTTP client for the overleaf-browser sidecar (services/overleaf-browser).
  * Communicates with the sidecar over HTTP with Bearer token authentication.
  */
 

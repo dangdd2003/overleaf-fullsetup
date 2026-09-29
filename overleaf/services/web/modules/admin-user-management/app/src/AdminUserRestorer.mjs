@@ -5,7 +5,10 @@ import UserAuditLogHandler from '../../../../app/src/Features/User/UserAuditLogH
 import { DeletedUser } from '../../../../app/src/models/DeletedUser.mjs'
 import { DeletedProject } from '../../../../app/src/models/DeletedProject.mjs'
 import { User } from '../../../../app/src/models/User.mjs'
-import { NotFoundError, ConflictError } from './AdminUserGuards.mjs'
+import {
+  NotFoundError,
+  ConflictError,
+} from './AdminUserGuards.mjs'
 
 export async function restoreUserAndProjects(userId, callerUserId, ipAddress) {
   const userObjectId = new ObjectId(userId)
@@ -29,8 +32,9 @@ export async function restoreUserAndProjects(userId, callerUserId, ipAddress) {
   if (Array.isArray(deletedUser.user.emails)) {
     for (const emailEntry of deletedUser.user.emails) {
       if (emailEntry?.email) {
-        const secondaryEmailExists =
-          await UserGetter.promises.getUserByAnyEmail(emailEntry.email)
+        const secondaryEmailExists = await UserGetter.promises.getUserByAnyEmail(
+          emailEntry.email
+        )
         if (secondaryEmailExists) {
           throw new ConflictError('email_already_in_use_by_active_user')
         }
@@ -79,7 +83,10 @@ export async function restoreUserAndProjects(userId, callerUserId, ipAddress) {
 export async function purgeDeletedUser(userId, callerUserId, ipAddress) {
   const userObjectId = new ObjectId(userId)
   const deletedUser = await DeletedUser.findOne({
-    $or: [{ 'deleterData.deletedUserId': userObjectId }, { _id: userObjectId }],
+    $or: [
+      { 'deleterData.deletedUserId': userObjectId },
+      { _id: userObjectId },
+    ],
   }).exec()
 
   if (!deletedUser) {
@@ -102,3 +109,4 @@ export async function purgeDeletedUser(userId, callerUserId, ipAddress) {
     purgedUserId: actualDeletedUserId.toString(),
   }
 }
+

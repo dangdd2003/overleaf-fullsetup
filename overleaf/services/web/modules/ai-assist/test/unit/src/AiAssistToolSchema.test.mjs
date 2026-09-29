@@ -152,7 +152,10 @@ describe('AiAssistToolSchema', () => {
     }
 
     it('coerces the Python-style "True" that gateways reject', () => {
-      const result = coerceToolArgs({ includeRaw: 'True' }, compileResultSchema)
+      const result = coerceToolArgs(
+        { includeRaw: 'True' },
+        compileResultSchema
+      )
 
       expect(result.includeRaw).to.equal(true)
     })
@@ -187,16 +190,13 @@ describe('AiAssistToolSchema', () => {
     })
 
     it('coerces a stringified number', () => {
-      expect(
-        coerceToolArgs({ limit: '20' }, compileResultSchema).limit
-      ).to.equal(20)
+      expect(coerceToolArgs({ limit: '20' }, compileResultSchema).limit).to.equal(
+        20
+      )
     })
 
     it('truncates towards an integer when the schema says integer', () => {
-      const schema = {
-        type: 'object',
-        properties: { from: { type: 'integer' } },
-      }
+      const schema = { type: 'object', properties: { from: { type: 'integer' } } }
 
       expect(coerceToolArgs({ from: '12.7' }, schema).from).to.equal(12)
     })
@@ -208,19 +208,13 @@ describe('AiAssistToolSchema', () => {
     })
 
     it('stringifies a scalar where the schema wants a string', () => {
-      const schema = {
-        type: 'object',
-        properties: { path: { type: 'string' } },
-      }
+      const schema = { type: 'object', properties: { path: { type: 'string' } } }
 
       expect(coerceToolArgs({ path: 12 }, schema).path).to.equal('12')
     })
 
     it('never stringifies an object into a string parameter', () => {
-      const schema = {
-        type: 'object',
-        properties: { path: { type: 'string' } },
-      }
+      const schema = { type: 'object', properties: { path: { type: 'string' } } }
       const value = { name: 'main.tex' }
 
       expect(coerceToolArgs({ path: value }, schema).path).to.deep.equal(value)
@@ -232,9 +226,9 @@ describe('AiAssistToolSchema', () => {
         properties: { paths: { type: 'array', items: { type: 'string' } } },
       }
 
-      expect(coerceToolArgs({ paths: 'main.tex' }, schema).paths).to.deep.equal(
-        ['main.tex']
-      )
+      expect(coerceToolArgs({ paths: 'main.tex' }, schema).paths).to.deep.equal([
+        'main.tex',
+      ])
     })
 
     it('coerces inside array items', () => {

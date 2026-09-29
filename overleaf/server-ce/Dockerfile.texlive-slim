@@ -1,0 +1,85 @@
+# -----------------------------------------------------------
+# Overleaf Lightweight TeX Live Slim Sibling Compiler Image
+# Supports multi-year versions (2026, 2025, 2024, 2023, 2022, etc.)
+# Fast build (~1-2 mins), small footprint (~350MB-500MB) for testing
+# -----------------------------------------------------------
+
+FROM phusion/baseimage:noble-1.0.3
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TEXMFVAR=/tmp/texmf-var
+ENV HOME=/tmp
+
+ARG TEXLIVE_YEAR=2026
+ARG TEXLIVE_MIRROR=https://mirror.ctan.org/systems/texlive/tlnet
+ARG TEXLIVE_INSTALLER_URL=""
+
+# 1. Install essential system dependencies, fonts, and utilities
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      build-essential \
+      wget \
+      unzip \
+      time \
+      poppler-utils \
+      optipng \
+      git \
+      python3 \
+      python-is-python3 \
+      python3-pygments \
+      libwww-perl \
+      ca-certificates \
+      curl \
+      gnupg \
+      qpdf \
+      make \
+      fontconfig \
+      ghostscript \
+      chktex \
+      fonts-liberation && \
+    fc-cache -f -v && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# 2. Install official basic TeX Live scheme + essential packages
+RUN mkdir -p /install-tl-unx && \
+    if [ -n "$TEXLIVE_INSTALLER_URL" ]; then \
+      echo "Downloading installer from specified URL: $TEXLIVE_INSTALLER_URL" && \
+      wget --quiet "$TEXLIVE_INSTALLER_URL" -O /install-tl-unx.tar.gz; \
+    else \
+      echo "Downloading installer for TeX Live ${TEXLIVE_YEAR}..." && \
+      (wget --quiet "${TEXLIVE_MIRROR}/install-tl-unx.tar.gz" -O /install-tl-unx.tar.gz || \
+       wget --quiet "https://ftp.math.utah.edu/pub/tex/historic/systems/texlive/${TEXLIVE_YEAR}/install-tl-unx.tar.gz" -O /install-tl-unx.tar.gz || \
+       wget --quiet "https://ftp.tu-chemnitz.de/pub/tug/historic/systems/texlive/${TEXLIVE_YEAR}/install-tl-unx.tar.gz" -O /install-tl-unx.tar.gz); \
+    fi && \
+    tar -xz -C /install-tl-unx --strip-components=1 -f /install-tl-unx.tar.gz && \
+    rm -f /install-tl-unx.tar.gz && \
+    echo "tlpdbopt_autobackup 0" >> /install-tl-unx/texlive.profile && \
+    echo "tlpdbopt_install_docfiles 0" >> /install-tl-unx/texlive.profile && \
+    echo "tlpdbopt_install_srcfiles 0" >> /install-tl-unx/texlive.profile && \
+    echo "selected_scheme scheme-basic" >> /install-tl-unx/texlive.profile && \
+    /install-tl-unx/install-tl \
+      -profile /install-tl-unx/texlive.profile \
+      -repository "${TEXLIVE_MIRROR}" && \
+    $(find /usr/local/texlive -name tlmgr) path add && \
+    tlmgr install --repository "${TEXLIVE_MIRROR}" \
+      latexmk \
+      texcount \
+      synctex \
+      etoolbox \
+      xetex || true && \
+    tlmgr path add && \
+    echo "shell_escape = t" >> $(find /usr/local/texlive/ -type d -name "20*")/texmf.cnf && \
+    rm -rf /install-tl-unx
+
+# 3. Copy custom Latexmk configuration ($go_mode = 3;)
+COPY server-ce/config/latexmkrc /usr/local/share/latexmk/LatexMk
+
+# 4. User and workspace isolation (handle pre-existing UID 1000 in Ubuntu Noble)
+RUN (userdel -r ubuntu 2>/dev/null || true) && \
+    (userdel -r tex 2>/dev/null || true) && \
+    useradd -u 1000 -d /tmp -s /bin/bash tex && \
+    mkdir -p /compile /tmp/texmf-var && \
+    chown -R tex:tex /compile /tmp
+
+USER tex
+WORKDIR /compile

@@ -97,7 +97,7 @@ describe('AdminUserRestorer', () => {
     const validId = '507f1f77bcf86cd799439011'
     await expect(
       restoreUserAndProjects(validId, 'admin-1', '127.0.0.1')
-    ).rejects.toThrow(NotFoundError)
+    ).to.be.rejectedWith(NotFoundError)
   })
 
   it('throws ConflictError if the primary email is already registered to an active user', async () => {
@@ -108,13 +108,11 @@ describe('AdminUserRestorer', () => {
         user: { email: 'alice@example.com', emails: [] },
       }),
     })
-    UserGetter.promises.getUserByAnyEmail.mockResolvedValue({
-      _id: 'active-user-2',
-    })
+    UserGetter.promises.getUserByAnyEmail.mockResolvedValue({ _id: 'active-user-2' })
 
     await expect(
       restoreUserAndProjects(validId, 'admin-1', '127.0.0.1')
-    ).rejects.toThrow(ConflictError)
+    ).to.be.rejectedWith(ConflictError)
   })
 
   it('restores user document and all soft-deleted projects', async () => {
@@ -152,12 +150,8 @@ describe('AdminUserRestorer', () => {
 
     expect(db.users.insertOne).toHaveBeenCalled()
     expect(DeletedUser.deleteOne).toHaveBeenCalledWith({ _id: 'del-doc-1' })
-    expect(ProjectDeleter.promises.undeleteProject).toHaveBeenCalledWith(
-      'proj-1'
-    )
-    expect(ProjectDeleter.promises.undeleteProject).toHaveBeenCalledWith(
-      'proj-2'
-    )
+    expect(ProjectDeleter.promises.undeleteProject).toHaveBeenCalledWith('proj-1')
+    expect(ProjectDeleter.promises.undeleteProject).toHaveBeenCalledWith('proj-2')
     expect(UserAuditLogHandler.promises.addEntry).toHaveBeenCalledWith(
       expect.anything(),
       'admin-restore-user',
@@ -177,7 +171,7 @@ describe('AdminUserRestorer', () => {
       const validId = '507f1f77bcf86cd799439011'
       await expect(
         purgeDeletedUser(validId, 'admin-1', '127.0.0.1')
-      ).rejects.toThrow(NotFoundError)
+      ).to.be.rejectedWith(NotFoundError)
     })
 
     it('permanently deletes user and associated archived projects', async () => {
@@ -208,3 +202,4 @@ describe('AdminUserRestorer', () => {
     })
   })
 })
+

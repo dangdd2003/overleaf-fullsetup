@@ -261,7 +261,7 @@ Settings.aiAssist = {
   enabled: process.env.AI_ASSIST_ENABLED === 'true',
   webToolsEnabled: process.env.AI_ASSIST_WEB_TOOLS_ENABLED === 'true',
   serverWebSearch,
-  // The headless-browser sidecar (services/ai-browser); unset leaves it out
+  // The headless-browser sidecar (services/overleaf-browser); unset leaves it out
   browser: (() => {
     const obj = {
       url: (process.env.AI_ASSIST_BROWSER_URL || '').trim() || null,

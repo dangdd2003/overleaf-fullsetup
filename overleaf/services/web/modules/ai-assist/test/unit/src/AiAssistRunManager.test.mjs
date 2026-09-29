@@ -4,9 +4,12 @@ import sinon from 'sinon'
 import {
   AiAssistRunManager,
   TRIM_TARGET_FRACTION,
+  WEB_CALL_NUDGE,
   applyContextBudget,
   estimateMessagesTokens,
   extractTextToolCall,
+  toAgentMessages,
+  toolMessageIsError,
 } from '../../../app/src/AiAssistRunManager.mjs'
 
 describe('AiAssistRunManager', function () {
@@ -732,6 +735,7 @@ describe('AiAssistRunManager', function () {
       cacheTools: true,
       lastStableMessage: 1,
       cacheKey: 'p1',
+      systemPrefix: capturedOpts.system,
     })
   })
 
@@ -1374,6 +1378,13 @@ describe('AiAssistRunManager', function () {
     })
 
     it('rescues text-based tool call when model outputs fenced tool call after thinking', async function () {
+      mockTools.getToolSpecs = () => [
+        {
+          name: 'edit_file',
+          description: 'e',
+          parameters: { type: 'object', properties: {} },
+        },
+      ]
       let callCount = 0
       mockClient.streamChat.callsFake(async function* () {
         callCount++
@@ -1539,7 +1550,7 @@ describe('AiAssistRunManager', function () {
       const names = capturedTools.map(t => t.name)
       expect(names).to.include('read_file')
       expect(names).to.include('present_plan')
-      expect(names).to.not.include('edit_file')
+      expect(names).not.to.include('edit_file')
 
       const finishedCall = capturedEvents.find(
         e => e.type === 'toolCallFinished' && e.id === 'call_edit'
@@ -2130,6 +2141,299 @@ describe('AiAssistRunManager', function () {
         m => m.role === 'tool' && m.name === 'web_search'
       )
       expect(toolMessage.content).to.include('<web_results query="siunitx">')
+    })
+
+    describe('web call budget', function () {
+      const NUDGE = `That is ${WEB_CALL_NUDGE} web calls for this request.`
+      let webTools
+      let sent
+
+      const search = n => ({
+        type: 'tool_call',
+        id: `w${n}`,
+        name: 'web_search',
+        args: { query: `query ${n}` },
+      })
+
+      beforeEach(function () {
+        webTools = {
+          getToolSpecs: () => [
+            {
+              name: 'web_search',
+              description: 'd',
+              parameters: {
+                type: 'object',
+                properties: { query: { type: 'string' } },
+              },
+            },
+          ],
+          execute: sinon.stub().callsFake(async (name, args) => ({
+            query: args.query,
+            results: [],
+          })),
+        }
+        manager = new AiAssistRunManager({
+          store: mockStore,
+          tools: mockTools,
+          clientFactory: () => mockClient,
+          webToolsFactory: () => webTools,
+        })
+        sent = []
+      })
+
+      // The tool results the model had seen when it made its last request.
+      const webResults = () =>
+        sent
+          .at(-1)
+          .filter(m => m.role === 'tool' && m.name === 'web_search')
+          .map(m => m.content)
+
+      it('tells the model once to answer after the web call budget, without counting project tools', async function () {
+        let turn = 0
+        mockClient.streamChat.callsFake(async function* (opts) {
+          turn++
+          sent.push(opts.messages.map(m => ({ ...m })))
+          if (turn === 1) {
+            yield {
+              type: 'tool_call',
+              id: 'g1',
+              name: 'get_packages',
+              args: {},
+            }
+          }
+          if (turn <= WEB_CALL_NUDGE + 1) {
+            yield search(turn)
+          } else {
+            yield { type: 'text', text: 'Done.' }
+          }
+        })
+
+        await start('run-web-budget', {
+          webSearchSettings: { type: 'ollama', apiKey: 'k' },
+        })
+
+        const results = webResults()
+        expect(results).to.have.length(WEB_CALL_NUDGE + 1)
+        results.forEach((content, index) => {
+          if (index === WEB_CALL_NUDGE - 1) {
+            expect(content).to.include(NUDGE)
+          } else {
+            expect(content).not.to.include(NUDGE)
+          }
+        })
+        expect(webTools.execute.callCount).to.equal(WEB_CALL_NUDGE + 1)
+      })
+
+      it('starts the count again for a message queued during the run', async function () {
+        let turn = 0
+        mockClient.streamChat.callsFake(async function* (opts) {
+          turn++
+          sent.push(opts.messages.map(m => ({ ...m })))
+          if (turn < WEB_CALL_NUDGE) {
+            yield search(turn)
+            if (turn === WEB_CALL_NUDGE - 1) {
+              await manager.queueMessage('run-web-queued', {
+                id: 'q1',
+                text: 'and the other package?',
+                contextText: '<project-context turn="2"/>',
+              })
+            }
+          } else if (turn < 2 * WEB_CALL_NUDGE - 1) {
+            yield search(turn)
+          } else {
+            yield { type: 'text', text: 'Done.' }
+          }
+        })
+
+        await start('run-web-queued', {
+          webSearchSettings: { type: 'ollama', apiKey: 'k' },
+        })
+
+        const results = webResults()
+        expect(results).to.have.length(2 * WEB_CALL_NUDGE - 2)
+        expect(results.filter(content => content.includes(NUDGE))).to.be.empty
+      })
+    })
+  })
+
+  describe('tool results the next run can rebuild', function () {
+    const provider = { type: 'anthropic', apiKey: 'k', model: 'claude-x' }
+
+    it('puts a mid-run mode switch on the next tool result, once', async function () {
+      mockStore.setMode = sinon.stub().resolves()
+      let secondRequest = null
+      let callCount = 0
+      mockClient.streamChat.callsFake(async function* (opts) {
+        callCount++
+        if (callCount === 1) {
+          yield { type: 'tool_call', id: 'r1', name: 'read_file', args: { path: 'a.tex' } }
+          yield { type: 'tool_call', id: 'r2', name: 'read_file', args: { path: 'b.tex' } }
+        } else {
+          secondRequest = opts
+          yield { type: 'text', text: 'done' }
+        }
+      })
+      let switched = false
+      mockTools.execute.callsFake(async () => {
+        if (!switched) {
+          switched = true
+          await manager.setMode('run-mode-notice', 'acceptEdits')
+        }
+        return { content: 'x' }
+      })
+
+      await manager.startRun({
+        runId: 'run-mode-notice',
+        projectId: 'p1',
+        userId: 'u1',
+        transcript: [{ role: 'user', content: 'read them' }],
+        providerSettings: provider,
+      })
+
+      const finished = mockStore.appendEvent.args
+        .map(([, event]) => event)
+        .filter(event => event.type === 'toolCallFinished')
+      const noticed = finished.filter(e => e.result?.notice)
+      expect(noticed).to.have.length(1)
+      expect(noticed[0].result.notice).to.equal(
+        'The user switched to Accept edits mode.'
+      )
+      const toolMessages = secondRequest.messages.filter(m => m.role === 'tool')
+      expect(
+        toolMessages.filter(m =>
+          m.content.endsWith('The user switched to Accept edits mode.')
+        )
+      ).to.have.length(1)
+    })
+
+    it('rebuilds tool messages exactly as the live run sent them', async function () {
+      let secondRequest = null
+      let callCount = 0
+      mockClient.streamChat.callsFake(async function* (opts) {
+        callCount++
+        if (callCount === 1) {
+          yield { type: 'tool_call', id: 'e1', name: 'read_file', args: { path: 'a.tex' } }
+        } else {
+          secondRequest = opts
+          yield { type: 'text', text: 'done' }
+        }
+      })
+      mockTools.execute.resolves({ status: 'noMatch', message: 'not found' })
+      await manager.startRun({
+        runId: 'run-rebuild',
+        projectId: 'p1',
+        userId: 'u1',
+        transcript: [{ role: 'user', content: 'edit' }],
+        providerSettings: provider,
+      })
+      const live = secondRequest.messages.find(m => m.role === 'tool')
+      const event = mockStore.appendEvent.args
+        .map(([, e]) => e)
+        .find(e => e.type === 'toolCallFinished')
+      const rebuilt = toAgentMessages([
+        { role: 'user', content: 'edit' },
+        {
+          role: 'assistant',
+          text: '',
+          toolCalls: [
+            {
+              id: 'e1',
+              name: 'read_file',
+              args: {},
+              result: event.result,
+              isError: event.isError,
+            },
+          ],
+        },
+      ]).find(m => m.role === 'tool')
+      expect(rebuilt.content).to.equal(live.content)
+      expect(rebuilt.isError).to.equal(live.isError)
+      expect(live.isError).to.equal(true)
+    })
+
+    it('treats noMatch and ambiguous as failed tool messages', function () {
+      expect(toolMessageIsError({ status: 'noMatch' }, false)).to.equal(true)
+      expect(toolMessageIsError({ status: 'ambiguous' }, false)).to.equal(true)
+      expect(toolMessageIsError({ status: 'denied' }, true)).to.equal(false)
+      expect(toolMessageIsError({ error: 'x' }, false)).to.equal(true)
+      expect(toolMessageIsError({ content: 'ok' }, false)).to.equal(false)
+    })
+  })
+
+  describe('prompt prefix', function () {
+    const provider = { type: 'anthropic', apiKey: 'k', model: 'claude-x' }
+    const startWith = (m, runId, extra = {}) =>
+      m.startRun({
+        runId,
+        projectId: 'p1',
+        userId: 'u1',
+        transcript: [{ role: 'user', content: 'hi' }],
+        providerSettings: provider,
+        ...extra,
+      })
+
+    beforeEach(function () {
+      mockClient.streamChat.callsFake(async function* () {
+        yield { type: 'text', text: 'ok' }
+      })
+      mockTools.getToolSpecs = () => [
+        {
+          name: 'read_file',
+          description: 'r',
+          parameters: { type: 'object', properties: {} },
+        },
+        {
+          name: 'edit_file',
+          description: 'e',
+          parameters: { type: 'object', properties: {} },
+        },
+      ]
+    })
+
+    it('builds mode-specific system prompt and tool specs for each mode', async function () {
+      await startWith(manager, 'run-plan', { mode: 'plan' })
+      await startWith(manager, 'run-accept', { mode: 'acceptEdits' })
+      const [plan, accept] = mockClient.streamChat.args.map(([a]) => a)
+      expect(plan.system).to.include('# Mode: Plan')
+      expect(accept.system).to.include('# Mode: Accept edits')
+      expect(plan.tools.map(t => t.name)).to.include('present_plan')
+      expect(plan.tools.map(t => t.name)).not.to.include('edit_file')
+      expect(accept.tools.map(t => t.name)).to.include('edit_file')
+      expect(accept.tools.map(t => t.name)).not.to.include('present_plan')
+      expect(plan.cacheHints.systemPrefix).to.equal(plan.system)
+    })
+
+    it('automatically adds AGENTS.md as a second block when present', async function () {
+      mockTools.getProjectInstructions = sinon.stub().resolves({
+        path: 'AGENTS.md',
+        text: 'Use British spelling.',
+      })
+      const m = new AiAssistRunManager({
+        store: mockStore,
+        tools: mockTools,
+        clientFactory: () => mockClient,
+      })
+      await startWith(m, 'run-agents')
+      const [request] = mockClient.streamChat.firstCall.args
+      expect(request.system).to.include('Use British spelling.')
+      expect(request.system.startsWith(request.cacheHints.systemPrefix)).to.be
+        .true
+      expect(request.cacheHints.systemPrefix).not.to.include('British')
+      expect(mockTools.getProjectInstructions.calledWith('p1')).to.be.true
+    })
+
+    it('keeps running when AGENTS.md cannot be read', async function () {
+      mockTools.getProjectInstructions = sinon.stub().rejects(new Error('boom'))
+      const m = new AiAssistRunManager({
+        store: mockStore,
+        tools: mockTools,
+        clientFactory: () => mockClient,
+      })
+      await startWith(m, 'run-agents-error')
+      const [request] = mockClient.streamChat.firstCall.args
+      expect(request.system).not.to.include('# Project instructions')
+      expect(mockStore.updateStatus.calledWith('run-agents-error', 'done')).to
+        .be.true
     })
   })
 })

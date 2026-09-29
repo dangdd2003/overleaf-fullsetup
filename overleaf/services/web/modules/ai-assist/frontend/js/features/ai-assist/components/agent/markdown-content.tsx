@@ -81,6 +81,83 @@ export function tableElementToLatex(tableEl: HTMLTableElement): string {
   return lines.join('\n')
 }
 
+const COLUMN_RESIZER =
+  '<span class="ai-assist-col-resizer" aria-hidden="true"></span>'
+const ROW_RESIZER =
+  '<span class="ai-assist-row-resizer" aria-hidden="true"></span>'
+const TABLE_RESIZER_SELECTOR = '.ai-assist-col-resizer, .ai-assist-row-resizer'
+const MIN_COLUMN_WIDTH = 48
+
+/** Pins every column at its current width so dragging one leaves the rest. */
+function pinColumnWidths(table: HTMLTableElement) {
+  if (table.classList.contains('is-sized')) return
+  const cells = Array.from(table.rows[0]?.cells ?? [])
+  const widths = cells.map(cell => cell.getBoundingClientRect().width)
+  cells.forEach((cell, i) => {
+    cell.style.width = `${widths[i]}px`
+  })
+  table.style.width = `${widths.reduce((sum, width) => sum + width, 0)}px`
+  table.classList.add('is-sized')
+}
+
+/** Drags a column's right edge or a row's bottom edge. */
+function startTableResize(handle: HTMLElement, down: PointerEvent) {
+  const cell = handle.parentElement
+  const table = cell?.closest('table')
+  if (!(cell instanceof HTMLTableCellElement) || !table) return
+
+  let resize: (delta: number) => void
+  const isColumn = handle.classList.contains('ai-assist-col-resizer')
+  if (isColumn) {
+    pinColumnWidths(table)
+    const column = table.rows[0]?.cells[cell.cellIndex]
+    if (!column) return
+    const startWidth = parseFloat(column.style.width)
+    const otherWidths = parseFloat(table.style.width) - startWidth
+    resize = delta => {
+      const width = Math.max(MIN_COLUMN_WIDTH, startWidth + delta)
+      column.style.width = `${width}px`
+      table.style.width = `${otherWidths + width}px`
+    }
+  } else {
+    const row = cell.parentElement as HTMLTableRowElement
+    const startHeight = row.getBoundingClientRect().height
+    // A row never gets shorter than its text
+    resize = delta => {
+      row.style.height = `${Math.max(0, startHeight + delta)}px`
+    }
+  }
+
+  handle.setPointerCapture(down.pointerId)
+  table.classList.add('is-resizing')
+  const move = (e: PointerEvent) =>
+    resize(isColumn ? e.clientX - down.clientX : e.clientY - down.clientY)
+  const end = () => {
+    handle.removeEventListener('pointermove', move)
+    handle.removeEventListener('pointerup', end)
+    handle.removeEventListener('pointercancel', end)
+    table.classList.remove('is-resizing')
+  }
+  handle.addEventListener('pointermove', move)
+  handle.addEventListener('pointerup', end)
+  handle.addEventListener('pointercancel', end)
+}
+
+/** Gives the column widths, or one row's height, back to the browser. */
+function resetTableSize(handle: HTMLElement) {
+  const table = handle.closest('table')
+  if (!table) return
+  if (handle.classList.contains('ai-assist-row-resizer')) {
+    handle.closest('tr')?.style.removeProperty('height')
+    return
+  }
+  table.classList.remove('is-sized')
+  table.style.removeProperty('width')
+  for (const cell of Array.from(table.rows[0]?.cells ?? [])) {
+    cell.style.removeProperty('width')
+  }
+}
+
 export function renderFileMentionHtml(filePath: string, line?: string): string {
   const cleanPath = filePath.replace(/^\.\//, '')
   const safePath = escapeHtml(cleanPath)
@@ -521,6 +598,111 @@ function renderFootnotes(): string {
   return `<ol class="ai-assist-footnotes">${items.join('')}</ol>`
 }
 
+// Titles for the tables of the reply being rendered, in document order; the
+// table renderer takes the next one for each table it draws
+let activeTableTitles: string[] | null = null
+
+const TABLE_CAPTION = /^table(?:\s+\d+[a-z]?)?\s*[:.]\s*(\S.*)$/i
+
+/** The text of inline tokens, still HTML-escaped as the lexer left it. */
+function inlinePlainText(tokens: any[] = []): string {
+  return tokens
+    .map(token => {
+      if (['citation', 'footnoteRef', 'html', 'image'].includes(token.type)) {
+        return ''
+      }
+      if (token.type === 'br') return ' '
+      if (token.tokens) return inlinePlainText(token.tokens)
+      if (token.type === 'inlineMath') return escapeHtml(token.raw)
+      return token.text ?? ''
+    })
+    .join('')
+}
+
+/** Cleaned like a chat title: one line, no "Table:" label, no end punctuation. */
+function cleanTableTitle(escaped: string): string {
+  const text = escaped
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return text
+    .replace(TABLE_CAPTION, '$1')
+    .replace(/^["'`“”‘’]+|["'`“”‘’]+$/g, '')
+    .replace(/[.,:;!?]+$/, '')
+    .trim()
+}
+
+/** A single-line paragraph, as its inline tokens. */
+function singleLine(token: any): any[] | null {
+  if (token?.type !== 'paragraph' || token.text.includes('\n')) return null
+  return token.tokens
+}
+
+/** A "Table: …" or "Table 2. …" caption line. */
+function captionTitle(token: any): string {
+  const inline = singleLine(token)
+  const text = inline ? inlinePlainText(inline).trim() : ''
+  return TABLE_CAPTION.test(text) ? cleanTableTitle(text) : ''
+}
+
+/** A heading, a bold line or a caption written right above a table. */
+function leadInTitle(token: any): string {
+  if (token?.type === 'heading') {
+    return cleanTableTitle(inlinePlainText(token.tokens))
+  }
+  const inline = singleLine(token)?.filter(
+    t => !(t.type === 'text' && /^[\s:]*$/.test(t.text))
+  )
+  if (inline?.length === 1 && inline[0].type === 'strong') {
+    return cleanTableTitle(inlinePlainText(inline[0].tokens))
+  }
+  return captionTitle(token)
+}
+
+/** Index of the nearest block before or after `from`, skipping blank lines. */
+function neighbourBlock(tokens: any[], from: number, step: 1 | -1): number {
+  let at = from + step
+  while (tokens[at]?.type === 'space') at += step
+  return tokens[at] ? at : -1
+}
+
+/**
+ * Titles every table from what the model wrote, the way a chat is titled from
+ * its first prompt. The heading, bold line or caption right above a table
+ * becomes its title and leaves the prose; failing that a caption right below
+ * it; failing that its column names.
+ */
+function titleTables(tokens: any[], titles: string[]) {
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i]
+    if (token.type === 'blockquote') titleTables(token.tokens, titles)
+    if (token.type === 'list') {
+      for (const item of token.items) titleTables(item.tokens, titles)
+    }
+    if (token.type !== 'table') continue
+
+    const before = neighbourBlock(tokens, i, -1)
+    const after = neighbourBlock(tokens, i, 1)
+    let title = before >= 0 ? leadInTitle(tokens[before]) : ''
+    if (title) {
+      tokens.splice(before, 1)
+      i--
+    } else if (after >= 0 && (title = captionTitle(tokens[after]))) {
+      tokens.splice(after, 1)
+    } else {
+      title = token.header
+        .map((cell: any) => cleanTableTitle(inlinePlainText(cell.tokens)))
+        .filter(Boolean)
+        .join(' · ')
+    }
+    titles.push(title)
+  }
+}
+
 // A list item with nothing in it, and a list left with no items
 const EMPTY_LIST_ITEM =
   /<li>(?:\s|<p>\s*(?:<br\s*\/?>)?\s*<\/p>|<br\s*\/?>)*<\/li>\s*/gi
@@ -535,9 +717,10 @@ marked.use({
   extensions: [blockMath, inlineMath, citation, footnoteRef],
   renderer: {
     table(header: string, body: string) {
+      const title = escapeHtml(activeTableTitles?.shift() ?? '')
       return `<div class="ai-assist-table-wrapper">
   <div class="ai-assist-table-header">
-    <span class="ai-assist-table-label">Table</span>
+    <span class="ai-assist-table-label" title="${title}">${title}</span>
     <div class="ai-assist-table-actions">
       <button type="button" class="ai-assist-table-insert-btn" aria-label="Insert as LaTeX table" title="Insert as LaTeX table">
         <svg class="ai-assist-icon-insert" xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 256 256" aria-hidden="true"><path d="M224,128a8,8,0,0,1-8,8H136v80a8,8,0,0,1-16,0V136H40a8,8,0,0,1,0-16h80V40a8,8,0,0,1,16,0v80h80A8,8,0,0,1,224,128Z"></path></svg>
@@ -548,6 +731,17 @@ marked.use({
   </div>
   <div class="ai-assist-table-scroll"><table class="ai-assist-table"><thead>${header}</thead><tbody>${body}</tbody></table></div>
 </div>`
+    },
+    // Each cell carries drag handles for its column's right edge and, in the
+    // body, its row's bottom edge
+    tablecell(
+      content: string,
+      flags: { header: boolean; align: 'center' | 'left' | 'right' | null }
+    ) {
+      const tag = flags.header ? 'th' : 'td'
+      const align = flags.align ? ` align="${flags.align}"` : ''
+      const rowHandle = flags.header ? '' : ROW_RESIZER
+      return `<${tag}${align}>${content}${COLUMN_RESIZER}${rowHandle}</${tag}>\n`
     },
     code(code: string, infostring: string | undefined) {
       const lang = (infostring || '').match(/\S*/)?.[0] || ''
@@ -682,7 +876,11 @@ export function renderMarkdown(
   try {
     let rawHtml = ''
     try {
-      rawHtml = (marked.parse(footnotes.text) as string) + renderFootnotes()
+      const tokens = marked.lexer(footnotes.text)
+      const titles: string[] = []
+      titleTables(tokens, titles)
+      activeTableTitles = titles
+      rawHtml = marked.parser(tokens) + renderFootnotes()
     } catch {
       rawHtml = escapeHtml(content)
     }
@@ -695,6 +893,7 @@ export function renderMarkdown(
     activeSources = null
     activeFootnotes = null
     activeBaseUrl = null
+    activeTableTitles = null
     DOMPurify.removeHook('afterSanitizeAttributes')
   }
 }
@@ -1018,6 +1217,28 @@ export const MarkdownContent: FC<{
     [openFile]
   )
 
+  const handlePointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      const handle = (e.target as HTMLElement).closest<HTMLElement>(
+        TABLE_RESIZER_SELECTOR
+      )
+      if (!handle || e.button !== 0) return
+      e.preventDefault()
+      startTableResize(handle, e.nativeEvent)
+    },
+    []
+  )
+
+  const handleDoubleClick = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      const handle = (e.target as HTMLElement).closest<HTMLElement>(
+        TABLE_RESIZER_SELECTOR
+      )
+      if (handle) resetTableSize(handle)
+    },
+    []
+  )
+
   // A citation card stays inside the panel: it opens leftwards when it would
   // run past the right edge, and upwards when the scrolling area it sits in
   // (the transcript, above the composer) has more room there than below
@@ -1054,6 +1275,8 @@ export const MarkdownContent: FC<{
         animating ? 'ai-assist-markdown is-streaming' : 'ai-assist-markdown'
       }
       onClick={handleClick}
+      onDoubleClick={handleDoubleClick}
+      onPointerDown={handlePointerDown}
       onKeyDown={handleKeyDown}
       onMouseOver={handleMouseOver}
       dangerouslySetInnerHTML={{ __html: html }}

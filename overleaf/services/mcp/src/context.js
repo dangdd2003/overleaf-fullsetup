@@ -50,8 +50,7 @@ export function runTool(fn) {
  * @param {unknown} value
  */
 export function textResult(value) {
-  const text =
-    typeof value === 'string' ? value : JSON.stringify(value, null, 2)
+  const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2)
   const result = { content: [{ type: 'text', text }] }
   if (value && typeof value === 'object' && !Array.isArray(value)) {
     result.structuredContent = value

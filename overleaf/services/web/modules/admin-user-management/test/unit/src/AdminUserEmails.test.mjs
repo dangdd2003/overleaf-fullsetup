@@ -49,17 +49,14 @@ vi.mock('../../../app/src/AdminUserRestorer.mjs', () => ({
   restoreUserAndProjects: vi.fn(),
 }))
 
-vi.mock(
-  '../../../../../app/src/Features/Collaborators/OwnershipTransferHandler.mjs',
-  () => ({
-    default: {
-      promises: {
-        transferOwnership: vi.fn(),
-        transferAllProjectsToUser: vi.fn(),
-      },
+vi.mock('../../../../../app/src/Features/Collaborators/OwnershipTransferHandler.mjs', () => ({
+  default: {
+    promises: {
+      transferOwnership: vi.fn(),
+      transferAllProjectsToUser: vi.fn(),
     },
-  })
-)
+  },
+}))
 
 vi.mock('../../../app/src/AdminUserQuery.mjs', () => ({
   getActiveUsers: vi.fn(),
@@ -95,14 +92,11 @@ vi.mock('../../../../../app/src/Features/User/UserCreator.mjs', () => ({
   },
 }))
 
-vi.mock(
-  '../../../../../app/src/Features/Authentication/AuthenticationManager.mjs',
-  () => ({
-    default: {
-      hashPassword: vi.fn(),
-    },
-  })
-)
+vi.mock('../../../../../app/src/Features/Authentication/AuthenticationManager.mjs', () => ({
+  default: {
+    hashPassword: vi.fn(),
+  },
+}))
 
 vi.mock('../../../../../app/src/Features/User/UserGetter.mjs', () => ({
   default: {
@@ -157,25 +151,19 @@ vi.mock('../../../../../app/src/Features/User/UserDeleter.mjs', () => ({
   },
 }))
 
-vi.mock(
-  '../../../../../app/src/Features/Security/OneTimeTokenHandler.mjs',
-  () => ({
-    default: {
-      promises: {
-        getNewToken: vi.fn(),
-      },
+vi.mock('../../../../../app/src/Features/Security/OneTimeTokenHandler.mjs', () => ({
+  default: {
+    promises: {
+      getNewToken: vi.fn(),
     },
-  })
-)
+  },
+}))
 
-vi.mock(
-  '../../../../../app/src/Features/Authentication/SessionManager.mjs',
-  () => ({
-    default: {
-      getLoggedInUserId: vi.fn(),
-    },
-  })
-)
+vi.mock('../../../../../app/src/Features/Authentication/SessionManager.mjs', () => ({
+  default: {
+    getLoggedInUserId: vi.fn(),
+  },
+}))
 
 vi.mock('../../../../../app/src/Features/User/UserSessionsManager.mjs', () => {
   const getAllUserSessions = vi.fn()

@@ -177,9 +177,7 @@ export default function AdminUserAuditTrailCard({
 
         if (!isCancelled) {
           setLogs(prev =>
-            page === 1
-              ? res.auditLogs || []
-              : [...prev, ...(res.auditLogs || [])]
+            page === 1 ? res.auditLogs || [] : [...prev, ...(res.auditLogs || [])]
           )
           setTotal(res.total ?? 0)
           setTotalPages(res.totalPages ?? 1)
@@ -281,7 +279,8 @@ export default function AdminUserAuditTrailCard({
                       <div className="text-muted small text-nowrap">
                         {logDate ? (
                           <span title={logDate.toLocaleString()}>
-                            {logDate.toLocaleString()} · {fromNowDate(logDate)}
+                            {logDate.toLocaleString()} ·{' '}
+                            {fromNowDate(logDate)}
                           </span>
                         ) : (
                           '—'
@@ -293,7 +292,9 @@ export default function AdminUserAuditTrailCard({
                       <div className="d-flex flex-wrap column-gap-3 small">
                         {infoEntries.map(([key, value]) => (
                           <span key={key}>
-                            <span className="text-muted">{humanize(key)}:</span>{' '}
+                            <span className="text-muted">
+                              {humanize(key)}:
+                            </span>{' '}
                             {formatInfoValue(value)}
                           </span>
                         ))}

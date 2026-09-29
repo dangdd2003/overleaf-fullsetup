@@ -7,3 +7,10 @@ export function nextMode(mode: AgentMode): AgentMode {
   if (idx === -1) return 'manual'
   return AGENT_MODES[(idx + 1) % AGENT_MODES.length]
 }
+
+/** How each mode is named to the model; matches the composer's labels. */
+export const MODE_LABELS: Record<AgentMode, string> = {
+  manual: 'Manual',
+  acceptEdits: 'Accept edits',
+  plan: 'Plan',
+}

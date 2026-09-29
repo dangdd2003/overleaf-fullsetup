@@ -200,11 +200,11 @@ describe('useProjectHandle (real) listFiles', function () {
     // it without refreshing first yields no files for the rest of the session.
     // That is what broke @-mentions and the attach menu, which list these paths.
     let refreshed = false
-    const refresh = sinon
-      .stub(ProjectSnapshot.prototype, 'refresh')
-      .callsFake(async () => {
+    const refresh = sinon.stub(ProjectSnapshot.prototype, 'refresh').callsFake(
+      async () => {
         refreshed = true
-      })
+      }
+    )
     sinon
       .stub(ProjectSnapshot.prototype, 'getDocPaths')
       .callsFake(() => (refreshed ? ['/main.tex'] : []))

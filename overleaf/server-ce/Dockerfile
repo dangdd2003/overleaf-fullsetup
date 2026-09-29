@@ -21,6 +21,16 @@ RUN apt-get update && apt-get upgrade -y && \
     fc-cache -f -v && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# Install curl-impersonate v2.2.3 for Chrome TLS fingerprinting
+ARG CURL_IMPERSONATE_VERSION=v2.2.3
+ARG CURL_IMPERSONATE_SHA256=ca7c8aae49e33260d3a2400db16c7737aaf04692d606a843502056b42990f989
+RUN mkdir -p /usr/local/lib/curl-impersonate && \
+    curl -fsSL "https://github.com/lexiforest/curl-impersonate/releases/download/${CURL_IMPERSONATE_VERSION}/curl-impersonate-${CURL_IMPERSONATE_VERSION}.x86_64-linux-gnu.tar.gz" -o /tmp/curl-impersonate.tar.gz && \
+    echo "${CURL_IMPERSONATE_SHA256}  /tmp/curl-impersonate.tar.gz" | sha256sum -c - && \
+    tar -xzf /tmp/curl-impersonate.tar.gz -C /usr/local/lib/curl-impersonate && \
+    rm -f /tmp/curl-impersonate.tar.gz && \
+    chmod +x /usr/local/lib/curl-impersonate/curl-impersonate
+
 WORKDIR /overleaf
 
 # Node.js version argument (e.g. v24.20.0)
