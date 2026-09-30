@@ -219,14 +219,15 @@ export function formatSubresultsSummary(
   const totalSec = Math.max(1, Math.round(totalThinkingMs / 1000))
   const thoughtTimeStr = totalThinkingMs > 0 ? `Thought for ${totalSec}s` : null
 
-  if (callsToTally.length === 0) {
-    if (!isLive && thoughtTimeStr) {
+  if (toolCalls.length === 0) {
+    if (thoughtTimeStr) {
       return { title: thoughtTimeStr, isOnlyThinking: true, diffStats: null }
     }
-    return { title: '', isOnlyThinking: false, diffStats: null }
+    return { title: '', isOnlyThinking: true, diffStats: null }
   }
 
-  const actionsStr = summariseToolCallActions(callsToTally)
+  const targetCalls = callsToTally.length > 0 ? callsToTally : toolCalls
+  const actionsStr = summariseToolCallActions(targetCalls) || 'Running action'
 
   if (!isLive && thoughtTimeStr) {
     return {
@@ -496,23 +497,10 @@ export const SubresultGroup: FC<{
                   key={call.id || `call-${idx}`}
                   className="ai-assist-subresult-item"
                 >
-                  {isSingleToolCall ? (
-                    <div className="ai-assist-tool-call">
-                      <div className="ai-assist-tool-call-summary ai-assist-tool-call-summary-static">
-                        <ToolCallSummaryLine call={call} />
-                      </div>
-                      <div
-                        className={toolCallDetailClass(
-                          call,
-                          'ai-assist-tool-call-detail-standalone'
-                        )}
-                      >
-                        <ToolCallDetailView call={call} />
-                      </div>
-                    </div>
-                  ) : (
-                    <ToolCallCard call={call} />
-                  )}
+                  <ToolCallCard
+                    call={call}
+                    defaultExpanded={pastItems.length === 1}
+                  />
                 </div>
               )
             })}

@@ -15,11 +15,13 @@ export function partitionBlocks(blocks?: AssistantBlock[]): MessageSegment[] {
   for (const block of blocks) {
     if (!block) continue
     if (block.type === 'text') {
-      if (currentSubresults.length > 0) {
-        segments.push({ type: 'subresults', items: currentSubresults })
-        currentSubresults = []
+      if (block.text && block.text.trim()) {
+        if (currentSubresults.length > 0) {
+          segments.push({ type: 'subresults', items: currentSubresults })
+          currentSubresults = []
+        }
+        segments.push({ type: 'text', text: block.text })
       }
-      segments.push({ type: 'text', text: block.text || '' })
     } else {
       currentSubresults.push(block)
     }
@@ -112,14 +114,7 @@ export function AgentMessageView({
         }
 
         if (segment.type === 'subresults') {
-          const firstItem = segment.items[0]
-          const firstItemId =
-            firstItem?.type === 'tool_call'
-              ? firstItem.call?.id
-              : firstItem?.startedAt
-                ? `think-${firstItem.startedAt}`
-                : null
-          const groupId = `${entry.id}-${firstItemId || `subresults-${idx}`}`
+          const groupId = `${entry.id}-subresults-${idx}`
           return (
             <SubresultGroup
               key={groupId}

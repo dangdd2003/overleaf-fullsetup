@@ -387,14 +387,11 @@ export function useEditorThemeStyles() {
   }, [fontFamily, fontSize, lineHeight])
 
   const palette: EditorThemePalette = useMemo(() => {
-    if (activeOverallTheme === 'dark') {
-      if (EDITOR_THEME_PALETTES[editorTheme]?.dark) {
-        return EDITOR_THEME_PALETTES[editorTheme]
-      }
-      return EDITOR_THEME_PALETTES.overleaf_dark
-    }
-    if (EDITOR_THEME_PALETTES[editorTheme] && !EDITOR_THEME_PALETTES[editorTheme].dark) {
+    if (EDITOR_THEME_PALETTES[editorTheme]) {
       return EDITOR_THEME_PALETTES[editorTheme]
+    }
+    if (activeOverallTheme === 'dark') {
+      return EDITOR_THEME_PALETTES.overleaf_dark
     }
     return EDITOR_THEME_PALETTES.textmate
   }, [editorTheme, activeOverallTheme])
@@ -420,7 +417,6 @@ export function useEditorThemeStyles() {
         fontFamily: styles.fontFamily,
         fontSize: styles.fontSize,
         lineHeight: styles.lineHeight,
-        backgroundColor: palette.bg,
         color: palette.fg,
       } as React.CSSProperties),
     [styles, palette, isDark]

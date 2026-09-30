@@ -166,4 +166,41 @@ describe('renderToolResult', function () {
     })
     expect(withNotice('text', 'Two.')).to.equal('text')
   })
+
+  it('renders list_available_settings and get_project_settings as human-readable text', function () {
+    const availableText = renderToolResult('list_available_settings', {
+      options: {
+        compilers: ['pdflatex', 'xelatex'],
+        editorThemes: ['cobalt', 'textmate'],
+        imageNames: [{ imageName: 'texlive-2024.1' }],
+        editorModes: ['none', 'vim'],
+        overallThemes: ['system', 'light', 'dark'],
+      },
+    })
+    expect(availableText).to.include('Available Settings & Options:')
+    expect(availableText).to.include('Compilers: pdflatex, xelatex')
+    expect(availableText).to.include('Editor Themes: cobalt, textmate')
+
+    const settingsText = renderToolResult('get_project_settings', {
+      settings: {
+        name: 'Test Paper',
+        compiler: { compiler: 'pdflatex', imageName: 'texlive-2024.1' },
+        appearance: { editorTheme: 'cobalt', fontSize: 14 },
+      },
+    })
+    expect(settingsText).to.include('Current Project Settings:')
+    expect(settingsText).to.include('Project: Test Paper')
+    expect(settingsText).to.include('Theme=cobalt')
+  })
+
+  it('renders configure settings tools as clean summary text', function () {
+    const text = renderToolResult('configure_appearance_settings', {
+      status: 'applied',
+      updatedSettings: { editorTheme: 'cobalt', editorDarkTheme: 'cobalt' },
+      message: 'Appearance settings updated successfully.',
+    })
+    expect(text).to.include(
+      'Updated appearance settings (editorTheme, editorDarkTheme): Appearance settings updated successfully.'
+    )
+  })
 })

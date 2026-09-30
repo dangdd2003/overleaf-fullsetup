@@ -354,6 +354,95 @@ const RENDERERS = {
     }
     return lines.join('\n')
   },
+
+  create_file(result) {
+    if (result.status !== 'applied') return JSON.stringify(result)
+    return `Created file ${result.path}.`
+  },
+
+  list_available_settings(result) {
+    if (!result?.options) return JSON.stringify(result)
+    const o = result.options
+    const themeNames = Array.isArray(o.editorThemes)
+      ? o.editorThemes.map(t => (typeof t === 'string' ? t : t.name))
+      : []
+    const fontNames = Array.isArray(o.fontFamilies)
+      ? o.fontFamilies.map(f =>
+          typeof f === 'string' ? f : `${f.name} (${f.label})`
+        )
+      : []
+    const lines = [
+      'Available Settings & Options:',
+      `Compilers: ${(o.compilers || []).join(', ')}`,
+      `TeX Live Versions: ${(o.imageNames || []).map(img => img.imageName || img).join(', ')}`,
+      `Keybinding Modes: ${(o.editorModes || []).join(', ')}`,
+      `Overall Themes: ${(o.overallThemes || []).join(', ')}`,
+      themeNames.length > 0 ? `Editor Themes: ${themeNames.join(', ')}` : '',
+      fontNames.length > 0 ? `Code Fonts: ${fontNames.join(', ')}` : '',
+      `Line Heights: ${(o.lineHeights || []).join(', ')}`,
+      `Spellcheck Languages: ${(o.spellCheckLanguages || [])
+        .slice(0, 10)
+        .map(l => `${l.code} (${l.name})`)
+        .join(', ')}${(o.spellCheckLanguages || []).length > 10 ? '...' : ''}`,
+      `PDF Viewers: ${(o.pdfViewers || ['pdfjs', 'native']).join(', ')}`,
+    ].filter(Boolean)
+    return lines.join('\n')
+  },
+
+  get_project_settings(result) {
+    if (!result?.settings) return JSON.stringify(result)
+    const { compiler, appearance, editor, spelling, name, description } =
+      result.settings
+    const lines = ['Current Project Settings:']
+    if (name)
+      lines.push(`Project: ${name}${description ? ` - ${description}` : ''}`)
+    if (compiler) {
+      lines.push(
+        `Compiler: ${compiler.compiler || 'pdflatex'}, TeX Live: ${compiler.imageName || 'default'}, Root Doc: ${compiler.rootDocPath || compiler.rootDocId || '(none)'}${compiler.draft ? ', Draft: on' : ''}${compiler.stopOnFirstError ? ', Stop on Error: on' : ''}`
+      )
+    }
+    if (appearance) {
+      lines.push(
+        `Appearance: Theme=${appearance.editorTheme || 'textmate'} (UI: ${appearance.overallTheme || 'system'}), Font Size=${appearance.fontSize ?? 12}px${appearance.fontFamily ? `, Font=${appearance.fontFamily}` : ''}${appearance.lineHeight ? `, Line Height=${appearance.lineHeight}` : ''}${appearance.darkModePdf ? ', Dark PDF: on' : ''}`
+      )
+    }
+    if (editor) {
+      lines.push(
+        `Editor: Keybindings=${editor.mode || 'none'}, Auto-complete=${editor.autoComplete ? 'on' : 'off'}, Auto-close brackets=${editor.autoPairDelimiters ? 'on' : 'off'}, Syntax validation=${editor.syntaxValidation ? 'on' : 'off'}, PDF viewer=${editor.pdfViewer || 'pdfjs'}, Math preview=${editor.mathPreview ? 'on' : 'off'}, Breadcrumbs=${editor.breadcrumbs ? 'on' : 'off'}, Tabs=${editor.editorTabs ? 'on' : 'off'}`
+      )
+    }
+    if (spelling?.spellCheckLanguage) {
+      lines.push(`Spellcheck: ${spelling.spellCheckLanguage}`)
+    }
+    return lines.join('\n')
+  },
+
+  configure_appearance_settings(result) {
+    if (result?.error) return JSON.stringify(result)
+    if (result?.updatedSettings) {
+      const keys = Object.keys(result.updatedSettings)
+      return `Updated appearance settings (${keys.join(', ')}): ${result.message || 'applied successfully.'}`
+    }
+    return JSON.stringify(result)
+  },
+
+  configure_editor_settings(result) {
+    if (result?.error) return JSON.stringify(result)
+    if (result?.updatedSettings) {
+      const keys = Object.keys(result.updatedSettings)
+      return `Updated editor settings (${keys.join(', ')}): ${result.message || 'applied successfully.'}`
+    }
+    return JSON.stringify(result)
+  },
+
+  configure_compiler_settings(result) {
+    if (result?.error) return JSON.stringify(result)
+    if (result?.updatedSettings) {
+      const keys = Object.keys(result.updatedSettings)
+      return `Updated compiler settings (${keys.join(', ')}): ${result.message || 'applied successfully.'}`
+    }
+    return JSON.stringify(result)
+  },
 }
 
 /**

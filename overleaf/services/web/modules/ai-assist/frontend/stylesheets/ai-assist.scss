@@ -1318,16 +1318,16 @@ $code-font-family: var(
   .ai-assist-web-fetch-content {
     margin: 0;
     padding: 0;
-    font-size: 0.8125rem;
-    line-height: 1.6;
+    font-size: 0.75rem;
+    line-height: 1.5;
     color: var(--content-primary-themed);
 
     .ai-assist-markdown {
-      font-size: 0.8125rem;
-      line-height: 1.6;
+      font-size: 0.75rem;
+      line-height: 1.5;
 
       p {
-        margin-bottom: 6px;
+        margin-bottom: 4px;
 
         &:last-child {
           margin-bottom: 0;
@@ -1340,9 +1340,9 @@ $code-font-family: var(
       h4,
       h5,
       h6 {
-        margin-top: 10px;
-        margin-bottom: 4px;
-        font-size: 0.875rem;
+        margin-top: 8px;
+        margin-bottom: 3px;
+        font-size: 0.8125rem;
 
         &:first-child {
           margin-top: 0;
@@ -1351,7 +1351,7 @@ $code-font-family: var(
 
       ul,
       ol {
-        margin-bottom: 6px;
+        margin-bottom: 4px;
         padding-left: 1.25rem;
       }
     }
@@ -1428,24 +1428,213 @@ $code-font-family: var(
     }
   }
 
+  .ai-assist-settings-detail {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    font-family: var(--bs-body-font-family, sans-serif);
+    font-size: 0.71875rem;
+    line-height: 1.4;
+
+    .ai-assist-settings-section-header {
+      font-size: 0.71875rem;
+      color: var(--content-primary-themed);
+      padding-bottom: 4px;
+      border-bottom: 1px solid var(--border-divider-themed, rgba(0, 0, 0, 0.08));
+    }
+
+    .ai-assist-settings-group {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+
+      .ai-assist-settings-group-label {
+        font-size: 0.625rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--content-secondary-themed);
+        opacity: 0.85;
+      }
+    }
+
+    .ai-assist-settings-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+
+      .ai-assist-settings-chip {
+        display: inline-flex;
+        align-items: center;
+        padding: 2px 6px;
+        font-size: 0.6875rem;
+        font-family: $font-family-monospace;
+        border-radius: 4px;
+        background: var(--surface-secondary-themed, rgba(0, 0, 0, 0.04));
+        color: var(--content-primary-themed);
+        border: 1px solid var(--border-divider-themed, rgba(0, 0, 0, 0.06));
+        line-height: 1.3;
+      }
+
+      .ai-assist-settings-chip-more {
+        font-size: 0.6875rem;
+        color: var(--content-secondary-themed);
+        align-self: center;
+        padding-left: 2px;
+      }
+    }
+
+    .ai-assist-settings-rows {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .ai-assist-settings-row {
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+      font-size: 0.71875rem;
+
+      .ai-assist-settings-key {
+        font-weight: 500;
+        color: var(--content-secondary-themed);
+        min-width: 110px;
+        flex-shrink: 0;
+      }
+
+      .ai-assist-settings-val {
+        color: var(--content-primary-themed);
+        font-family: $font-family-monospace;
+        font-size: 0.6875rem;
+        word-break: break-word;
+      }
+    }
+  }
+
+  .ai-assist-tool-call-raw,
+  .ai-assist-tool-detail-raw {
+    margin: 0;
+    padding: 6px 8px;
+    background: var(--surface-secondary-themed, rgba(0, 0, 0, 0.03));
+    border-radius: 4px;
+    font-family: $font-family-monospace;
+    font-size: 0.6875rem;
+    line-height: 1.4;
+    color: var(--content-primary-themed);
+    white-space: pre-wrap;
+    word-break: break-all;
+    border: 1px solid var(--border-divider-themed, rgba(0, 0, 0, 0.05));
+  }
+
   .ai-assist-tool-detail-generic {
     display: flex;
     flex-direction: column;
     gap: 3px;
+    font-size: 0.71875rem;
 
-    .ai-assist-generic-row {
+    .ai-assist-generic-row,
+    .ai-assist-settings-row {
       display: flex;
+      align-items: baseline;
       gap: 6px;
 
-      .ai-assist-generic-key {
+      .ai-assist-generic-key,
+      .ai-assist-settings-key {
         color: var(--content-secondary-themed);
         font-weight: 500;
+        min-width: 90px;
         flex-shrink: 0;
       }
 
-      .ai-assist-generic-val {
+      .ai-assist-generic-val,
+      .ai-assist-settings-val {
         color: var(--content-primary-themed);
+        font-family: $font-family-monospace;
+        font-size: 0.6875rem;
         word-break: break-all;
+      }
+    }
+  }
+
+  .ai-assist-tool-detail-refs {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    font-size: 0.71875rem;
+    line-height: 1.4;
+
+    .ai-assist-refs-warning {
+      color: var(--content-warning-themed, #eab308);
+      font-size: 0.6875rem;
+      padding: 4px 8px;
+      border-radius: 4px;
+      background: rgba(234, 179, 8, 0.1);
+      border: 1px solid rgba(234, 179, 8, 0.2);
+    }
+
+    .ai-assist-refs-section {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+
+      .ai-assist-refs-section-title {
+        font-size: 0.625rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--content-secondary-themed);
+        opacity: 0.85;
+      }
+
+      .ai-assist-refs-list {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+      }
+
+      .ai-assist-ref-item {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        font-size: 0.6875rem;
+
+        .ai-assist-ref-cmd {
+          font-family: $font-family-monospace;
+          color: var(--content-primary-themed);
+          font-weight: 500;
+          min-width: 130px;
+          flex-shrink: 0;
+          word-break: break-all;
+        }
+
+        .ai-assist-file-link {
+          color: var(--content-secondary-themed);
+          cursor: pointer;
+
+          &:hover {
+            color: var(--content-primary-themed);
+            text-decoration: underline;
+          }
+        }
+
+        .ai-assist-ref-badge {
+          margin-left: auto;
+          font-size: 0.625rem;
+          font-weight: 600;
+          padding: 1px 5px;
+          border-radius: 3px;
+
+          &.resolved {
+            color: var(--content-positive-themed, #22c55e);
+            background: rgba(34, 197, 94, 0.1);
+          }
+
+          &.unresolved {
+            color: var(--content-danger-themed, #ef4444);
+            background: rgba(239, 68, 68, 0.1);
+          }
+        }
       }
     }
   }
@@ -2411,9 +2600,10 @@ $code-font-family: var(
 
   .ai-assist-code-block {
     margin: var(--spacing-02, 8px) 0;
-    border: 1px solid var(--border-divider-themed);
+    border: 1px solid var(--gutter-border, var(--border-divider-themed));
     border-radius: var(--border-radius-base, 6px);
-    background: var(--bg-secondary-themed);
+    background: var(--editor-bg, var(--bg-secondary-themed));
+    color: var(--editor-fg, inherit);
     overflow: hidden;
 
     &:last-child {
@@ -2425,10 +2615,10 @@ $code-font-family: var(
       align-items: center;
       justify-content: space-between;
       padding: 4px 8px 4px 12px;
-      background: var(--bg-tertiary-themed);
-      border-bottom: 1px solid var(--border-divider-themed);
+      background: var(--gutter-bg, var(--bg-tertiary-themed));
+      border-bottom: 1px solid var(--gutter-border, var(--border-divider-themed));
       font-size: 0.6875rem;
-      color: var(--content-secondary-themed);
+      color: var(--gutter-fg, var(--content-secondary-themed));
       user-select: none;
 
       .ai-assist-code-lang {
@@ -4490,7 +4680,7 @@ $code-font-family: var(
   font-family: var(--source-font-family, #{$font-family-monospace}, monospace);
   font-size: var(--font-size, 12px);
   line-height: var(--line-height, 1.6);
-  background-color: var(--bg-secondary-themed);
+  background-color: var(--editor-bg, var(--bg-secondary-themed));
   color: var(--editor-fg, inherit);
   border: 1px solid var(--border-divider-themed);
   border-radius: var(--border-radius-base, 4px);
@@ -4580,6 +4770,9 @@ $code-font-family: var(
   // Claude Code-style diff: line number and sign, the whole row tinted, the
   // code in the editor's own colours
   &.is-diff {
+    background-color: var(--bg-secondary-themed);
+    color: var(--content-primary-themed);
+
     --diff-ins-tint: rgba(46, 160, 67, 0.14);
     --diff-ins-mark: rgba(46, 160, 67, 0.36);
     --diff-ins-sign: #1a7f37;
@@ -4605,7 +4798,7 @@ $code-font-family: var(
       }
     }
 
-    // Sticky, so it has to be opaque: the row's tint over the editor's background
+    // Sticky, so it has to be opaque: the row's tint over the panel's background
     .diff-gutter {
       min-width: 0;
       gap: 10px;
@@ -4614,8 +4807,8 @@ $code-font-family: var(
       font-weight: 400;
       background:
         linear-gradient(var(--diff-row-tint), var(--diff-row-tint)),
-        var(--editor-bg);
-      color: color-mix(in srgb, var(--editor-fg) 45%, transparent);
+        var(--bg-secondary-themed);
+      color: color-mix(in srgb, var(--content-primary-themed, currentColor) 45%, transparent);
     }
 
     .diff-line-no {

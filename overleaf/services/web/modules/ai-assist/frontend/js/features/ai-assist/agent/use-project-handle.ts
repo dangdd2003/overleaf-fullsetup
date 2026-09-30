@@ -12,7 +12,11 @@ import useEventListener from '@/shared/hooks/use-event-listener'
 import { Folder } from '@ol-types/folder'
 import { errorExcerpt, excerptAround } from './tools/compile-result'
 import { matchesGlob } from './tools/search-text'
-import { applyLiveSettingsUpdate } from './live-settings-updater'
+import {
+  applyLiveSettingsUpdate,
+  DARK_EDITOR_THEMES,
+  LIGHT_EDITOR_THEMES,
+} from './live-settings-updater'
 import { locateAnchorInText, countOccurrences } from './latex-matcher'
 import {
   createSnapshotGate,
@@ -1569,6 +1573,24 @@ export function useProjectHandle({
       for (const key of allowed) {
         if (settingsToUpdate[key] !== undefined) {
           payload[key] = settingsToUpdate[key]
+        }
+      }
+
+      if (settingsToUpdate.editorTheme !== undefined) {
+        const themeName = String(settingsToUpdate.editorTheme)
+        if (
+          payload.editorDarkTheme === undefined &&
+          (DARK_EDITOR_THEMES.has(themeName) ||
+            !LIGHT_EDITOR_THEMES.has(themeName))
+        ) {
+          payload.editorDarkTheme = themeName
+        }
+        if (
+          payload.editorLightTheme === undefined &&
+          (LIGHT_EDITOR_THEMES.has(themeName) ||
+            !DARK_EDITOR_THEMES.has(themeName))
+        ) {
+          payload.editorLightTheme = themeName
         }
       }
 

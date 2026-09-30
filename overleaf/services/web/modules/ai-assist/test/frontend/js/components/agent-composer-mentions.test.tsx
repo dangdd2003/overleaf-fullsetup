@@ -236,4 +236,53 @@ describe('AgentComposer attachments', function () {
       )
     ).to.be.true
   })
+
+  describe('while running', function () {
+    it('shows stop button when running and content is empty', function () {
+      renderComposer({ running: true })
+      expect(screen.getByRole('button', { name: /stop/i })).to.exist
+      expect(screen.queryByRole('button', { name: /send/i })).to.equal(null)
+    })
+
+    it('calls onStop when stop button is clicked', function () {
+      const onStop = sinon.stub()
+      renderComposer({ running: true, onStop })
+      fireEvent.click(screen.getByRole('button', { name: /stop/i }))
+      expect(onStop.calledOnce).to.be.true
+    })
+
+    it('switches to send button when user types text while running', function () {
+      renderComposer({ running: true })
+      type('mid-generation follow-up')
+      expect(screen.queryByRole('button', { name: /stop/i })).to.equal(null)
+      expect(
+        screen.getByRole('button', { name: /send to the running agent/i })
+      ).to.exist
+    })
+
+    it('allows sending by clicking send button while running', function () {
+      const onSend = sinon.stub()
+      renderComposer({ running: true, onSend })
+      type('steer agent to use package hyperref')
+      const sendBtn = screen.getByRole('button', {
+        name: /send to the running agent/i,
+      })
+      fireEvent.click(sendBtn)
+
+      expect(onSend.calledOnce).to.be.true
+      expect(onSend.lastCall.args[0]).to.equal(
+        'steer agent to use package hyperref'
+      )
+    })
+
+    it('allows sending by pressing Enter while running', function () {
+      const onSend = sinon.stub()
+      renderComposer({ running: true, onSend })
+      const textarea = type('append this mid-run')
+      fireEvent.keyDown(textarea, { key: 'Enter' })
+
+      expect(onSend.calledOnce).to.be.true
+      expect(onSend.lastCall.args[0]).to.equal('append this mid-run')
+    })
+  })
 })

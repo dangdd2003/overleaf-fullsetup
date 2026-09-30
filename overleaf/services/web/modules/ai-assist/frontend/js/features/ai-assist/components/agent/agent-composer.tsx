@@ -287,7 +287,7 @@ export function AgentComposer({
     attachedSelection !== null
 
   const send = () => {
-    if (disabled || running) return
+    if (disabled) return
     const trimmed = value.trim()
     if (!trimmed && attachments.length === 0 && !attachedSelection) return
     onSend(trimmed, attachments, attachedSelection)

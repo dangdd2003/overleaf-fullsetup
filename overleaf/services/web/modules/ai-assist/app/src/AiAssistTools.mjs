@@ -53,6 +53,52 @@ const ALLOWED_APPEARANCE_KEYS = new Set([
   'lineHeight',
 ])
 
+export const DARK_EDITOR_THEMES = new Set([
+  'ambiance',
+  'chaos',
+  'clouds_midnight',
+  'cobalt',
+  'dracula',
+  'gruvbox',
+  'idle_fingers',
+  'kr_theme',
+  'merbivore',
+  'mono_industrial',
+  'monokai',
+  'nord_dark',
+  'overleaf_dark',
+  'pastel_on_dark',
+  'solarized_dark',
+  'terminal',
+  'tomorrow_night',
+  'tomorrow_night_blue',
+  'tomorrow_night_bright',
+  'tomorrow_night_eighties',
+  'twilight',
+  'vibrant_ink',
+])
+
+export const LIGHT_EDITOR_THEMES = new Set([
+  'chrome',
+  'clouds',
+  'crimson_editor',
+  'dawn',
+  'dreamweaver',
+  'eclipse',
+  'github',
+  'gob',
+  'iplastic',
+  'katzenmilch',
+  'kuroir',
+  'merbivore_soft',
+  'overleaf',
+  'solarized_light',
+  'sqlserver',
+  'textmate',
+  'tomorrow',
+  'xcode',
+])
+
 const ALLOWED_COMPILER_KEYS = new Set([
   'compiler',
   'imageName',
@@ -1939,8 +1985,25 @@ export class AiAssistTools {
           updated.overallTheme = norm
         }
         if (args.editorTheme !== undefined) {
-          user.ace.theme = String(args.editorTheme)
-          updated.editorTheme = user.ace.theme
+          const themeName = String(args.editorTheme)
+          user.ace.theme = themeName
+          updated.editorTheme = themeName
+          if (
+            args.editorDarkTheme === undefined &&
+            (DARK_EDITOR_THEMES.has(themeName) ||
+              !LIGHT_EDITOR_THEMES.has(themeName))
+          ) {
+            user.ace.darkTheme = themeName
+            updated.editorDarkTheme = themeName
+          }
+          if (
+            args.editorLightTheme === undefined &&
+            (LIGHT_EDITOR_THEMES.has(themeName) ||
+              !DARK_EDITOR_THEMES.has(themeName))
+          ) {
+            user.ace.lightTheme = themeName
+            updated.editorLightTheme = themeName
+          }
         }
         if (args.editorLightTheme !== undefined) {
           user.ace.lightTheme = String(args.editorLightTheme)

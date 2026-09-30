@@ -285,4 +285,121 @@ describe('ToolCallDetailView', function () {
     // Does NOT duplicate the website row inside the detail
     expect(container.querySelector('.ai-assist-web-row')).to.be.null
   })
+
+  it('renders list_available_settings with structured categories rather than empty json', function () {
+    const call = {
+      id: '12',
+      name: 'list_available_settings',
+      args: {},
+      result: {
+        status: 'ok',
+        options: {
+          compilers: ['pdflatex', 'xelatex', 'lualatex'],
+          editorThemes: ['cobalt', 'dracula', 'textmate'],
+          overallThemes: ['system', 'light', 'dark'],
+          fontFamilies: [{ name: 'monaco', label: 'Monaco' }],
+          editorModes: ['none', 'vim', 'emacs'],
+          lineHeights: ['compact', 'normal', 'spacious'],
+        },
+      },
+    }
+    const { container } = render(<ToolCallDetailView call={call} />)
+    expect(screen.getByText('LaTeX Compilers')).to.exist
+    expect(screen.getByText('pdflatex')).to.exist
+    expect(screen.getByText('xelatex')).to.exist
+    expect(screen.getByText('Editor Syntax Themes')).to.exist
+    expect(screen.getByText('cobalt')).to.exist
+    expect(screen.getByText('dracula')).to.exist
+    expect(screen.getByText('Keybinding Modes')).to.exist
+    expect(screen.getByText('vim')).to.exist
+    expect(container.querySelector('.ai-assist-settings-detail')).to.exist
+    expect(container.textContent).not.to.equal('{}')
+  })
+
+  it('renders get_project_settings with structured sections and rows', function () {
+    const call = {
+      id: '13',
+      name: 'get_project_settings',
+      args: {},
+      result: {
+        status: 'ok',
+        settings: {
+          name: 'My Paper',
+          compiler: {
+            compiler: 'xelatex',
+            imageName: 'texlive-2024.1',
+            rootDocPath: 'main.tex',
+            draft: false,
+          },
+          appearance: {
+            overallTheme: 'system',
+            editorTheme: 'cobalt',
+            fontSize: 14,
+          },
+          editor: {
+            mode: 'vim',
+            autoComplete: true,
+          },
+        },
+      },
+    }
+    const { container } = render(<ToolCallDetailView call={call} />)
+    expect(screen.getByText(/My Paper/)).to.exist
+    expect(screen.getByText('xelatex')).to.exist
+    expect(screen.getByText('main.tex')).to.exist
+    expect(screen.getByText('cobalt')).to.exist
+    expect(screen.getByText('14px')).to.exist
+    expect(screen.getByText('vim')).to.exist
+    expect(container.querySelector('.ai-assist-settings-detail')).to.exist
+  })
+
+  it('renders configure_appearance_settings with human-readable keys and values', function () {
+    const call = {
+      id: '14',
+      name: 'configure_appearance_settings',
+      args: { editorTheme: 'cobalt', fontSize: 14 },
+      result: {
+        status: 'applied',
+        updatedSettings: { editorTheme: 'cobalt', fontSize: 14 },
+        message: 'Appearance settings updated successfully.',
+      },
+    }
+    const { container } = render(<ToolCallDetailView call={call} />)
+    expect(screen.getByText(/Appearance settings updated successfully/)).to.exist
+    expect(screen.getByText('Editor Theme:')).to.exist
+    expect(screen.getByText('cobalt')).to.exist
+    expect(screen.getByText('Font Size:')).to.exist
+    expect(screen.getByText('14px')).to.exist
+    expect(container.textContent).not.to.include('{"editorTheme"')
+  })
+
+  it('renders get_references with structured labels, refs, citations and bibKeys', function () {
+    const call = {
+      id: '15',
+      name: 'get_references',
+      args: {},
+      result: {
+        labels: [{ key: 'sec:intro', path: 'main.tex', line: 10 }],
+        refs: [
+          { command: 'ref', key: 'sec:intro', path: 'main.tex', line: 25, resolved: true },
+          { command: 'ref', key: 'sec:missing', path: 'main.tex', line: 40, resolved: false },
+        ],
+        citations: [
+          { command: 'cite', key: 'einstein1905', path: 'main.tex', line: 50, resolved: true },
+        ],
+        bibKeys: [{ key: 'einstein1905', path: 'refs.bib', line: 1 }],
+      },
+    }
+    const { container } = render(<ToolCallDetailView call={call} />)
+    expect(screen.getByText('Cross-References (2)')).to.exist
+    expect(screen.getByText('\\ref{sec:intro}')).to.exist
+    expect(screen.getByText('\\ref{sec:missing}')).to.exist
+    expect(screen.getByText('Citations (1)')).to.exist
+    expect(screen.getByText('\\cite{einstein1905}')).to.exist
+    expect(screen.getByText('Labels (1)')).to.exist
+    expect(screen.getByText('\\label{sec:intro}')).to.exist
+    expect(screen.getByText('Bibliography Entries (1)')).to.exist
+    expect(screen.getByText('@einstein1905')).to.exist
+    expect(container.querySelector('.ai-assist-tool-detail-refs')).to.exist
+  })
 })

@@ -504,7 +504,13 @@ export function toolCallDetailClass(call: ToolCallRecord, extra = '') {
 
 export const toolCallExpansionStore = new Map<string, boolean>()
 
-export function ToolCallCard({ call }: { call: ToolCallRecord }) {
+export function ToolCallCard({
+  call,
+  defaultExpanded = false,
+}: {
+  call: ToolCallRecord
+  defaultExpanded?: boolean
+}) {
   const [userToggled, setUserToggled] = useState<boolean | null>(() => {
     if (call?.id && toolCallExpansionStore.has(call.id)) {
       return toolCallExpansionStore.get(call.id)!
@@ -517,7 +523,7 @@ export function ToolCallCard({ call }: { call: ToolCallRecord }) {
       ? userToggled
       : call?.id && toolCallExpansionStore.has(call.id)
         ? toolCallExpansionStore.get(call.id)!
-        : false
+        : defaultExpanded
 
   const handleToggle = () => {
     const next = !expanded

@@ -186,26 +186,31 @@ export default function DiffView({
     </div>
   )
 
-  const renderContainer = (children: React.ReactNode) => (
-    <div
-      className={`cm-editor cm-editor-preview ${
-        isDark ? 'overall-theme-dark' : 'overall-theme-light'
-      } ai-suggest-code-diff is-diff${highlighted ? ` ${EDITOR_CODE_CLASS}` : ''}`}
-      style={
-        {
-          ...editorStyle,
-          // Every row's number column is as wide as the longest number
-          '--diff-line-no-chars': String(
-            safeStartLine + Math.max(oldSegments.length, newSegments.length)
-          ).length,
-        } as React.CSSProperties
-      }
-    >
-      <div className="cm-scroller">
-        <div className="cm-content">{children}</div>
+  const renderContainer = (children: React.ReactNode) => {
+    const { backgroundColor: _bg, ...diffStyle } = (editorStyle ||
+      {}) as Record<string, any>
+    return (
+      <div
+        className={`cm-editor cm-editor-preview ${
+          isDark ? 'overall-theme-dark' : 'overall-theme-light'
+        } ai-suggest-code-diff is-diff${highlighted ? ` ${EDITOR_CODE_CLASS}` : ''}`}
+        style={
+          {
+            ...diffStyle,
+            backgroundColor: 'transparent',
+            // Every row's number column is as wide as the longest number
+            '--diff-line-no-chars': String(
+              safeStartLine + Math.max(oldSegments.length, newSegments.length)
+            ).length,
+          } as React.CSSProperties
+        }
+      >
+        <div className="cm-scroller">
+          <div className="cm-content">{children}</div>
+        </div>
       </div>
-    </div>
-  )
+    )
+  }
 
   // create_file and the creation branch of EditApprovalCard both pass an empty
   // oldText. ''.split('\n') is [''], which would render a bogus deleted blank

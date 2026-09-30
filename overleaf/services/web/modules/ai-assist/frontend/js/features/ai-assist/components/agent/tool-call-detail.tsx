@@ -603,19 +603,7 @@ export const ToolCallDetailView: FC<{ call: ToolCallRecord }> = ({ call }) => {
     (call.name === 'get_references' || call.name === 'list_references') &&
     result
   ) {
-    return (
-      <div className="ai-assist-tool-detail-refs">
-        {result.summary && (
-          <div className="ai-assist-refs-summary">{result.summary}</div>
-        )}
-        {Array.isArray(result.duplicateLabels) &&
-          result.duplicateLabels.length > 0 && (
-            <div className="ai-assist-refs-warning">
-              Duplicate labels: {result.duplicateLabels.join(', ')}
-            </div>
-          )}
-      </div>
-    )
+    return <ReferencesDetail result={result} openFile={openFile} />
   }
 
   // 9. web_search: the results as rows, like Claude.ai's search card
@@ -735,10 +723,678 @@ export const ToolCallDetailView: FC<{ call: ToolCallRecord }> = ({ call }) => {
     )
   }
 
-  // Unrecognised tool: show the arguments verbatim rather than an empty panel.
+  // 11. list_available_settings
+  if (call.name === 'list_available_settings') {
+    const options = result?.options ?? (typeof result === 'object' ? result : null)
+    if (options) {
+      return <ListAvailableSettingsDetail options={options} />
+    }
+  }
+
+  // 12. get_project_settings
+  if (call.name === 'get_project_settings') {
+    const settings = result?.settings ?? (typeof result === 'object' ? result : null)
+    if (settings) {
+      return <GetProjectSettingsDetail settings={settings} openFile={openFile} />
+    }
+  }
+
+  // 13. configure settings tools
+  if (
+    call.name === 'configure_appearance_settings' ||
+    call.name === 'configure_editor_settings' ||
+    call.name === 'configure_compiler_settings' ||
+    call.name === 'configure_project_settings'
+  ) {
+    return <ConfigureSettingsDetail call={call} result={result} />
+  }
+
+  // Generic / fallback tool: show formatted key-values rather than an unstyled pre
+  return <GenericToolDetail call={call} result={result} />
+}
+
+function ReferencesDetail({
+  result,
+  openFile,
+}: {
+  result: any
+  openFile: (path: string, line?: number) => void
+}) {
+  if (!result || typeof result !== 'object') return null
+  const labels = Array.isArray(result.labels) ? result.labels : []
+  const duplicateLabels = Array.isArray(result.duplicateLabels)
+    ? result.duplicateLabels
+    : []
+  const refs = Array.isArray(result.refs) ? result.refs : []
+  const citations = Array.isArray(result.citations) ? result.citations : []
+  const bibKeys = Array.isArray(result.bibKeys) ? result.bibKeys : []
+
+  const totalItems =
+    labels.length +
+    duplicateLabels.length +
+    refs.length +
+    citations.length +
+    bibKeys.length
+
+  if (totalItems === 0) {
+    return (
+      <div className="ai-assist-tool-detail-note">
+        No labels, references, or citations found in project.
+      </div>
+    )
+  }
+
   return (
-    <pre className="ai-assist-tool-call-raw">
-      {JSON.stringify(call.args, null, 2)}
-    </pre>
+    <div className="ai-assist-tool-detail-refs">
+      {duplicateLabels.length > 0 && (
+        <div className="ai-assist-refs-warning">
+          <strong>Duplicate labels:</strong> {duplicateLabels.join(', ')}
+        </div>
+      )}
+
+      {refs.length > 0 && (
+        <div className="ai-assist-refs-section">
+          <div className="ai-assist-refs-section-title">
+            Cross-References ({refs.length})
+          </div>
+          <div className="ai-assist-refs-list">
+            {refs.map((r: any, idx: number) => (
+              <div
+                key={`ref-${idx}`}
+                className={`ai-assist-ref-item ${r.resolved ? 'is-resolved' : 'is-unresolved'}`}
+              >
+                <span className="ai-assist-ref-cmd">
+                  \{r.command || 'ref'}&#123;{r.key}&#125;
+                </span>
+                <span
+                  role="button"
+                  tabIndex={0}
+                  className="ai-assist-file-link"
+                  onClick={() => r.path && openFile(r.path, r.line)}
+                  onKeyDown={e =>
+                    e.key === 'Enter' && r.path && openFile(r.path, r.line)
+                  }
+                >
+                  {r.path}:{r.line ?? '?'}
+                </span>
+                <span
+                  className={`ai-assist-ref-badge ${r.resolved ? 'resolved' : 'unresolved'}`}
+                >
+                  {r.resolved ? '✓ OK' : '✗ Unresolved'}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {citations.length > 0 && (
+        <div className="ai-assist-refs-section">
+          <div className="ai-assist-refs-section-title">
+            Citations ({citations.length})
+          </div>
+          <div className="ai-assist-refs-list">
+            {citations.map((c: any, idx: number) => (
+              <div
+                key={`cite-${idx}`}
+                className={`ai-assist-ref-item ${c.resolved ? 'is-resolved' : 'is-unresolved'}`}
+              >
+                <span className="ai-assist-ref-cmd">
+                  \{c.command || 'cite'}&#123;{c.key}&#125;
+                </span>
+                <span
+                  role="button"
+                  tabIndex={0}
+                  className="ai-assist-file-link"
+                  onClick={() => c.path && openFile(c.path, c.line)}
+                  onKeyDown={e =>
+                    e.key === 'Enter' && c.path && openFile(c.path, c.line)
+                  }
+                >
+                  {c.path}:{c.line ?? '?'}
+                </span>
+                <span
+                  className={`ai-assist-ref-badge ${c.resolved ? 'resolved' : 'unresolved'}`}
+                >
+                  {c.resolved ? '✓ OK' : '✗ Missing'}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {labels.length > 0 && (
+        <div className="ai-assist-refs-section">
+          <div className="ai-assist-refs-section-title">
+            Labels ({labels.length})
+          </div>
+          <div className="ai-assist-refs-list">
+            {labels.slice(0, 30).map((l: any, idx: number) => (
+              <div key={`lbl-${idx}`} className="ai-assist-ref-item">
+                <span className="ai-assist-ref-cmd">
+                  \label&#123;{l.key}&#125;
+                </span>
+                <span
+                  role="button"
+                  tabIndex={0}
+                  className="ai-assist-file-link"
+                  onClick={() => l.path && openFile(l.path, l.line)}
+                  onKeyDown={e =>
+                    e.key === 'Enter' && l.path && openFile(l.path, l.line)
+                  }
+                >
+                  {l.path}:{l.line ?? '?'}
+                </span>
+              </div>
+            ))}
+            {labels.length > 30 && (
+              <div className="ai-assist-tool-detail-note">
+                +{labels.length - 30} more labels
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {bibKeys.length > 0 && (
+        <div className="ai-assist-refs-section">
+          <div className="ai-assist-refs-section-title">
+            Bibliography Entries ({bibKeys.length})
+          </div>
+          <div className="ai-assist-refs-list">
+            {bibKeys.slice(0, 30).map((b: any, idx: number) => (
+              <div key={`bib-${idx}`} className="ai-assist-ref-item">
+                <span className="ai-assist-ref-cmd">@{b.key}</span>
+                <span
+                  role="button"
+                  tabIndex={0}
+                  className="ai-assist-file-link"
+                  onClick={() => b.path && openFile(b.path, b.line)}
+                  onKeyDown={e =>
+                    e.key === 'Enter' && b.path && openFile(b.path, b.line)
+                  }
+                >
+                  {b.path}:{b.line ?? '?'}
+                </span>
+              </div>
+            ))}
+            {bibKeys.length > 30 && (
+              <div className="ai-assist-tool-detail-note">
+                +{bibKeys.length - 30} more entries
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+const SETTING_LABELS: Record<string, string> = {
+  overallTheme: 'Overall Theme',
+  editorTheme: 'Editor Theme',
+  editorLightTheme: 'Editor Light Theme',
+  editorDarkTheme: 'Editor Dark Theme',
+  darkModePdf: 'Dark Mode PDF',
+  fontSize: 'Font Size',
+  fontFamily: 'Font Family',
+  lineHeight: 'Line Spacing',
+  compiler: 'Compiler Engine',
+  imageName: 'TeX Live Version',
+  rootDocPath: 'Root Document',
+  rootDocId: 'Root Doc ID',
+  draft: 'Draft Mode',
+  stopOnFirstError: 'Stop on Error',
+  mode: 'Keybinding Mode',
+  autoComplete: 'Auto-complete',
+  autoPairDelimiters: 'Auto-close Brackets',
+  syntaxValidation: 'Syntax Validation',
+  pdfViewer: 'PDF Viewer',
+  mathPreview: 'Math Preview',
+  breadcrumbs: 'Breadcrumbs Bar',
+  editorTabs: 'Editor Tabs',
+  spellCheckLanguage: 'Spell-check Language',
+}
+
+function ListAvailableSettingsDetail({ options }: { options: any }) {
+  if (!options || typeof options !== 'object') return null
+  const compilers: string[] = options.compilers || []
+  const imageNames: any[] = options.imageNames || []
+  const overallThemes: string[] = options.overallThemes || []
+  const editorThemes: string[] = Array.isArray(options.editorThemes)
+    ? options.editorThemes.map((t: any) =>
+        typeof t === 'string' ? t : t.name
+      )
+    : []
+  const fontFamilies: any[] = options.fontFamilies || []
+  const editorModes: string[] = options.editorModes || []
+  const lineHeights: string[] = options.lineHeights || []
+  const spellCheckLanguages: any[] = options.spellCheckLanguages || []
+  const pdfViewers: string[] = options.pdfViewers || ['pdfjs', 'native']
+
+  return (
+    <div className="ai-assist-settings-detail">
+      {compilers.length > 0 && (
+        <div className="ai-assist-settings-group">
+          <span className="ai-assist-settings-group-label">
+            LaTeX Compilers
+          </span>
+          <div className="ai-assist-settings-chips">
+            {compilers.map(c => (
+              <span key={c} className="ai-assist-settings-chip">
+                {c}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {imageNames.length > 0 && (
+        <div className="ai-assist-settings-group">
+          <span className="ai-assist-settings-group-label">
+            TeX Live Versions
+          </span>
+          <div className="ai-assist-settings-chips">
+            {imageNames.map((img: any) => (
+              <span
+                key={img.imageName || img}
+                className="ai-assist-settings-chip"
+                title={img.imageDesc}
+              >
+                {img.imageDesc || img.imageName || img}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {editorThemes.length > 0 && (
+        <div className="ai-assist-settings-group">
+          <span className="ai-assist-settings-group-label">
+            Editor Syntax Themes
+          </span>
+          <div className="ai-assist-settings-chips">
+            {editorThemes.map(theme => (
+              <span key={theme} className="ai-assist-settings-chip">
+                {theme}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {overallThemes.length > 0 && (
+        <div className="ai-assist-settings-group">
+          <span className="ai-assist-settings-group-label">Overall Themes</span>
+          <div className="ai-assist-settings-chips">
+            {overallThemes.map(t => (
+              <span key={t} className="ai-assist-settings-chip">
+                {t}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {editorModes.length > 0 && (
+        <div className="ai-assist-settings-group">
+          <span className="ai-assist-settings-group-label">
+            Keybinding Modes
+          </span>
+          <div className="ai-assist-settings-chips">
+            {editorModes.map(m => (
+              <span key={m} className="ai-assist-settings-chip">
+                {m}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {fontFamilies.length > 0 && (
+        <div className="ai-assist-settings-group">
+          <span className="ai-assist-settings-group-label">Code Fonts</span>
+          <div className="ai-assist-settings-chips">
+            {fontFamilies.map((f: any) => (
+              <span
+                key={f.name || f}
+                className="ai-assist-settings-chip"
+                title={f.label}
+              >
+                {f.label ? `${f.name} (${f.label})` : f.name || f}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {lineHeights.length > 0 && (
+        <div className="ai-assist-settings-group">
+          <span className="ai-assist-settings-group-label">Line Spacing</span>
+          <div className="ai-assist-settings-chips">
+            {lineHeights.map(lh => (
+              <span key={lh} className="ai-assist-settings-chip">
+                {lh}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {spellCheckLanguages.length > 0 && (
+        <div className="ai-assist-settings-group">
+          <span className="ai-assist-settings-group-label">
+            Spellcheck Languages
+          </span>
+          <div className="ai-assist-settings-chips">
+            {spellCheckLanguages.slice(0, 14).map((lang: any) => (
+              <span
+                key={lang.code || lang}
+                className="ai-assist-settings-chip"
+              >
+                {lang.name
+                  ? `${lang.name} (${lang.code})`
+                  : lang.code || lang}
+              </span>
+            ))}
+            {spellCheckLanguages.length > 14 && (
+              <span className="ai-assist-settings-chip-more">
+                +{spellCheckLanguages.length - 14} more
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {pdfViewers.length > 0 && (
+        <div className="ai-assist-settings-group">
+          <span className="ai-assist-settings-group-label">PDF Viewer</span>
+          <div className="ai-assist-settings-chips">
+            {pdfViewers.map(v => (
+              <span key={v} className="ai-assist-settings-chip">
+                {v}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function GetProjectSettingsDetail({
+  settings,
+  openFile,
+}: {
+  settings: any
+  openFile: (path: string) => void
+}) {
+  if (!settings || typeof settings !== 'object') return null
+  const { compiler, appearance, editor, spelling, name, description } =
+    settings
+
+  return (
+    <div className="ai-assist-settings-detail">
+      {name && (
+        <div className="ai-assist-settings-section-header">
+          <strong>Project:</strong> {name}
+          {description ? ` — ${description}` : ''}
+        </div>
+      )}
+
+      {compiler && (
+        <div className="ai-assist-settings-group">
+          <span className="ai-assist-settings-group-label">Compiler</span>
+          <div className="ai-assist-settings-rows">
+            <div className="ai-assist-settings-row">
+              <span className="ai-assist-settings-key">Compiler:</span>
+              <span className="ai-assist-settings-val">
+                {compiler.compiler || 'pdflatex'}
+              </span>
+            </div>
+            <div className="ai-assist-settings-row">
+              <span className="ai-assist-settings-key">TeX Live:</span>
+              <span className="ai-assist-settings-val">
+                {compiler.imageName || 'default'}
+              </span>
+            </div>
+            {compiler.rootDocPath && (
+              <div className="ai-assist-settings-row">
+                <span className="ai-assist-settings-key">Root Doc:</span>
+                <span
+                  role="button"
+                  tabIndex={0}
+                  className="ai-assist-file-link"
+                  onClick={() => openFile(compiler.rootDocPath)}
+                  onKeyDown={e =>
+                    e.key === 'Enter' && openFile(compiler.rootDocPath)
+                  }
+                >
+                  {compiler.rootDocPath}
+                </span>
+              </div>
+            )}
+            <div className="ai-assist-settings-row">
+              <span className="ai-assist-settings-key">Draft Mode:</span>
+              <span className="ai-assist-settings-val">
+                {compiler.draft ? 'Enabled' : 'Disabled'}
+              </span>
+            </div>
+            <div className="ai-assist-settings-row">
+              <span className="ai-assist-settings-key">Stop on Error:</span>
+              <span className="ai-assist-settings-val">
+                {compiler.stopOnFirstError ? 'Enabled' : 'Disabled'}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {appearance && (
+        <div className="ai-assist-settings-group">
+          <span className="ai-assist-settings-group-label">Appearance</span>
+          <div className="ai-assist-settings-rows">
+            <div className="ai-assist-settings-row">
+              <span className="ai-assist-settings-key">Overall Theme:</span>
+              <span className="ai-assist-settings-val">
+                {appearance.overallTheme || 'system'}
+              </span>
+            </div>
+            <div className="ai-assist-settings-row">
+              <span className="ai-assist-settings-key">Editor Theme:</span>
+              <span className="ai-assist-settings-val">
+                {appearance.editorTheme || 'textmate'}
+              </span>
+            </div>
+            <div className="ai-assist-settings-row">
+              <span className="ai-assist-settings-key">Font Size:</span>
+              <span className="ai-assist-settings-val">
+                {appearance.fontSize ?? 12}px
+              </span>
+            </div>
+            {appearance.fontFamily && (
+              <div className="ai-assist-settings-row">
+                <span className="ai-assist-settings-key">Font Family:</span>
+                <span className="ai-assist-settings-val">
+                  {appearance.fontFamily}
+                </span>
+              </div>
+            )}
+            {appearance.lineHeight && (
+              <div className="ai-assist-settings-row">
+                <span className="ai-assist-settings-key">Line Spacing:</span>
+                <span className="ai-assist-settings-val">
+                  {appearance.lineHeight}
+                </span>
+              </div>
+            )}
+            <div className="ai-assist-settings-row">
+              <span className="ai-assist-settings-key">Dark Mode PDF:</span>
+              <span className="ai-assist-settings-val">
+                {appearance.darkModePdf ? 'Enabled' : 'Disabled'}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {editor && (
+        <div className="ai-assist-settings-group">
+          <span className="ai-assist-settings-group-label">
+            Editor Behavior
+          </span>
+          <div className="ai-assist-settings-rows">
+            <div className="ai-assist-settings-row">
+              <span className="ai-assist-settings-key">Keybindings:</span>
+              <span className="ai-assist-settings-val">
+                {editor.mode || 'none'}
+              </span>
+            </div>
+            <div className="ai-assist-settings-row">
+              <span className="ai-assist-settings-key">Auto-complete:</span>
+              <span className="ai-assist-settings-val">
+                {editor.autoComplete ? 'On' : 'Off'}
+              </span>
+            </div>
+            <div className="ai-assist-settings-row">
+              <span className="ai-assist-settings-key">
+                Auto-close Brackets:
+              </span>
+              <span className="ai-assist-settings-val">
+                {editor.autoPairDelimiters ? 'On' : 'Off'}
+              </span>
+            </div>
+            <div className="ai-assist-settings-row">
+              <span className="ai-assist-settings-key">
+                Syntax Validation:
+              </span>
+              <span className="ai-assist-settings-val">
+                {editor.syntaxValidation ? 'On' : 'Off'}
+              </span>
+            </div>
+            <div className="ai-assist-settings-row">
+              <span className="ai-assist-settings-key">PDF Viewer:</span>
+              <span className="ai-assist-settings-val">
+                {editor.pdfViewer || 'pdfjs'}
+              </span>
+            </div>
+            <div className="ai-assist-settings-row">
+              <span className="ai-assist-settings-key">Math Preview:</span>
+              <span className="ai-assist-settings-val">
+                {editor.mathPreview ? 'On' : 'Off'}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {spelling?.spellCheckLanguage && (
+        <div className="ai-assist-settings-group">
+          <span className="ai-assist-settings-group-label">Spelling</span>
+          <div className="ai-assist-settings-rows">
+            <div className="ai-assist-settings-row">
+              <span className="ai-assist-settings-key">Language:</span>
+              <span className="ai-assist-settings-val">
+                {spelling.spellCheckLanguage}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ConfigureSettingsDetail({
+  call,
+  result,
+}: {
+  call: ToolCallRecord
+  result: any
+}) {
+  const args = (call.args ?? {}) as Record<string, any>
+  const updated = (result?.updatedSettings ?? args) as Record<string, any>
+  const keys = Object.keys(updated).filter(
+    k => k !== 'status' && k !== 'message'
+  )
+  const message = result?.message || 'Settings updated successfully.'
+
+  const formatValue = (key: string, val: any) => {
+    if (typeof val === 'boolean') return val ? 'Enabled' : 'Disabled'
+    if (key === 'fontSize' && typeof val === 'number') return `${val}px`
+    return String(val ?? '')
+  }
+
+  return (
+    <div className="ai-assist-settings-detail">
+      <div className="ai-assist-tool-detail-success">✓ {message}</div>
+      {keys.length > 0 && (
+        <div className="ai-assist-settings-rows">
+          {keys.map(key => (
+            <div key={key} className="ai-assist-settings-row">
+              <span className="ai-assist-settings-key">
+                {SETTING_LABELS[key] || key}:
+              </span>
+              <span className="ai-assist-settings-val">
+                {formatValue(key, updated[key])}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function GenericToolDetail({
+  call,
+  result,
+}: {
+  call: ToolCallRecord
+  result: any
+}) {
+  const hasArgs = call.args && Object.keys(call.args).length > 0
+  const hasResult =
+    result && typeof result === 'object' && Object.keys(result).length > 0
+
+  if (!hasArgs && !hasResult) {
+    if (typeof result === 'string' && result.trim()) {
+      return <div className="ai-assist-tool-detail-text">{result}</div>
+    }
+    return (
+      <div className="ai-assist-tool-detail-note">
+        No additional parameters.
+      </div>
+    )
+  }
+
+  return (
+    <div className="ai-assist-tool-detail-generic">
+      {hasArgs && (
+        <div className="ai-assist-settings-rows">
+          {Object.entries(call.args).map(([k, v]) => (
+            <div key={`arg-${k}`} className="ai-assist-settings-row">
+              <span className="ai-assist-settings-key">{k}:</span>
+              <span className="ai-assist-settings-val">
+                {typeof v === 'object' ? JSON.stringify(v) : String(v)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+      {hasResult && !hasArgs && (
+        <div className="ai-assist-settings-rows">
+          {Object.entries(result).map(([k, v]) => (
+            <div key={`res-${k}`} className="ai-assist-settings-row">
+              <span className="ai-assist-settings-key">{k}:</span>
+              <span className="ai-assist-settings-val">
+                {typeof v === 'object' ? JSON.stringify(v) : String(v)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }

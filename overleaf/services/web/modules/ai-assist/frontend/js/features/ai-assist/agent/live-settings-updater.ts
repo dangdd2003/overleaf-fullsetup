@@ -1,3 +1,49 @@
+export const DARK_EDITOR_THEMES = new Set([
+  'ambiance',
+  'chaos',
+  'clouds_midnight',
+  'cobalt',
+  'dracula',
+  'gruvbox',
+  'idle_fingers',
+  'kr_theme',
+  'merbivore',
+  'mono_industrial',
+  'monokai',
+  'nord_dark',
+  'overleaf_dark',
+  'pastel_on_dark',
+  'solarized_dark',
+  'terminal',
+  'tomorrow_night',
+  'tomorrow_night_blue',
+  'tomorrow_night_bright',
+  'tomorrow_night_eighties',
+  'twilight',
+  'vibrant_ink',
+])
+
+export const LIGHT_EDITOR_THEMES = new Set([
+  'chrome',
+  'clouds',
+  'crimson_editor',
+  'dawn',
+  'dreamweaver',
+  'eclipse',
+  'github',
+  'gob',
+  'iplastic',
+  'katzenmilch',
+  'kuroir',
+  'merbivore_soft',
+  'overleaf',
+  'solarized_light',
+  'sqlserver',
+  'textmate',
+  'tomorrow',
+  'xcode',
+])
+
 export function normalizeOverallTheme(theme?: string): string {
   if (!theme) return ''
   const lower = String(theme).toLowerCase().trim()
@@ -44,11 +90,38 @@ export function applyLiveSettingsUpdate(
         document.body.dataset.theme = norm === 'light-' ? 'light' : 'default'
       }
     }
-    if (
-      settings.editorTheme !== undefined &&
-      (!currentUserSettings || currentUserSettings.editorTheme !== settings.editorTheme)
-    ) {
-      userPayload.editorTheme = settings.editorTheme
+    if (settings.editorTheme !== undefined) {
+      const themeName = String(settings.editorTheme)
+      if (
+        !currentUserSettings ||
+        currentUserSettings.editorTheme !== themeName
+      ) {
+        userPayload.editorTheme = themeName
+      }
+      if (
+        settings.editorDarkTheme === undefined &&
+        (DARK_EDITOR_THEMES.has(themeName) ||
+          !LIGHT_EDITOR_THEMES.has(themeName))
+      ) {
+        if (
+          !currentUserSettings ||
+          currentUserSettings.editorDarkTheme !== themeName
+        ) {
+          userPayload.editorDarkTheme = themeName
+        }
+      }
+      if (
+        settings.editorLightTheme === undefined &&
+        (LIGHT_EDITOR_THEMES.has(themeName) ||
+          !DARK_EDITOR_THEMES.has(themeName))
+      ) {
+        if (
+          !currentUserSettings ||
+          currentUserSettings.editorLightTheme !== themeName
+        ) {
+          userPayload.editorLightTheme = themeName
+        }
+      }
     }
     if (
       settings.editorLightTheme !== undefined &&
