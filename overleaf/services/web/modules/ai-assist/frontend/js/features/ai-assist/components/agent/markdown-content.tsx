@@ -401,6 +401,7 @@ const CITATION_RUN = new RegExp(`^${CITATION_UNIT}(?:[ \t]?${CITATION_UNIT})*`)
 // Set only for the duration of one synchronous renderMarkdown call
 let activeSources: WebSources | null = null
 let activeBaseUrl: string | null = null
+let activeIsThinking = false
 
 /** The nearest ancestor that clips its content, which a card must stay inside. */
 function clippingAncestor(el: HTMLElement): HTMLElement | null {
@@ -745,24 +746,28 @@ marked.use({
     },
     code(code: string, infostring: string | undefined) {
       const lang = (infostring || '').match(/\S*/)?.[0] || ''
-      const langLabel = `<span class="ai-assist-code-lang">${escapeHtml(lang || 'code')}</span>`
       const highlighted = lang ? highlightCodeHtml(code, lang) : null
       const escapedCode = highlighted !== null ? highlighted : escapeHtml(code)
       const editorCodeClass =
         highlighted !== null ? ` ${EDITOR_CODE_CLASS}` : ''
 
+      if (activeIsThinking) {
+        return `<pre class="ai-assist-thinking-code-block${editorCodeClass}"><code class="${lang ? `language-${escapeHtml(lang)}` : ''}">${escapedCode}</code></pre>`
+      }
+
+      const langLabel = `<span class="ai-assist-code-lang">${escapeHtml(lang || 'code')}</span>`
       return `<div class="ai-assist-code-block">
   <div class="ai-assist-code-header">
     ${langLabel}
     <div class="ai-assist-code-actions">
       <button type="button" class="ai-assist-code-insert-btn" aria-label="Insert at cursor" title="Insert at cursor">
-        <svg class="ai-assist-icon-insert" xmlns="http://www.w3.org/2000/svg" width="13" height="13" fill="currentColor" viewBox="0 0 256 256" aria-hidden="true"><path d="M224,128a8,8,0,0,1-8,8H136v80a8,8,0,0,1-16,0V136H40a8,8,0,0,1,0-16h80V40a8,8,0,0,1,16,0v80h80A8,8,0,0,1,224,128Z"></path></svg>
-        <svg class="ai-assist-icon-check" xmlns="http://www.w3.org/2000/svg" width="13" height="13" fill="currentColor" viewBox="0 0 256 256" aria-hidden="true"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"></path></svg>
+        <svg class="ai-assist-icon-insert" xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 256 256" aria-hidden="true"><path d="M224,128a8,8,0,0,1-8,8H136v80a8,8,0,0,1-16,0V136H40a8,8,0,0,1,0-16h80V40a8,8,0,0,1,16,0v80h80A8,8,0,0,1,224,128Z"></path></svg>
+        <svg class="ai-assist-icon-check" xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 256 256" aria-hidden="true"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"></path></svg>
         <span class="ai-assist-insert-text">Insert</span>
       </button>
       <button type="button" class="ai-assist-code-copy-btn" aria-label="Copy code" title="Copy code">
-        <svg class="ai-assist-icon-copy" xmlns="http://www.w3.org/2000/svg" width="13" height="13" fill="currentColor" viewBox="0 0 256 256" aria-hidden="true"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"></path></svg>
-        <svg class="ai-assist-icon-check" xmlns="http://www.w3.org/2000/svg" width="13" height="13" fill="currentColor" viewBox="0 0 256 256" aria-hidden="true"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"></path></svg>
+        <svg class="ai-assist-icon-copy" xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 256 256" aria-hidden="true"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"></path></svg>
+        <svg class="ai-assist-icon-check" xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 256 256" aria-hidden="true"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"></path></svg>
         <span class="ai-assist-copy-text">Copy</span>
       </button>
     </div>
@@ -836,7 +841,8 @@ marked.use({
 export function renderMarkdown(
   content: string,
   sources?: WebSources,
-  baseUrl?: string
+  baseUrl?: string,
+  opts?: { isThinking?: boolean }
 ): string {
   if (!content) {
     return ''
@@ -873,6 +879,7 @@ export function renderMarkdown(
   activeSources = sources ?? null
   activeFootnotes = { notes: footnotes.notes, order: [] }
   activeBaseUrl = baseUrl ?? null
+  activeIsThinking = Boolean(opts?.isThinking)
   try {
     let rawHtml = ''
     try {
@@ -894,6 +901,7 @@ export function renderMarkdown(
     activeFootnotes = null
     activeBaseUrl = null
     activeTableTitles = null
+    activeIsThinking = false
     DOMPurify.removeHook('afterSanitizeAttributes')
   }
 }

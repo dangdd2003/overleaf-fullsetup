@@ -92,18 +92,12 @@ export const ThinkingBlock: FC<{
   blockId?: string
 }> = ({ thinking, isLive = false, elapsedMs, groupId, blockId }) => {
   const { t } = useTranslation()
-  const storageKey = blockId
-    ? `think-${blockId}`
-    : groupId
-      ? `think-${groupId}`
-      : null
+  const uniqueId = blockId ?? (groupId ? `${groupId}-think` : undefined)
+  const storageKey = uniqueId ? `think-item:${uniqueId}` : null
 
   const [expanded, setExpanded] = useState<boolean>(() => {
     if (storageKey && subresultExpansionStore.has(storageKey)) {
       return subresultExpansionStore.get(storageKey)!
-    }
-    if (groupId && subresultExpansionStore.has(groupId)) {
-      return subresultExpansionStore.get(groupId)!
     }
     return false
   })
@@ -117,7 +111,10 @@ export const ThinkingBlock: FC<{
   )
   const displayText = isLive && expanded ? revealedText : thinking
 
-  const html = useMemo(() => renderMarkdown(displayText), [displayText])
+  const html = useMemo(
+    () => renderMarkdown(displayText, undefined, undefined, { isThinking: true }),
+    [displayText]
+  )
 
   const fadeState = useRef<FadeState | null>(
     isLive ? { text: '', chunks: [] } : null
@@ -184,9 +181,6 @@ export const ThinkingBlock: FC<{
       const next = !prev
       if (storageKey) {
         subresultExpansionStore.set(storageKey, next)
-      }
-      if (groupId) {
-        subresultExpansionStore.set(groupId, next)
       }
       if (next) {
         window.dispatchEvent(new CustomEvent('aiAssist:stickToBottom'))

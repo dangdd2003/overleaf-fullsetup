@@ -2222,8 +2222,20 @@ $code-font-family: var(
     }
   }
 
+  .ai-assist-code-header {
+    display: none !important;
+  }
+
+  .ai-assist-code-block {
+    margin: 6px 0 !important;
+    border: 1px solid var(--border-divider-themed) !important;
+    border-radius: var(--border-radius-base, 4px) !important;
+    background: var(--bg-tertiary-themed) !important;
+    overflow: hidden;
+  }
+
   code {
-    font-style: normal;
+    font-style: normal !important;
     padding: 1px 3.5px;
     font-size: 0.85em;
     background: var(--bg-tertiary-themed);
@@ -2234,22 +2246,27 @@ $code-font-family: var(
     vertical-align: baseline;
   }
 
+  .ai-assist-thinking-code-block,
   pre {
-    font-style: normal;
-    margin: 6px 0;
-    padding: 6px 10px;
-    background: var(--bg-tertiary-themed);
-    border: 1px solid var(--border-divider-themed);
-    border-radius: 4px;
+    font-style: normal !important;
+    margin: 6px 0 !important;
+    padding: 8px 12px !important;
+    background: var(--bg-tertiary-themed) !important;
+    border: 1px solid var(--border-divider-themed) !important;
+    border-radius: var(--border-radius-base, 4px) !important;
     overflow-x: auto;
-    font-family: $font-family-monospace;
+    font-family: $font-family-monospace !important;
+    font-size: 0.8125rem !important;
+    line-height: 1.45 !important;
+    color: var(--content-primary-themed) !important;
 
     code {
-      font-style: normal;
+      font-style: normal !important;
       font-size: 0.85em;
       padding: 0;
       background: transparent;
       border: none;
+      color: inherit;
     }
   }
 
@@ -3798,7 +3815,7 @@ $code-font-family: var(
   }
 
   .form-control {
-    background-color: var(--bg-primary-themed);
+    background-color: var(--bg-secondary-themed);
     color: var(--content-primary-themed);
     border-color: var(--border-divider-themed);
 
@@ -3808,7 +3825,7 @@ $code-font-family: var(
     }
 
     &:focus {
-      background-color: var(--bg-primary-themed);
+      background-color: var(--bg-secondary-themed);
       color: var(--content-primary-themed);
       border-color: var(--interactive-primary-themed, #38bdf8);
       box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2);
@@ -4091,10 +4108,10 @@ $code-font-family: var(
 }
 
 .ai-suggest-fix-card {
-  background: transparent !important;
-  background-color: transparent !important;
-  border: 1px solid var(--border-active-themed, #2563eb);
-  border-radius: var(--border-radius-base, 6px);
+  background: var(--bg-primary-themed) !important;
+  background-color: var(--bg-primary-themed) !important;
+  border: 1px solid var(--border-divider-themed) !important;
+  border-radius: var(--border-radius-base);
   padding: var(--spacing-03);
   color: var(--content-primary-themed);
 }
@@ -4159,20 +4176,26 @@ $code-font-family: var(
   background: var(--bg-primary-themed) !important;
   background-color: var(--bg-primary-themed) !important;
   border: 1px solid var(--border-divider-themed) !important;
-  border-radius: var(--border-radius-base, 6px) !important;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
+  border-radius: var(--border-radius-base) !important;
+  padding: 4px !important;
   margin-bottom: var(--spacing-02, 8px);
   cursor: pointer;
-  transition: background-color 0.15s ease, border-color 0.15s ease;
+
+  .ai-suggest-fix-folded-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    border-radius: var(--border-radius-base);
+    transition: background-color 0.15s ease;
+    width: 100%;
+  }
 
   &:hover,
   &:focus-visible {
-    background: var(--bg-secondary-themed) !important;
-    background-color: var(--bg-secondary-themed) !important;
-    border-color: var(--border-divider-themed) !important;
+    .ai-suggest-fix-folded-row {
+      background-color: var(--bg-secondary-themed) !important;
+    }
 
     .ai-suggest-fix-folded-icon {
       background-color: var(--bg-tertiary-themed);
@@ -4467,9 +4490,9 @@ $code-font-family: var(
   font-family: var(--source-font-family, #{$font-family-monospace}, monospace);
   font-size: var(--font-size, 12px);
   line-height: var(--line-height, 1.6);
-  background-color: var(--editor-bg, transparent);
+  background-color: var(--bg-secondary-themed);
   color: var(--editor-fg, inherit);
-  border: 1px solid var(--border-divider-themed, rgba(128, 128, 128, 0.2));
+  border: 1px solid var(--border-divider-themed);
   border-radius: var(--border-radius-base, 4px);
   overflow-y: auto;
   overflow-x: auto;

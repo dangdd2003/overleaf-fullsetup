@@ -649,32 +649,34 @@ export default function SuggestFixPanel({
           onClick={() => setCollapsed(false)}
           onKeyDown={e => e.key === 'Enter' && setCollapsed(false)}
         >
-          <span className="ai-suggest-fix-folded-icon" aria-hidden="true">
-            <MaterialIcon type="history" />
-          </span>
-          <div className="ai-suggest-fix-folded-text">
-            <div className="ai-suggest-fix-folded-title">
-              Last suggested fix
+          <div className="ai-suggest-fix-folded-row">
+            <span className="ai-suggest-fix-folded-icon" aria-hidden="true">
+              <MaterialIcon type="history" />
+            </span>
+            <div className="ai-suggest-fix-folded-text">
+              <div className="ai-suggest-fix-folded-title">
+                Last suggested fix
+              </div>
+              <div className="ai-suggest-fix-folded-subtitle">
+                ./{fileName}
+                {logEntry?.line != null ? `, ${logEntry.line}` : ''}
+              </div>
             </div>
-            <div className="ai-suggest-fix-folded-subtitle">
-              ./{fileName}
-              {logEntry?.line != null ? `, ${logEntry.line}` : ''}
-            </div>
-          </div>
-          <div
-            className="ai-suggest-fix-folded-actions"
-            onClick={e => e.stopPropagation()}
-          >
-            {handoffButton}
-            <OLButton
-              type="button"
-              variant="secondary"
-              size="sm"
-              className="ai-suggest-fix-reopen-btn"
-              onClick={() => setCollapsed(false)}
+            <div
+              className="ai-suggest-fix-folded-actions"
+              onClick={e => e.stopPropagation()}
             >
-              Re-open
-            </OLButton>
+              {handoffButton}
+              <OLButton
+                type="button"
+                variant="secondary"
+                size="sm"
+                className="ai-suggest-fix-reopen-btn"
+                onClick={() => setCollapsed(false)}
+              >
+                Re-open
+              </OLButton>
+            </div>
           </div>
           {busyWarning}
         </div>
