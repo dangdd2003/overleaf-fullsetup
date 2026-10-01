@@ -141,6 +141,67 @@ describe('AiAssistRunController', function () {
       expect(crossProject.statusCode).to.equal(403)
       expect(mockManager.queueMessage.called).to.be.false
     })
+
+    it('answers 409 when a run still marked running has stopped reading its queue', async function () {
+      mockManager.queueMessage.resolves(false)
+      const res = reply()
+      await controller.queueMessage(
+        {
+          params: { Project_id: 'p1', runId: 'run-1' },
+          body: { id: 'q1', text: 'just as it finished' },
+        },
+        res
+      )
+
+      expect(res.statusCode).to.equal(409)
+    })
+
+    describe('taking a message back', function () {
+      const takeBack = async () => {
+        const res = reply()
+        await controller.unqueueMessage(
+          { params: { Project_id: 'p1', runId: 'run-1', messageId: 'q1' } },
+          res
+        )
+        return res
+      }
+
+      it('removes a message the run has not read', async function () {
+        mockManager.unqueueMessage = sinon.stub().resolves(true)
+        const res = await takeBack()
+        expect(res.statusCode).to.equal(200)
+        expect(mockManager.unqueueMessage.firstCall.args).to.deep.equal([
+          'run-1',
+          'q1',
+        ])
+      })
+
+      it('says when the run has already read it', async function () {
+        mockManager.unqueueMessage = sinon.stub().resolves(false)
+        const res = await takeBack()
+        expect(res.statusCode).to.equal(409)
+        expect(res.body.reason).to.equal('read')
+      })
+
+      it('says when the run has ended', async function () {
+        mockManager.unqueueMessage = sinon.stub().resolves(true)
+        mockStore.getRun.resolves({
+          runId: 'run-1',
+          projectId: 'p1',
+          status: 'stopped',
+        })
+        const res = await takeBack()
+        expect(res.statusCode).to.equal(409)
+        expect(res.body.reason).to.equal('ended')
+        expect(mockManager.unqueueMessage.called).to.be.false
+      })
+
+      it('accepts a request another instance was asked to carry out', async function () {
+        mockManager.unqueueMessage = sinon.stub().resolves(null)
+        const res = await takeBack()
+        expect(res.statusCode).to.equal(200)
+      })
+    })
   })
 
   it('handles stop run requests', async function () {

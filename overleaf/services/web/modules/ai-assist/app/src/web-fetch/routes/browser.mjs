@@ -1,6 +1,6 @@
 import Settings from '@overleaf/settings'
 import { ProviderError } from '../../AiAssistProviders.mjs'
-import { describeStatus, webError } from '../util.mjs'
+import { describeStatus, safeDecodeURI, webError } from '../util.mjs'
 
 /**
  * HTTP client for the overleaf-browser sidecar (services/overleaf-browser).
@@ -100,7 +100,7 @@ export class BrowserRoute {
 
     const arrayBuf = await res.arrayBuffer()
     return {
-      url: decodeURI(res.headers.get('x-page-url') || targetUrl),
+      url: safeDecodeURI(res.headers.get('x-page-url') || targetUrl),
       contentType:
         res.headers.get('content-type') || 'text/html; charset=utf-8',
       body: Buffer.from(arrayBuf),

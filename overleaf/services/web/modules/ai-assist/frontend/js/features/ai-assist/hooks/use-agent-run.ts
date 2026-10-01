@@ -37,9 +37,16 @@ import {
   setStoredActiveRunId,
   setBackgroundRunMode,
   sendBackgroundRunMessage,
+  takeBackRunMessage,
 } from '../agent/background/background-run-client'
 
 const REPLAY_SETTLE_MS = 250
+// How long a message a finishing run turned away waits for that run's last
+// events before the next run starts anyway
+const RUN_END_WAIT_MS = 10_000
+// How long a stopped run is followed for the events it sent before it saw
+// the stop
+const STOP_WAIT_MS = 5_000
 
 export function useAgentRun({
   tools,
@@ -117,6 +124,40 @@ export function useAgentRun({
   onEventRef.current = onEvent
   const requestedCompileIdsRef = useRef<Set<string>>(new Set())
   const finishedCallIdsRef = useRef<Set<string>>(new Set())
+
+  // Settles once the followed run's stream has delivered its last event. A
+  // message the run turned away because it was finishing waits on this, so
+  // the run's final reply lands before the next run starts.
+  const runEndRef = useRef<{
+    promise: Promise<void>
+    settle: () => void
+  } | null>(null)
+  const followRunEnd = useCallback(() => {
+    runEndRef.current?.settle()
+    let resolve = () => {}
+    const record = {
+      promise: new Promise<void>(done => {
+        resolve = done
+      }),
+      settle: () => {
+        resolve()
+        if (runEndRef.current === record) runEndRef.current = null
+      },
+    }
+    runEndRef.current = record
+    return record.settle
+  }, [])
+  const whenRunEnded = useCallback(async (waitMs: number = RUN_END_WAIT_MS) => {
+    const ended = runEndRef.current?.promise
+    if (!ended) return
+    await Promise.race([
+      ended,
+      new Promise<void>(resolve => window.setTimeout(resolve, waitMs)),
+    ])
+    // The last events are reduced in a state update; let it render, so a
+    // caller reading the transcript next reads them
+    await new Promise<void>(resolve => window.setTimeout(resolve, 0))
+  }, [])
 
   const handleStreamEvent = useCallback((event: AgentEvent) => {
     if (event.type === 'toolCallStarted') {
@@ -262,6 +303,31 @@ export function useAgentRun({
     [systemPrompt]
   )
 
+  /**
+   * Takes back a message `queueMessage` handed to the run, as Claude Code lets
+   * you take back what you queued. True when the run will not read it: it was
+   * removed, or the run has ended. In that case its events have all arrived
+   * by the time this returns, so the caller can tell from the entry whether
+   * the run read it after all.
+   */
+  const unqueueMessage = useCallback(
+    async (id: string): Promise<boolean> => {
+      const runId = currentRunIdRef.current
+      if (!runId) return true
+      const outcome = await takeBackRunMessage(
+        projectIdRef.current,
+        runId,
+        id
+      ).catch(() => 'read' as const)
+      if (outcome === 'ended') {
+        await whenRunEnded()
+        return true
+      }
+      return outcome === 'removed'
+    },
+    [whenRunEnded]
+  )
+
   const setMode = useCallback((mode: AgentMode) => {
     // Before the re-render, so a send in the same tick starts in the new mode.
     modeRef.current = mode
@@ -281,7 +347,6 @@ export function useAgentRun({
     const runId = currentRunIdRef.current
     currentRunIdRef.current = null
     abortRef.current?.abort()
-    streamCleanupRef.current?.()
     // Only the background path owns this storage key. An in-page run (systemPrompt
     // set) shares the same projectId, and clearing it here would drop the main
     // chat's live run id and break its reconnect.
@@ -293,7 +358,6 @@ export function useAgentRun({
     setApprovalContext(null)
     setState(current => ({
       ...current,
-      transcript: cancelPendingToolCalls(current.transcript),
       running: false,
       stoppedByUser: true,
       pendingApproval: null,
@@ -301,8 +365,21 @@ export function useAgentRun({
     }))
     if (runId) {
       await stopBackgroundRun(runId).catch(() => {})
+      // Events the run sent before it saw the stop are still arriving, among
+      // them results of tools it had already run and sent to the provider.
+      // The next run is rebuilt from this transcript, so it needs them to
+      // send the same messages and read them from the cache. The run ends
+      // its stream once it has stopped; a send waits on that too.
+      await whenRunEnded(STOP_WAIT_MS)
     }
-  }, [projectId, systemPrompt])
+    streamCleanupRef.current?.()
+    streamCleanupRef.current = null
+    runEndRef.current?.settle()
+    setState(current => ({
+      ...current,
+      transcript: cancelPendingToolCalls(current.transcript),
+    }))
+  }, [projectId, systemPrompt, whenRunEnded])
 
   const run = useCallback(
     async (
@@ -336,6 +413,12 @@ export function useAgentRun({
 
       window.dispatchEvent(new CustomEvent('aiAssist:agentReadSelection'))
 
+      // A message still waiting its turn in the panel's send queue is shown
+      // but not sent: it goes to the run when the queue reaches it.
+      const payload = transcript.filter(
+        entry => !(entry.role === 'user' && entry.pending)
+      )
+
       setState(current => ({
         ...current,
         transcript,
@@ -355,7 +438,7 @@ export function useAgentRun({
             client: assistant.client,
             handle,
             tools: runTools,
-            transcript,
+            transcript: payload,
             limits: resolveLimits(assistant.settings),
             cacheKey,
             systemPrompt: runSystemPrompt,
@@ -429,7 +512,7 @@ export function useAgentRun({
       try {
         const runId = await startBackgroundRun({
           projectId,
-          transcript,
+          transcript: payload,
           providerSettings: assistant.settings,
           mode: modeRef.current,
           chatId: chatIdRef.current,
@@ -438,6 +521,7 @@ export function useAgentRun({
             : null,
         })
         currentRunIdRef.current = runId
+        const runEnded = followRunEnd()
 
         streamCleanupRef.current?.()
         streamCleanupRef.current = connectRunStream({
@@ -445,6 +529,7 @@ export function useAgentRun({
           projectId,
           onEvent: handleStreamEvent,
           onDone: () => {
+            runEnded()
             currentRunIdRef.current = null
             setStoredActiveRunId(projectId, null)
             setState(current => ({
@@ -454,6 +539,7 @@ export function useAgentRun({
             }))
           },
           onError: _err => {
+            runEnded()
             if (!currentRunIdRef.current) return
             currentRunIdRef.current = null
             setStoredActiveRunId(projectId, null)
@@ -489,6 +575,7 @@ export function useAgentRun({
       projectContext,
       userSettingsContext,
       stop,
+      followRunEnd,
     ]
   )
 
@@ -502,6 +589,7 @@ export function useAgentRun({
     currentRunIdRef.current = null
     streamCleanupRef.current?.()
     streamCleanupRef.current = null
+    runEndRef.current?.settle()
     approvalRef.current = null
     setApprovalContext(null)
     setStoredActiveRunId(projectId, null)
@@ -517,6 +605,7 @@ export function useAgentRun({
       if (systemPrompt || currentRunIdRef.current === runId) return
       streamCleanupRef.current?.()
       currentRunIdRef.current = runId
+      const runEnded = followRunEnd()
       setStoredActiveRunId(projectId, runId, startedAt)
       setState(current => {
         const last = current.transcript.at(-1)
@@ -532,6 +621,7 @@ export function useAgentRun({
         }
       })
       const finish = () => {
+        runEnded()
         if (currentRunIdRef.current !== runId) return
         currentRunIdRef.current = null
         setStoredActiveRunId(projectId, null)
@@ -550,7 +640,7 @@ export function useAgentRun({
         onError: finish,
       })
     },
-    [handleStreamEvent, projectId, systemPrompt]
+    [handleStreamEvent, projectId, systemPrompt, followRunEnd]
   )
 
   // Reconnect on mount if a background run is in progress
@@ -578,6 +668,8 @@ export function useAgentRun({
     chatTitle: state.chatTitle,
     isTitleGenerated: state.isTitleGenerated,
     queueMessage,
+    unqueueMessage,
+    whenRunEnded,
     running: state.running,
     error: state.error,
     handle,

@@ -60,6 +60,7 @@ export function AgentComposer({
   attachedSelection: externalAttachedSelection,
   setAttachedSelection: externalSetAttachedSelection,
   history = [],
+  restoredDraft = null,
 }: {
   running: boolean
   disabled?: boolean
@@ -79,6 +80,8 @@ export function AgentComposer({
     React.SetStateAction<AttachedSelection | null>
   >
   history?: string[]
+  /** A queued message taken back to be edited; a new object each time. */
+  restoredDraft?: { text: string } | null
 }) {
   const { t } = useTranslation()
   const [value, setValue] = useState('')
@@ -236,6 +239,17 @@ export function AgentComposer({
   useEffect(() => {
     setHistoryIndex(-1)
   }, [history])
+
+  // Ahead of anything already typed, one message per line, as Claude Code
+  // hands back what you queued
+  useEffect(() => {
+    if (!restoredDraft) return
+    setValue(current =>
+      current.trim() ? `${restoredDraft.text}\n${current}` : restoredDraft.text
+    )
+    setHistoryIndex(-1)
+    textareaRef.current?.focus()
+  }, [restoredDraft])
 
   useEventListener('aiAssist:selectionChanged', (event: Event) => {
     if (externalSetAttachedSelection) return

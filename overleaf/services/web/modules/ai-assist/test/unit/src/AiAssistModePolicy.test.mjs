@@ -110,37 +110,26 @@ describe('AiAssistModePolicy', () => {
       { name: 'compile_project' },
     ]
 
-    it('offers edit tools in manual mode', () => {
-      const specs = toolSpecsFor('manual', sampleSpecs)
-      const names = specs.map(s => s.name)
-      expect(names).to.include.members([
+    it('offers the same tools, in the same order, in every mode', () => {
+      const manual = toolSpecsFor('manual', sampleSpecs)
+      expect(toolSpecsFor('acceptEdits', sampleSpecs)).to.deep.equal(manual)
+      expect(toolSpecsFor('plan', sampleSpecs)).to.deep.equal(manual)
+      expect(manual.map(s => s.name)).to.deep.equal([
         'read_file',
         'edit_file',
         'create_file',
         'configure_editor_settings',
+        'compile_project',
+        'present_plan',
       ])
-      expect(names).not.to.include('present_plan')
     })
 
-    it('offers edit tools in acceptEdits mode', () => {
-      const specs = toolSpecsFor('acceptEdits', sampleSpecs)
-      const names = specs.map(s => s.name)
-      expect(names).to.include.members([
-        'read_file',
-        'edit_file',
-        'create_file',
-        'configure_editor_settings',
-      ])
-      expect(names).not.to.include('present_plan')
-    })
-
-    it('excludes edit tools and includes present_plan in plan mode', () => {
-      const specs = toolSpecsFor('plan', sampleSpecs)
-      const names = specs.map(s => s.name)
-      expect(names).to.include.members(['read_file', 'compile_project', 'present_plan'])
-      expect(names).not.to.include('edit_file')
-      expect(names).not.to.include('create_file')
-      expect(names).not.to.include('configure_editor_settings')
+    it('leaves the mode to decide, which refuses what it does not allow', () => {
+      expect(decide('plan', 'edit_file')).to.equal('deny')
+      expect(decide('plan', 'configure_editor_settings')).to.equal('deny')
+      expect(decide('manual', 'present_plan')).to.equal('deny')
+      expect(decide('acceptEdits', 'present_plan')).to.equal('deny')
+      expect(decide('plan', 'present_plan')).to.equal('ask')
     })
   })
 })

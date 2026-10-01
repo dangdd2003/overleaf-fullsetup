@@ -159,11 +159,9 @@ export const WEB_FETCH_PROMPT = [
   ...WEB_CLOSE,
 ].join('\n')
 
-import { normalizeMode } from './AiAssistModePolicy.mjs'
-
 export const MODE_PROMPTS = {
   manual: [
-    '# Mode: Manual',
+    '## Manual',
     '',
     'File edits, new files and settings changes are proposed as diffs that the',
     'user accepts or rejects; reading, searching and compiling run freely. Call',
@@ -172,7 +170,7 @@ export const MODE_PROMPTS = {
   ].join('\n'),
 
   acceptEdits: [
-    '# Mode: Accept edits',
+    '## Accept edits',
     '',
     'File edits, new files and compiler settings apply immediately. Appearance',
     "and editor preferences still ask once, because they belong to the user's",
@@ -181,16 +179,40 @@ export const MODE_PROMPTS = {
   ].join('\n'),
 
   plan: [
-    '# Mode: Plan',
+    '## Plan',
     '',
-    'Nothing you do can change the project: the edit, create and settings tools',
-    'are not available. Research with the read-only tools, compiling if you need',
-    'to diagnose the build. Then call present_plan with a Markdown plan: what',
+    'Nothing you do can change the project: edit, create and settings calls are',
+    'refused. Research with the read-only tools, compiling if you need to',
+    'diagnose the build. Then call present_plan with a Markdown plan: what',
     'changes, in which files, in what order, and what you are unsure of. The user',
     'approves it, which switches to an editing mode, or sends feedback. If the',
     'user only asked a question, answer it in words and call nothing.',
   ].join('\n'),
 }
+
+/**
+ * Every mode, in one section that is the same whatever the mode is.
+ *
+ * The mode is not interpolated anywhere in the system prompt and the tool list
+ * does not change with it: either would rewrite the start of the cached prefix
+ * on every mode switch, a plan approval in the middle of a run included. As in
+ * Claude Code, the switch reaches the model as a message instead.
+ */
+export const MODES_PROMPT = [
+  '# Modes',
+  '',
+  'The user sets the mode, not you. It is the <mode> in the newest',
+  '<project-context>, unless a later tool result says the user switched mode',
+  'or approved a plan; then that mode applies. With no mode given, it is',
+  'Manual. A call the current mode does not allow is refused and changes',
+  'nothing; present_plan is for Plan mode only.',
+  '',
+  MODE_PROMPTS.manual,
+  '',
+  MODE_PROMPTS.acceptEdits,
+  '',
+  MODE_PROMPTS.plan,
+].join('\n')
 
 function escapeAttribute(value) {
   return String(value).replace(/&/g, '&amp;').replace(/"/g, '&quot;')
@@ -225,14 +247,17 @@ export function projectInstructionsPrompt(instructions) {
   return lines.join('\n')
 }
 
+/**
+ * `mode` is accepted for callers that pass it and does not change the result:
+ * see MODES_PROMPT.
+ */
 export function systemBlocksFor(
-  mode,
+  _mode,
   { webTools = false, webSearch = webTools, projectInstructions = null } = {}
 ) {
-  const normMode = normalizeMode(mode)
   const sections = [SYSTEM_PROMPT]
   if (webTools) sections.push(webSearch ? WEB_TOOLS_PROMPT : WEB_FETCH_PROMPT)
-  sections.push(MODE_PROMPTS[normMode])
+  sections.push(MODES_PROMPT)
   return {
     shared: sections.join('\n\n'),
     instructions: projectInstructionsPrompt(projectInstructions),

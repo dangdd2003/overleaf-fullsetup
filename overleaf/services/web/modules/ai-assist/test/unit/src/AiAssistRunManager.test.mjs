@@ -3,14 +3,24 @@ import { expect } from 'chai'
 import sinon from 'sinon'
 import {
   AiAssistRunManager,
+  FINAL_REPLY_NUDGE,
+  SENT_DURING_RUN_NOTE,
   TRIM_TARGET_FRACTION,
   WEB_CALL_NUDGE,
   applyContextBudget,
+  applyContextTrim,
   estimateMessagesTokens,
+  latestContextTrim,
+  recordContextTrim,
   extractTextToolCall,
   toAgentMessages,
   toolMessageIsError,
 } from '../../../app/src/AiAssistRunManager.mjs'
+import {
+  emptyAgentState,
+  reduceAgentEvent,
+} from '../../../frontend/js/features/ai-assist/agent/agent-state.ts'
+import { hydrateTranscript } from '../../../app/src/AiAssistChatHistoryStore.mjs'
 
 describe('AiAssistRunManager', function () {
   let manager
@@ -564,6 +574,7 @@ describe('AiAssistRunManager', function () {
       'search_text',
       'edit_file',
       'create_file',
+      'present_plan',
     ])
     expect(mockStore.setPendingApproval.calledOnce).to.be.true
     expect(
@@ -1550,7 +1561,7 @@ describe('AiAssistRunManager', function () {
       const names = capturedTools.map(t => t.name)
       expect(names).to.include('read_file')
       expect(names).to.include('present_plan')
-      expect(names).not.to.include('edit_file')
+      expect(names).to.include('edit_file')
 
       const finishedCall = capturedEvents.find(
         e => e.type === 'toolCallFinished' && e.id === 'call_edit'
@@ -1652,10 +1663,13 @@ describe('AiAssistRunManager', function () {
         providerSettings: { type: 'openai', apiKey: 'k', model: 'gpt-4o' },
       })
 
-      // The second request carries it, assembled envelope-first like a stored turn.
+      // The second request carries it, assembled envelope-first like a stored
+      // turn, with the note that it came in while the model was working.
       expect(sentMessages[1]).to.include(
-        '<project-context turn="2"/>\n\nalso check the bibliography'
+        `<project-context turn="2"/>\n\nalso check the bibliography\n\n${SENT_DURING_RUN_NOTE}`
       )
+      // As the last message: appended after the tool result, nothing moved
+      expect(sentMessages[1].at(-1)).to.include('also check the bibliography')
       expect(
         mockStore.appendEvent.calledWith(
           'run-queue',
@@ -1663,6 +1677,7 @@ describe('AiAssistRunManager', function () {
             type: 'userMessage',
             id: 'q1',
             text: 'also check the bibliography',
+            contextText: '<project-context turn="2"/>',
           })
         )
       ).to.be.true
@@ -1747,6 +1762,316 @@ describe('AiAssistRunManager', function () {
           c => c.args[1]?.type === 'toolCallFinished' && c.args[1]?.id === 'e2'
         )
       expect(secondEdit?.args[1]?.result?.status).to.not.equal('rejected')
+    })
+
+    it('stores the run so the next run resends the bytes this one sent', async function () {
+      const transcript = [
+        {
+          id: 'u0',
+          role: 'user',
+          text: 'fix the preamble',
+          contextText: '<project-context turn="1"/>',
+        },
+      ]
+      const requests = []
+      let turn = 0
+      mockClient.streamChat.callsFake(async function* (opts) {
+        turn++
+        requests.push(JSON.parse(JSON.stringify(opts.messages)))
+        if (turn === 1) {
+          yield { type: 'text', text: 'Reading both.' }
+          yield {
+            type: 'tool_call',
+            id: 'r1',
+            name: 'read_file',
+            args: { path: 'main.tex' },
+          }
+          yield {
+            type: 'tool_call',
+            id: 'r2',
+            name: 'read_file',
+            args: { path: 'refs.bib' },
+          }
+        } else if (turn === 2) {
+          // Calls and no text, straight after the previous request's calls
+          yield {
+            type: 'tool_call',
+            id: 's1',
+            name: 'search_text',
+            args: { query: 'title' },
+          }
+          await manager.queueMessage('run-roundtrip', {
+            id: 'q1',
+            text: 'also the date',
+            contextText: '<project-context turn="2"/>',
+          })
+        } else if (turn === 3) {
+          yield { type: 'text', text: 'Both now.' }
+          yield {
+            type: 'tool_call',
+            id: 'r3',
+            name: 'read_file',
+            args: { path: 'main.tex', from: 1 },
+          }
+        } else {
+          yield { type: 'text', text: 'Done: title and date.' }
+        }
+      })
+
+      await manager.startRun({
+        runId: 'run-roundtrip',
+        projectId: 'p1',
+        userId: 'u1',
+        transcript,
+        providerSettings: { type: 'anthropic', apiKey: 'k', model: 'claude' },
+      })
+
+      // What the panel stores, from the events as they reach it, by its own
+      // reducer
+      let state = emptyAgentState(transcript)
+      for (const call of mockStore.appendEvent.getCalls()) {
+        state = reduceAgentEvent(
+          state,
+          JSON.parse(JSON.stringify(call.args[1]))
+        )
+      }
+      const rebuilt = toAgentMessages(state.transcript)
+
+      // Tool calls compared by what reaches the provider: id, name, args
+      const wireShape = messages =>
+        JSON.stringify(
+          messages.map(({ toolCalls, ...message }) =>
+            toolCalls
+              ? {
+                  ...message,
+                  toolCalls: toolCalls.map(({ id, name, args }) => ({
+                    id,
+                    name,
+                    args,
+                  })),
+                }
+              : message
+          )
+        )
+      const lastRequest = requests.at(-1)
+      expect(lastRequest.map(m => m.role)).to.deep.equal([
+        'user',
+        'assistant',
+        'tool',
+        'tool',
+        'assistant',
+        'tool',
+        'user',
+        'assistant',
+        'tool',
+      ])
+      expect(wireShape(rebuilt.slice(0, lastRequest.length))).to.equal(
+        wireShape(lastRequest)
+      )
+      expect(rebuilt.slice(lastRequest.length)).to.deep.equal([
+        { role: 'assistant', content: 'Done: title and date.' },
+      ])
+    })
+
+    it('lets a waiting message take the reply instead of nudging an empty one', async function () {
+      let turn = 0
+      const requests = []
+      mockClient.streamChat.callsFake(async function* (opts) {
+        turn++
+        requests.push(opts.messages.map(m => m.content))
+        if (turn === 1) {
+          yield {
+            type: 'tool_call',
+            id: 'r1',
+            name: 'read_file',
+            args: { path: 'main.tex' },
+          }
+        } else if (turn === 2) {
+          // Ends with nothing to say, as a message comes in
+          await manager.queueMessage('run-no-nudge', {
+            id: 'q1',
+            text: 'what did you find?',
+          })
+        } else {
+          yield { type: 'text', text: 'The preamble loads graphicx twice.' }
+        }
+      })
+
+      await manager.startRun({
+        runId: 'run-no-nudge',
+        projectId: 'p1',
+        userId: 'u1',
+        transcript: [{ role: 'user', content: 'check the preamble' }],
+        providerSettings: { type: 'openai', apiKey: 'k', model: 'gpt-4o' },
+      })
+
+      expect(requests).to.have.length(3)
+      expect(requests[2].at(-1)).to.include('what did you find?')
+      expect(requests[2].some(c => c === FINAL_REPLY_NUDGE)).to.be.false
+    })
+
+    it('turns a message away once the run has looked at its queue for the last time', async function () {
+      let lateAnswer = null
+      mockStore.appendEvent.callsFake(async (runId, event) => {
+        if (event.type === 'turnFinished') {
+          lateAnswer = await manager.queueMessage(runId, {
+            id: 'q-late',
+            text: 'one more',
+          })
+        }
+        return 1
+      })
+      mockClient.streamChat.callsFake(async function* () {
+        yield { type: 'text', text: 'Done.' }
+      })
+
+      await manager.startRun({
+        runId: 'run-closing',
+        projectId: 'p1',
+        userId: 'u1',
+        transcript: [{ role: 'user', content: 'go' }],
+        providerSettings: { type: 'openai', apiKey: 'k', model: 'gpt-4o' },
+      })
+
+      expect(lateAnswer).to.equal(false)
+      expect(mockClient.streamChat.callCount).to.equal(1)
+    })
+
+    it('turns messages away once the run is stopped', async function () {
+      let answer = null
+      mockClient.streamChat.callsFake(async function* () {
+        await manager.stopLocalRun('run-stopping')
+        answer = await manager.queueMessage('run-stopping', {
+          id: 'q1',
+          text: 'hello?',
+        })
+        yield { type: 'text', text: 'never read' }
+      })
+
+      await manager.startRun({
+        runId: 'run-stopping',
+        projectId: 'p1',
+        userId: 'u1',
+        transcript: [{ role: 'user', content: 'go' }],
+        providerSettings: { type: 'openai', apiKey: 'k', model: 'gpt-4o' },
+      })
+
+      expect(answer).to.equal(false)
+    })
+
+    it('lets a message be taken back until the run reads it', async function () {
+      let turn = 0
+      const requests = []
+      const answers = {}
+      mockClient.streamChat.callsFake(async function* (opts) {
+        turn++
+        requests.push(opts.messages.map(m => m.content))
+        if (turn === 1) {
+          yield {
+            type: 'tool_call',
+            id: 'r1',
+            name: 'read_file',
+            args: { path: 'main.tex' },
+          }
+          await manager.queueMessage('run-take-back', {
+            id: 'q1',
+            text: 'never mind',
+          })
+          await manager.queueMessage('run-take-back', {
+            id: 'q2',
+            text: 'keep this one',
+          })
+          answers.unread = await manager.unqueueMessage('run-take-back', 'q1')
+        } else {
+          answers.read = await manager.unqueueMessage('run-take-back', 'q2')
+          yield { type: 'text', text: 'Kept.' }
+        }
+      })
+
+      await manager.startRun({
+        runId: 'run-take-back',
+        projectId: 'p1',
+        userId: 'u1',
+        transcript: [{ role: 'user', content: 'go' }],
+        providerSettings: { type: 'openai', apiKey: 'k', model: 'gpt-4o' },
+      })
+
+      expect(answers).to.deep.equal({ unread: true, read: false })
+      expect(requests[1].some(c => c.includes('never mind'))).to.be.false
+      expect(requests[1].some(c => c.includes('keep this one'))).to.be.true
+      const announced = mockStore.appendEvent
+        .getCalls()
+        .filter(c => c.args[1]?.type === 'userMessage')
+        .map(c => c.args[1].id)
+      expect(announced).to.deep.equal(['q2'])
+    })
+
+    it('rebuilds an entry stored before calls recorded their request as one message', function () {
+      const read = (id, content) => ({
+        id,
+        name: 'read_file',
+        args: { path: id },
+        result: { content },
+      })
+      const entry = {
+        id: 'a1',
+        role: 'assistant',
+        text: 'Looked.',
+        toolCalls: [read('c1', 'x'), read('c2', 'y')],
+        blocks: [
+          { type: 'tool_call', call: read('c1', 'x') },
+          { type: 'text', text: 'Looked.' },
+          { type: 'tool_call', call: read('c2', 'y') },
+        ],
+      }
+
+      const messages = toAgentMessages([{ role: 'user', text: 'go' }, entry])
+
+      expect(messages.map(m => m.role)).to.deep.equal([
+        'user',
+        'assistant',
+        'tool',
+        'tool',
+      ])
+      expect(messages[1].content).to.equal('Looked.')
+      expect(messages[1].toolCalls.map(c => c.id)).to.deep.equal(['c1', 'c2'])
+    })
+
+    it('splits requests that made calls without writing anything', function () {
+      const read = (id, step) => ({
+        id,
+        name: 'read_file',
+        args: { path: id },
+        result: { content: id },
+        step,
+      })
+      const calls = [read('c1', 1), read('c2', 2), read('c3', 2)]
+      const entry = {
+        id: 'a1',
+        role: 'assistant',
+        text: 'Done.',
+        toolCalls: calls,
+        blocks: [
+          ...calls.map(call => ({ type: 'tool_call', call })),
+          { type: 'thinking', thinking: 'all read' },
+          { type: 'text', text: 'Done.' },
+        ],
+      }
+
+      const messages = toAgentMessages([{ role: 'user', text: 'go' }, entry])
+
+      expect(messages.map(m => m.role)).to.deep.equal([
+        'user',
+        'assistant',
+        'tool',
+        'assistant',
+        'tool',
+        'tool',
+        'assistant',
+      ])
+      expect(messages[1].toolCalls.map(c => c.id)).to.deep.equal(['c1'])
+      expect(messages[3].toolCalls.map(c => c.id)).to.deep.equal(['c2', 'c3'])
+      expect(messages[6]).to.deep.equal({ role: 'assistant', content: 'Done.' })
     })
   })
 
@@ -2390,17 +2715,99 @@ describe('AiAssistRunManager', function () {
       ]
     })
 
-    it('builds mode-specific system prompt and tool specs for each mode', async function () {
+    it('sends the same system prompt and tools whatever the mode', async function () {
       await startWith(manager, 'run-plan', { mode: 'plan' })
       await startWith(manager, 'run-accept', { mode: 'acceptEdits' })
       const [plan, accept] = mockClient.streamChat.args.map(([a]) => a)
-      expect(plan.system).to.include('# Mode: Plan')
-      expect(accept.system).to.include('# Mode: Accept edits')
-      expect(plan.tools.map(t => t.name)).to.include('present_plan')
-      expect(plan.tools.map(t => t.name)).not.to.include('edit_file')
-      expect(accept.tools.map(t => t.name)).to.include('edit_file')
-      expect(accept.tools.map(t => t.name)).not.to.include('present_plan')
+      expect(plan.system).to.equal(accept.system)
+      expect(plan.tools).to.deep.equal(accept.tools)
+      expect(plan.tools.map(t => t.name)).to.deep.equal([
+        'read_file',
+        'edit_file',
+        'present_plan',
+      ])
       expect(plan.cacheHints.systemPrefix).to.equal(plan.system)
+    })
+
+    it('keeps the prefix byte-identical across a plan approval and a mode switch mid-run', async function () {
+      mockStore.setMode = sinon.stub().resolves()
+      let turn = 0
+      mockClient.streamChat.callsFake(async function* () {
+        turn++
+        if (turn === 1) {
+          yield {
+            type: 'tool_call',
+            id: 'p1',
+            name: 'present_plan',
+            args: { plan: 'Fix the title.' },
+          }
+        } else if (turn === 2) {
+          yield {
+            type: 'tool_call',
+            id: 'r1',
+            name: 'read_file',
+            args: { path: 'main.tex' },
+          }
+          await manager.setMode('run-modes', 'manual')
+        } else {
+          yield { type: 'text', text: 'Done.' }
+        }
+      })
+
+      const run = startWith(manager, 'run-modes', { mode: 'plan' })
+      await new Promise(resolve => setTimeout(resolve, 20))
+      await manager.approveEdit('run-modes', {
+        accepted: true,
+        nextMode: 'acceptEdits',
+      })
+      await run
+
+      const requests = mockClient.streamChat.args.map(([a]) => a)
+      expect(requests).to.have.length(3)
+      for (const request of requests.slice(1)) {
+        expect(request.system).to.equal(requests[0].system)
+        expect(JSON.stringify(request.tools)).to.equal(
+          JSON.stringify(requests[0].tools)
+        )
+      }
+      // The switches reach the model in the conversation instead
+      const results = requests[2].messages.filter(m => m.role === 'tool')
+      expect(results[0].content).to.include('Accept edits')
+      expect(results[1].content).to.include('switched to Manual mode')
+    })
+
+    it('reads AGENTS.md once for the run, so an edit mid-run keeps the cache', async function () {
+      let turn = 0
+      mockClient.streamChat.callsFake(async function* () {
+        turn++
+        if (turn === 1) {
+          yield {
+            type: 'tool_call',
+            id: 'r1',
+            name: 'read_file',
+            args: { path: 'main.tex' },
+          }
+        } else {
+          yield { type: 'text', text: 'Done.' }
+        }
+      })
+      mockTools.getProjectInstructions = sinon
+        .stub()
+        .onFirstCall()
+        .resolves({ path: 'AGENTS.md', text: 'Use British spelling.' })
+        .onSecondCall()
+        .resolves({ path: 'AGENTS.md', text: 'Edited while running.' })
+      const m = new AiAssistRunManager({
+        store: mockStore,
+        tools: mockTools,
+        clientFactory: () => mockClient,
+      })
+
+      await startWith(m, 'run-agents-frozen')
+
+      const [first, second] = mockClient.streamChat.args.map(([a]) => a)
+      expect(second.system).to.equal(first.system)
+      expect(mockTools.getProjectInstructions.callCount).to.equal(1)
     })
 
     it('automatically adds AGENTS.md as a second block when present', async function () {
@@ -2434,6 +2841,387 @@ describe('AiAssistRunManager', function () {
       expect(request.system).not.to.include('# Project instructions')
       expect(mockStore.updateStatus.calledWith('run-agents-error', 'done')).to
         .be.true
+    })
+
+    it('rebuilds the next run from the transcript as a prefix of what was sent', async function () {
+      const requests = []
+      mockClient.streamChat.callsFake(async function* (opts) {
+        requests.push(JSON.parse(JSON.stringify(opts.messages)))
+        if (requests.length === 1) {
+          yield { type: 'text', text: 'Looking.' }
+          yield {
+            type: 'tool_call',
+            id: 'r1',
+            name: 'read_file',
+            args: { path: 'main.tex' },
+          }
+        } else if (requests.length === 2) {
+          yield { type: 'text', text: 'Reply to first question.' }
+        } else {
+          yield { type: 'text', text: 'Reply to second question.' }
+        }
+      })
+
+      const first = [{ id: 'u0', role: 'user', text: 'first question' }]
+      await manager.startRun({
+        runId: 'run-seq-1',
+        projectId: 'p1',
+        userId: 'u1',
+        transcript: first,
+        providerSettings: provider,
+      })
+
+      // The panel's transcript, from the events as they reach it
+      let state = emptyAgentState(first)
+      for (const call of mockStore.appendEvent.getCalls()) {
+        state = reduceAgentEvent(
+          state,
+          JSON.parse(JSON.stringify(call.args[1]))
+        )
+      }
+
+      await manager.startRun({
+        runId: 'run-seq-2',
+        projectId: 'p1',
+        userId: 'u1',
+        transcript: [
+          ...state.transcript,
+          { id: 'u2', role: 'user', text: 'second question' },
+        ],
+        providerSettings: provider,
+      })
+
+      expect(requests).to.have.length(3)
+      // Calls compared by what reaches the provider: id, name, args
+      const wire = messages =>
+        messages.map(({ toolCalls, ...message }) =>
+          toolCalls
+            ? {
+                ...message,
+                toolCalls: toolCalls.map(({ id, name, args }) => ({
+                  id,
+                  name,
+                  args,
+                })),
+              }
+            : message
+        )
+      const sent = requests[1]
+      expect(wire(requests[2].slice(0, sent.length))).to.deep.equal(wire(sent))
+      expect(requests[2].slice(sent.length)).to.deep.equal([
+        { role: 'assistant', content: 'Reply to first question.' },
+        { role: 'user', content: 'second question' },
+      ])
+    })
+  })
+
+  describe('rebuilding what a run sent, whatever happened during it', function () {
+    const provider = { type: 'anthropic', apiKey: 'k', model: 'claude' }
+
+    // What the panel stores from the run's events, by its own reducer
+    const panelTranscript = (initial, store = mockStore) => {
+      let state = emptyAgentState(initial)
+      for (const call of store.appendEvent.getCalls()) {
+        state = reduceAgentEvent(
+          state,
+          JSON.parse(JSON.stringify(call.args[1]))
+        )
+      }
+      return state.transcript
+    }
+    const wire = messages =>
+      JSON.parse(
+        JSON.stringify(
+          messages.map(({ toolCalls, ...message }) =>
+            toolCalls
+              ? {
+                  ...message,
+                  toolCalls: toolCalls.map(({ id, name, args }) => ({
+                    id,
+                    name,
+                    args,
+                  })),
+                }
+              : message
+          )
+        )
+      )
+    const expectPrefix = (rebuilt, sent) => {
+      expect(wire(rebuilt.slice(0, sent.length))).to.deep.equal(wire(sent))
+    }
+
+    it('keeps the reply nudge in the rebuilt messages', async function () {
+      const requests = []
+      mockClient.streamChat.callsFake(async function* (opts) {
+        requests.push(JSON.parse(JSON.stringify(opts.messages)))
+        if (requests.length === 1) {
+          yield {
+            type: 'tool_call',
+            id: 'r1',
+            name: 'read_file',
+            args: { path: 'main.tex' },
+          }
+        } else if (requests.length === 3) {
+          yield { type: 'text', text: 'Read it.' }
+        }
+      })
+      const first = [{ id: 'u0', role: 'user', text: 'read main' }]
+      await manager.startRun({
+        runId: 'run-nudge-rebuild',
+        projectId: 'p1',
+        userId: 'u1',
+        transcript: first,
+        providerSettings: provider,
+      })
+
+      expect(requests[2].at(-1)).to.deep.equal({
+        role: 'user',
+        content: FINAL_REPLY_NUDGE,
+      })
+      const rebuilt = toAgentMessages(panelTranscript(first))
+      expectPrefix(rebuilt, requests[2])
+      expect(rebuilt.slice(requests[2].length)).to.deep.equal([
+        { role: 'assistant', content: 'Read it.' },
+      ])
+    })
+
+    it('stores a tool call written as text as the call the run sent', async function () {
+      mockTools.getToolSpecs = () => [
+        {
+          name: 'read_file',
+          description: 'Read a file',
+          parameters: { type: 'object', properties: { path: { type: 'string' } } },
+        },
+      ]
+      const requests = []
+      mockClient.streamChat.callsFake(async function* (opts) {
+        requests.push(JSON.parse(JSON.stringify(opts.messages)))
+        if (requests.length === 1) {
+          yield { type: 'text', text: 'Reading.\n```json\n' }
+          yield {
+            type: 'text',
+            text: '{"name":"read_file","arguments":{"path":"main.tex"}}\n```',
+          }
+        } else {
+          yield { type: 'text', text: 'Done.' }
+        }
+      })
+      const first = [{ id: 'u0', role: 'user', text: 'read main' }]
+      await manager.startRun({
+        runId: 'run-rescue-rebuild',
+        projectId: 'p1',
+        userId: 'u1',
+        transcript: first,
+        providerSettings: provider,
+      })
+
+      const transcript = panelTranscript(first)
+      expect(transcript.at(-1).text).to.equal('Reading.Done.')
+      expectPrefix(toAgentMessages(transcript), requests[1])
+    })
+
+    it('drops the text of a failed attempt the run retried', async function () {
+      const clock = sinon.useFakeTimers({ toFake: ['setTimeout'] })
+      try {
+        const requests = []
+        let attempt = 0
+        mockClient.streamChat.callsFake(async function* (opts) {
+          attempt++
+          requests.push(JSON.parse(JSON.stringify(opts.messages)))
+          if (attempt === 1) {
+            yield { type: 'text', text: 'Half a rep' }
+            const err = new Error('connection reset')
+            err.status = 502
+            throw err
+          }
+          if (attempt === 2) {
+            yield { type: 'text', text: 'Whole reply. ' }
+            yield {
+              type: 'tool_call',
+              id: 'r1',
+              name: 'read_file',
+              args: { path: 'main.tex' },
+            }
+          } else {
+            yield { type: 'text', text: 'Done.' }
+          }
+        })
+        const first = [{ id: 'u0', role: 'user', text: 'read main' }]
+        const run = manager.startRun({
+          runId: 'run-retry-rebuild',
+          projectId: 'p1',
+          userId: 'u1',
+          transcript: first,
+          providerSettings: provider,
+        })
+        for (let i = 0; i < 50; i++) await clock.tickAsync(1000)
+        await run
+
+        const transcript = panelTranscript(first)
+        expect(transcript.at(-1).text).to.equal('Whole reply. Done.')
+        expectPrefix(toAgentMessages(transcript), requests.at(-1))
+      } finally {
+        clock.restore()
+      }
+    })
+
+    it('sends nothing for a reply that produced no text', function () {
+      expect(
+        toAgentMessages([
+          { id: 'u0', role: 'user', text: 'one' },
+          { id: 'a1', role: 'assistant', text: '', toolCalls: [], blocks: [] },
+          { id: 'u2', role: 'user', text: 'two' },
+        ])
+      ).to.deep.equal([
+        { role: 'user', content: 'one' },
+        { role: 'user', content: 'two' },
+      ])
+    })
+
+    it('renders a string result as the run did', function () {
+      const [, , tool] = toAgentMessages([
+        { id: 'u0', role: 'user', text: 'go' },
+        {
+          id: 'a1',
+          role: 'assistant',
+          text: '',
+          toolCalls: [
+            { id: 'c1', name: 'nope', args: {}, result: 'plain', step: 1 },
+          ],
+          blocks: [
+            {
+              type: 'tool_call',
+              call: { id: 'c1', name: 'nope', args: {}, result: 'plain' },
+            },
+          ],
+        },
+      ])
+      expect(tool.content).to.equal(JSON.stringify('plain'))
+    })
+
+    it('cuts a rebuilt conversation where the last run had cut it', function () {
+      const full = []
+      for (let i = 0; i < 6; i++) {
+        full.push({ role: 'user', content: `q${i}` })
+        full.push({
+          role: 'assistant',
+          content: '',
+          toolCalls: [{ id: `c${i}`, name: 'read_file', args: {} }],
+        })
+        full.push({
+          role: 'tool',
+          toolCallId: `c${i}`,
+          name: 'read_file',
+          content: 'x'.repeat(9000),
+        })
+      }
+      const limits = { contextWindow: 12000, maxOutputTokens: 1000 }
+      const budgeted = applyContextBudget({ system: 'S', messages: full, limits })
+      const trim = recordContextTrim(null, full, budgeted.messages)
+      expect(trim.elided.length + trim.dropped).to.be.greaterThan(0)
+
+      // The next run rebuilds the whole chat with a reply and a turn added
+      const next = [
+        ...full,
+        { role: 'assistant', content: 'reply' },
+        { role: 'user', content: 'more' },
+      ]
+      const rebuilt = applyContextTrim(next, trim)
+      expect(rebuilt.trim).to.deep.equal(trim)
+      expect(rebuilt.messages).to.deep.equal([
+        ...budgeted.messages,
+        { role: 'assistant', content: 'reply' },
+        { role: 'user', content: 'more' },
+      ])
+      // and stays under the budget, so it is not trimmed afresh
+      const again = applyContextBudget({
+        system: 'S',
+        messages: rebuilt.messages,
+        limits,
+      })
+      expect(again.messages).to.deep.equal(rebuilt.messages)
+
+      expect(latestContextTrim([{ role: 'user' }, { contextTrim: trim }])).to
+        .equal(trim)
+      // A conversation the positions no longer fit is left alone
+      expect(applyContextTrim(next.slice(3), trim).trim).to.equal(null)
+    })
+  })
+
+  describe('hydrateTranscript', function () {
+    const stored = [
+      { id: 'u0', role: 'user', text: 'first' },
+      {
+        id: 'a1',
+        role: 'assistant',
+        text: '',
+        toolCalls: [
+          { id: 'c1', name: 'read_file', args: {}, result: { content: 'full' } },
+        ],
+      },
+      { id: 'u2', role: 'user', text: 'second' },
+      {
+        id: 'a3',
+        role: 'assistant',
+        text: '',
+        toolCalls: [
+          { id: 'c2', name: 'read_file', args: {}, result: { content: 'all' } },
+        ],
+        blocks: [
+          {
+            type: 'tool_call',
+            call: {
+              id: 'c2',
+              name: 'read_file',
+              args: {},
+              result: { content: 'all' },
+            },
+          },
+        ],
+      },
+    ]
+
+    it('restores results the panel cut down, and turns it dropped', function () {
+      const shrunk = { content: 'a', truncated: true, _shrunk: true }
+      const panel = [
+        { id: 'u2', role: 'user', text: 'second' },
+        {
+          id: 'a3',
+          role: 'assistant',
+          text: '',
+          toolCalls: [
+            { id: 'c2', name: 'read_file', args: {}, result: shrunk },
+          ],
+          blocks: [
+            {
+              type: 'tool_call',
+              call: { id: 'c2', name: 'read_file', args: {}, result: shrunk },
+            },
+          ],
+        },
+        { id: 'u4', role: 'user', text: 'third' },
+      ]
+      const hydrated = hydrateTranscript(panel, stored)
+      expect(hydrated.map(entry => entry.id)).to.deep.equal([
+        'u0',
+        'a1',
+        'u2',
+        'a3',
+        'u4',
+      ])
+      expect(hydrated[3].toolCalls[0].result).to.deep.equal({ content: 'all' })
+      expect(hydrated[3].blocks[0].call.result).to.deep.equal({
+        content: 'all',
+      })
+    })
+
+    it('leaves a transcript that does not line up with the history alone', function () {
+      const panel = [
+        { id: 'u2', role: 'user', text: 'something else' },
+        { id: 'u4', role: 'user', text: 'third' },
+      ]
+      expect(hydrateTranscript(panel, stored)).to.deep.equal(panel)
+      expect(hydrateTranscript(panel, null)).to.equal(panel)
     })
   })
 })

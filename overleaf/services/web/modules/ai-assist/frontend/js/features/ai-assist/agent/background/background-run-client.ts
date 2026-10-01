@@ -320,3 +320,31 @@ export async function sendBackgroundRunMessage(
   }
   return true
 }
+
+/**
+ * Takes back a message sent into a run, before the run reads it.
+ *
+ * 'removed' when the run will not read it, 'read' when it already has, and
+ * 'ended' when the run is over: whether it read the message is then known
+ * from its events, not from the server.
+ */
+export async function takeBackRunMessage(
+  projectId: string,
+  runId: string,
+  messageId: string
+): Promise<'removed' | 'read' | 'ended'> {
+  const res = await fetch(
+    `/ai-assist/projects/${projectId}/runs/${runId}/message/${encodeURIComponent(messageId)}`,
+    {
+      method: 'DELETE',
+      headers: { ...getCsrfHeaders() },
+    }
+  )
+  if (res.ok) return 'removed'
+  if (res.status === 404) return 'ended'
+  if (res.status === 409) {
+    const data = await res.json().catch(() => null)
+    return data?.reason === 'ended' ? 'ended' : 'read'
+  }
+  throw new Error(`Failed to take the message back: ${res.status}`)
+}

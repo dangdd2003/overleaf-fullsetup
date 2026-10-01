@@ -163,4 +163,27 @@ describe('BrowserRoute (HTTP client)', function () {
       Settings.aiAssist = original
     }
   })
+
+  it('safely handles malformed percent-encoded redirect URL in X-Page-Url header without throwing URIError', async function () {
+    // Malformed percent-encoding like %E0%A4 that causes decodeURI to throw URIError
+    const malformedUrl = 'https://example.com/dest?q=%E0%A4'
+    const fetchFn = sinon.stub().callsFake(async () => {
+      return new Response('<html><body>Page with bad redirect header</body></html>', {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/html; charset=utf-8',
+          'X-Page-Status': '200',
+          'X-Page-Url': malformedUrl,
+          'X-Page-Truncated': '0',
+        },
+      })
+    })
+
+    const route = new BrowserRoute({ baseUrl: BASE_URL, token: TOKEN, fetchFn })
+    const res = await route.raw('https://example.com/src')
+    expect(res.url).to.equal(malformedUrl)
+    expect(res.body.toString('utf8')).to.equal(
+      '<html><body>Page with bad redirect header</body></html>'
+    )
+  })
 })

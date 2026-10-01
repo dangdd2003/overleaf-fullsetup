@@ -3,6 +3,7 @@ import { expect } from 'chai'
 import {
   SYSTEM_PROMPT,
   MODE_PROMPTS,
+  MODES_PROMPT,
   WEB_TOOLS_PROMPT,
   WEB_FETCH_PROMPT,
   projectInstructionsPrompt,
@@ -12,35 +13,37 @@ import {
 } from '../../../app/src/AiAssistSystemPrompt.mjs'
 
 describe('AiAssistSystemPrompt', function () {
-  it('provides distinct, non-empty MODE_PROMPTS for each mode', function () {
-    expect(MODE_PROMPTS.manual).to.include('# Mode: Manual')
-    expect(MODE_PROMPTS.acceptEdits).to.include('# Mode: Accept edits')
-    expect(MODE_PROMPTS.plan).to.include('# Mode: Plan')
+  it('describes every mode in one section', function () {
+    expect(MODES_PROMPT).to.include(MODE_PROMPTS.manual)
+    expect(MODES_PROMPT).to.include(MODE_PROMPTS.acceptEdits)
+    expect(MODES_PROMPT).to.include(MODE_PROMPTS.plan)
     expect(MODE_PROMPTS.plan).to.include('present_plan')
+    // Where the model learns which one applies
+    expect(MODES_PROMPT).to.include('<mode>')
   })
 
   it('no longer tells the model that package questions need no tool', function () {
     expect(SYSTEM_PROMPT).not.to.match(/packages[^.]*need no tool/i)
   })
 
-  it('systemBlocksFor appends the respective mode prompt to shared block', function () {
-    const manual = systemBlocksFor('manual')
-    expect(manual.shared).to.equal(`${SYSTEM_PROMPT}\n\n${MODE_PROMPTS.manual}`)
-
-    const plan = systemBlocksFor('plan')
-    expect(plan.shared).to.equal(`${SYSTEM_PROMPT}\n\n${MODE_PROMPTS.plan}`)
-
-    const accept = systemBlocksFor('acceptEdits')
-    expect(accept.shared).to.equal(`${SYSTEM_PROMPT}\n\n${MODE_PROMPTS.acceptEdits}`)
+  it('gives the same system prompt in every mode, so a switch keeps the cache', function () {
+    for (const options of [{}, { webTools: true }]) {
+      const manual = systemBlocksFor('manual', options)
+      expect(systemBlocksFor('plan', options)).to.deep.equal(manual)
+      expect(systemBlocksFor('acceptEdits', options)).to.deep.equal(manual)
+    }
+    expect(systemBlocksFor('plan').shared).to.equal(
+      `${SYSTEM_PROMPT}\n\n${MODES_PROMPT}`
+    )
   })
 
   it('picks the web section by search availability', function () {
     expect(systemBlocksFor('manual', { webTools: true }).shared).to.equal(
-      `${SYSTEM_PROMPT}\n\n${WEB_TOOLS_PROMPT}\n\n${MODE_PROMPTS.manual}`
+      `${SYSTEM_PROMPT}\n\n${WEB_TOOLS_PROMPT}\n\n${MODES_PROMPT}`
     )
     expect(
       systemBlocksFor('manual', { webTools: true, webSearch: false }).shared
-    ).to.equal(`${SYSTEM_PROMPT}\n\n${WEB_FETCH_PROMPT}\n\n${MODE_PROMPTS.manual}`)
+    ).to.equal(`${SYSTEM_PROMPT}\n\n${WEB_FETCH_PROMPT}\n\n${MODES_PROMPT}`)
   })
 
   it('keeps the shared block identical with or without project instructions', function () {

@@ -7,6 +7,12 @@ export type ToolCallRecord = {
   args: unknown
   result?: unknown
   isError?: boolean
+  /**
+   * Which provider request of a server run made the call. A run sends one
+   * assistant message per request; this lets the next run rebuild those
+   * messages as they were sent and read them from the provider's cache.
+   */
+  step?: number
 }
 
 export type AssistantBlock =
@@ -18,6 +24,18 @@ export type AssistantBlock =
     }
   | { type: 'text'; text: string }
   | { type: 'tool_call'; call: ToolCallRecord }
+
+/**
+ * How a server run had cut the conversation to fit the context window, in
+ * positions on the whole conversation. Kept so the next run cuts it the same
+ * way and the messages the provider has cached stay as they were sent.
+ */
+export type ContextTrim = {
+  total: number
+  anchor: string
+  dropped: number
+  elided: number[]
+}
 
 export type TranscriptEntry =
   | {
@@ -36,6 +54,11 @@ export type TranscriptEntry =
        * message never landed and has to be resent as a new run.
        */
       pending?: boolean
+      /**
+       * Read by a run that was already going. The server sends such a turn
+       * with a note saying so, and rebuilds it with the same note.
+       */
+      sentDuringRun?: boolean
     }
   | {
       id: string
@@ -47,6 +70,14 @@ export type TranscriptEntry =
       blocks?: AssistantBlock[]
       durationMs?: number
       statusWord?: string
+      /**
+       * The run asked for a reply after this call's results (null: before
+       * anything in this entry) with a message the user never sees. Kept so
+       * the next run sends the same messages.
+       */
+      nudge?: { after: string | null }
+      /** The latest trim recorded by the run that wrote this entry. */
+      contextTrim?: ContextTrim
     }
 
 /**

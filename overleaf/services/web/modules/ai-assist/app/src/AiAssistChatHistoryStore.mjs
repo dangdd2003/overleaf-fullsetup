@@ -172,6 +172,89 @@ export function titleFor(transcript, existingTitle = null) {
   return fallbackTitleFor(transcript)
 }
 
+/** A tool result the panel cut down to keep its local copy small. */
+function isShrunkResult(result) {
+  return Boolean(result && typeof result === 'object' && result._shrunk)
+}
+
+/**
+ * Fills in what the panel's copy of a chat has lost from the chat's history
+ * on disk, which keeps it whole, as Claude Code's session log does. A run
+ * starts from the result, and a save stores it, so a copy the panel cut down
+ * never replaces the whole one.
+ *
+ * The panel's local copy cuts tool results down and drops turns from the
+ * front when it grows, and after a reload that copy is what it sends. Rebuilt
+ * from it, the messages would differ from the ones the last run sent from the
+ * first cut result on, and miss the provider's cache from there. Results are
+ * restored by call id; dropped turns are put back when the panel's first
+ * entry and everything after it line up with the history.
+ */
+export function hydrateTranscript(transcript, stored) {
+  if (
+    !Array.isArray(transcript) ||
+    transcript.length === 0 ||
+    !Array.isArray(stored) ||
+    stored.length === 0
+  ) {
+    return transcript
+  }
+
+  const whole = new Map()
+  for (const entry of stored) {
+    if (entry?.role !== 'assistant' || !Array.isArray(entry.toolCalls)) continue
+    for (const call of entry.toolCalls) {
+      if (call?.id && 'result' in call && !isShrunkResult(call.result)) {
+        whole.set(call.id, call)
+      }
+    }
+  }
+  const restore = call => {
+    if (!call || !isShrunkResult(call.result) || !whole.has(call.id)) {
+      return call
+    }
+    const { result, isError } = whole.get(call.id)
+    return { ...call, result, isError }
+  }
+  let hydrated = transcript.map(entry => {
+    if (entry?.role !== 'assistant') return entry
+    return {
+      ...entry,
+      ...(Array.isArray(entry.toolCalls)
+        ? { toolCalls: entry.toolCalls.map(restore) }
+        : {}),
+      ...(Array.isArray(entry.blocks)
+        ? {
+            blocks: entry.blocks.map(block =>
+              block?.type === 'tool_call' && block.call
+                ? { ...block, call: restore(block.call) }
+                : block
+            ),
+          }
+        : {}),
+    }
+  })
+
+  const first = hydrated[0]
+  const linesUpAt = at => {
+    const overlap = Math.min(stored.length - at, hydrated.length)
+    for (let i = 0; i < overlap; i++) {
+      const kept = stored[at + i]
+      const sent = hydrated[i]
+      if (kept?.id !== sent?.id || kept?.role !== sent?.role) return false
+      if (sent.role === 'user' && kept.text !== sent.text) return false
+    }
+    return true
+  }
+  for (let at = 1; at < stored.length; at++) {
+    if (stored[at]?.id === first?.id && linesUpAt(at)) {
+      hydrated = [...stored.slice(0, at), ...hydrated]
+      break
+    }
+  }
+  return hydrated
+}
+
 async function readChat(file) {
   try {
     return JSON.parse(await fs.readFile(file, 'utf8'))
@@ -253,6 +336,8 @@ async function saveChat(
   } else {
     finalTitle = fallbackTitleFor(transcript)
   }
+
+  transcript = hydrateTranscript(transcript, existing?.transcript)
 
   const chat = {
     id: chatId,

@@ -1,9 +1,12 @@
+import crypto from 'node:crypto'
 import logger from '@overleaf/logger'
 import Settings from '@overleaf/settings'
 import './ModuleSettings.mjs'
 import defaultStore from './AiAssistRunStore.mjs'
 import defaultTools from './AiAssistTools.mjs'
-import defaultChatHistoryStore from './AiAssistChatHistoryStore.mjs'
+import defaultChatHistoryStore, {
+  hydrateTranscript,
+} from './AiAssistChatHistoryStore.mjs'
 import { generateChatTitle } from './AiAssistChatTitler.mjs'
 import { createProviderClient } from './AiAssistProviders.mjs'
 import { renderToolResult, withNotice } from './AiAssistToolRender.mjs'
@@ -21,63 +24,256 @@ import {
   PLAN_TOOL,
 } from './AiAssistModePolicy.mjs'
 
-export function toAgentMessages(transcript) {
-  if (!Array.isArray(transcript)) return []
-  const messages = []
+/**
+ * Follows a message the user sent while a run was going, so the model deals
+ * with it and then finishes what it was doing rather than dropping it. Claude
+ * Code frames a queued message the same way. It belongs to the stored turn
+ * (see userTurnContent), so a rebuilt transcript gives the same bytes.
+ */
+export const SENT_DURING_RUN_NOTE =
+  '[Sent while you were working. Address this, then carry on with the rest of the task unless it says otherwise.]'
 
-  transcript.forEach((entry, index) => {
+/**
+ * The text of a user turn, as the provider is sent it. The live run and a
+ * transcript rebuilt for the next run both use this, so the same turn gives
+ * the same bytes and the provider's cached prefix survives.
+ */
+export function userTurnContent(entry) {
+  const text = entry?.text || entry?.content || ''
+  const body = entry?.sentDuringRun
+    ? `${text}\n\n${SENT_DURING_RUN_NOTE}`
+    : text
+  return entry?.contextText ? `${entry.contextText}\n\n${body}` : body
+}
+
+/**
+ * The provider requests an assistant entry was made of, in order.
+ *
+ * The panel keeps a whole run in one assistant entry, but the run sent one
+ * assistant message per request, each followed by its own tool results.
+ * Rebuilt as one message holding every call, the next run's prefix would stop
+ * matching the cached one at the run's second request. Calls record the
+ * request they came from (`step`) and the blocks keep text and calls in
+ * order, so the entry splits back into what was sent. Entries stored before
+ * calls carried a step rebuild as one message, the same bytes as before.
+ */
+export function modelSteps(entry) {
+  const calls = Array.isArray(entry.toolCalls) ? entry.toolCalls : []
+  const whole = [{ text: entry.text || entry.content || '', calls }]
+  const blocks = Array.isArray(entry.blocks) ? entry.blocks : []
+  if (
+    calls.length === 0 ||
+    blocks.length === 0 ||
+    !calls.every(call => Number.isInteger(call?.step))
+  ) {
+    return whole
+  }
+
+  const unplaced = new Map(calls.map(call => [call.id, call]))
+  const steps = []
+  let current = null
+  for (const block of blocks) {
+    if (block?.type === 'tool_call') {
+      const call = unplaced.get(block.call?.id)
+      if (!call) return whole
+      unplaced.delete(call.id)
+      if (
+        !current ||
+        (current.calls.length > 0 && current.calls[0].step !== call.step)
+      ) {
+        current = { text: '', calls: [] }
+        steps.push(current)
+      }
+      current.calls.push(call)
+    } else if (block?.type === 'text' || block?.type === 'thinking') {
+      // A request streams its text before its calls, so text or thinking
+      // after a call belongs to the next request
+      if (!current || current.calls.length > 0) {
+        current = { text: '', calls: [] }
+        steps.push(current)
+      }
+      if (block.type === 'text') current.text += block.text || ''
+    }
+  }
+  if (unplaced.size > 0) return whole
+  return steps.filter(step => step.calls.length > 0 || step.text)
+}
+
+/**
+ * The messages a transcript stands for, byte for byte what its runs sent:
+ * user turns through userTurnContent and assistant entries split back into
+ * their requests by modelSteps. The chat's history is the only record of a
+ * conversation, as Claude Code's session log is, so every run rebuilds from
+ * it and its first request reads the whole conversation from the cache.
+ */
+export function toAgentMessages(transcript) {
+  const messages = []
+  if (!Array.isArray(transcript)) return messages
+
+  transcript.forEach(entry => {
     if (entry.role === 'user') {
-      const content = entry.contextText
-        ? `${entry.contextText}\n\n${entry.text}`
-        : entry.text || entry.content || ''
-      messages.push({ role: 'user', content })
+      messages.push({ role: 'user', content: userTurnContent(entry) })
       return
     }
 
-    const isLast = index === transcript.length - 1
-    if (
-      isLast &&
-      !entry.text &&
-      !entry.content &&
-      (!entry.toolCalls || entry.toolCalls.length === 0)
-    )
-      return
+    // Where the run asked for a reply it did not get (FINAL_REPLY_NUDGE):
+    // after the results of this call, or at the start of the entry
+    const nudgeAfter = entry.nudge ? (entry.nudge.after ?? null) : undefined
+    if (nudgeAfter === null) {
+      messages.push({ role: 'user', content: FINAL_REPLY_NUDGE })
+    }
 
     if (!entry.toolCalls || entry.toolCalls.length === 0) {
-      messages.push({
-        role: 'assistant',
-        content: entry.text || entry.content || '',
-      })
+      // A request that produced no text added nothing to the run's messages,
+      // so it adds nothing here either
+      const content = entry.text || entry.content || ''
+      if (content) messages.push({ role: 'assistant', content })
       return
     }
 
-    messages.push({
-      role: 'assistant',
-      content: entry.text || entry.content || '',
-      toolCalls: entry.toolCalls.map(call => ({
-        id: call.id,
-        name: call.name,
-        args: call.args,
-      })),
-    })
+    for (const step of modelSteps(entry)) {
+      if (step.calls.length === 0) {
+        messages.push({ role: 'assistant', content: step.text })
+        continue
+      }
 
-    for (const call of entry.toolCalls) {
-      const finished = 'result' in call
       messages.push({
-        role: 'tool',
-        toolCallId: call.id,
-        name: call.name,
-        content: finished
-          ? typeof call.result === 'string'
-            ? call.result
-            : renderToolResult(call.name, call.result)
-          : 'This tool call did not complete.',
-        isError: finished ? toolMessageIsError(call.result, call.isError) : true,
+        role: 'assistant',
+        content: step.text,
+        toolCalls: step.calls.map(call => ({
+          id: call.id,
+          name: call.name,
+          args: call.args,
+        })),
       })
+
+      for (const call of step.calls) {
+        const finished = 'result' in call
+        messages.push({
+          role: 'tool',
+          toolCallId: call.id,
+          name: call.name,
+          // Rendered as the run rendered it, strings included
+          content: finished
+            ? renderToolResult(call.name, call.result)
+            : 'This tool call did not complete.',
+          isError: finished
+            ? toolMessageIsError(call.result, call.isError)
+            : true,
+        })
+      }
+      if (nudgeAfter && step.calls.some(call => call.id === nudgeAfter)) {
+        messages.push({ role: 'user', content: FINAL_REPLY_NUDGE })
+      }
     }
   })
 
   return messages
+}
+
+/** Identifies a message, to check a recorded trim still fits the messages. */
+function messageFingerprint(message) {
+  return crypto
+    .createHash('sha1')
+    .update(
+      [
+        message?.role ?? '',
+        message?.toolCallId ?? '',
+        (message?.toolCalls ?? []).map(call => call.id).join(','),
+        typeof message?.content === 'string'
+          ? message.content
+          : JSON.stringify(message?.content ?? ''),
+      ].join('\u0000')
+    )
+    .digest('base64')
+}
+
+/** The trim the chat's runs last recorded (see applyContextTrim). */
+export function latestContextTrim(transcript) {
+  if (!Array.isArray(transcript)) return null
+  for (let i = transcript.length - 1; i >= 0; i--) {
+    const trim = transcript[i]?.contextTrim
+    if (trim && typeof trim === 'object') return trim
+  }
+  return null
+}
+
+/**
+ * Cuts a rebuilt conversation the way the context budget had cut it when the
+ * last run sent it.
+ *
+ * A run that trims keeps the trimmed messages and only appends to them, but a
+ * new run rebuilds the whole chat and would trim it afresh, further than
+ * before, rewriting messages the provider has cached. Claude Code keeps its
+ * compacted history in the session log for the same reason. A trim is
+ * recorded in positions on the whole conversation: how many messages were
+ * dropped from the front, which were elided, and the last message at the
+ * time, which has to match for the positions to be trusted.
+ *
+ * Returns { messages, trim }, trim being null when it was not applied.
+ */
+export function applyContextTrim(messages, trim) {
+  const none = { messages, trim: null }
+  if (!trim || typeof trim !== 'object') return none
+  const total = Number(trim.total)
+  if (
+    !Number.isInteger(total) ||
+    total < 1 ||
+    total > messages.length ||
+    messageFingerprint(messages[total - 1]) !== trim.anchor
+  ) {
+    return none
+  }
+  const dropped = Number.isInteger(trim.dropped) ? trim.dropped : 0
+  // Only ever at the start of a turn, as the budget drops them
+  if (dropped < 0 || dropped >= total || messages[dropped]?.role !== 'user') {
+    return none
+  }
+  const elided = new Set(
+    (Array.isArray(trim.elided) ? trim.elided : []).filter(
+      index => Number.isInteger(index) && index >= dropped && index < total
+    )
+  )
+  const cut = messages.slice(dropped).map((message, offset) => {
+    if (!elided.has(dropped + offset)) return message
+    if (message.role === 'tool') {
+      return isElided(message) ? message : stubToolMessage(message)
+    }
+    if (message.role === 'assistant' && message.content) {
+      return { ...message, content: ASSISTANT_ELISION_MARKER }
+    }
+    return message
+  })
+  return {
+    messages: cut,
+    trim: { total, anchor: trim.anchor, dropped, elided: [...elided] },
+  }
+}
+
+/**
+ * Adds what one applyContextBudget call cut to the trim recorded so far.
+ * `before` is the list it was given, `after` what it returned; both start at
+ * position `trim.dropped` on the whole conversation.
+ */
+export function recordContextTrim(trim, before, after) {
+  const base = trim?.dropped ?? 0
+  const cut = before.length - after.length
+  const elided = new Set(trim?.elided ?? [])
+  let changed = cut > 0
+  after.forEach((message, index) => {
+    if (message !== before[index + cut]) {
+      elided.add(base + cut + index)
+      changed = true
+    }
+  })
+  if (!changed || before.length === 0) return trim
+  const dropped = base + cut
+  return {
+    total: base + before.length,
+    anchor: messageFingerprint(before[before.length - 1]),
+    dropped,
+    elided: [...elided].filter(index => index >= dropped).sort((a, b) => a - b),
+  }
 }
 
 const MAX_COMPILE_ENTRIES = 200
@@ -129,27 +325,26 @@ export { FILE_EDIT_TOOLS, READ_ONLY_TOOLS }
 export const FINAL_REPLY_NUDGE =
   'You ended the turn without replying, so nothing was shown to the user except the tool calls. Write the reply now, in one to three sentences: what you did or found, in which files, and anything they need to know. Do not call any more tools.'
 
-const MAX_QUEUED_MESSAGE_BYTES = 200_000
-
 /**
  * Normalises a message the user sent while the run was already going.
  *
- * `content` is assembled the same way toAgentMessages assembles a stored user
- * turn, so an injected message is indistinguishable from one the run started
- * with — same <project-context> envelope, same ordering.
+ * `content` is assembled by userTurnContent, as toAgentMessages assembles the
+ * stored turn the panel keeps for it, so the next run rebuilds the bytes this
+ * run sent. Nothing is cut here for the same reason; the controller refuses a
+ * message that is too large instead.
  */
 export function toQueuedMessage(message, index = 0) {
   const text = typeof message?.text === 'string' ? message.text : ''
   const contextText =
     typeof message?.contextText === 'string' ? message.contextText : ''
-  const content = contextText ? `${contextText}\n\n${text}` : text
   return {
     id:
       typeof message?.id === 'string' && message.id
         ? message.id
         : `queued_${Date.now()}_${index}`,
     text,
-    content: content.slice(0, MAX_QUEUED_MESSAGE_BYTES),
+    contextText,
+    content: userTurnContent({ text, contextText, sentDuringRun: true }),
   }
 }
 
@@ -530,7 +725,28 @@ export class AiAssistRunManager {
     this.control = control
   }
 
-  /** The project's AGENTS.md for this step, or null. Never fails a run. */
+  /**
+   * The panel's transcript, with what its local copy lost restored from the
+   * chat's history on disk (see hydrateTranscript). Never fails a run.
+   */
+  async _withStoredHistory(projectId, userId, chatId, transcript) {
+    if (!chatId || !userId || !this.chatHistoryStore?.getChat) {
+      return transcript
+    }
+    try {
+      const chat = await this.chatHistoryStore.getChat(
+        projectId,
+        userId,
+        chatId
+      )
+      return hydrateTranscript(transcript, chat?.transcript)
+    } catch (err) {
+      logger.warn({ err, projectId, chatId }, '[AiAssist] chat history not read')
+      return transcript
+    }
+  }
+
+  /** The project's AGENTS.md, or null. Never fails a run. */
   async _projectInstructions(projectId) {
     if (typeof this.tools?.getProjectInstructions !== 'function') return null
     try {
@@ -560,7 +776,7 @@ export class AiAssistRunManager {
     // requests and a new user turn can be added without splitting a turn.
     const queuedMessages = []
 
-    this.activeRuns.set(runId, {
+    const activeRun = {
       controller,
       projectId,
       userId,
@@ -568,7 +784,15 @@ export class AiAssistRunManager {
       approvalResolver: approvalPromiseResolvers,
       compileResolvers,
       queuedMessages,
-    })
+      acceptsMessages: true,
+    }
+    this.activeRuns.set(runId, activeRun)
+    // Called, with no await before it, once the loop has looked at the queue
+    // for the last time. A message arriving after that would never be read,
+    // so it is refused instead and the panel starts a run of its own for it.
+    const closeQueue = () => {
+      activeRun.acceptsMessages = false
+    }
 
     await this.store.createRun({ runId, projectId, userId, mode: initialMode })
 
@@ -595,9 +819,25 @@ export class AiAssistRunManager {
           contextWindow: resolvedLimits.contextWindow,
         })
       : null
+    transcript = await this._withStoredHistory(
+      projectId,
+      userId,
+      chatId,
+      transcript
+    )
     // Sources cited in earlier turns keep their numbers in this one
     webTools?.rememberSources?.(transcript)
-    let messages = toAgentMessages(transcript)
+
+    // Rebuilt byte for byte from the chat's history, cut where the last run
+    // had cut it, so this run's first request reads the whole conversation
+    // from the cache. From here on the run only appends to `messages`,
+    // keeping every earlier request a prefix of the next.
+    const rebuilt = applyContextTrim(
+      toAgentMessages(transcript),
+      latestContextTrim(transcript)
+    )
+    let messages = rebuilt.messages
+    let contextTrim = rebuilt.trim
 
     // Streamed text and thinking are buffered and written in batches: every
     // appendEvent is INCR + RPUSH + PUBLISH, and the provider stream is not
@@ -818,13 +1058,29 @@ export class AiAssistRunManager {
       let toolsRanThisRun = false
       let finalReplyNudged = false
       const executedTools = []
-      // Tool specs filtered by mode (plan mode excludes edit tools)
-      const allToolSpecs = [
+      // The tools and the system prompt start every request, ahead of the
+      // conversation, so they are settled once for the run and sent the same
+      // way at every step: the same in every mode (see toolSpecsFor), and
+      // AGENTS.md read once, as Claude Code reads CLAUDE.md once a session.
+      // An edit to it, or a search backend dropping out, applies from the
+      // next run instead of throwing away the cached conversation mid-run.
+      const modeToolSpecs = toolSpecsFor(initialMode, [
         ...(this.tools?.getToolSpecs ? this.tools.getToolSpecs() : []),
         ...(webTools ? webTools.getToolSpecs() : []),
-      ]
+      ])
+      const systemBlocks = systemBlocksFor(initialMode, {
+        webTools: Boolean(webTools),
+        webSearch: webTools?.canSearch ? webTools.canSearch() : Boolean(webTools),
+        projectInstructions: await this._projectInstructions(projectId),
+      })
+      const currentSystemPrompt = joinSystemBlocks(systemBlocks)
+
+      // Which provider request a tool call came from, so the stored
+      // transcript can be split back into the messages sent (modelSteps)
+      let modelStep = 0
 
       const finishWithError = async (code, message) => {
+        closeQueue()
         await emitEvent({ type: 'error', code, message })
         await emitEvent({ type: 'turnFinished', reason: 'stop' })
         await this.store.updateStatus(runId, 'done')
@@ -839,13 +1095,21 @@ export class AiAssistRunManager {
         // guard rails: the decline block, the repeat-failure counters and the
         // reply nudge were all reasoning about the previous instruction.
         if (queuedMessages.length > 0) {
+          await flushText().catch(() => {})
           const injected = queuedMessages.splice(0, queuedMessages.length)
           for (const queued of injected) {
+            // Appended after the tool results, never inserted earlier: the
+            // prefix the provider cached is untouched.
             messages.push({ role: 'user', content: queued.content })
+            // Everything a tab needs to store the turn byte for byte, even
+            // one that never saw it sent
             await emitEvent({
               type: 'userMessage',
               id: queued.id,
               text: queued.text,
+              ...(queued.contextText
+                ? { contextText: queued.contextText }
+                : {}),
             })
           }
           userDeclinedEdit = false
@@ -859,17 +1123,6 @@ export class AiAssistRunManager {
         const calls = []
         let text = ''
         let truncated = false
-
-        const currentMode = this.activeRuns.get(runId)?.mode || 'manual'
-        const systemBlocks = systemBlocksFor(currentMode, {
-          webTools: Boolean(webTools),
-          webSearch: webTools?.canSearch
-            ? webTools.canSearch()
-            : Boolean(webTools),
-          projectInstructions: await this._projectInstructions(projectId),
-        })
-        const currentSystemPrompt = joinSystemBlocks(systemBlocks)
-        const modeToolSpecs = toolSpecsFor(currentMode, allToolSpecs)
 
         const budgeted = applyContextBudget({
           system: currentSystemPrompt,
@@ -886,6 +1139,17 @@ export class AiAssistRunManager {
           break
         }
 
+        // Recorded with the transcript, so the next run cuts the rebuilt
+        // conversation the same way instead of trimming it afresh
+        const trimmed = recordContextTrim(
+          contextTrim,
+          messages,
+          budgeted.messages
+        )
+        if (trimmed !== contextTrim) {
+          contextTrim = trimmed
+          await emitEvent({ type: 'contextTrimmed', trim: contextTrim })
+        }
         messages = budgeted.messages
 
         const cacheHints = {
@@ -901,6 +1165,7 @@ export class AiAssistRunManager {
 
         let streamSucceeded = false
         let streamAttempts = 0
+        modelStep++
 
         while (!streamSucceeded && streamAttempts < MAX_STREAM_ATTEMPTS) {
           if (controller.signal.aborted || shouldStop) break
@@ -961,6 +1226,12 @@ export class AiAssistRunManager {
               },
               '[AiAssist] Transient error from provider during tool run, auto-retrying'
             )
+            // The retry streams the reply afresh; what the failed attempt
+            // streamed is dropped from the panel too, so its stored text is
+            // the text this run sends
+            if (text) {
+              await emitEvent({ type: 'stepText', text: '' }).catch(() => {})
+            }
             const delay = Math.min(
               2000 * Math.pow(2, streamAttempts - 1) + Math.random() * 300,
               20000
@@ -988,18 +1259,25 @@ export class AiAssistRunManager {
           if (rescued) {
             calls.push(rescued.call)
             text = rescued.prose
+            // The call is sent as a call, not as the text it came in
+            await emitEvent({ type: 'stepText', text })
           }
         }
 
         if (calls.length === 0) {
+          // A message waiting in the queue gets the reply instead; nudging
+          // first would only add a turn the user never wrote
           if (
             !text.trim() &&
             toolsRanThisRun &&
             !truncated &&
-            !finalReplyNudged
+            !finalReplyNudged &&
+            queuedMessages.length === 0
           ) {
             finalReplyNudged = true
             messages.push({ role: 'user', content: FINAL_REPLY_NUDGE })
+            // Stored with the turn, so the next run rebuilds it (toAgentMessages)
+            await emitEvent({ type: 'nudge' })
             continue
           }
           if (truncated) {
@@ -1012,9 +1290,12 @@ export class AiAssistRunManager {
           // The user may have sent something while this reply was streaming.
           // Answer it in this run rather than ending and making them resend.
           if (queuedMessages.length > 0) {
+            await flushText().catch(() => {})
             if (text) messages.push({ role: 'assistant', content: text })
             continue
           }
+          if (text) messages.push({ role: 'assistant', content: text })
+          closeQueue()
           await emitEvent({ type: 'turnFinished', reason: 'stop' })
           await this.store.updateStatus(runId, 'done')
           shouldStop = true
@@ -1094,6 +1375,7 @@ export class AiAssistRunManager {
             id: callId,
             name: call.name,
             args: call.args,
+            step: modelStep,
           })
 
           let result = null
@@ -1396,6 +1678,7 @@ export class AiAssistRunManager {
         }
       }
 
+      closeQueue()
       if (controller.signal.aborted) {
         await emitEvent({ type: 'turnFinished', reason: 'aborted' })
         await this.store.updateStatus(runId, 'stopped')
@@ -1407,6 +1690,7 @@ export class AiAssistRunManager {
         await this.store.updateStatus(runId, 'done')
       }
     } catch (err) {
+      closeQueue()
       if (
         controller.signal.aborted ||
         err.name === 'AbortError' ||
@@ -1448,6 +1732,8 @@ export class AiAssistRunManager {
   async stopLocalRun(runId) {
     const active = this.activeRuns.get(runId)
     if (!active) return false
+    // A stopped run reads nothing more; the panel sends what it had queued
+    active.acceptsMessages = false
     active.controller.abort()
     active.approvalResolver?.resolve?.({ accepted: false })
     // The run loop owns the terminal event (see startRun's aborted branch).
@@ -1499,22 +1785,49 @@ export class AiAssistRunManager {
    * Adds a message the user sent while the run was already going.
    *
    * Local first, broadcast only if this process does not own the run, which is
-   * the same shape as stop, approve and setMode. Returns true when the message
-   * was handed to a running loop here; the caller has already checked the
-   * stored status, so a false only means another instance owns it.
+   * the same shape as stop, approve and setMode. Returns false when the run
+   * has looked at its queue for the last time (it is finishing or stopped), so
+   * the caller can turn the message away rather than let it sit unread.
    */
   async queueMessage(runId, message) {
     const active = this.activeRuns.get(runId)
     if (active?.queuedMessages) {
+      if (!active.acceptsMessages) return false
       active.queuedMessages.push(
         toQueuedMessage(message, active.queuedMessages.length)
       )
       return true
     }
     if (this.control) {
+      try {
+        await this.control.publish(runId, { action: 'message', message })
+        return true
+      } catch {
+        return false
+      }
+    }
+    return false
+  }
+
+  /**
+   * Takes back a message the run has not read yet, as Claude Code lets you
+   * take back what you queued. True when it was removed, false when the run
+   * has already read it, null when another instance owns the run and was
+   * asked to remove it.
+   */
+  async unqueueMessage(runId, messageId) {
+    const active = this.activeRuns.get(runId)
+    if (active?.queuedMessages) {
+      const index = active.queuedMessages.findIndex(m => m.id === messageId)
+      if (index === -1) return false
+      active.queuedMessages.splice(index, 1)
+      return true
+    }
+    if (this.control) {
       await this.control
-        .publish(runId, { action: 'message', message })
+        .publish(runId, { action: 'unqueue', id: messageId })
         .catch(() => {})
+      return null
     }
     return false
   }
@@ -1568,11 +1881,17 @@ export class AiAssistRunManager {
     }
     if (action === 'message') {
       const active = this.activeRuns.get(runId)
-      if (active?.queuedMessages) {
+      if (active?.queuedMessages && active.acceptsMessages) {
         active.queuedMessages.push(
           toQueuedMessage(message, active.queuedMessages.length)
         )
       }
+      return
+    }
+    if (action === 'unqueue') {
+      const queue = this.activeRuns.get(runId)?.queuedMessages
+      const index = queue ? queue.findIndex(m => m.id === id) : -1
+      if (index !== -1) queue.splice(index, 1)
       return
     }
     if (action === 'compile') {

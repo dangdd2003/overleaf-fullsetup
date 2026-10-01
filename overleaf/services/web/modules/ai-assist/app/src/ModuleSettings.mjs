@@ -286,6 +286,10 @@ Settings.aiAssist = {
   streamIdleSeconds: intFromEnv('AI_ASSIST_STREAM_IDLE_SECONDS', 0),
   streamKeepAliveSeconds: intFromEnv('AI_ASSIST_STREAM_KEEPALIVE_SECONDS', 15),
   maxTranscriptBytes: intFromEnv('AI_ASSIST_MAX_TRANSCRIPT_BYTES', 5000000),
+  // Anthropic prompt cache lifetime: '5m' (default, 1.25x write) or '1h' (2x
+  // write). An hour keeps a chat cached while the user reads a reply or edits
+  // for longer than five minutes before writing again.
+  promptCacheTtl: process.env.AI_ASSIST_PROMPT_CACHE_TTL === '1h' ? '1h' : '5m',
   chatHistoryDir:
     process.env.AI_ASSIST_CHAT_HISTORY_DIR ||
     '/var/lib/overleaf/data/ai-assist',

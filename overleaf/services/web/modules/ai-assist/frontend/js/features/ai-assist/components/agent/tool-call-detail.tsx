@@ -434,13 +434,13 @@ export const ToolCallDetailView: FC<{ call: ToolCallRecord }> = ({ call }) => {
       return (
         <div className="ai-assist-tool-detail-files">
           {files.map((file: any, idx: number) => (
-            <div key={idx} className="ai-assist-file-row">
+            <div key={file.path || idx} className="ai-assist-file-row">
               <span
                 role="button"
                 tabIndex={0}
                 className="ai-assist-file-link"
                 onClick={() => openFile(file.path)}
-                onKeyDown={e => e.key === 'Enter' && openFile(file.path)}
+                onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && openFile(file.path)}
               >
                 {file.path}
               </span>
@@ -477,7 +477,7 @@ export const ToolCallDetailView: FC<{ call: ToolCallRecord }> = ({ call }) => {
           )}
           {sections.map((sec: any, idx: number) => (
             <div
-              key={idx}
+              key={`${sec.path ?? ''}:${sec.line ?? 0}:${idx}`}
               className="ai-assist-outline-section"
               style={{
                 paddingLeft: `${Math.max(0, (sec.level ?? 1) - 1) * 12}px`,
@@ -490,7 +490,8 @@ export const ToolCallDetailView: FC<{ call: ToolCallRecord }> = ({ call }) => {
                 className="ai-assist-file-link"
                 onClick={() => openFile(sec.path, sec.line)}
                 onKeyDown={e =>
-                  e.key === 'Enter' && openFile(sec.path, sec.line)
+                  (e.key === 'Enter' || e.key === ' ') &&
+                  openFile(sec.path, sec.line)
                 }
               >
                 {sec.title}
@@ -522,7 +523,7 @@ export const ToolCallDetailView: FC<{ call: ToolCallRecord }> = ({ call }) => {
         <div className="ai-assist-tool-detail-log">
           {errors.map((err: any, idx: number) => (
             <CompileLogEntry
-              key={`err-${idx}`}
+              key={`err-${err.file ?? ''}:${err.line ?? 0}:${idx}`}
               entry={err}
               level="error"
               openFile={openFile}
@@ -530,7 +531,7 @@ export const ToolCallDetailView: FC<{ call: ToolCallRecord }> = ({ call }) => {
           ))}
           {warnings.slice(0, 5).map((warn: any, idx: number) => (
             <CompileLogEntry
-              key={`warn-${idx}`}
+              key={`warn-${warn.file ?? ''}:${warn.line ?? 0}:${idx}`}
               entry={warn}
               level="warning"
               openFile={openFile}
@@ -693,7 +694,7 @@ export const ToolCallDetailView: FC<{ call: ToolCallRecord }> = ({ call }) => {
           {hasMatches ? (
             <div className="ai-assist-web-fetch-content">
               {result.matches.map((match: any, idx: number) => (
-                <div key={idx} className="ai-assist-web-fetch-passage">
+                <div key={`${match.heading ?? 'passage'}:${match.page ?? 0}:${idx}`} className="ai-assist-web-fetch-passage">
                   {match.heading && (
                     <div className="ai-assist-web-fetch-heading">
                       {match.heading}

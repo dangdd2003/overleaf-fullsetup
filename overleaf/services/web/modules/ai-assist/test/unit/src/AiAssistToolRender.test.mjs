@@ -203,4 +203,59 @@ describe('renderToolResult', function () {
       'Updated appearance settings (editorTheme, editorDarkTheme): Appearance settings updated successfully.'
     )
   })
+
+  it('renders present_plan with its message or falls back to JSON', function () {
+    expect(renderToolResult('present_plan', {
+      status: 'approved',
+      mode: 'manual',
+      message: 'The user approved the plan.',
+    })).to.equal('The user approved the plan.')
+
+    expect(renderToolResult('present_plan', {
+      status: 'unknown',
+    })).to.equal('{"status":"unknown"}')
+  })
+
+  it('clamps get_outline MAX_SAFE_INTEGER range.to to "end"', function () {
+    const text = renderToolResult('get_outline', {
+      sections: [{ path: 'main.tex', line: 12, level: 1, title: 'Discussion' }],
+      range: { from: 12, to: Number.MAX_SAFE_INTEGER },
+      hint: 'read_file with path=main.tex from=12 to=end for the body',
+    })
+    expect(text).to.equal(
+      'section lines 12-end\n    main.tex:12 Discussion\nread_file with path=main.tex from=12 to=end for the body'
+    )
+  })
+
+  it('renders read_file on empty files gracefully', function () {
+    const text = renderToolResult('read_file', {
+      path: 'empty.tex',
+      from: 1,
+      to: 0,
+      totalLines: 0,
+      content: '',
+      truncated: false,
+    })
+    expect(text).to.equal('empty.tex is empty (0 lines)\n```\n```')
+  })
+
+  it('renders tool aliases matching their canonical renderers', function () {
+    expect(renderToolResult('search_project', {
+      hits: [{ path: 'a.tex', line: 1, text: 'hi' }],
+      total: 1,
+    })).to.include('Found 1 hit(s):')
+
+    expect(renderToolResult('project_map', {
+      files: [{ path: 'main.tex', type: 'doc', lines: 10 }],
+      total: 1,
+    })).to.include('main.tex  doc  10')
+
+    expect(renderToolResult('get_compile_log', {
+      status: 'success',
+      errorCount: 0,
+      warningCount: 0,
+      errors: [],
+      warnings: [],
+    })).to.equal('Last compile: success - 0 error(s), 0 warning(s)')
+  })
 })

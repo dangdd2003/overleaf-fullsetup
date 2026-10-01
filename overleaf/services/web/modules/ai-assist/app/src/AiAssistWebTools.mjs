@@ -54,7 +54,7 @@ export {
   guardedLookup,
   isPublicAddress,
 } from './web-fetch/transport.mjs'
-export { isoDay } from './web-fetch/util.mjs'
+export { isoDay, safeDecodeURI, safeDecodeURIComponent } from './web-fetch/util.mjs'
 
 /**
  * Web research for the agent: `web_search` and `web_fetch`.
@@ -1519,6 +1519,7 @@ export class AiAssistWebTools {
 
     const cacheKey = JSON.stringify([
       this.settings.type ?? this.settings.rotationStrategy ?? 'round-robin',
+      this.settings.primaryProvider ?? null,
       this.settings.baseUrl ?? '',
       this.settings.providers?.websearchapi?.search ?? null,
       this.settings.providers?.tavily?.search ?? null,
@@ -1530,6 +1531,8 @@ export class AiAssistWebTools {
       this.settings.providers?.ollama?.maxResults ?? null,
       this.settings.providers?.searxng?.timeRange ?? null,
       this.settings.providers?.searxng?.safeSearch ?? null,
+      this.settings.providers?.searxng?.defaultCategories ?? null,
+      this.settings.providers?.searxng?.defaultLanguage ?? null,
       searchCacheText(query),
     ])
 

@@ -59,10 +59,12 @@ export const DARK_EDITOR_THEMES = new Set([
   'clouds_midnight',
   'cobalt',
   'dracula',
+  'gob',
   'gruvbox',
   'idle_fingers',
   'kr_theme',
   'merbivore',
+  'merbivore_soft',
   'mono_industrial',
   'monokai',
   'nord_dark',
@@ -86,11 +88,9 @@ export const LIGHT_EDITOR_THEMES = new Set([
   'dreamweaver',
   'eclipse',
   'github',
-  'gob',
   'iplastic',
   'katzenmilch',
   'kuroir',
-  'merbivore_soft',
   'overleaf',
   'solarized_light',
   'sqlserver',
@@ -150,15 +150,28 @@ export function errorSignature(e) {
 }
 
 export function computeErrorDelta(currentErrors = [], previousErrors = []) {
-  const previousSignatures = new Set(previousErrors.map(errorSignature))
-  const currentSignatures = new Set(currentErrors.map(errorSignature))
+  const prevMap = new Map()
+  const currMap = new Map()
+  for (const e of previousErrors) {
+    const sig = errorSignature(e)
+    prevMap.set(sig, (prevMap.get(sig) || 0) + 1)
+  }
+  for (const e of currentErrors) {
+    const sig = errorSignature(e)
+    currMap.set(sig, (currMap.get(sig) || 0) + 1)
+  }
 
   const newErrors = currentErrors.filter(
-    e => !previousSignatures.has(errorSignature(e))
+    e => (prevMap.get(errorSignature(e)) || 0) === 0
   )
-  const resolvedErrors = previousErrors.filter(
-    e => !currentSignatures.has(errorSignature(e))
-  )
+
+  let resolvedErrorsCount = 0
+  for (const [sig, count] of prevMap) {
+    const currCount = currMap.get(sig) || 0
+    if (count > currCount) {
+      resolvedErrorsCount += count - currCount
+    }
+  }
 
   const countDelta = currentErrors.length - previousErrors.length
 
@@ -166,7 +179,7 @@ export function computeErrorDelta(currentErrors = [], previousErrors = []) {
     countDelta,
     newErrors,
     newErrorsCount: newErrors.length,
-    resolvedErrorsCount: resolvedErrors.length,
+    resolvedErrorsCount,
     regressed: countDelta > 0 || newErrors.length > 0,
   }
 }
@@ -205,7 +218,7 @@ export function cleanOldText(text) {
   if (!text) return ''
   let cleaned = cleanLineNumbers(text)
   // Normalize double-escaped LaTeX backslashes e.g. \\centering -> \centering
-  cleaned = cleaned.replace(/\\\\([a-zA-Z@{}[\]$%&_#\\]|\\\\)/g, '\\$1')
+  cleaned = cleaned.replace(/\\\\([a-zA-Z@]+)/g, '\\$1')
   return cleaned
 }
 
@@ -1911,7 +1924,12 @@ export class AiAssistTools {
               stopOnFirstError: Boolean(project.stopOnFirstError),
             },
             appearance: {
-              overallTheme: ace.overallTheme || 'system',
+              overallTheme:
+                ace.overallTheme === ''
+                  ? 'dark'
+                  : ace.overallTheme === 'light-'
+                    ? 'light'
+                    : ace.overallTheme || 'system',
               editorTheme: ace.theme || 'textmate',
               editorLightTheme: ace.lightTheme || 'textmate',
               editorDarkTheme: ace.darkTheme || 'overleaf_dark',

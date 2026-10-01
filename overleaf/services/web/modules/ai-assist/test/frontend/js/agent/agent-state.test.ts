@@ -263,6 +263,7 @@ describe('reduceAgentEvent', function () {
       id: 'q1',
       role: 'user',
       text: 'and also this',
+      sentDuringRun: true,
     })
   })
 
@@ -280,7 +281,65 @@ describe('reduceAgentEvent', function () {
       id: 'q1',
       role: 'user',
       text: 'sent from another tab',
+      sentDuringRun: true,
     })
+  })
+
+  it('stores the envelope the run was sent with a message it read mid-run', () => {
+    const initial = emptyAgentState([
+      { id: 'u0', role: 'user', text: 'first' },
+      { id: 'q1', role: 'user', text: 'and this', pending: true },
+    ])
+
+    const next = reduceAgentEvent(initial, {
+      type: 'userMessage',
+      id: 'q1',
+      text: 'and this',
+      contextText: '<project-context turn="2"/>',
+    })
+
+    expect(next.transcript[1]).to.deep.include({
+      contextText: '<project-context turn="2"/>',
+      sentDuringRun: true,
+    })
+  })
+
+  it('places a message the run read after those read before it and ahead of those still queued', () => {
+    const initial = emptyAgentState([
+      { id: 'u0', role: 'user', text: 'first' },
+      { id: 'a0', role: 'assistant', text: 'working', toolCalls: [] },
+      { id: 'mine', role: 'user', text: 'mine, queued', pending: true },
+    ])
+
+    // Another tab's message reached the run first
+    const next = reduceAgentEvent(initial, {
+      type: 'userMessage',
+      id: 'theirs',
+      text: 'from the other tab',
+    })
+
+    expect(next.transcript.map(entry => entry.id)).to.deep.equal([
+      'u0',
+      'a0',
+      'theirs',
+      'mine',
+    ])
+    expect(next.transcript[3]).to.deep.include({ pending: true })
+  })
+
+  it('records which provider request a tool call came from', () => {
+    let state = emptyAgentState([{ id: 'u0', role: 'user', text: 'go' }])
+    state = reduceAgentEvent(state, {
+      type: 'toolCallStarted',
+      id: 'c1',
+      name: 'read_file',
+      args: { path: 'main.tex' },
+      step: 2,
+    })
+
+    const assistant = state.transcript[1] as any
+    expect(assistant.toolCalls[0].step).to.equal(2)
+    expect(assistant.blocks[0].call.step).to.equal(2)
   })
 
   it('updates chatTitle on chatTitle event', () => {
@@ -292,5 +351,126 @@ describe('reduceAgentEvent', function () {
     })
     expect(next.chatTitle).to.equal('Smart Generated Title')
     expect(next.isTitleGenerated).to.be.true
+  })
+
+  it('keeps active assistant streaming intact when a mid-turn user message is pending', function () {
+    let state = emptyAgentState([
+      { id: 'u1', role: 'user', text: 'who is nguyen duy ngoc' },
+    ])
+    // Assistant 1 starts thinking
+    state = reduceAgentEvent(state, {
+      type: 'thinking',
+      text: 'Analyzing first query...',
+    })
+    // User sends second question mid-run (optimistically appended as pending)
+    state = {
+      ...state,
+      transcript: [
+        ...state.transcript,
+        {
+          id: 'u2',
+          role: 'user',
+          text: 'who is fan van giang?',
+          pending: true,
+        },
+      ],
+    }
+
+    // Assistant 1 continues streaming text for first query
+    state = reduceAgentEvent(state, {
+      type: 'text',
+      text: 'Nguyen Duy Ngoc is a politician.',
+    })
+
+    // Expect Assistant 1 to contain its full text and thinking, positioned before the pending User 2
+    expect(state.transcript).to.have.length(3)
+    expect(state.transcript[0]).to.deep.include({
+      id: 'u1',
+      role: 'user',
+      text: 'who is nguyen duy ngoc',
+    })
+    const assistant1 = state.transcript[1] as any
+    expect(assistant1.role).to.equal('assistant')
+    expect(assistant1.text).to.equal('Nguyen Duy Ngoc is a politician.')
+    expect(assistant1.thinking).to.equal('Analyzing first query...')
+    expect(state.transcript[2]).to.deep.include({
+      id: 'u2',
+      role: 'user',
+      text: 'who is fan van giang?',
+      pending: true,
+    })
+
+    // Now server processes queued message and emits userMessage event
+    state = reduceAgentEvent(state, {
+      type: 'userMessage',
+      id: 'u2',
+      text: 'who is fan van giang?',
+    })
+    expect(state.transcript[2]).to.deep.equal({
+      id: 'u2',
+      role: 'user',
+      text: 'who is fan van giang?',
+      sentDuringRun: true,
+    })
+
+    // Assistant 2 starts streaming for second query
+    state = reduceAgentEvent(state, {
+      type: 'text',
+      text: 'Phan Van Giang is a general.',
+    })
+    expect(state.transcript).to.have.length(4)
+    const assistant2 = state.transcript[3] as any
+    expect(assistant2.role).to.equal('assistant')
+    expect(assistant2.text).to.equal('Phan Van Giang is a general.')
+  })
+
+  it('replaces the text of the request still going, keeping its thinking', function () {
+    let state = emptyAgentState([{ id: '1', role: 'user', text: 'hi' }])
+    state = reduceAgentEvent(state, { type: 'text', text: 'Reading. ' })
+    state = reduceAgentEvent(state, {
+      type: 'toolCallStarted',
+      id: 'c1',
+      name: 'read_file',
+      args: {},
+      step: 1,
+    })
+    state = reduceAgentEvent(state, { type: 'thinking', text: 'hmm' })
+    state = reduceAgentEvent(state, { type: 'text', text: 'Half a rep' })
+    state = reduceAgentEvent(state, { type: 'stepText', text: '' })
+    state = reduceAgentEvent(state, { type: 'text', text: 'Whole.' })
+
+    const entry = state.transcript.at(-1) as any
+    expect(entry.text).to.equal('Reading. Whole.')
+    expect(entry.blocks.map((b: any) => b.type)).to.deep.equal([
+      'text',
+      'tool_call',
+      'thinking',
+      'text',
+    ])
+    expect(entry.blocks[3].text).to.equal('Whole.')
+  })
+
+  it('records where the run asked for its reply, and what it trimmed', function () {
+    let state = emptyAgentState([{ id: '1', role: 'user', text: 'hi' }])
+    state = reduceAgentEvent(state, { type: 'nudge' })
+    expect((state.transcript.at(-1) as any).nudge).to.deep.equal({
+      after: null,
+    })
+
+    state = reduceAgentEvent(state, {
+      type: 'toolCallStarted',
+      id: 'c1',
+      name: 'read_file',
+      args: {},
+      step: 1,
+    })
+    state = reduceAgentEvent(state, { type: 'nudge' })
+    expect((state.transcript.at(-1) as any).nudge).to.deep.equal({
+      after: 'c1',
+    })
+
+    const trim = { total: 4, anchor: 'x', dropped: 0, elided: [2] }
+    state = reduceAgentEvent(state, { type: 'contextTrimmed', trim })
+    expect((state.transcript.at(-1) as any).contextTrim).to.deep.equal(trim)
   })
 })

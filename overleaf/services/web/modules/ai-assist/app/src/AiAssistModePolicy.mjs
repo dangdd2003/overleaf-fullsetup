@@ -23,9 +23,12 @@ export const READ_ONLY_TOOLS = new Set([
   'get_packages',
   'get_references',
   'list_files',
+  'project_map',
   'read_file',
   'search_text',
+  'search_project',
   'get_compile_result',
+  'get_compile_log',
   'get_project_settings',
   'list_available_settings',
   'web_search',
@@ -59,7 +62,7 @@ export const PLAN_TOOL = 'present_plan'
 export const PRESENT_PLAN_SPEC = {
   name: 'present_plan',
   description:
-    'Present your finished plan to the user for approval. Call this once research is complete and you know exactly what to change. The user will approve (you then switch to an editing mode and carry the plan out) or ask you to keep planning with feedback.',
+    'Plan mode only. Present your finished plan to the user for approval. Call this once research is complete and you know exactly what to change. The user will approve (you then switch to an editing mode and carry the plan out) or ask you to keep planning with feedback.',
   parameters: {
     type: 'object',
     properties: {
@@ -104,17 +107,16 @@ export function decide(mode, toolName) {
   return normMode === 'plan' ? 'deny' : 'allow'
 }
 
-export function toolSpecsFor(mode, allSpecs = []) {
-  const normMode = normalizeMode(mode)
-  const filtered = allSpecs.filter(
-    spec => decide(normMode, spec.name) !== 'deny'
-  )
-
-  if (normMode === 'plan') {
-    if (!filtered.some(spec => spec.name === PLAN_TOOL)) {
-      return [...filtered, PRESENT_PLAN_SPEC]
-    }
-  }
-
-  return filtered
+/**
+ * The tools the model is offered: the same list, in the same order, in every
+ * mode. Tool definitions are the first thing in a request, so a list that
+ * changed with the mode would throw away the whole cached conversation on
+ * every switch. Claude Code keeps its tools fixed for the same reason. The
+ * mode is enforced when a call is made: `decide` refuses what it does not
+ * allow, and the model is told why.
+ */
+export function toolSpecsFor(_mode, allSpecs = []) {
+  return allSpecs.some(spec => spec.name === PLAN_TOOL)
+    ? allSpecs
+    : [...allSpecs, PRESENT_PLAN_SPEC]
 }

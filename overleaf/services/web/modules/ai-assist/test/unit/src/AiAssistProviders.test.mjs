@@ -3,6 +3,7 @@ import { expect } from 'chai'
 import sinon from 'sinon'
 import {
   anthropicSystemField,
+  cacheControlValue,
   createProviderClient,
   ProviderError,
   fetchWithRetry,
@@ -11,8 +12,10 @@ import {
   parseSseLines,
   promptCacheKey,
   safeParseToolArgs,
+  toGeminiContents,
   validateSafeProviderBaseUrl,
 } from '../../../app/src/AiAssistProviders.mjs'
+import Settings from '@overleaf/settings'
 
 describe('AiAssistProviders', function () {
   describe('validateSafeProviderBaseUrl', function () {
@@ -361,6 +364,61 @@ describe('AiAssistProviders', function () {
         { type: 'text', text: 'Turn 1', cache_control: { type: 'ephemeral' } },
       ])
     })
+
+    it('sends a message typed while tools ran in the turn holding their results', async function () {
+      let sentPayload = null
+      const fakeFetch = sinon.stub().callsFake((_url, opts) => {
+        sentPayload = JSON.parse(opts.body)
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          body: (async function* () {
+            yield new TextEncoder().encode('data: {"type":"message_stop"}\n\n')
+          })(),
+        })
+      })
+      const client = createProviderClient({
+        type: 'anthropic',
+        apiKey: 'key',
+        model: 'claude-sonnet-4-5',
+        fetchFn: fakeFetch,
+      })
+
+      for await (const _ of client.streamChat({
+        system: 'You are an assistant.',
+        messages: [
+          { role: 'user', content: 'fix it' },
+          {
+            role: 'assistant',
+            content: '',
+            toolCalls: [{ id: 't1', name: 'read_file', args: {} }],
+          },
+          { role: 'tool', toolCallId: 't1', name: 'read_file', content: 'a' },
+          { role: 'user', content: 'also the title' },
+          { role: 'user', content: 'and the date' },
+        ],
+        cacheHints: { cacheSystem: true },
+      })) {
+      }
+
+      // One user turn after the assistant: results first, then each message
+      expect(sentPayload.messages).to.have.length(3)
+      expect(sentPayload.messages[2].role).to.equal('user')
+      expect(sentPayload.messages[2].content).to.deep.equal([
+        {
+          type: 'tool_result',
+          tool_use_id: 't1',
+          content: 'a',
+          is_error: false,
+        },
+        { type: 'text', text: 'also the title' },
+        {
+          type: 'text',
+          text: 'and the date',
+          cache_control: { type: 'ephemeral' },
+        },
+      ])
+    })
   })
 
   describe('markMessageCacheBreakpoints', function () {
@@ -473,6 +531,49 @@ describe('AiAssistProviders', function () {
       const count =
         JSON.stringify(sentPayload).split('"cache_control"').length - 1
       expect(count).to.be.at.most(4)
+    })
+
+    it('uses 1h TTL when promptCacheTtl is set to 1h', () => {
+      const orig = Settings.aiAssist?.promptCacheTtl
+      try {
+        if (!Settings.aiAssist) Settings.aiAssist = {}
+        Settings.aiAssist.promptCacheTtl = '1h'
+        expect(cacheControlValue()).to.deep.equal({
+          type: 'ephemeral',
+          ttl: '1h',
+        })
+        Settings.aiAssist.promptCacheTtl = '5m'
+        expect(cacheControlValue()).to.deep.equal({
+          type: 'ephemeral',
+        })
+      } finally {
+        Settings.aiAssist.promptCacheTtl = orig
+      }
+    })
+  })
+
+  describe('toGeminiContents', () => {
+    it('merges consecutive user turns when a mid-run message follows a tool result', () => {
+      const messages = [
+        { role: 'user', content: 'check this' },
+        {
+          role: 'assistant',
+          content: '',
+          toolCalls: [{ id: 't1', name: 'read_file', args: { path: 'a.tex' } }],
+        },
+        { role: 'tool', toolCallId: 't1', name: 'read_file', content: 'file content' },
+        { role: 'user', content: 'also check b.tex' },
+      ]
+
+      const contents = toGeminiContents(messages)
+      // Alternating turns: user, model, user (with functionResponse + text)
+      expect(contents).to.have.length(3)
+      expect(contents[0].role).to.equal('user')
+      expect(contents[1].role).to.equal('model')
+      expect(contents[2].role).to.equal('user')
+      expect(contents[2].parts).to.have.length(2)
+      expect(contents[2].parts[0]).to.have.property('functionResponse')
+      expect(contents[2].parts[1]).to.deep.equal({ text: 'also check b.tex' })
     })
   })
 

@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import { TranscriptEntry, AssistantBlock } from '../../agent/agent-messages'
 import { WebSources } from '../../agent/web-sources'
 import { MarkdownContent } from './markdown-content'
@@ -41,6 +42,7 @@ export function AgentMessageView({
   onDecision,
   isRunning = false,
   webSources,
+  onTakeBack,
 }: {
   entry: TranscriptEntry
   pendingApprovalId: string | null
@@ -49,10 +51,16 @@ export function AgentMessageView({
   isRunning?: boolean
   /** Web pages cited anywhere in the conversation, by source number. */
   webSources?: WebSources
+  /** Takes a queued message back into the composer. */
+  onTakeBack?: (id: string) => void
 }) {
+  const { t } = useTranslation()
+
   if (entry.role === 'user') {
     return (
-      <div className="ai-assist-message ai-assist-message-user">
+      <div
+        className={`ai-assist-message ai-assist-message-user${entry.pending ? ' is-queued' : ''}`}
+      >
         {entry.attachments && entry.attachments.length > 0 && (
           <div className="ai-assist-selection-chip-wrapper">
             {entry.attachments.map((attachment, index) => (
@@ -70,6 +78,27 @@ export function AgentMessageView({
           </div>
         )}
         <div className="ai-assist-message-user-text">{entry.text}</div>
+        {/* Greyed until the run reads it, as Claude Code shows a queued message */}
+        {entry.pending && (
+          <div className="ai-assist-queued-row">
+            <span className="ai-assist-queued-label">
+              {t('ai_assist_queued', 'Queued')}
+            </span>
+            {onTakeBack && (
+              <button
+                type="button"
+                className="ai-assist-queued-take-back"
+                onClick={() => onTakeBack(entry.id)}
+                title={t(
+                  'ai_assist_queued_take_back_hint',
+                  'Take this message back to edit it before the assistant reads it'
+                )}
+              >
+                {t('edit', 'Edit')}
+              </button>
+            )}
+          </div>
+        )}
       </div>
     )
   }

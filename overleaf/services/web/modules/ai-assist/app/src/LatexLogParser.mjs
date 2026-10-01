@@ -24,7 +24,8 @@ class LogText {
       const currentLine = wrappedLines[i]
 
       if (
-        prevLine.length === LOG_WRAP_LIMIT &&
+        (prevLine.length === LOG_WRAP_LIMIT ||
+          Buffer.byteLength(prevLine, 'utf8') === LOG_WRAP_LIMIT) &&
         prevLine.slice(-3) !== '...' &&
         currentLine.charAt(0) !== '!'
       ) {

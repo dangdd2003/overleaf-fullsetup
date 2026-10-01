@@ -105,6 +105,7 @@ export default function SuggestFixPanel({
 
   const entryId = logEntry?.key ?? logEntry?.id
   const fileName = logEntry?.file || 'main.tex'
+  const cleanFileName = fileName.replace(/^\.?\//, '')
   const displayFileName = fileName.split('/').pop() || fileName
 
   const fingerprint = useMemo(
@@ -205,14 +206,73 @@ export default function SuggestFixPanel({
   // Stamped when a run begins so the status line can count from it; the
   // agent state carries no start time of its own.
   const [runStartedAt, setRunStartedAt] = useState<number | null>(null)
+  const [completedRun, setCompletedRun] = useState<{
+    durationMs: number
+    word?: string
+  } | null>(() => {
+    const last = stored?.transcript?.at(-1)
+    if (last && last.role === 'assistant' && (last as any).durationMs) {
+      return {
+        durationMs: (last as any).durationMs,
+        word: (last as any).statusWord,
+      }
+    }
+    return null
+  })
+
+  const isWorking = Boolean(requesting || running)
+  const runStartedAtRef = useRef<number | null>(runStartedAt)
+  runStartedAtRef.current = runStartedAt
+  const prevWorkingRef = useRef(isWorking)
+  const waitedMsRef = useRef(0)
+  const waitStartRef = useRef<number | null>(null)
+  const awaitingUser = Boolean(state.pendingApproval)
 
   useEffect(() => {
-    if ((requesting || running) && !state.pendingApproval) {
+    if (awaitingUser) {
+      waitStartRef.current ??= Date.now()
+    } else if (waitStartRef.current !== null) {
+      waitedMsRef.current += Date.now() - waitStartRef.current
+      waitStartRef.current = null
+    }
+  }, [awaitingUser])
+
+  const activeWordRef = useRef<string | null>(null)
+  const handleWordChange = useCallback((word: string) => {
+    activeWordRef.current = word
+  }, [])
+
+  useEffect(() => {
+    if (isWorking) {
+      if (runStartedAtRef.current === null) waitedMsRef.current = 0
       setRunStartedAt(current => current ?? Date.now())
-    } else {
+      setCompletedRun(null)
+    } else if (prevWorkingRef.current && !isWorking) {
+      if (!error && !state.pendingApproval && runStartedAtRef.current) {
+        const duration = Math.max(
+          1000,
+          Date.now() - runStartedAtRef.current - waitedMsRef.current
+        )
+        const word = activeWordRef.current || undefined
+        setCompletedRun({ durationMs: duration, word })
+        setState(curr => {
+          const last = curr.transcript.at(-1)
+          if (last && last.role === 'assistant') {
+            return {
+              ...curr,
+              transcript: [
+                ...curr.transcript.slice(0, -1),
+                { ...last, durationMs: duration, statusWord: word },
+              ],
+            }
+          }
+          return curr
+        })
+      }
       setRunStartedAt(null)
     }
-  }, [requesting, running, state.pendingApproval])
+    prevWorkingRef.current = isWorking
+  }, [isWorking, error, state.pendingApproval, setState])
 
   // Seed state on mount from stored conversation if available
   const seededRef = useRef(false)
@@ -644,22 +704,35 @@ export default function SuggestFixPanel({
       {!error && !needsConsent && collapsed && !running ? (
         <div
           className="ai-suggest-fix-card ai-suggest-fix-folded"
-          role="button"
           tabIndex={0}
-          onClick={() => setCollapsed(false)}
-          onKeyDown={e => e.key === 'Enter' && setCollapsed(false)}
+          onKeyDown={e =>
+            (e.key === 'Enter' || e.key === ' ') && setCollapsed(false)
+          }
         >
           <div className="ai-suggest-fix-folded-row">
-            <span className="ai-suggest-fix-folded-icon" aria-hidden="true">
-              <MaterialIcon type="history" />
-            </span>
-            <div className="ai-suggest-fix-folded-text">
-              <div className="ai-suggest-fix-folded-title">
-                Last suggested fix
-              </div>
-              <div className="ai-suggest-fix-folded-subtitle">
-                ./{fileName}
-                {logEntry?.line != null ? `, ${logEntry.line}` : ''}
+            <div
+              className="ai-suggest-fix-folded-main"
+              role="button"
+              tabIndex={0}
+              onClick={() => setCollapsed(false)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.stopPropagation()
+                  setCollapsed(false)
+                }
+              }}
+            >
+              <span className="ai-suggest-fix-folded-icon" aria-hidden="true">
+                <MaterialIcon type="history" />
+              </span>
+              <div className="ai-suggest-fix-folded-text">
+                <div className="ai-suggest-fix-folded-title">
+                  Last suggested fix
+                </div>
+                <div className="ai-suggest-fix-folded-subtitle">
+                  ./{cleanFileName}
+                  {logEntry?.line != null ? `, ${logEntry.line}` : ''}
+                </div>
               </div>
             </div>
             <div
@@ -856,18 +929,32 @@ export default function SuggestFixPanel({
 
           {/*
             Below the activity rows, never inside one: the rows report what
-            the agent did, this reports that it is still going.
+            the agent did, this reports that it is still going or completed.
           */}
-          {runStartedAt !== null && !state.pendingApproval && (
+          {runStartedAt !== null && isWorking ? (
             <AgentStatusLine
               startedAt={runStartedAt}
-              isRunning={state.running}
+              isRunning={true}
+              isPaused={Boolean(state.pendingApproval)}
+              onWordChange={handleWordChange}
               blocks={(() => {
-                const last = state.running ? state.transcript.at(-1) : null
+                const last = isWorking ? state.transcript.at(-1) : null
                 return last?.role === 'assistant' ? (last.blocks ?? []) : []
               })()}
             />
-          )}
+          ) : completedRun &&
+            !isWorking &&
+            !state.pendingApproval &&
+            !error &&
+            state.transcript.length > 0 &&
+            state.transcript.at(-1)?.role === 'assistant' ? (
+            <AgentStatusLine
+              startedAt={Date.now() - completedRun.durationMs}
+              durationMs={completedRun.durationMs}
+              completedWord={completedRun.word}
+              isRunning={false}
+            />
+          ) : null}
 
           {/* Footer with disclaimer and actions */}
           <div className="ai-suggest-fix-footer">

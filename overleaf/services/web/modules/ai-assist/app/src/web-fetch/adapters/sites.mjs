@@ -1,7 +1,7 @@
 import { makeDocument } from '../document.mjs'
 import { fragmentToMarkdown } from '../extract/html.mjs'
 import { BROWSER_HEADERS, USER_AGENT } from '../transport.mjs'
-import { collapse, isoDay, webError } from '../util.mjs'
+import { collapse, isoDay, safeDecodeURIComponent, webError } from '../util.mjs'
 import { facts, optional, unescapeXml, unixDay } from './common.mjs'
 
 /**
@@ -111,7 +111,7 @@ async function githubFile(url, { owner, repo, path }, ctx) {
     { 'User-Agent': USER_AGENT }
   )
   // path is "<ref>/<file path>"
-  const file = decodeURIComponent(path.split('/').slice(1).join('/'))
+  const file = safeDecodeURIComponent(path.split('/').slice(1).join('/'))
   return { ...doc, url, title: doc.title || `${owner}/${repo}: ${file}` }
 }
 

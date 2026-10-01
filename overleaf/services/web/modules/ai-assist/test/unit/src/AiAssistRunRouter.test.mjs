@@ -99,8 +99,19 @@ describe('AiAssistRunRouter', function () {
     expect(webRouter.put.args[0][0]).to.equal(
       '/ai-assist/projects/:Project_id/chats/:chatId'
     )
-    expect(webRouter.delete.args[0][0]).to.equal(
+    expect(webRouter.delete.args.map(call => call[0])).to.include(
       '/ai-assist/projects/:Project_id/chats/:chatId'
+    )
+  })
+
+  it('registers the routes for messages sent into a running run', async function () {
+    await routerModule.apply(webRouter)
+
+    expect(webRouter.post.args.map(call => call[0])).to.include(
+      '/ai-assist/projects/:Project_id/runs/:runId/message'
+    )
+    expect(webRouter.delete.args.map(call => call[0])).to.include(
+      '/ai-assist/projects/:Project_id/runs/:runId/message/:messageId'
     )
   })
 })

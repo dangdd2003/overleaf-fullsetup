@@ -344,7 +344,44 @@ export class AiAssistRunController {
       return res.status(413).json({ error: 'Message too large' })
     }
 
-    await this.manager.queueMessage(runId, { id, text, contextText })
+    // The run may be past its last look at the queue while its status still
+    // says running; it turns the message away rather than leave it unread.
+    if (!(await this.manager.queueMessage(runId, { id, text, contextText }))) {
+      return res.status(409).json({
+        error: 'Run is no longer accepting messages',
+        status: run.status,
+      })
+    }
+    res.json({ ok: true })
+  }
+
+  /**
+   * Takes back a message sent into a run before the run has read it. 409 when
+   * it is too late: `reason` says whether the run read it or has ended.
+   */
+  unqueueMessage = async (req, res) => {
+    const { runId, messageId } = req.params
+    const run = await this.store.getRun(runId)
+    if (!run) {
+      return res.status(404).json({ error: 'Run not found' })
+    }
+
+    const projectId = req.params.Project_id || req.params.project_id
+    if (projectId && run.projectId !== projectId) {
+      return res
+        .status(403)
+        .json({ error: 'Cross-project run access forbidden' })
+    }
+
+    if (TERMINAL_STATUSES.includes(run.status)) {
+      return res.status(409).json({ error: 'Run has ended', reason: 'ended' })
+    }
+
+    if ((await this.manager.unqueueMessage(runId, messageId)) === false) {
+      return res
+        .status(409)
+        .json({ error: 'The run has already read it', reason: 'read' })
+    }
     res.json({ ok: true })
   }
 

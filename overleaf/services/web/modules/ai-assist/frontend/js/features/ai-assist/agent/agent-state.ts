@@ -50,21 +50,62 @@ export function emptyAgentState(
   }
 }
 
+/** Messages at the end still queued, which the live reply is shown above. */
+export function countTrailingPendingUserEntries(
+  transcript: TranscriptEntry[]
+): number {
+  let count = 0
+  for (let i = transcript.length - 1; i >= 0; i--) {
+    const entry = transcript[i]
+    if (entry.role === 'user' && entry.pending) {
+      count++
+    } else {
+      break
+    }
+  }
+  return count
+}
+
 export function openAssistantTurn(
   transcript: TranscriptEntry[]
-): TranscriptEntry[] {
-  const last = transcript.at(-1)
-  if (last && last.role === 'assistant') return transcript
-  return [
-    ...transcript,
-    {
-      id: `a${transcript.length}`,
+): { transcript: TranscriptEntry[]; targetIndex: number } {
+  const pendingCount = countTrailingPendingUserEntries(transcript)
+  if (pendingCount > 0) {
+    const insertIdx = transcript.length - pendingCount
+    const prev = insertIdx > 0 ? transcript[insertIdx - 1] : null
+    if (prev && prev.role === 'assistant') {
+      return { transcript, targetIndex: insertIdx - 1 }
+    }
+    const newEntry: TranscriptEntry = {
+      id: `a${insertIdx}`,
       role: 'assistant',
       text: '',
       toolCalls: [],
       blocks: [],
-    },
-  ]
+    }
+    const updated = [
+      ...transcript.slice(0, insertIdx),
+      newEntry,
+      ...transcript.slice(insertIdx),
+    ]
+    return { transcript: updated, targetIndex: insertIdx }
+  }
+
+  const last = transcript.at(-1)
+  if (last && last.role === 'assistant') {
+    return { transcript, targetIndex: transcript.length - 1 }
+  }
+  const newEntry: TranscriptEntry = {
+    id: `a${transcript.length}`,
+    role: 'assistant',
+    text: '',
+    toolCalls: [],
+    blocks: [],
+  }
+  return {
+    transcript: [...transcript, newEntry],
+    targetIndex: transcript.length,
+  }
 }
 
 function finalizeThinkingBlock(
@@ -90,9 +131,12 @@ export function appendThinking(
   text: string,
   now: number = Date.now()
 ) {
-  const opened = openAssistantTurn(transcript)
-  const last = opened.at(-1) as Extract<TranscriptEntry, { role: 'assistant' }>
-  const blocks: AssistantBlock[] = [...(last.blocks ?? [])]
+  const { transcript: opened, targetIndex } = openAssistantTurn(transcript)
+  const target = opened[targetIndex] as Extract<
+    TranscriptEntry,
+    { role: 'assistant' }
+  >
+  const blocks: AssistantBlock[] = [...(target.blocks ?? [])]
   const lastBlock = blocks.at(-1)
   if (lastBlock && lastBlock.type === 'thinking') {
     blocks[blocks.length - 1] = {
@@ -106,14 +150,13 @@ export function appendThinking(
       startedAt: now,
     })
   }
-  return [
-    ...opened.slice(0, -1),
-    {
-      ...last,
-      thinking: (last.thinking ?? '') + text,
-      blocks,
-    },
-  ]
+  const updated = [...opened]
+  updated[targetIndex] = {
+    ...target,
+    thinking: (target.thinking ?? '') + text,
+    blocks,
+  }
+  return updated
 }
 
 export function appendText(
@@ -121,10 +164,13 @@ export function appendText(
   text: string,
   now: number = Date.now()
 ) {
-  const opened = openAssistantTurn(transcript)
-  const last = opened.at(-1) as Extract<TranscriptEntry, { role: 'assistant' }>
+  const { transcript: opened, targetIndex } = openAssistantTurn(transcript)
+  const target = opened[targetIndex] as Extract<
+    TranscriptEntry,
+    { role: 'assistant' }
+  >
   const blocks: AssistantBlock[] = finalizeThinkingBlock(
-    [...(last.blocks ?? [])],
+    [...(target.blocks ?? [])],
     now
   )
   const lastBlock = blocks.at(-1)
@@ -136,14 +182,13 @@ export function appendText(
   } else {
     blocks.push({ type: 'text', text })
   }
-  return [
-    ...opened.slice(0, -1),
-    {
-      ...last,
-      text: last.text + text,
-      blocks,
-    },
-  ]
+  const updated = [...opened]
+  updated[targetIndex] = {
+    ...target,
+    text: target.text + text,
+    blocks,
+  }
+  return updated
 }
 
 /**
@@ -152,24 +197,40 @@ export function appendText(
  * The panel adds the entry optimistically the moment it is sent, so the usual
  * case is clearing `pending` on an entry that is already here. A tab that was
  * not the sender — or one replaying the run after a reconnect — has never seen
- * it, and appends it instead.
+ * it, and adds it instead.
+ *
+ * Either way the entry lands after everything already delivered and ahead of
+ * what is still queued, which is the order the run read them in, and keeps
+ * the envelope the run was sent. The stored transcript then rebuilds into the
+ * messages the run sent, and the next run reads them from the provider's
+ * cache.
  */
 export function deliverUserMessage(
   transcript: TranscriptEntry[],
-  message: { id: string; text: string }
+  message: { id: string; text: string; contextText?: string }
 ): TranscriptEntry[] {
-  const existing = transcript.findIndex(entry => entry.id === message.id)
-  if (existing !== -1) {
-    const entry = transcript[existing]
-    if (entry.role !== 'user' || !entry.pending) return transcript
-    const { pending: _pending, ...delivered } = entry
-    return [
-      ...transcript.slice(0, existing),
-      delivered,
-      ...transcript.slice(existing + 1),
-    ]
+  const index = transcript.findIndex(entry => entry.id === message.id)
+  const found = index === -1 ? null : transcript[index]
+  if (found && (found.role !== 'user' || !found.pending)) return transcript
+
+  const { pending: _pending, ...entry } =
+    found && found.role === 'user'
+      ? found
+      : { id: message.id, role: 'user' as const, text: message.text }
+  const delivered: TranscriptEntry = {
+    ...entry,
+    ...(message.contextText !== undefined
+      ? { contextText: message.contextText }
+      : {}),
+    sentDuringRun: true,
   }
-  return [...transcript, { id: message.id, role: 'user', text: message.text }]
+
+  const rest =
+    index === -1
+      ? transcript
+      : [...transcript.slice(0, index), ...transcript.slice(index + 1)]
+  const at = rest.length - countTrailingPendingUserEntries(rest)
+  return [...rest.slice(0, at), delivered, ...rest.slice(at)]
 }
 
 export function appendToolCall(
@@ -177,8 +238,11 @@ export function appendToolCall(
   call: ToolCallRecord,
   now: number = Date.now()
 ) {
-  const opened = openAssistantTurn(transcript)
-  const last = opened.at(-1) as Extract<TranscriptEntry, { role: 'assistant' }>
+  const { transcript: opened, targetIndex } = openAssistantTurn(transcript)
+  const last = opened[targetIndex] as Extract<
+    TranscriptEntry,
+    { role: 'assistant' }
+  >
 
   // If this tool call is already registered in last.toolCalls, update it rather than duplicating
   if (last.toolCalls.some(c => c.id === call.id)) {
@@ -190,14 +254,13 @@ export function appendToolCall(
         ? { ...b, call: { ...b.call, ...call } }
         : b
     )
-    return [
-      ...opened.slice(0, -1),
-      {
-        ...last,
-        toolCalls: updatedCalls,
-        ...(updatedBlocks ? { blocks: updatedBlocks } : {}),
-      },
-    ]
+    const updated = [...opened]
+    updated[targetIndex] = {
+      ...last,
+      toolCalls: updatedCalls,
+      ...(updatedBlocks ? { blocks: updatedBlocks } : {}),
+    }
+    return updated
   }
 
   const blocks: AssistantBlock[] = finalizeThinkingBlock(
@@ -205,14 +268,13 @@ export function appendToolCall(
     now
   )
   blocks.push({ type: 'tool_call', call })
-  return [
-    ...opened.slice(0, -1),
-    {
-      ...last,
-      toolCalls: [...last.toolCalls, call],
-      blocks,
-    },
-  ]
+  const updated = [...opened]
+  updated[targetIndex] = {
+    ...last,
+    toolCalls: [...last.toolCalls, call],
+    blocks,
+  }
+  return updated
 }
 
 export function finishToolCall(
@@ -280,6 +342,52 @@ export function cancelPendingToolCalls(
   })
 }
 
+type AssistantEntry = Extract<TranscriptEntry, { role: 'assistant' }>
+
+function updateAssistantTurn(
+  transcript: TranscriptEntry[],
+  update: (entry: AssistantEntry) => AssistantEntry
+): TranscriptEntry[] {
+  const { transcript: opened, targetIndex } = openAssistantTurn(transcript)
+  const updated = [...opened]
+  updated[targetIndex] = update(opened[targetIndex] as AssistantEntry)
+  return updated
+}
+
+/**
+ * Replaces the text of the provider request still going: the text blocks
+ * after the turn's last tool call. Thinking stays, as it was shown.
+ */
+export function replaceStepText(
+  transcript: TranscriptEntry[],
+  text: string
+): TranscriptEntry[] {
+  return updateAssistantTurn(transcript, entry => {
+    const blocks = [...(entry.blocks ?? [])]
+    let start = blocks.length
+    while (start > 0 && blocks[start - 1].type !== 'tool_call') start--
+    let removed = 0
+    let at = -1
+    const kept: AssistantBlock[] = []
+    blocks.slice(start).forEach(block => {
+      if (block.type === 'text') {
+        removed += block.text.length
+        if (at === -1) at = kept.length
+      } else {
+        kept.push(block)
+      }
+    })
+    if (text) {
+      kept.splice(at === -1 ? kept.length : at, 0, { type: 'text', text })
+    }
+    return {
+      ...entry,
+      text: entry.text.slice(0, entry.text.length - removed) + text,
+      blocks: [...blocks.slice(0, start), ...kept],
+    }
+  })
+}
+
 export function reduceAgentEvent(
   state: AgentState,
   event: AgentEvent
@@ -299,6 +407,7 @@ export function reduceAgentEvent(
           id: event.id,
           name: event.name,
           args: event.args,
+          ...(event.step !== undefined ? { step: event.step } : {}),
         }),
       }
     case 'toolCallFinished':
@@ -319,6 +428,33 @@ export function reduceAgentEvent(
       return {
         ...state,
         transcript: deliverUserMessage(state.transcript, event),
+      }
+    case 'stepText':
+      return {
+        ...state,
+        transcript: replaceStepText(state.transcript, event.text),
+      }
+    case 'nudge':
+      return {
+        ...state,
+        transcript: updateAssistantTurn(state.transcript, entry => {
+          const lastCall = [...(entry.blocks ?? [])]
+            .reverse()
+            .find(block => block.type === 'tool_call')
+          const after =
+            lastCall?.type === 'tool_call'
+              ? lastCall.call.id
+              : (entry.toolCalls.at(-1)?.id ?? null)
+          return { ...entry, nudge: { after } }
+        }),
+      }
+    case 'contextTrimmed':
+      return {
+        ...state,
+        transcript: updateAssistantTurn(state.transcript, entry => ({
+          ...entry,
+          contextTrim: event.trim,
+        })),
       }
     case 'chatTitle':
       return { ...state, chatTitle: event.title, isTitleGenerated: true }

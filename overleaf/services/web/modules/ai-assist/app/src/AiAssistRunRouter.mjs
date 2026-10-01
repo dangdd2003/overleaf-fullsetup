@@ -105,6 +105,14 @@ export default {
       AiAssistRunController.queueMessage
     )
 
+    // Takes such a message back before the run has read it
+    webRouter.delete(
+      '/ai-assist/projects/:Project_id/runs/:runId/message/:messageId',
+      AuthenticationController.requireLogin(),
+      AuthorizationMiddleware.ensureUserCanWriteProjectContent,
+      AiAssistRunController.unqueueMessage
+    )
+
     webRouter.post(
       '/ai-assist/projects/:Project_id/runs/:runId/mode',
       AuthenticationController.requireLogin(),

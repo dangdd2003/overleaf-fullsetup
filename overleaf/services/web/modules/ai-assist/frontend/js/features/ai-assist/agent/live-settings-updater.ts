@@ -4,10 +4,12 @@ export const DARK_EDITOR_THEMES = new Set([
   'clouds_midnight',
   'cobalt',
   'dracula',
+  'gob',
   'gruvbox',
   'idle_fingers',
   'kr_theme',
   'merbivore',
+  'merbivore_soft',
   'mono_industrial',
   'monokai',
   'nord_dark',
@@ -31,11 +33,9 @@ export const LIGHT_EDITOR_THEMES = new Set([
   'dreamweaver',
   'eclipse',
   'github',
-  'gob',
   'iplastic',
   'katzenmilch',
   'kuroir',
-  'merbivore_soft',
   'overleaf',
   'solarized_light',
   'sqlserver',
@@ -261,6 +261,8 @@ export function applyLiveSettingsUpdate(
     'mathPreview' in settings ||
     'breadcrumbs' in settings ||
     'editorTabs' in settings ||
+    'nonBlinkingCursor' in settings ||
+    'floatingMenu' in settings ||
     'spellCheckLanguage' in settings
 
   if (isEditor) {

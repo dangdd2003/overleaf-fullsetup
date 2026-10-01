@@ -239,8 +239,10 @@ const RENDERERS = {
 
   get_outline(result) {
     if (result.sections && result.range) {
+      const toStr =
+        result.range.to === Number.MAX_SAFE_INTEGER ? 'end' : result.range.to
       return [
-        `section lines ${result.range.from}-${result.range.to}`,
+        `section lines ${result.range.from}-${toStr}`,
         ...result.sections.map(outlineLine),
         result.hint ?? '',
       ]
@@ -321,6 +323,9 @@ const RENDERERS = {
   },
 
   read_file(result) {
+    if (result.totalLines === 0) {
+      return `${result.path} is empty (0 lines)\n\`\`\`\n\`\`\``
+    }
     const header = `${result.path} lines ${result.from}-${result.to} of ${result.totalLines}`
     const footer = result.nextRange
       ? `\n(truncated - call read_file with from=${result.nextRange.from}, to=${result.nextRange.to} for the rest)`
@@ -443,7 +448,16 @@ const RENDERERS = {
     }
     return JSON.stringify(result)
   },
+
+  present_plan(result) {
+    if (result?.message) return result.message
+    return JSON.stringify(result)
+  },
 }
+
+RENDERERS.search_project = RENDERERS.search_text
+RENDERERS.project_map = RENDERERS.list_files
+RENDERERS.get_compile_log = RENDERERS.get_compile_result
 
 /**
  * A page that could not be read, with what its search result said about it.

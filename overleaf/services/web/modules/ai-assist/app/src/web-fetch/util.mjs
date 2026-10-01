@@ -60,3 +60,22 @@ export function isoDay(value) {
   if (year < 1990 || year > 2200) return ''
   return date.toISOString().slice(0, 10)
 }
+
+export function safeDecodeURI(uri) {
+  if (!uri || typeof uri !== 'string') return ''
+  try {
+    return decodeURI(uri)
+  } catch {
+    return uri
+  }
+}
+
+export function safeDecodeURIComponent(str) {
+  if (!str || typeof str !== 'string') return ''
+  try {
+    return decodeURIComponent(str)
+  } catch {
+    return str
+  }
+}
+

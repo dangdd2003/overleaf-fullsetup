@@ -537,6 +537,12 @@ async function fetchModelList(fetchFn, url, headers, signal) {
   return await res.json().catch(() => null)
 }
 
+export function cacheControlValue() {
+  return Settings.aiAssist?.promptCacheTtl === '1h'
+    ? { type: 'ephemeral', ttl: '1h' }
+    : { type: 'ephemeral' }
+}
+
 /**
  * Marks up to two message cache breakpoints on Anthropic wire messages.
  *
@@ -556,7 +562,7 @@ async function fetchModelList(fetchFn, url, headers, signal) {
  * limit of four.
  */
 export function markMessageCacheBreakpoints(wire) {
-  const ephemeral = { type: 'ephemeral' }
+  const ephemeral = cacheControlValue()
   const mark = index => {
     const entry = wire[index]
     if (!entry) return
@@ -629,7 +635,7 @@ function geminiThinkingBudget(effort, model) {
  */
 export function anthropicSystemField(system, cacheHints) {
   if (!cacheHints?.cacheSystem) return system
-  const ephemeral = { type: 'ephemeral' }
+  const ephemeral = cacheControlValue()
   const prefix = cacheHints.systemPrefix
   if (
     typeof prefix === 'string' &&
@@ -722,7 +728,7 @@ class AnthropicServerClient {
       idleMs: this.streamIdleTimeoutMs,
     })
 
-    const ephemeral = { type: 'ephemeral' }
+    const ephemeral = cacheControlValue()
     const systemField = anthropicSystemField(system, cacheHints)
 
     const wire = []
@@ -774,6 +780,18 @@ class AnthropicServerClient {
           })
         }
         wire.push({ role: 'assistant', content })
+        continue
+      }
+
+      // A message the user sent while tools ran shares the turn of their
+      // results, after them, as Claude Code sends it. The API merges
+      // consecutive user turns anyway; some gateways reject them instead.
+      const lastTurn = wire.at(-1)
+      if (message.role === 'user' && lastTurn?.role === 'user') {
+        if (typeof lastTurn.content === 'string') {
+          lastTurn.content = [{ type: 'text', text: lastTurn.content }]
+        }
+        lastTurn.content.push({ type: 'text', text: message.content || ' ' })
         continue
       }
 
@@ -1321,10 +1339,15 @@ export function toGeminiContents(messages) {
     }
 
     // role === 'user'
-    contents.push({
-      role: 'user',
-      parts: [{ text: message.content || ' ' }],
-    })
+    const prev = contents.at(-1)
+    if (prev && prev.role === 'user') {
+      prev.parts.push({ text: message.content || ' ' })
+    } else {
+      contents.push({
+        role: 'user',
+        parts: [{ text: message.content || ' ' }],
+      })
+    }
   }
 
   return contents

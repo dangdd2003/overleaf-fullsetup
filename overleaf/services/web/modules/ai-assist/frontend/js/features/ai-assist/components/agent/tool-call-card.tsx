@@ -61,6 +61,7 @@ export function getToolIcon(name: string, size = 13) {
     case 'configure_appearance_settings':
       return <SlidersHorizontal size={size} />
     case 'list_available_settings':
+    case 'present_plan':
       return <ListChecks size={size} />
     case 'web_search':
       return <Globe size={size} />
@@ -184,6 +185,8 @@ export function summarise(
         return t('ai_assist_tool_web_search', 'Searched the web')
       case 'web_fetch':
         return t('ai_assist_tool_web_fetch', 'Fetched')
+      case 'present_plan':
+        return t('ai_assist_tool_present_plan', 'Presented plan')
       default:
         // A call stored before a rename. Its name is the only honest thing we
         // can say about it, so say that rather than mislabelling it.

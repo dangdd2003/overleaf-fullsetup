@@ -369,7 +369,11 @@ export function useEditorThemeStyles() {
   try {
     activeOverallTheme = useActiveOverallTheme() === 'dark' ? 'dark' : 'light'
   } catch {
-    activeOverallTheme = (userSettings.overallTheme as string) === 'dark' ? 'dark' : 'light'
+    const rawTheme = userSettings.overallTheme as string
+    activeOverallTheme =
+      !rawTheme || rawTheme === 'dark' || rawTheme === 'default'
+        ? 'dark'
+        : 'light'
   }
 
   const {

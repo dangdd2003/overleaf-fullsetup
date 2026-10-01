@@ -47,7 +47,10 @@ import { takePendingHandoff } from '../../agent/chat-handoff'
 import { setChatBusy } from '../../agent/chat-activity'
 import { useStickToBottom } from '../../hooks/use-stick-to-bottom'
 import { useAgentRun } from '../../hooks/use-agent-run'
-import { emptyAgentState } from '../../agent/agent-state'
+import {
+  countTrailingPendingUserEntries,
+  emptyAgentState,
+} from '../../agent/agent-state'
 import withErrorBoundary from '@/infrastructure/error-boundary'
 import type { FallbackProps } from 'react-error-boundary'
 import {
@@ -220,6 +223,8 @@ function AgentPanelInner({
     attach,
     onDecision,
     queueMessage,
+    unqueueMessage,
+    whenRunEnded,
     needsConsent,
     allowConsent,
   } = useAgentRun({
@@ -295,6 +300,22 @@ function AgentPanelInner({
   // storage is not in here, so reopening the project never resends an old
   // message — only one this tab queued and watched fail can be revived.
   const queuedIdsRef = useRef<Set<string>>(new Set())
+  // Sends go out one at a time, in the order they were typed. Each is built
+  // against the turn before it (its envelope is a delta on that one) and
+  // reaches the run in that order, so the transcript stores what the run is
+  // sent, in the order it is sent, and the next run's rebuilt prefix reads the
+  // provider's cache instead of missing it.
+  const sendChainRef = useRef<Promise<void>>(Promise.resolve())
+  // Tasks in that line. A message typed behind any of them is queued, and
+  // goes to whichever run is live when its turn comes.
+  const sendsInFlightRef = useRef(0)
+  // Queued sends not yet handed to a run, and those taken back before they were
+  const waitingIdsRef = useRef<Set<string>>(new Set())
+  const takenBackIdsRef = useRef<Set<string>>(new Set())
+  // Moves on with the chat; a send still on its way leaves the new chat alone
+  const chatEpochRef = useRef(0)
+  const runningRef = useRef(state.running)
+  runningRef.current = state.running
   const runStartedAtRef = useRef<number | null>(runStartedAt)
   runStartedAtRef.current = runStartedAt
   // Time the run spent waiting on the user, left out of its duration
@@ -363,6 +384,14 @@ function AgentPanelInner({
     isAtBottom,
     scrollToBottom,
   } = useStickToBottom(transcriptRef)
+
+  // The entry the run is streaming into: the last one, or the one above the
+  // messages still queued after it
+  const liveEntryIndex = state.running
+    ? state.transcript.length -
+      1 -
+      countTrailingPendingUserEntries(state.transcript)
+    : -1
 
   const promptHistory = useMemo(
     () =>
@@ -475,11 +504,62 @@ function AgentPanelInner({
     )
   )
 
+  const enqueueSend = useCallback((task: () => Promise<void>) => {
+    sendsInFlightRef.current += 1
+    const next = sendChainRef.current
+      .then(task)
+      .catch(() => {})
+      .finally(() => {
+        sendsInFlightRef.current -= 1
+      })
+    sendChainRef.current = next
+    return next
+  }, [])
+
+  // Applied to the ref at once as well, so the next send in the line builds
+  // against it before React has rendered it
+  const updateTranscript = useCallback(
+    (update: (transcript: TranscriptEntry[]) => TranscriptEntry[]) => {
+      liveTranscriptRef.current = update(liveTranscriptRef.current)
+      setState(current => ({
+        ...current,
+        transcript: update(current.transcript),
+      }))
+    },
+    [setState]
+  )
+
+  /**
+   * Starts a run on the transcript together with the messages no run has
+   * read: `ids`, and any a run took but ended without reading. Sends still
+   * waiting their turn stay queued behind it. A `pending` entry that is
+   * neither was left by an earlier session and is dropped, as before.
+   */
+  const startRunWith = useCallback(
+    async (ids: string[] = []) => {
+      // A run still stopping is followed to its end first: the transcript
+      // read below is what the new run is rebuilt from, and has to hold
+      // everything the stopped run sent the provider
+      await whenRunEnded()
+      const include = new Set([...ids, ...queuedIdsRef.current])
+      queuedIdsRef.current.clear()
+      const next = liveTranscriptRef.current.flatMap(entry => {
+        if (entry.role !== 'user' || !entry.pending) return [entry]
+        if (include.has(entry.id)) {
+          const { pending: _pending, ...unqueued } = entry
+          return [unqueued]
+        }
+        return waitingIdsRef.current.has(entry.id) ? [entry] : []
+      })
+      await run(next)
+    },
+    [run, whenRunEnded]
+  )
+
   // Builds the user entry from scratch and sends it. Shared by `onSend` and
-  // `onAllowConsent` so a prompt blocked on consent resumes through the exact
-  // same path once the user allows it.
+  // the compile-log handoff, so every prompt takes the same path.
   const sendPrompt = useCallback(
-    async ({
+    ({
       text,
       attachments: attachmentRefs = [],
       attachedSelection: selectionRef,
@@ -504,17 +584,14 @@ function AgentPanelInner({
             ]
           : []),
       ]
-      // A send while a run is going does not start a second run: it is handed
-      // to the one already in flight, which reads it the next time it is
-      // between provider requests.
-      const queueing = state.running
-      // The live transcript, not the one this callback closed over: two sends
-      // in quick succession must not compute the same id or delta-encode the
-      // envelope against the wrong previous turn.
-      const baseTranscript = liveTranscriptRef.current
+      // While a run is going, or sends ahead of this one are still on their
+      // way, this does not start a second run. It is shown as queued and handed
+      // to the run in flight, which reads it as soon as its current tool calls
+      // finish, or once its reply ends, as Claude Code does.
+      const queueing = state.running || sendsInFlightRef.current > 0
       const entryId = queueing
         ? `q${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
-        : `u${baseTranscript.length}`
+        : `u${liveTranscriptRef.current.length}`
       const optimisticEntry: TranscriptEntry = {
         id: entryId,
         role: 'user',
@@ -522,10 +599,14 @@ function AgentPanelInner({
         attachments: initialAttachments,
         ...(queueing ? { pending: true } : {}),
       }
+      const epoch = chatEpochRef.current
+      const abandoned = () =>
+        takenBackIdsRef.current.has(entryId) || chatEpochRef.current !== epoch
+      if (queueing) waitingIdsRef.current.add(entryId)
 
+      updateTranscript(transcript => [...transcript, optimisticEntry])
       setState(current => ({
         ...current,
-        transcript: [...current.transcript, optimisticEntry],
         running: true,
         stoppedByUser: false,
         error: null,
@@ -536,63 +617,103 @@ function AgentPanelInner({
       // before it reached the new message.
       scrollToBottom({ smooth: false })
 
-      try {
-        let attachmentsResolved: Attachment[] = []
+      return enqueueSend(async () => {
         try {
-          attachmentsResolved = await resolveAttachments(attachmentRefs, handle)
-        } catch {
-          // Never fail prompt send if attachment resolution fails
-          attachmentsResolved = attachmentRefs.map(r => ({
-            path: r.path,
-            text: null,
+          if (abandoned()) return
+          let attachmentsResolved: Attachment[] = []
+          try {
+            attachmentsResolved = await resolveAttachments(
+              attachmentRefs,
+              handle
+            )
+          } catch {
+            // Never fail prompt send if attachment resolution fails
+            attachmentsResolved = attachmentRefs.map(r => ({
+              path: r.path,
+              text: null,
+            }))
+          }
+          // Against the turns before it, the queued ones included, so the
+          // envelope is a delta on the one sent just before
+          const live = liveTranscriptRef.current
+          const position = live.findIndex(entry => entry.id === entryId)
+          const built = await buildUserEntry({
+            handle,
+            transcript: position === -1 ? live : live.slice(0, position),
+            text,
+            attachments: attachmentsResolved,
+            attachedSelection: selectionRef,
+            extraContext,
+            mode: state.mode,
+          })
+          if (abandoned()) return
+          const userEntry: TranscriptEntry = { ...built, id: entryId }
+          // The transcript keeps what the run is sent, envelope and all, so a
+          // later run rebuilds the same bytes
+          updateTranscript(transcript =>
+            transcript.map(entry =>
+              entry.id === entryId
+                ? {
+                    ...userEntry,
+                    ...(entry.role === 'user' && entry.pending
+                      ? { pending: true }
+                      : {}),
+                  }
+                : entry
+            )
+          )
+
+          if (queueing) {
+            if (await queueMessage(userEntry)) {
+              // Taken back while it was on its way: ask the run for it back
+              if (takenBackIdsRef.current.has(entryId)) {
+                void unqueueMessage(entryId)
+              } else if (chatEpochRef.current === epoch) {
+                // The run's `userMessage` event clears `pending` once it has
+                // actually read it
+                queuedIdsRef.current.add(entryId)
+              }
+              return
+            }
+            // No run took it: the one going was finishing. Let its last
+            // events land, so its reply is whole before the next run starts.
+            await whenRunEnded()
+            if (abandoned()) return
+          }
+          await startRunWith([entryId])
+        } catch (err: any) {
+          if (chatEpochRef.current !== epoch) return
+          setState(current => ({
+            ...current,
+            running: false,
+            error: {
+              code: 'runFailed',
+              message: err?.message || 'Failed to prepare prompt',
+            },
           }))
+        } finally {
+          waitingIdsRef.current.delete(entryId)
+          takenBackIdsRef.current.delete(entryId)
         }
-        const built = await buildUserEntry({
-          handle,
-          transcript: baseTranscript,
-          text,
-          attachments: attachmentsResolved,
-          attachedSelection: selectionRef,
-          extraContext,
-          mode: state.mode,
-        })
-        const userEntry: TranscriptEntry = { ...built, id: entryId }
-
-        if (queueing && (await queueMessage(userEntry))) {
-          // The run took it. Its `userMessage` event clears `pending` once it
-          // has actually been read.
-          queuedIdsRef.current.add(entryId)
-          return
-        }
-
-        // Either nothing was running, or the run ended while we were building
-        // the envelope. Send it as a new run, replacing the optimistic entry.
-        const next: TranscriptEntry[] = [...baseTranscript, userEntry]
-        void run(next)
-      } catch (err: any) {
-        setState(current => ({
-          ...current,
-          running: false,
-          error: {
-            code: 'runFailed',
-            message: err?.message || 'Failed to prepare prompt',
-          },
-        }))
-      }
+      })
     },
     [
       handle,
       state.running,
       state.mode,
-      run,
+      enqueueSend,
+      updateTranscript,
       queueMessage,
+      unqueueMessage,
+      whenRunEnded,
+      startRunWith,
       setState,
       scrollToBottom,
     ]
   )
 
   const onSend = useCallback(
-    async (
+    (
       text: string,
       attachmentRefs?: AttachmentRef[],
       selection?: AttachedSelection | null
@@ -611,7 +732,7 @@ function AgentPanelInner({
           ? selection
           : (attachedSelection ?? handle.currentSelection())
 
-      await sendPrompt({
+      void sendPrompt({
         text,
         attachments: finalAttachments,
         attachedSelection: finalSelection,
@@ -621,37 +742,75 @@ function AgentPanelInner({
       setAttachments([])
       setAttachedSelection(null)
     },
-    [attachments, attachedSelection, handle, sendPrompt, setState, t]
+    [attachments, attachedSelection, handle, sendPrompt]
   )
 
   /**
-   * Rescues a queued message the run never read.
-   *
-   * The endpoint refuses a run that has already finished, but a message can
-   * still arrive in the gap between the loop's last check of its queue and the
-   * run being marked done. Those entries are still `pending` when the run ends,
-   * and are resent here as a run of their own rather than silently lost.
+   * Sends on the messages a run took but ended without reading: it was
+   * stopped, it failed, or a message slipped past a run on another server
+   * instance as it finished. As in Claude Code, stopping a run sends what was
+   * queued next. Through the send line, so it cannot race a send on its way.
    */
   useEffect(() => {
-    if (state.running || state.stoppedByUser) return
-    const transcript = liveTranscriptRef.current
-    const lost = (entry: TranscriptEntry) =>
-      entry.role === 'user' &&
-      entry.pending &&
-      queuedIdsRef.current.has(entry.id)
-    if (!transcript.some(lost)) return
-    const revived = transcript.map(entry => {
-      if (!lost(entry)) return entry
-      queuedIdsRef.current.delete(entry.id)
-      const { pending: _pending, ...rest } = entry as Extract<
-        TranscriptEntry,
-        { role: 'user' }
-      >
-      return rest
+    if (state.running) return
+    const unread = () =>
+      liveTranscriptRef.current.some(
+        entry =>
+          entry.role === 'user' &&
+          entry.pending &&
+          queuedIdsRef.current.has(entry.id)
+      )
+    if (!unread()) return
+    void enqueueSend(async () => {
+      // A send ahead of this one may have started a run that took them
+      if (runningRef.current || !unread()) return
+      await startRunWith()
     })
-    setState(current => ({ ...current, transcript: revived }))
-    void run(revived)
-  }, [state.running, state.stoppedByUser, run, setState])
+  }, [state.running, enqueueSend, startRunWith])
+
+  // A queued message taken back lands in the composer to be edited
+  const [restoredDraft, setRestoredDraft] = useState<{ text: string } | null>(
+    null
+  )
+
+  /**
+   * Takes a queued message back into the composer, as Claude Code does, as
+   * long as no run has read it. One not yet handed to a run just leaves the
+   * line; one a run holds is asked back from that run first.
+   */
+  const takeBack = useCallback(
+    (entryId: string) => {
+      const queued = () => {
+        const entry = liveTranscriptRef.current.find(e => e.id === entryId)
+        return entry?.role === 'user' && entry.pending ? entry : null
+      }
+      const restore = (text: string) => {
+        updateTranscript(transcript =>
+          transcript.filter(entry => entry.id !== entryId)
+        )
+        setRestoredDraft({ text })
+      }
+
+      const entry = queued()
+      if (!entry) return
+      if (!queuedIdsRef.current.has(entryId)) {
+        if (waitingIdsRef.current.has(entryId)) {
+          takenBackIdsRef.current.add(entryId)
+        }
+        restore(entry.text)
+        return
+      }
+      void enqueueSend(async () => {
+        if (!queued() || !(await unqueueMessage(entryId))) return
+        // A run that ended may still have read it just before
+        const unread = queued()
+        if (!unread) return
+        queuedIdsRef.current.delete(entryId)
+        restore(unread.text)
+      })
+    },
+    [enqueueSend, unqueueMessage, updateTranscript]
+  )
 
   // The blocked run already committed its transcript, user entry included, so
   // resume it as-is; sending the prompt again would duplicate the message.
@@ -760,6 +919,9 @@ function AgentPanelInner({
    * reopening it replays the run from the start and picks up the rest.
    */
   const leaveChat = useCallback(() => {
+    // Sends still on their way belong to the chat being left
+    chatEpochRef.current += 1
+    queuedIdsRef.current.clear()
     const now = Date.now()
     // Moved forward by the time spent waiting on the user, which the clock
     // leaves out when the chat is reopened
@@ -938,10 +1100,9 @@ function AgentPanelInner({
                 pendingApprovalId={state.pendingApproval?.id ?? null}
                 approvalContext={approvalContext}
                 onDecision={onDecision}
-                isRunning={
-                  state.running && entryIndex === state.transcript.length - 1
-                }
+                isRunning={state.running && entryIndex === liveEntryIndex}
                 webSources={webSources}
+                onTakeBack={takeBack}
               />
             ))
           )}
@@ -957,8 +1118,8 @@ function AgentPanelInner({
               isPaused={Boolean(state.pendingApproval)}
               onWordChange={handleWordChange}
               blocks={(() => {
-                const last = state.running ? state.transcript.at(-1) : null
-                return last?.role === 'assistant' ? (last.blocks ?? []) : []
+                const live = state.transcript[liveEntryIndex]
+                return live?.role === 'assistant' ? (live.blocks ?? []) : []
               })()}
             />
           ) : completedRun &&
@@ -1052,7 +1213,7 @@ function AgentPanelInner({
                       type="button"
                       variant="secondary"
                       size="sm"
-                      onClick={() => void run(state.transcript)}
+                      onClick={() => void enqueueSend(() => startRunWith())}
                     >
                       {t('try_again', 'Try again')}
                     </OLButton>
@@ -1101,6 +1262,7 @@ function AgentPanelInner({
         attachedSelection={attachedSelection}
         setAttachedSelection={setAttachedSelection}
         history={promptHistory}
+        restoredDraft={restoredDraft}
       />
     </div>
   )

@@ -83,7 +83,7 @@ export function summariseToolCallActions(
         rejectedEdits++
         continue
       }
-      if (isCancelled || !call.result || (status && status !== 'applied')) {
+      if (isCancelled || (status && status !== 'applied')) {
         cancelledEdits++
         continue
       }
@@ -93,7 +93,7 @@ export function summariseToolCallActions(
         rejectedCreations++
         continue
       }
-      if (isCancelled || !call.result || (status && status !== 'applied')) {
+      if (isCancelled || (status && status !== 'applied')) {
         cancelledCreations++
         continue
       }
@@ -150,6 +150,9 @@ export function summariseToolCallActions(
   if (counts['create_file']) {
     const n = counts['create_file']
     parts.push(`created ${n} file${n > 1 ? 's' : ''}`)
+  }
+  if (counts['present_plan']) {
+    parts.push('presented plan')
   }
   if (rejectedEdits > 0) {
     parts.push(rejectedEdits === 1 ? '1 edit rejected' : `${rejectedEdits} edits rejected`)
