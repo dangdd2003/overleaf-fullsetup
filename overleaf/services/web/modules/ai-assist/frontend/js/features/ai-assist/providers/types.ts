@@ -60,6 +60,18 @@ export type WebSearchPrimaryProvider =
   | 'jina'
   | 'langsearch'
   | 'exa'
+  | 'mcp'
+
+export interface McpHeader {
+  key: string
+  value: string
+}
+
+export interface McpProviderConfig {
+  enabled: boolean
+  serverUrls: string[]
+  headers?: McpHeader[]
+}
 
 export interface OllamaProviderConfig {
   enabled: boolean
@@ -378,6 +390,7 @@ export interface MultiWebSearchSettings extends WebSearchPreferences {
     jina?: JinaProviderConfig
     langsearch?: LangsearchProviderConfig
     exa?: ExaProviderConfig
+    mcp?: McpProviderConfig
   }
   rotationStrategy?: WebSearchRotationStrategy
   primaryProvider?: WebSearchPrimaryProvider
@@ -393,6 +406,7 @@ export type LegacyWebSearchSettings = (
   | { type: 'jina'; apiKey: string }
   | { type: 'langsearch'; apiKey: string }
   | { type: 'exa'; apiKey: string }
+  | { type: 'mcp'; baseUrl: string; headers?: McpHeader[] }
 ) &
   WebSearchPreferences
 
@@ -422,6 +436,7 @@ export type WebSearchProviderType =
   | 'jina'
   | 'langsearch'
   | 'exa'
+  | 'mcp'
 
 export type Limits = {
   contextWindow: number

@@ -347,6 +347,97 @@ describe('AiAssistProviderController', function () {
       })
     })
 
+    it('tests MCP web search provider settings successfully in multi and single format', async function () {
+      const webSearchTester = sinon.stub().resolves({
+        latencyMs: 95,
+        resultCount: 4,
+        activeEndpoints: 1,
+        provider: 'mcp',
+      })
+      const controller = new AiAssistProviderController({
+        webSearchTester,
+      })
+
+      const res1 = fakeRes()
+      await controller.testWebSearch(
+        {
+          body: {
+            webSearchSettings: {
+              providers: {
+                mcp: {
+                  enabled: true,
+                  serverUrls: ['https://api.agentshop247.com/api/mcp'],
+                  headers: [{ key: 'Authorization', value: 'Bearer token' }],
+                },
+              },
+            },
+          },
+        },
+        res1
+      )
+      expect(res1.body).to.deep.equal({
+        latencyMs: 95,
+        resultCount: 4,
+        activeEndpoints: 1,
+        provider: 'mcp',
+      })
+
+      const res2 = fakeRes()
+      await controller.testWebSearch(
+        {
+          body: {
+            webSearchSettings: {
+              type: 'mcp',
+              baseUrl: 'https://api.agentshop247.com/api/mcp',
+            },
+          },
+        },
+        res2
+      )
+      expect(res2.body).to.deep.equal({
+        latencyMs: 95,
+        resultCount: 4,
+        activeEndpoints: 1,
+        provider: 'mcp',
+      })
+    })
+
+    it('allows testing configured provider in draft mode even when enabled is false', async function () {
+      const webSearchTester = sinon.stub().resolves({
+        latencyMs: 60,
+        resultCount: 2,
+        activeEndpoints: 1,
+        provider: 'mcp',
+      })
+      const controller = new AiAssistProviderController({
+        webSearchTester,
+      })
+      const res = fakeRes()
+
+      await controller.testWebSearch(
+        {
+          body: {
+            webSearchSettings: {
+              providers: {
+                mcp: {
+                  enabled: false,
+                  serverUrls: ['https://api.agentshop247.com/api/mcp'],
+                },
+              },
+            },
+          },
+        },
+        res
+      )
+
+      expect(res.body).to.deep.equal({
+        latencyMs: 60,
+        resultCount: 2,
+        activeEndpoints: 1,
+        provider: 'mcp',
+      })
+    })
+
     it('rejects testWebSearch without webSearchSettings', async function () {
       const controller = new AiAssistProviderController()
       const res = fakeRes()

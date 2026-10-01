@@ -82,6 +82,7 @@ export const WEB_SEARCH_PROVIDERS = [
   'jina',
   'langsearch',
   'exa',
+  'mcp',
 ]
 export const WEB_TOOL_NAMES = new Set(['web_search', 'web_fetch'])
 export const WEB_SEARCH_ROTATION_STRATEGIES = [
@@ -99,6 +100,7 @@ export const WEB_SEARCH_PRIMARY_PROVIDERS = [
   'jina',
   'langsearch',
   'exa',
+  'mcp',
 ]
 /** Providers that answer web_search. */
 export const SEARCH_PROVIDERS = new Set([
@@ -111,6 +113,7 @@ export const SEARCH_PROVIDERS = new Set([
   'jina',
   'langsearch',
   'exa',
+  'mcp',
 ])
 
 export const WEB_SEARCH_DEFAULTS = {
@@ -320,6 +323,26 @@ export function normalizeFirecrawlBaseUrl(raw) {
     .replace(/\/v[12](\/.*)?$/, '')
     .replace(/\/+$/, '')
   return parsed.toString().replace(/\/+$/, '')
+}
+
+export function normalizeMcpOptions(raw = {}) {
+  const rawHeaders = Array.isArray(raw?.headers) ? raw.headers : []
+  const headers = rawHeaders
+    .filter(
+      h =>
+        h &&
+        typeof h === 'object' &&
+        typeof h.key === 'string' &&
+        h.key.trim() &&
+        typeof h.value === 'string'
+    )
+    .map(h => ({
+      key: h.key.trim(),
+      value: h.value.trim(),
+    }))
+  return withoutUndefined({
+    headers: headers.length > 0 ? headers : undefined,
+  })
 }
 
 /**
@@ -810,7 +833,10 @@ export function normalizeExaOptions(raw = {}) {
   }
 }
 
-export function normalizeWebSearchSettings(raw) {
+export function normalizeWebSearchSettings(
+  raw,
+  { allowConfiguredOnly = false } = {}
+) {
   if (raw === null || raw === undefined) return null
   if (typeof raw !== 'object')
     throw settingsError('Invalid web search settings.')
@@ -858,6 +884,27 @@ export function normalizeWebSearchSettings(raw) {
       }
     }
 
+    if (type === 'mcp') {
+      const rawUrls = Array.isArray(raw.serverUrls)
+        ? raw.serverUrls
+        : raw.baseUrl ? [raw.baseUrl] : []
+      const serverUrls = rawUrls
+        .map(u => (typeof u === 'string' ? u.trim() : ''))
+        .filter(Boolean)
+      if (serverUrls.length === 0) {
+        throw settingsError('MCP web search needs the URL of your endpoint.')
+      }
+      for (const url of serverUrls) {
+        validateSafeProviderBaseUrl(url)
+      }
+      return {
+        type: 'mcp',
+        serverUrls,
+        ...normalizeMcpOptions(raw),
+        ...preferences,
+      }
+    }
+
     const apiKey = typeof raw.apiKey === 'string' ? raw.apiKey.trim() : ''
     if (!apiKey) {
       const label =
@@ -895,8 +942,10 @@ export function normalizeWebSearchSettings(raw) {
     const rawTavily = raw.providers.tavily
     const rawJina = raw.providers.jina
     const rawFirecrawl = raw.providers.firecrawl
+    const rawFirecrawlSelfHosted = raw.providers.firecrawlSelfHosted
     const rawLangsearch = raw.providers.langsearch
     const rawExa = raw.providers.exa
+    const rawMcp = raw.providers.mcp
     const readerKeys = raw =>
       Array.isArray(raw?.apiKeys)
         ? raw.apiKeys
@@ -934,7 +983,6 @@ export function normalizeWebSearchSettings(raw) {
       validateSafeProviderBaseUrl(url)
     }
 
-    const rawFirecrawlSelfHosted = raw.providers.firecrawlSelfHosted
     const firecrawlSelfHostedUrls = (
       Array.isArray(rawFirecrawlSelfHosted?.baseUrls)
         ? rawFirecrawlSelfHosted.baseUrls
@@ -946,29 +994,40 @@ export function normalizeWebSearchSettings(raw) {
       validateSafeProviderBaseUrl(url)
     }
 
-    const ollamaEnabled = Boolean(rawOllama?.enabled && ollamaKeys.length > 0)
+    const rawMcpServerUrls = Array.isArray(rawMcp?.serverUrls)
+      ? rawMcp.serverUrls
+      : []
+    const mcpServerUrls = rawMcpServerUrls
+      .map(u => (typeof u === 'string' ? u.trim() : ''))
+      .filter(Boolean)
+    for (const url of mcpServerUrls) {
+      validateSafeProviderBaseUrl(url)
+    }
+
+    let ollamaEnabled = Boolean(rawOllama?.enabled && ollamaKeys.length > 0)
     const ollamaMaxResults = Number.isInteger(rawOllama?.maxResults)
       ? Math.min(OLLAMA_MAX_RESULTS, Math.max(1, rawOllama.maxResults))
       : undefined
-    const searxngEnabled = Boolean(
+    let searxngEnabled = Boolean(
       rawSearxng?.enabled && searxngUrls.length > 0
     )
-    const websearchapiEnabled = Boolean(
+    let websearchapiEnabled = Boolean(
       rawWebsearchapi?.enabled && websearchapiKeys.length > 0
     )
 
-    const tavilyEnabled = Boolean(rawTavily?.enabled && tavilyKeys.length > 0)
-    const firecrawlEnabled = Boolean(
+    let tavilyEnabled = Boolean(rawTavily?.enabled && tavilyKeys.length > 0)
+    let firecrawlEnabled = Boolean(
       rawFirecrawl?.enabled && firecrawlKeys.length > 0
     )
-    const firecrawlSelfHostedEnabled = Boolean(
+    let firecrawlSelfHostedEnabled = Boolean(
       rawFirecrawlSelfHosted?.enabled && firecrawlSelfHostedUrls.length > 0
     )
-    const jinaEnabled = Boolean(rawJina?.enabled && jinaKeys.length > 0)
-    const langsearchEnabled = Boolean(
+    let jinaEnabled = Boolean(rawJina?.enabled && jinaKeys.length > 0)
+    let langsearchEnabled = Boolean(
       rawLangsearch?.enabled && langsearchKeys.length > 0
     )
-    const exaEnabled = Boolean(rawExa?.enabled && exaKeys.length > 0)
+    let exaEnabled = Boolean(rawExa?.enabled && exaKeys.length > 0)
+    let mcpEnabled = Boolean(rawMcp?.enabled && mcpServerUrls.length > 0)
 
     if (
       !ollamaEnabled &&
@@ -979,7 +1038,34 @@ export function normalizeWebSearchSettings(raw) {
       !firecrawlSelfHostedEnabled &&
       !jinaEnabled &&
       !langsearchEnabled &&
-      !exaEnabled
+      !exaEnabled &&
+      !mcpEnabled
+    ) {
+      if (allowConfiguredOnly || raw.forTest) {
+        ollamaEnabled = ollamaKeys.length > 0
+        searxngEnabled = searxngUrls.length > 0
+        websearchapiEnabled = websearchapiKeys.length > 0
+        tavilyEnabled = tavilyKeys.length > 0
+        firecrawlEnabled = firecrawlKeys.length > 0
+        firecrawlSelfHostedEnabled = firecrawlSelfHostedUrls.length > 0
+        jinaEnabled = jinaKeys.length > 0
+        langsearchEnabled = langsearchKeys.length > 0
+        exaEnabled = exaKeys.length > 0
+        mcpEnabled = mcpServerUrls.length > 0
+      }
+    }
+
+    if (
+      !ollamaEnabled &&
+      !searxngEnabled &&
+      !websearchapiEnabled &&
+      !tavilyEnabled &&
+      !firecrawlEnabled &&
+      !firecrawlSelfHostedEnabled &&
+      !jinaEnabled &&
+      !langsearchEnabled &&
+      !exaEnabled &&
+      !mcpEnabled
     ) {
       return null
     }
@@ -1013,7 +1099,9 @@ export function normalizeWebSearchSettings(raw) {
                     ? 'jina'
                     : langsearchEnabled
                       ? 'langsearch'
-                      : 'exa',
+                      : exaEnabled
+                        ? 'exa'
+                        : 'mcp',
       providers: {
         ollama: {
           enabled: ollamaEnabled,
@@ -1056,6 +1144,11 @@ export function normalizeWebSearchSettings(raw) {
           enabled: exaEnabled,
           apiKeys: exaKeys,
           ...normalizeExaOptions(rawExa),
+        },
+        mcp: {
+          enabled: mcpEnabled,
+          serverUrls: mcpServerUrls,
+          ...normalizeMcpOptions(rawMcp),
         },
         searxng: {
           enabled: searxngEnabled,
@@ -1197,6 +1290,17 @@ export function buildEndpointPool(settings) {
       })
     })
   }
+  if (settings?.providers?.mcp?.enabled) {
+    const { serverUrls = [], headers } = settings.providers.mcp
+    serverUrls.forEach((baseUrl, index) => {
+      pool.push({
+        id: `mcp:${index}`,
+        provider: 'mcp',
+        baseUrl,
+        ...(headers ? { headers } : {}),
+      })
+    })
+  }
   if (pool.length === 0) {
     if (settings?.type === 'searxng' && settings.baseUrl) {
       pool.push({
@@ -1310,6 +1414,178 @@ export function clearWebDocumentCache() {
 // ---------------------------------------------------------------------------
 // Search results
 // ---------------------------------------------------------------------------
+
+export function parseTextSearchResults(text, query) {
+  if (!text || typeof text !== 'string') return []
+  const raw = text.trim()
+  if (!raw) return []
+
+  const items = []
+
+  // Pattern 1: Numbered list format:
+  // 1. Title
+  //    https://example.com/link
+  //    Snippet text
+  // OR
+  // 1. https://example.com/bare-url
+  //    Snippet text
+  const numberedPattern =
+    /(?:^|\n)\s*(\d+)\.\s+(?:([^\n]+)\n\s*)?(https?:\/\/[^\s\]\)]+|\[https?:\/\/[^\]\)]+\])\n([\s\S]*?)(?=(?:\n\s*\d+\.|$))/g
+
+  let match
+  while ((match = numberedPattern.exec(raw)) !== null) {
+    const [, , rawTitle, rawUrl, snippet] = match
+    const url = rawUrl.replace(/^[\[\(]/, '').replace(/[\]\)]$/, '').trim()
+    const title = rawTitle && rawTitle.trim() ? rawTitle.trim() : url
+    items.push({
+      title,
+      url,
+      snippet: snippet.trim(),
+    })
+  }
+
+  // If numbered list matches found, normalize and return
+  if (items.length > 0) {
+    return normalizeResults(items, Number.MAX_SAFE_INTEGER, query)
+  }
+
+  // Pattern 2: Markdown links [Title](url) followed by optional snippet
+  const mdPattern =
+    /(?:^|\n)\s*(?:[-*]|\d+\.)?\s*\[([^\]]+)\]\((https?:\/\/[^)]+)\)(?:\s*[-:]\s*|\n+)?([\s\S]*?)(?=(?:\n\s*(?:[-*]|\d+\.)?\s*\[[^\]]+\]\(https?:|$))/g
+  while ((match = mdPattern.exec(raw)) !== null) {
+    const [, title, url, snippet] = match
+    items.push({
+      title: title.trim(),
+      url: url.trim(),
+      snippet: snippet.trim(),
+    })
+  }
+
+  if (items.length > 0) {
+    return normalizeResults(items, Number.MAX_SAFE_INTEGER, query)
+  }
+
+  // Pattern 3: Fallback - look for any URLs in text with preceding line as title
+  const lines = raw.split('\n')
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim()
+    const urlMatch = line.match(/^https?:\/\/[^\s]+$/)
+    if (urlMatch) {
+      const url = urlMatch[0]
+      const title = i > 0 ? lines[i - 1].replace(/^\d+\.\s*/, '').trim() : url
+      const snippet = i + 1 < lines.length ? lines[i + 1].trim() : ''
+      items.push({ title, url, snippet })
+    }
+  }
+
+  return normalizeResults(items, Number.MAX_SAFE_INTEGER, query)
+}
+
+export function extractMcpSearchResults(body, query) {
+  if (!body) return []
+
+  // If string, try JSON parse first; if not JSON or parsing fails, parse as plain text
+  if (typeof body === 'string') {
+    try {
+      const parsed = JSON.parse(body)
+      return extractMcpSearchResults(parsed, query)
+    } catch {
+      return parseTextSearchResults(body, query)
+    }
+  }
+
+  if (typeof body !== 'object') return []
+
+  // Case 1: body is an array of results
+  if (Array.isArray(body)) {
+    const normalized = normalizeResults(body, Number.MAX_SAFE_INTEGER, query)
+    if (normalized.length > 0) return normalized
+  }
+
+  // Case 2: standard structured JSON keys (results, organic, items, data, webPages)
+  const candidateArrays = [
+    body.results,
+    body.result?.results,
+    body.result?.organic,
+    body.result?.items,
+    body.organic,
+    body.items,
+    body.data?.results,
+    body.data?.webPages?.value,
+    body.data,
+  ]
+
+  for (const arr of candidateArrays) {
+    if (Array.isArray(arr)) {
+      const normalized = normalizeResults(arr, Number.MAX_SAFE_INTEGER, query)
+      if (normalized.length > 0) return normalized
+    }
+  }
+
+  // Case 3: MCP content blocks: result.content or content array
+  const contentBlocks = body.result?.content || body.content
+  if (Array.isArray(contentBlocks)) {
+    const extracted = []
+    for (const block of contentBlocks) {
+      if (typeof block?.text === 'string') {
+        const parsed = extractMcpSearchResults(block.text, query)
+        extracted.push(...parsed)
+      } else if (typeof block === 'string') {
+        const parsed = extractMcpSearchResults(block, query)
+        extracted.push(...parsed)
+      }
+    }
+    if (extracted.length > 0) {
+      return normalizeResults(extracted, Number.MAX_SAFE_INTEGER, query)
+    }
+  }
+
+  // Case 4: text / message / output field on body or result
+  const textFields = [
+    body.text,
+    body.result?.text,
+    body.message,
+    body.result?.message,
+    body.output,
+    body.result?.output,
+  ]
+  for (const txt of textFields) {
+    if (typeof txt === 'string' && txt.trim()) {
+      const parsed = extractMcpSearchResults(txt, query)
+      if (parsed.length > 0) return parsed
+    }
+  }
+
+  // Case 5: recursive tree search for any array of objects with url or text fields
+  const seenObjects = new Set()
+  function traverse(obj) {
+    if (!obj || typeof obj !== 'object' || seenObjects.has(obj)) return []
+    seenObjects.add(obj)
+
+    if (Array.isArray(obj)) {
+      const direct = normalizeResults(obj, Number.MAX_SAFE_INTEGER, query)
+      if (direct.length > 0) return direct
+      for (const item of obj) {
+        const res = traverse(item)
+        if (res.length > 0) return res
+      }
+    } else {
+      for (const key of Object.keys(obj)) {
+        const val = obj[key]
+        if (typeof val === 'string' && val.length > 20) {
+          const parsed = extractMcpSearchResults(val, query)
+          if (parsed.length > 0) return parsed
+        } else if (typeof val === 'object') {
+          const res = traverse(val)
+          if (res.length > 0) return res
+        }
+      }
+    }
+    return []
+  }
+
+  return traverse(body)
+}
 
 function normalizeResults(list, max, query) {
   const seen = new Set()
@@ -1576,6 +1852,8 @@ export class AiAssistWebTools {
               res = await this._langsearchSearch(query, signal, endpoint)
             } else if (provider === 'exa') {
               res = await this._exaSearch(query, signal, endpoint)
+            } else if (provider === 'mcp') {
+              res = await this._mcpSearch(query, signal, endpoint)
             } else {
               res = await this._ollamaSearch(query, signal, endpoint)
             }
@@ -2229,6 +2507,60 @@ export class AiAssistWebTools {
       publishedDate: entry?.publishedDate,
     }))
     return { results: normalizeResults(results, limit, query) }
+  }
+
+  /** MCP search endpoint */
+  async _mcpSearch(query, signal, endpoint) {
+    const baseUrl = endpoint?.baseUrl
+    const url = resolveDockerHostUrl(baseUrl)
+
+    const headers = {
+      'Content-Type': 'application/json',
+      Accept: 'application/json, text/plain, */*',
+    }
+
+    if (Array.isArray(endpoint?.headers)) {
+      for (const h of endpoint.headers) {
+        if (h && typeof h.key === 'string' && typeof h.value === 'string') {
+          headers[h.key] = h.value
+        }
+      }
+    } else if (endpoint?.headers && typeof endpoint.headers === 'object') {
+      for (const [key, value] of Object.entries(endpoint.headers)) {
+        if (typeof key === 'string' && typeof value === 'string') {
+          headers[key] = value
+        }
+      }
+    }
+
+    const res = await this._request(
+      url,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ q: query }),
+      },
+      signal,
+      'MCP Search',
+      'mcp'
+    )
+
+    let body
+    try {
+      const text = await res.text()
+      try {
+        body = JSON.parse(text)
+      } catch {
+        body = text
+      }
+    } catch {
+      throw webError('MCP search returned an unreadable response.')
+    }
+
+    const results = extractMcpSearchResults(body, query)
+    return {
+      results: normalizeResults(results, Number.MAX_SAFE_INTEGER, query),
+    }
   }
 
   /** SearXNG has no result count: every result the instance sends is kept. */

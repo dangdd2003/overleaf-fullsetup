@@ -140,6 +140,69 @@ if (serverWebSearchEnabled) {
     .map(k => k.trim())
     .filter(Boolean)
 
+  const mcpUrlsRaw =
+    process.env.AI_ASSIST_MCP_URLS ||
+    process.env.AI_ASSIST_MCP_URL ||
+    ''
+  const mcpUrls = mcpUrlsRaw
+    .split(',')
+    .map(u => u.trim())
+    .filter(u => {
+      if (!u) return false
+      try {
+        validateSafeProviderBaseUrl(u)
+        return true
+      } catch {
+        return false
+      }
+    })
+
+  let mcpHeaders = []
+  if (process.env.AI_ASSIST_MCP_HEADERS) {
+    try {
+      const parsed = JSON.parse(process.env.AI_ASSIST_MCP_HEADERS)
+      if (Array.isArray(parsed)) {
+        mcpHeaders = parsed
+          .filter(h => h && typeof h === 'object' && h.key && h.value)
+          .map(h => ({
+            key: String(h.key).trim(),
+            value: String(h.value).trim(),
+          }))
+      } else if (parsed && typeof parsed === 'object') {
+        mcpHeaders = Object.entries(parsed)
+          .map(([k, v]) => ({ key: String(k).trim(), value: String(v).trim() }))
+          .filter(h => h.key && h.value)
+      }
+    } catch {
+      mcpHeaders = process.env.AI_ASSIST_MCP_HEADERS
+        .split('\n')
+        .map(line => {
+          const idx = line.indexOf(':')
+          if (idx <= 0) return null
+          return {
+            key: line.slice(0, idx).trim(),
+            value: line.slice(idx + 1).trim(),
+          }
+        })
+        .filter(Boolean)
+    }
+  }
+
+  const mcpBearer = (
+    process.env.AI_ASSIST_MCP_BEARER_TOKEN ||
+    process.env.AI_ASSIST_MCP_API_KEY ||
+    ''
+  ).trim()
+  if (
+    mcpBearer &&
+    !mcpHeaders.some(h => h.key.toLowerCase() === 'authorization')
+  ) {
+    mcpHeaders.push({
+      key: 'Authorization',
+      value: `Bearer ${mcpBearer}`,
+    })
+  }
+
   const firecrawlSelfHostedUrls = (
     process.env.AI_ASSIST_FIRECRAWL_SELFHOSTED_URLS ||
     process.env.AI_ASSIST_FIRECRAWL_SELFHOSTED_URL ||
@@ -180,6 +243,7 @@ if (serverWebSearchEnabled) {
     'jina',
     'langsearch',
     'exa',
+    'mcp',
   ].includes(process.env.AI_ASSIST_WEB_SEARCH_PRIMARY_PROVIDER)
     ? process.env.AI_ASSIST_WEB_SEARCH_PRIMARY_PROVIDER
     : 'searxng'
@@ -194,6 +258,7 @@ if (serverWebSearchEnabled) {
   const jinaEnabled = jinaKeys.length > 0
   const langsearchEnabled = langsearchKeys.length > 0
   const exaEnabled = exaKeys.length > 0
+  const mcpEnabled = mcpUrls.length > 0
 
   if (
     searxngEnabled ||
@@ -204,7 +269,8 @@ if (serverWebSearchEnabled) {
     firecrawlSelfHostedEnabled ||
     jinaEnabled ||
     langsearchEnabled ||
-    exaEnabled
+    exaEnabled ||
+    mcpEnabled
   ) {
     serverWebSearch = {
       enabled: true,
@@ -246,6 +312,11 @@ if (serverWebSearchEnabled) {
         exa: {
           enabled: exaEnabled,
           apiKeys: exaKeys,
+        },
+        mcp: {
+          enabled: mcpEnabled,
+          serverUrls: mcpUrls,
+          ...(mcpHeaders.length > 0 ? { headers: mcpHeaders } : {}),
         },
       },
       rotationStrategy,

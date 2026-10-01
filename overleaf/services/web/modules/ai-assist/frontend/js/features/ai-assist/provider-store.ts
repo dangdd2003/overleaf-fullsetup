@@ -132,6 +132,30 @@ export function migrateLegacyWebSearchSettings(
       }
     }
 
+    if (type === 'mcp') {
+      const baseUrl = String(parsed.baseUrl ?? '').trim()
+      if (!baseUrl) return null
+      const headers = Array.isArray(parsed.headers)
+        ? parsed.headers
+            .filter((h: any) => h && typeof h === 'object' && typeof h.key === 'string' && typeof h.value === 'string')
+            .map((h: any) => ({ key: String(h.key).trim(), value: String(h.value).trim() }))
+            .filter((h: any) => h.key && h.value)
+        : undefined
+      return {
+        sourceMode: 'custom',
+        providers: {
+          mcp: {
+            enabled: true,
+            serverUrls: [baseUrl],
+            ...(headers && headers.length > 0 ? { headers } : {}),
+          },
+        },
+        rotationStrategy: 'round-robin',
+        primaryProvider: 'mcp',
+        ...preferences,
+      }
+    }
+
     const apiKey = String(parsed.apiKey ?? '').trim()
     if (!apiKey) return null
     if (
@@ -215,6 +239,19 @@ export function migrateLegacyWebSearchSettings(
           .filter(Boolean)
       : []
 
+    const mcpUrls = Array.isArray(parsed.providers.mcp?.serverUrls)
+      ? parsed.providers.mcp.serverUrls
+          .map((u: any) => String(u ?? '').trim())
+          .filter(Boolean)
+      : []
+
+    const mcpHeaders = Array.isArray(parsed.providers.mcp?.headers)
+      ? parsed.providers.mcp.headers
+          .filter((h: any) => h && typeof h === 'object' && typeof h.key === 'string' && typeof h.value === 'string')
+          .map((h: any) => ({ key: String(h.key).trim(), value: String(h.value).trim() }))
+          .filter((h: any) => h.key && h.value)
+      : undefined
+
     const ollamaEnabled = Boolean(
       parsed.providers.ollama?.enabled && ollamaKeys.length > 0
     )
@@ -251,6 +288,10 @@ export function migrateLegacyWebSearchSettings(
       parsed.providers.exa?.enabled && exaKeys.length > 0
     )
 
+    const mcpEnabled = Boolean(
+      parsed.providers.mcp?.enabled && mcpUrls.length > 0
+    )
+
     if (
       !ollamaEnabled &&
       !searxngEnabled &&
@@ -260,7 +301,8 @@ export function migrateLegacyWebSearchSettings(
       !firecrawlSelfHostedEnabled &&
       !jinaEnabled &&
       !langsearchEnabled &&
-      !exaEnabled
+      !exaEnabled &&
+      !mcpEnabled
     )
       return null
 
@@ -350,6 +392,13 @@ export function migrateLegacyWebSearchSettings(
             ? { read: parsed.providers.exa.read }
             : {}),
         },
+        mcp: {
+          enabled: mcpEnabled,
+          serverUrls: mcpUrls,
+          ...(mcpHeaders && mcpHeaders.length > 0
+            ? { headers: mcpHeaders }
+            : {}),
+        },
         searxng: {
           enabled: searxngEnabled,
           baseUrls: searxngUrls,
@@ -379,7 +428,8 @@ export function migrateLegacyWebSearchSettings(
         parsed.primaryProvider === 'firecrawlSelfHosted' ||
         parsed.primaryProvider === 'jina' ||
         parsed.primaryProvider === 'langsearch' ||
-        parsed.primaryProvider === 'exa'
+        parsed.primaryProvider === 'exa' ||
+        parsed.primaryProvider === 'mcp'
           ? parsed.primaryProvider
           : 'searxng',
       ...preferences,

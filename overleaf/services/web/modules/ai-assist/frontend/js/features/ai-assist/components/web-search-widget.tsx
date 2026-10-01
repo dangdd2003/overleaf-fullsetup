@@ -77,6 +77,12 @@ function statusSummary(settings: MultiWebSearchSettings) {
   if (exa?.enabled && exa.apiKeys?.length) {
     providers.push(`Exa (${plural(exa.apiKeys.length, 'API key')})`)
   }
+  const mcp = settings.providers?.mcp
+  if (mcp?.enabled && mcp.serverUrls?.length) {
+    providers.push(
+      `MCP WebSearch (${plural(mcp.serverUrls.length, 'custom endpoint')})`
+    )
+  }
 
   const primary =
     settings.primaryProvider === 'ollama'
@@ -95,7 +101,9 @@ function statusSummary(settings: MultiWebSearchSettings) {
                   ? 'LangSearch'
                   : settings.primaryProvider === 'exa'
                     ? 'Exa'
-                    : 'SearXNG'
+                    : settings.primaryProvider === 'mcp'
+                      ? 'MCP WebSearch'
+                      : 'SearXNG'
   const rotation =
     settings.rotationStrategy === 'provider-priority'
       ? `Searches go to ${primary} first, then the others.`

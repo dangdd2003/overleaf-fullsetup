@@ -11,6 +11,7 @@ export const SEARCH_CAPABLE = new Set([
   'jina',
   'langsearch',
   'exa',
+  'mcp',
 ])
 export const READ_CAPABLE = new Set([
   'ollama',

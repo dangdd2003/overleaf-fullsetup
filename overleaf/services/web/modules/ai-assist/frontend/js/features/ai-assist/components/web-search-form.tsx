@@ -40,6 +40,7 @@ import LangsearchOptions, {
   langsearchOptionsFromDraft,
 } from './langsearch-options'
 import ExaOptions, { draftFromExa, exaOptionsFromDraft } from './exa-options'
+import McpOptions, { draftFromMcp, mcpOptionsFromDraft } from './mcp-options'
 import { testWebSearch } from '../providers/server-client'
 import {
   ExaProviderConfig,
@@ -47,6 +48,7 @@ import {
   FirecrawlSelfHostedProviderConfig,
   JinaProviderConfig,
   LangsearchProviderConfig,
+  McpProviderConfig,
   MultiWebSearchSettings,
   ProviderError,
   SearxngProviderConfig,
@@ -74,6 +76,7 @@ const ALL_PROVIDERS: WebSearchProviderType[] = [
   'jina',
   'langsearch',
   'exa',
+  'mcp',
 ]
 
 function plural(count: number, noun: string, nouns = `${noun}s`) {
@@ -170,6 +173,16 @@ export default function WebSearchForm({
       ? { enabled: true, apiKeys: [(initial as any).apiKey] }
       : undefined
 
+  const initialMcp: McpProviderConfig | undefined = isMulti
+    ? (initial as MultiWebSearchSettings)?.providers?.mcp
+    : legacyType === 'mcp'
+      ? {
+          enabled: true,
+          serverUrls: [(initial as any).baseUrl],
+          headers: (initial as any).headers,
+        }
+      : undefined
+
   const [addedProviders, setAddedProviders] = useState<WebSearchProviderType[]>(
     () => {
       const list: WebSearchProviderType[] = []
@@ -246,6 +259,14 @@ export default function WebSearchForm({
           legacyType === 'exa')
       ) {
         list.push('exa')
+      }
+      if (
+        initialMcp &&
+        (initialMcp.enabled ||
+          (initialMcp.serverUrls && initialMcp.serverUrls.length > 0) ||
+          legacyType === 'mcp')
+      ) {
+        list.push('mcp')
       }
       return list
     }
@@ -394,6 +415,11 @@ export default function WebSearchForm({
   )
   const [exaDraft, setExaDraft] = useState(() => draftFromExa(initialExa))
 
+  const [mcpEnabled, setMcpEnabled] = useState(
+    initialMcp?.enabled ?? legacyType === 'mcp'
+  )
+  const [mcpDraft, setMcpDraft] = useState(() => draftFromMcp(initialMcp))
+
   const [probe, setProbe] = useState<Probe>({ state: 'idle' })
 
   const validSearxngUrls = searxngUrls.map(u => u.trim()).filter(Boolean)
@@ -410,6 +436,7 @@ export default function WebSearchForm({
   const validJinaKeys = jinaKeys.map(k => k.trim()).filter(Boolean)
   const validLangsearchKeys = langsearchKeys.map(k => k.trim()).filter(Boolean)
   const validExaKeys = exaKeys.map(k => k.trim()).filter(Boolean)
+  const validMcpUrls = mcpDraft.serverUrls.map(u => u.trim()).filter(Boolean)
 
   const isProviderValid = useCallback(
     (type: WebSearchProviderType) => {
@@ -435,6 +462,8 @@ export default function WebSearchForm({
           return langsearchEnabled && validLangsearchKeys.length > 0
         case 'exa':
           return exaEnabled && validExaKeys.length > 0
+        case 'mcp':
+          return mcpEnabled && validMcpUrls.length > 0
         default:
           return false
       }
@@ -458,6 +487,8 @@ export default function WebSearchForm({
       validLangsearchKeys.length,
       exaEnabled,
       validExaKeys.length,
+      mcpEnabled,
+      validMcpUrls.length,
     ]
   )
 
@@ -482,6 +513,8 @@ export default function WebSearchForm({
           return validLangsearchKeys.length > 0
         case 'exa':
           return validExaKeys.length > 0
+        case 'mcp':
+          return validMcpUrls.length > 0
         default:
           return false
       }
@@ -496,6 +529,7 @@ export default function WebSearchForm({
       validJinaKeys.length,
       validLangsearchKeys.length,
       validExaKeys.length,
+      validMcpUrls.length,
     ]
   )
 
@@ -639,6 +673,13 @@ export default function WebSearchForm({
       }
     }
 
+    if (effectiveProviders.includes('mcp')) {
+      providers.mcp = {
+        enabled: addedProviders.includes('mcp') ? mcpEnabled : true,
+        ...mcpOptionsFromDraft(mcpDraft),
+      }
+    }
+
     const effectivePrimary = effectiveProviders.includes(primaryProvider)
       ? primaryProvider
       : effectiveProviders[0] || 'searxng'
@@ -683,6 +724,8 @@ export default function WebSearchForm({
     exaEnabled,
     validExaKeys,
     exaDraft,
+    mcpEnabled,
+    mcpDraft,
     primaryProvider,
     rotationStrategy,
   ])
@@ -690,8 +733,17 @@ export default function WebSearchForm({
   const onTest = useCallback(async () => {
     setProbe({ state: 'busy' })
     try {
+      const payload = current()
+      const hasAnyEnabled = Object.values(payload.providers).some(
+        p => (p as any)?.enabled
+      )
+      if (!hasAnyEnabled) {
+        for (const p of Object.values(payload.providers)) {
+          if (p) (p as any).enabled = true
+        }
+      }
       const { latencyMs, activeEndpoints, provider } =
-        await testWebSearch(current())
+        await testWebSearch(payload)
       const details = [
         `Search answered in ${latencyMs} ms`,
         provider ? `via ${provider}` : null,
@@ -747,6 +799,9 @@ export default function WebSearchForm({
         case 'exa':
           setExaEnabled(enabled)
           break
+        case 'mcp':
+          setMcpEnabled(enabled)
+          break
       }
     },
     []
@@ -783,6 +838,9 @@ export default function WebSearchForm({
         break
       case 'exa':
         setExaEnabled(true)
+        break
+      case 'mcp':
+        setMcpEnabled(true)
         break
     }
     setIsAddingProvider(false)
@@ -848,6 +906,10 @@ export default function WebSearchForm({
           setExaKeys([''])
           setExaDraft(draftFromExa(undefined))
           break
+        case 'mcp':
+          setMcpEnabled(false)
+          setMcpDraft(draftFromMcp(undefined))
+          break
       }
     },
     [primaryProvider]
@@ -892,6 +954,10 @@ export default function WebSearchForm({
           return validExaKeys.length > 0
             ? plural(validExaKeys.length, 'API key')
             : 'No API keys'
+        case 'mcp':
+          return validMcpUrls.length > 0
+            ? plural(validMcpUrls.length, 'custom endpoint')
+            : 'No custom endpoints'
       }
     },
     [
@@ -904,6 +970,7 @@ export default function WebSearchForm({
       validJinaKeys.length,
       validLangsearchKeys.length,
       validExaKeys.length,
+      validMcpUrls.length,
     ]
   )
 
@@ -928,6 +995,8 @@ export default function WebSearchForm({
           return langsearchEnabled
         case 'exa':
           return exaEnabled
+        case 'mcp':
+          return mcpEnabled
       }
     },
     [
@@ -940,6 +1009,7 @@ export default function WebSearchForm({
       jinaEnabled,
       langsearchEnabled,
       exaEnabled,
+      mcpEnabled,
     ]
   )
 
@@ -1254,6 +1324,16 @@ export default function WebSearchForm({
               }}
             />
           </>
+        )
+      case 'mcp':
+        return (
+          <McpOptions
+            value={mcpDraft}
+            onChange={next => {
+              setMcpDraft(next)
+              setProbe({ state: 'idle' })
+            }}
+          />
         )
     }
   }

@@ -84,7 +84,9 @@ export class AiAssistProviderController {
           status: 400,
         })
       } else {
-        settings = normalizeWebSearchSettings(clientSettings)
+        settings = normalizeWebSearchSettings(clientSettings, {
+          allowConfiguredOnly: true,
+        })
       }
       if (!settings) {
         throw new ProviderError('No web search providers are configured.', {

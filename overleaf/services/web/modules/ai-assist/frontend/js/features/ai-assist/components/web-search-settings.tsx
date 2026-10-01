@@ -26,6 +26,7 @@ export const WEB_SEARCH_LABELS: Record<WebSearchProviderType, string> = {
   jina: 'Jina AI',
   langsearch: 'LangSearch',
   exa: 'Exa',
+  mcp: 'MCP WebSearch',
 }
 
 export const WEB_SEARCH_NOTES: Record<WebSearchProviderType, string> = {
@@ -45,6 +46,7 @@ export const WEB_SEARCH_NOTES: Record<WebSearchProviderType, string> = {
   langsearch:
     'Hosted search through api.langsearch.com. Search uses credits; pages are read by this server.',
   exa: 'Hosted neural and keyword search and page reading through api.exa.ai. Every search and page read uses credits.',
+  mcp: 'Custom POST endpoint accepting {q} JSON and returning search results, or remote MCP WebSearch server.',
 }
 
 /**
@@ -150,6 +152,16 @@ export const WEB_SEARCH_LINKS: Record<
       { label: 'Website', href: 'https://exa.ai' },
       { label: 'API docs', href: 'https://docs.exa.ai' },
       { label: 'Get API keys', href: 'https://dashboard.exa.ai/api-keys' },
+    ],
+  },
+  mcp: {
+    icon: 'https://modelcontextprotocol.io',
+    links: [
+      { label: 'MCP Documentation', href: 'https://modelcontextprotocol.io' },
+      {
+        label: 'Connectors Guide',
+        href: 'https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool',
+      },
     ],
   },
 }
