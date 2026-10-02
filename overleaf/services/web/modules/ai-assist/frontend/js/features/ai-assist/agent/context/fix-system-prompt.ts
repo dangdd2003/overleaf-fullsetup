@@ -67,6 +67,9 @@ const FIX_WEB_INTRO = [
 ]
 
 const FIX_WEB_CLOSE = [
+  '- web_fetch returns one page of a long document. To find the error,',
+  '  command or option in it, call web_fetch with find rather than reading',
+  '  page by page.',
   '- This is one fix, not research. As soon as you know the fix, make the edit.',
   '- The newest documentation may describe a version this project does not',
   '  build with; fix for the environment the project actually uses.',

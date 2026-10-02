@@ -176,8 +176,8 @@ describe('PDF reading', function () {
       server.close()
     })
 
-    it('downloads files without truncation by default, and honors explicit caps when given', async function () {
-      expect(MAX_PDF_BYTES).to.equal(Infinity)
+    it('downloads files under the default caps whole, and honors explicit caps when given', async function () {
+      expect(MAX_PDF_BYTES).to.equal(128 * 1024 * 1024)
       const pdf = await fetchPublicUrl(
         `http://files.example.test:${port}/doc.pdf`,
         {

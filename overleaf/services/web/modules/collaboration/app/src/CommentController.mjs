@@ -6,6 +6,7 @@ import SessionManager from '../../../../app/src/Features/Authentication/SessionM
 import UserInfoManager from '../../../../app/src/Features/User/UserInfoManager.mjs'
 import UserInfoController from '../../../../app/src/Features/User/UserInfoController.mjs'
 import ChatManager from '../../../../app/src/Features/Chat/ChatManager.mjs'
+import DocumentUpdaterHandler from '../../../../app/src/Features/DocumentUpdater/DocumentUpdaterHandler.mjs'
 
 async function getThreads(req, res) {
   const { project_id: projectId } = req.params
@@ -62,10 +63,26 @@ async function sendComment(req, res) {
   res.json(message)
 }
 
+// The /doc/:doc_id/ variants also update the comment range held by
+// document-updater (resolved state in history, range removal on delete); the
+// doc-less variants only touch the chat thread.
+
 async function resolveThread(req, res) {
-  const { project_id: projectId, thread_id: threadId } = req.params
+  const {
+    project_id: projectId,
+    doc_id: docId,
+    thread_id: threadId,
+  } = req.params
   const userId = SessionManager.getLoggedInUserId(req.session)
   await ChatApiHandler.promises.resolveThread(projectId, threadId, userId)
+  if (docId) {
+    await DocumentUpdaterHandler.promises.resolveThread(
+      projectId,
+      docId,
+      threadId,
+      userId
+    )
+  }
 
   const user = await UserInfoManager.promises.getPersonalInfo(userId)
   const formattedUser = user
@@ -83,8 +100,21 @@ async function resolveThread(req, res) {
 }
 
 async function reopenThread(req, res) {
-  const { project_id: projectId, thread_id: threadId } = req.params
+  const {
+    project_id: projectId,
+    doc_id: docId,
+    thread_id: threadId,
+  } = req.params
+  const userId = SessionManager.getLoggedInUserId(req.session)
   await ChatApiHandler.promises.reopenThread(projectId, threadId)
+  if (docId) {
+    await DocumentUpdaterHandler.promises.reopenThread(
+      projectId,
+      docId,
+      threadId,
+      userId
+    )
+  }
 
   // Emits socket 'reopen-thread' with (threadId) to match frontend threads-context.tsx
   EditorRealTimeController.emitToRoom(projectId, 'reopen-thread', threadId)
@@ -92,7 +122,22 @@ async function reopenThread(req, res) {
 }
 
 async function deleteThread(req, res) {
-  const { project_id: projectId, thread_id: threadId } = req.params
+  const {
+    project_id: projectId,
+    doc_id: docId,
+    thread_id: threadId,
+  } = req.params
+  const userId = SessionManager.getLoggedInUserId(req.session)
+  // drop the range before the thread so a failure never leaves a comment
+  // range pointing at a deleted thread
+  if (docId) {
+    await DocumentUpdaterHandler.promises.deleteThread(
+      projectId,
+      docId,
+      threadId,
+      userId
+    )
+  }
   await ChatApiHandler.promises.deleteThread(projectId, threadId)
 
   // Emits socket 'delete-thread' with (threadId) to match frontend threads-context.tsx

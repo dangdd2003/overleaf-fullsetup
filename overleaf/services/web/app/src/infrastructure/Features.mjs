@@ -107,7 +107,10 @@ const Features = {
       case 'symbol-palette':
         return symbolPaletteModuleAvailable
       case 'track-changes':
-        return trackChangesModuleAvailable
+        // Server Pro's module, or this fork's env-gated collaboration module
+        return (
+          trackChangesModuleAvailable || Boolean(Settings.enableCollaboration)
+        )
       default:
         throw new Error(`unknown feature: ${feature}`)
     }

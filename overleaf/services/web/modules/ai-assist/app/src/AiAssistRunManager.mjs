@@ -13,6 +13,7 @@ import { renderToolResult, withNotice } from './AiAssistToolRender.mjs'
 import { systemBlocksFor, joinSystemBlocks, systemPromptFor } from './AiAssistSystemPrompt.mjs'
 import { coerceToolArgs } from './AiAssistToolSchema.mjs'
 import { AiAssistWebTools, WEB_TOOL_NAMES } from './AiAssistWebTools.mjs'
+import { cacheKeyFor } from './web-fetch/urls.mjs'
 import {
   decide,
   toolSpecsFor,
@@ -356,6 +357,13 @@ export const FAILED_TURN_LIMIT = 4
 // Web calls for one instruction after which the model is told, once, to answer
 // with what it has. Nothing is blocked: a hard question may need more.
 export const WEB_CALL_NUDGE = 8
+
+/** The document a web_fetch call reads, however the model spelled its URL. */
+function fetchedPageKey(args) {
+  const raw = typeof args?.url === 'string' ? args.url.trim() : ''
+  if (!raw) return ''
+  return cacheKeyFor(/^[a-z][a-z0-9+.-]*:/i.test(raw) ? raw : `https://${raw}`)
+}
 
 export function estimateTokens(text) {
   return Math.ceil(
@@ -704,7 +712,11 @@ export class AiAssistRunManager {
     approvalTimeoutMs = null,
     compileTimeoutMs = null,
     webToolsFactory = (settings, { userId, contextWindow } = {}) =>
-      new AiAssistWebTools(settings, { cacheOwner: userId, contextWindow }),
+      new AiAssistWebTools(settings, {
+        cacheOwner: userId,
+        contextWindow,
+        prefetch: Settings.aiAssist?.webPrefetchResults,
+      }),
   } = {}) {
     this.store = store
     this.tools = tools
@@ -1050,6 +1062,9 @@ export class AiAssistRunManager {
       const failedCallSignatures = new Map()
       const recentCallSignatures = []
       let webCalls = 0
+      // Documents web_fetch has read this run: more pages or a find of one
+      // come from the cache, so they do not count towards WEB_CALL_NUDGE
+      const fetchedPages = new Set()
       let shouldStop = false
       let userDeclinedEdit = false
       // The user reads the reply, not the tool cards. A model that spends the
@@ -1593,9 +1608,14 @@ export class AiAssistRunManager {
             )
             liveRun.modeNotice = null
           }
+          const fetched =
+            call.name === 'web_fetch' ? fetchedPageKey(call.args) : ''
+          const readingOn = Boolean(fetched) && fetchedPages.has(fetched)
+          if (fetched && !isFailed) fetchedPages.add(fetched)
           if (
             webTools &&
             WEB_TOOL_NAMES.has(call.name) &&
+            !readingOn &&
             ++webCalls === WEB_CALL_NUDGE
           ) {
             notices.push(

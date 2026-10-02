@@ -1,4 +1,5 @@
 import logger from '@overleaf/logger'
+import Settings from '@overleaf/settings'
 import './ModuleSettings.mjs'
 import SessionManager from '../../../../app/src/Features/Authentication/SessionManager.mjs'
 import { AiAssistWebTools, WEB_TOOL_NAMES } from './AiAssistWebTools.mjs'
@@ -34,7 +35,11 @@ function knownCallsFrom(raw) {
 export class AiAssistWebToolsController {
   constructor({
     webToolsFactory = (settings, { userId, contextWindow } = {}) =>
-      new AiAssistWebTools(settings, { cacheOwner: userId, contextWindow }),
+      new AiAssistWebTools(settings, {
+        cacheOwner: userId,
+        contextWindow,
+        prefetch: Settings.aiAssist?.webPrefetchResults,
+      }),
   } = {}) {
     this.webToolsFactory = webToolsFactory
   }

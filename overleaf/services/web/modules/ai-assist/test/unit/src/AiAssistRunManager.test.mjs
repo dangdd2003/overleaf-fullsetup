@@ -2549,6 +2549,57 @@ describe('AiAssistRunManager', function () {
         expect(webTools.execute.callCount).to.equal(WEB_CALL_NUDGE + 1)
       })
 
+      it('does not count more pages or finds of a document already read', async function () {
+        webTools.getToolSpecs = () => [
+          {
+            name: 'web_fetch',
+            description: 'd',
+            parameters: {
+              type: 'object',
+              properties: { url: { type: 'string' } },
+            },
+          },
+        ]
+        webTools.execute = sinon.stub().callsFake(async (name, args) => ({
+          url: 'https://docs.example.org/manual',
+          page: args.page ?? 1,
+          totalPages: 20,
+          content: 'text',
+        }))
+        let turn = 0
+        mockClient.streamChat.callsFake(async function* (opts) {
+          turn++
+          sent.push(opts.messages.map(m => ({ ...m })))
+          if (turn <= WEB_CALL_NUDGE + 2) {
+            yield {
+              type: 'tool_call',
+              id: `f${turn}`,
+              name: 'web_fetch',
+              // The first read spells the address loosely; the rest page on
+              args:
+                turn === 1
+                  ? { url: 'docs.example.org/manual#units' }
+                  : turn % 2
+                    ? { url: 'https://docs.example.org/manual', page: turn }
+                    : { url: 'https://www.docs.example.org/manual/', find: `t${turn}` },
+            }
+          } else {
+            yield { type: 'text', text: 'Done.' }
+          }
+        })
+
+        await start('run-web-paging', {
+          webSearchSettings: { type: 'ollama', apiKey: 'k' },
+        })
+
+        const results = sent
+          .at(-1)
+          .filter(m => m.role === 'tool' && m.name === 'web_fetch')
+          .map(m => m.content)
+        expect(results).to.have.length(WEB_CALL_NUDGE + 2)
+        expect(results.filter(content => content.includes(NUDGE))).to.be.empty
+      })
+
       it('starts the count again for a message queued during the run', async function () {
         let turn = 0
         mockClient.streamChat.callsFake(async function* (opts) {

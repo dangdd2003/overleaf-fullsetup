@@ -8,6 +8,7 @@ const {
   mockUserInfoManager,
   mockUserInfoController,
   mockChatManager,
+  mockDocumentUpdaterHandler,
 } = vi.hoisted(() => {
   const mockModules = {
     promises: {
@@ -52,7 +53,15 @@ const {
       injectUserInfoIntoThreads: vi.fn().mockResolvedValue(),
     },
   }
+  const mockDocumentUpdaterHandler = {
+    promises: {
+      resolveThread: vi.fn(),
+      reopenThread: vi.fn(),
+      deleteThread: vi.fn(),
+    },
+  }
   return {
+    mockDocumentUpdaterHandler,
     mockModules,
     mockChatApiHandler,
     mockEditorRealTimeController,
@@ -86,6 +95,11 @@ vi.mock('../../../../../app/src/Features/User/UserInfoController.mjs', () => ({
 vi.mock('../../../../../app/src/Features/Chat/ChatManager.mjs', () => ({
   default: mockChatManager,
 }))
+
+vi.mock(
+  '../../../../../app/src/Features/DocumentUpdater/DocumentUpdaterHandler.mjs',
+  () => ({ default: mockDocumentUpdaterHandler })
+)
 
 const CommentController = (
   await import('../../../app/src/CommentController.mjs')
@@ -290,6 +304,85 @@ describe('CommentController', () => {
         't1'
       )
       expect(res.sendStatus).toHaveBeenCalledWith(204)
+    })
+  })
+
+  describe('thread state with a doc', () => {
+    const params = { project_id: 'proj1', doc_id: 'doc1', thread_id: 'th1' }
+
+    beforeEach(() => {
+      mockSessionManager.getLoggedInUserId.mockReturnValue('user1')
+      mockUserInfoManager.promises.getPersonalInfo.mockResolvedValue({
+        _id: 'user1',
+      })
+    })
+
+    it('resolveThread also marks the comment resolved in document-updater', async () => {
+      const { req, res } = createMockReqRes({ req: { params } })
+      await CommentController.resolveThread(req, res)
+      expect(mockChatApiHandler.promises.resolveThread).toHaveBeenCalledWith(
+        'proj1',
+        'th1',
+        'user1'
+      )
+      expect(
+        mockDocumentUpdaterHandler.promises.resolveThread
+      ).toHaveBeenCalledWith('proj1', 'doc1', 'th1', 'user1')
+      expect(res.sendStatus).toHaveBeenCalledWith(204)
+    })
+
+    it('reopenThread also reopens the comment in document-updater', async () => {
+      const { req, res } = createMockReqRes({ req: { params } })
+      await CommentController.reopenThread(req, res)
+      expect(
+        mockDocumentUpdaterHandler.promises.reopenThread
+      ).toHaveBeenCalledWith('proj1', 'doc1', 'th1', 'user1')
+      expect(mockEditorRealTimeController.emitToRoom).toHaveBeenCalledWith(
+        'proj1',
+        'reopen-thread',
+        'th1'
+      )
+    })
+
+    it('deleteThread removes the comment range before the chat thread', async () => {
+      const calls = []
+      mockDocumentUpdaterHandler.promises.deleteThread.mockImplementation(
+        async () => calls.push('doc-updater')
+      )
+      mockChatApiHandler.promises.deleteThread.mockImplementation(async () =>
+        calls.push('chat')
+      )
+      const { req, res } = createMockReqRes({ req: { params } })
+      await CommentController.deleteThread(req, res)
+      expect(calls).toEqual(['doc-updater', 'chat'])
+      expect(
+        mockDocumentUpdaterHandler.promises.deleteThread
+      ).toHaveBeenCalledWith('proj1', 'doc1', 'th1', 'user1')
+    })
+
+    it('does not delete the chat thread if the range removal fails', async () => {
+      mockDocumentUpdaterHandler.promises.deleteThread.mockRejectedValue(
+        new Error('boom')
+      )
+      const { req, res } = createMockReqRes({ req: { params } })
+      const next = vi.fn()
+      await CommentController.deleteThread(req, res, next)
+      expect(mockChatApiHandler.promises.deleteThread).not.toHaveBeenCalled()
+      expect(mockEditorRealTimeController.emitToRoom).not.toHaveBeenCalled()
+    })
+
+    it('doc-less routes leave document-updater alone', async () => {
+      const { req, res } = createMockReqRes({
+        req: { params: { project_id: 'proj1', thread_id: 'th1' } },
+      })
+      await CommentController.resolveThread(req, res)
+      await CommentController.deleteThread(req, res)
+      expect(
+        mockDocumentUpdaterHandler.promises.resolveThread
+      ).not.toHaveBeenCalled()
+      expect(
+        mockDocumentUpdaterHandler.promises.deleteThread
+      ).not.toHaveBeenCalled()
     })
   })
 

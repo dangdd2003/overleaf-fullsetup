@@ -14,9 +14,14 @@ import { curlFetch, isCurlImpersonateAvailable } from './curl.mjs'
  * so a DNS answer that changes between check and connect cannot slip through.
  */
 
-export const MAX_DOWNLOAD_BYTES = Infinity
-/** Unlimited download for pages and papers */
-export const MAX_PDF_BYTES = Infinity
+/**
+ * The most of one page held in memory, after decompression. Any book or
+ * manual fits; past this a download is cut and the document marked
+ * truncated, so a huge file cannot exhaust the web process's memory.
+ */
+export const MAX_DOWNLOAD_BYTES = 64 * 1024 * 1024
+/** PDFs carry fonts and images besides their text, so they get more room */
+export const MAX_PDF_BYTES = 128 * 1024 * 1024
 const MAX_REDIRECTS = 5
 export const REQUEST_TIMEOUT_MS = 20_000
 export const USER_AGENT = 'Mozilla/5.0 (compatible; OverleafAIAssist/1.0)'

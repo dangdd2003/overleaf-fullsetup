@@ -1,6 +1,7 @@
 import { describe, it } from 'vitest'
 import { expect } from 'chai'
 import {
+  MAX_DOCUMENT_CHARS,
   makeDocument,
   outline,
   pageCharsFor,
@@ -9,6 +10,31 @@ import {
 } from '../../../../app/src/web-fetch/document.mjs'
 import { findPassages } from '../../../../app/src/web-fetch/find.mjs'
 import { lintMarkdown } from './helpers/lintMarkdown.mjs'
+
+describe('document size', function () {
+  it('cuts a text past the limit at a line break and marks it truncated', function () {
+    const line = 'Once upon a time there lived a reader.\n'
+    const doc = makeDocument({
+      url: 'https://a.org/novel',
+      title: 'Novel',
+      text: line.repeat(Math.ceil((MAX_DOCUMENT_CHARS * 1.4) / line.length)),
+      format: 'text',
+    })
+    expect(doc.text.length).to.be.at.most(MAX_DOCUMENT_CHARS)
+    expect(doc.text.endsWith('reader.')).to.equal(true)
+    expect(doc.truncated).to.equal(true)
+  })
+
+  it('keeps a text under the limit whole', function () {
+    const doc = makeDocument({
+      url: 'https://a.org/a',
+      title: 'A',
+      text: 'word '.repeat(200_000),
+      format: 'text',
+    })
+    expect(doc.truncated).to.equal(false)
+  })
+})
 
 describe('document paging', function () {
   it('fits the page size to the model', function () {

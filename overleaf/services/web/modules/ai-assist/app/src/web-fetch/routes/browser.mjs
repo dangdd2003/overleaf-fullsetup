@@ -1,5 +1,6 @@
 import Settings from '@overleaf/settings'
 import { ProviderError } from '../../AiAssistProviders.mjs'
+import { MAX_DOWNLOAD_BYTES, MAX_PDF_BYTES } from '../transport.mjs'
 import { describeStatus, safeDecodeURI, webError } from '../util.mjs'
 
 /**
@@ -13,6 +14,34 @@ const UNAVAILABLE_MS = 30_000
 
 function cancelled() {
   return new ProviderError('Request was cancelled', { code: 'aborted' })
+}
+
+/**
+ * A response body of at most `limit` bytes, read as it streams in, so a huge
+ * page is cut on arrival instead of after it fills memory.
+ */
+async function readCapped(res, limit) {
+  const reader = res.body?.getReader?.()
+  if (!reader) {
+    const whole = Buffer.from(await res.arrayBuffer())
+    return whole.length > limit
+      ? { body: whole.subarray(0, limit), cut: true }
+      : { body: whole, cut: false }
+  }
+  const chunks = []
+  let size = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    if (size + value.length > limit) {
+      chunks.push(Buffer.from(value.subarray(0, limit - size)))
+      await reader.cancel().catch(() => {})
+      return { body: Buffer.concat(chunks), cut: true }
+    }
+    chunks.push(Buffer.from(value))
+    size += value.length
+  }
+  return { body: Buffer.concat(chunks), cut: false }
 }
 
 export class BrowserRoute {
@@ -98,13 +127,17 @@ export class BrowserRoute {
       })
     }
 
-    const arrayBuf = await res.arrayBuffer()
+    const contentType =
+      res.headers.get('content-type') || 'text/html; charset=utf-8'
+    const { body, cut } = await readCapped(
+      res,
+      /pdf/i.test(contentType) ? MAX_PDF_BYTES : MAX_DOWNLOAD_BYTES
+    )
     return {
       url: safeDecodeURI(res.headers.get('x-page-url') || targetUrl),
-      contentType:
-        res.headers.get('content-type') || 'text/html; charset=utf-8',
-      body: Buffer.from(arrayBuf),
-      truncated: res.headers.get('x-page-truncated') === '1',
+      contentType,
+      body,
+      truncated: cut || res.headers.get('x-page-truncated') === '1',
     }
   }
 

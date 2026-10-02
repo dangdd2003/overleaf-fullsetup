@@ -78,6 +78,16 @@ describe('AiAssistSystemPrompt', function () {
     )
   })
 
+  it('tells the model one page is not the whole document', function () {
+    for (const text of [WEB_TOOLS_PROMPT, WEB_FETCH_PROMPT]) {
+      const flat = text.replace(/\n\s*/g, ' ')
+      expect(flat).to.include('returns one page of a long document per call')
+      expect(flat).to.include(
+        'Never say a source lacks something while pages of it are unread'
+      )
+    }
+  })
+
   it('joins the blocks with a blank line', function () {
     expect(joinSystemBlocks({ shared: 'A', instructions: null })).to.equal('A')
     expect(joinSystemBlocks({ shared: 'A', instructions: 'B' })).to.equal(

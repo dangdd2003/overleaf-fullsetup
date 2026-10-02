@@ -336,6 +336,11 @@ Settings.aiAssist = {
   cacheHours,
   maxCachedSearches,
   maxCachedPages,
+  // Top search results web_fetch starts reading in the background; 0 is off
+  webPrefetchResults: Math.max(
+    0,
+    intFromEnv('AI_ASSIST_WEB_PREFETCH_RESULTS', 3)
+  ),
   // The headless-browser sidecar (services/overleaf-browser); unset leaves it out
   browser: (() => {
     const obj = {

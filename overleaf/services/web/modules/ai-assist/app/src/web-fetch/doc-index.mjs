@@ -34,7 +34,15 @@ const TOP_HITS = 200
 /** An index let go stays usable this long for a find still running on it. */
 const CLOSE_DELAY_MS = 60_000
 
+/** Short documents' page maps and search sources kept, by count and size. */
+const MAX_SMALL_INDEXES = 32
+// A search source holds a few times its text, so this is ~100 MB at most
+const MAX_SMALL_CHARS = 16_000_000
+
 const open = new Map()
+// identity:size -> { chars, map, source } for documents read in memory
+const small = new Map()
+let smallChars = 0
 let folder = null
 
 function isRunning(pid) {
@@ -286,14 +294,33 @@ export async function documentIndex(
   { runJob = runExtractJob } = {}
 ) {
   if (doc.text.length < INDEXED_DOCUMENT_CHARS) {
-    let source = null
-    return {
-      map: pageMap(doc.text, size),
-      get source() {
-        source ??= memorySource(doc)
-        return source
-      },
+    // Paged and scanned in memory, once per document and page size: the next
+    // page or find of it reuses both
+    const key = `${identity(doc)}:${size}`
+    let entry = small.get(key)
+    if (entry) {
+      small.delete(key)
+    } else {
+      let source = null
+      entry = {
+        chars: doc.text.length,
+        map: pageMap(doc.text, size),
+        get source() {
+          source ??= memorySource(doc)
+          return source
+        },
+      }
+      smallChars += entry.chars
     }
+    small.set(key, entry)
+    for (const [oldest, stale] of small) {
+      if (small.size <= MAX_SMALL_INDEXES && smallChars <= MAX_SMALL_CHARS) {
+        break
+      }
+      small.delete(oldest)
+      smallChars -= stale.chars
+    }
+    return entry
   }
 
   const key = identity(doc)
@@ -331,4 +358,6 @@ export function closeDocumentIndexes() {
       .catch(() => {})
   }
   open.clear()
+  small.clear()
+  smallChars = 0
 }

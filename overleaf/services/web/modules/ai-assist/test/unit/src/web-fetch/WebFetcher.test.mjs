@@ -4,7 +4,12 @@ import sinon from 'sinon'
 import {
   WebFetcher,
   clearFailureCache,
+  readsInFlight,
 } from '../../../../app/src/web-fetch/WebFetcher.mjs'
+import {
+  clearWorkingSet,
+  keepSearchPage,
+} from '../../../../app/src/web-fetch/working-set.mjs'
 import {
   documentFromResponse,
   makeDocument,
@@ -84,6 +89,7 @@ describe('WebFetcher', function () {
     clearEndpointHealth()
     clearHostMemory()
     clearFailureCache()
+    clearWorkingSet()
   })
 
   it('returns the direct read when it is real content', async function () {
@@ -105,7 +111,7 @@ describe('WebFetcher', function () {
 
     expect(fetchPage.callCount).to.equal(1)
     expect(second).to.equal(first)
-    expect(fetcher.pending.size).to.equal(0)
+    expect(readsInFlight()).to.equal(0)
   })
 
   it('hands the failure of a shared read to every caller', async function () {
@@ -128,7 +134,7 @@ describe('WebFetcher', function () {
     ])
     expect(outcomes[1].reason).to.equal(outcomes[0].reason)
     expect(fetchPage.callCount).to.equal(alone.callCount)
-    expect(fetcher.pending.size).to.equal(0)
+    expect(readsInFlight()).to.equal(0)
   })
 
   it('moves past a refused direct read to the browser', async function () {
@@ -405,6 +411,7 @@ describe('WebFetcher', function () {
     expect(fetchPage.called).to.equal(false)
 
     // When sidecar raw throws network error, falls back to directRoute
+    clearWorkingSet()
     browser.raw.rejects(webError('sidecar down', { kind: 'network' }))
     const directFetchPage = site({ page: articlePage() })
     const fallbackFetcher = new WebFetcher({
@@ -481,6 +488,91 @@ describe('WebFetcher', function () {
     } catch {}
     // Only archive routes should have been attempted
     expect(fetchPage.callCount).to.be.lessThan(firstRunCalls * 2)
+  })
+
+  it('starts the next reader alongside one slow to answer', async function () {
+    let slowSignal = null
+    const fetchFn = sinon.stub().callsFake((url, init) => {
+      if (url.startsWith('https://ollama.com')) {
+        slowSignal = init?.signal
+        // Answers only when cancelled
+        return new Promise((resolve, reject) =>
+          init?.signal?.addEventListener('abort', () =>
+            reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+          )
+        )
+      }
+      return Promise.resolve(
+        jsonResponse({ data: { title: 'W', content: ARTICLE_TEXT } })
+      )
+    })
+    const fetcher = new WebFetcher({
+      fetchPage: site({ page: articlePage() }),
+      fetchFn,
+      hedgeMs: 20,
+      rotator: rotatorFor({
+        ollama: { enabled: true, apiKeys: ['o1'] },
+        websearchapi: { enabled: true, apiKeys: ['w1'] },
+      }),
+    })
+    const started = Date.now()
+    const doc = await fetcher.read(PAGE)
+    expect(doc.via).to.equal('websearchapi')
+    expect(Date.now() - started).to.be.lessThan(5000)
+    // The slow reader is cancelled once another has answered
+    expect(slowSignal?.aborted).to.equal(true)
+  })
+
+  it('reads a page from the text a search returned for it', async function () {
+    const fetchPage = site({ page: articlePage() })
+    keepSearchPage('u1', PAGE, {
+      url: PAGE,
+      title: 'From search',
+      text: ARTICLE_TEXT,
+      format: 'markdown',
+      via: 'tavily',
+    })
+    const cache = memoryCache()
+    const fetcher = new WebFetcher({
+      fetchPage,
+      cache,
+      cacheHours: 24,
+      owner: 'u1',
+    })
+    const doc = await fetcher.read(PAGE)
+    expect(doc.via).to.equal('tavily')
+    expect(doc.title).to.equal('From search')
+    expect(fetchPage.called).to.equal(false)
+    expect(cache.map.has(PAGE)).to.equal(true)
+    // Another user's read does not see it
+    clearWorkingSet()
+    const other = new WebFetcher({ fetchPage, owner: 'u2' })
+    expect((await other.read(PAGE)).via).to.equal('direct')
+  })
+
+  it('keeps a redirected page under both addresses', async function () {
+    const landed = 'https://example.com/b'
+    const fetchPage = sinon
+      .stub()
+      .callsFake(async () => htmlResponse(landed, articlePage()))
+    const cache = memoryCache()
+    const fetcher = new WebFetcher({ fetchPage, cache, cacheHours: 24 })
+    await fetcher.read(PAGE)
+    clearWorkingSet()
+    const again = await fetcher.read(landed)
+    expect(again.url).to.equal(landed)
+    expect(fetchPage.callCount).to.equal(1)
+  })
+
+  it('answers later reads from memory even with caching off', async function () {
+    const fetchPage = site({ page: articlePage() })
+    const fetcher = new WebFetcher({ fetchPage, cacheHours: 0 })
+    const first = await fetcher.read(PAGE)
+    const second = await new WebFetcher({ fetchPage, cacheHours: 0 }).read(
+      PAGE
+    )
+    expect(second).to.equal(first)
+    expect(fetchPage.callCount).to.equal(1)
   })
 
   it('appends plain error message when bot check fails without browser', async function () {

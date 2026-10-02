@@ -1,7 +1,8 @@
 import { collapse, webError } from '../util.mjs'
 
 /** PDFs are parsed in full without page limit. */
-export const MAX_PDF_PAGES = Infinity
+/** PDF pages read: past this the text would pass MAX_DOCUMENT_CHARS anyway */
+export const MAX_PDF_PAGES = 10_000
 /** Less text than this in the whole file means it has no text layer. */
 const MIN_PDF_TEXT = 100
 /** A line this much taller than body text is a ## heading; the second, a ### heading. */

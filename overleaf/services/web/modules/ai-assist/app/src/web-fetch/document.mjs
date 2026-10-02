@@ -17,6 +17,20 @@ export {
   splitPages,
 } from './pages.mjs'
 
+/**
+ * The most text one document keeps: about 8M tokens, over a thousand pages
+ * for the model, so any book fits. It bounds the memory, the search index and
+ * the cache row a single page can take, whichever route read it.
+ */
+export const MAX_DOCUMENT_CHARS = 32_000_000
+
+/** `text` cut to `max` characters at a line break, when it is longer. */
+function capText(text, max) {
+  if (text.length <= max) return text
+  const cut = text.lastIndexOf('\n', max)
+  return text.slice(0, cut > max * 0.9 ? cut : max)
+}
+
 export function makeDocument({
   url,
   title,
@@ -26,9 +40,16 @@ export function makeDocument({
   modified,
   format = 'markdown',
 }) {
-  let body = String(text ?? '')
+  const raw = String(text ?? '')
+  // Cut before cleaning too, so a huge text is never scanned whole; cleaning
+  // only shortens it, so a little extra is kept for it to remove
+  let body = capText(raw, Math.round(MAX_DOCUMENT_CHARS * 1.25))
+  let cut = body.length < raw.length
   if (format === 'markdown') body = cleanMarkdown(body, url)
-  body = body.trim()
+  const cleaned = body.trim()
+  body = capText(cleaned, MAX_DOCUMENT_CHARS).trim()
+  cut ||= body.length < cleaned.length
+  if (cut) truncated = true
   if (!body) {
     throw webError(
       `${url} has no readable text. It may need JavaScript to render.`,

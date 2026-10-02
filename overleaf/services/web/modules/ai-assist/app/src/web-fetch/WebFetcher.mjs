@@ -1,8 +1,13 @@
 import { ProviderError } from '../AiAssistProviders.mjs'
 import { adapterContext } from './adapters/common.mjs'
 import { ADAPTERS, matchAdapter } from './adapters/index.mjs'
-import { documentFromResponse } from './document.mjs'
+import { documentFromResponse, makeDocument } from './document.mjs'
 import { assessContent } from './quality.mjs'
+import {
+  keepWorkingDocument,
+  takeSearchPage,
+  workingDocument,
+} from './working-set.mjs'
 import { archiveTodayRoute, waybackRoute } from './routes/archives.mjs'
 import { directRoute } from './routes/direct.mjs'
 import { READERS, READER_ORDER, readerTimeoutMs } from './routes/readers.mjs'
@@ -18,12 +23,14 @@ import {
 /**
  * Reads one URL by the first route that yields real content:
  *
- *   cache → paid readers → site adapter → direct GET → headless browser → archives
+ *   working set → cache → a search's page text → paid readers → site adapter
+ *     → direct GET → headless browser → archives
  *
  * Configured provider readers run first; built-in fallbacks are tried only when
- * no provider is configured or all reader attempts fail. Every document passes
- * the quality check, so a bot check or an empty JavaScript shell counts as that
- * route failing.
+ * no provider is configured or all reader attempts fail. A reader slow to
+ * answer is hedged: the next one starts alongside it and the first real
+ * document wins. Every document passes the quality check, so a bot check or an
+ * empty JavaScript shell counts as that route failing.
  */
 
 /** The whole ladder for one URL, however many routes it climbs. */
@@ -45,9 +52,23 @@ const ARCHIVES = [
 ]
 const FAILURE_TTL_MS = 10 * 60 * 1000 // 10 minutes
 const failureCache = new Map() // cacheKey -> { at: number, error: Error }
+/**
+ * How long a reader has before the next one is started alongside it. Most
+ * readers answer well inside this; a slow one no longer holds up the read.
+ */
+export const READER_HEDGE_MS = 4000
+// owner + cacheKey -> the read in flight, shared by every reader of the page
+// in this process: parallel calls, a prefetch, and the browser's fix runs,
+// which get a new WebFetcher per request
+const inFlight = new Map()
 
 export function clearFailureCache() {
   failureCache.clear()
+}
+
+/** How many reads are in flight in this process: for tests. */
+export function readsInFlight() {
+  return inFlight.size
 }
 
 function cancelled() {
@@ -70,6 +91,8 @@ export class WebFetcher {
     cacheHours = 0,
     adapters = ADAPTERS,
     budgetMs = READ_BUDGET_MS,
+    hedgeMs = READER_HEDGE_MS,
+    owner = 'default',
     now = () => Date.now(),
   } = {}) {
     this.fetchPage = fetchPage
@@ -80,48 +103,112 @@ export class WebFetcher {
     this.cacheHours = cacheHours
     this.adapters = adapters
     this.budgetMs = budgetMs
+    this.hedgeMs = hedgeMs
+    this.owner = String(owner ?? 'default')
     this.now = now
-    // cacheKeyFor(url) -> the read in flight for it
-    this.pending = new Map()
   }
 
   /**
-   * The document for `url`: from the cache unless `fresh`, else read by the
-   * ladder. Stamped with `via` (the route that read it) and `fetchedAt`.
+   * The document for `url`: unless `fresh`, from the working set, the cache
+   * or the page text a search returned, else read by the ladder. Stamped with
+   * `via` (the route that read it) and `fetchedAt`.
    */
   async read(url, { signal, fresh = false } = {}) {
     if (signal?.aborted) throw cancelled()
     const key = cacheKeyFor(url)
+    const maxAgeMs = this.cacheHours * HOUR_MS
+    const useCache = Boolean(this.cache) && maxAgeMs > 0
+
     if (!fresh) {
+      const working = workingDocument(this.owner, key)
+      if (working) return working
+
+      if (useCache) {
+        const cached = this.cache.get(key, maxAgeMs)
+        const stale =
+          cached?.partial &&
+          this.now() - Date.parse(cached.fetchedAt) > PARTIAL_TTL_MS
+        if (cached && !stale) {
+          if (!cached.partial) keepWorkingDocument(this.owner, key, cached)
+          return cached
+        }
+      }
+
+      const searched = this._fromSearchPage(key)
+      if (searched) {
+        this._store(key, searched, useCache)
+        return searched
+      }
+
       const failed = failureCache.get(key)
       if (failed && this.now() - failed.at < FAILURE_TTL_MS) {
         throw failed.error
       }
     }
 
-    const maxAgeMs = this.cacheHours * HOUR_MS
-    const useCache = Boolean(this.cache) && maxAgeMs > 0
-    if (useCache && !fresh) {
-      const cached = this.cache.get(key, maxAgeMs)
-      const stale =
-        cached?.partial &&
-        this.now() - Date.parse(cached.fetchedAt) > PARTIAL_TTL_MS
-      if (cached && !stale) return cached
-    }
-
-    // Calls made together for one page (page 1 and a find, say) share one
-    // read. They come from one run, which aborts them all with one signal.
+    // Calls for one page at the same time (page 1 and a find, a prefetch and
+    // the model's own read) share one read
     if (fresh) return this._readAndStore(url, key, { signal, fresh, useCache })
-    let reading = this.pending.get(key)
+    const id = `${this.owner}\n${key}`
+    let reading = inFlight.get(id)
+    const joined = Boolean(reading)
     if (!reading) {
       reading = this._readAndStore(url, key, {
         signal,
         fresh,
         useCache,
-      }).finally(() => this.pending.delete(key))
-      this.pending.set(key, reading)
+      }).finally(() => inFlight.delete(id))
+      inFlight.set(id, reading)
     }
-    return reading
+    try {
+      return await reading
+    } catch (err) {
+      // The read joined was cancelled by its own caller, not by this one
+      if (joined && err?.code === 'aborted' && !signal?.aborted) {
+        return this._readAndStore(url, key, { signal, fresh, useCache })
+      }
+      throw err
+    }
+  }
+
+  /**
+   * The page text a search already returned for `key`, as a document, when it
+   * is real content. Used once: after this the document is cached.
+   */
+  _fromSearchPage(key) {
+    const page = takeSearchPage(this.owner, key)
+    if (!page) return null
+    try {
+      const doc = makeDocument({
+        url: page.url,
+        title: page.title,
+        text: page.text,
+        published: page.published,
+        format: page.format,
+      })
+      if (assessContent({ text: doc.text }) !== 'ok') return null
+      return {
+        ...doc,
+        via: page.via,
+        fetchedAt: new Date(this.now()).toISOString(),
+      }
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * Keeps a document under `key`, and under the address it was read from
+   * when a redirect led elsewhere, so either spelling finds it next time.
+   */
+  _store(key, doc, useCache) {
+    const keys = [key]
+    const landed = cacheKeyFor(doc.url)
+    if (landed && landed !== key) keys.push(landed)
+    for (const each of keys) {
+      if (useCache) this.cache.set(each, doc)
+      if (!doc.partial) keepWorkingDocument(this.owner, each, doc)
+    }
   }
 
   /** Reads `url` by the ladder, then caches the document or remembers the failure. */
@@ -147,8 +234,78 @@ export class WebFetcher {
       throw err
     }
 
-    if (useCache) this.cache.set(key, doc)
+    this._store(key, doc, useCache)
     return doc
+  }
+
+  /**
+   * The configured readers, in plan order, hedged: each gets `hedgeMs` to
+   * answer before the next starts alongside it, and a failure starts the next
+   * at once. The first real document wins and the others are cancelled.
+   */
+  async _hedgedReaders(url, readerPlan, attempt, { fresh, readerDeadline }) {
+    const race = new AbortController()
+    const running = new Map()
+    let next = 0
+    let launched = 0
+    const launch = () => {
+      while (next < readerPlan.length) {
+        const { provider, endpoints } = readerPlan[next++]
+        if (!READERS[provider]) continue
+        const timeout = Math.min(
+          readerTimeoutMs(provider, this.rotator),
+          Math.max(0, readerDeadline - this.now())
+        )
+        if (timeout <= 0) return
+        const id = ++launched
+        running.set(
+          id,
+          attempt(
+            provider,
+            timeout,
+            stepSignal =>
+              READERS[provider](url, {
+                signal: AbortSignal.any([stepSignal, race.signal]),
+                endpoints,
+                rotator: this.rotator,
+                router: this.rotator,
+                fetchFn: this.fetchFn,
+                fresh,
+              }),
+            { lenient: true }
+          ).then(
+            doc => ({ id, doc }),
+            error => ({ id, error })
+          )
+        )
+        return
+      }
+    }
+
+    try {
+      launch()
+      while (running.size > 0) {
+        let timer
+        const hedge = new Promise(resolve => {
+          timer = setTimeout(() => resolve(null), this.hedgeMs)
+          timer.unref?.()
+        })
+        const outcome = await Promise.race([...running.values(), hedge])
+        clearTimeout(timer)
+        if (outcome === null) {
+          launch()
+          continue
+        }
+        running.delete(outcome.id)
+        // Only the user's cancel gets here: a reader's own failure is a null
+        if (outcome.error) throw outcome.error
+        if (outcome.doc) return outcome.doc
+        launch()
+      }
+      return null
+    } finally {
+      race.abort()
+    }
   }
 
   async _ladder(url, { signal, fresh, deadline, useAdapters }) {
@@ -265,31 +422,11 @@ export class WebFetcher {
         )
         const readerBudget = Math.max(40_000, firstTimeout)
         const readerDeadline = Math.min(deadline, this.now() + readerBudget)
-
-        for (const { provider, endpoints } of readerPlan) {
-          if (!READERS[provider]) continue
-          const timeout = Math.min(
-            readerTimeoutMs(provider, this.rotator),
-            Math.max(0, readerDeadline - this.now())
-          )
-          if (timeout <= 0) break
-
-          const doc = await attempt(
-            provider,
-            timeout,
-            stepSignal =>
-              READERS[provider](url, {
-                signal: stepSignal,
-                endpoints,
-                rotator: this.rotator,
-                router: this.rotator,
-                fetchFn: this.fetchFn,
-                fresh,
-              }),
-            { lenient: true }
-          )
-          if (doc) return done(doc)
-        }
+        const doc = await this._hedgedReaders(url, readerPlan, attempt, {
+          fresh,
+          readerDeadline,
+        })
+        if (doc) return done(doc)
       }
     }
 

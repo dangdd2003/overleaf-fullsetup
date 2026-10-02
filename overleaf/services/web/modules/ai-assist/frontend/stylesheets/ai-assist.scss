@@ -1316,7 +1316,8 @@ $code-font-family: var(
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-      min-width: 0;
+      // The URL always keeps a readable share of a narrow panel
+      min-width: min(45%, 14em);
       flex: 0 1 auto;
 
       &:hover,
@@ -1334,11 +1335,24 @@ $code-font-family: var(
     }
 
     .ai-assist-web-fetch-notes {
-      flex-shrink: 0;
+      flex: 0 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
       white-space: nowrap;
       color: var(--content-secondary-themed);
       opacity: 0.72;
       font-size: 11px;
+      cursor: default;
+    }
+
+    .ai-assist-web-fetch-note::before {
+      content: '·';
+      margin: 0 5px;
+    }
+
+    .ai-assist-web-fetch-note:first-child::before {
+      margin-left: 0;
     }
   }
 

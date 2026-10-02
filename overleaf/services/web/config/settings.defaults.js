@@ -1176,7 +1176,7 @@ module.exports = {
     'admin-project-management',
     'user-activate',
     'github-sync',
-    'comment-notifications',
+    'collaboration',
     'ai-assist',
     'api-docs',
   ],

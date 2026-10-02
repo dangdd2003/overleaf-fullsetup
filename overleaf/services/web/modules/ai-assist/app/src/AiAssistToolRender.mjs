@@ -33,7 +33,7 @@ function attributeValue(value) {
  */
 function webText(text) {
   return String(text ?? '').replace(
-    /<(\/?)(web_page|web_results)\b/gi,
+    /<(\/?)(web_page|web_results|web_sections)\b/gi,
     '&lt;$1$2'
   )
 }
@@ -73,8 +73,13 @@ const ARCHIVE_NAMES = {
   'archive.today': 'archive.today',
 }
 
-/** What the model must know about a copy that is not the live page. */
-/** The document's headings with their pages, so the model can jump to one. */
+/** [from, to] ranges as "3, 7–9, 12". */
+function rangeText(ranges) {
+  return ranges
+    .map(([from, to]) => (from === to ? `${from}` : `${from}–${to}`))
+    .join(', ')
+}
+
 /** 3, 7–9, 12 */
 function pageRanges(pages) {
   const ranges = []
@@ -83,20 +88,137 @@ function pageRanges(pages) {
     if (last && page === last[1] + 1) last[1] = page
     else ranges.push([page, page])
   }
-  return ranges
-    .map(([from, to]) => (from === to ? `${from}` : `${from}–${to}`))
-    .join(', ')
+  return rangeText(ranges)
 }
 
-function contentsLines(outline) {
+/** About how many tokens `chars` characters of page text are. */
+function tokenText(chars) {
+  const tokens = chars / 4
+  if (tokens < 1000) return `~${Math.max(10, Math.round(tokens / 10) * 10)}`
+  return `~${tokens < 10_000 ? (tokens / 1000).toFixed(1) : Math.round(tokens / 1000)}k`
+}
+
+/** The pages of a document the model has not been shown, or ''. */
+function unreadText(result) {
+  if (!Number.isInteger(result.unreadCount) || result.unreadCount <= 0) {
+    return ''
+  }
+  const ranges = Array.isArray(result.unreadPages) ? result.unreadPages : []
+  const listed = ranges.reduce((sum, [from, to]) => sum + to - from + 1, 0)
+  const pages = `${rangeText(ranges)}${listed < result.unreadCount ? ', …' : ''}`
+  return `${result.unreadCount === 1 ? 'page' : 'pages'} ${pages}`
+}
+
+/**
+ * The document's headings with the page each starts on, so the model can
+ * jump to a section. They are web text, so they get a fence of their own.
+ */
+function sectionLines(result) {
+  const outline = result.outline
   if (!Array.isArray(outline) || outline.length === 0) return ''
   return [
-    'Contents:',
+    `<web_sections${Number.isInteger(result.source) ? ` source="${result.source}"` : ''}>`,
     ...outline.map(
       entry =>
         `${entry.level === 3 ? '  ' : ''}- ${webText(entry.title)} (p. ${entry.page})`
     ),
+    '</web_sections>',
   ].join('\n')
+}
+
+/** The harness's line above a page: where it sits in the document. */
+function pageStatus(result) {
+  const { page, totalPages } = result
+  if (!Number.isInteger(page) || !Number.isInteger(totalPages)) return ''
+  const shown =
+    typeof result.content === 'string' ? result.content.length : null
+  if (totalPages <= 1) {
+    return `[web_fetch] Page 1 of 1: the whole document${shown ? ` (${tokenText(shown)} tokens)` : ''}.`
+  }
+  const parts = [`[web_fetch] Page ${page} of ${totalPages}`]
+  if (shown && Number.isInteger(result.totalChars)) {
+    const rest = Math.max(0, result.totalChars - shown)
+    parts.push(
+      `${tokenText(shown)} tokens shown, ${tokenText(rest)} more on the other ${totalPages - 1} page${totalPages === 2 ? '' : 's'}`
+    )
+  }
+  const unread = unreadText(result)
+  if (unread) parts.push(`unread: ${unread}`)
+  else if (result.unreadCount === 0) parts.push('every page has now been read')
+  if (page < totalPages) parts.push(`next: page=${page + 1}`)
+  else parts.push('this is the last page')
+  if (result.outline?.length) parts.push('sections and their pages below')
+  return `${parts.join(' · ')}.`
+}
+
+/** The harness's note after a page: how to get to the rest of it. */
+function pageFooter(result) {
+  const { page, totalPages } = result
+  if (!Number.isInteger(totalPages) || totalPages <= 1) return ''
+  const unread = unreadText(result)
+  if (result.unreadCount === 0) {
+    return `End of page ${page} of ${totalPages}. You have now seen every page of this document.`
+  }
+  const next = page < totalPages ? `page=${page + 1} for the next page, ` : ''
+  const jump = result.outline?.length
+    ? 'page=N for the page a section above starts on'
+    : 'page=N to jump to any page'
+  return `End of page ${page} of ${totalPages}${unread ? `; not yet read: ${unread}` : ''}. If the answer is not above, do not conclude the document lacks it: call web_fetch on this URL with ${next}${jump}, or find="…" to search every page. Independent pages and finds can be fetched in parallel.`
+}
+
+/** The harness's line above find results: what matched, and where. */
+function findStatus(result) {
+  const term = attributeValue(result.find)
+  const of = `${result.totalPages} page${result.totalPages === 1 ? '' : 's'}`
+  if (result.matches.length === 0) {
+    return `[web_fetch] find "${term}": no passage matches on any of the ${of} (the exact phrase, all of its words and most of its words were tried).`
+  }
+  const where =
+    result.totalPages > 1 && result.matchPages?.length
+      ? ` on page${result.matchPages.length === 1 ? '' : 's'} ${pageRanges(result.matchPages)} of ${of}`
+      : ' in the document'
+  const shown =
+    result.matches.length < result.totalMatches
+      ? `showing the ${result.matches.length} most relevant, in document order`
+      : `showing ${result.matches.length === 1 ? 'it' : `all ${result.matches.length}`}`
+  const levels = new Set(result.matches.map(match => match.match ?? 'exact'))
+  const these = result.matches.length === 1 ? 'this has' : 'these have'
+  const closeness = levels.has('exact')
+    ? ''
+    : levels.has('all words')
+      ? ` No passage has the exact phrase; ${these} all of its words.`
+      : ` No passage has the exact phrase or all of its words; ${these} most of them, so check ${result.matches.length === 1 ? 'it is' : 'they are'} about the same thing.`
+  return `[web_fetch] find "${term}": ${result.totalMatches} passage${result.totalMatches === 1 ? '' : 's'} match${result.totalMatches === 1 ? 'es' : ''}${where}; ${shown}.${closeness}`
+}
+
+/** The harness's note after find results: how to see the rest. */
+function findFooter(result) {
+  const pages = result.totalPages
+  if (result.matches.length === 0) {
+    const read =
+      pages <= 1
+        ? 'read the document itself by calling web_fetch without find'
+        : result.outline?.length
+          ? 'read the page a likely section above starts on with page=N'
+          : 'read its pages with page=N'
+    return `No match does not prove the document lacks it: it may use other words. Try a shorter phrase, a synonym, alternatives separated by " | ", or ${read}.`
+  }
+  const lines = []
+  const hidden = (result.totalMatches ?? 0) - result.matches.length
+  if (hidden > 0) {
+    const shownPages = new Set(result.matches.map(match => match.page))
+    const elsewhere = (result.matchPages ?? []).filter(
+      page => !shownPages.has(page)
+    )
+    lines.push(
+      `${hidden} more matching passage${hidden === 1 ? ' is' : 's are'} not shown${elsewhere.length > 0 ? `, some on page${elsewhere.length === 1 ? '' : 's'} ${pageRanges(elsewhere)}` : ''}. Read a page with page=N to see a passage in full context, or narrow find with more specific words.`
+    )
+  } else if (pages > 1) {
+    lines.push(
+      'Each passage is an excerpt; read its page with page=N for the full context.'
+    )
+  }
+  return lines.join(' ')
 }
 
 function copyNotes(result) {
@@ -139,47 +261,47 @@ const RENDERERS = {
     return lines.join('\n')
   },
 
+  // The status line comes first, where it cannot be missed, and the note
+  // after the page says how to read on: a model that is not told a page is
+  // one of several takes it for the whole document.
   web_fetch(result) {
     const open = `<web_page${webPageAttributes(result)}>`
+    const truncated = result.truncated
+      ? 'The document was cut short because it is very large.'
+      : ''
 
     if (Array.isArray(result.matches)) {
       const body =
         result.matches.length === 0
-          ? `No passage mentions "${result.find}".`
+          ? '(no matching passages)'
           : result.matches
               .map(
                 match =>
                   `[page ${match.page}]${match.heading ? ` ${webText(match.heading)}` : ''}${match.match ? ` (${match.match})` : ''}\n${webText(match.text)}`
               )
               .join('\n\n')
-      const hidden = (result.totalMatches ?? 0) - result.matches.length
-      const shown = new Set(result.matches.map(match => match.page))
-      const elsewhere = (result.matchPages ?? []).filter(
-        page => !shown.has(page)
-      )
-      const summary =
-        result.matches.length === 0
-          ? `The document has ${result.totalPages} page(s); read one, or try other words.`
-          : `${result.totalMatches} passage(s) match "${result.find}" across ${result.totalPages} page(s).${hidden > 0 ? ` ${hidden} not shown${elsewhere.length > 0 ? `; more on page ${pageRanges(elsewhere)}` : ''}. Read a page, or narrow find.` : ''}`
-      return [open, body, '</web_page>', summary, ...copyNotes(result)]
+      return [
+        findStatus(result),
+        sectionLines(result),
+        open,
+        body,
+        '</web_page>',
+        findFooter(result),
+        truncated,
+        ...copyNotes(result),
+      ]
         .filter(Boolean)
         .join('\n')
     }
 
-    let footer = ''
-    if (result.page < result.totalPages) {
-      footer = `Page ${result.page} of ${result.totalPages}. Call web_fetch with page=${result.page + 1} for more, or with find to go straight to a term.`
-    } else if (result.totalPages > 1) {
-      footer = `Page ${result.page} of ${result.totalPages} (last).`
-    }
-    if (result.truncated)
-      footer += `${footer ? ' ' : ''}The document was cut short because it is very large.`
     return [
+      pageStatus(result),
+      sectionLines(result),
       open,
       webText(result.content),
       '</web_page>',
-      contentsLines(result.outline),
-      footer,
+      pageFooter(result),
+      truncated,
       ...copyNotes(result),
     ]
       .filter(Boolean)

@@ -223,44 +223,83 @@ function CompileLogEntry({
   )
 }
 
-const VIA_NOTES: Record<string, string> = {
-  browser: 'Read via browser',
-  ollama: 'Read via Ollama',
-  websearchapi: 'Read via WebSearchAPI.ai',
-  tavily: 'Read via Tavily',
-  firecrawl: 'Read via Firecrawl',
-  firecrawlSelfHosted: 'Read via Firecrawl',
-  jina: 'Read via Jina Reader',
-  exa: 'Read via Exa',
+const VIA_LABELS: Record<string, string> = {
+  browser: 'browser',
+  ollama: 'Ollama',
+  websearchapi: 'WebSearchAPI.ai',
+  tavily: 'Tavily',
+  firecrawl: 'Firecrawl',
+  firecrawlSelfHosted: 'Firecrawl',
+  jina: 'Jina Reader',
+  exa: 'Exa',
 }
 
-const ARCHIVE_LABELS: Record<string, string> = {
-  wayback: 'Internet Archive',
-  'archive.today': 'archive.today',
+// [short label, full name for the tooltip]
+const ARCHIVE_LABELS: Record<string, [string, string]> = {
+  wayback: ['Wayback', 'Internet Archive'],
+  'archive.today': ['archive.today', 'archive.today'],
 }
 
-/** The notes line under a fetched page: which part, when, and how it was read. */
-export function webFetchNotes(result: any): string[] {
+export type WebFetchNote = { label: string; title: string }
+
+/**
+ * The notes beside a fetched page: which part, when, and how it was read.
+ * Each label is kept short so the URL keeps its room; the title says it in full.
+ */
+export function webFetchNotes(result: any): WebFetchNote[] {
   if (!result || typeof result !== 'object') return []
-  const notes: string[] = []
-  if (result.totalPages > 1) {
-    notes.push(`Page ${result.page ?? 1} of ${result.totalPages}`)
+  const notes: WebFetchNote[] = []
+  // A find searched every page, so it names the search, not a page
+  if (typeof result.find === 'string' && Array.isArray(result.matches)) {
+    const total = Number.isInteger(result.totalMatches)
+      ? result.totalMatches
+      : result.matches.length
+    const pages = Array.isArray(result.matchPages)
+      ? result.matchPages.length
+      : new Set(result.matches.map((match: any) => match.page)).size
+    const matches = `${total} match${total === 1 ? '' : 'es'}`
+    notes.push(
+      total > 0
+        ? {
+            label: pages > 1 ? `${matches} · ${pages} pp.` : matches,
+            title: `${matches} on ${pages} page${pages === 1 ? '' : 's'}`,
+          }
+        : { label: 'No matches', title: 'No matches' }
+    )
+  } else if (result.totalPages > 1) {
+    const page = result.page ?? 1
+    notes.push({
+      label: `p. ${page}/${result.totalPages}`,
+      title: `Page ${page} of ${result.totalPages}`,
+    })
   }
   if (result.published) {
-    notes.push(`Published ${result.published}`)
+    notes.push({
+      label: `Pub. ${result.published}`,
+      title: `Published ${result.published}`,
+    })
   }
   if (result.archived || result.archiveUrl) {
-    const archive = ARCHIVE_LABELS[result.via] ?? 'Internet Archive'
+    const [short, full] = ARCHIVE_LABELS[result.via] ?? ARCHIVE_LABELS.wayback
     notes.push(
       result.archived
-        ? `Read from the ${archive} copy of ${result.archived}`
-        : `Read from the ${archive} copy`
+        ? {
+            label: `${short} ${result.archived}`,
+            title: `Read from the ${full} copy of ${result.archived}`,
+          }
+        : { label: short, title: `Read from the ${full} copy` }
     )
-  } else if (VIA_NOTES[result.via]) {
-    notes.push(VIA_NOTES[result.via])
+  } else if (VIA_LABELS[result.via]) {
+    notes.push({
+      label: `via ${VIA_LABELS[result.via]}`,
+      title: `Read via ${VIA_LABELS[result.via]}`,
+    })
   }
   if (result.partial) {
-    notes.push('Only part of this page could be read')
+    notes.push({
+      label: 'Partial',
+      title: 'Only part of this page could be read',
+    })
   }
   return notes
 }
@@ -684,9 +723,13 @@ export const ToolCallDetailView: FC<{ call: ToolCallRecord }> = ({ call }) => {
           {notes.length > 0 && (
             <span
               className="ai-assist-web-fetch-notes"
-              title={notes.join(' · ')}
+              title={notes.map(note => note.title).join('\n')}
             >
-              · {notes.join(' · ')}
+              {notes.map(note => (
+                <span key={note.label} className="ai-assist-web-fetch-note">
+                  {note.label}
+                </span>
+              ))}
             </span>
           )}
         </div>
@@ -695,9 +738,12 @@ export const ToolCallDetailView: FC<{ call: ToolCallRecord }> = ({ call }) => {
             <div className="ai-assist-web-fetch-content">
               {result.matches.map((match: any, idx: number) => (
                 <div key={`${match.heading ?? 'passage'}:${match.page ?? 0}:${idx}`} className="ai-assist-web-fetch-passage">
-                  {match.heading && (
+                  {(match.heading ||
+                    (typeof match.page === 'number' &&
+                      result?.totalPages > 1)) && (
                     <div className="ai-assist-web-fetch-heading">
-                      {match.heading}
+                      {match.heading ||
+                        t('ai_assist_web_fetch_passage', 'Passage')}
                       {typeof match.page === 'number' && result?.totalPages > 1
                         ? ` (page ${match.page})`
                         : ''}

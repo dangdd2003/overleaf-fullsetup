@@ -35,6 +35,7 @@ import { WebRouter, clearEndpointHealth } from './web-fetch/routing.mjs'
 import { clearWebCacheStore, ownerWebCaches } from './web-fetch/cache-store.mjs'
 import { JINA_COUNTRIES, JINA_LANGUAGES } from './web-fetch/jina-codes.mjs'
 import { cacheKeyFor } from './web-fetch/urls.mjs'
+import { clearWorkingSet, keepSearchPage } from './web-fetch/working-set.mjs'
 
 export { openWebCache } from './web-fetch/cache-store.mjs'
 export {
@@ -188,6 +189,8 @@ const EXA_SEARCH_CATEGORIES = [
 ]
 const EXA_LIVECRAWL_MODES = ['always', 'fallback', 'never', 'auto']
 const MAX_SNIPPET_CHARS = 600
+/** Unread page ranges a web_fetch result lists; the count covers the rest. */
+const MAX_UNREAD_RANGES = 8
 const RECENCY_VALUES = ['day', 'week', 'month', 'year']
 
 function settingsError(message) {
@@ -1355,25 +1358,39 @@ const WEB_SEARCH_SPEC = {
   },
 }
 
+/**
+ * A model reads on only when the result makes reading on look necessary and
+ * cheap, so the description says plainly that one page is not the document,
+ * and how page and find get to the rest.
+ */
 const WEB_FETCH_SPEC = {
   name: 'web_fetch',
-  description: `Read a web page, PDF or text file as Markdown. Long documents come in pages, and the result says which page you got and how many there are. Pass find to jump to the passages about a command, option or phrase anywhere in the document, most relevant first, instead of paging through it. A page that blocks automated readers is retried through other routes automatically. The page keeps its source number [n] for citing.`,
+  description: [
+    'Read a web page, PDF or text file as Markdown.',
+    'Long documents are split into pages of a few thousand tokens and you get ONE page per call. Each result starts with a status line: "Page 1 of 4", how many tokens the other pages hold, and which pages are still unread. Page 1 of a long document also lists its sections with the page each starts on.',
+    'One page is not the whole document. If the answer is not on the page you got, never conclude the document lacks it while pages are unread: fetch the page the section list points to (page), search the whole document (find), or read the next page.',
+    'Use find to jump straight to a command, option, error message or phrase anywhere in the document; it returns the most relevant passages with their page and section, and how many passages match in total. Use page to read a section in full.',
+    'Further calls on a URL you already read are usually served from cache, so they are cheap: call several pages or finds of one document in parallel when you need them.',
+    'A page that blocks automated readers is retried through other routes automatically. The result keeps its source number [n] for citing.',
+  ].join(' '),
   parameters: {
     type: 'object',
     properties: {
       url: {
         type: 'string',
         description:
-          'The http or https URL to read: one from a search result, the user or the project.',
+          'The http or https URL to read: one from a search result, the user or the project. Use the same URL to read further pages of a document.',
       },
       page: {
         type: 'integer',
-        description: 'Which page of a long document to return. Defaults to 1.',
+        minimum: 1,
+        description:
+          'Which page to return, from 1 (the default) to the page count the status line gives. Pages need not be read in order: jump to the page the section list or a find match points to. Ignored when find is given.',
       },
       find: {
         type: 'string',
         description:
-          'Words or a phrase to look for. Case, Markdown formatting and hyphens versus spaces do not matter; when no passage has the exact phrase, passages with all its words come back, marked as such. Separate alternatives with " | ", e.g. "range-phrase | range-units".',
+          'Search the whole document instead of returning one page: a command, option, error text, or a few distinctive words, e.g. "\\qty" or "range-phrase". Case, Markdown formatting and hyphens versus spaces do not matter. When no passage has the exact phrase, passages with all or most of its words come back, marked as such. Separate alternatives or synonyms with " | ", e.g. "range-phrase | range-units". No match does not prove absence: try other words or read the pages.',
       },
     },
     required: ['url'],
@@ -1386,7 +1403,12 @@ export const WEB_TOOL_SPECS = [WEB_SEARCH_SPEC, WEB_FETCH_SPEC]
 export const REPEATED_SEARCH_NOTICE =
   'You already ran this search. Use these results or try a different angle.'
 
-export const MAX_DOCUMENT_CACHE_BYTES = Infinity
+/**
+ * The most one user's cached pages take on the data volume, least recently
+ * used out first. A page counts two bytes a character, so this holds sixteen
+ * of the longest documents or thousands of ordinary pages.
+ */
+export const MAX_DOCUMENT_CACHE_BYTES = 1024 * 1024 * 1024
 
 /**
  * A user's search and page caches, at the limits the user set. They live in
@@ -1408,6 +1430,7 @@ export function getOwnerCaches(
 
 export function clearWebDocumentCache() {
   clearWebCacheStore()
+  clearWorkingSet()
   clearEndpointHealth()
 }
 
@@ -1587,6 +1610,24 @@ export function extractMcpSearchResults(body, query) {
   return traverse(body)
 }
 
+/** Shorter page text is a summary, not the page, and is not kept. */
+const MIN_SEARCH_PAGE_CHARS = 500
+
+/**
+ * The whole page a search result carries, for web_fetch to read it from
+ * instead of a second request. Text that reaches the provider's character
+ * limit was cut there, so it is not the whole page and is left out.
+ */
+function searchPage(text, format, limit) {
+  if (typeof text !== 'string' || text.length < MIN_SEARCH_PAGE_CHARS) {
+    return undefined
+  }
+  if (Number(limit) > 0 && text.length >= Number(limit) * 0.95) {
+    return undefined
+  }
+  return { text, format }
+}
+
 function normalizeResults(list, max, query) {
   const seen = new Set()
   const results = []
@@ -1606,6 +1647,8 @@ function normalizeResults(list, max, query) {
       url,
       ...(published ? { published } : {}),
       snippet: bestSnippet(entry.content || entry.snippet || '', query),
+      // Taken off before the results are cached or shown (see keepPages)
+      ...(entry.page ? { page: entry.page } : {}),
     })
     if (results.length >= max) break
   }
@@ -1631,9 +1674,13 @@ export class AiAssistWebTools {
       browser = sharedBrowserRoute(),
       contextWindow,
       runJob,
+      prefetch = 0,
     } = {}
   ) {
     this.settings = settings
+    // Top search results read in the background, while the model reads the
+    // results, so its web_fetch of one is answered at once
+    this.prefetch = Math.max(0, Math.floor(Number(prefetch) || 0))
     // Extraction-worker jobs, such as indexing a long document
     this.runJob = runJob
     this.fetchFn = fetchFn
@@ -1652,6 +1699,7 @@ export class AiAssistWebTools {
       browser,
       cache: this.caches.documents,
       cacheHours: settings.cacheHours ?? WEB_SEARCH_DEFAULTS.cacheHours,
+      owner: cacheOwner,
     })
 
     // Every page the conversation has seen gets a number, [n], that the model
@@ -1700,7 +1748,8 @@ export class AiAssistWebTools {
               : []
         for (const item of items) {
           if (Number.isInteger(item?.source) && typeof item.url === 'string') {
-            this._source(item.url, item, item.source)
+            const source = this._source(item.url, item, item.source)
+            if (call.name === 'web_fetch') this._markRead(source, item)
           }
         }
       }
@@ -1721,6 +1770,44 @@ export class AiAssistWebTools {
       if (info[field] && !source[field]) source[field] = info[field]
     }
     return source
+  }
+
+  /**
+   * Records the page a web_fetch result showed. Pages are numbered for the
+   * page size they were cut at, so a read is kept with its document's page
+   * count and only counts against a document paged the same way.
+   */
+  _markRead(source, result) {
+    if (
+      !Number.isInteger(result?.page) ||
+      !Number.isInteger(result?.totalPages)
+    ) {
+      return
+    }
+    source.read ??= new Map()
+    let pages = source.read.get(result.totalPages)
+    if (!pages) {
+      pages = new Set()
+      source.read.set(result.totalPages, pages)
+    }
+    pages.add(result.page)
+  }
+
+  /**
+   * The pages of a document paged into `totalPages` that no result has shown
+   * yet: how many, and the first of them as [from, to] ranges.
+   */
+  _unreadPages(source, totalPages) {
+    const read = source.read?.get(totalPages) ?? new Set()
+    const ranges = []
+    for (let page = 1; page <= totalPages; page++) {
+      if (read.has(page)) continue
+      const last = ranges[ranges.length - 1]
+      if (last && last[1] === page - 1) last[1] = page
+      else if (ranges.length < MAX_UNREAD_RANGES) ranges.push([page, page])
+      else break
+    }
+    return { count: totalPages - read.size, ranges }
   }
 
   /** Tool failures come back as `{ error }` for the model, like project tools. */
@@ -1901,6 +1988,7 @@ export class AiAssistWebTools {
         }
       }
 
+      found = { ...found, results: this._keepPages(found.results, providerUsed) }
       if (found.results.length > 0 && shouldUseCache) {
         this.caches.searches.set(cacheKey, found)
       }
@@ -1935,6 +2023,8 @@ export class AiAssistWebTools {
         })),
     ]
 
+    this._prefetchResults(results, signal)
+
     return {
       provider: providerUsed,
       query,
@@ -1943,6 +2033,41 @@ export class AiAssistWebTools {
         ...result,
       })),
       ...(found.answers?.length ? { answers: found.answers } : {}),
+    }
+  }
+
+  /**
+   * Keeps the whole page text a provider returned with its results, for
+   * web_fetch to read a result from, and returns the results without it: the
+   * search cache and the model get snippets only.
+   */
+  _keepPages(results, provider) {
+    return results.map(({ page, ...result }) => {
+      if (page) {
+        keepSearchPage(this.cacheOwner, cacheKeyFor(result.url), {
+          url: result.url,
+          title: result.title,
+          text: page.text,
+          format: page.format,
+          via: provider,
+          ...(result.published ? { published: result.published } : {}),
+        })
+      }
+      return result
+    })
+  }
+
+  /**
+   * Starts reading the top results the cache does not hold yet. A web_fetch
+   * of one joins the read in flight, or finds it done. Failures are left for
+   * that web_fetch to report; the run's cancel stops them.
+   */
+  _prefetchResults(results, signal) {
+    if (this.prefetch <= 0 || signal?.aborted) return
+    for (const result of results
+      .filter(result => !result.cached)
+      .slice(0, this.prefetch)) {
+      this.fetcher.read(result.url, { signal }).catch(() => {})
     }
   }
 
@@ -1990,11 +2115,17 @@ export class AiAssistWebTools {
           }
         : {}),
       totalPages,
+      // The document's length, so the model can see what reading on costs
+      totalChars: doc.text.length,
       ...(doc.truncated ? { truncated: true } : {}),
       ...(doc.via ? { via: doc.via } : {}),
       ...(doc.fetchedAt ? { fetchedAt: doc.fetchedAt } : {}),
       ...(doc.partial ? { partial: true } : {}),
     }
+    const outline =
+      totalPages > 1 && index.map.outline.length > 0
+        ? { outline: index.map.outline }
+        : {}
 
     const find = typeof args?.find === 'string' ? args.find.trim() : ''
     if (find) {
@@ -2004,26 +2135,44 @@ export class AiAssistWebTools {
         source: index.source,
         pages,
       })
+      // Without a passage that has the exact phrase, the contents are the
+      // next best way into the document
+      const weak =
+        found.matches.length === 0 || found.matches.every(match => match.match)
       return {
         ...base,
-        find: found.term,
+        find: found.term || collapse(find),
         matches: found.matches,
         totalMatches: found.total,
         ...(found.pages.length > 0 ? { matchPages: found.pages } : {}),
+        ...(weak ? outline : {}),
+        ...this._unreadFields(source, totalPages),
       }
     }
 
     const page = clampInt(args?.page, 1, Number.MAX_SAFE_INTEGER, 1)
     if (page > totalPages) {
       return {
-        error: `${doc.url} has ${totalPages} page${totalPages === 1 ? '' : 's'}; there is no page ${page}.`,
+        error: `${doc.url} has ${totalPages} page${totalPages === 1 ? '' : 's'}; there is no page ${page}. Pages run from 1 to ${totalPages}.`,
       }
     }
-    return {
+    const result = {
       ...base,
       page,
       content: pageText({ text: doc.text, pages, open: index.map.open }, page),
-      ...(page === 1 && totalPages > 1 ? { outline: index.map.outline } : {}),
+      ...(page === 1 ? outline : {}),
+    }
+    this._markRead(source, result)
+    return { ...result, ...this._unreadFields(source, totalPages) }
+  }
+
+  /** What is still unread of a multi-page document, for the result. */
+  _unreadFields(source, totalPages) {
+    if (totalPages <= 1) return {}
+    const unread = this._unreadPages(source, totalPages)
+    return {
+      unreadCount: unread.count,
+      ...(unread.count > 0 ? { unreadPages: unread.ranges } : {}),
     }
   }
 
@@ -2128,7 +2277,13 @@ export class AiAssistWebTools {
       endpoint.apiKey
     )
     const organic = (Array.isArray(body?.organic) ? body.organic : []).map(
-      entry => ({ ...entry, content: entry?.content || entry?.description })
+      entry => ({
+        ...entry,
+        content: entry?.content || entry?.description,
+        page: options.includeContent
+          ? searchPage(entry?.content, 'text')
+          : undefined,
+      })
     )
     const answer =
       typeof body?.answer === 'string' && body.answer.trim()
@@ -2189,7 +2344,14 @@ export class AiAssistWebTools {
       throw webError('Tavily returned a response that is not JSON.')
     }
     const results = (Array.isArray(body?.results) ? body.results : []).map(
-      entry => ({ ...entry, content: entry?.raw_content || entry?.content })
+      entry => ({
+        ...entry,
+        content: entry?.raw_content || entry?.content,
+        page: searchPage(
+          entry?.raw_content,
+          options.includeRawContent === 'text' ? 'text' : 'markdown'
+        ),
+      })
     )
     const answer =
       typeof body?.answer === 'string' && body.answer.trim()
@@ -2279,6 +2441,7 @@ export class AiAssistWebTools {
       ...entry,
       title: entry?.title || entry?.metadata?.title,
       content: entry?.markdown || entry?.description || entry?.snippet,
+      page: searchPage(entry?.markdown, 'markdown'),
       publishedDate: entry?.date,
     }))
     // The limit applies to each source
@@ -2331,6 +2494,9 @@ export class AiAssistWebTools {
     const results = (Array.isArray(body?.data) ? body.data : []).map(entry => ({
       ...entry,
       content: entry?.content || entry?.description,
+      page: options.includeContent
+        ? searchPage(entry?.content, 'markdown')
+        : undefined,
       publishedDate: entry?.date,
     }))
     return { results: normalizeResults(results, limit, query) }
@@ -2384,6 +2550,9 @@ export class AiAssistWebTools {
       url: entry?.url,
       content:
         entry?.text || entry?.summary || entry?.snippet || entry?.description,
+      page: options.includeContent
+        ? searchPage(entry?.text, 'text', options.maxCharacters)
+        : undefined,
       publishedDate:
         entry?.datePublished || entry?.dateLastCrawled || entry?.publishedDate,
     }))
@@ -2504,6 +2673,10 @@ export class AiAssistWebTools {
         entry?.summary ||
         entry?.snippet ||
         entry?.description,
+      // Text with HTML tags in it is not Markdown, so it is read again
+      page: options.includeHtmlTags
+        ? undefined
+        : searchPage(entry?.text, 'text', options.maxCharacters),
       publishedDate: entry?.publishedDate,
     }))
     return { results: normalizeResults(results, limit, query) }

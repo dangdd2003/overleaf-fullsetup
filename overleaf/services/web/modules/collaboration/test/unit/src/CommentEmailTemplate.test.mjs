@@ -27,12 +27,16 @@ describe('CommentEmailTemplate', () => {
   })
 
   it('registers commentDigest template in EmailBuilder.templates', async () => {
-    await import('../../../app/src/CommentEmailTemplate.mjs')
+    ;(
+      await import('../../../app/src/CommentEmailTemplate.mjs')
+    ).registerCommentEmailTemplate()
     expect(mockEmailBuilder.templates.commentDigest).toBeDefined()
   })
 
   it('calls NoCTAEmailTemplate with subject, greeting, and message', async () => {
-    await import('../../../app/src/CommentEmailTemplate.mjs')
+    ;(
+      await import('../../../app/src/CommentEmailTemplate.mjs')
+    ).registerCommentEmailTemplate()
     expect(mockEmailBuilder.NoCTAEmailTemplate).toHaveBeenCalledWith(
       expect.objectContaining({
         subject: expect.any(Function),
@@ -43,7 +47,9 @@ describe('CommentEmailTemplate', () => {
   })
 
   it('subject includes project name and mention flag', async () => {
-    await import('../../../app/src/CommentEmailTemplate.mjs')
+    ;(
+      await import('../../../app/src/CommentEmailTemplate.mjs')
+    ).registerCommentEmailTemplate()
     const content = mockEmailBuilder.NoCTAEmailTemplate.mock.calls[0][0]
 
     const mentionSubject = content.subject({
@@ -62,13 +68,17 @@ describe('CommentEmailTemplate', () => {
   })
 
   it('greeting uses recipientName', async () => {
-    await import('../../../app/src/CommentEmailTemplate.mjs')
+    ;(
+      await import('../../../app/src/CommentEmailTemplate.mjs')
+    ).registerCommentEmailTemplate()
     const content = mockEmailBuilder.NoCTAEmailTemplate.mock.calls[0][0]
     expect(content.greeting({ recipientName: 'Bob' })).toContain('Bob')
   })
 
   it('message lists each comment with author name and content', async () => {
-    await import('../../../app/src/CommentEmailTemplate.mjs')
+    ;(
+      await import('../../../app/src/CommentEmailTemplate.mjs')
+    ).registerCommentEmailTemplate()
     const content = mockEmailBuilder.NoCTAEmailTemplate.mock.calls[0][0]
     const opts = {
       projectName: 'Paper',
@@ -88,7 +98,9 @@ describe('CommentEmailTemplate', () => {
   })
 
   it('escapes HTML in project name, author name, and comment content', async () => {
-    await import('../../../app/src/CommentEmailTemplate.mjs')
+    ;(
+      await import('../../../app/src/CommentEmailTemplate.mjs')
+    ).registerCommentEmailTemplate()
     const content = mockEmailBuilder.NoCTAEmailTemplate.mock.calls[0][0]
     const opts = {
       projectName: '<script>alert(1)</script>',

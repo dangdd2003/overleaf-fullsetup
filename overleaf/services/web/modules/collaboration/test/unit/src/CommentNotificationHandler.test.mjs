@@ -45,9 +45,9 @@ const {
 })
 
 // Mock paths as resolved from the handler's location
-// Handler is at modules/comment-notifications/app/src/CommentNotificationHandler.mjs
+// Handler is at modules/collaboration/app/src/CommentNotificationHandler.mjs
 // It imports ../../../../app/src/Features/X → resolves to app/src/Features/X
-// From test at modules/comment-notifications/test/unit/src/ → ../../../../../app/src/Features/X
+// From test at modules/collaboration/test/unit/src/ → ../../../../../app/src/Features/X
 vi.mock('../../../../../app/src/Features/Project/ProjectGetter.mjs', () => ({
   default: mockProjectGetter,
 }))
