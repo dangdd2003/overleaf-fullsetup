@@ -363,7 +363,7 @@ export function createEgressProxy({
         if (!res.headersSent) res.writeHead(429).end('Too many connections')
         return
       }
-      log(`egress http ${target.hostname}:${port} ${address.address}`)
+      log(`egress http ${target.hostname}:${port} ${address.address}${upstream ? ` (via ${upstream.type})` : ''}`)
     })
     upstreamReq.on('response', upstreamRes => {
       res.writeHead(upstreamRes.statusCode ?? 502, upstreamRes.headers)
