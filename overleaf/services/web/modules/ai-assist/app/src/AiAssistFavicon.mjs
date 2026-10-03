@@ -1,22 +1,31 @@
+import { sharedBrowserRoute } from './web-fetch/routes/browser.mjs'
 import { fetchPublicUrl } from './web-fetch/transport.mjs'
 
 /**
  * Site icons for the web result rows. The browser cannot find most of them on
  * its own: many sites keep the icon on a CDN and name it only in the home
- * page's <link rel="icon">, so /favicon.ico answers 404. The server reads the
- * home page, tries the icons it declares, then /favicon.ico, and hands the
- * browser the image from Overleaf's own origin. The fetch goes through the
- * same public-address guard as web_fetch, and no third-party icon service
- * learns what the agent looked up.
+ * page's <link rel="icon">, so /favicon.ico answers 404. The server asks for
+ * /favicon.ico and the home page's head at once, then for the icons the page
+ * declares and, when /favicon.ico is missing, the usual other paths, all
+ * together; it keeps the first real image, drops the rest, and hands the
+ * browser the image from Overleaf's own origin. The fetch goes
+ * the way web_fetch's does (through the browser sidecar when it is
+ * configured, else through the same public-address guard), and no
+ * third-party icon service learns what the agent looked up.
  */
 
 const PAGE_BYTES = 512 * 1024
 const ICON_BYTES = 256 * 1024
-const TIMEOUT_MS = 8000
-const MAX_CANDIDATES = 4
+const TIMEOUT_MS = 6000
+/** Declared icons tried, best first, besides /favicon.ico. */
+const MAX_DECLARED = 3
+/** Where sites keep an icon they do not declare, when /favicon.ico is not one. */
+const COMMON_PATHS = ['/favicon.svg', '/apple-touch-icon.png', '/favicon.png']
 const MAX_CACHED = 512
 const FOUND_TTL_MS = 24 * 60 * 60 * 1000
 const MISSING_TTL_MS = 60 * 60 * 1000
+/** A site whose icon could not be checked (busy sidecar, timeout) is retried. */
+const UNSURE_TTL_MS = 60 * 1000
 
 const HEADERS = {
   'User-Agent':
@@ -111,8 +120,22 @@ export function iconLinksIn(html, baseUrl) {
     .map(icon => icon.url)
 }
 
+/**
+ * An icon request: through the browser sidecar's small-file route when it is
+ * configured (plain HTTP through its egress, Chrome for a file a bot check
+ * refuses, never queued behind page reads), else directly. Never directly
+ * while the browser is configured, even when it fails. `head` asks for a
+ * page only up to its </head>; directly, the page's size cap stands in.
+ */
+export function fetchIcon(url, { head = false, ...options } = {}) {
+  const browser = sharedBrowserRoute()
+  return browser
+    ? browser.fetchFile(url, { ...options, head })
+    : fetchPublicUrl(url, options)
+}
+
 export class FaviconResolver {
-  constructor({ fetch = fetchPublicUrl, now = Date.now } = {}) {
+  constructor({ fetch = fetchIcon, now = Date.now } = {}) {
     this.fetch = fetch
     this.now = now
     this.cache = new Map()
@@ -121,49 +144,113 @@ export class FaviconResolver {
 
   /** The origin's icon as { type, body }, or null when it has none. */
   async get(origin) {
+    return (await this.find(origin)).icon
+  }
+
+  /**
+   * { icon, sure }: the icon or null, and whether a null is the site having
+   * none rather than a request that failed on the way (busy sidecar,
+   * timeout), which is looked up again a minute later instead of an hour.
+   */
+  async find(origin) {
     const cached = this.cache.get(origin)
-    if (cached && cached.expires > this.now()) return cached.icon
+    if (cached && cached.expires > this.now()) return cached.found
     // A search lists several pages of one site at once: one lookup serves all.
     let pending = this.pending.get(origin)
     if (!pending) {
       pending = this._resolve(origin).finally(() => this.pending.delete(origin))
       this.pending.set(origin, pending)
     }
-    const icon = await pending
+    const found = await pending
+    const ttl = found.icon
+      ? FOUND_TTL_MS
+      : found.sure
+        ? MISSING_TTL_MS
+        : UNSURE_TTL_MS
     this.cache.delete(origin)
-    this.cache.set(origin, {
-      icon,
-      expires: this.now() + (icon ? FOUND_TTL_MS : MISSING_TTL_MS),
-    })
+    this.cache.set(origin, { found, expires: this.now() + ttl })
     if (this.cache.size > MAX_CACHED) {
       this.cache.delete(this.cache.keys().next().value)
     }
-    return icon
+    return found
   }
 
-  async _resolve(origin) {
-    let declared = []
-    try {
-      const page = await this.fetch(`${origin}/`, {
-        maxBytes: PAGE_BYTES,
-        timeoutMs: TIMEOUT_MS,
-        headers: HEADERS,
-      })
-      declared = iconLinksIn(page.body.toString('utf8'), page.url)
-    } catch {}
-    const candidates = [...new Set([...declared, `${origin}/favicon.ico`])]
-    for (const url of candidates.slice(0, MAX_CANDIDATES)) {
-      try {
-        const res = await this.fetch(url, {
+  /**
+   * /favicon.ico and the home page's head at once; the icons the page
+   * declares as soon as it is read, and the common paths as soon as
+   * /favicon.ico turns out not to be an icon. The first real image wins and
+   * the other requests are stopped.
+   */
+  _resolve(origin) {
+    const stop = new AbortController()
+    const { signal } = stop
+    let sure = true
+    const failed = err => {
+      if (signal.aborted) return
+      if (err?.kind === 'network' || err?.code === 'aborted') sure = false
+    }
+
+    return new Promise(resolve => {
+      const tried = new Set()
+      let open = 0
+      let done = false
+      const settle = icon => {
+        if (done) return
+        if (icon) {
+          done = true
+          stop.abort()
+          resolve({ icon, sure: true })
+        } else if (--open === 0) {
+          done = true
+          resolve({ icon: null, sure })
+        }
+      }
+      const tryIcon = (url, { orElse } = {}) => {
+        if (done || tried.has(url)) return
+        tried.add(url)
+        open++
+        this.fetch(url, {
           maxBytes: ICON_BYTES,
           timeoutMs: TIMEOUT_MS,
           headers: HEADERS,
-        })
-        const type = res.truncated ? null : sniffImageType(res.body)
-        if (type) return { type, body: res.body }
-      } catch {}
-    }
-    return null
+          signal,
+        }).then(
+          res => {
+            const type = res.truncated ? null : sniffImageType(res.body)
+            if (!type) orElse?.()
+            settle(type ? { type, body: res.body } : null)
+          },
+          err => {
+            failed(err)
+            // Started before this one settles, so `open` never reaches 0 early
+            orElse?.()
+            settle(null)
+          }
+        )
+      }
+
+      open++
+      tryIcon(`${origin}/favicon.ico`, {
+        orElse: () => COMMON_PATHS.forEach(path => tryIcon(`${origin}${path}`)),
+      })
+      this.fetch(`${origin}/`, {
+        maxBytes: PAGE_BYTES,
+        timeoutMs: TIMEOUT_MS,
+        headers: HEADERS,
+        signal,
+        head: true,
+      }).then(
+        page => {
+          const declared = iconLinksIn(page.body.toString('utf8'), page.url)
+          for (const url of declared.slice(0, MAX_DECLARED)) tryIcon(url)
+          settle(null)
+        },
+        err => {
+          failed(err)
+          settle(null)
+        }
+      )
+    })
   }
 }
 
@@ -174,10 +261,11 @@ export default {
   async serve(req, res) {
     const origin = normalizeOrigin(req.query?.origin)
     if (!origin) return res.sendStatus(400)
-    let icon = null
+    let found = { icon: null, sure: false }
     try {
-      icon = await resolver.get(origin)
+      found = await resolver.find(origin)
     } catch {}
+    const { icon } = found
     // An SVG opened directly must not run as a page on Overleaf's origin.
     res.set({
       'X-Content-Type-Options': 'nosniff',
@@ -185,7 +273,10 @@ export default {
         "default-src 'none'; style-src 'unsafe-inline'; sandbox",
     })
     if (!icon) {
-      res.set('Cache-Control', 'private, max-age=3600')
+      res.set(
+        'Cache-Control',
+        found.sure ? 'private, max-age=3600' : 'no-store'
+      )
       return res.sendStatus(404)
     }
     res.set({

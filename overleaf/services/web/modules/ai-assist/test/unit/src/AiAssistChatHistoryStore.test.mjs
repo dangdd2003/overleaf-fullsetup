@@ -155,4 +155,119 @@ describe('AiAssistChatHistoryStore', function () {
 
     expect(title).to.equal('Optimized Agent Harness')
   })
+
+  it('restores missing top turns when saving a truncated transcript', async function () {
+    const fullTranscript = [
+      { id: 'u0', role: 'user', text: 'Step 1: start research' },
+      { id: 'a0', role: 'assistant', text: 'Researched step 1', toolCalls: [] },
+      { id: 'u1', role: 'user', text: 'Step 2: draft outline' },
+      { id: 'a1', role: 'assistant', text: 'Drafted outline', toolCalls: [] },
+      { id: 'u2', role: 'user', text: 'Step 3: write section' },
+      { id: 'a2', role: 'assistant', text: 'Wrote section', toolCalls: [] },
+    ]
+
+    // Save full transcript first
+    await store.saveChat(PROJECT, USER, 'long-chat', fullTranscript)
+
+    // Simulate client sending a transcript missing the top 2 turns (u0, a0)
+    const truncatedClientTranscript = [
+      { id: 'u1', role: 'user', text: 'Step 2: draft outline' },
+      { id: 'a1', role: 'assistant', text: 'Drafted outline', toolCalls: [] },
+      { id: 'u2', role: 'user', text: 'Step 3: write section' },
+      { id: 'a2', role: 'assistant', text: 'Wrote section', toolCalls: [] },
+      { id: 'u3', role: 'user', text: 'Step 4: compile' },
+      { id: 'a3', role: 'assistant', text: 'Compiled successfully', toolCalls: [] },
+    ]
+
+    const updated = await store.saveChat(
+      PROJECT,
+      USER,
+      'long-chat',
+      truncatedClientTranscript
+    )
+
+    // Should contain all 8 turns: u0, a0, u1, a1, u2, a2, u3, a3
+    expect(updated.messageCount).to.equal(8)
+    const reloaded = await store.getChat(PROJECT, USER, 'long-chat')
+    expect(reloaded.transcript.length).to.equal(8)
+    expect(reloaded.transcript[0].text).to.equal('Step 1: start research')
+    expect(reloaded.transcript[1].text).to.equal('Researched step 1')
+    expect(reloaded.transcript[7].text).to.equal('Compiled successfully')
+    expect(reloaded.version).to.equal(2)
+  })
+
+  it('restores shrunk tool call results from stored transcript', async function () {
+    const originalTranscript = [
+      { id: 'u0', role: 'user', text: 'Read the big file' },
+      {
+        id: 'a0',
+        role: 'assistant',
+        text: 'File content below',
+        toolCalls: [
+          {
+            id: 'call_read_1',
+            name: 'read_file',
+            args: { path: 'main.tex' },
+            result: { path: 'main.tex', content: 'FULL UN-TRUNCATED CONTENT' },
+            isError: false,
+          },
+        ],
+        blocks: [
+          {
+            type: 'tool_call',
+            call: {
+              id: 'call_read_1',
+              name: 'read_file',
+              args: { path: 'main.tex' },
+              result: { path: 'main.tex', content: 'FULL UN-TRUNCATED CONTENT' },
+            },
+          },
+        ],
+      },
+    ]
+
+    await store.saveChat(PROJECT, USER, 'tool-chat', originalTranscript)
+
+    // Client sends back shrunk version
+    const shrunkClientTranscript = [
+      { id: 'u0', role: 'user', text: 'Read the big file' },
+      {
+        id: 'a0',
+        role: 'assistant',
+        text: 'File content below',
+        toolCalls: [
+          {
+            id: 'call_read_1',
+            name: 'read_file',
+            args: { path: 'main.tex' },
+            result: { truncated: true, _shrunk: true },
+          },
+        ],
+        blocks: [
+          {
+            type: 'tool_call',
+            call: {
+              id: 'call_read_1',
+              name: 'read_file',
+              args: { path: 'main.tex' },
+              result: { truncated: true, _shrunk: true },
+            },
+          },
+        ],
+      },
+      { id: 'u1', role: 'user', text: 'Looks good, now edit line 5' },
+    ]
+
+    await store.saveChat(PROJECT, USER, 'tool-chat', shrunkClientTranscript)
+
+    const reloaded = await store.getChat(PROJECT, USER, 'tool-chat')
+    expect(reloaded.transcript[1].toolCalls[0].result).to.deep.equal({
+      path: 'main.tex',
+      content: 'FULL UN-TRUNCATED CONTENT',
+    })
+    expect(reloaded.transcript[1].blocks[0].call.result).to.deep.equal({
+      path: 'main.tex',
+      content: 'FULL UN-TRUNCATED CONTENT',
+    })
+  })
 })

@@ -7,6 +7,7 @@ import DiffView from './diff-view'
 import CodeView from './code-view'
 import { MarkdownContent } from './markdown-content'
 import { hostOf } from '../../agent/web-sources'
+import { describeWebFailure } from '../../agent/web-errors'
 import { SiteIcon } from './site-icon'
 import { CopyToClipboard } from '@/shared/components/copy-to-clipboard'
 
@@ -94,24 +95,13 @@ function WebPageRow({
   )
 }
 
-/**
- * The part of a web tool error meant for the user. The server writes it for
- * the model: it names the URL the row already shows, and ends with advice on
- * what to try next.
- */
-function webErrorText(error: string, url?: string) {
-  let text = error
-  if (url) text = text.split(url).join('The page')
-  return text
-    .replace(/\s+(Its search snippet|Read another result)[\s\S]*$/, '')
-    .trim()
-}
-
 function WebToolError({ call, result }: { call: ToolCallRecord; result: any }) {
   const { t } = useTranslation()
   const args = (call.args ?? {}) as any
   const url = typeof result?.url === 'string' ? result.url : args.url
-  const message = webErrorText(
+  const tool = call.name === 'web_search' ? 'web_search' : 'web_fetch'
+  const failure = describeWebFailure(
+    tool,
     typeof result?.error === 'string'
       ? result.error
       : typeof result === 'string'
@@ -121,10 +111,10 @@ function WebToolError({ call, result }: { call: ToolCallRecord; result: any }) {
   )
   return (
     <div className="ai-assist-web-detail">
-      {call.name === 'web_search' && typeof url === 'string' && url && (
+      {tool === 'web_search' && typeof url === 'string' && url && (
         <WebPageRow url={url} title={result?.title} />
       )}
-      {call.name === 'web_fetch' && (
+      {tool === 'web_fetch' && (
         <div className="ai-assist-web-fetch-header">
           {url ? (
             <a
@@ -143,9 +133,56 @@ function WebToolError({ call, result }: { call: ToolCallRecord; result: any }) {
           )}
         </div>
       )}
-      <div className="ai-assist-tool-detail-error">
-        <span className="ai-assist-tool-detail-badge error">Error</span>
-        <pre className="ai-assist-tool-detail-text">{message}</pre>
+      <div className="ai-assist-web-error" role="alert">
+        <div className="ai-assist-web-error-head">
+          <span className="ai-assist-web-error-icon" aria-hidden="true" />
+          <div className="ai-assist-web-error-text">
+            <div className="ai-assist-web-error-title">{failure.title}</div>
+            <div className="ai-assist-web-error-why">{failure.explanation}</div>
+          </div>
+        </div>
+        {failure.fixes.length > 0 && (
+          <ul className="ai-assist-web-error-fixes">
+            {failure.fixes.map(fix => (
+              <li key={fix}>{fix}</li>
+            ))}
+          </ul>
+        )}
+        <details className="ai-assist-web-error-details">
+          <summary>
+            {failure.attempts.length > 0
+              ? t('ai_assist_web_error_tried', {
+                  count: failure.attempts.length,
+                  defaultValue: `What was tried (${failure.attempts.length})`,
+                })
+              : t('ai_assist_web_error_technical', 'Technical details')}
+          </summary>
+          {failure.attempts.length > 0 ? (
+            <ul className="ai-assist-web-attempts">
+              {failure.attempts.map(attempt => (
+                <li
+                  key={attempt.route}
+                  className={`ai-assist-web-attempt is-${attempt.kind}`}
+                >
+                  <span className="ai-assist-web-attempt-route">
+                    {attempt.label}
+                  </span>
+                  <span
+                    className="ai-assist-web-attempt-why"
+                    title={attempt.raw}
+                  >
+                    {attempt.summary}
+                    {attempt.raw && /HTTP \d{3}/.test(attempt.raw) && (
+                      <code>{/HTTP \d{3}/.exec(attempt.raw)?.[0]}</code>
+                    )}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <pre className="ai-assist-tool-detail-text">{failure.raw}</pre>
+          )}
+        </details>
       </div>
     </div>
   )

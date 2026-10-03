@@ -177,45 +177,105 @@ function isShrunkResult(result) {
   return Boolean(result && typeof result === 'object' && result._shrunk)
 }
 
+export function countSteps(transcript) {
+  if (!Array.isArray(transcript)) return 0
+  let steps = 0
+  for (const entry of transcript) {
+    if (!entry) continue
+    if (entry.role === 'user') {
+      steps++
+    } else if (entry.role === 'assistant') {
+      const calls = Array.isArray(entry.toolCalls) ? entry.toolCalls.length : 0
+      steps += Math.max(1, calls)
+    }
+  }
+  return steps
+}
+
+export function totalDuration(transcript) {
+  if (!Array.isArray(transcript)) return 0
+  let total = 0
+  for (const entry of transcript) {
+    if (entry?.role === 'assistant' && typeof entry.durationMs === 'number') {
+      total += entry.durationMs
+    }
+  }
+  return total
+}
+
+function entriesMatch(a, b) {
+  if (!a || !b) return false
+  if (a.id && b.id && a.id === b.id) return true
+  if (a.role !== b.role) return false
+  if (a.role === 'user') {
+    return a.text === b.text
+  }
+  if (a.role === 'assistant') {
+    if (
+      Array.isArray(a.toolCalls) &&
+      Array.isArray(b.toolCalls) &&
+      a.toolCalls.length > 0 &&
+      b.toolCalls.length > 0
+    ) {
+      if (a.toolCalls[0]?.id && b.toolCalls[0]?.id) {
+        return a.toolCalls[0].id === b.toolCalls[0].id
+      }
+    }
+    return Boolean(a.text && b.text && a.text === b.text)
+  }
+  return false
+}
+
 /**
  * Fills in what the panel's copy of a chat has lost from the chat's history
- * on disk, which keeps it whole, as Claude Code's session log does. A run
- * starts from the result, and a save stores it, so a copy the panel cut down
- * never replaces the whole one.
+ * on disk, which keeps it whole, as Claude Code's session log does.
  *
- * The panel's local copy cuts tool results down and drops turns from the
- * front when it grows, and after a reload that copy is what it sends. Rebuilt
- * from it, the messages would differ from the ones the last run sent from the
- * first cut result on, and miss the provider's cache from there. Results are
- * restored by call id; dropped turns are put back when the panel's first
- * entry and everything after it line up with the history.
+ * Ensures:
+ * 1. Shrunk tool call results are restored to full results by call ID.
+ * 2. Dropped turns from the top of the transcript are restored and prepended.
+ * 3. Never truncates or loses existing turns.
  */
 export function hydrateTranscript(transcript, stored) {
-  if (
-    !Array.isArray(transcript) ||
-    transcript.length === 0 ||
-    !Array.isArray(stored) ||
-    stored.length === 0
-  ) {
+  if (!Array.isArray(transcript) || transcript.length === 0) {
+    return Array.isArray(stored) ? stored : []
+  }
+  if (!Array.isArray(stored) || stored.length === 0) {
     return transcript
   }
 
+  // 1. Collect all whole tool call results from stored transcript
   const whole = new Map()
   for (const entry of stored) {
-    if (entry?.role !== 'assistant' || !Array.isArray(entry.toolCalls)) continue
-    for (const call of entry.toolCalls) {
-      if (call?.id && 'result' in call && !isShrunkResult(call.result)) {
-        whole.set(call.id, call)
+    if (entry?.role !== 'assistant') continue
+    if (Array.isArray(entry.toolCalls)) {
+      for (const call of entry.toolCalls) {
+        if (call?.id && 'result' in call && !isShrunkResult(call.result)) {
+          whole.set(call.id, call)
+        }
+      }
+    }
+    if (Array.isArray(entry.blocks)) {
+      for (const block of entry.blocks) {
+        if (
+          block?.type === 'tool_call' &&
+          block.call?.id &&
+          'result' in block.call &&
+          !isShrunkResult(block.call.result)
+        ) {
+          whole.set(block.call.id, block.call)
+        }
       }
     }
   }
+
   const restore = call => {
     if (!call || !isShrunkResult(call.result) || !whole.has(call.id)) {
       return call
     }
     const { result, isError } = whole.get(call.id)
-    return { ...call, result, isError }
+    return { ...call, result, isError, _shrunk: undefined }
   }
+
   let hydrated = transcript.map(entry => {
     if (entry?.role !== 'assistant') return entry
     return {
@@ -235,23 +295,37 @@ export function hydrateTranscript(transcript, stored) {
     }
   })
 
-  const first = hydrated[0]
+  // 2. Detect missing prefix from stored history
   const linesUpAt = at => {
     const overlap = Math.min(stored.length - at, hydrated.length)
+    if (overlap <= 0) return false
     for (let i = 0; i < overlap; i++) {
-      const kept = stored[at + i]
-      const sent = hydrated[i]
-      if (kept?.id !== sent?.id || kept?.role !== sent?.role) return false
-      if (sent.role === 'user' && kept.text !== sent.text) return false
+      if (!entriesMatch(hydrated[i], stored[at + i])) {
+        return false
+      }
     }
     return true
   }
+
+  // Check if hydrated starts at an offset within stored
+  let matchedAt = -1
   for (let at = 1; at < stored.length; at++) {
-    if (stored[at]?.id === first?.id && linesUpAt(at)) {
-      hydrated = [...stored.slice(0, at), ...hydrated]
+    if (linesUpAt(at)) {
+      matchedAt = at
       break
     }
   }
+
+  if (matchedAt > 0) {
+    hydrated = [...stored.slice(0, matchedAt), ...hydrated]
+  } else if (stored.length > hydrated.length) {
+    // Check if hydrated is a strict tail suffix of stored
+    const tailOffset = stored.length - hydrated.length
+    if (linesUpAt(tailOffset)) {
+      hydrated = [...stored.slice(0, tailOffset), ...hydrated]
+    }
+  }
+
   return hydrated
 }
 
@@ -283,6 +357,7 @@ async function listChats(projectId, userId) {
       continue // a corrupt file must not hide the rest of the history
     }
     if (!chat) continue
+    const transcript = Array.isArray(chat.transcript) ? chat.transcript : []
     chats.push({
       id: chat.id,
       title: chat.title,
@@ -290,7 +365,9 @@ async function listChats(projectId, userId) {
       mode: normalizeMode(chat.mode),
       createdAt: chat.createdAt,
       updatedAt: chat.updatedAt,
-      messageCount: Array.isArray(chat.transcript) ? chat.transcript.length : 0,
+      messageCount: transcript.length,
+      totalSteps: chat.stats?.totalSteps ?? countSteps(transcript),
+      durationMs: chat.stats?.durationMs ?? totalDuration(transcript),
     })
   }
   return chats.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
@@ -299,10 +376,17 @@ async function listChats(projectId, userId) {
 async function getChat(projectId, userId, chatId) {
   const chat = await readChat(fileFor(projectId, userId, chatId))
   if (!chat) return null
+  const transcript = Array.isArray(chat.transcript) ? chat.transcript : []
   return {
+    version: chat.version || 2,
     ...chat,
     titleGenerated: Boolean(chat.titleGenerated),
     mode: normalizeMode(chat.mode),
+    stats: chat.stats || {
+      totalSteps: countSteps(transcript),
+      durationMs: totalDuration(transcript),
+    },
+    transcript,
   }
 }
 
@@ -313,7 +397,8 @@ async function saveChat(
   transcript,
   mode = 'manual',
   title = null,
-  titleGenerated = undefined
+  titleGenerated = undefined,
+  stats = null
 ) {
   const file = fileFor(projectId, userId, chatId)
   const existing = await readChat(file).catch(() => null)
@@ -339,7 +424,15 @@ async function saveChat(
 
   transcript = hydrateTranscript(transcript, existing?.transcript)
 
+  const finalStats = {
+    totalSteps: countSteps(transcript),
+    durationMs: totalDuration(transcript),
+    ...(existing?.stats || {}),
+    ...(stats || {}),
+  }
+
   const chat = {
+    version: 2,
     id: chatId,
     projectId: String(projectId),
     userId: String(userId),
@@ -348,15 +441,21 @@ async function saveChat(
     mode: normalizeMode(mode || existing?.mode),
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
+    stats: finalStats,
     transcript,
   }
   await fs.mkdir(Path.dirname(file), { recursive: true })
   // Write-then-rename so a crash mid-write never leaves a truncated file.
   const tmp = `${file}.${crypto.randomBytes(6).toString('hex')}.tmp`
-  await fs.writeFile(tmp, JSON.stringify(chat))
+  await fs.writeFile(tmp, JSON.stringify(chat, null, 2))
   await fs.rename(tmp, file)
   const { transcript: _omit, ...summary } = chat
-  return { ...summary, messageCount: transcript.length }
+  return {
+    ...summary,
+    messageCount: transcript.length,
+    totalSteps: finalStats.totalSteps,
+    durationMs: finalStats.durationMs,
+  }
 }
 
 async function saveChatTitle(
@@ -372,6 +471,7 @@ async function saveChatTitle(
   const now = Date.now()
   if (!existing) {
     const chat = {
+      version: 2,
       id: chatId,
       projectId: String(projectId),
       userId: String(userId),
@@ -380,27 +480,29 @@ async function saveChatTitle(
       mode: 'manual',
       createdAt: now,
       updatedAt: now,
+      stats: { totalSteps: 0, durationMs: 0 },
       transcript: [],
     }
     await fs.mkdir(Path.dirname(file), { recursive: true })
     const tmp = `${file}.${crypto.randomBytes(6).toString('hex')}.tmp`
-    await fs.writeFile(tmp, JSON.stringify(chat))
+    await fs.writeFile(tmp, JSON.stringify(chat, null, 2))
     await fs.rename(tmp, file)
     const { transcript: _omit, ...summary } = chat
-    return { ...summary, messageCount: 0 }
+    return { ...summary, messageCount: 0, totalSteps: 0, durationMs: 0 }
   }
   existing.title = cleanTitle
   existing.titleGenerated = true
   existing.updatedAt = now
   const tmp = `${file}.${crypto.randomBytes(6).toString('hex')}.tmp`
-  await fs.writeFile(tmp, JSON.stringify(existing))
+  await fs.writeFile(tmp, JSON.stringify(existing, null, 2))
   await fs.rename(tmp, file)
   const { transcript: _omit, ...summary } = existing
+  const transcript = Array.isArray(existing.transcript) ? existing.transcript : []
   return {
     ...summary,
-    messageCount: Array.isArray(existing.transcript)
-      ? existing.transcript.length
-      : 0,
+    messageCount: transcript.length,
+    totalSteps: existing.stats?.totalSteps ?? countSteps(transcript),
+    durationMs: existing.stats?.durationMs ?? totalDuration(transcript),
   }
 }
 
@@ -418,4 +520,7 @@ export default {
   reorganizePromptToTitle,
   fallbackTitleFor,
   titleFor,
+  hydrateTranscript,
+  countSteps,
+  totalDuration,
 }

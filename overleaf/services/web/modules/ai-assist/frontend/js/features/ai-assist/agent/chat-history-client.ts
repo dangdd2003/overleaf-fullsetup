@@ -6,8 +6,13 @@ import {
 } from '@/infrastructure/fetch-json'
 import customLocalStorage from '@/infrastructure/local-storage'
 import { TranscriptEntry } from './agent-messages'
-import { prepareTranscriptForRun } from './conversation-store'
 import { AgentMode } from './agent-mode'
+
+export type ChatStats = {
+  totalSteps?: number
+  durationMs?: number
+  [key: string]: any
+}
 
 export type ChatSummary = {
   id: string
@@ -15,11 +20,15 @@ export type ChatSummary = {
   createdAt: number
   updatedAt: number
   messageCount: number
+  totalSteps?: number
+  durationMs?: number
 }
 
 export type StoredChat = ChatSummary & {
+  version?: number
   transcript: TranscriptEntry[]
   mode?: AgentMode
+  stats?: ChatStats
 }
 
 const activeKeyFor = (projectId: string) => `ai-assist:chat-id:${projectId}`
@@ -82,13 +91,15 @@ export function saveChat(
   chatId: string,
   transcript: TranscriptEntry[],
   mode: AgentMode = 'manual',
-  title?: string
+  title?: string,
+  stats?: ChatStats
 ) {
   return putJSON<ChatSummary>(`${base(projectId)}/${chatId}`, {
     body: {
-      transcript: prepareTranscriptForRun(transcript),
+      transcript,
       mode,
       ...(title ? { title } : {}),
+      ...(stats ? { stats } : {}),
     },
   })
 }

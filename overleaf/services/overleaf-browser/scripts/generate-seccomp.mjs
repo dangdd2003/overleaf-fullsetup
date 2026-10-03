@@ -22,7 +22,7 @@ export function generateSeccompProfile() {
       sc.names.includes('unshare')
     ) {
       sc.names = sc.names.filter(
-        n => !['clone', 'clone3', 'setns', 'unshare'].includes(n)
+        n => !['clone', 'clone3', 'unshare'].includes(n)
       )
     }
     if (
@@ -51,7 +51,7 @@ export function generateSeccompProfile() {
   )
 
   profile.syscalls.push({
-    names: ['clone', 'clone3', 'setns', 'unshare', 'chroot'],
+    names: ['clone', 'clone3', 'unshare', 'chroot'],
     action: 'SCMP_ACT_ALLOW',
     args: [],
     comment:

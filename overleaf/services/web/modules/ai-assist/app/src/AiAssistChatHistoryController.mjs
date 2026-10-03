@@ -67,6 +67,7 @@ export class AiAssistChatHistoryController {
     const mode = req.body?.mode
     const title = req.body?.title
     const titleGenerated = req.body?.titleGenerated
+    const stats = req.body?.stats
     if (!Array.isArray(transcript)) {
       return res.status(400).json({ error: 'transcript must be an array' })
     }
@@ -85,7 +86,8 @@ export class AiAssistChatHistoryController {
           transcript,
           mode,
           title,
-          titleGenerated
+          titleGenerated,
+          stats
         )
       )
     } catch (err) {

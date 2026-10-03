@@ -199,6 +199,56 @@ describe('conversation-store', function () {
     expect(assistant.blocks).to.have.lengthOf(2)
   })
 
+  it('keeps conversations for different chatIds within the same project apart', function () {
+    saveConversation(PROJECT, 'chat_A', [{ id: '1', role: 'user', text: 'chat A message' }])
+    saveConversation(PROJECT, 'chat_B', [{ id: '2', role: 'user', text: 'chat B message' }])
+    expect(loadConversation(PROJECT, 'chat_A')[0]).to.deep.include({ text: 'chat A message' })
+    expect(loadConversation(PROJECT, 'chat_B')[0]).to.deep.include({ text: 'chat B message' })
+  })
+
+  it('preserves all turns intact without dropping top turns when tool outputs are large', function () {
+    const multiTurn: TranscriptEntry[] = [
+      { id: 'u0', role: 'user', text: 'turn 0 question' },
+      {
+        id: 'a0',
+        role: 'assistant',
+        text: 'turn 0 answer',
+        toolCalls: [
+          {
+            id: 'c0',
+            name: 'read_file',
+            args: { path: 'a.tex' },
+            result: { content: 'x'.repeat(60000) },
+          },
+        ],
+      },
+      { id: 'u1', role: 'user', text: 'turn 1 question' },
+      {
+        id: 'a1',
+        role: 'assistant',
+        text: 'turn 1 answer',
+        toolCalls: [
+          {
+            id: 'c1',
+            name: 'read_file',
+            args: { path: 'b.tex' },
+            result: { content: 'y'.repeat(60000) },
+          },
+        ],
+      },
+      { id: 'u2', role: 'user', text: 'turn 2 question' },
+    ]
+
+    saveConversation(PROJECT, 'chat_multi', multiTurn)
+    const stored = loadConversation(PROJECT, 'chat_multi')
+
+    // All 5 turns MUST still be present - never dropped from top!
+    expect(stored.length).to.equal(5)
+    expect(stored[0].id).to.equal('u0')
+    expect((stored[0] as any).text).to.equal('turn 0 question')
+    expect(stored[4].id).to.equal('u2')
+  })
+
   describe('prepareTranscriptForRun', function () {
     it('returns empty or non-array transcript unchanged', function () {
       expect(prepareTranscriptForRun([])).to.deep.equal([])

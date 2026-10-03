@@ -230,7 +230,7 @@ function AgentPanelInner({
   } = useAgentRun({
     tools: TOOLS,
     cacheKey: projectId,
-    initialTranscript: loadConversation(projectId),
+    initialTranscript: loadConversation(projectId, chatId),
     initialMode,
     chatId,
   })
@@ -252,12 +252,47 @@ function AgentPanelInner({
           setMode(chat.mode)
           setStoredChatMode(projectId, chatId, chat.mode)
         }
+        if (Array.isArray(chat.transcript) && chat.transcript.length > 0) {
+          setState(curr => {
+            if (
+              !curr.running &&
+              (curr.transcript.length === 0 ||
+                chat.transcript.length >= curr.transcript.length)
+            ) {
+              lastSavedRef.current = {
+                transcript: chat.transcript,
+                mode: chat.mode || curr.mode,
+              }
+              saveConversation(projectId, chatId, chat.transcript)
+              return {
+                ...curr,
+                transcript: chat.transcript,
+                chatTitle: chat.title || curr.chatTitle,
+              }
+            } else if (chat.transcript.length > curr.transcript.length) {
+              const offset = chat.transcript.length - curr.transcript.length
+              const missingPrefix = chat.transcript.slice(0, offset)
+              const merged = [...missingPrefix, ...curr.transcript]
+              lastSavedRef.current = {
+                transcript: merged,
+                mode: chat.mode || curr.mode,
+              }
+              saveConversation(projectId, chatId, merged)
+              return {
+                ...curr,
+                transcript: merged,
+                chatTitle: chat.title || curr.chatTitle,
+              }
+            }
+            return curr
+          })
+        }
       })
       .catch(() => {})
     return () => {
       active = false
     }
-  }, [projectId, chatId, setMode])
+  }, [projectId, chatId, setMode, setState])
 
   // Whether the next title change sweeps in over the old one: a freshly
   // generated title, or the title of a chat opened from history
@@ -280,7 +315,7 @@ function AgentPanelInner({
     durationMs: number
     word?: string
   } | null>(() => {
-    const initial = loadConversation(projectId)
+    const initial = loadConversation(projectId, chatId)
     const last = initial.at(-1)
     if (last && last.role === 'assistant' && (last as any).durationMs) {
       return {
@@ -419,8 +454,8 @@ function AgentPanelInner({
   }, [state.transcript])
 
   useEffect(() => {
-    saveConversation(projectId, state.transcript)
-  }, [projectId, state.transcript])
+    saveConversation(projectId, chatId, state.transcript)
+  }, [projectId, chatId, state.transcript])
 
   // Mirror the conversation to a JSON file on the server once a run settles or mode changes.
   // The ref skips re-saving a chat that was just opened from history, which
@@ -948,7 +983,7 @@ function AgentPanelInner({
   const onNewChat = useCallback(() => {
     void stop()
     leaveChat()
-    clearConversation(projectId)
+    clearConversation(projectId, chatId)
     const id = newChatId()
     setActiveChatId(projectId, id)
     setChatId(id)
@@ -959,7 +994,7 @@ function AgentPanelInner({
     setNewChatSeed(s => s + 1)
     setCompletedRun(null)
     setRunStartedAt(null)
-  }, [leaveChat, projectId, setState, stop])
+  }, [chatId, leaveChat, projectId, setState, stop])
 
   const onOpenChat = useCallback(
     async (id: string) => {
@@ -969,7 +1004,7 @@ function AgentPanelInner({
       leaveChat()
       const mode = chat.mode || getStoredChatMode(projectId, id) || 'manual'
       lastSavedRef.current = { transcript: chat.transcript, mode }
-      saveConversation(projectId, chat.transcript)
+      saveConversation(projectId, id, chat.transcript)
       setActiveChatId(projectId, id)
       setChatId(id)
       setChatTitle(chat.title || '')

@@ -5,12 +5,18 @@ import path from 'node:path'
 import os from 'node:os'
 import {
   BrowserEngine,
+  MAX_BODY_BYTES,
+  capBody,
+  checkSandbox,
   cleanProfileDir,
   isChallengeBody,
+  navigationUrl,
   routeRaw,
   routeRender,
   waitForSettledPage,
 } from '../engine.mjs'
+
+const SANDBOXED = () => ({ ok: true, reason: 'test' })
 
 function tmpProfile() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'profile-test-'))
@@ -189,12 +195,11 @@ test('BrowserEngine launches Chrome once when reads arrive together', async () =
     const context = {
       on: () => {},
       close: async () => {},
-      newPage: async () => {
-        throw new Error('unused')
-      },
+      newPage: async () => ({ close: async () => {} }),
     }
     const engine = new BrowserEngine({
       profileDir: tmp,
+      sandboxCheck: SANDBOXED,
       launcher: async () => {
         launches++
         await new Promise(resolve => setTimeout(resolve, 10))
@@ -237,6 +242,7 @@ test('BrowserEngine closes the page and reports cancellation when the read is ab
     }
     const engine = new BrowserEngine({
       profileDir: tmp,
+      sandboxCheck: SANDBOXED,
       launcher: async () => context,
     })
     const controller = new AbortController()
@@ -247,6 +253,221 @@ test('BrowserEngine closes the page and reports cancellation when the read is ab
     controller.abort()
     await assert.rejects(reading, err => err.code === 'aborted')
     assert.equal(closed, true)
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true })
+  }
+})
+
+test('navigationUrl adds an empty query to a bare favicon.ico, which Chrome refuses to open', () => {
+  assert.equal(
+    navigationUrl('https://github.com/favicon.ico'),
+    'https://github.com/favicon.ico?'
+  )
+  assert.equal(
+    navigationUrl('https://www.python.org/static/FAVICON.ICO'),
+    'https://www.python.org/static/FAVICON.ICO?'
+  )
+  assert.equal(
+    navigationUrl('https://example.com/favicon.ico?v=2'),
+    'https://example.com/favicon.ico?v=2'
+  )
+  assert.equal(
+    navigationUrl('https://example.com/favicon.png'),
+    'https://example.com/favicon.png'
+  )
+  assert.equal(navigationUrl('https://example.com/'), 'https://example.com/')
+})
+
+test('BrowserEngine reads a bare favicon.ico by its empty-query form', async () => {
+  const tmp = tmpProfile()
+  try {
+    const visited = []
+    const icon = Buffer.from([0, 0, 1, 0])
+    const page = {
+      route: async () => {},
+      goto: async url => {
+        visited.push(url)
+        return {
+          body: async () => icon,
+          headers: () => ({ 'content-type': 'image/x-icon' }),
+          status: () => 200,
+        }
+      },
+      close: async () => {},
+      url: () => visited.at(-1),
+    }
+    const engine = new BrowserEngine({
+      profileDir: tmp,
+      sandboxCheck: SANDBOXED,
+      launcher: async () => ({
+        on: () => {},
+        close: async () => {},
+        newPage: async () => page,
+      }),
+    })
+    const read = await engine.raw('https://github.com/favicon.ico')
+    assert.deepEqual(visited, ['https://github.com/favicon.ico?'])
+    assert.equal(read.finalUrl, 'https://github.com/favicon.ico')
+    assert.deepEqual(read.body, icon)
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true })
+  }
+})
+
+test('cleanProfileDir removes the lock a Chrome that did not shut down left behind', () => {
+  const tmp = tmpProfile()
+  try {
+    // Chrome's lock is a link to "<host>-<pid>" of a container that is gone
+    fs.symlinkSync('old-container-22', path.join(tmp, 'SingletonLock'))
+    fs.symlinkSync('/tmp/gone/SingletonSocket', path.join(tmp, 'SingletonSocket'))
+    fs.symlinkSync('12345', path.join(tmp, 'SingletonCookie'))
+    fs.writeFileSync(path.join(tmp, 'Local State'), '{}')
+    cleanProfileDir(tmp)
+    for (const name of ['SingletonLock', 'SingletonSocket', 'SingletonCookie']) {
+      assert.throws(() => fs.lstatSync(path.join(tmp, name)), { code: 'ENOENT' })
+    }
+    assert.equal(fs.readFileSync(path.join(tmp, 'Local State'), 'utf8'), '{}')
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true })
+  }
+})
+
+test('cleanProfileDir purges every kind of site storage and keeps cookies and preferences', () => {
+  const tmp = tmpProfile()
+  try {
+    const profile = path.join(tmp, 'Default')
+    fs.mkdirSync(profile, { recursive: true })
+    fs.writeFileSync(path.join(profile, 'Cookies'), 'cookie')
+    fs.writeFileSync(path.join(profile, 'Preferences'), '{}')
+    const purged = [
+      'Local Storage',
+      'Session Storage',
+      'File System',
+      'WebStorage',
+      'Shared Dictionary',
+    ]
+    for (const name of purged) {
+      fs.mkdirSync(path.join(profile, name), { recursive: true })
+    }
+    fs.mkdirSync(path.join(tmp, 'Crashpad'), { recursive: true })
+
+    assert.deepEqual(cleanProfileDir(tmp), { wiped: false })
+
+    assert.equal(fs.readFileSync(path.join(profile, 'Cookies'), 'utf8'), 'cookie')
+    assert.equal(fs.existsSync(path.join(profile, 'Preferences')), true)
+    for (const name of purged) {
+      assert.equal(fs.existsSync(path.join(profile, name)), false, name)
+    }
+    assert.equal(fs.existsSync(path.join(tmp, 'Crashpad')), false)
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true })
+  }
+})
+
+test('cleanProfileDir empties a profile still too big after cleaning', () => {
+  const tmp = tmpProfile()
+  try {
+    fs.mkdirSync(path.join(tmp, 'Default'), { recursive: true })
+    fs.writeFileSync(path.join(tmp, 'Default', 'Cookies'), 'x'.repeat(2048))
+    assert.deepEqual(cleanProfileDir(tmp, { maxBytes: 1024 }), { wiped: true })
+    assert.deepEqual(fs.readdirSync(tmp), [])
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true })
+  }
+})
+
+test('capBody cuts a body over the cap and says so', () => {
+  assert.equal(MAX_BODY_BYTES, 128 * 1024 * 1024)
+  assert.deepEqual(capBody(Buffer.from('abcdef'), 4), {
+    body: Buffer.from('abcd'),
+    truncated: true,
+  })
+  assert.deepEqual(capBody(Buffer.from('ab'), 4), {
+    body: Buffer.from('ab'),
+    truncated: false,
+  })
+})
+
+/** A fake /proc: `processes` maps pid -> { cmdline, status }. */
+function fakeProc(processes) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proc-test-'))
+  for (const [pid, { cmdline, status }] of Object.entries(processes)) {
+    fs.mkdirSync(path.join(root, pid))
+    fs.writeFileSync(path.join(root, pid, 'cmdline'), cmdline)
+    fs.writeFileSync(path.join(root, pid, 'status'), status)
+  }
+  fs.mkdirSync(path.join(root, 'self'))
+  return root
+}
+
+const NODE = {
+  cmdline: 'node\0server.mjs\0',
+  status: 'Name:\tnode\nSeccomp:\t2\nSeccomp_filters:\t1\nNSpid:\t1\n',
+}
+
+test('checkSandbox passes when every renderer has its own PID namespace and seccomp filter', () => {
+  const root = fakeProc({
+    1: NODE,
+    40: {
+      cmdline: '/opt/google/chrome/chrome --type=renderer --lang=en-US',
+      status: 'Seccomp:\t2\nSeccomp_filters:\t2\nNSpid:\t40\t3\n',
+    },
+  })
+  try {
+    const verdict = checkSandbox({ procRoot: root, selfPid: 1 })
+    assert.equal(verdict.ok, true, verdict.reason)
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('checkSandbox fails without a renderer, without a namespace, or without a filter', () => {
+  const cases = {
+    'no renderer': { 1: NODE },
+    'no namespace': {
+      1: NODE,
+      40: {
+        cmdline: 'chrome\0--type=renderer\0',
+        status: 'Seccomp_filters:\t2\nNSpid:\t40\n',
+      },
+    },
+    'no filter of its own': {
+      1: NODE,
+      40: {
+        cmdline: 'chrome\0--type=renderer\0',
+        status: 'Seccomp_filters:\t1\nNSpid:\t40\t3\n',
+      },
+    },
+  }
+  for (const [name, processes] of Object.entries(cases)) {
+    const root = fakeProc(processes)
+    try {
+      assert.equal(checkSandbox({ procRoot: root, selfPid: 1 }).ok, false, name)
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  }
+})
+
+test('BrowserEngine refuses to start, and closes Chrome, when the sandbox is not active', async () => {
+  const tmp = tmpProfile()
+  try {
+    let closed = false
+    const context = {
+      on: () => {},
+      close: async () => {
+        closed = true
+      },
+      newPage: async () => ({ close: async () => {} }),
+    }
+    const engine = new BrowserEngine({
+      profileDir: tmp,
+      sandboxCheck: () => ({ ok: false, reason: 'no namespace' }),
+      launcher: async () => context,
+    })
+    await assert.rejects(engine.init(), /sandbox is not active \(no namespace\)/)
+    assert.equal(closed, true)
+    assert.equal(engine.context, null)
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true })
   }

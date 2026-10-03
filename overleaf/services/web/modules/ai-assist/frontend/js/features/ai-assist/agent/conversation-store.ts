@@ -1,10 +1,11 @@
 import customLocalStorage from '@/infrastructure/local-storage'
 import { TranscriptEntry, ToolCallRecord } from './agent-messages'
 
-export const MAX_STORED_BYTES = 200000
+export const MAX_STORED_BYTES = 500000
 const MAX_RESULT_CHARS = 4000
 
-const keyFor = (projectId: string) => `ai-assist:chat:${projectId}`
+export const keyFor = (projectId: string, chatId?: string) =>
+  chatId ? `ai-assist:chat:${projectId}:${chatId}` : `ai-assist:chat:${projectId}`
 
 /**
  * Cleans stored tool call results, unwrapping any legacy nested { truncated, preview }
@@ -173,6 +174,52 @@ export function shrinkCall(call: ToolCallRecord): ToolCallRecord {
   }
 }
 
+function deepShrinkCall(call: ToolCallRecord): ToolCallRecord {
+  if (!('result' in call) || !call.result) return call
+  if (typeof call.result === 'object') {
+    const res = call.result as any
+    if (call.name === 'read_file' && typeof res.content === 'string') {
+      return {
+        ...call,
+        result: {
+          path: res.path,
+          from: res.from,
+          to: res.to,
+          totalLines: res.totalLines,
+          content: res.content.slice(0, 500) + '\n... (truncated)',
+          truncated: true,
+          _shrunk: true,
+        },
+      }
+    }
+    return {
+      ...call,
+      result: {
+        truncated: true,
+        message: 'Result truncated for storage',
+        _shrunk: true,
+      },
+    }
+  }
+  return call
+}
+
+function deepShrink(entry: TranscriptEntry): TranscriptEntry {
+  if (entry.role !== 'assistant') return entry
+  const dedupedCalls = deduplicateToolCalls(entry.toolCalls || [])
+  const dedupedBlocks = deduplicateBlocks(entry.blocks)
+
+  return {
+    ...entry,
+    toolCalls: dedupedCalls.map(deepShrinkCall),
+    blocks: dedupedBlocks?.map(block =>
+      block && block.type === 'tool_call' && block.call
+        ? { ...block, call: deepShrinkCall(block.call) }
+        : block
+    ),
+  }
+}
+
 export function deduplicateToolCalls(calls: ToolCallRecord[]): ToolCallRecord[] {
   const seen = new Set<string>()
   const result: ToolCallRecord[] = []
@@ -222,8 +269,32 @@ export function shrink(entry: TranscriptEntry): TranscriptEntry {
   }
 }
 
-function fit(transcript: TranscriptEntry[]) {
+function fit(transcript: TranscriptEntry[]): TranscriptEntry[] {
+  if (!Array.isArray(transcript) || transcript.length === 0) return []
   let kept = transcript.map(shrink)
+  if (JSON.stringify(kept).length <= MAX_STORED_BYTES) {
+    return kept
+  }
+
+  // Pass 2: Deep-shrink older assistant entries (preserve last assistant entry if possible)
+  const lastAssistantIdx = kept.map(e => e.role).lastIndexOf('assistant')
+  kept = kept.map((entry, idx) => {
+    if (entry.role === 'assistant' && idx !== lastAssistantIdx) {
+      return deepShrink(entry)
+    }
+    return entry
+  })
+  if (JSON.stringify(kept).length <= MAX_STORED_BYTES) {
+    return kept
+  }
+
+  // Pass 3: Deep shrink all assistant entries
+  kept = kept.map(entry => (entry.role === 'assistant' ? deepShrink(entry) : entry))
+  if (JSON.stringify(kept).length <= MAX_STORED_BYTES) {
+    return kept
+  }
+
+  // Pass 4: Fallback limit for extreme synthetic cases (e.g. hundreds of massive user messages)
   while (kept.length > 1 && JSON.stringify(kept).length > MAX_STORED_BYTES) {
     kept = kept.slice(1)
   }
@@ -281,9 +352,18 @@ export function prepareTranscriptForRun(
  * corrupt store by returning null, so unreadable history degrades to an empty
  * transcript and unwritable history degrades to memory for this session.
  */
-export function loadConversation(projectId: string): TranscriptEntry[] {
+export function loadConversation(
+  projectId: string,
+  chatId?: string
+): TranscriptEntry[] {
   try {
-    const parsed = customLocalStorage.getItem(keyFor(projectId))
+    let parsed: any = null
+    if (chatId) {
+      parsed = customLocalStorage.getItem(keyFor(projectId, chatId))
+    }
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+      parsed = customLocalStorage.getItem(keyFor(projectId))
+    }
     if (!Array.isArray(parsed)) return []
     return parsed.map(entry => {
       if (!entry || typeof entry !== 'object') return entry
@@ -312,14 +392,27 @@ export function loadConversation(projectId: string): TranscriptEntry[] {
 
 export function saveConversation(
   projectId: string,
-  transcript: TranscriptEntry[]
+  chatIdOrTranscript: string | TranscriptEntry[],
+  maybeTranscript?: TranscriptEntry[]
 ) {
   try {
-    customLocalStorage.setItem(keyFor(projectId), fit(transcript))
+    const chatId =
+      typeof chatIdOrTranscript === 'string' ? chatIdOrTranscript : undefined
+    const transcript = Array.isArray(chatIdOrTranscript)
+      ? chatIdOrTranscript
+      : maybeTranscript || []
+    const fitted = fit(transcript)
+    if (chatId) {
+      customLocalStorage.setItem(keyFor(projectId, chatId), fitted)
+    }
+    customLocalStorage.setItem(keyFor(projectId), fitted)
   } catch (err) {
   }
 }
 
-export function clearConversation(projectId: string) {
+export function clearConversation(projectId: string, chatId?: string) {
+  if (chatId) {
+    customLocalStorage.removeItem(keyFor(projectId, chatId))
+  }
   customLocalStorage.removeItem(keyFor(projectId))
 }

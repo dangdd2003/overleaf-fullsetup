@@ -1294,6 +1294,120 @@ $code-font-family: var(
     }
   }
 
+  // A failed web tool: sits in the step's own box, at the size of its other
+  // output, with no box of its own
+  .ai-assist-web-error {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 0 4px;
+    line-height: 1.45;
+  }
+
+  .ai-assist-web-error-head {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+  }
+
+  .ai-assist-web-error-icon {
+    flex-shrink: 0;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--content-danger-themed, #ef4444);
+    // the dot sits on the first line's x-height
+    transform: translateY(-1px);
+    font-size: 0;
+  }
+
+  .ai-assist-web-error-text {
+    min-width: 0;
+  }
+
+  .ai-assist-web-error-title {
+    color: var(--content-primary-themed);
+    font-weight: 500;
+  }
+
+  .ai-assist-web-error-why,
+  .ai-assist-web-error-fixes,
+  .ai-assist-web-error-details {
+    color: var(--content-secondary-themed);
+    font-size: 0.6875rem;
+  }
+
+  .ai-assist-web-error-fixes {
+    margin: 0;
+    padding-left: 24px;
+
+    li + li {
+      margin-top: 2px;
+    }
+  }
+
+  .ai-assist-web-error-details {
+    margin-left: 12px;
+
+    > summary {
+      cursor: pointer;
+      width: fit-content;
+      user-select: none;
+
+      &:hover {
+        color: var(--content-primary-themed);
+      }
+    }
+
+    .ai-assist-tool-detail-text {
+      margin: 4px 0 0;
+      font-family: $font-family-monospace;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+  }
+
+  .ai-assist-web-attempts {
+    margin: 4px 0 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .ai-assist-web-attempt {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 1px 0;
+
+    &.is-skipped,
+    &.is-no_copy {
+      opacity: 0.65;
+    }
+  }
+
+  .ai-assist-web-attempt-route {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .ai-assist-web-attempt-why {
+    display: inline-flex;
+    align-items: baseline;
+    flex-shrink: 0;
+    gap: 8px;
+    text-align: right;
+
+    code {
+      padding: 0;
+      background: none;
+      color: inherit;
+      font-size: inherit;
+      opacity: 0.6;
+    }
+  }
+
   .ai-assist-web-fetch-detail {
     display: flex;
     flex-direction: column;

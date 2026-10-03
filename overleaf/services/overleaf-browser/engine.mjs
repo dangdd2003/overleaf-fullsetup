@@ -9,13 +9,60 @@ export const RAW_NAV_TIMEOUT_MS = 15_000
 export const RENDER_NAV_TIMEOUT_MS = 25_000
 /** web_fetch keeps text only; these never change what a page says. */
 export const RENDER_BLOCKED_TYPES = new Set(['image', 'media', 'font'])
+/** The most of one page or download handed back: the web side's PDF cap. */
+export const MAX_BODY_BYTES = 128 * 1024 * 1024
+/** Chrome's HTTP cache on the profile volume. */
+export const DISK_CACHE_BYTES = 100 * 1024 * 1024
+/** A profile still bigger than this after cleaning is wiped whole. */
+export const PROFILE_MAX_BYTES = 512 * 1024 * 1024
+
+/** `body` cut to MAX_BODY_BYTES, and whether it was cut. */
+export function capBody(body, max = MAX_BODY_BYTES) {
+  return body.length > max
+    ? { body: body.subarray(0, max), truncated: true }
+    : { body, truncated: false }
+}
+
+/** Bytes under `dir`, without following links. */
+function sizeOf(dir) {
+  let total = 0
+  let entries = []
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true })
+  } catch {
+    return 0
+  }
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name)
+    if (entry.isDirectory()) total += sizeOf(full)
+    else if (entry.isFile()) {
+      try {
+        total += fs.statSync(full).size
+      } catch {}
+    }
+  }
+  return total
+}
 
 /**
- * Delete ephemeral directories so no page leaves code running behind,
- * while preserving Cookies and profile preferences.
+ * Delete everything a page can store or leave running behind (workers,
+ * caches, every kind of site storage, crash dumps) and the locks of a Chrome
+ * that did not shut down, keeping only cookies and profile preferences,
+ * which bot checks rely on. A profile still bigger than
+ * `maxBytes` afterwards is emptied entirely, so no page can fill the volume.
+ * Returns whether it was emptied.
  */
-export function cleanProfileDir(profileDir) {
-  if (!fs.existsSync(profileDir)) return
+export function cleanProfileDir(
+  profileDir,
+  { maxBytes = PROFILE_MAX_BYTES } = {}
+) {
+  if (!fs.existsSync(profileDir)) return { wiped: false }
+  // Locks of a Chrome that did not shut down (its container was replaced):
+  // left in place, the next Chrome asks whether the profile is in use and
+  // never starts. Only this container runs a Chrome on this profile.
+  for (const name of ['SingletonLock', 'SingletonSocket', 'SingletonCookie']) {
+    fs.rmSync(path.join(profileDir, name), { force: true })
+  }
   const purgeNames = new Set([
     'Service Worker',
     'Cache',
@@ -23,6 +70,17 @@ export function cleanProfileDir(profileDir) {
     'GPUCache',
     'IndexedDB',
     'blob_storage',
+    'File System',
+    'Local Storage',
+    'Session Storage',
+    'WebStorage',
+    'Shared Dictionary',
+    'DawnGraphiteCache',
+    'DawnWebGPUCache',
+    'GraphiteDawnCache',
+    'GrShaderCache',
+    'ShaderCache',
+    'Crashpad',
   ])
 
   function walk(current) {
@@ -45,6 +103,87 @@ export function cleanProfileDir(profileDir) {
   }
 
   walk(profileDir)
+
+  if (sizeOf(profileDir) <= maxBytes) return { wiped: false }
+  for (const entry of fs.readdirSync(profileDir)) {
+    fs.rmSync(path.join(profileDir, entry), { recursive: true, force: true })
+  }
+  return { wiped: true }
+}
+
+/**
+ * Whether Chrome's own sandbox is really on, read from /proc rather than
+ * trusted from a flag: every renderer must run in a PID namespace of its own
+ * (the namespace sandbox) and, where the kernel reports it, carry more
+ * seccomp filters than this process (Chrome's seccomp-bpf on top of
+ * Docker's).
+ */
+export function checkSandbox({ procRoot = '/proc', selfPid = process.pid } = {}) {
+  const read = (pid, file) => {
+    try {
+      return fs.readFileSync(path.join(procRoot, String(pid), file), 'utf8')
+    } catch {
+      return null
+    }
+  }
+  const filtersOf = status => {
+    const match = /^Seccomp_filters:\s*(\d+)/m.exec(status ?? '')
+    return match ? Number(match[1]) : null
+  }
+  const pidNamespaces = status => {
+    const match = /^NSpid:\s*(.+)$/m.exec(status ?? '')
+    return match ? match[1].trim().split(/\s+/).length : 0
+  }
+
+  let pids = []
+  try {
+    pids = fs.readdirSync(procRoot).filter(name => /^\d+$/.test(name))
+  } catch {
+    return { ok: false, reason: `${procRoot} cannot be read` }
+  }
+  // Chrome may rewrite its command line with spaces instead of NULs
+  const renderers = pids.filter(pid =>
+    (read(pid, 'cmdline') ?? '').replace(/\0/g, ' ').includes('--type=renderer')
+  )
+  if (renderers.length === 0) {
+    return { ok: false, reason: 'no Chrome renderer is running' }
+  }
+  const ownFilters = filtersOf(read(selfPid, 'status'))
+  for (const pid of renderers) {
+    const status = read(pid, 'status')
+    if (pidNamespaces(status) < 2) {
+      return {
+        ok: false,
+        reason: `renderer ${pid} is not in a PID namespace of its own`,
+      }
+    }
+    const filters = filtersOf(status)
+    if (ownFilters !== null && filters !== null && filters <= ownFilters) {
+      return {
+        ok: false,
+        reason: `renderer ${pid} has no seccomp filter of its own`,
+      }
+    }
+  }
+  return { ok: true, reason: `${renderers.length} renderer(s) sandboxed` }
+}
+
+/**
+ * The URL Chrome is sent to for `url`. Chrome aborts a navigation to a path
+ * ending in /favicon.ico (net::ERR_ABORTED, before any request goes out),
+ * so such a URL gets an empty query: the same file to any server, and
+ * a page Chrome opens.
+ */
+export function navigationUrl(url) {
+  const parsed = new URL(url)
+  if (parsed.search || !/\/favicon\.ico$/i.test(parsed.pathname)) return url
+  return `${url}?`
+}
+
+/** The page's own URL, without the query navigationUrl added. */
+function reportedUrl(page, url, navigated) {
+  const current = page.url()
+  return current === navigated ? url : current
 }
 
 /** Raw reads take the document only; the page's own requests are refused. */
@@ -162,23 +301,20 @@ export async function waitForSettledPage(
   return { html, text, challenge: isChallenge(html, text) }
 }
 
-async function launchChrome({
-  profileDir,
-  proxyUrl,
-  chromiumSandbox,
-  browserLang,
-}) {
+async function launchChrome({ profileDir, proxyUrl, browserLang }) {
   const { chromium } = await import('patchright')
   return chromium.launchPersistentContext(profileDir, {
     channel: 'chrome',
     headless: false, // headed Chrome on the Xvfb display server.mjs starts, as Patchright recommends
     viewport: null,
-    chromiumSandbox,
+    // Never off: checkSandbox refuses to read pages without it
+    chromiumSandbox: true,
     proxy: { server: proxyUrl, bypass: '<-loopback>' },
     args: [
       `--lang=${browserLang}`,
       '--disable-quic',
       '--force-webrtc-ip-handling-policy=disable_non_proxied_udp',
+      `--disk-cache-size=${DISK_CACHE_BYTES}`,
     ],
   })
 }
@@ -186,16 +322,16 @@ async function launchChrome({
 export class BrowserEngine {
   constructor({
     profileDir = '/data/profile',
-    proxyUrl = 'http://127.0.0.1:8080',
-    chromiumSandbox = true,
+    proxyUrl,
     browserLang = 'en-US',
     launcher = null,
+    sandboxCheck = checkSandbox,
   } = {}) {
     this.profileDir = profileDir
     this.proxyUrl = proxyUrl
-    this.chromiumSandbox = chromiumSandbox
     this.browserLang = browserLang
     this.launcher = launcher
+    this.sandboxCheck = sandboxCheck
     this.context = null
     this.starting = null
     this.busyCount = 0
@@ -222,7 +358,11 @@ export class BrowserEngine {
   }
 
   async _launch() {
-    cleanProfileDir(this.profileDir)
+    if (cleanProfileDir(this.profileDir).wiped) {
+      console.warn(
+        `The browser profile was over ${PROFILE_MAX_BYTES} bytes after cleaning and was emptied`
+      )
+    }
     fs.mkdirSync(this.profileDir, { recursive: true })
 
     let context
@@ -230,15 +370,33 @@ export class BrowserEngine {
       context = await (this.launcher ?? launchChrome)({
         profileDir: this.profileDir,
         proxyUrl: this.proxyUrl,
-        chromiumSandbox: this.chromiumSandbox,
         browserLang: this.browserLang,
       })
     } catch (err) {
       if (/sandbox/i.test(String(err?.message || err))) {
         console.error(
-          "Chrome's sandbox could not start. Run the container with services/overleaf-browser/seccomp.json (see README), or set BROWSER_SANDBOX=off to run without it."
+          "Chrome's sandbox could not start. Run the container with services/overleaf-browser/seccomp.json (see README)."
         )
       }
+      throw err
+    }
+
+    // A renderer exists once a page is open: check it really is sandboxed
+    try {
+      const page = await context.newPage()
+      try {
+        const verdict = this.sandboxCheck()
+        if (!verdict.ok) {
+          throw new Error(
+            `Chrome's sandbox is not active (${verdict.reason}); refusing to read pages without it`
+          )
+        }
+        console.log(`Chrome sandbox verified: ${verdict.reason}`)
+      } finally {
+        await page.close().catch(() => {})
+      }
+    } catch (err) {
+      await context.close().catch(() => {})
       throw err
     }
 
@@ -273,25 +431,28 @@ export class BrowserEngine {
       if (signal?.aborted) throw cancelled()
       await page.route('**/*', routeRaw)
 
-      const response = await page.goto(url, {
+      const navigated = navigationUrl(url)
+      const response = await page.goto(navigated, {
         waitUntil: 'domcontentloaded',
         timeout: RAW_NAV_TIMEOUT_MS,
       })
 
-      let body
+      let whole
       try {
-        body = await response.body()
+        whole = await response.body()
       } catch {
-        body = Buffer.from(await page.content(), 'utf8')
+        whole = Buffer.from(await page.content(), 'utf8')
       }
+      const { body, truncated } = capBody(whole)
       const contentType =
         response?.headers()['content-type'] || 'text/html; charset=utf-8'
 
       return {
         status: response?.status() ?? 200,
-        finalUrl: page.url(),
+        finalUrl: reportedUrl(page, url, navigated),
         contentType,
         body,
+        truncated,
         challenge: isChallengeBody(contentType, body),
       }
     } catch (err) {
@@ -340,32 +501,45 @@ export class BrowserEngine {
       )
       if (downloaded || isPdf) {
         let body
+        let truncated = false
         if (downloaded) {
           const download = await downloadPromise
           if (!download) throw new Error('Download failed')
+          // Read no more than the cap, then drop the file from /tmp
           const chunks = []
+          let size = 0
           for await (const chunk of await download.createReadStream()) {
+            if (size + chunk.length > MAX_BODY_BYTES) {
+              chunks.push(chunk.subarray(0, MAX_BODY_BYTES - size))
+              truncated = true
+              break
+            }
             chunks.push(chunk)
+            size += chunk.length
           }
+          await download.delete().catch(() => {})
           body = Buffer.concat(chunks)
         } else {
-          body = await response.body()
+          ;({ body, truncated } = capBody(await response.body()))
         }
         return {
           status,
           finalUrl: page.url(),
           contentType: 'application/pdf',
           body,
+          truncated,
           challenge: false,
         }
       }
 
       const { html, challenge } = await waitForSettledPage(page, { signal })
+      const { body, truncated } = capBody(Buffer.from(html, 'utf8'))
       return {
         status,
         finalUrl: page.url(),
         contentType: 'text/html; charset=utf-8',
-        body: Buffer.from(html, 'utf8'),
+        body,
+        truncated,
         challenge,
       }
     } catch (err) {

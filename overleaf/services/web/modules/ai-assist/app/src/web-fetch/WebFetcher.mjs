@@ -24,10 +24,13 @@ import {
  * Reads one URL by the first route that yields real content:
  *
  *   working set → cache → a search's page text → paid readers → site adapter
- *     → direct GET → headless browser → archives
+ *     → the page (direct GET, or the browser's raw read then render) → archives
  *
  * Configured provider readers run first; built-in fallbacks are tried only when
- * no provider is configured or all reader attempts fail. A reader slow to
+ * no provider is configured or all reader attempts fail. With the browser
+ * sidecar configured, every request the fallbacks make (adapter, page,
+ * archive) goes through it and none is ever made directly, even when the
+ * browser fails. A reader slow to
  * answer is hedged: the next one starts alongside it and the first real
  * document wins. Every document passes the quality check, so a bot check or an
  * empty JavaScript shell counts as that route failing.
@@ -95,10 +98,14 @@ export class WebFetcher {
     owner = 'default',
     now = () => Date.now(),
   } = {}) {
-    this.fetchPage = fetchPage
+    this.browser = browser
+    // With the browser sidecar configured, every request this fetcher makes
+    // on its own goes through it; `fetchPage` (a direct request) is never used
+    this.fetchPage = browser
+      ? (target, options) => browser.fetchPage(target, options)
+      : fetchPage
     this.fetchFn = fetchFn
     this.rotator = rotator
-    this.browser = browser
     this.cache = cache
     this.cacheHours = cacheHours
     this.adapters = adapters
@@ -460,29 +467,18 @@ export class WebFetcher {
       }
     }
 
-    // Plain fetch: prefer sidecar raw when available, fall back to local direct GET
-    let direct = null
-    if (this.browser?.available()) {
-      direct = await attempt(
-        'browser-raw',
-        STEP_TIMEOUT_MS.raw,
-        async stepSignal => {
-          const resp = await this.browser.raw(url, { signal: stepSignal })
-          return await documentFromResponse(resp)
-        },
-        { lenient: true }
-      )
-    }
-
-    if (!direct) {
-      direct = await attempt('direct', STEP_TIMEOUT_MS.direct, stepSignal =>
+    // The page itself, by this.fetchPage: the browser's raw read when the
+    // browser is configured, else a direct GET. Never both.
+    const page = await attempt(
+      this.browser ? 'browser-raw' : 'direct',
+      this.browser ? STEP_TIMEOUT_MS.raw : STEP_TIMEOUT_MS.direct,
+      stepSignal =>
         directRoute(url, { fetchPage: this.fetchPage, signal: stepSignal })
-      )
-    }
-    if (direct) return done(direct)
+    )
+    if (page) return done(page)
 
-    // Full browser render: when sidecar is available
-    if (!gone && this.browser?.available()) {
+    // A full render, for a page that needs JavaScript or runs a bot check
+    if (!gone && this.browser) {
       const doc = await attempt(
         'browser-render',
         STEP_TIMEOUT_MS.render,
@@ -510,13 +506,16 @@ export class WebFetcher {
     }
 
     let errorMsg = `Could not read ${url}: ${tried.join(' · ')}.`
-    if (sawBrowserChallenge && (!this.browser || !this.browser.available())) {
+    if (sawBrowserChallenge && !this.browser) {
       errorMsg +=
         ' This page needs a real browser (it runs a bot check or renders in JavaScript); the overleaf-browser sidecar can read it.'
     }
 
     throw webError(errorMsg, {
-      kind: 'ladder-failed',
+      // The sidecar went down during this read: not remembered as the page's
+      // failure, so the next read tries again once it is back
+      kind:
+        this.browser && !this.browser.available() ? 'network' : 'ladder-failed',
     })
   }
 }

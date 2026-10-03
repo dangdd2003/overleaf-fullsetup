@@ -137,7 +137,7 @@ describe('WebFetcher', function () {
     expect(readsInFlight()).to.equal(0)
   })
 
-  it('moves past a refused direct read to the browser', async function () {
+  it("moves past the browser's refused raw read to its render", async function () {
     const browserDocResponse = {
       url: PAGE,
       contentType: 'text/html; charset=utf-8',
@@ -146,16 +146,17 @@ describe('WebFetcher', function () {
     }
     const browser = {
       available: () => true,
-      raw: sinon.stub().rejects(refused(403)),
+      fetchPage: sinon.stub().rejects(refused(403)),
       render: sinon.stub().resolves(browserDocResponse),
     }
-    const fetcher = new WebFetcher({
-      fetchPage: site({ page: refused(403) }),
-      browser,
-    })
+    const direct = site({ page: articlePage() })
+    const fetcher = new WebFetcher({ fetchPage: direct, browser })
     const doc = await fetcher.read(PAGE)
     expect(doc.via).to.equal('browser-render')
+    expect(browser.fetchPage.calledOnce).to.equal(true)
+    expect(browser.fetchPage.firstCall.args[0]).to.equal(PAGE)
     expect(browser.render.calledOnceWith(PAGE)).to.equal(true)
+    expect(direct.called).to.equal(false)
   })
 
   it('treats a bot check as a failure and keeps climbing', async function () {
@@ -183,7 +184,8 @@ describe('WebFetcher', function () {
       )
     const browser = {
       available: () => true,
-      read: sinon.stub().resolves(articlePage()),
+      fetchPage: sinon.stub().resolves(htmlResponse(PAGE, articlePage())),
+      render: sinon.stub(),
     }
     const fetcher = new WebFetcher({
       fetchPage,
@@ -204,7 +206,8 @@ describe('WebFetcher', function () {
       'https://api.websearchapi.ai/scrape'
     )
     expect(fetchPage.called).to.equal(false)
-    expect(browser.read.called).to.equal(false)
+    expect(browser.fetchPage.called).to.equal(false)
+    expect(browser.render.called).to.equal(false)
   })
 
   // Review Focus 3
@@ -231,15 +234,59 @@ describe('WebFetcher', function () {
   })
 
   it('goes straight to the archives when the page is gone', async function () {
-    const browser = { available: () => true, read: sinon.stub() }
     const fetcher = new WebFetcher({
       fetchPage: site({ page: refused(404), wayback: articlePage() }),
-      browser,
     })
     const doc = await fetcher.read(PAGE)
     expect(doc.via).to.equal('wayback')
     expect(doc.archived).to.equal('2026-04-07')
-    expect(browser.read.called).to.equal(false)
+  })
+
+  it('reads the archives through the browser, skipping its render, when the page is gone', async function () {
+    const browser = {
+      available: () => true,
+      fetchPage: site({ page: refused(404), wayback: articlePage() }),
+      render: sinon.stub(),
+    }
+    const direct = site({ page: articlePage() })
+    const fetcher = new WebFetcher({ fetchPage: direct, browser })
+    const doc = await fetcher.read(PAGE)
+    expect(doc.via).to.equal('wayback')
+    expect(doc.archived).to.equal('2026-04-07')
+    expect(browser.render.called).to.equal(false)
+    const asked = browser.fetchPage.getCalls().map(call => call.args[0])
+    expect(asked[0]).to.equal(PAGE)
+    expect(asked.some(url => url.startsWith('https://archive.org/'))).to.equal(
+      true
+    )
+    expect(direct.called).to.equal(false)
+  })
+
+  it('sends a site adapter through the browser when it is configured', async function () {
+    const adapter = {
+      name: 'fake',
+      match: () => true,
+      read: async (url, ctx) => ctx.readDocument('https://api.example.com/x'),
+    }
+    const browser = {
+      available: () => true,
+      fetchPage: sinon
+        .stub()
+        .callsFake(async url => htmlResponse(url, articlePage())),
+      render: sinon.stub(),
+    }
+    const direct = site({ page: articlePage() })
+    const fetcher = new WebFetcher({
+      fetchPage: direct,
+      browser,
+      adapters: [adapter],
+    })
+    const doc = await fetcher.read(PAGE)
+    expect(doc.via).to.equal('fake')
+    expect(browser.fetchPage.firstCall.args[0]).to.equal(
+      'https://api.example.com/x'
+    )
+    expect(direct.called).to.equal(false)
   })
 
   it('stops at once for a private address', async function () {
@@ -391,39 +438,59 @@ describe('WebFetcher', function () {
     expect((await fetcher.read(PAGE)).via).to.equal('direct')
   })
 
-  it('uses sidecar raw as plain fetch and falls back to local direct when sidecar is unavailable', async function () {
-    const rawDocResponse = {
-      url: PAGE,
-      contentType: 'text/html; charset=utf-8',
-      body: Buffer.from(articlePage()),
-      truncated: false,
-    }
+  it("reads the page by the browser's raw read when it is configured", async function () {
     const browser = {
-      available: sinon.stub().returns(true),
-      raw: sinon.stub().resolves(rawDocResponse),
+      available: () => true,
+      fetchPage: sinon.stub().resolves(htmlResponse(PAGE, articlePage())),
       render: sinon.stub(),
     }
-    const fetchPage = site({ page: refused(403) })
-    const fetcher = new WebFetcher({ fetchPage, browser })
+    const direct = site({ page: articlePage() })
+    const fetcher = new WebFetcher({ fetchPage: direct, browser })
     const doc = await fetcher.read(PAGE)
     expect(doc.via).to.equal('browser-raw')
-    expect(browser.raw.calledOnceWith(PAGE)).to.equal(true)
-    expect(fetchPage.called).to.equal(false)
-
-    // When sidecar raw throws network error, falls back to directRoute
-    clearWorkingSet()
-    browser.raw.rejects(webError('sidecar down', { kind: 'network' }))
-    const directFetchPage = site({ page: articlePage() })
-    const fallbackFetcher = new WebFetcher({
-      fetchPage: directFetchPage,
-      browser,
-    })
-    const fallbackDoc = await fallbackFetcher.read(PAGE)
-    expect(fallbackDoc.via).to.equal('direct')
-    expect(directFetchPage.called).to.equal(true)
+    expect(browser.fetchPage.firstCall.args[0]).to.equal(PAGE)
+    expect(browser.render.called).to.equal(false)
+    expect(direct.called).to.equal(false)
   })
 
-  it('runs sidecar render when raw / direct yields a bot check', async function () {
+  it('never makes a direct request when the browser is down', async function () {
+    let up = true
+    const down = () => {
+      up = false
+      return webError('the browser sidecar is unavailable', {
+        kind: 'network',
+      })
+    }
+    const browser = {
+      available: () => up,
+      fetchPage: sinon.stub().callsFake(async () => {
+        throw down()
+      }),
+      render: sinon.stub().callsFake(async () => {
+        throw down()
+      }),
+    }
+    const direct = site({ page: articlePage() })
+    const fetcher = new WebFetcher({ fetchPage: direct, browser })
+    let error
+    try {
+      await fetcher.read(PAGE)
+    } catch (err) {
+      error = err
+    }
+    expect(error?.message).to.match(
+      /^Could not read https:\/\/example\.com\/a: browser-raw: the browser sidecar is unavailable · browser-render: /
+    )
+    // Not remembered as the page's failure: the next read asks again
+    expect(error?.kind).to.equal('network')
+    expect(direct.called).to.equal(false)
+    const callsBefore = browser.fetchPage.callCount
+    await fetcher.read(PAGE).catch(() => {})
+    expect(browser.fetchPage.callCount).to.be.greaterThan(callsBefore)
+    expect(direct.called).to.equal(false)
+  })
+
+  it("runs the browser's render when its raw read is a bot check", async function () {
     const renderDocResponse = {
       url: PAGE,
       contentType: 'text/html; charset=utf-8',
@@ -431,15 +498,18 @@ describe('WebFetcher', function () {
       truncated: false,
     }
     const browser = {
-      available: sinon.stub().returns(true),
-      raw: sinon.stub().rejects(refused(403)),
+      available: () => true,
+      fetchPage: sinon
+        .stub()
+        .resolves(htmlResponse(PAGE, CLOUDFLARE_CHALLENGE)),
       render: sinon.stub().resolves(renderDocResponse),
     }
-    const fetchPage = site({ page: CLOUDFLARE_CHALLENGE })
-    const fetcher = new WebFetcher({ fetchPage, browser })
+    const direct = site({ page: articlePage() })
+    const fetcher = new WebFetcher({ fetchPage: direct, browser })
     const doc = await fetcher.read(PAGE)
     expect(doc.via).to.equal('browser-render')
     expect(browser.render.calledOnceWith(PAGE)).to.equal(true)
+    expect(direct.called).to.equal(false)
   })
 
   it('caches failures for 10 minutes unless fresh is true', async function () {

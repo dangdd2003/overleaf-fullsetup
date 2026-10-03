@@ -1,7 +1,8 @@
 import crypto from 'node:crypto'
 import http from 'node:http'
 import net from 'node:net'
-import { isPublicAddress } from './proxy.mjs'
+import { isPublicAddress } from './address.mjs'
+import { isChallengeBody } from './engine.mjs'
 import { HostPacer } from './pacer.mjs'
 import { Slots } from './slots.mjs'
 
@@ -9,7 +10,34 @@ import { Slots } from './slots.mjs'
  * How long a read waits for a free browser page. Raw must stay well inside
  * the web side's 25 s raw timeout, render inside its 60 s.
  */
-export const SLOT_WAIT_MS = { raw: 5_000, render: 10_000 }
+export const SLOT_WAIT_MS = {
+  raw: 5_000,
+  render: 10_000,
+  fetch: 3_000,
+  fetchChrome: 5_000,
+}
+/**
+ * Small-file fetches (site icons) at once. They open no browser page, so
+ * they have places of their own and never wait for a page read.
+ */
+export const FETCH_CAPACITY = 8
+/**
+ * Small files a bot check refused to plain HTTP, read by Chrome at once.
+ * Their own pages, so an icon never waits behind a page read.
+ */
+export const FETCH_CHROME_CAPACITY = 2
+
+/**
+ * A plain-HTTP answer that is a bot check rather than the file (Cloudflare
+ * and the like refuse a client that is not a browser): Chrome may pass it.
+ */
+export function refusedAsBot(outcome) {
+  return (
+    outcome.status === 403 ||
+    outcome.status === 503 ||
+    isChallengeBody(outcome.contentType, outcome.body)
+  )
+}
 
 function verifyToken(header, expected) {
   if (!header || !expected) return false
@@ -36,11 +64,16 @@ export function createApp({
   pacer = new HostPacer(),
   capacity = 2,
   slotWaitMs = SLOT_WAIT_MS,
+  fetchFile = null,
+  fetchCapacity = FETCH_CAPACITY,
+  fetchChromeCapacity = FETCH_CHROME_CAPACITY,
 } = {}) {
   if (!token || token.length < 32) {
     throw new Error('BROWSER_TOKEN must be at least 32 characters.')
   }
   const slots = new Slots(capacity)
+  const fetchSlots = new Slots(fetchCapacity)
+  const fetchChromeSlots = new Slots(fetchChromeCapacity)
 
   const server = http.createServer(async (req, res) => {
     const parsedUrl = new URL(req.url, 'http://127.0.0.1')
@@ -65,7 +98,9 @@ export function createApp({
 
     if (
       req.method !== 'POST' ||
-      (pathname !== '/v1/raw' && pathname !== '/v1/render')
+      (pathname !== '/v1/raw' &&
+        pathname !== '/v1/render' &&
+        pathname !== '/v1/fetch')
     ) {
       sendJson(res, 404, { error: 'Not found', kind: 'http' })
       return
@@ -119,7 +154,7 @@ export function createApp({
       return
     }
 
-    const mode = pathname === '/v1/raw' ? 'raw' : 'render'
+    const mode = pathname.slice('/v1/'.length)
     // The web side gave up (its own timeout or a cancelled run): stop
     // queueing and close the page. res, not req: req closes once its body is read.
     const controller = new AbortController()
@@ -131,9 +166,38 @@ export function createApp({
     let releasePacer = null
     let releaseSlot = null
     try {
-      releasePacer = await pacer.acquire(host, { signal })
-      releaseSlot = await slots.acquire({ signal, waitMs: slotWaitMs[mode] })
-      const outcome = await engine[mode](targetUrl, { signal })
+      let outcome
+      if (mode === 'fetch') {
+        // A small file a browser would ask for anyway (an icon): it keeps
+        // a host's cooldown but not the spacing between page reads
+        const retryAfter = pacer.getCooldown(host)
+        if (retryAfter > 0) {
+          throw Object.assign(new Error(`Host ${host} is cooling down`), {
+            status: 429,
+            retryAfter,
+          })
+        }
+        const head = parsedBody.head === true
+        releaseSlot = await fetchSlots.acquire({
+          signal,
+          waitMs: slotWaitMs.fetch,
+        })
+        outcome = await fetchFile(targetUrl, { signal, head })
+        // Chrome's fingerprint and cookies pass many checks plain HTTP does not
+        if (refusedAsBot(outcome)) {
+          releaseSlot()
+          releaseSlot = await fetchChromeSlots.acquire({
+            signal,
+            waitMs: slotWaitMs.fetchChrome,
+          })
+          // An icon's bot check never cools the host down for page reads
+          outcome = { ...(await engine.raw(targetUrl, { signal })), challenge: false }
+        }
+      } else {
+        releasePacer = await pacer.acquire(host, { signal })
+        releaseSlot = await slots.acquire({ signal, waitMs: slotWaitMs[mode] })
+        outcome = await engine[mode](targetUrl, { signal })
+      }
 
       if (outcome.status === 429) {
         pacer.setCooldown(host, outcome.retryAfter || 60)
@@ -145,7 +209,7 @@ export function createApp({
         'Content-Type': outcome.contentType || 'text/html; charset=utf-8',
         'X-Page-Status': String(outcome.status || 200),
         'X-Page-Url': encodeURI(outcome.finalUrl || targetUrl),
-        'X-Page-Truncated': '0',
+        'X-Page-Truncated': outcome.truncated ? '1' : '0',
       })
       res.end(outcome.body)
     } catch (err) {

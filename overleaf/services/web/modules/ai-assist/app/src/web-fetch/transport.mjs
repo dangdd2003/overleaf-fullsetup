@@ -73,8 +73,13 @@ for (const [prefix, bits] of [
   BLOCKED_ADDRESSES.addSubnet(prefix, bits, 'ipv4')
 }
 for (const [prefix, bits] of [
-  ['::', 128],
-  ['::1', 128],
+  // Unspecified, loopback and the old IPv4-compatible form (::a.b.c.d), then
+  // the IPv4-translated form (::ffff:0:a.b.c.d): both embed an IPv4 address
+  ['::', 96],
+  ['::ffff:0:0:0', 96],
+  // Documentation (RFC 9637) and SRv6 segment IDs (RFC 9602)
+  ['3fff::', 20],
+  ['5f00::', 16],
   // NAT64, Teredo and 6to4 all embed an IPv4 address that may be private;
   // none of them is how a public documentation site is reached. IPv4-mapped
   // addresses are unwrapped in isPublicAddress instead: BlockList matches every
@@ -143,6 +148,21 @@ export function guardedLookup(hostname, options, callback) {
   })
 }
 
+/**
+ * Ports a browser refuses to fetch: the Fetch standard's "bad port" list
+ * (https://fetch.spec.whatwg.org/#port-blocking). They belong to mail, shell,
+ * IRC and other services that are not web pages but could be sent an HTTP
+ * request. Chrome refuses the same ports, so both transports behave alike.
+ */
+const BAD_PORTS = new Set([
+  0, 1, 7, 9, 11, 13, 15, 17, 19, 20, 21, 22, 23, 25, 37, 42, 43, 53, 69, 77,
+  79, 87, 95, 101, 102, 103, 104, 109, 110, 111, 113, 115, 117, 119, 123, 135,
+  137, 139, 143, 161, 179, 389, 427, 465, 512, 513, 514, 515, 526, 530, 531,
+  532, 540, 548, 554, 556, 563, 587, 601, 636, 989, 990, 993, 995, 1719, 1720,
+  1723, 2049, 3659, 4045, 4190, 5060, 5061, 6000, 6566, 6665, 6666, 6667, 6668,
+  6669, 6679, 6697, 10080,
+])
+
 export function parseFetchUrl(raw) {
   let parsed
   try {
@@ -165,6 +185,12 @@ export function parseFetchUrl(raw) {
   ) {
     throw webError(
       `${host} is not a public address. Only public web pages can be fetched.`
+    )
+  }
+  const port = Number(parsed.port || (parsed.protocol === 'https:' ? 443 : 80))
+  if (BAD_PORTS.has(port)) {
+    throw webError(
+      `Port ${port} is not a web port. Only public web pages can be fetched.`
     )
   }
   parsed.hash = ''

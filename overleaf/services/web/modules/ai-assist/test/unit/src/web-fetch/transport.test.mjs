@@ -4,9 +4,56 @@ import sinon from 'sinon'
 import {
   BROWSER_HEADERS,
   fetchPublicUrl,
+  isPublicAddress,
+  parseFetchUrl,
 } from '../../../../app/src/web-fetch/transport.mjs'
 
 describe('transport', function () {
+  it('refuses IPv6 forms that embed an IPv4 address, and reserved IPv6 ranges', function () {
+    for (const address of [
+      '::',
+      '::1',
+      '::7f00:1', // ::127.0.0.1, IPv4-compatible
+      '::a00:1', // ::10.0.0.1
+      '::ffff:0:7f00:1', // ::ffff:0:127.0.0.1, IPv4-translated
+      '3fff::1',
+      '5f00::1',
+    ]) {
+      expect(isPublicAddress(address), address).to.equal(false)
+    }
+    expect(isPublicAddress('8.8.8.8')).to.equal(true)
+    expect(isPublicAddress('2606:4700:4700::1111')).to.equal(true)
+  })
+
+  it('parseFetchUrl refuses those addresses written into a URL', function () {
+    for (const url of [
+      'http://[::127.0.0.1]/',
+      'http://[::ffff:0:127.0.0.1]/',
+      'http://[3fff::1]/',
+    ]) {
+      expect(() => parseFetchUrl(url), url).to.throw(/not a public address/)
+    }
+  })
+
+  it('parseFetchUrl refuses the ports browsers refuse, and keeps web ports', function () {
+    for (const url of [
+      'http://example.com:25/',
+      'https://example.com:22/',
+      'http://example.com:6667/',
+      'http://example.com:0/',
+    ]) {
+      expect(() => parseFetchUrl(url), url).to.throw(/is not a web port/)
+    }
+    for (const url of [
+      'http://example.com/',
+      'https://example.com/',
+      'https://example.com:8443/',
+      'http://example.com:8080/',
+    ]) {
+      expect(parseFetchUrl(url).hostname).to.equal('example.com')
+    }
+  })
+
   it('BROWSER_HEADERS claims Chrome 150 with complete sec-ch-ua headers', function () {
     expect(BROWSER_HEADERS['User-Agent']).to.include('Chrome/150.0.0.0')
     expect(BROWSER_HEADERS['sec-ch-ua']).to.include('"Chromium";v="150"')
