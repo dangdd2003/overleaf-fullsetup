@@ -464,10 +464,44 @@ test('BrowserEngine refuses to start, and closes Chrome, when the sandbox is not
       profileDir: tmp,
       sandboxCheck: () => ({ ok: false, reason: 'no namespace' }),
       launcher: async () => context,
+      sandboxTimeoutMs: 50,
     })
     await assert.rejects(engine.init(), /sandbox is not active \(no namespace\)/)
     assert.equal(closed, true)
     assert.equal(engine.context, null)
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true })
+  }
+})
+
+test('BrowserEngine polls until sandbox check succeeds during renderer startup', async () => {
+  const tmp = tmpProfile()
+  try {
+    let closed = false
+    let attempts = 0
+    const context = {
+      on: () => {},
+      close: async () => {
+        closed = true
+      },
+      newPage: async () => ({ close: async () => {} }),
+    }
+    const engine = new BrowserEngine({
+      profileDir: tmp,
+      sandboxCheck: () => {
+        attempts++
+        return attempts >= 2
+          ? { ok: true, reason: '2 renderer(s) sandboxed' }
+          : { ok: false, reason: 'renderer 165 has no seccomp filter of its own' }
+      },
+      launcher: async () => context,
+      sandboxTimeoutMs: 1000,
+    })
+    await engine.init()
+    assert.ok(attempts >= 2)
+    assert.equal(closed, false)
+    assert.notEqual(engine.context, null)
+    await engine.close()
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true })
   }

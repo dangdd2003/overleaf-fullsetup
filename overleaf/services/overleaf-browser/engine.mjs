@@ -142,15 +142,20 @@ export function checkSandbox({ procRoot = '/proc', selfPid = process.pid } = {})
     return { ok: false, reason: `${procRoot} cannot be read` }
   }
   // Chrome may rewrite its command line with spaces instead of NULs
-  const renderers = pids.filter(pid =>
-    (read(pid, 'cmdline') ?? '').replace(/\0/g, ' ').includes('--type=renderer')
-  )
+  const renderers = pids.filter(pid => {
+    const cmd = read(pid, 'cmdline') ?? ''
+    return (
+      (cmd.includes('chrome') || cmd.includes('/chrome')) &&
+      cmd.replace(/\0/g, ' ').includes('--type=renderer')
+    )
+  })
   if (renderers.length === 0) {
     return { ok: false, reason: 'no Chrome renderer is running' }
   }
   const ownFilters = filtersOf(read(selfPid, 'status'))
   for (const pid of renderers) {
     const status = read(pid, 'status')
+    if (!status) continue
     if (pidNamespaces(status) < 2) {
       return {
         ok: false,
@@ -161,7 +166,7 @@ export function checkSandbox({ procRoot = '/proc', selfPid = process.pid } = {})
     if (ownFilters !== null && filters !== null && filters <= ownFilters) {
       return {
         ok: false,
-        reason: `renderer ${pid} has no seccomp filter of its own`,
+        reason: `renderer ${pid} has no seccomp filter of its own (has ${filters}, parent has ${ownFilters})`,
       }
     }
   }
@@ -326,12 +331,14 @@ export class BrowserEngine {
     browserLang = 'en-US',
     launcher = null,
     sandboxCheck = checkSandbox,
+    sandboxTimeoutMs = 5_000,
   } = {}) {
     this.profileDir = profileDir
     this.proxyUrl = proxyUrl
     this.browserLang = browserLang
     this.launcher = launcher
     this.sandboxCheck = sandboxCheck
+    this.sandboxTimeoutMs = sandboxTimeoutMs
     this.context = null
     this.starting = null
     this.busyCount = 0
@@ -381,11 +388,18 @@ export class BrowserEngine {
       throw err
     }
 
-    // A renderer exists once a page is open: check it really is sandboxed
+    // A renderer exists once a page is open: check it really is sandboxed.
+    // Poll briefly because newly forked renderer processes take a few milliseconds
+    // to initialize their seccomp-bpf policy after forking from zygote.
     try {
       const page = await context.newPage()
       try {
-        const verdict = this.sandboxCheck()
+        const start = Date.now()
+        let verdict = this.sandboxCheck()
+        while (!verdict.ok && Date.now() - start < this.sandboxTimeoutMs) {
+          await new Promise(resolve => setTimeout(resolve, 50))
+          verdict = this.sandboxCheck()
+        }
         if (!verdict.ok) {
           throw new Error(
             `Chrome's sandbox is not active (${verdict.reason}); refusing to read pages without it`
