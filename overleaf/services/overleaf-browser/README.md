@@ -42,7 +42,6 @@ services:
     container_name: overleaf-browser
     environment:
       BROWSER_TOKEN: "${BROWSER_TOKEN}"
-      TZ: "${TZ:-UTC}"
       BROWSER_LANG: "en-US"
       PROXY_PORT: "8080"
       # Optional upstream proxy (HTTP or SOCKS5 with optional credentials):
@@ -86,7 +85,6 @@ volumes:
 | `UPSTREAM_PROXY` | Optional upstream HTTP or SOCKS5 proxy: `http://[user:pass@]host:port` or `socks5://[user:pass@]host:port`. Fallbacks: `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`. |
 | `BROWSER_CAPACITY` | Pages open at once, default 2; keep `AI_ASSIST_BROWSER_CONCURRENCY` at or below it |
 | `BROWSER_LANG` | Browser language, default `en-US` |
-| `TZ` | Time zone, default UTC |
 
 `/v1/fetch` reads one small file (a site icon, at most 1 MB) by plain HTTP through the internal proxy, without opening a Chrome page; with `"head": true` it reads a page only up to its `</head>`. A file that a bot check refuses to plain HTTP (403, 503 or a challenge page) is read again by Chrome, on 2 pages kept for this. It has places of its own, so icons never wait behind page reads, and it keeps a host's cooldown but not the 2 s spacing between page reads.
 

@@ -6,9 +6,7 @@ import { registerCommentEmailTemplate } from './CommentEmailTemplate.mjs'
 // changes, the Reviewer role, @mentions and comment email notifications.
 // Disabled, nothing below runs and the editor behaves as plain upstream CE.
 if (Settings.enableCollaboration === undefined) {
-  Settings.enableCollaboration =
-    process.env.COLLABORATION_ENABLED === 'true' ||
-    process.env.OVERLEAF_COLLABORATION_ENABLED === 'true'
+  Settings.enableCollaboration = process.env.COLLABORATION_ENABLED === 'true'
 }
 
 if (Settings.enableCollaboration) {

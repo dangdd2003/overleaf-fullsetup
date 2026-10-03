@@ -6,7 +6,6 @@ describe('collaboration ModuleSettings', () => {
   beforeEach(() => {
     originalEnv = { ...process.env }
     delete process.env.COLLABORATION_ENABLED
-    delete process.env.OVERLEAF_COLLABORATION_ENABLED
   })
 
   afterEach(() => {
@@ -52,12 +51,6 @@ describe('collaboration ModuleSettings', () => {
       'comment-mentions': 'enabled',
     })
     expect(EmailBuilder.templates.commentDigest).toBeDefined()
-  })
-
-  it('accepts the OVERLEAF_ prefixed variable too', async () => {
-    process.env.OVERLEAF_COLLABORATION_ENABLED = 'true'
-    const { Settings } = await load()
-    expect(Settings.enableCollaboration).toBe(true)
   })
 
   it('keeps an explicit admin split test override', async () => {

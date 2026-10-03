@@ -3,7 +3,7 @@ import { loadConfig } from '../../../src/config.js'
 
 const BASE = {
   MCP_ENABLED: 'true',
-  OVERLEAF_INTERNAL_URL: 'http://web:3000',
+  MCP_INTERNAL_URL: 'http://web:3000',
 }
 
 describe('config', function () {
@@ -30,7 +30,7 @@ describe('config', function () {
       expect(config.authServerUrl).to.equal('http://web:3000')
     })
 
-    it('falls back to OVERLEAF_SITE_URL when OVERLEAF_INTERNAL_URL is absent', function () {
+    it('falls back to OVERLEAF_SITE_URL when MCP_INTERNAL_URL is absent', function () {
       const config = loadConfig({
         MCP_ENABLED: 'true',
         OVERLEAF_SITE_URL: 'http://web:3000',
@@ -39,13 +39,13 @@ describe('config', function () {
     })
 
     it('strips a trailing slash from the internal URL', function () {
-      const config = loadConfig({ ...BASE, OVERLEAF_INTERNAL_URL: 'http://web:3000/' })
+      const config = loadConfig({ ...BASE, MCP_INTERNAL_URL: 'http://web:3000/' })
       expect(config.internalUrl).to.equal('http://web:3000')
     })
 
     it('throws when enabled without an internal URL', function () {
       expect(() => loadConfig({ MCP_ENABLED: 'true' })).to.throw(
-        /OVERLEAF_INTERNAL_URL/
+        /MCP_INTERNAL_URL/
       )
     })
 

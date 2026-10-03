@@ -31,10 +31,10 @@ describe('server-ce MCP wiring', function () {
     expect(vhost).to.include(`proxy_pass http://127.0.0.1:${webPort};`)
   })
 
-  it('defaults OVERLEAF_INTERNAL_URL to the web process that mounts publicApiRouter', function () {
+  it('defaults MCP_INTERNAL_URL to the web process that mounts publicApiRouter', function () {
     const webPort = /export WEB_PORT="(\d+)"/.exec(webRun)[1]
-    const internalUrl = /OVERLEAF_INTERNAL_URL:-([^}"]+)/.exec(mcpRun)?.[1]
-    expect(internalUrl, 'OVERLEAF_INTERNAL_URL default in runit/mcp-overleaf/run')
+    const internalUrl = /MCP_INTERNAL_URL:-([^}"]+)/.exec(mcpRun)?.[1]
+    expect(internalUrl, 'MCP_INTERNAL_URL default in runit/mcp-overleaf/run')
       .to.be.a('string')
     expect(new URL(internalUrl).port).to.equal(webPort)
   })

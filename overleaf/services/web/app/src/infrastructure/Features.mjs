@@ -79,8 +79,7 @@ const Features = {
       case 'admin-project-management':
         return Boolean(
           Settings.enableAdminProjectManagement ||
-            process.env.ADMIN_PROJECT_MANAGEMENT_ENABLED === 'true' ||
-            process.env.OVERLEAF_ADMIN_PROJECT_MANAGEMENT_ENABLED === 'true'
+            process.env.ADMIN_PROJECT_MANAGEMENT_ENABLED === 'true'
         )
       case 'oauth':
         return Boolean(Settings.oauth)

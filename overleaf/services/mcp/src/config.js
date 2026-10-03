@@ -44,13 +44,13 @@ export function loadConfig(env = process.env) {
   }
 
   const internalUrl = (
-    env.OVERLEAF_INTERNAL_URL ||
+    env.MCP_INTERNAL_URL ||
     env.OVERLEAF_SITE_URL ||
     ''
   ).replace(/\/+$/, '')
   if (enabled && !internalUrl) {
     throw new Error(
-      'OVERLEAF_INTERNAL_URL (or OVERLEAF_SITE_URL) is required when MCP_ENABLED=true'
+      'MCP_INTERNAL_URL (or OVERLEAF_SITE_URL) is required when MCP_ENABLED=true'
     )
   }
 

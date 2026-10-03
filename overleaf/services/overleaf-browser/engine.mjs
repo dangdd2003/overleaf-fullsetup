@@ -318,6 +318,12 @@ async function launchChrome({ profileDir, proxyUrl, browserLang }) {
     args: [
       `--lang=${browserLang}`,
       '--disable-quic',
+      '--disable-background-networking',
+      '--disable-sync',
+      '--disable-component-update',
+      '--disable-default-apps',
+      '--no-default-browser-check',
+      '--no-first-run',
       '--force-webrtc-ip-handling-policy=disable_non_proxied_udp',
       `--disk-cache-size=${DISK_CACHE_BYTES}`,
     ],

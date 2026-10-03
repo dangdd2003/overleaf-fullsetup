@@ -8,10 +8,9 @@ ENV NODE_ENV=production \
 
 WORKDIR /app
 
-# Xvfb gives headed Chrome a screen; tini reaps Chrome's child processes;
-# tzdata lets TZ work without mounting the host's /etc/localtime
+# Xvfb gives headed Chrome a screen; tini reaps Chrome's child processes
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates xvfb tini tzdata \
+ && apt-get install -y --no-install-recommends ca-certificates xvfb tini \
  && rm -rf /var/lib/apt/lists/*
 
 # Patchright from the lockfile, then Google Chrome stable and its system

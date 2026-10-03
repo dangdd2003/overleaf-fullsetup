@@ -2,6 +2,7 @@
 !data/.gitkeep
 
 # Environment & Sandbox mounts
+/variable.env
 /.bash_profile
 /.bashrc
 /.gitconfig

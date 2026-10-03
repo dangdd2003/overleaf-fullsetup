@@ -46,32 +46,68 @@ services:
       - "/etc/localtime:/etc/localtime:ro"
       - "./data/redis:/data"
 
-  # Google Chrome (Patchright) for AI Assist web_fetch. Starts only with
-  # `docker compose --profile overleaf-browser up -d`, and is used only when
-  # AI_ASSIST_BROWSER_URL and AI_ASSIST_BROWSER_TOKEN are configured.
-  overleaf-browser:
-    profiles: ["overleaf-browser"]
-    restart: always
-    image: dangdoan2003/overleaf-browser:latest
-    container_name: overleaf-browser
-    environment:
-      BROWSER_TOKEN: "${BROWSER_TOKEN:-}"
-      TZ: "${TZ:-UTC}"
-      BROWSER_LANG: "${BROWSER_LANG:-en-US}"
-      PROXY_PORT: "8080"
-    volumes:
-      - "overleaf-browser-profile:/data/profile"
-    security_opt:
-      - "seccomp=./overleaf/services/overleaf-browser/seccomp.json"
-      - "no-new-privileges:true"
-    cap_drop:
-      - ALL
-    read_only: true
-    tmpfs:
-      - /tmp
-    shm_size: 1gb
-    mem_limit: 2g
-    pids_limit: 512
+  # overleaf-browser:
+  #   profiles: ["overleaf-browser"]
+  #   restart: always
+  #   image: dangdoan2003/overleaf-browser:latest
+  #   container_name: overleaf-browser
+  #   environment:
+  #     BROWSER_TOKEN: "${AI_ASSIST_BROWSER_TOKEN:-}"
+  #     # Optional upstream HTTP or SOCKS5 proxy:
+  #     # UPSTREAM_PROXY: "http://user:pass@proxy.example.com:8080"
+  #     # UPSTREAM_PROXY: "socks5://user:pass@proxy.example.com:1080"
+  #   volumes:
+  #     - "./data/browser-profile:/data/profile"
+  #     - "/etc/localtime:/etc/localtime:ro"
+  #   security_opt:
+  #     - "seccomp=./overleaf/services/overleaf-browser/seccomp.json"
+  #     - "no-new-privileges:true"
+  #   cap_drop:
+  #     - ALL
+  #   read_only: true
+  #   tmpfs:
+  #     - /tmp:size=512m,nosuid,nodev,noexec
+  #   shm_size: 1gb
+  #   mem_limit: 2g
+  #   memswap_limit: 2g
+  #   cpus: 2
+  #   pids_limit: 512
+  #   ulimits:
+  #     nofile:
+  #       soft: 4096
+  #       hard: 4096
+  #   healthcheck:
+  #     test:
+  #       - CMD
+  #       - node
+  #       - -e
+  #       - "fetch('http://127.0.0.1:3000/v1/health').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+  #     interval: 30s
+  #     timeout: 5s
+  #     start_period: 60s
+  #     retries: 3
+  #   logging:
+  #     options:
+  #       max-size: "10m"
+  #       max-file: "3"
+  #   depends_on:
+  #     - overleaf
+
+  # git-bridge:
+  #   container_name: git-bridge
+  #   image: dangdoan2003/git-bridge:latest
+  #   restart: always
+  #   pull_policy: always
+  #   environment:
+  #     GIT_BRIDGE_API_BASE_URL: "http://overleaf:3000/api/v0"
+  #     GIT_BRIDGE_OAUTH2_SERVER: "http://overleaf:3000"
+  #     GIT_BRIDGE_POSTBACK_BASE_URL: "http://git-bridge:8000"
+  #     GIT_BRIDGE_ROOT_DIR: "/data"
+  #   volumes:
+  #     - './data/git-bridge-data:/data'
+  #     - '/etc/localtime:/etc/localtime:ro'
+  #   depends_on:
+  #     - overleaf
 
   # nginx:
   #   restart: always
@@ -85,6 +121,3 @@ services:
   #     - "/var/run/docker.sock:/tmp/docker.sock:ro"
   #     - "/etc/letsencrypt:/etc/letsencrypt:ro"
   #     - "./nginx.conf:/etc/nginx/nginx.conf:ro"
-
-volumes:
-  overleaf-browser-profile:

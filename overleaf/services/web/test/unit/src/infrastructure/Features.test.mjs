@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const modulePath = '../../../../app/src/infrastructure/Features.mjs'
 
 describe('Features', function () {
@@ -176,7 +176,6 @@ describe('Features', function () {
     describe('admin-project-management', function () {
       afterEach(function () {
         delete process.env.ADMIN_PROJECT_MANAGEMENT_ENABLED
-        delete process.env.OVERLEAF_ADMIN_PROJECT_MANAGEMENT_ENABLED
       })
       it('should return true when enableAdminProjectManagement is set', function (ctx) {
         ctx.settings.enableAdminProjectManagement = true
@@ -185,11 +184,6 @@ describe('Features', function () {
       it('should return true when ADMIN_ env var is set', function (ctx) {
         ctx.settings.enableAdminProjectManagement = false
         process.env.ADMIN_PROJECT_MANAGEMENT_ENABLED = 'true'
-        expect(ctx.Features.hasFeature('admin-project-management')).to.be.true
-      })
-      it('should return true when OVERLEAF_ env var alias is set', function (ctx) {
-        ctx.settings.enableAdminProjectManagement = false
-        process.env.OVERLEAF_ADMIN_PROJECT_MANAGEMENT_ENABLED = 'true'
         expect(ctx.Features.hasFeature('admin-project-management')).to.be.true
       })
       it('should return false when nothing is set', function (ctx) {
