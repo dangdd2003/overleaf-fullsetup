@@ -131,6 +131,23 @@ describe('AiAssistRunReaper', function () {
     expect(cancelled).to.be.empty
   })
 
+  it('leaves a run alone while a chat not on screen follows it', async function () {
+    mockStore.getActiveRuns.resolves(['run-background'])
+    mockStore.getRun.withArgs('run-background').resolves({
+      runId: 'run-background',
+      status: 'running',
+      watchers: 0,
+      followers: 1,
+      zeroSince: Date.now() - 400_000,
+    })
+
+    const cancelled = await reaper.sweepOnce()
+
+    expect(mockControl.publish.called).to.be.false
+    expect(mockStore.clearZeroSince.calledWith('run-background')).to.be.true
+    expect(cancelled).to.be.empty
+  })
+
   it('re-reads watchers immediately before aborting and skips if watcher reconnected', async function () {
     mockStore.getActiveRuns.resolves(['run-reconnect'])
     const staleRun = {

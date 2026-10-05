@@ -329,6 +329,50 @@ export function hydrateTranscript(transcript, stored) {
   return hydrated
 }
 
+/**
+ * The transcript without an entry repeated right after itself: the same id,
+ * role and text. A chat reopened while its run was going could store its
+ * question twice, and every later run would send it twice.
+ */
+export function dropRepeatedEntries(transcript) {
+  if (!Array.isArray(transcript)) return []
+  return transcript.filter((entry, index) => {
+    const previous = transcript[index - 1]
+    return !(
+      previous &&
+      entry?.id &&
+      entry.id === previous.id &&
+      entry.role === previous.role &&
+      entry.text === previous.text
+    )
+  })
+}
+
+// Every write to a chat's file reads it, merges and renames over it. Two of
+// them interleaving (the panel's save, the run's own save, a generated title)
+// would let the later rename drop what the earlier one wrote, so writes to
+// one file wait their turn (within this process). Different chats still write in parallel.
+const fileLocks = new Map()
+
+function withFileLock(file, task) {
+  const previous = fileLocks.get(file) || Promise.resolve()
+  const next = previous.catch(() => {}).then(task)
+  const tail = next.catch(() => {})
+  fileLocks.set(file, tail)
+  tail.then(() => {
+    if (fileLocks.get(file) === tail) fileLocks.delete(file)
+  })
+  return next
+}
+
+async function writeChat(file, chat) {
+  await fs.mkdir(Path.dirname(file), { recursive: true })
+  // Write-then-rename so a crash mid-write never leaves a truncated file.
+  const tmp = `${file}.${crypto.randomBytes(6).toString('hex')}.tmp`
+  await fs.writeFile(tmp, JSON.stringify(chat, null, 2))
+  await fs.rename(tmp, file)
+}
+
 async function readChat(file) {
   try {
     return JSON.parse(await fs.readFile(file, 'utf8'))
@@ -347,16 +391,17 @@ async function listChats(projectId, userId) {
     if (err.code === 'ENOENT') return []
     throw err
   }
+  // Read in parallel: a project with many chats opens its history in the
+  // time of the slowest file, not the sum of them all
+  const loaded = await Promise.all(
+    names
+      .filter(name => name.endsWith('.json'))
+      // a corrupt file must not hide the rest of the history
+      .map(name => readChat(Path.join(dir, name)).catch(() => null))
+  )
   const chats = []
-  for (const name of names) {
-    if (!name.endsWith('.json')) continue
-    let chat
-    try {
-      chat = await readChat(Path.join(dir, name))
-    } catch {
-      continue // a corrupt file must not hide the rest of the history
-    }
-    if (!chat) continue
+  for (const chat of loaded) {
+    if (!chat?.id) continue
     const transcript = Array.isArray(chat.transcript) ? chat.transcript : []
     chats.push({
       id: chat.id,
@@ -376,7 +421,7 @@ async function listChats(projectId, userId) {
 async function getChat(projectId, userId, chatId) {
   const chat = await readChat(fileFor(projectId, userId, chatId))
   if (!chat) return null
-  const transcript = Array.isArray(chat.transcript) ? chat.transcript : []
+  const transcript = dropRepeatedEntries(chat.transcript)
   return {
     version: chat.version || 2,
     ...chat,
@@ -401,63 +446,70 @@ async function saveChat(
   stats = null
 ) {
   const file = fileFor(projectId, userId, chatId)
-  const existing = await readChat(file).catch(() => null)
-  const now = Date.now()
+  return withFileLock(file, async () => {
+    const existing = await readChat(file).catch(() => null)
+    const now = Date.now()
 
-  let finalTitle
-  let isGenerated = Boolean(existing?.titleGenerated)
-  if (typeof titleGenerated === 'boolean') {
-    isGenerated = titleGenerated
-  }
+    let finalTitle
+    let isGenerated = Boolean(existing?.titleGenerated)
+    if (typeof titleGenerated === 'boolean') {
+      isGenerated = titleGenerated
+    }
 
-  if (typeof title === 'string' && title.trim()) {
-    finalTitle = sanitizeChatTitle(title)
-  } else if (
-    existing?.title &&
-    existing.title !== 'New chat' &&
-    existing.title !== 'Untitled chat'
-  ) {
-    finalTitle = existing.title
-  } else {
-    finalTitle = fallbackTitleFor(transcript)
-  }
+    if (typeof title === 'string' && title.trim()) {
+      finalTitle = sanitizeChatTitle(title)
+    } else if (
+      existing?.title &&
+      existing.title !== 'New chat' &&
+      existing.title !== 'Untitled chat'
+    ) {
+      finalTitle = existing.title
+    } else {
+      finalTitle = fallbackTitleFor(transcript)
+    }
 
-  transcript = hydrateTranscript(transcript, existing?.transcript)
+    transcript = dropRepeatedEntries(
+      hydrateTranscript(transcript, dropRepeatedEntries(existing?.transcript))
+    )
 
-  const finalStats = {
-    totalSteps: countSteps(transcript),
-    durationMs: totalDuration(transcript),
-    ...(existing?.stats || {}),
-    ...(stats || {}),
-  }
+    // Counted from the transcript being written: the stored counts are of
+    // an older copy of it and would never move on
+    const finalStats = {
+      ...(existing?.stats || {}),
+      totalSteps: countSteps(transcript),
+      durationMs: totalDuration(transcript),
+      ...(stats || {}),
+    }
 
-  const chat = {
-    version: 2,
-    id: chatId,
-    projectId: String(projectId),
-    userId: String(userId),
-    title: finalTitle,
-    titleGenerated: isGenerated,
-    mode: normalizeMode(mode || existing?.mode),
-    createdAt: existing?.createdAt ?? now,
-    updatedAt: now,
-    stats: finalStats,
-    transcript,
-  }
-  await fs.mkdir(Path.dirname(file), { recursive: true })
-  // Write-then-rename so a crash mid-write never leaves a truncated file.
-  const tmp = `${file}.${crypto.randomBytes(6).toString('hex')}.tmp`
-  await fs.writeFile(tmp, JSON.stringify(chat, null, 2))
-  await fs.rename(tmp, file)
-  const { transcript: _omit, ...summary } = chat
-  return {
-    ...summary,
-    messageCount: transcript.length,
-    totalSteps: finalStats.totalSteps,
-    durationMs: finalStats.durationMs,
-  }
+    const chat = {
+      version: 2,
+      id: chatId,
+      projectId: String(projectId),
+      userId: String(userId),
+      title: finalTitle,
+      titleGenerated: isGenerated,
+      mode: normalizeMode(mode || existing?.mode),
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+      stats: finalStats,
+      transcript,
+    }
+    await writeChat(file, chat)
+    const { transcript: _omit, ...summary } = chat
+    return {
+      ...summary,
+      messageCount: transcript.length,
+      totalSteps: finalStats.totalSteps,
+      durationMs: finalStats.durationMs,
+    }
+  })
 }
 
+/**
+ * Sets the title of a chat that exists. Resolves null for one that does not:
+ * a title arriving for a chat never saved, or deleted meanwhile, must not
+ * leave an empty chat behind in the history.
+ */
 async function saveChatTitle(
   projectId,
   userId,
@@ -467,47 +519,30 @@ async function saveChatTitle(
 ) {
   const cleanTitle = sanitizeChatTitle(title) || 'New chat'
   const file = fileFor(projectId, userId, chatId)
-  const existing = await readChat(file).catch(() => null)
-  const now = Date.now()
-  if (!existing) {
-    const chat = {
-      version: 2,
-      id: chatId,
-      projectId: String(projectId),
-      userId: String(userId),
-      title: cleanTitle,
-      titleGenerated: Boolean(isGenerated),
-      mode: 'manual',
-      createdAt: now,
-      updatedAt: now,
-      stats: { totalSteps: 0, durationMs: 0 },
-      transcript: [],
+  return withFileLock(file, async () => {
+    const existing = await readChat(file).catch(() => null)
+    if (!existing) return null
+    existing.title = cleanTitle
+    existing.titleGenerated =
+      Boolean(isGenerated) || Boolean(existing.titleGenerated)
+    existing.updatedAt = Date.now()
+    await writeChat(file, existing)
+    const { transcript: _omit, ...summary } = existing
+    const transcript = Array.isArray(existing.transcript)
+      ? existing.transcript
+      : []
+    return {
+      ...summary,
+      messageCount: transcript.length,
+      totalSteps: existing.stats?.totalSteps ?? countSteps(transcript),
+      durationMs: existing.stats?.durationMs ?? totalDuration(transcript),
     }
-    await fs.mkdir(Path.dirname(file), { recursive: true })
-    const tmp = `${file}.${crypto.randomBytes(6).toString('hex')}.tmp`
-    await fs.writeFile(tmp, JSON.stringify(chat, null, 2))
-    await fs.rename(tmp, file)
-    const { transcript: _omit, ...summary } = chat
-    return { ...summary, messageCount: 0, totalSteps: 0, durationMs: 0 }
-  }
-  existing.title = cleanTitle
-  existing.titleGenerated = true
-  existing.updatedAt = now
-  const tmp = `${file}.${crypto.randomBytes(6).toString('hex')}.tmp`
-  await fs.writeFile(tmp, JSON.stringify(existing, null, 2))
-  await fs.rename(tmp, file)
-  const { transcript: _omit, ...summary } = existing
-  const transcript = Array.isArray(existing.transcript) ? existing.transcript : []
-  return {
-    ...summary,
-    messageCount: transcript.length,
-    totalSteps: existing.stats?.totalSteps ?? countSteps(transcript),
-    durationMs: existing.stats?.durationMs ?? totalDuration(transcript),
-  }
+  })
 }
 
 async function deleteChat(projectId, userId, chatId) {
-  await fs.rm(fileFor(projectId, userId, chatId), { force: true })
+  const file = fileFor(projectId, userId, chatId)
+  await withFileLock(file, () => fs.rm(file, { force: true }))
 }
 
 export default {
@@ -521,6 +556,7 @@ export default {
   fallbackTitleFor,
   titleFor,
   hydrateTranscript,
+  dropRepeatedEntries,
   countSteps,
   totalDuration,
 }

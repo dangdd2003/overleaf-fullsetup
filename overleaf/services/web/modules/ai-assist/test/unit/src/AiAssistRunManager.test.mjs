@@ -57,6 +57,78 @@ describe('AiAssistRunManager', function () {
     })
   })
 
+  it('saves the chat before the provider is reached', async function () {
+    const order = []
+    const chatHistoryStore = {
+      saveChat: sinon.stub().callsFake(async () => {
+        order.push('saveChat')
+      }),
+      getChat: sinon.stub().resolves(null),
+      saveChatTitle: sinon.stub().resolves(null),
+    }
+    mockClient.streamChat.callsFake(async function* () {
+      order.push('provider')
+      yield { type: 'text', text: 'hello' }
+    })
+    manager = new AiAssistRunManager({
+      store: mockStore,
+      tools: mockTools,
+      clientFactory: () => mockClient,
+      chatHistoryStore,
+    })
+    const transcript = [{ id: 'u0', role: 'user', text: 'first message' }]
+
+    await manager.startRun({
+      runId: 'run-persist',
+      projectId: '0123456789abcdef01234567',
+      userId: 'abcdef0123456789abcdef01',
+      transcript,
+      providerSettings: { type: 'openai', apiKey: 'k', model: 'm' },
+      mode: 'plan',
+      chatId: 'chat_first',
+    })
+
+    expect(chatHistoryStore.saveChat.calledOnce).to.be.true
+    expect(chatHistoryStore.saveChat.firstCall.args).to.deep.equal([
+      '0123456789abcdef01234567',
+      'abcdef0123456789abcdef01',
+      'chat_first',
+      transcript,
+      'plan',
+    ])
+    // The provider is called for the reply and for the chat's title
+    expect(order[0]).to.equal('saveChat')
+    expect(order).to.include('provider')
+  })
+
+  it('still runs when the chat cannot be saved', async function () {
+    const chatHistoryStore = {
+      saveChat: sinon.stub().rejects(new Error('disk full')),
+      getChat: sinon.stub().resolves(null),
+      saveChatTitle: sinon.stub().resolves(null),
+    }
+    mockClient.streamChat.callsFake(async function* () {
+      yield { type: 'text', text: 'hello' }
+    })
+    manager = new AiAssistRunManager({
+      store: mockStore,
+      tools: mockTools,
+      clientFactory: () => mockClient,
+      chatHistoryStore,
+    })
+
+    await manager.startRun({
+      runId: 'run-persist-fail',
+      projectId: '0123456789abcdef01234567',
+      userId: 'abcdef0123456789abcdef01',
+      transcript: [{ id: 'u0', role: 'user', text: 'hi' }],
+      providerSettings: { type: 'openai', apiKey: 'k', model: 'm' },
+      chatId: 'chat_x',
+    })
+
+    expect(mockClient.streamChat.called).to.be.true
+  })
+
   it('sends tool results back to the provider with the tool name and error flag', async function () {
     let secondRequest = null
     let callCount = 0
@@ -3105,7 +3177,10 @@ describe('AiAssistRunManager', function () {
           transcript: first,
           providerSettings: provider,
         })
-        for (let i = 0; i < 50; i++) await clock.tickAsync(1000)
+        for (let i = 0; i < 50; i++) {
+          clock.tick(1000)
+          await new Promise(resolve => setImmediate(resolve))
+        }
         await run
 
         const transcript = panelTranscript(first)

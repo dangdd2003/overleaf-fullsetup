@@ -26,7 +26,7 @@ export function ChatHistoryMenu({
 }: {
   projectId: string
   activeChatId: string
-  onOpen: (chatId: string) => void
+  onOpen: (chatId: string, summary: ChatSummary) => void
   onDelete: (chatId: string) => Promise<void>
   onRename?: (chatId: string, newTitle: string) => Promise<void>
 }) {
@@ -154,7 +154,7 @@ export function ChatHistoryMenu({
                     <button
                       type="button"
                       className="ai-assist-history-item-btn"
-                      onClick={() => onOpen(chat.id)}
+                      onClick={() => onOpen(chat.id, chat)}
                       title={chat.title || t('ai_assist_untitled_chat', 'Untitled chat')}
                     >
                       <span className="ai-assist-history-title">

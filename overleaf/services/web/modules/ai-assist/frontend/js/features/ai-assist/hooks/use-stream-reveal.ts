@@ -1,4 +1,17 @@
-import { useEffect, useRef, useState } from 'react'
+import { createContext, useContext, useEffect, useRef, useState } from 'react'
+
+/**
+ * True while a run followed from part-way through is still sending what it
+ * had already written: a chat opened mid-run. That text is there already and
+ * is shown at once; only what the run writes after it is animated.
+ */
+export const StreamCatchUpContext = createContext(false)
+
+/** Whether text streaming in should be animated, rather than shown at once. */
+export function useRevealLive(isLive: boolean) {
+  const isCatchingUp = useContext(StreamCatchUpContext)
+  return isLive && !isCatchingUp
+}
 
 /**
  * How far behind the stream the reveal runs. The reveal speed is the backlog

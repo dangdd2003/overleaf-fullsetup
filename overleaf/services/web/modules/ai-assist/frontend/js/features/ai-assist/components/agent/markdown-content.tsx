@@ -4,11 +4,8 @@ import DOMPurify from 'dompurify'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
 import { useOpenFileInEditor } from '../../hooks/use-open-file'
-import {
-  STREAM_FADE_MS,
-  MAX_FADE_LEAD_MS,
-  useStreamReveal,
-} from '../../hooks/use-stream-reveal'
+import { useRevealLive, useStreamReveal } from '../../hooks/use-stream-reveal'
+import { applyChunkFades, createFadeState, FadeState } from './stream-fade'
 import {
   highlightCodeHtml,
   useEditorHighlightStyle,
@@ -929,7 +926,7 @@ function nodesMatch(a: Node, b: Node): boolean {
  * preserving unchanged leading blocks so earlier text, citations, and tables
  * never get destroyed or re-rendered while streaming continues below them.
  */
-function reconcileContainerHtml(container: HTMLElement, newHtml: string) {
+export function reconcileContainerHtml(container: HTMLElement, newHtml: string) {
   const template = document.createElement('template')
   template.innerHTML = newHtml
   const newNodes = Array.from(template.content.childNodes)
@@ -962,120 +959,6 @@ function reconcileContainerHtml(container: HTMLElement, newHtml: string) {
   }
 }
 
-type FadeChunk = { start: number; at: number }
-type FadeState = { text: string; chunks: FadeChunk[] }
-
-/** Structures that fade in as a whole when they first appear. */
-const FADE_UNIT_SELECTOR =
-  '.ai-assist-table-wrapper, .ai-assist-code-block, tr, li, .katex, .ai-assist-citation'
-/** Structures whose text must not be split into spans. */
-const ATOMIC_SELECTOR = '.katex, button, svg, .ai-assist-citation'
-
-function fadeElement(el: Element, ageMs: number) {
-  el.classList.add('ai-assist-stream-fade')
-  const delayMs = Math.round(-ageMs)
-  ;(el as HTMLElement).style.animationDelay = `${delayMs}ms`
-}
-
-/**
- * Fades in the text a streaming render added since the previous one. The
- * rendered text is compared with what was on screen before: everything after
- * the common prefix is a new chunk. Chunks still inside their fade window are
- * re-applied after every render with a negative animation delay, so replacing
- * the markup never restarts a fade that is already under way.
- */
-function applyChunkFades(container: HTMLElement, state: FadeState) {
-  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT)
-  const nodes: Text[] = []
-  while (walker.nextNode()) nodes.push(walker.currentNode as Text)
-
-  const text = nodes.map(node => node.data).join('')
-  const now = performance.now()
-  let kept = 0
-  const max = Math.min(text.length, state.text.length)
-  while (kept < max && text[kept] === state.text[kept]) kept++
-
-  const chunks = state.chunks.filter(
-    chunk =>
-      chunk.start < kept && now - chunk.at < STREAM_FADE_MS + MAX_FADE_LEAD_MS
-  )
-  if (text.length > kept) {
-    const newText = text.slice(kept)
-    const tokenRegex = /\S+\s*/g
-    let match: RegExpExecArray | null
-    let tokenIndex = 0
-    let addedAny = false
-    while ((match = tokenRegex.exec(newText)) !== null) {
-      const start = kept + match.index
-      const stagger = Math.min(tokenIndex * 24, MAX_FADE_LEAD_MS)
-      chunks.push({ start, at: now + stagger })
-      tokenIndex++
-      addedAny = true
-    }
-    if (!addedAny) {
-      chunks.push({ start: kept, at: now })
-    }
-  }
-  state.text = text
-  state.chunks = chunks
-  if (chunks.length === 0) return
-
-  const chunkAt = (offset: number) => {
-    for (let i = chunks.length - 1; i >= 0; i--) {
-      if (offset >= chunks[i].start) return chunks[i]
-    }
-    return null
-  }
-
-  const unitChunks = new Map<Element, FadeChunk | null>()
-  let offset = 0
-  for (const node of nodes) {
-    const nodeStart = offset
-    offset += node.data.length
-
-    // A structure whose first text is new fades in whole, borders included
-    let covered: FadeChunk | null = null
-    let el = node.parentElement
-    while (el && el !== container) {
-      if (el.matches(FADE_UNIT_SELECTOR)) {
-        if (!unitChunks.has(el)) {
-          const chunk = chunkAt(nodeStart)
-          unitChunks.set(el, chunk)
-          if (chunk) fadeElement(el, now - chunk.at)
-        }
-        covered ??= unitChunks.get(el) ?? null
-      }
-      el = el.parentElement
-    }
-
-    if (offset <= chunks[0].start || !node.data.trim()) continue
-    if (node.parentElement?.closest(ATOMIC_SELECTOR)) continue
-
-    // Wrap each part of the node that belongs to a chunk still fading, unless
-    // an enclosing structure is already fading it
-    let current: Text = node
-    let currentStart = nodeStart
-    for (let i = 0; i < chunks.length; i++) {
-      if (covered) continue
-      const start = Math.max(chunks[i].start, currentStart)
-      const end = Math.min(chunks[i + 1]?.start ?? Infinity, offset)
-      if (end <= start) continue
-      if (start > currentStart) {
-        current = current.splitText(start - currentStart)
-        currentStart = start
-      }
-      const rest = end < offset ? current.splitText(end - currentStart) : null
-      const span = document.createElement('span')
-      fadeElement(span, now - chunks[i].at)
-      current.parentNode!.insertBefore(span, current)
-      span.appendChild(current)
-      if (!rest) break
-      current = rest
-      currentStart = end
-    }
-  }
-}
-
 export const MarkdownContent: FC<{
   content: string
   onOpenFile?: (path: string, line?: number) => void
@@ -1089,7 +972,8 @@ export const MarkdownContent: FC<{
   const { editorTheme } = useEditorThemeStyles()
   useEditorHighlightStyle(editorTheme)
 
-  const { text, animating } = useStreamReveal(content, isLive)
+  const revealLive = useRevealLive(isLive)
+  const { text, animating } = useStreamReveal(content, revealLive)
   const html = useMemo(
     () => renderMarkdown(text, sources, baseUrl),
     [text, sources, baseUrl]
@@ -1097,7 +981,7 @@ export const MarkdownContent: FC<{
 
   const containerRef = useRef<HTMLDivElement>(null)
   const fadeState = useRef<FadeState | null>(
-    isLive ? { text: '', chunks: [] } : null
+    revealLive ? createFadeState() : null
   )
 
   // Runs after React renders and before browser paint to incrementally update DOM
@@ -1108,10 +992,7 @@ export const MarkdownContent: FC<{
     reconcileContainerHtml(container, html)
 
     if (animating) {
-      fadeState.current ??= {
-        text: container.textContent ?? '',
-        chunks: [],
-      }
+      fadeState.current ??= createFadeState(container)
       applyChunkFades(container, fadeState.current)
       window.dispatchEvent(new CustomEvent('aiAssist:stickToBottom'))
     } else {

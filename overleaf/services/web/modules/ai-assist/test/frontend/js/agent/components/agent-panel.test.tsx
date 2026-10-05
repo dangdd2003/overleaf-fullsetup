@@ -278,7 +278,7 @@ describe('AgentComposer', function () {
     expect(onStop).to.have.been.calledOnce
   })
 
-  it('does not send on Enter while running', function () {
+  it('sends on Enter while running so the panel can queue the message', function () {
     const onSend = sinon.stub()
     render(<AgentComposer running onSend={onSend} onStop={sinon.stub()} />)
 
@@ -286,7 +286,7 @@ describe('AgentComposer', function () {
     fireEvent.change(input, { target: { value: 'add a section' } })
     fireEvent.keyDown(input, { key: 'Enter' })
 
-    expect(onSend).to.have.not.been.called
+    expect(onSend).to.have.been.calledOnceWith('add a section')
   })
 
   it('navigates history prompts with ArrowUp and ArrowDown', function () {
@@ -502,7 +502,9 @@ describe('AgentPanel', function () {
   })
 
   it('seeds the transcript from a previously saved conversation on mount', function () {
-    saveConversation(PROJECT_ID, [
+    // The chat open in the panel, with turns this browser already holds
+    customLocalStorage.setItem(`ai-assist:chat-id:${PROJECT_ID}`, 'chat_seeded')
+    saveConversation(PROJECT_ID, 'chat_seeded', [
       { id: 'u0', role: 'user', text: 'what did we talk about last time?' },
     ])
 
@@ -515,12 +517,13 @@ describe('AgentPanel', function () {
     expect(screen.getByText('what did we talk about last time?')).to.exist
   })
 
-  it('stops active background run when New chat is clicked', async function () {
+  it('keeps the active background run going when New chat is clicked', async function () {
     customLocalStorage.setItem('ai-assist:active-run:' + PROJECT_ID, 'run-123')
     customLocalStorage.setItem(
       'ai-assist:active-run-start:' + PROJECT_ID,
       String(Date.now())
     )
+    customLocalStorage.setItem(`ai-assist:chat-id:${PROJECT_ID}`, 'chat_left')
 
     fakeFetch = sinon.stub(globalThis, 'fetch' as any).resolves({
       ok: true,
@@ -547,7 +550,13 @@ describe('AgentPanel', function () {
     const stopCall = fakeFetch
       .getCalls()
       .find(c => String(c.args[0]).includes('/runs/run-123/stop'))
-    expect(stopCall, 'New chat must POST stop for the active run').to.exist
+    expect(stopCall, 'New chat must leave the run going').to.equal(undefined)
+    expect(
+      customLocalStorage.getItem(`ai-assist:detached-runs:${PROJECT_ID}`)
+    ).to.have.nested.property('chat_left.runId', 'run-123')
+    expect(
+      customLocalStorage.getItem(`ai-assist:chat-id:${PROJECT_ID}`)
+    ).to.not.equal('chat_left')
   })
 
   it('does not repopulate transcript with stream events arriving after New chat', async function () {
@@ -597,7 +606,9 @@ describe('AgentPanel', function () {
   })
 
   it('shows jump to latest button when scrolled up and clicking it scrolls to bottom', function () {
-    saveConversation(PROJECT_ID, [
+    // The chat open in the panel, with turns this browser already holds
+    customLocalStorage.setItem(`ai-assist:chat-id:${PROJECT_ID}`, 'chat_seeded')
+    saveConversation(PROJECT_ID, 'chat_seeded', [
       { id: 'u1', role: 'user', text: 'turn 1' },
       { id: 'a1', role: 'assistant', text: 'turn 1 reply', toolCalls: [] },
       { id: 'u2', role: 'user', text: 'turn 2' },
@@ -649,7 +660,9 @@ describe('AgentPanel', function () {
       apiKey: 'sk-test',
       model: 'gpt-4o-mini',
     })
-    saveConversation(PROJECT_ID, [
+    // The chat open in the panel, with turns this browser already holds
+    customLocalStorage.setItem(`ai-assist:chat-id:${PROJECT_ID}`, 'chat_seeded')
+    saveConversation(PROJECT_ID, 'chat_seeded', [
       { id: 'u1', role: 'user', text: 'turn 1' },
       { id: 'a1', role: 'assistant', text: 'turn 1 reply', toolCalls: [] },
     ])

@@ -2,87 +2,10 @@ import { FC, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Brain } from '@phosphor-icons/react'
 import { useStickToBottom } from '../../hooks/use-stick-to-bottom'
-import {
-  STREAM_FADE_MS,
-  MAX_FADE_LEAD_MS,
-  useStreamReveal,
-} from '../../hooks/use-stream-reveal'
+import { useRevealLive, useStreamReveal } from '../../hooks/use-stream-reveal'
+import { applyChunkFades, createFadeState, FadeState } from './stream-fade'
 import { subresultExpansionStore } from './subresult-group'
-import { renderMarkdown } from './markdown-content'
-
-type FadeChunk = { start: number; at: number }
-type FadeState = { text: string; chunks: FadeChunk[] }
-
-function fadeElement(el: Element, ageMs: number) {
-  el.classList.add('ai-assist-stream-fade')
-  const delayMs = Math.round(-ageMs)
-  ;(el as HTMLElement).style.animationDelay = `${delayMs}ms`
-}
-
-function applyChunkFades(container: HTMLElement, state: FadeState) {
-  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT)
-  const nodes: Text[] = []
-  while (walker.nextNode()) nodes.push(walker.currentNode as Text)
-
-  const text = nodes.map(node => node.data).join('')
-  const now = performance.now()
-  let kept = 0
-  const max = Math.min(text.length, state.text.length)
-  while (kept < max && text[kept] === state.text[kept]) kept++
-
-  const chunks = state.chunks.filter(
-    chunk =>
-      chunk.start < kept && now - chunk.at < STREAM_FADE_MS + MAX_FADE_LEAD_MS
-  )
-  if (text.length > kept) {
-    const newText = text.slice(kept)
-    const tokenRegex = /\S+\s*/g
-    let match: RegExpExecArray | null
-    let tokenIndex = 0
-    let addedAny = false
-    while ((match = tokenRegex.exec(newText)) !== null) {
-      const start = kept + match.index
-      const stagger = Math.min(tokenIndex * 24, MAX_FADE_LEAD_MS)
-      chunks.push({ start, at: now + stagger })
-      tokenIndex++
-      addedAny = true
-    }
-    if (!addedAny) {
-      chunks.push({ start: kept, at: now })
-    }
-  }
-  state.text = text
-  state.chunks = chunks
-  if (chunks.length === 0) return
-
-  let offset = 0
-  for (const node of nodes) {
-    const nodeStart = offset
-    offset += node.data.length
-
-    if (offset <= chunks[0].start || !node.data.trim()) continue
-
-    let current: Text = node
-    let currentStart = nodeStart
-    for (let i = 0; i < chunks.length; i++) {
-      const start = Math.max(chunks[i].start, currentStart)
-      const end = Math.min(chunks[i + 1]?.start ?? Infinity, offset)
-      if (end <= start) continue
-      if (start > currentStart) {
-        current = current.splitText(start - currentStart)
-        currentStart = start
-      }
-      const rest = end < offset ? current.splitText(end - currentStart) : null
-      const span = document.createElement('span')
-      fadeElement(span, now - chunks[i].at)
-      current.parentNode!.insertBefore(span, current)
-      span.appendChild(current)
-      if (!rest) break
-      current = rest
-      currentStart = end
-    }
-  }
-}
+import { reconcileContainerHtml, renderMarkdown } from './markdown-content'
 
 export const ThinkingBlock: FC<{
   thinking: string
@@ -105,11 +28,13 @@ export const ThinkingBlock: FC<{
   const contentRef = useRef<HTMLDivElement>(null)
   const { onScroll, scrollToBottom } = useStickToBottom(contentRef)
 
+  // Thinking the run did before this chat was opened is shown at once
+  const revealLive = useRevealLive(isLive)
   const { text: revealedText, animating } = useStreamReveal(
     thinking,
-    isLive && expanded
+    revealLive && expanded
   )
-  const displayText = isLive && expanded ? revealedText : thinking
+  const displayText = revealLive && expanded ? revealedText : thinking
 
   const html = useMemo(
     () => renderMarkdown(displayText, undefined, undefined, { isThinking: true }),
@@ -117,7 +42,7 @@ export const ThinkingBlock: FC<{
   )
 
   const fadeState = useRef<FadeState | null>(
-    isLive ? { text: '', chunks: [] } : null
+    revealLive ? createFadeState() : null
   )
 
   useLayoutEffect(() => {
@@ -125,36 +50,10 @@ export const ThinkingBlock: FC<{
     const container = contentRef.current
     if (!container) return
 
-    const template = document.createElement('template')
-    template.innerHTML = html
-    const newNodes = Array.from(template.content.childNodes)
-    const currentNodes = Array.from(container.childNodes)
-
-    let i = 0
-    const maxCommon = Math.min(currentNodes.length, newNodes.length)
-    while (i < maxCommon && currentNodes[i].isEqualNode(newNodes[i])) {
-      i++
-    }
-
-    for (let j = i; j < newNodes.length; j++) {
-      if (j < container.childNodes.length) {
-        if (!container.childNodes[j].isEqualNode(newNodes[j])) {
-          container.replaceChild(newNodes[j], container.childNodes[j])
-        }
-      } else {
-        container.appendChild(newNodes[j])
-      }
-    }
-
-    while (container.childNodes.length > newNodes.length) {
-      container.removeChild(container.lastChild!)
-    }
+    reconcileContainerHtml(container, html)
 
     if (animating) {
-      fadeState.current ??= {
-        text: container.textContent ?? '',
-        chunks: [],
-      }
+      fadeState.current ??= createFadeState(container)
       applyChunkFades(container, fadeState.current)
     } else {
       fadeState.current = null

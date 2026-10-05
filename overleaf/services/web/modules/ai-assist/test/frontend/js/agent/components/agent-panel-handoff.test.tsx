@@ -154,7 +154,9 @@ describe('AgentPanel receiving a compile-error handoff', function () {
   })
 
   it('adds to the conversation already in progress instead of replacing it', async function () {
-    saveConversation(PROJECT_ID, [
+    // The chat open in the panel, with turns this browser already holds
+    customLocalStorage.setItem(`ai-assist:chat-id:${PROJECT_ID}`, 'chat_seeded')
+    saveConversation(PROJECT_ID, 'chat_seeded', [
       { id: 'u0', role: 'user', text: 'what were we discussing?' },
       { id: 'a0', role: 'assistant', text: 'Your bibliography.', toolCalls: [] },
     ])
@@ -170,7 +172,9 @@ describe('AgentPanel receiving a compile-error handoff', function () {
   })
 
   it('appends the handoff last, keeping the cached prefix intact', async function () {
-    saveConversation(PROJECT_ID, [
+    // The chat open in the panel, with turns this browser already holds
+    customLocalStorage.setItem(`ai-assist:chat-id:${PROJECT_ID}`, 'chat_seeded')
+    saveConversation(PROJECT_ID, 'chat_seeded', [
       { id: 'u0', role: 'user', text: 'what were we discussing?' },
       { id: 'a0', role: 'assistant', text: 'Your bibliography.', toolCalls: [] },
     ])

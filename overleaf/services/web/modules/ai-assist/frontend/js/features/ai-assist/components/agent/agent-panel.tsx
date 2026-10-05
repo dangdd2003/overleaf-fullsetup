@@ -24,9 +24,11 @@ import { resolveAttachments } from '../../agent/context/attachments'
 import {
   clearConversation,
   loadConversation,
+  mergeStoredTranscript,
   saveConversation,
 } from '../../agent/conversation-store'
 import {
+  ChatSummary,
   deleteChat,
   fetchChat,
   getActiveChatId,
@@ -48,12 +50,14 @@ import { setChatBusy } from '../../agent/chat-activity'
 import { useStickToBottom } from '../../hooks/use-stick-to-bottom'
 import { useAgentRun } from '../../hooks/use-agent-run'
 import {
+  AgentState,
   countTrailingPendingUserEntries,
   emptyAgentState,
 } from '../../agent/agent-state'
 import withErrorBoundary from '@/infrastructure/error-boundary'
 import type { FallbackProps } from 'react-error-boundary'
 import {
+  getDetachedRuns,
   getStoredActiveRunId,
   getStoredActiveRunStartedAt,
   setDetachedRun,
@@ -61,7 +65,13 @@ import {
   stopBackgroundRun,
   takeDetachedRun,
 } from '../../agent/background/background-run-client'
+import {
+  followDetachedRun,
+  stopFollowingRun,
+  takeFollowedRun,
+} from '../../agent/background/detached-run-follower'
 import { useAiDock, DockPosition } from '../../hooks/use-ai-dock'
+import { StreamCatchUpContext } from '../../hooks/use-stream-reveal'
 
 export async function buildUserEntry({
   handle,
@@ -203,6 +213,15 @@ function AgentPanelInner({
   }, [activeDock, setDock, setIsRightOpen])
 
   const [chatId, setChatId] = useState(() => getActiveChatId(projectId))
+  const chatIdRef = useRef(chatId)
+  chatIdRef.current = chatId
+  // Chats started in this panel and not yet sent anything: the server has
+  // no copy of them to fetch
+  const unsavedChatIdsRef = useRef<Set<string>>(new Set())
+  // Read from storage once, on mount: the hook only uses it to seed its state
+  const [initialTranscript] = useState(() =>
+    loadConversation(projectId, chatId)
+  )
   const [chatTitle, setChatTitle] = useState<string>('')
   const initialMode = useMemo(
     () => getStoredChatMode(projectId, chatId) || 'manual',
@@ -218,6 +237,8 @@ function AgentPanelInner({
     handle,
     approvalContext,
     run,
+    runDetached,
+    catchingUp,
     stop,
     detach,
     attach,
@@ -230,13 +251,13 @@ function AgentPanelInner({
   } = useAgentRun({
     tools: TOOLS,
     cacheKey: projectId,
-    initialTranscript: loadConversation(projectId, chatId),
+    initialTranscript,
     initialMode,
     chatId,
   })
 
   useEffect(() => {
-    if (!chatId) return
+    if (!chatId || unsavedChatIdsRef.current.has(chatId)) return
     let active = true
     fetchChat(projectId, chatId)
       .then(chat => {
@@ -254,37 +275,26 @@ function AgentPanelInner({
         }
         if (Array.isArray(chat.transcript) && chat.transcript.length > 0) {
           setState(curr => {
-            if (
-              !curr.running &&
-              (curr.transcript.length === 0 ||
-                chat.transcript.length >= curr.transcript.length)
-            ) {
-              lastSavedRef.current = {
-                transcript: chat.transcript,
-                mode: chat.mode || curr.mode,
-              }
-              saveConversation(projectId, chatId, chat.transcript)
-              return {
-                ...curr,
-                transcript: chat.transcript,
-                chatTitle: chat.title || curr.chatTitle,
-              }
-            } else if (chat.transcript.length > curr.transcript.length) {
-              const offset = chat.transcript.length - curr.transcript.length
-              const missingPrefix = chat.transcript.slice(0, offset)
-              const merged = [...missingPrefix, ...curr.transcript]
-              lastSavedRef.current = {
-                transcript: merged,
-                mode: chat.mode || curr.mode,
-              }
-              saveConversation(projectId, chatId, merged)
-              return {
-                ...curr,
-                transcript: merged,
-                chatTitle: chat.title || curr.chatTitle,
-              }
+            // Lined up by id with what is shown. While a run is followed it
+            // writes the reply, so the server's copy only puts back the top
+            // turns this browser dropped: never the reply again, nor the
+            // question it answers a second time.
+            const merged = mergeStoredTranscript(
+              curr.transcript,
+              chat.transcript,
+              { live: curr.running }
+            )
+            if (merged === curr.transcript) return curr
+            lastSavedRef.current = {
+              transcript: merged,
+              mode: chat.mode || curr.mode,
             }
-            return curr
+            saveConversation(projectId, chatId, merged)
+            return {
+              ...curr,
+              transcript: merged,
+              chatTitle: chat.title || curr.chatTitle,
+            }
           })
         }
       })
@@ -311,26 +321,24 @@ function AgentPanelInner({
   const [runStartedAt, setRunStartedAt] = useState<number | null>(() => {
     return getStoredActiveRunStartedAt(projectId)
   })
-  const [completedRun, setCompletedRun] = useState<{
-    durationMs: number
-    word?: string
-  } | null>(() => {
-    const initial = loadConversation(projectId, chatId)
-    const last = initial.at(-1)
-    if (last && last.role === 'assistant' && (last as any).durationMs) {
-      return {
-        durationMs: (last as any).durationMs,
-        word: (last as any).statusWord,
-      }
-    }
-    return null
-  })
+  // The line under a finished reply, saying how long it took: stamped on the
+  // reply when its run ended, whether on screen or off it, so it is there
+  // whenever the chat is opened again
+  const completedRun = useMemo(() => {
+    const last = state.transcript.at(-1)
+    return last?.role === 'assistant' && last.durationMs
+      ? { durationMs: last.durationMs, word: last.statusWord }
+      : null
+  }, [state.transcript])
 
   const prevRunningRef = useRef(state.running)
   // Read by sendPrompt, which is memoised and would otherwise see the
   // transcript as it was when the callback was last built.
   const liveTranscriptRef = useRef(state.transcript)
   liveTranscriptRef.current = state.transcript
+  // All the panel holds for the chat, handed on with its run when it is left
+  const stateRef = useRef(state)
+  stateRef.current = state
   // Ids this session handed to a live run. A `pending` entry restored from
   // storage is not in here, so reopening the project never resends an old
   // message — only one this tab queued and watched fail can be revived.
@@ -349,6 +357,14 @@ function AgentPanelInner({
   const takenBackIdsRef = useRef<Set<string>>(new Set())
   // Moves on with the chat; a send still on its way leaves the new chat alone
   const chatEpochRef = useRef(0)
+  // The chat each epoch was spent in, as it was left: a send still on its way
+  // when its chat was left goes to that chat, not to the one now shown
+  const leftChatsRef = useRef(
+    new Map<
+      number,
+      { chatId: string; transcript: TranscriptEntry[]; mode: AgentMode }
+    >()
+  )
   const runningRef = useRef(state.running)
   runningRef.current = state.running
   const runStartedAtRef = useRef<number | null>(runStartedAt)
@@ -374,7 +390,6 @@ function AgentPanelInner({
     if (state.running) {
       if (runStartedAtRef.current === null) waitedMsRef.current = 0
       setRunStartedAt(current => current ?? Date.now())
-      setCompletedRun(null)
     } else if (prevRunningRef.current && !state.running) {
       if (
         !state.stoppedByUser &&
@@ -387,7 +402,6 @@ function AgentPanelInner({
           Date.now() - runStartedAtRef.current - waitedMsRef.current
         )
         const word = activeWordRef.current || undefined
-        setCompletedRun({ durationMs: duration, word })
         setState(curr => {
           const last = curr.transcript.at(-1)
           if (last && last.role === 'assistant') {
@@ -540,12 +554,16 @@ function AgentPanelInner({
   )
 
   const enqueueSend = useCallback((task: () => Promise<void>) => {
+    // Each chat has a line of its own, started afresh when the chat is left:
+    // a send still on its way in the chat left never holds up, or queues, the
+    // first message of the next one
+    const epoch = chatEpochRef.current
     sendsInFlightRef.current += 1
     const next = sendChainRef.current
       .then(task)
       .catch(() => {})
       .finally(() => {
-        sendsInFlightRef.current -= 1
+        if (chatEpochRef.current === epoch) sendsInFlightRef.current -= 1
       })
     sendChainRef.current = next
     return next
@@ -572,10 +590,13 @@ function AgentPanelInner({
    */
   const startRunWith = useCallback(
     async (ids: string[] = []) => {
+      const epoch = chatEpochRef.current
       // A run still stopping is followed to its end first: the transcript
       // read below is what the new run is rebuilt from, and has to hold
       // everything the stopped run sent the provider
       await whenRunEnded()
+      // The chat was left meanwhile: what it holds was saved as it was left
+      if (chatEpochRef.current !== epoch) return
       const include = new Set([...ids, ...queuedIdsRef.current])
       queuedIdsRef.current.clear()
       const next = liveTranscriptRef.current.flatMap(entry => {
@@ -635,8 +656,9 @@ function AgentPanelInner({
         ...(queueing ? { pending: true } : {}),
       }
       const epoch = chatEpochRef.current
-      const abandoned = () =>
-        takenBackIdsRef.current.has(entryId) || chatEpochRef.current !== epoch
+      const takenBack = () => takenBackIdsRef.current.has(entryId)
+      const chatLeft = () => chatEpochRef.current !== epoch
+      const abandoned = () => takenBack() || chatLeft()
       if (queueing) waitingIdsRef.current.add(entryId)
 
       updateTranscript(transcript => [...transcript, optimisticEntry])
@@ -654,7 +676,12 @@ function AgentPanelInner({
 
       return enqueueSend(async () => {
         try {
-          if (abandoned()) return
+          if (takenBack()) return
+          // A message queued behind a run of a chat since left stays saved in
+          // that chat; only one that would have started a run still goes
+          if (chatLeft() && (queueing || !leftChatsRef.current.has(epoch))) {
+            return
+          }
           let attachmentsResolved: Attachment[] = []
           try {
             attachmentsResolved = await resolveAttachments(
@@ -670,7 +697,9 @@ function AgentPanelInner({
           }
           // Against the turns before it, the queued ones included, so the
           // envelope is a delta on the one sent just before
-          const live = liveTranscriptRef.current
+          const live = chatLeft()
+            ? (leftChatsRef.current.get(epoch)?.transcript ?? [])
+            : liveTranscriptRef.current
           const position = live.findIndex(entry => entry.id === entryId)
           const built = await buildUserEntry({
             handle,
@@ -681,8 +710,25 @@ function AgentPanelInner({
             extraContext,
             mode: state.mode,
           })
-          if (abandoned()) return
+          if (takenBack()) return
           const userEntry: TranscriptEntry = { ...built, id: entryId }
+          if (chatLeft()) {
+            // Its chat was left while the message was being prepared. It is
+            // sent all the same, to a run of that chat's own going on in
+            // parallel with the chat now on screen.
+            const left = leftChatsRef.current.get(epoch)
+            if (queueing || !left) return
+            const transcript = left.transcript.flatMap(entry =>
+              entry.id === entryId
+                ? [userEntry]
+                : entry.role === 'user' && entry.pending
+                  ? []
+                  : [entry]
+            )
+            saveConversation(projectId, left.chatId, transcript)
+            await runDetached(left.chatId, transcript, left.mode)
+            return
+          }
           // The transcript keeps what the run is sent, envelope and all, so a
           // later run rebuilds the same bytes
           updateTranscript(transcript =>
@@ -744,6 +790,8 @@ function AgentPanelInner({
       startRunWith,
       setState,
       scrollToBottom,
+      projectId,
+      runDetached,
     ]
   )
 
@@ -950,74 +998,170 @@ function AgentPanelInner({
 
   /**
    * Leaving a chat does not stop its run. The panel stops following it, so its
-   * events cannot land in the next chat, and the chat is saved as it stands;
-   * reopening it replays the run from the start and picks up the rest.
+   * events cannot land in the next chat, and the chat is saved as it stands —
+   * with or without a run, so a message whose reply has not come yet is never
+   * lost. Its run goes on in parallel, followed off screen from where the
+   * panel was until its reply is saved; reopening the chat picks it up there.
+   *
+   * `save: false` is for a chat being deleted, which must not be written back
+   * and whose run has nowhere to go: it is stopped.
    */
-  const leaveChat = useCallback(() => {
-    // Sends still on their way belong to the chat being left
-    chatEpochRef.current += 1
-    queuedIdsRef.current.clear()
-    const now = Date.now()
-    // Moved forward by the time spent waiting on the user, which the clock
-    // leaves out when the chat is reopened
-    const waited =
-      waitedMsRef.current +
-      (waitStartRef.current !== null ? now - waitStartRef.current : 0)
-    waitedMsRef.current = 0
-    waitStartRef.current = null
-    const runId = detach()
-    if (!runId) return
-    setDetachedRun(projectId, chatId, {
-      runId,
-      startedAt: (runStartedAtRef.current ?? now) + waited,
-    })
-    saveChat(
-      projectId,
-      chatId,
-      liveTranscriptRef.current,
-      state.mode,
-      chatTitle || undefined
-    ).catch(() => {})
-  }, [chatId, chatTitle, detach, projectId, state.mode])
+  const leaveChat = useCallback(
+    ({ save = true }: { save?: boolean } = {}) => {
+      // Sends still on their way belong to the chat being left
+      const epoch = chatEpochRef.current
+      chatEpochRef.current += 1
+      queuedIdsRef.current.clear()
+      sendChainRef.current = Promise.resolve()
+      sendsInFlightRef.current = 0
+      const now = Date.now()
+      // Moved forward by the time spent waiting on the user, which the clock
+      // leaves out when the chat is reopened
+      const waited =
+        waitedMsRef.current +
+        (waitStartRef.current !== null ? now - waitStartRef.current : 0)
+      waitedMsRef.current = 0
+      waitStartRef.current = null
+      const live = detach()
+      if (!save) {
+        if (live) void stopBackgroundRun(live.runId).catch(() => {})
+        return
+      }
 
-  const onNewChat = useCallback(() => {
-    void stop()
-    leaveChat()
-    clearConversation(projectId, chatId)
-    const id = newChatId()
-    setActiveChatId(projectId, id)
-    setChatId(id)
-    setChatTitle('')
-    setAnimateTitle(false)
-    setStoredChatMode(projectId, id, 'manual')
-    setState(emptyAgentState([], 'manual', ''))
-    setNewChatSeed(s => s + 1)
-    setCompletedRun(null)
-    setRunStartedAt(null)
-  }, [chatId, leaveChat, projectId, setState, stop])
+      const transcript = liveTranscriptRef.current
+      const mode = state.mode
+      leftChatsRef.current.set(epoch, { chatId, transcript, mode })
+      // Only a send prepared in the last moments of a chat looks it up
+      for (const old of leftChatsRef.current.keys()) {
+        if (old < epoch - 4) leftChatsRef.current.delete(old)
+      }
+      if (transcript.length > 0) {
+        unsavedChatIdsRef.current.delete(chatId)
+        saveConversation(projectId, chatId, transcript)
+        // Skipped for a chat opened and left untouched, which would only move
+        // up the history for having been looked at
+        if (
+          lastSavedRef.current.transcript !== transcript ||
+          lastSavedRef.current.mode !== mode
+        ) {
+          lastSavedRef.current = { transcript, mode }
+          saveChat(
+            projectId,
+            chatId,
+            transcript,
+            mode,
+            chatTitle || undefined
+          ).catch(() => {})
+        }
+      }
+      if (live) {
+        const startedAt = (runStartedAtRef.current ?? now) + waited
+        setDetachedRun(projectId, chatId, { runId: live.runId, startedAt })
+        followDetachedRun({
+          projectId,
+          chatId,
+          runId: live.runId,
+          startedAt,
+          transcript,
+          mode,
+          state: { ...stateRef.current, transcript },
+          since: live.seq,
+        })
+      }
+    },
+    [chatId, chatTitle, detach, projectId, state.mode]
+  )
 
-  const onOpenChat = useCallback(
-    async (id: string) => {
-      if (id === chatId) return
-      const chat = await fetchChat(projectId, id).catch(() => null)
-      if (!chat) return
-      leaveChat()
-      const mode = chat.mode || getStoredChatMode(projectId, id) || 'manual'
-      lastSavedRef.current = { transcript: chat.transcript, mode }
-      saveConversation(projectId, id, chat.transcript)
+  /** Shows a chat: a new one, or one opened from the history. */
+  const showChat = useCallback(
+    (
+      id: string,
+      {
+        transcript = [],
+        mode = 'manual',
+        title = '',
+        state: shown,
+      }: {
+        transcript?: TranscriptEntry[]
+        mode?: AgentMode
+        title?: string
+        /** What a run followed off screen holds for the chat. */
+        state?: AgentState
+      }
+    ) => {
+      lastSavedRef.current = { transcript, mode }
       setActiveChatId(projectId, id)
       setChatId(id)
-      setChatTitle(chat.title || '')
-      setAnimateTitle(true)
+      setChatTitle(title)
       setStoredChatMode(projectId, id, mode)
-      setState(emptyAgentState(chat.transcript, mode, chat.title || ''))
-      setCompletedRun(null)
+      setState(
+        shown
+          ? { ...shown, transcript, mode }
+          : emptyAgentState(transcript, mode, title)
+      )
+      setRunStartedAt(null)
+    },
+    [projectId, setState]
+  )
+
+  const startNewChat = useCallback(() => {
+    const id = newChatId()
+    unsavedChatIdsRef.current.add(id)
+    showChat(id, {})
+    setAnimateTitle(false)
+    setNewChatSeed(s => s + 1)
+  }, [showChat])
+
+  const onNewChat = useCallback(() => {
+    leaveChat()
+    startNewChat()
+  }, [leaveChat, startNewChat])
+
+  /**
+   * Switches at once. A chat whose run is followed off screen is shown as
+   * that run has got it and followed on from there; any other from this
+   * browser's copy, while the server's copy is fetched by the effect on
+   * `chatId`, in parallel with the save of the chat being left.
+   */
+  const onOpenChat = useCallback(
+    (id: string, summary?: ChatSummary) => {
+      if (id === chatId) return
+      leaveChat()
+      const title =
+        summary?.title &&
+        summary.title !== 'New chat' &&
+        summary.title !== 'Untitled chat'
+          ? summary.title
+          : ''
+      const followed = takeFollowedRun(projectId, id)
       // A run left going when this chat was last open carries on from here
       const detached = takeDetachedRun(projectId, id)
-      setRunStartedAt(detached?.startedAt ?? null)
-      if (detached) attach(detached.runId, detached.startedAt)
+      if (followed) {
+        showChat(id, {
+          transcript: followed.state.transcript,
+          mode: followed.state.mode,
+          title: followed.state.chatTitle || title,
+          state: followed.state,
+        })
+      } else {
+        showChat(id, {
+          transcript: loadConversation(projectId, id),
+          mode: getStoredChatMode(projectId, id) || 'manual',
+          title,
+        })
+      }
+      setAnimateTitle(true)
+      const run = followed ?? detached
+      if (run) {
+        setRunStartedAt(run.startedAt)
+        attach(run.runId, {
+          startedAt: run.startedAt,
+          since: followed?.seq ?? 0,
+          chatId: id,
+        })
+      }
     },
-    [attach, chatId, leaveChat, projectId, setState]
+    [attach, chatId, leaveChat, projectId, showChat]
   )
 
   const onRenameChat = useCallback(
@@ -1032,20 +1176,49 @@ function AgentPanelInner({
     [chatId, projectId]
   )
 
-  // A deleted chat's run has nowhere to go, so it is stopped
+  // A deleted chat's run has nowhere to go, so it is stopped, and the chat
+  // is not saved on the way out, which would write it back
   const onDeleteChat = useCallback(
     async (id: string) => {
       if (id === chatId) {
-        void stop()
+        leaveChat({ save: false })
+        startNewChat()
       } else {
+        stopFollowingRun(projectId, id)
         const detached = takeDetachedRun(projectId, id)
         if (detached) void stopBackgroundRun(detached.runId).catch(() => {})
       }
+      clearConversation(projectId, id)
       await deleteChat(projectId, id)
-      if (id === chatId) onNewChat()
     },
-    [chatId, onNewChat, projectId, stop]
+    [chatId, leaveChat, projectId, startNewChat]
   )
+
+  // Runs of other chats left going when the page was last open are followed
+  // again, so their replies reach the history without opening each chat
+  useEffect(() => {
+    for (const [id, detached] of Object.entries(getDetachedRuns(projectId))) {
+      if (id === chatIdRef.current) {
+        // The open chat's own run, unless it was reconnected already
+        if (!getStoredActiveRunId(projectId)) {
+          takeDetachedRun(projectId, id)
+          setRunStartedAt(detached.startedAt)
+          attach(detached.runId, { startedAt: detached.startedAt, chatId: id })
+        }
+        continue
+      }
+      followDetachedRun({
+        projectId,
+        chatId: id,
+        runId: detached.runId,
+        startedAt: detached.startedAt,
+        transcript: loadConversation(projectId, id),
+        mode: getStoredChatMode(projectId, id) || 'manual',
+      })
+    }
+    // Once, on mount: later runs are handed over as their chats are left
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId])
 
   return (
     <div className="ai-assist-panel">
@@ -1073,7 +1246,7 @@ function AgentPanelInner({
             <ChatHistoryMenu
               projectId={projectId}
               activeChatId={chatId}
-              onOpen={id => void onOpenChat(id)}
+              onOpen={onOpenChat}
               onDelete={onDeleteChat}
               onRename={onRenameChat}
             />
@@ -1128,18 +1301,22 @@ function AgentPanelInner({
               disabled={!hasProvider}
             />
           ) : (
-            state.transcript.map((entry, entryIndex) => (
-              <AgentMessageView
-                key={entry.id}
-                entry={entry}
-                pendingApprovalId={state.pendingApproval?.id ?? null}
-                approvalContext={approvalContext}
-                onDecision={onDecision}
-                isRunning={state.running && entryIndex === liveEntryIndex}
-                webSources={webSources}
-                onTakeBack={takeBack}
-              />
-            ))
+            // A chat opened mid-run shows what the run has written so far at
+            // once, and animates only what it writes from there
+            <StreamCatchUpContext.Provider value={catchingUp}>
+              {state.transcript.map((entry, entryIndex) => (
+                <AgentMessageView
+                  key={entry.id}
+                  entry={entry}
+                  pendingApprovalId={state.pendingApproval?.id ?? null}
+                  approvalContext={approvalContext}
+                  onDecision={onDecision}
+                  isRunning={state.running && entryIndex === liveEntryIndex}
+                  webSources={webSources}
+                  onTakeBack={takeBack}
+                />
+              ))}
+            </StreamCatchUpContext.Provider>
           )}
 
           {/*

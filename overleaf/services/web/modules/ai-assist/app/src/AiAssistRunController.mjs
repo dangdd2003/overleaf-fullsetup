@@ -121,7 +121,8 @@ export class AiAssistRunController {
 
   streamRun = async (req, res) => {
     const { runId } = req.params
-    const sinceSeq = parseInt(req.query.since || '0', 10)
+    const parsed = parseInt(req.query.since || '0', 10)
+    const sinceSeq = Number.isFinite(parsed) && parsed > 0 ? parsed : 0
 
     const run = await this.store.getRun(runId)
     if (!run) {
@@ -173,12 +174,17 @@ export class AiAssistRunController {
 
     let counted = false
     let closed = false
+    // `watch=0` is a panel following a chat it is not showing, to save the
+    // reply when it lands. It keeps the run from being reaped, but cannot
+    // compile or approve, so the run does not count it as an editor watching.
+    const watch = req.query?.watch === '0' ? { follower: true } : undefined
+    const watchArgs = watch ? [runId, watch] : [runId]
 
     const releaseWatcher = () => {
       if (closed) return
       closed = true
       if (counted) {
-        void this.store.removeWatcher(runId).catch(() => {})
+        void this.store.removeWatcher(...watchArgs).catch(() => {})
       }
     }
 
@@ -207,7 +213,7 @@ export class AiAssistRunController {
     }
 
     counted = true
-    await this.store.addWatcher(runId)
+    await this.store.addWatcher(...watchArgs)
 
     const keepAliveSeconds = Settings.aiAssist?.streamKeepAliveSeconds ?? 15
     if (keepAliveSeconds > 0) {
@@ -233,6 +239,11 @@ export class AiAssistRunController {
     subscribed = true
     for (const msg of liveBuffer) {
       onMessage(msg)
+    }
+    // Everything the run sent before this connection is out. A panel opening
+    // a chat mid-run shows that at once, and animates only what comes next.
+    if (!closed && !res.writableEnded) {
+      res.write(`data: ${JSON.stringify({ caughtUp: true })}\n\n`)
     }
 
     const freshRun = await this.store.getRun(runId)

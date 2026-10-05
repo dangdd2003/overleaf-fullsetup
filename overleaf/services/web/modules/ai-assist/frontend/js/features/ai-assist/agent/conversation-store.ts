@@ -348,6 +348,76 @@ export function prepareTranscriptForRun(
 }
 
 /**
+ * The transcript without an entry repeated right after itself: the same id,
+ * role and text. A chat reopened while its run was going could hold its
+ * question twice, and every later run would send it twice.
+ */
+export function dropRepeatedEntries(
+  transcript: TranscriptEntry[]
+): TranscriptEntry[] {
+  const kept = transcript.filter((entry, index) => {
+    const previous = transcript[index - 1]
+    return !(
+      previous &&
+      entry?.id &&
+      entry.id === previous.id &&
+      entry.role === previous.role &&
+      entry.text === previous.text
+    )
+  })
+  return kept.length === transcript.length ? transcript : kept
+}
+
+const isFinishedReply = (entry: TranscriptEntry) =>
+  entry.role === 'assistant' && typeof entry.durationMs === 'number'
+
+/**
+ * The chat as shown, with what the server's copy of it adds: the top turns
+ * this browser dropped to fit its storage, the turns after the ones shown,
+ * and a reply finished since this copy was saved. Entries are lined up by id,
+ * so a message both copies hold is never shown twice; copies that do not line
+ * up are left as shown. Returns `local` itself when nothing is added.
+ *
+ * `live`: a run is writing the chat's reply. Only the top turns are put back;
+ * the server's copy of the reply, or of anything after it, would be shown
+ * next to the one the run is writing.
+ */
+export function mergeStoredTranscript(
+  local: TranscriptEntry[],
+  stored: TranscriptEntry[] | null | undefined,
+  { live = false }: { live?: boolean } = {}
+): TranscriptEntry[] {
+  const server = dropRepeatedEntries(Array.isArray(stored) ? stored : [])
+  if (server.length === 0) return local
+  if (local.length === 0) return server
+
+  const at = server.findIndex(entry => entry.id === local[0].id)
+  if (at === -1) return local
+  const overlap = Math.min(local.length, server.length - at)
+  for (let i = 0; i < overlap; i++) {
+    const theirs = server[at + i]
+    if (theirs.id !== local[i].id || theirs.role !== local[i].role) {
+      return local
+    }
+  }
+  if (live) return at > 0 ? [...server.slice(0, at), ...local] : local
+
+  let changed = at > 0
+  const shown = local.map((entry, i) => {
+    const theirs = i < overlap ? server[at + i] : null
+    if (theirs && isFinishedReply(theirs) && !isFinishedReply(entry)) {
+      changed = true
+      return theirs
+    }
+    return entry
+  })
+  const after = server.slice(at + overlap)
+  if (after.length > 0) changed = true
+  if (!changed) return local
+  return [...server.slice(0, at), ...shown, ...after]
+}
+
+/**
  * `customLocalStorage` handles the JSON encoding and swallows a denied, full or
  * corrupt store by returning null, so unreadable history degrades to an empty
  * transcript and unwritable history degrades to memory for this session.
@@ -357,15 +427,13 @@ export function loadConversation(
   chatId?: string
 ): TranscriptEntry[] {
   try {
-    let parsed: any = null
-    if (chatId) {
-      parsed = customLocalStorage.getItem(keyFor(projectId, chatId))
-    }
-    if (!Array.isArray(parsed) || parsed.length === 0) {
-      parsed = customLocalStorage.getItem(keyFor(projectId))
-    }
+    // Each chat only ever reads its own copy. The one kept per project before
+    // chats had ids is whichever chat was last open, so reading it for a chat
+    // with no copy of its own showed a new chat another chat's turns; that
+    // chat's turns come from the server's history instead.
+    const parsed: any = customLocalStorage.getItem(keyFor(projectId, chatId))
     if (!Array.isArray(parsed)) return []
-    return parsed.map(entry => {
+    return dropRepeatedEntries(parsed).map(entry => {
       if (!entry || typeof entry !== 'object') return entry
       if (entry.role !== 'assistant') return entry
       const dedupedCalls = deduplicateToolCalls(entry.toolCalls || [])
@@ -401,13 +469,10 @@ export function saveConversation(
     const transcript = Array.isArray(chatIdOrTranscript)
       ? chatIdOrTranscript
       : maybeTranscript || []
-    const fitted = fit(transcript)
-    if (chatId) {
-      customLocalStorage.setItem(keyFor(projectId, chatId), fitted)
-    }
-    customLocalStorage.setItem(keyFor(projectId), fitted)
-  } catch (err) {
-  }
+    // Each chat under its own key only: one copy shared by every chat is what
+    // let a new chat open showing the last one's turns
+    customLocalStorage.setItem(keyFor(projectId, chatId), fit(transcript))
+  } catch (err) {}
 }
 
 export function clearConversation(projectId: string, chatId?: string) {

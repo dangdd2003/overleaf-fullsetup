@@ -298,6 +298,33 @@ describe('AiAssistRunController', function () {
     expect(mockManager.stopRun.called).to.be.false
   })
 
+  it('sanitizes non-numeric since parameter in streamRun to 0 and streams catch-up events', async function () {
+    const written = []
+    const req = {
+      params: { Project_id: 'p1', runId: 'run-1' },
+      query: { since: 'abc' },
+      session: { user: { _id: 'user-1' } },
+      on: sinon.stub(),
+    }
+    const res = {
+      setHeader: sinon.stub(),
+      flushHeaders: sinon.stub(),
+      write: sinon.stub().callsFake(chunk => written.push(chunk)),
+      end: sinon.stub(),
+      json: sinon.stub(),
+      status: sinon.stub().returnsThis(),
+    }
+
+    mockStore.getEvents.resolves([
+      { seq: 1, event: { type: 'text', text: 'replayed event' } },
+    ])
+
+    await controller.streamRun(req, res)
+    expect(mockStore.getEvents.calledWith('run-1', 0)).to.be.true
+    const replayChunk = written.find(chunk => chunk.includes('replayed event'))
+    expect(replayChunk, 'Catch-up events must be written even when since is non-numeric').to.exist
+  })
+
   it('rejects approve with 403 when route Project_id does not match run.projectId', async function () {
     const req = {
       params: { Project_id: 'mismatched-proj', runId: 'run-1' },
@@ -339,6 +366,32 @@ describe('AiAssistRunController', function () {
     expect(fakeSubscriber.release.calledOnce).to.be.true
   })
 
+  it('counts a chat followed off screen as a follower, not as an editor watching', async function () {
+    let closeHandler
+    const req = {
+      params: { Project_id: 'p1', runId: 'run-1' },
+      query: { watch: '0' },
+      session: { user: { _id: 'user-1' } },
+      on: sinon.stub().callsFake((event, handler) => {
+        if (event === 'close') closeHandler = handler
+      }),
+    }
+    const res = {
+      setHeader: sinon.stub(),
+      flushHeaders: sinon.stub(),
+      write: sinon.stub(),
+      end: sinon.stub(),
+    }
+
+    await controller.streamRun(req, res)
+    expect(mockStore.addWatcher.calledWith('run-1', { follower: true })).to.be
+      .true
+
+    closeHandler()
+    expect(mockStore.removeWatcher.calledWith('run-1', { follower: true })).to
+      .be.true
+  })
+
   it('does not increment or decrement watcher count if request closes before subscribe resolves', async function () {
     let resolveSubscribe
     fakeSubscriber.subscribe = sinon.stub().callsFake(
@@ -374,6 +427,34 @@ describe('AiAssistRunController', function () {
     expect(mockStore.removeWatcher.called).to.be.false
     // The channel handle obtained after close must still be released.
     expect(fakeSubscriber.release.calledOnce).to.be.true
+  })
+
+  it('says when it has sent everything the run had sent before the connection', async function () {
+    mockStore.getEvents.resolves([
+      { seq: 1, event: { type: 'text', text: 'Reading' } },
+      { seq: 2, event: { type: 'text', text: ' main.tex' } },
+    ])
+    const req = {
+      params: { Project_id: 'p1', runId: 'run-1' },
+      query: { since: '0' },
+      session: { user: { _id: 'user-1' } },
+      on: sinon.stub(),
+    }
+    const res = {
+      setHeader: sinon.stub(),
+      flushHeaders: sinon.stub(),
+      write: sinon.stub(),
+      end: sinon.stub(),
+    }
+
+    await controller.streamRun(req, res)
+
+    const frames = res.write.args.map(([frame]) => frame)
+    expect(frames).to.deep.equal([
+      `data: ${JSON.stringify({ seq: 1, event: { type: 'text', text: 'Reading' } })}\n\n`,
+      `data: ${JSON.stringify({ seq: 2, event: { type: 'text', text: ' main.tex' } })}\n\n`,
+      `data: ${JSON.stringify({ caughtUp: true })}\n\n`,
+    ])
   })
 
   it('forwards live pub/sub messages to the SSE response', async function () {

@@ -101,6 +101,15 @@ describe('AiAssistChatHistoryController', function () {
     expect(res.body).to.deep.equal({ id: CHAT_ID, title: 'Renamed Chat' })
   })
 
+  it('answers 404 when renaming a chat that does not exist', async function () {
+    mockStore.saveChatTitle.resolves(null)
+    const req = mockReq({ body: { title: 'New Name' } })
+    const res = mockRes()
+
+    await controller.rename(req, res)
+    expect(res.statusCode).to.equal(404)
+  })
+
   it('rejects empty title in rename endpoint', async function () {
     const req = mockReq({
       body: { title: '   ' },

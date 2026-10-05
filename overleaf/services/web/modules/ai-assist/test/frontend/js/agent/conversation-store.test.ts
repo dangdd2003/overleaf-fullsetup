@@ -2,7 +2,9 @@ import { expect } from 'chai'
 import customLocalStorage from '@/infrastructure/local-storage'
 import {
   clearConversation,
+  dropRepeatedEntries,
   loadConversation,
+  mergeStoredTranscript,
   prepareTranscriptForRun,
   saveConversation,
 } from '../../../../frontend/js/features/ai-assist/agent/conversation-store'
@@ -199,6 +201,31 @@ describe('conversation-store', function () {
     expect(assistant.blocks).to.have.lengthOf(2)
   })
 
+  it('never opens a chat with the conversation kept before chats had ids', function () {
+    saveConversation(PROJECT, [{ id: '1', role: 'user', text: 'legacy' }])
+    // That copy is whichever chat was last open: a chat with no copy of its
+    // own opens empty, and its turns come from the server's history
+    expect(loadConversation(PROJECT, 'chat_new')).to.deep.equal([])
+    expect(loadConversation(PROJECT, 'chat_other')).to.deep.equal([])
+  })
+
+  it('shows a question stored twice in a row once', function () {
+    saveConversation(PROJECT, 'chat_A', [
+      { id: 'u0', role: 'user', text: 'Scan this project' },
+      { id: 'u0', role: 'user', text: 'Scan this project' },
+      { id: 'a2', role: 'assistant', text: 'Done', toolCalls: [] },
+    ])
+    expect(loadConversation(PROJECT, 'chat_A').map(e => e.id)).to.deep.equal([
+      'u0',
+      'a2',
+    ])
+  })
+
+  it("never shows one chat's turns in another", function () {
+    saveConversation(PROJECT, 'chat_A', [{ id: '1', role: 'user', text: 'only A' }])
+    expect(loadConversation(PROJECT, 'chat_new')).to.deep.equal([])
+  })
+
   it('keeps conversations for different chatIds within the same project apart', function () {
     saveConversation(PROJECT, 'chat_A', [{ id: '1', role: 'user', text: 'chat A message' }])
     saveConversation(PROJECT, 'chat_B', [{ id: '2', role: 'user', text: 'chat B message' }])
@@ -360,5 +387,72 @@ describe('conversation-store', function () {
       expect(prepared.length).to.be.lessThan(transcript.length)
       expect(prepared.at(-1)?.id).to.equal('3')
     })
+  })
+
+  describe('mergeStoredTranscript', function () {
+    const u0: TranscriptEntry = { id: 'u0', role: 'user', text: 'Scan this project' }
+    const a1: TranscriptEntry = {
+      id: 'a1',
+      role: 'assistant',
+      text: 'Reading',
+      toolCalls: [],
+    }
+    const a1Done: TranscriptEntry = {
+      ...a1,
+      text: 'Reading. Done.',
+      durationMs: 3000,
+    }
+    const u2: TranscriptEntry = { id: 'u2', role: 'user', text: 'and the refs' }
+
+    it("never repeats a message the browser's copy already holds", function () {
+      // The server holds the reply so far; the browser dropped it to rebuild
+      // it from the run. The question is the same message, not a missing one.
+      const merged = mergeStoredTranscript([u0], [u0, a1])
+      expect(merged.map(e => e.id)).to.deep.equal(['u0', 'a1'])
+    })
+
+    it('takes the turns the server has after the ones shown', function () {
+      expect(mergeStoredTranscript([u0], [u0, a1Done, u2])).to.deep.equal([
+        u0,
+        a1Done,
+        u2,
+      ])
+    })
+
+    it('puts back the top turns the browser dropped to fit its storage', function () {
+      expect(
+        mergeStoredTranscript([a1Done, u2], [u0, a1Done]).map(e => e.id)
+      ).to.deep.equal(['u0', 'a1', 'u2'])
+    })
+
+    it('keeps a finished reply over a copy saved while it was written', function () {
+      expect(mergeStoredTranscript([u0, a1Done], [u0, a1])).to.deep.equal([
+        u0,
+        a1Done,
+      ])
+      expect(mergeStoredTranscript([u0, a1], [u0, a1Done])).to.deep.equal([
+        u0,
+        a1Done,
+      ])
+    })
+
+    it('returns the same transcript when the server adds nothing', function () {
+      const local = [u0, a1Done]
+      expect(mergeStoredTranscript(local, [u0, a1Done])).to.equal(local)
+      expect(mergeStoredTranscript(local, [])).to.equal(local)
+    })
+
+    it('takes the server copy for a chat this browser has none of', function () {
+      expect(mergeStoredTranscript([], [u0, a1Done])).to.deep.equal([u0, a1Done])
+    })
+  })
+
+  it('dropRepeatedEntries keeps distinct entries that share text', function () {
+    const transcript: TranscriptEntry[] = [
+      { id: 'u0', role: 'user', text: 'again' },
+      { id: 'a1', role: 'assistant', text: 'ok', toolCalls: [] },
+      { id: 'u2', role: 'user', text: 'again' },
+    ]
+    expect(dropRepeatedEntries(transcript)).to.deep.equal(transcript)
   })
 })

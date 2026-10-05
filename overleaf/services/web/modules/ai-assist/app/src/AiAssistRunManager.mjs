@@ -758,6 +758,27 @@ export class AiAssistRunManager {
     }
   }
 
+  /**
+   * Writes the chat as the run received it, before anything can go wrong
+   * with the provider: a chat exists in the history from its first message,
+   * whether or not the model is ever reached. Never fails a run.
+   */
+  async _persistChat(projectId, userId, chatId, transcript, mode) {
+    if (!chatId || !userId || !this.chatHistoryStore?.saveChat) return
+    if (!Array.isArray(transcript) || transcript.length === 0) return
+    try {
+      await this.chatHistoryStore.saveChat(
+        projectId,
+        userId,
+        chatId,
+        transcript,
+        mode
+      )
+    } catch (err) {
+      logger.warn({ err, projectId, chatId }, '[AiAssist] chat not saved')
+    }
+  }
+
   /** The project's AGENTS.md, or null. Never fails a run. */
   async _projectInstructions(projectId) {
     if (typeof this.tools?.getProjectInstructions !== 'function') return null
@@ -805,6 +826,8 @@ export class AiAssistRunManager {
     const closeQueue = () => {
       activeRun.acceptsMessages = false
     }
+
+    await this._persistChat(projectId, userId, chatId, transcript, initialMode)
 
     await this.store.createRun({ runId, projectId, userId, mode: initialMode })
 

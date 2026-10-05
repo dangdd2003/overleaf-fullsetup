@@ -25,6 +25,7 @@ import {
   emptyAgentState,
   reduceAgentEvent,
   cancelPendingToolCalls,
+  withoutLiveReply,
 } from '../agent/agent-state'
 import {
   startBackgroundRun,
@@ -32,13 +33,16 @@ import {
   stopBackgroundRun,
   approveBackgroundEdit,
   submitBackgroundCompile,
+  getStoredActiveRunChatId,
   getStoredActiveRunId,
   getStoredActiveRunStartedAt,
   setStoredActiveRunId,
   setBackgroundRunMode,
   sendBackgroundRunMessage,
   takeBackRunMessage,
+  setDetachedRun,
 } from '../agent/background/background-run-client'
+import { followDetachedRun } from '../agent/background/detached-run-follower'
 
 const REPLAY_SETTLE_MS = 250
 // How long a message a finishing run turned away waits for that run's last
@@ -74,8 +78,13 @@ export function useAgentRun({
     emptyAgentState(initialTranscript ?? [], initialMode ?? 'manual')
   )
   const [needsConsent, setNeedsConsent] = useState(false)
+  // A run followed from part-way through is still sending what it had
+  // already written, which is shown at once rather than animated again
+  const [catchingUp, setCatchingUp] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
   const currentRunIdRef = useRef<string | null>(null)
+  // The last event of the followed run that the transcript holds
+  const lastSeqRef = useRef(0)
   const streamCleanupRef = useRef<(() => void) | null>(null)
   const callMapRef = useRef<Map<string, string>>(new Map())
   const approvalRef = useRef<
@@ -261,6 +270,14 @@ export function useAgentRun({
     })
   }, [])
 
+  const onRunEvent = useCallback(
+    (event: AgentEvent, seq: number) => {
+      if (seq > lastSeqRef.current) lastSeqRef.current = seq
+      handleStreamEvent(event)
+    },
+    [handleStreamEvent]
+  )
+
   const onDecision = useCallback(
     async (decision: {
       accepted: boolean
@@ -345,6 +362,7 @@ export function useAgentRun({
 
   const stop = useCallback(async () => {
     const runId = currentRunIdRef.current
+    const cleanup = streamCleanupRef.current
     currentRunIdRef.current = null
     abortRef.current?.abort()
     // Only the background path owns this storage key. An in-page run (systemPrompt
@@ -372,6 +390,8 @@ export function useAgentRun({
       // its stream once it has stopped; a send waits on that too.
       await whenRunEnded(STOP_WAIT_MS)
     }
+    // A chat opened meanwhile follows a run of its own, which is left alone
+    if (streamCleanupRef.current !== cleanup) return
     streamCleanupRef.current?.()
     streamCleanupRef.current = null
     runEndRef.current?.settle()
@@ -393,11 +413,16 @@ export function useAgentRun({
     ) => {
       const runTools = overrides.tools ?? tools
       const runSystemPrompt = overrides.systemPrompt ?? systemPrompt
+      // The chat this run belongs to. The panel may move to another chat while
+      // the run is being started; the run then carries on for this one.
+      const runChatId = chatIdRef.current
+      const leftChat = () => chatIdRef.current !== runChatId
       const assistant = AiAssistant.fromStoredSettings()
       if (!assistant) {
         return
       }
       if (!hasConsented()) {
+        if (leftChat()) return
         // Commit the transcript now, replacing the caller's optimistic entry,
         // so allowing consent resumes this exact run rather than re-sending
         // the prompt as a second copy.
@@ -419,13 +444,15 @@ export function useAgentRun({
         entry => !(entry.role === 'user' && entry.pending)
       )
 
-      setState(current => ({
-        ...current,
-        transcript,
-        running: true,
-        stoppedByUser: false,
-        error: null,
-      }))
+      if (!leftChat()) {
+        setState(current => ({
+          ...current,
+          transcript,
+          running: true,
+          stoppedByUser: false,
+          error: null,
+        }))
+      }
 
       // If a narrow system prompt was supplied (e.g. compile-log fix), keep in-page
       if (runSystemPrompt) {
@@ -510,24 +537,45 @@ export function useAgentRun({
 
       // Server-side background execution for main chat
       try {
+        const mode = modeRef.current
         const runId = await startBackgroundRun({
           projectId,
           transcript: payload,
           providerSettings: assistant.settings,
-          mode: modeRef.current,
-          chatId: chatIdRef.current,
+          mode,
+          chatId: runChatId,
           webSearchSettings: isWebToolsAvailable()
             ? readWebSearchSettings()
             : null,
+          trackActive: false,
         })
+        if (leftChat()) {
+          // Its chat was left while the request was out: the run goes on in
+          // parallel, off screen, and must not stream into the chat now shown
+          if (runChatId) {
+            const startedAt = Date.now()
+            setDetachedRun(projectId, runChatId, { runId, startedAt })
+            followDetachedRun({
+              projectId,
+              chatId: runChatId,
+              runId,
+              startedAt,
+              transcript,
+              mode,
+            })
+          }
+          return
+        }
+        setStoredActiveRunId(projectId, runId, Date.now(), runChatId)
         currentRunIdRef.current = runId
+        lastSeqRef.current = 0
         const runEnded = followRunEnd()
 
         streamCleanupRef.current?.()
         streamCleanupRef.current = connectRunStream({
           runId,
           projectId,
-          onEvent: handleStreamEvent,
+          onEvent: onRunEvent,
           onDone: () => {
             runEnded()
             currentRunIdRef.current = null
@@ -555,6 +603,7 @@ export function useAgentRun({
           },
         })
       } catch (err: any) {
+        if (leftChat()) return
         setState(current => ({
           ...current,
           running: false,
@@ -571,6 +620,7 @@ export function useAgentRun({
       projectId,
       onEvent,
       handleStreamEvent,
+      onRunEvent,
       t,
       projectContext,
       userSettingsContext,
@@ -581,9 +631,10 @@ export function useAgentRun({
 
   /**
    * Stops following the run without stopping it: the server carries on, and
-   * `attach` picks it up again. Returns the run's id, or null if none is live.
+   * `attach` picks it up again from `seq`, the last event the transcript
+   * holds. Null if no run is live.
    */
-  const detach = useCallback((): string | null => {
+  const detach = useCallback((): { runId: string; seq: number } | null => {
     if (systemPrompt) return null
     const runId = currentRunIdRef.current
     currentRunIdRef.current = null
@@ -592,37 +643,39 @@ export function useAgentRun({
     runEndRef.current?.settle()
     approvalRef.current = null
     setApprovalContext(null)
+    setCatchingUp(false)
     setStoredActiveRunId(projectId, null)
-    return runId
+    return runId ? { runId, seq: lastSeqRef.current } : null
   }, [projectId, systemPrompt])
 
   /**
-   * Follows a run from its first event, as after a reload: the unfinished
-   * assistant turn is dropped and rebuilt from the replay.
+   * Follows a run of the chat on screen. From `since`, the last event the
+   * transcript holds, it carries on from there. From 0, as after a reload,
+   * the run is replayed: the unfinished reply shown is dropped once the
+   * replay begins and rebuilt from it, and kept if nothing comes back.
    */
   const attach = useCallback(
-    (runId: string, startedAt?: number) => {
+    (
+      runId: string,
+      {
+        startedAt,
+        since = 0,
+        chatId: runChatId = chatIdRef.current,
+      }: { startedAt?: number; since?: number; chatId?: string } = {}
+    ) => {
       if (systemPrompt || currentRunIdRef.current === runId) return
       streamCleanupRef.current?.()
       currentRunIdRef.current = runId
+      lastSeqRef.current = since
       const runEnded = followRunEnd()
-      setStoredActiveRunId(projectId, runId, startedAt)
-      setState(current => {
-        const last = current.transcript.at(-1)
-        const transcript =
-          last && last.role === 'assistant'
-            ? current.transcript.slice(0, -1)
-            : current.transcript
-        return {
-          ...current,
-          transcript,
-          running: true,
-          error: null,
-        }
-      })
+      setStoredActiveRunId(projectId, runId, startedAt, runChatId)
+      setState(current => ({ ...current, running: true, error: null }))
+      setCatchingUp(true)
+      let replaying = since === 0
       const finish = () => {
         runEnded()
         if (currentRunIdRef.current !== runId) return
+        setCatchingUp(false)
         currentRunIdRef.current = null
         setStoredActiveRunId(projectId, null)
         setState(current => ({
@@ -634,13 +687,66 @@ export function useAgentRun({
       streamCleanupRef.current = connectRunStream({
         runId,
         projectId,
-        since: 0,
-        onEvent: handleStreamEvent,
+        since,
+        onEvent: (event, seq) => {
+          if (replaying) {
+            replaying = false
+            setState(current => ({
+              ...current,
+              transcript: withoutLiveReply(current.transcript),
+            }))
+          }
+          onRunEvent(event, seq)
+        },
+        onCaughtUp: () => {
+          if (currentRunIdRef.current === runId) setCatchingUp(false)
+        },
         onDone: finish,
         onError: finish,
       })
     },
-    [handleStreamEvent, projectId, systemPrompt, followRunEnd]
+    [onRunEvent, projectId, systemPrompt, followRunEnd]
+  )
+
+  /**
+   * Starts a run for a chat that is no longer on screen: a message sent just
+   * before its chat was left. The run goes on in parallel with the chat now
+   * shown and is followed off screen, so its reply reaches the chat's history.
+   */
+  const runDetached = useCallback(
+    async (
+      runChatId: string,
+      transcript: TranscriptEntry[],
+      mode: AgentMode
+    ) => {
+      const assistant = AiAssistant.fromStoredSettings()
+      if (systemPrompt || !assistant || !hasConsented()) return
+      const payload = transcript.filter(
+        entry => !(entry.role === 'user' && entry.pending)
+      )
+      const runId = await startBackgroundRun({
+        projectId,
+        transcript: payload,
+        providerSettings: assistant.settings,
+        mode,
+        chatId: runChatId,
+        webSearchSettings: isWebToolsAvailable()
+          ? readWebSearchSettings()
+          : null,
+        trackActive: false,
+      })
+      const startedAt = Date.now()
+      setDetachedRun(projectId, runChatId, { runId, startedAt })
+      followDetachedRun({
+        projectId,
+        chatId: runChatId,
+        runId,
+        startedAt,
+        transcript: payload,
+        mode,
+      })
+    },
+    [projectId, systemPrompt]
   )
 
   // Reconnect on mount if a background run is in progress
@@ -648,7 +754,19 @@ export function useAgentRun({
     if (systemPrompt) return
     const activeRunId = getStoredActiveRunId(projectId)
     if (activeRunId) {
-      attach(activeRunId, getStoredActiveRunStartedAt(projectId) ?? undefined)
+      const startedAt = getStoredActiveRunStartedAt(projectId) ?? undefined
+      const owner = getStoredActiveRunChatId(projectId)
+      if (owner && chatIdRef.current && owner !== chatIdRef.current) {
+        // The run of another chat (one left in another tab, say) goes on off
+        // screen, never streamed into the chat that is open now
+        setStoredActiveRunId(projectId, null)
+        setDetachedRun(projectId, owner, {
+          runId: activeRunId,
+          startedAt: startedAt ?? Date.now(),
+        })
+      } else {
+        attach(activeRunId, { startedAt })
+      }
     }
     return () => {
       streamCleanupRef.current?.()
@@ -675,6 +793,8 @@ export function useAgentRun({
     handle,
     approvalContext,
     run,
+    runDetached,
+    catchingUp,
     stop,
     detach,
     attach,

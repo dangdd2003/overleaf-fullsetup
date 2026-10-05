@@ -6,7 +6,10 @@ import {
   stopBackgroundRun,
   approveBackgroundEdit,
   connectRunStream,
+  setDetachedRun,
+  getDetachedRuns,
 } from '../../../../frontend/js/features/ai-assist/agent/background/background-run-client'
+import { followDetachedRun } from '../../../../frontend/js/features/ai-assist/agent/background/detached-run-follower'
 
 describe('background-run-client', function () {
   let fakeFetch: sinon.SinonStub
@@ -168,6 +171,29 @@ describe('background-run-client', function () {
     return instances
   }
 
+  it('tells the caller once the run has caught up, without an event', function () {
+    const instances = installFakeEventSource()
+    const onEvent = sinon.spy()
+    const onCaughtUp = sinon.spy()
+    connectRunStream({
+      runId: 'run-1',
+      projectId: 'proj-1',
+      onEvent,
+      onCaughtUp,
+      onDone: () => {},
+      onError: () => {},
+    })
+
+    instances[0].onmessage({
+      data: JSON.stringify({ seq: 1, event: { type: 'text', text: 'a' } }),
+    })
+    expect(onCaughtUp.called).to.equal(false)
+    instances[0].onmessage({ data: JSON.stringify({ caughtUp: true }) })
+
+    expect(onCaughtUp.calledOnce).to.equal(true)
+    expect(onEvent.calledOnce).to.equal(true)
+  })
+
   it('reconnects after a dropped connection, resuming from the last seq', async function () {
     const clock = sinon.useFakeTimers()
     try {
@@ -277,5 +303,25 @@ describe('background-run-client', function () {
     } finally {
       clock.restore()
     }
+  })
+
+  it('clears stale detached run from storage when followDetachedRun is called with empty transcript', function () {
+    setDetachedRun('proj-1', 'chat-1', {
+      runId: 'run-stale',
+      startedAt: Date.now(),
+    })
+    expect(getDetachedRuns('proj-1')).to.have.property('chat-1')
+
+    const result = followDetachedRun({
+      projectId: 'proj-1',
+      chatId: 'chat-1',
+      runId: 'run-stale',
+      startedAt: Date.now(),
+      transcript: [],
+      mode: 'manual',
+    })
+
+    expect(result).to.equal(false)
+    expect(getDetachedRuns('proj-1')).to.not.have.property('chat-1')
   })
 })

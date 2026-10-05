@@ -80,6 +80,56 @@ describe('AiAssistChatHistoryStore', function () {
     }
   })
 
+  it('keeps the transcript when a title and a save of the same chat race', async function () {
+    await store.saveChat(PROJECT, USER, 'race', [
+      { id: 'u0', role: 'user', text: 'first' },
+    ])
+    const longer = [
+      { id: 'u0', role: 'user', text: 'first' },
+      { id: 'a1', role: 'assistant', text: 'reply', toolCalls: [] },
+    ]
+    await Promise.all([
+      store.saveChatTitle(PROJECT, USER, 'race', 'Generated title'),
+      store.saveChat(PROJECT, USER, 'race', longer),
+      store.saveChatTitle(PROJECT, USER, 'race', 'Generated title'),
+    ])
+
+    const chat = await store.getChat(PROJECT, USER, 'race')
+    expect(chat.transcript).to.deep.equal(longer)
+    expect(chat.title).to.equal('Generated title')
+  })
+
+  it('does not create an empty chat for a title of a chat never saved', async function () {
+    const summary = await store.saveChatTitle(PROJECT, USER, 'ghost', 'Title')
+    expect(summary).to.equal(null)
+    expect(await store.listChats(PROJECT, USER)).to.deep.equal([])
+  })
+
+  it('does not bring a deleted chat back with a title arriving late', async function () {
+    await store.saveChat(PROJECT, USER, 'gone', [
+      { id: 'u0', role: 'user', text: 'a' },
+    ])
+    await Promise.all([
+      store.deleteChat(PROJECT, USER, 'gone'),
+      store.saveChatTitle(PROJECT, USER, 'gone', 'Late title'),
+    ])
+    expect(await store.getChat(PROJECT, USER, 'gone')).to.equal(null)
+  })
+
+  it('counts steps from the transcript as it grows', async function () {
+    await store.saveChat(PROJECT, USER, 'steps', [
+      { id: 'u0', role: 'user', text: 'a' },
+    ])
+    const summary = await store.saveChat(PROJECT, USER, 'steps', [
+      { id: 'u0', role: 'user', text: 'a' },
+      { id: 'a1', role: 'assistant', text: 'b', toolCalls: [] },
+      { id: 'u2', role: 'user', text: 'c' },
+    ])
+    expect(summary.totalSteps).to.equal(3)
+    const [listed] = await store.listChats(PROJECT, USER)
+    expect(listed.totalSteps).to.equal(3)
+  })
+
   it('sanitizes AI-generated chat titles', function () {
     expect(sanitizeChatTitle('  "Title: Fix LaTeX Bibliography."  ')).to.equal(
       'Fix LaTeX Bibliography'
@@ -154,6 +204,36 @@ describe('AiAssistChatHistoryStore', function () {
     })
 
     expect(title).to.equal('Optimized Agent Harness')
+  })
+
+  it('drops a message stored twice in a row, as a chat reopened mid-run saved it', async function () {
+    const file = Path.join(dir, `${PROJECT}-${USER}`, 'twice.json')
+    await fs.mkdir(Path.dirname(file), { recursive: true })
+    const question = { id: 'u0', role: 'user', text: 'Scan this project' }
+    await fs.writeFile(
+      file,
+      JSON.stringify({
+        version: 2,
+        id: 'twice',
+        title: 'Scan',
+        transcript: [
+          question,
+          { ...question },
+          { id: 'a2', role: 'assistant', text: 'Done', toolCalls: [] },
+        ],
+      })
+    )
+
+    const loaded = await store.getChat(PROJECT, USER, 'twice')
+    expect(loaded.transcript.map(entry => entry.id)).to.deep.equal(['u0', 'a2'])
+
+    await store.saveChat(PROJECT, USER, 'twice', [
+      question,
+      { ...question },
+      { id: 'a2', role: 'assistant', text: 'Done again', toolCalls: [] },
+    ])
+    const saved = JSON.parse(await fs.readFile(file, 'utf8'))
+    expect(saved.transcript.map(entry => entry.id)).to.deep.equal(['u0', 'a2'])
   })
 
   it('restores missing top turns when saving a truncated transcript', async function () {

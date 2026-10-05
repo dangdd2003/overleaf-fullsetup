@@ -66,6 +66,19 @@ export function countTrailingPendingUserEntries(
   return count
 }
 
+/**
+ * The transcript without the reply a live run is still writing: the
+ * assistant entry above any messages still queued. A run replayed from its
+ * first event rebuilds that reply, so keeping it would show it twice.
+ */
+export function withoutLiveReply(
+  transcript: TranscriptEntry[]
+): TranscriptEntry[] {
+  const at = transcript.length - 1 - countTrailingPendingUserEntries(transcript)
+  if (at < 0 || transcript[at].role !== 'assistant') return transcript
+  return [...transcript.slice(0, at), ...transcript.slice(at + 1)]
+}
+
 export function openAssistantTurn(
   transcript: TranscriptEntry[]
 ): { transcript: TranscriptEntry[]; targetIndex: number } {

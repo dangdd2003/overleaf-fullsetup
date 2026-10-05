@@ -7,6 +7,9 @@ import defaultControl from './AiAssistRunControl.mjs'
 // or a run can sit abandoned for grace + interval before anyone notices.
 const SWEEP_INTERVAL_MS = 30_000
 
+const watchersOf = run =>
+  Number(run.watchers || 0) + Number(run.followers || 0)
+
 export class AiAssistRunReaper {
   constructor({ store = defaultStore, control = defaultControl } = {}) {
     this.store = store
@@ -42,8 +45,8 @@ export class AiAssistRunReaper {
       if (!run) continue
       if (TERMINAL_STATUSES.includes(run.status)) continue
 
-      const watchers = Number(run.watchers || 0)
-      if (watchers > 0) {
+      // A chat followed off screen keeps its run as much as one on screen
+      if (watchersOf(run) > 0) {
         if (run.zeroSince) await this.store.clearZeroSince(runId)
         continue
       }
@@ -59,7 +62,7 @@ export class AiAssistRunReaper {
       // Re-read immediately before acting: a watcher may have reconnected
       // while this sweep was walking the index.
       const fresh = await this.store.getRun(runId)
-      if (!fresh || Number(fresh.watchers || 0) > 0) continue
+      if (!fresh || watchersOf(fresh) > 0) continue
       if (TERMINAL_STATUSES.includes(fresh.status)) continue
 
       await this.control.publish(runId, { action: 'stop' })

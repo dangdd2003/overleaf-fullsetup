@@ -49,6 +49,7 @@ export class AiAssistRunStore {
       heartbeat: String(now),
       createdAt: String(now),
       watchers: '0',
+      followers: '0',
       zeroSince: '',
       metadata: JSON.stringify(metadata),
     })
@@ -97,27 +98,43 @@ export class AiAssistRunStore {
     }
   }
 
-  async addWatcher(runId) {
+  // `watchers` are editors showing the run: they can compile for it.
+  // `followers` are panels following a chat that is not on screen: they only
+  // keep the run from being reaped as abandoned, the reaper counts both.
+  _watchField(follower) {
+    return follower ? 'followers' : 'watchers'
+  }
+
+  async addWatcher(runId, { follower = false } = {}) {
     const rclient = this.getClient()
     if (!rclient) return 0
-    const count = Number(await rclient.hincrby(this._key(runId), 'watchers', 1))
+    const count = Number(
+      await rclient.hincrby(this._key(runId), this._watchField(follower), 1)
+    )
     // Somebody is watching again: the orphan clock stops.
     if (count > 0) await rclient.hset(this._key(runId), 'zeroSince', '')
     return count
   }
 
-  async removeWatcher(runId) {
+  async removeWatcher(runId, { follower = false } = {}) {
     const rclient = this.getClient()
     if (!rclient) return 0
-    const count = Number(await rclient.hincrby(this._key(runId), 'watchers', -1))
+    const field = this._watchField(follower)
+    const count = Number(await rclient.hincrby(this._key(runId), field, -1))
     // A connection that never finished subscribing must not drive this below 0,
     // or a later reconnect would look like a watcher that is not there.
     if (count < 0) {
-      await rclient.hset(this._key(runId), { watchers: '0', zeroSince: '' })
+      await rclient.hset(this._key(runId), { [field]: '0' })
       return 0
     }
-    // Watchers just hit zero: start the orphan clock now. The reaper reads this.
-    if (count === 0) await rclient.hset(this._key(runId), 'zeroSince', String(Date.now()))
+    // Nobody at all is watching now: start the orphan clock. The reaper reads this.
+    if (count === 0) {
+      const other = this._watchField(!follower)
+      const run = await rclient.hgetall(this._key(runId))
+      if (!Number(run?.[other] || 0)) {
+        await rclient.hset(this._key(runId), 'zeroSince', String(Date.now()))
+      }
+    }
     return count
   }
 

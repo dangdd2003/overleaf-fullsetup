@@ -18,6 +18,8 @@ const ACTIVE_RUN_KEY = (projectId: string) =>
   `ai-assist:active-run:${projectId}`
 const ACTIVE_RUN_START_KEY = (projectId: string) =>
   `ai-assist:active-run-start:${projectId}`
+const ACTIVE_RUN_CHAT_KEY = (projectId: string) =>
+  `ai-assist:active-run-chat:${projectId}`
 
 export function getStoredActiveRunId(projectId: string): string | null {
   return customLocalStorage.getItem(ACTIVE_RUN_KEY(projectId))
@@ -28,10 +30,16 @@ export function getStoredActiveRunStartedAt(projectId: string): number | null {
   return val ? Number(val) : null
 }
 
+/** The chat the active run belongs to, when it was recorded with one. */
+export function getStoredActiveRunChatId(projectId: string): string | null {
+  return customLocalStorage.getItem(ACTIVE_RUN_CHAT_KEY(projectId))
+}
+
 export function setStoredActiveRunId(
   projectId: string,
   runId: string | null,
-  startedAt?: number
+  startedAt?: number,
+  chatId?: string
 ) {
   if (runId) {
     customLocalStorage.setItem(ACTIVE_RUN_KEY(projectId), runId)
@@ -40,9 +48,17 @@ export function setStoredActiveRunId(
       ACTIVE_RUN_START_KEY(projectId),
       String(startTime)
     )
+    // A reload reconnects the run to this chat only, never to whichever
+    // chat happens to be open by then
+    if (chatId) {
+      customLocalStorage.setItem(ACTIVE_RUN_CHAT_KEY(projectId), chatId)
+    } else {
+      customLocalStorage.removeItem(ACTIVE_RUN_CHAT_KEY(projectId))
+    }
   } else {
     customLocalStorage.removeItem(ACTIVE_RUN_KEY(projectId))
     customLocalStorage.removeItem(ACTIVE_RUN_START_KEY(projectId))
+    customLocalStorage.removeItem(ACTIVE_RUN_CHAT_KEY(projectId))
   }
 }
 
@@ -55,6 +71,13 @@ const DETACHED_RUNS_KEY = (projectId: string) =>
 function readDetachedRuns(projectId: string): Record<string, DetachedRun> {
   const stored = customLocalStorage.getItem(DETACHED_RUNS_KEY(projectId))
   return stored && typeof stored === 'object' ? stored : {}
+}
+
+/** Every chat's detached run, by chat id. */
+export function getDetachedRuns(
+  projectId: string
+): Record<string, DetachedRun> {
+  return { ...readDetachedRuns(projectId) }
 }
 
 export function setDetachedRun(
@@ -88,6 +111,7 @@ export async function startBackgroundRun({
   mode = 'manual',
   chatId,
   webSearchSettings,
+  trackActive = true,
 }: {
   projectId: string
   transcript: TranscriptEntry[]
@@ -95,6 +119,11 @@ export async function startBackgroundRun({
   mode?: AgentMode
   chatId?: string
   webSearchSettings?: WebSearchSettings | null
+  /**
+   * Whether this is the run of the chat on screen, which a reload reconnects
+   * to. A run started for a chat already left is recorded as detached instead.
+   */
+  trackActive?: boolean
 }): Promise<string> {
   const preparedTranscript = prepareTranscriptForRun(transcript)
   const res = await fetch(`/ai-assist/projects/${projectId}/runs`, {
@@ -122,7 +151,7 @@ export async function startBackgroundRun({
     throw new Error(errorMsg)
   }
   const data = await res.json()
-  setStoredActiveRunId(projectId, data.runId, Date.now())
+  if (trackActive) setStoredActiveRunId(projectId, data.runId, Date.now())
   return data.runId
 }
 
@@ -134,20 +163,33 @@ export function connectRunStream({
   projectId,
   since = 0,
   onEvent,
+  onCaughtUp,
   onDone,
   onError,
   maxReconnects = DEFAULT_MAX_RECONNECTS,
   reconnectDelayMs = DEFAULT_RECONNECT_DELAY_MS,
+  passive = false,
 }: {
   runId: string
   projectId: string
   since?: number
-  onEvent: (event: AgentEvent) => void
+  /** `seq` is the event's place in the run, to carry on from after it. */
+  onEvent: (event: AgentEvent, seq: number) => void
+  /** Every event the run sent before this stream opened has arrived. */
+  onCaughtUp?: () => void
   onDone: () => void
   onError: (err: any) => void
   maxReconnects?: number
   reconnectDelayMs?: number
+  /**
+   * Following a chat that is not on screen: the run does not count it as an
+   * editor that can compile, and the on-screen chat's active run is left alone.
+   */
+  passive?: boolean
 }): () => void {
+  const clearActiveRun = () => {
+    if (!passive) setStoredActiveRunId(projectId, null)
+  }
   // The run lives on the server and keeps going when this connection drops
   // (proxy idle timeout, network blip, laptop sleep). Resume from the last
   // event seen instead of abandoning a run that is still producing output.
@@ -168,30 +210,37 @@ export function connectRunStream({
 
   const open = () => {
     const eventSource = new EventSource(
-      `/ai-assist/projects/${projectId}/runs/${runId}/stream?since=${lastSeq}`
+      `/ai-assist/projects/${projectId}/runs/${runId}/stream?since=${lastSeq}${passive ? '&watch=0' : ''}`
     )
     current = eventSource
 
     eventSource.onmessage = msg => {
+      // A message already queued when the stream was closed must not land:
+      // its chat may no longer be the one on screen
+      if (finished) return
       try {
         const data = JSON.parse(msg.data)
         failures = 0
+        if (data.caughtUp) {
+          onCaughtUp?.()
+          return
+        }
         if (typeof data.seq === 'number' && data.seq > lastSeq) {
           lastSeq = data.seq
         }
         if (data.event) {
-          onEvent(data.event)
+          onEvent(data.event, lastSeq)
           if (
             data.event.type === 'turnFinished' ||
             data.event.type === 'error'
           ) {
-            setStoredActiveRunId(projectId, null)
+            clearActiveRun()
             finish()
             onDone()
           }
         }
       } catch (err) {
-        setStoredActiveRunId(projectId, null)
+        clearActiveRun()
         finish()
         onError(err)
       }
@@ -201,7 +250,7 @@ export function connectRunStream({
       eventSource.close()
       if (finished) return
       if (failures >= maxReconnects) {
-        setStoredActiveRunId(projectId, null)
+        clearActiveRun()
         finish()
         onError(err)
         return

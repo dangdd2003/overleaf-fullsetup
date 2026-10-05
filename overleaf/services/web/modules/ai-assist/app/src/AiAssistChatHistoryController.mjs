@@ -113,6 +113,7 @@ export class AiAssistChatHistoryController {
         ids.chatId,
         title
       )
+      if (!summary) return res.status(404).json({ error: 'Chat not found' })
       res.json(summary)
     } catch (err) {
       logger.error(
