@@ -5,7 +5,7 @@ export type DockPosition = 'left' | 'right'
 const DOCK_STORAGE_KEY = 'ai-assist:dock-position'
 const RIGHT_OPEN_STORAGE_KEY = 'ai-assist:right-open'
 
-function readStoredDock(): DockPosition {
+export function readStoredDock(): DockPosition {
   try {
     const val = localStorage.getItem(DOCK_STORAGE_KEY)
     return val === 'right' ? 'right' : 'left'
@@ -21,6 +21,36 @@ function readStoredRightOpen(): boolean {
   } catch {
     return true
   }
+}
+
+function writeRightOpen(open: boolean) {
+  try {
+    localStorage.setItem(RIGHT_OPEN_STORAGE_KEY, String(open))
+  } catch {}
+  window.dispatchEvent(new CustomEvent('aiAssist:dockChange'))
+}
+
+/**
+ * Opens the AI chat wherever it is docked (the right column or the rail tab)
+ * and puts the cursor in its message box. The editor selection stays, so the
+ * chat attaches it as usual.
+ */
+export function openAiChat() {
+  if (readStoredDock() === 'right') {
+    writeRightOpen(true)
+  } else {
+    window.dispatchEvent(
+      new CustomEvent('ui:select-rail-tab', {
+        detail: { tab: 'ai-assist', open: true },
+      })
+    )
+  }
+  // After the panel has had a chance to mount: attach the selection, then
+  // put the cursor in the message box
+  window.setTimeout(() => {
+    window.dispatchEvent(new CustomEvent('aiAssist:announceSelection'))
+    window.dispatchEvent(new CustomEvent('aiAssist:focusComposer'))
+  }, 100)
 }
 
 export function useAiDock() {
@@ -59,11 +89,8 @@ export function useAiDock() {
   }, [])
 
   const setIsRightOpen = useCallback((open: boolean) => {
-    try {
-      localStorage.setItem(RIGHT_OPEN_STORAGE_KEY, String(open))
-    } catch {}
     setIsRightOpenState(open)
-    window.dispatchEvent(new CustomEvent('aiAssist:dockChange'))
+    writeRightOpen(open)
   }, [])
 
   const toggleDock = useCallback(() => {

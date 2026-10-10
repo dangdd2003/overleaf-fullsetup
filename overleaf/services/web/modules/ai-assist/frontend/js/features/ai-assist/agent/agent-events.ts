@@ -21,7 +21,14 @@ export type AgentEvent =
       /** The provider request the call came from; see ToolCallRecord.step. */
       step?: number
     }
-  | { type: 'toolCallFinished'; id: string; result: unknown; isError: boolean }
+  | {
+      type: 'toolCallFinished'
+      id: string
+      name?: string
+      result: unknown
+      isError: boolean
+      mode?: AgentMode
+    }
   | {
       type: 'awaitingApproval'
       id: string
@@ -61,3 +68,35 @@ export type AgentEvent =
       upstreamCode?: string
       upstreamType?: string
     }
+
+/**
+ * Tells the editor to glow the lines an applied `edit_file` / `create_file`
+ * call changed. Other tools and unapplied results are ignored.
+ */
+export function dispatchAiEditHighlight(
+  name: string,
+  result: any,
+  mode: AgentMode = 'manual',
+  detached?: boolean
+) {
+  if (
+    (name !== 'edit_file' && name !== 'create_file') ||
+    result?.status !== 'applied'
+  ) {
+    return
+  }
+  window.dispatchEvent(
+    new CustomEvent('aiAssist:highlightAiEdit', {
+      detail: {
+        path: result.path,
+        startLine: result.startLine,
+        endLine: result.endLine,
+        newText: result.newText,
+        oldText: result.oldText,
+        mode: result.mode || mode,
+        detached: Boolean(detached || result.detached),
+      },
+    })
+  )
+}
+

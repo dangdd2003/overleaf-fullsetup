@@ -7,7 +7,9 @@ import { useOpenFileInEditor } from '../../hooks/use-open-file'
 import { useRevealLive, useStreamReveal } from '../../hooks/use-stream-reveal'
 import { applyChunkFades, createFadeState, FadeState } from './stream-fade'
 import {
+  canHighlightCode,
   highlightCodeHtml,
+  highlightCodeLines,
   useEditorHighlightStyle,
   EDITOR_CODE_CLASS,
 } from '../../hooks/use-editor-code-highlight'
@@ -29,9 +31,6 @@ export function insertSnippetIntoEditor(text: string): boolean {
   if (!text || typeof window === 'undefined') return false
   window.dispatchEvent(
     new CustomEvent('aiAssist:insertSnippet', { detail: { text } })
-  )
-  window.dispatchEvent(
-    new CustomEvent('editor:insert-symbol', { detail: { command: text } })
   )
   return true
 }
@@ -76,6 +75,49 @@ export function tableElementToLatex(tableEl: HTMLTableElement): string {
   lines.push('\\end{table}')
 
   return lines.join('\n')
+}
+
+export function extractCodeText(block: Element | null): string {
+  if (!block) return ''
+  const dataCode = block.getAttribute('data-code')
+  if (dataCode !== null && dataCode !== undefined) return dataCode
+  const lines = block.querySelectorAll('.ai-assist-code-line-content')
+  if (lines.length > 0) {
+    return Array.from(lines)
+      .map(line => line.textContent || '')
+      .join('\n')
+  }
+  const codeEl = block.querySelector('pre > code') || block.querySelector('code')
+  return codeEl?.textContent || ''
+}
+
+export function renderCodeLinesHtml(code: string, lang: string): string {
+  const lineSegments = lang ? highlightCodeLines(code, lang) : null
+
+  if (lineSegments && lineSegments.length > 0) {
+    return lineSegments
+      .map((segments, index) => {
+        const lineNo = index + 1
+        const lineHtml = segments
+          .map(s =>
+            s.className
+              ? `<span class="${s.className}">${escapeHtml(s.text)}</span>`
+              : escapeHtml(s.text)
+          )
+          .join('')
+        return `<span class="ai-assist-code-line"><span class="ai-assist-code-line-num" aria-hidden="true">${lineNo}</span><span class="ai-assist-code-line-content">${lineHtml || ' '}</span></span>`
+      })
+      .join('')
+  }
+
+  const rawLines = code.split('\n')
+  return rawLines
+    .map((line, index) => {
+      const lineNo = index + 1
+      const lineHtml = escapeHtml(line)
+      return `<span class="ai-assist-code-line"><span class="ai-assist-code-line-num" aria-hidden="true">${lineNo}</span><span class="ai-assist-code-line-content">${lineHtml || ' '}</span></span>`
+    })
+    .join('')
 }
 
 const COLUMN_RESIZER =
@@ -399,6 +441,8 @@ const CITATION_RUN = new RegExp(`^${CITATION_UNIT}(?:[ \t]?${CITATION_UNIT})*`)
 let activeSources: WebSources | null = null
 let activeBaseUrl: string | null = null
 let activeIsThinking = false
+// Token-colour scope for highlighted code: the editor's, or the system theme's on popups
+let activeCodeClass = EDITOR_CODE_CLASS
 
 /** The nearest ancestor that clips its content, which a card must stay inside. */
 function clippingAncestor(el: HTMLElement): HTMLElement | null {
@@ -743,17 +787,16 @@ marked.use({
     },
     code(code: string, infostring: string | undefined) {
       const lang = (infostring || '').match(/\S*/)?.[0] || ''
-      const highlighted = lang ? highlightCodeHtml(code, lang) : null
-      const escapedCode = highlighted !== null ? highlighted : escapeHtml(code)
+      const codeLinesHtml = renderCodeLinesHtml(code, lang)
       const editorCodeClass =
-        highlighted !== null ? ` ${EDITOR_CODE_CLASS}` : ''
+        lang && canHighlightCode(lang) ? ` ${activeCodeClass}` : ''
 
       if (activeIsThinking) {
-        return `<pre class="ai-assist-thinking-code-block${editorCodeClass}"><code class="${lang ? `language-${escapeHtml(lang)}` : ''}">${escapedCode}</code></pre>`
+        return `<pre class="ai-assist-thinking-code-block${editorCodeClass}"><code class="${lang ? `language-${escapeHtml(lang)}` : ''}">${codeLinesHtml}</code></pre>`
       }
 
       const langLabel = `<span class="ai-assist-code-lang">${escapeHtml(lang || 'code')}</span>`
-      return `<div class="ai-assist-code-block">
+      return `<div class="ai-assist-code-block" data-code="${escapeHtml(code)}">
   <div class="ai-assist-code-header">
     ${langLabel}
     <div class="ai-assist-code-actions">
@@ -769,7 +812,7 @@ marked.use({
       </button>
     </div>
   </div>
-  <pre class="${editorCodeClass}"><code class="${lang ? `language-${escapeHtml(lang)}` : ''}">${escapedCode}</code></pre>
+  <pre class="${editorCodeClass}"><code class="${lang ? `language-${escapeHtml(lang)}` : ''}">${codeLinesHtml}</code></pre>
 </div>`
     },
     codespan(code: string) {
@@ -839,7 +882,7 @@ export function renderMarkdown(
   content: string,
   sources?: WebSources,
   baseUrl?: string,
-  opts?: { isThinking?: boolean }
+  opts?: { isThinking?: boolean; codeClass?: string }
 ): string {
   if (!content) {
     return ''
@@ -877,6 +920,7 @@ export function renderMarkdown(
   activeFootnotes = { notes: footnotes.notes, order: [] }
   activeBaseUrl = baseUrl ?? null
   activeIsThinking = Boolean(opts?.isThinking)
+  activeCodeClass = opts?.codeClass ?? EDITOR_CODE_CLASS
   try {
     let rawHtml = ''
     try {
@@ -899,6 +943,7 @@ export function renderMarkdown(
     activeBaseUrl = null
     activeTableTitles = null
     activeIsThinking = false
+    activeCodeClass = EDITOR_CODE_CLASS
     DOMPurify.removeHook('afterSanitizeAttributes')
   }
 }
@@ -966,10 +1011,11 @@ export const MarkdownContent: FC<{
   /** Web pages the model may cite by number. */
   sources?: WebSources
   baseUrl?: string
-}> = ({ content, onOpenFile, isLive = false, sources, baseUrl }) => {
+  style?: React.CSSProperties
+}> = ({ content, onOpenFile, isLive = false, sources, baseUrl, style }) => {
   const defaultOpenFile = useOpenFileInEditor()
   const openFile = onOpenFile ?? defaultOpenFile
-  const { editorTheme } = useEditorThemeStyles()
+  const { editorTheme, editorVars } = useEditorThemeStyles()
   useEditorHighlightStyle(editorTheme)
 
   const revealLive = useRevealLive(isLive)
@@ -1013,9 +1059,7 @@ export const MarkdownContent: FC<{
         e.stopPropagation()
 
         const block = insertBtn.closest('.ai-assist-code-block')
-        const codeEl =
-          block?.querySelector('pre > code') || block?.querySelector('code')
-        const textToInsert = codeEl?.textContent || ''
+        const textToInsert = extractCodeText(block)
 
         if (!textToInsert) return
 
@@ -1089,9 +1133,7 @@ export const MarkdownContent: FC<{
         e.stopPropagation()
 
         const block = copyBtn.closest('.ai-assist-code-block')
-        const codeEl =
-          block?.querySelector('pre > code') || block?.querySelector('code')
-        const textToCopy = codeEl?.textContent || ''
+        const textToCopy = extractCodeText(block)
 
         if (!textToCopy) return
 
@@ -1221,6 +1263,10 @@ export const MarkdownContent: FC<{
       className={
         animating ? 'ai-assist-markdown is-streaming' : 'ai-assist-markdown'
       }
+      style={{
+        ...editorVars,
+        ...style,
+      }}
       onClick={handleClick}
       onDoubleClick={handleDoubleClick}
       onPointerDown={handlePointerDown}

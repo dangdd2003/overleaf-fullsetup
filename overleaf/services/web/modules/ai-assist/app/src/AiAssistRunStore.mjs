@@ -2,6 +2,7 @@ import RedisWrapper from '../../../../app/src/infrastructure/RedisWrapper.mjs'
 import { normalizeMode } from './AiAssistModePolicy.mjs'
 
 const RUN_TTL_SECONDS = 7 * 24 * 3600 // 7 days retention
+const MAX_HEARTBEAT_ENTRIES = 10_000
 const ACTIVE_RUNS_KEY = 'ai-assist:active-runs'
 
 export const TERMINAL_STATUSES = ['done', 'stopped', 'error', 'interrupted']
@@ -83,6 +84,9 @@ export class AiAssistRunStore {
   }
 
   async updateStatus(runId, status, error = null) {
+    if (TERMINAL_STATUSES.includes(status)) {
+      this._lastHeartbeats.delete(runId)
+    }
     const rclient = this.getClient()
     if (!rclient) return
     const updates = {
@@ -191,6 +195,18 @@ export class AiAssistRunStore {
     const now = Date.now()
     const last = this._lastHeartbeats.get(runId) || 0
     if (now - last < minIntervalMs) return
+    this._lastHeartbeats.delete(runId)
+    // Sweep expired runs only when the map is full: a full scan on every touch is O(runs)
+    if (this._lastHeartbeats.size >= MAX_HEARTBEAT_ENTRIES) {
+      for (const [cachedRunId, timestamp] of this._lastHeartbeats) {
+        if (now - timestamp >= RUN_TTL_SECONDS * 1000) {
+          this._lastHeartbeats.delete(cachedRunId)
+        }
+      }
+    }
+    while (this._lastHeartbeats.size >= MAX_HEARTBEAT_ENTRIES) {
+      this._lastHeartbeats.delete(this._lastHeartbeats.keys().next().value)
+    }
     this._lastHeartbeats.set(runId, now)
     await rclient.hset(this._key(runId), 'heartbeat', String(now))
   }
@@ -201,7 +217,7 @@ export class AiAssistRunStore {
     const seqKey = `${this._key(runId)}:seq`
     const seq = await rclient.incr(seqKey)
     const payload = JSON.stringify({ seq, event })
-    void this.touchHeartbeat(runId)
+    if (event?.type !== 'turnFinished') void this.touchHeartbeat(runId)
     await Promise.all([
       rclient.rpush(this._eventsKey(runId), payload),
       rclient.publish(this._channel(runId), payload),

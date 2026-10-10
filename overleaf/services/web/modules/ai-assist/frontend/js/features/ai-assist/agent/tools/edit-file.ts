@@ -138,7 +138,11 @@ export const editFileTool: AgentTool = {
           return {
             status: 'applied',
             message: `Appended the change to ${path}.`,
-            startLine: (outcome as any).startLine,
+            path: outcome.path ?? path,
+            startLine: outcome.startLine,
+            endLine: outcome.endLine,
+            newText: outcome.newText ?? sanitizedNewText,
+            oldText: outcome.oldText ?? '',
           }
         case 'rejected': {
           return {
@@ -265,7 +269,11 @@ export const editFileTool: AgentTool = {
         return {
           status: 'applied',
           message: `Applied the change to ${path}.`,
-          startLine: (outcome as any).startLine,
+          path: outcome.path ?? path,
+          startLine: outcome.startLine,
+          endLine: outcome.endLine,
+          newText: outcome.newText ?? sanitizedNewText,
+          oldText: outcome.oldText ?? targetAnchor,
         }
       case 'rejected': {
         return {

@@ -10,6 +10,7 @@ import { saveConversation } from '../conversation-store'
 import { saveChat } from '../chat-history-client'
 import { nextStatusWord } from '../../components/agent/status-words'
 import { connectRunStream, setDetachedRun } from './background-run-client'
+import { dispatchAiEditHighlight } from '../agent-events'
 
 /**
  * Runs of chats the panel is not showing keep going on the server, in
@@ -163,7 +164,16 @@ function connect(follower: Follower) {
       }
       follower.seq = Math.max(follower.seq, seq)
       follower.state = reduceAgentEvent(follower.state, event)
+      if (event.type === 'toolCallFinished') {
+        const e: any = event
+        const name = e.name || e.call?.name || ''
+        const result = e.result
+        if (result && result.status === 'applied') {
+          dispatchAiEditHighlight(name, result, follower.state.mode, true)
+        }
+      }
       saveLocally(follower)
+
     },
     onDone: () => settle(follower, true),
     onError: () => settle(follower, false),

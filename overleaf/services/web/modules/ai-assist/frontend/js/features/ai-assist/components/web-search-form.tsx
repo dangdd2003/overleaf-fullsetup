@@ -8,6 +8,7 @@ import OLFormSelect from '@/shared/components/ol/ol-form-select'
 import DropdownSetting from '@/features/ide-settings/components/dropdown-setting'
 import OLRow from '@/shared/components/ol/ol-row'
 import OLCol from '@/shared/components/ol/ol-col'
+import MaterialIcon from '@/shared/components/material-icon'
 import Notification from '@/shared/components/notification'
 import { SiteIcon } from './agent/site-icon'
 import {
@@ -40,8 +41,16 @@ import LangsearchOptions, {
   langsearchOptionsFromDraft,
 } from './langsearch-options'
 import ExaOptions, { draftFromExa, exaOptionsFromDraft } from './exa-options'
+import TinyfishOptions, {
+  draftFromTinyfish,
+  tinyfishOptionsFromDraft,
+} from './tinyfish-options'
+import ParallelOptions, {
+  draftFromParallel,
+  parallelOptionsFromDraft,
+} from './parallel-options'
 import McpOptions, { draftFromMcp, mcpOptionsFromDraft } from './mcp-options'
-import { testWebSearch } from '../providers/server-client'
+import { testWebSearch, WebSearchTestOutcome } from '../providers/server-client'
 import {
   ExaProviderConfig,
   FirecrawlProviderConfig,
@@ -50,9 +59,11 @@ import {
   LangsearchProviderConfig,
   McpProviderConfig,
   MultiWebSearchSettings,
+  ParallelProviderConfig,
   ProviderError,
   SearxngProviderConfig,
   TavilyProviderConfig,
+  TinyfishProviderConfig,
   WEB_SEARCH_DEFAULTS,
   WebSearchPreferences,
   WebSearchPrimaryProvider,
@@ -76,6 +87,8 @@ const ALL_PROVIDERS: WebSearchProviderType[] = [
   'jina',
   'langsearch',
   'exa',
+  'tinyfish',
+  'parallel',
   'mcp',
 ]
 
@@ -86,7 +99,7 @@ function plural(count: number, noun: string, nouns = `${noun}s`) {
 type Probe =
   | { state: 'idle' }
   | { state: 'busy' }
-  | { state: 'ok'; message: string }
+  | { state: 'tested'; outcome: WebSearchTestOutcome }
   | { state: 'failed'; message: string }
 
 export default function WebSearchForm({
@@ -170,6 +183,18 @@ export default function WebSearchForm({
   const initialExa: ExaProviderConfig | undefined = isMulti
     ? (initial as MultiWebSearchSettings)?.providers?.exa
     : legacyType === 'exa'
+      ? { enabled: true, apiKeys: [(initial as any).apiKey] }
+      : undefined
+
+  const initialTinyfish: TinyfishProviderConfig | undefined = isMulti
+    ? (initial as MultiWebSearchSettings)?.providers?.tinyfish
+    : legacyType === 'tinyfish'
+      ? { enabled: true, apiKeys: [(initial as any).apiKey] }
+      : undefined
+
+  const initialParallel: ParallelProviderConfig | undefined = isMulti
+    ? (initial as MultiWebSearchSettings)?.providers?.parallel
+    : legacyType === 'parallel'
       ? { enabled: true, apiKeys: [(initial as any).apiKey] }
       : undefined
 
@@ -259,6 +284,22 @@ export default function WebSearchForm({
           legacyType === 'exa')
       ) {
         list.push('exa')
+      }
+      if (
+        initialTinyfish &&
+        (initialTinyfish.enabled ||
+          (initialTinyfish.apiKeys && initialTinyfish.apiKeys.length > 0) ||
+          legacyType === 'tinyfish')
+      ) {
+        list.push('tinyfish')
+      }
+      if (
+        initialParallel &&
+        (initialParallel.enabled ||
+          (initialParallel.apiKeys && initialParallel.apiKeys.length > 0) ||
+          legacyType === 'parallel')
+      ) {
+        list.push('parallel')
       }
       if (
         initialMcp &&
@@ -415,6 +456,30 @@ export default function WebSearchForm({
   )
   const [exaDraft, setExaDraft] = useState(() => draftFromExa(initialExa))
 
+  const [tinyfishEnabled, setTinyfishEnabled] = useState(
+    initialTinyfish?.enabled ?? legacyType === 'tinyfish'
+  )
+  const [tinyfishKeys, setTinyfishKeys] = useState<string[]>(
+    initialTinyfish?.apiKeys && initialTinyfish.apiKeys.length > 0
+      ? initialTinyfish.apiKeys
+      : ['']
+  )
+  const [tinyfishDraft, setTinyfishDraft] = useState(() =>
+    draftFromTinyfish(initialTinyfish)
+  )
+
+  const [parallelEnabled, setParallelEnabled] = useState(
+    initialParallel?.enabled ?? legacyType === 'parallel'
+  )
+  const [parallelKeys, setParallelKeys] = useState<string[]>(
+    initialParallel?.apiKeys && initialParallel.apiKeys.length > 0
+      ? initialParallel.apiKeys
+      : ['']
+  )
+  const [parallelDraft, setParallelDraft] = useState(() =>
+    draftFromParallel(initialParallel)
+  )
+
   const [mcpEnabled, setMcpEnabled] = useState(
     initialMcp?.enabled ?? legacyType === 'mcp'
   )
@@ -436,6 +501,8 @@ export default function WebSearchForm({
   const validJinaKeys = jinaKeys.map(k => k.trim()).filter(Boolean)
   const validLangsearchKeys = langsearchKeys.map(k => k.trim()).filter(Boolean)
   const validExaKeys = exaKeys.map(k => k.trim()).filter(Boolean)
+  const validTinyfishKeys = tinyfishKeys.map(k => k.trim()).filter(Boolean)
+  const validParallelKeys = parallelKeys.map(k => k.trim()).filter(Boolean)
   const validMcpUrls = mcpDraft.serverUrls.map(u => u.trim()).filter(Boolean)
 
   const isProviderValid = useCallback(
@@ -462,6 +529,10 @@ export default function WebSearchForm({
           return langsearchEnabled && validLangsearchKeys.length > 0
         case 'exa':
           return exaEnabled && validExaKeys.length > 0
+        case 'tinyfish':
+          return tinyfishEnabled && validTinyfishKeys.length > 0
+        case 'parallel':
+          return parallelEnabled && validParallelKeys.length > 0
         case 'mcp':
           return mcpEnabled && validMcpUrls.length > 0
         default:
@@ -487,6 +558,10 @@ export default function WebSearchForm({
       validLangsearchKeys.length,
       exaEnabled,
       validExaKeys.length,
+      tinyfishEnabled,
+      validTinyfishKeys.length,
+      parallelEnabled,
+      validParallelKeys.length,
       mcpEnabled,
       validMcpUrls.length,
     ]
@@ -513,6 +588,10 @@ export default function WebSearchForm({
           return validLangsearchKeys.length > 0
         case 'exa':
           return validExaKeys.length > 0
+        case 'tinyfish':
+          return validTinyfishKeys.length > 0
+        case 'parallel':
+          return validParallelKeys.length > 0
         case 'mcp':
           return validMcpUrls.length > 0
         default:
@@ -529,6 +608,8 @@ export default function WebSearchForm({
       validJinaKeys.length,
       validLangsearchKeys.length,
       validExaKeys.length,
+      validTinyfishKeys.length,
+      validParallelKeys.length,
       validMcpUrls.length,
     ]
   )
@@ -673,6 +754,22 @@ export default function WebSearchForm({
       }
     }
 
+    if (effectiveProviders.includes('tinyfish')) {
+      providers.tinyfish = {
+        enabled: addedProviders.includes('tinyfish') ? tinyfishEnabled : true,
+        apiKeys: validTinyfishKeys,
+        ...tinyfishOptionsFromDraft(tinyfishDraft),
+      }
+    }
+
+    if (effectiveProviders.includes('parallel')) {
+      providers.parallel = {
+        enabled: addedProviders.includes('parallel') ? parallelEnabled : true,
+        apiKeys: validParallelKeys,
+        ...parallelOptionsFromDraft(parallelDraft),
+      }
+    }
+
     if (effectiveProviders.includes('mcp')) {
       providers.mcp = {
         enabled: addedProviders.includes('mcp') ? mcpEnabled : true,
@@ -724,7 +821,252 @@ export default function WebSearchForm({
     exaEnabled,
     validExaKeys,
     exaDraft,
+    tinyfishEnabled,
+    validTinyfishKeys,
+    tinyfishDraft,
+    parallelEnabled,
+    validParallelKeys,
+    parallelDraft,
     mcpEnabled,
+    mcpDraft,
+    primaryProvider,
+    rotationStrategy,
+  ])
+
+  const hasAnyConfigured =
+    validSearxngUrls.length > 0 ||
+    validOllamaKeys.length > 0 ||
+    validWebsearchapiKeys.length > 0 ||
+    validTavilyKeys.length > 0 ||
+    validFirecrawlKeys.length > 0 ||
+    validFirecrawlSelfHostedUrls.length > 0 ||
+    validJinaKeys.length > 0 ||
+    validLangsearchKeys.length > 0 ||
+    validExaKeys.length > 0 ||
+    validTinyfishKeys.length > 0 ||
+    validParallelKeys.length > 0 ||
+    validMcpUrls.length > 0
+
+  const buildTestSettings = useCallback((): MultiWebSearchSettings | null => {
+    const providers: MultiWebSearchSettings['providers'] = {}
+
+    const isTarget = (type: WebSearchProviderType) => {
+      if (addedProviders.includes(type)) {
+        switch (type) {
+          case 'searxng':
+            return searxngEnabled
+          case 'ollama':
+            return ollamaEnabled
+          case 'websearchapi':
+            return websearchapiEnabled
+          case 'tavily':
+            return tavilyEnabled
+          case 'firecrawl':
+            return firecrawlEnabled
+          case 'firecrawlSelfHosted':
+            return firecrawlSelfHostedEnabled
+          case 'jina':
+            return jinaEnabled
+          case 'langsearch':
+            return langsearchEnabled
+          case 'exa':
+            return exaEnabled
+          case 'tinyfish':
+            return tinyfishEnabled
+          case 'parallel':
+            return parallelEnabled
+          case 'mcp':
+            return mcpEnabled
+          default:
+            return false
+        }
+      }
+      return isAddingProvider && selectedNewProvider === type
+    }
+
+    if (isTarget('searxng') && validSearxngUrls.length > 0) {
+      providers.searxng = {
+        enabled: true,
+        baseUrls: validSearxngUrls,
+        ...(defaultCategories.trim()
+          ? { defaultCategories: defaultCategories.trim() }
+          : {}),
+        ...(defaultLanguage.trim()
+          ? { defaultLanguage: defaultLanguage.trim() }
+          : {}),
+        ...(searxngTimeRange
+          ? {
+              timeRange: searxngTimeRange as SearxngProviderConfig['timeRange'],
+            }
+          : {}),
+        ...(searxngSafeSearch
+          ? {
+              safeSearch: Number(
+                searxngSafeSearch
+              ) as SearxngProviderConfig['safeSearch'],
+            }
+          : {}),
+      }
+    }
+
+    if (isTarget('ollama') && validOllamaKeys.length > 0) {
+      providers.ollama = {
+        enabled: true,
+        apiKeys: validOllamaKeys,
+        ...(ollamaMaxResults.trim() &&
+        Number.isFinite(Math.trunc(Number(ollamaMaxResults)))
+          ? {
+              maxResults: Math.min(
+                10,
+                Math.max(1, Math.trunc(Number(ollamaMaxResults)))
+              ),
+            }
+          : {}),
+      }
+    }
+
+    if (isTarget('websearchapi') && validWebsearchapiKeys.length > 0) {
+      providers.websearchapi = {
+        enabled: true,
+        apiKeys: validWebsearchapiKeys,
+        ...websearchapiOptionsFromDraft(websearchapiDraft),
+      }
+    }
+
+    if (isTarget('tavily') && validTavilyKeys.length > 0) {
+      providers.tavily = {
+        enabled: true,
+        apiKeys: validTavilyKeys,
+        ...tavilyOptionsFromDraft(tavilyDraft),
+      }
+    }
+
+    if (isTarget('firecrawl') && validFirecrawlKeys.length > 0) {
+      providers.firecrawl = {
+        enabled: true,
+        apiKeys: validFirecrawlKeys,
+        ...firecrawlOptionsFromDraft(firecrawlDraft, { cloud: true }),
+      }
+    }
+
+    if (
+      isTarget('firecrawlSelfHosted') &&
+      validFirecrawlSelfHostedUrls.length > 0
+    ) {
+      providers.firecrawlSelfHosted = {
+        enabled: true,
+        baseUrls: validFirecrawlSelfHostedUrls,
+        ...firecrawlOptionsFromDraft(firecrawlSelfHostedDraft, {
+          cloud: false,
+        }),
+      }
+    }
+
+    if (isTarget('jina') && validJinaKeys.length > 0) {
+      providers.jina = {
+        enabled: true,
+        apiKeys: validJinaKeys,
+        ...jinaOptionsFromDraft(jinaDraft),
+      }
+    }
+
+    if (isTarget('langsearch') && validLangsearchKeys.length > 0) {
+      providers.langsearch = {
+        enabled: true,
+        apiKeys: validLangsearchKeys,
+        ...langsearchOptionsFromDraft(langsearchDraft),
+      }
+    }
+
+    if (isTarget('exa') && validExaKeys.length > 0) {
+      providers.exa = {
+        enabled: true,
+        apiKeys: validExaKeys,
+        ...exaOptionsFromDraft(exaDraft),
+      }
+    }
+
+    if (isTarget('tinyfish') && validTinyfishKeys.length > 0) {
+      providers.tinyfish = {
+        enabled: true,
+        apiKeys: validTinyfishKeys,
+        ...tinyfishOptionsFromDraft(tinyfishDraft),
+      }
+    }
+
+    if (isTarget('parallel') && validParallelKeys.length > 0) {
+      providers.parallel = {
+        enabled: true,
+        apiKeys: validParallelKeys,
+        ...parallelOptionsFromDraft(parallelDraft),
+      }
+    }
+
+    if (isTarget('mcp') && validMcpUrls.length > 0) {
+      providers.mcp = {
+        enabled: true,
+        ...mcpOptionsFromDraft(mcpDraft),
+      }
+    }
+
+    if (Object.keys(providers).length === 0) {
+      return null
+    }
+
+    const available = Object.keys(providers) as WebSearchProviderType[]
+    const effectivePrimary = available.includes(primaryProvider)
+      ? primaryProvider
+      : available[0] || 'searxng'
+
+    return {
+      sourceMode: 'custom',
+      providers,
+      rotationStrategy,
+      primaryProvider: effectivePrimary,
+      forTest: true,
+    } as any
+  }, [
+    addedProviders,
+    isAddingProvider,
+    selectedNewProvider,
+    searxngEnabled,
+    ollamaEnabled,
+    websearchapiEnabled,
+    tavilyEnabled,
+    firecrawlEnabled,
+    firecrawlSelfHostedEnabled,
+    jinaEnabled,
+    langsearchEnabled,
+    exaEnabled,
+    tinyfishEnabled,
+    parallelEnabled,
+    mcpEnabled,
+    validSearxngUrls,
+    defaultCategories,
+    defaultLanguage,
+    searxngTimeRange,
+    searxngSafeSearch,
+    validOllamaKeys,
+    ollamaMaxResults,
+    validWebsearchapiKeys,
+    websearchapiDraft,
+    validTavilyKeys,
+    tavilyDraft,
+    validFirecrawlKeys,
+    firecrawlDraft,
+    validFirecrawlSelfHostedUrls,
+    firecrawlSelfHostedDraft,
+    validJinaKeys,
+    jinaDraft,
+    validLangsearchKeys,
+    langsearchDraft,
+    validExaKeys,
+    exaDraft,
+    validTinyfishKeys,
+    tinyfishDraft,
+    validParallelKeys,
+    parallelDraft,
+    validMcpUrls,
     mcpDraft,
     primaryProvider,
     rotationStrategy,
@@ -733,34 +1075,23 @@ export default function WebSearchForm({
   const onTest = useCallback(async () => {
     setProbe({ state: 'busy' })
     try {
-      const payload = current()
-      const hasAnyEnabled = Object.values(payload.providers).some(
-        p => (p as any)?.enabled
-      )
-      if (!hasAnyEnabled) {
-        for (const p of Object.values(payload.providers)) {
-          if (p) (p as any).enabled = true
-        }
+      const payload = buildTestSettings()
+      if (!payload) {
+        setProbe({
+          state: 'failed',
+          message: 'Please enter an API key or instance URL first.',
+        })
+        return
       }
-      const { latencyMs, activeEndpoints, provider } =
-        await testWebSearch(payload)
-      const details = [
-        `Search answered in ${latencyMs} ms`,
-        provider ? `via ${provider}` : null,
-        typeof activeEndpoints === 'number'
-          ? `(${activeEndpoints} endpoint${activeEndpoints === 1 ? '' : 's'} available)`
-          : null,
-      ]
-        .filter(Boolean)
-        .join(' ')
-      setProbe({ state: 'ok', message: `${details}.` })
+      const outcome = await testWebSearch(payload)
+      setProbe({ state: 'tested', outcome })
     } catch (error: any) {
       setProbe({
         state: 'failed',
         message: (error as ProviderError)?.message || 'The search test failed.',
       })
     }
-  }, [current])
+  }, [buildTestSettings])
 
   const toggleExpand = useCallback((type: WebSearchProviderType) => {
     setExpandedProviders(prev =>
@@ -799,6 +1130,12 @@ export default function WebSearchForm({
         case 'exa':
           setExaEnabled(enabled)
           break
+        case 'tinyfish':
+          setTinyfishEnabled(enabled)
+          break
+        case 'parallel':
+          setParallelEnabled(enabled)
+          break
         case 'mcp':
           setMcpEnabled(enabled)
           break
@@ -810,7 +1147,7 @@ export default function WebSearchForm({
   const handleAddProvider = useCallback((type: WebSearchProviderType) => {
     setSourceMode('custom')
     setAddedProviders(prev => (prev.includes(type) ? prev : [...prev, type]))
-    setExpandedProviders(prev => (prev.includes(type) ? prev : [...prev, type]))
+    setExpandedProviders([])
     switch (type) {
       case 'searxng':
         setSearxngEnabled(true)
@@ -838,6 +1175,12 @@ export default function WebSearchForm({
         break
       case 'exa':
         setExaEnabled(true)
+        break
+      case 'tinyfish':
+        setTinyfishEnabled(true)
+        break
+      case 'parallel':
+        setParallelEnabled(true)
         break
       case 'mcp':
         setMcpEnabled(true)
@@ -906,6 +1249,16 @@ export default function WebSearchForm({
           setExaKeys([''])
           setExaDraft(draftFromExa(undefined))
           break
+        case 'tinyfish':
+          setTinyfishEnabled(false)
+          setTinyfishKeys([''])
+          setTinyfishDraft(draftFromTinyfish(undefined))
+          break
+        case 'parallel':
+          setParallelEnabled(false)
+          setParallelKeys([''])
+          setParallelDraft(draftFromParallel(undefined))
+          break
         case 'mcp':
           setMcpEnabled(false)
           setMcpDraft(draftFromMcp(undefined))
@@ -954,6 +1307,14 @@ export default function WebSearchForm({
           return validExaKeys.length > 0
             ? plural(validExaKeys.length, 'API key')
             : 'No API keys'
+        case 'tinyfish':
+          return validTinyfishKeys.length > 0
+            ? plural(validTinyfishKeys.length, 'API key')
+            : 'No API keys'
+        case 'parallel':
+          return validParallelKeys.length > 0
+            ? plural(validParallelKeys.length, 'API key')
+            : 'No API keys'
         case 'mcp':
           return validMcpUrls.length > 0
             ? plural(validMcpUrls.length, 'custom endpoint')
@@ -970,6 +1331,8 @@ export default function WebSearchForm({
       validJinaKeys.length,
       validLangsearchKeys.length,
       validExaKeys.length,
+      validTinyfishKeys.length,
+      validParallelKeys.length,
       validMcpUrls.length,
     ]
   )
@@ -995,6 +1358,10 @@ export default function WebSearchForm({
           return langsearchEnabled
         case 'exa':
           return exaEnabled
+        case 'tinyfish':
+          return tinyfishEnabled
+        case 'parallel':
+          return parallelEnabled
         case 'mcp':
           return mcpEnabled
       }
@@ -1009,6 +1376,8 @@ export default function WebSearchForm({
       jinaEnabled,
       langsearchEnabled,
       exaEnabled,
+      tinyfishEnabled,
+      parallelEnabled,
       mcpEnabled,
     ]
   )
@@ -1325,6 +1694,60 @@ export default function WebSearchForm({
             />
           </>
         )
+      case 'tinyfish':
+        return (
+          <>
+            <SettingsGroup title="Authentication">
+              <ListSetting
+                id="ai-web-search-tinyfish-key"
+                label="API keys"
+                description="Keys from agent.tinyfish.ai/api-keys, stored in this browser only. Requests rotate across them. Prefix sk-tinyfish-."
+                itemLabel="key"
+                values={tinyfishKeys}
+                placeholder="sk-tinyfish-..."
+                secret
+                onChange={next => {
+                  setTinyfishKeys(next)
+                  setProbe({ state: 'idle' })
+                }}
+              />
+            </SettingsGroup>
+            <TinyfishOptions
+              draft={tinyfishDraft}
+              onChange={next => {
+                setTinyfishDraft(next)
+                setProbe({ state: 'idle' })
+              }}
+            />
+          </>
+        )
+      case 'parallel':
+        return (
+          <>
+            <SettingsGroup title="Authentication">
+              <ListSetting
+                id="ai-web-search-parallel-key"
+                label="API keys"
+                description="Keys from your Parallel dashboard, stored in this browser only. Requests rotate across them."
+                itemLabel="key"
+                values={parallelKeys}
+                placeholder="Parallel API key"
+                secret
+                onChange={next => {
+                  setParallelKeys(next)
+                  setProbe({ state: 'idle' })
+                }}
+              />
+            </SettingsGroup>
+            <ParallelOptions
+              draft={parallelDraft}
+              onChange={next => {
+                setParallelDraft(next)
+                setProbe({ state: 'idle' })
+              }}
+            />
+          </>
+        )
       case 'mcp':
         return (
           <McpOptions
@@ -1614,9 +2037,55 @@ export default function WebSearchForm({
         </div>
       )}
 
-      {probe.state === 'ok' ? (
+      {probe.state === 'tested' ? (
         <div className="notification-list mt-3">
-          <Notification type="success" content={probe.message} />
+          <Notification
+            type={probe.outcome.anySuccess ? 'success' : 'error'}
+            content={
+              <div>
+                <div className="fw-semibold mb-2">
+                  {probe.outcome.anySuccess
+                    ? `Search health check: ${
+                        (probe.outcome.results || []).filter(r => r.ok).length
+                      } of ${(probe.outcome.results || []).length} operational (${
+                        probe.outcome.latencyMs
+                      } ms)`
+                    : `All search providers failed connection check (${probe.outcome.latencyMs} ms)`}
+                </div>
+                {Array.isArray(probe.outcome.results) &&
+                probe.outcome.results.length > 0 ? (
+                  <div className="d-flex flex-column gap-1 small">
+                    {probe.outcome.results.map(r => (
+                      <div
+                        key={r.provider}
+                        className="d-flex align-items-center gap-2"
+                      >
+                        <MaterialIcon
+                          type={r.ok ? 'check_circle' : 'cancel'}
+                          className={r.ok ? 'text-success' : 'text-danger'}
+                        />
+                        <span className="fw-medium">
+                          {WEB_SEARCH_LABELS[r.provider] || r.provider}:
+                        </span>
+                        <span>
+                          {r.ok
+                            ? `OK (${r.latencyMs ?? 0} ms)`
+                            : `Failed: ${r.error || 'Connection error'}`}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="small">
+                    {`Search answered in ${probe.outcome.latencyMs} ms`}{' '}
+                    {probe.outcome.provider
+                      ? `via ${probe.outcome.provider}`
+                      : ''}
+                  </div>
+                )}
+              </div>
+            }
+          />
         </div>
       ) : null}
       {probe.state === 'failed' ? (
@@ -1636,7 +2105,9 @@ export default function WebSearchForm({
             onClick={onTest}
             isLoading={probe.state === 'busy'}
             loadingLabel="Testing search…"
-            disabled={probe.state === 'busy' || !complete}
+            disabled={
+              probe.state === 'busy' || (!complete && !hasAnyConfigured)
+            }
           >
             Test search
           </OLButton>

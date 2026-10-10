@@ -83,6 +83,8 @@ export const WEB_SEARCH_PROVIDERS = [
   'jina',
   'langsearch',
   'exa',
+  'tinyfish',
+  'parallel',
   'mcp',
 ]
 export const WEB_TOOL_NAMES = new Set(['web_search', 'web_fetch'])
@@ -101,6 +103,8 @@ export const WEB_SEARCH_PRIMARY_PROVIDERS = [
   'jina',
   'langsearch',
   'exa',
+  'tinyfish',
+  'parallel',
   'mcp',
 ]
 /** Providers that answer web_search. */
@@ -114,6 +118,8 @@ export const SEARCH_PROVIDERS = new Set([
   'jina',
   'langsearch',
   'exa',
+  'tinyfish',
+  'parallel',
   'mcp',
 ])
 
@@ -125,6 +131,10 @@ export const WEB_SEARCH_DEFAULTS = {
 
 export const LANGSEARCH_API_BASE = 'https://api.langsearch.com'
 export const EXA_API_BASE = 'https://api.exa.ai'
+export const TINYFISH_API_BASE = 'https://api.search.tinyfish.ai'
+export const PARALLEL_API_BASE = 'https://api.parallel.ai'
+export const PARALLEL_MAX_RESULTS = 20
+export const PARALLEL_MODES = ['turbo', 'fast', 'basic', 'advanced']
 
 /** Settings for a run with no search backend: web_fetch only, default caching. */
 export function fetchOnlyWebSettings() {
@@ -188,6 +198,9 @@ const EXA_SEARCH_CATEGORIES = [
   'financial report',
 ]
 const EXA_LIVECRAWL_MODES = ['always', 'fallback', 'never', 'auto']
+/** TinyFish Search answers one GET on its root; limit is applied client-side. */
+const TINYFISH_MAX_RESULTS = 20
+const TINYFISH_DOMAIN_TYPES = ['web', 'news', 'research_paper']
 const MAX_SNIPPET_CHARS = 600
 /** Unread page ranges a web_fetch result lists; the count covers the rest. */
 const MAX_UNREAD_RANGES = 8
@@ -340,11 +353,22 @@ export function normalizeMcpOptions(raw = {}) {
         typeof h.value === 'string'
     )
     .map(h => ({
-      key: h.key.trim(),
-      value: h.value.trim(),
+      key: h.key.trim().replace(/[\r\n]+/g, ''),
+      value: h.value.trim().replace(/[\r\n]+/g, ''),
     }))
+    .filter(h => h.key.length > 0)
+  const toolName =
+    typeof raw?.toolName === 'string' && raw.toolName.trim()
+      ? raw.toolName.trim()
+      : undefined
+  const queryParam =
+    typeof raw?.queryParam === 'string' && raw.queryParam.trim()
+      ? raw.queryParam.trim()
+      : undefined
   return withoutUndefined({
     headers: headers.length > 0 ? headers : undefined,
+    toolName,
+    queryParam,
   })
 }
 
@@ -836,6 +860,133 @@ export function normalizeExaOptions(raw = {}) {
   }
 }
 
+/**
+ * The TinyFish request options a user chose, keeping only valid values.
+ * An option left out is left to the API's own default (US/en, web, page 0).
+ * Date filters are mutually exclusive with recency and unsupported for
+ * research_paper; invalid combos are dropped here so the API never sees a 400.
+ */
+export function normalizeTinyfishOptions(raw = {}) {
+  const rawSearch =
+    raw?.search && typeof raw.search === 'object' ? raw.search : {}
+  const domainType = optionalChoice(
+    rawSearch.domainType ?? rawSearch.domain_type,
+    TINYFISH_DOMAIN_TYPES
+  )
+  const isPaper = domainType === 'research_paper'
+  const recencyMinutes = Number.isInteger(rawSearch.recencyMinutes)
+    ? Math.min(5256000, Math.max(1, rawSearch.recencyMinutes))
+    : undefined
+  const afterDate =
+    !isPaper && recencyMinutes === undefined
+      ? optionalText(rawSearch.afterDate, /^\d{4}-\d{2}-\d{2}$/, 10)
+      : undefined
+  const beforeDate =
+    !isPaper && recencyMinutes === undefined
+      ? optionalText(rawSearch.beforeDate, /^\d{4}-\d{2}-\d{2}$/, 10)
+      : undefined
+  const search = withoutUndefined({
+    maxResults: Number.isInteger(rawSearch.maxResults)
+      ? Math.min(TINYFISH_MAX_RESULTS, Math.max(1, rawSearch.maxResults))
+      : undefined,
+    domainType,
+    location: optionalText(rawSearch.location ?? rawSearch.country, /^[A-Za-z]{2}$/, 2),
+    language: optionalText(rawSearch.language, /^[A-Za-z]{2,5}$/, 5),
+    includeDomains: domainList(rawSearch.includeDomains),
+    excludeDomains: domainList(rawSearch.excludeDomains),
+    ...(isPaper
+      ? {
+          pubYearMin: Number.isInteger(rawSearch.pubYearMin)
+            ? Math.min(9999, Math.max(0, rawSearch.pubYearMin))
+            : undefined,
+          pubYearMax: Number.isInteger(rawSearch.pubYearMax)
+            ? Math.min(9999, Math.max(0, rawSearch.pubYearMax))
+            : undefined,
+        }
+      : {
+          recencyMinutes,
+          afterDate,
+          beforeDate,
+        }),
+  })
+  const baseUrl =
+    typeof raw?.baseUrl === 'string' && raw.baseUrl.trim()
+      ? raw.baseUrl.trim()
+      : typeof rawSearch.baseUrl === 'string' && rawSearch.baseUrl.trim()
+        ? rawSearch.baseUrl.trim()
+        : undefined
+  return {
+    ...(Object.keys(search).length > 0 ? { search } : {}),
+    ...(baseUrl ? { baseUrl } : {}),
+  }
+}
+
+/**
+ * The Parallel request options a user chose, keeping only valid values.
+ * An option left out is left to the API's own default.
+ */
+export function normalizeParallelOptions(raw = {}) {
+  const rawSearch =
+    raw?.search && typeof raw.search === 'object' ? raw.search : {}
+  const rawRead =
+    raw?.read && typeof raw.read === 'object'
+      ? raw.read
+      : raw?.extract && typeof raw.extract === 'object'
+        ? raw.extract
+        : {}
+
+  const search = withoutUndefined({
+    maxResults: Number.isInteger(rawSearch.maxResults)
+      ? Math.min(PARALLEL_MAX_RESULTS, Math.max(1, rawSearch.maxResults))
+      : undefined,
+    mode: optionalChoice(rawSearch.mode, PARALLEL_MODES),
+    location: optionalText(rawSearch.location, /^[a-z]{2}$/i)?.toLowerCase(),
+    includeDomains: domainList(rawSearch.includeDomains),
+    excludeDomains: domainList(rawSearch.excludeDomains),
+    afterDate: optionalText(rawSearch.afterDate, /^\d{4}-\d{2}-\d{2}$/),
+    maxCharsTotal: Number.isInteger(rawSearch.maxCharsTotal)
+      ? Math.max(1, rawSearch.maxCharsTotal)
+      : undefined,
+    maxCharsPerResult: Number.isInteger(rawSearch.maxCharsPerResult)
+      ? Math.max(1, rawSearch.maxCharsPerResult)
+      : undefined,
+    maxAgeSeconds: Number.isInteger(rawSearch.maxAgeSeconds)
+      ? Math.max(600, rawSearch.maxAgeSeconds)
+      : undefined,
+    timeoutSeconds: Number.isInteger(rawSearch.timeoutSeconds)
+      ? Math.min(120, Math.max(1, rawSearch.timeoutSeconds))
+      : undefined,
+    disableCacheFallback: optionalFlag(rawSearch.disableCacheFallback),
+  })
+
+  const read = withoutUndefined({
+    fullContent: optionalFlag(rawRead.fullContent),
+    maxCharsPerResult: Number.isInteger(rawRead.maxCharsPerResult)
+      ? Math.max(1, rawRead.maxCharsPerResult)
+      : undefined,
+    maxAgeSeconds: Number.isInteger(rawRead.maxAgeSeconds)
+      ? Math.max(600, rawRead.maxAgeSeconds)
+      : undefined,
+    timeoutSeconds: Number.isInteger(rawRead.timeoutSeconds)
+      ? Math.min(120, Math.max(1, rawRead.timeoutSeconds))
+      : undefined,
+    disableCacheFallback: optionalFlag(rawRead.disableCacheFallback),
+  })
+
+  const baseUrl =
+    typeof raw?.baseUrl === 'string' && raw.baseUrl.trim()
+      ? raw.baseUrl.trim()
+      : typeof rawSearch.baseUrl === 'string' && rawSearch.baseUrl.trim()
+        ? rawSearch.baseUrl.trim()
+        : undefined
+
+  return {
+    ...(Object.keys(search).length > 0 ? { search } : {}),
+    ...(Object.keys(read).length > 0 ? { read } : {}),
+    ...(baseUrl ? { baseUrl } : {}),
+  }
+}
+
 export function normalizeWebSearchSettings(
   raw,
   { allowConfiguredOnly = false } = {}
@@ -925,10 +1076,54 @@ export function normalizeWebSearchSettings(
                     ? 'LangSearch'
                     : type === 'exa'
                       ? 'Exa'
-                      : type
+                      : type === 'tinyfish'
+                        ? 'TinyFish'
+                        : type === 'parallel'
+                          ? 'Parallel'
+                          : type
       const help =
-        type === 'ollama' ? ' from https://ollama.com/settings/keys.' : '.'
+        type === 'ollama'
+          ? ' from https://ollama.com/settings/keys.'
+          : type === 'parallel'
+            ? ' from https://parallel.ai.'
+            : '.'
       throw settingsError(`${label} web search needs an API key${help}`)
+    }
+    if (type === 'parallel') {
+      const rawBaseUrl =
+        typeof raw.baseUrl === 'string'
+          ? raw.baseUrl.trim()
+          : typeof raw.search?.baseUrl === 'string'
+            ? raw.search.baseUrl.trim()
+            : ''
+      if (rawBaseUrl) {
+        validateSafeProviderBaseUrl(rawBaseUrl)
+      }
+      return {
+        type: 'parallel',
+        apiKey,
+        ...(rawBaseUrl ? { baseUrl: rawBaseUrl } : {}),
+        ...normalizeParallelOptions(raw),
+        ...preferences,
+      }
+    }
+    if (type === 'tinyfish') {
+      const rawBaseUrl =
+        typeof raw.baseUrl === 'string'
+          ? raw.baseUrl.trim()
+          : typeof raw.search?.baseUrl === 'string'
+            ? raw.search.baseUrl.trim()
+            : ''
+      if (rawBaseUrl) {
+        validateSafeProviderBaseUrl(rawBaseUrl)
+      }
+      return {
+        type: 'tinyfish',
+        apiKey,
+        ...(rawBaseUrl ? { baseUrl: rawBaseUrl } : {}),
+        ...normalizeTinyfishOptions(raw),
+        ...preferences,
+      }
     }
     return {
       type,
@@ -948,34 +1143,47 @@ export function normalizeWebSearchSettings(
     const rawFirecrawlSelfHosted = raw.providers.firecrawlSelfHosted
     const rawLangsearch = raw.providers.langsearch
     const rawExa = raw.providers.exa
+    const rawTinyfish = raw.providers.tinyfish
+    const rawParallel = raw.providers.parallel
     const rawMcp = raw.providers.mcp
     const readerKeys = raw =>
       Array.isArray(raw?.apiKeys)
         ? raw.apiKeys
             .map(k => (typeof k === 'string' ? k.trim() : ''))
             .filter(Boolean)
-        : []
+        : typeof raw?.apiKey === 'string' && raw.apiKey.trim()
+          ? [raw.apiKey.trim()]
+          : []
     const jinaKeys = readerKeys(rawJina)
     const firecrawlKeys = readerKeys(rawFirecrawl)
     const langsearchKeys = readerKeys(rawLangsearch)
     const exaKeys = readerKeys(rawExa)
+    const tinyfishKeys = readerKeys(rawTinyfish)
+    const parallelKeys = readerKeys(rawParallel)
 
     const ollamaKeys = Array.isArray(rawOllama?.apiKeys)
       ? rawOllama.apiKeys
           .map(k => (typeof k === 'string' ? k.trim() : ''))
           .filter(Boolean)
-      : []
+      : typeof rawOllama?.apiKey === 'string' && rawOllama.apiKey.trim()
+        ? [rawOllama.apiKey.trim()]
+        : []
     const websearchapiKeys = Array.isArray(rawWebsearchapi?.apiKeys)
       ? rawWebsearchapi.apiKeys
           .map(k => (typeof k === 'string' ? k.trim() : ''))
           .filter(Boolean)
-      : []
+      : typeof rawWebsearchapi?.apiKey === 'string' &&
+          rawWebsearchapi.apiKey.trim()
+        ? [rawWebsearchapi.apiKey.trim()]
+        : []
 
     const tavilyKeys = readerKeys(rawTavily)
 
     const rawUrls = Array.isArray(rawSearxng?.baseUrls)
       ? rawSearxng.baseUrls
-      : []
+      : typeof rawSearxng?.baseUrl === 'string' && rawSearxng.baseUrl.trim()
+        ? [rawSearxng.baseUrl.trim()]
+        : []
 
     const searxngUrls = rawUrls
       .map(u => normalizeSearxngBaseUrl(u))
@@ -989,7 +1197,10 @@ export function normalizeWebSearchSettings(
     const firecrawlSelfHostedUrls = (
       Array.isArray(rawFirecrawlSelfHosted?.baseUrls)
         ? rawFirecrawlSelfHosted.baseUrls
-        : []
+        : typeof rawFirecrawlSelfHosted?.baseUrl === 'string' &&
+            rawFirecrawlSelfHosted.baseUrl.trim()
+          ? [rawFirecrawlSelfHosted.baseUrl.trim()]
+          : []
     )
       .map(u => normalizeFirecrawlBaseUrl(u))
       .filter(Boolean)
@@ -999,12 +1210,36 @@ export function normalizeWebSearchSettings(
 
     const rawMcpServerUrls = Array.isArray(rawMcp?.serverUrls)
       ? rawMcp.serverUrls
-      : []
+      : typeof rawMcp?.baseUrl === 'string' && rawMcp.baseUrl.trim()
+        ? [rawMcp.baseUrl.trim()]
+        : []
     const mcpServerUrls = rawMcpServerUrls
       .map(u => (typeof u === 'string' ? u.trim() : ''))
       .filter(Boolean)
     for (const url of mcpServerUrls) {
       validateSafeProviderBaseUrl(url)
+    }
+
+    // Validate optional TinyFish base URL override (proxy/mock)
+    const rawTinyfishBaseUrl =
+      typeof rawTinyfish?.baseUrl === 'string'
+        ? rawTinyfish.baseUrl.trim()
+        : typeof rawTinyfish?.search?.baseUrl === 'string'
+          ? rawTinyfish.search.baseUrl.trim()
+          : ''
+    if (rawTinyfishBaseUrl) {
+      validateSafeProviderBaseUrl(rawTinyfishBaseUrl)
+    }
+
+    // Validate optional Parallel base URL override (proxy/mock)
+    const rawParallelBaseUrl =
+      typeof rawParallel?.baseUrl === 'string'
+        ? rawParallel.baseUrl.trim()
+        : typeof rawParallel?.search?.baseUrl === 'string'
+          ? rawParallel.search.baseUrl.trim()
+          : ''
+    if (rawParallelBaseUrl) {
+      validateSafeProviderBaseUrl(rawParallelBaseUrl)
     }
 
     let ollamaEnabled = Boolean(rawOllama?.enabled && ollamaKeys.length > 0)
@@ -1030,6 +1265,12 @@ export function normalizeWebSearchSettings(
       rawLangsearch?.enabled && langsearchKeys.length > 0
     )
     let exaEnabled = Boolean(rawExa?.enabled && exaKeys.length > 0)
+    let tinyfishEnabled = Boolean(
+      rawTinyfish?.enabled && tinyfishKeys.length > 0
+    )
+    let parallelEnabled = Boolean(
+      rawParallel?.enabled && parallelKeys.length > 0
+    )
     let mcpEnabled = Boolean(rawMcp?.enabled && mcpServerUrls.length > 0)
 
     if (
@@ -1042,6 +1283,8 @@ export function normalizeWebSearchSettings(
       !jinaEnabled &&
       !langsearchEnabled &&
       !exaEnabled &&
+      !tinyfishEnabled &&
+      !parallelEnabled &&
       !mcpEnabled
     ) {
       if (allowConfiguredOnly || raw.forTest) {
@@ -1054,6 +1297,8 @@ export function normalizeWebSearchSettings(
         jinaEnabled = jinaKeys.length > 0
         langsearchEnabled = langsearchKeys.length > 0
         exaEnabled = exaKeys.length > 0
+        tinyfishEnabled = tinyfishKeys.length > 0
+        parallelEnabled = parallelKeys.length > 0
         mcpEnabled = mcpServerUrls.length > 0
       }
     }
@@ -1068,6 +1313,8 @@ export function normalizeWebSearchSettings(
       !jinaEnabled &&
       !langsearchEnabled &&
       !exaEnabled &&
+      !tinyfishEnabled &&
+      !parallelEnabled &&
       !mcpEnabled
     ) {
       return null
@@ -1104,7 +1351,11 @@ export function normalizeWebSearchSettings(
                       ? 'langsearch'
                       : exaEnabled
                         ? 'exa'
-                        : 'mcp',
+                        : tinyfishEnabled
+                          ? 'tinyfish'
+                          : parallelEnabled
+                            ? 'parallel'
+                            : 'mcp',
       providers: {
         ollama: {
           enabled: ollamaEnabled,
@@ -1147,6 +1398,17 @@ export function normalizeWebSearchSettings(
           enabled: exaEnabled,
           apiKeys: exaKeys,
           ...normalizeExaOptions(rawExa),
+        },
+        tinyfish: {
+          enabled: tinyfishEnabled,
+          apiKeys: tinyfishKeys,
+          ...normalizeTinyfishOptions(rawTinyfish),
+        },
+        parallel: {
+          enabled: parallelEnabled,
+          apiKeys: parallelKeys,
+          ...(rawParallelBaseUrl ? { baseUrl: rawParallelBaseUrl } : {}),
+          ...normalizeParallelOptions(rawParallel),
         },
         mcp: {
           enabled: mcpEnabled,
@@ -1293,14 +1555,41 @@ export function buildEndpointPool(settings) {
       })
     })
   }
+  if (settings?.providers?.tinyfish?.enabled) {
+    const { apiKeys = [], baseUrl, search } = settings.providers.tinyfish
+    apiKeys.forEach((apiKey, index) => {
+      pool.push({
+        id: `tinyfish:${index}`,
+        provider: 'tinyfish',
+        apiKey,
+        ...(baseUrl ? { baseUrl } : {}),
+        search,
+      })
+    })
+  }
+  if (settings?.providers?.parallel?.enabled) {
+    const { apiKeys = [], baseUrl, search, read } = settings.providers.parallel
+    apiKeys.forEach((apiKey, index) => {
+      pool.push({
+        id: `parallel:${index}`,
+        provider: 'parallel',
+        apiKey,
+        ...(baseUrl ? { baseUrl } : {}),
+        search,
+        read,
+      })
+    })
+  }
   if (settings?.providers?.mcp?.enabled) {
-    const { serverUrls = [], headers } = settings.providers.mcp
+    const { serverUrls = [], headers, toolName, queryParam } = settings.providers.mcp
     serverUrls.forEach((baseUrl, index) => {
       pool.push({
         id: `mcp:${index}`,
         provider: 'mcp',
         baseUrl,
         ...(headers ? { headers } : {}),
+        ...(toolName ? { toolName } : {}),
+        ...(queryParam ? { queryParam } : {}),
       })
     })
   }
@@ -1318,6 +1607,22 @@ export function buildEndpointPool(settings) {
         baseUrl: settings.baseUrl,
       })
     } else if (
+      settings?.type === 'mcp' &&
+      (settings.baseUrl ||
+        (Array.isArray(settings.serverUrls) && settings.serverUrls.length > 0))
+    ) {
+      const urls = settings.baseUrl ? [settings.baseUrl] : settings.serverUrls
+      urls.forEach((baseUrl, index) => {
+        pool.push({
+          id: `mcp:${index}`,
+          provider: 'mcp',
+          baseUrl,
+          ...(settings.headers ? { headers: settings.headers } : {}),
+          ...(settings.toolName ? { toolName: settings.toolName } : {}),
+          ...(settings.queryParam ? { queryParam: settings.queryParam } : {}),
+        })
+      })
+    } else if (
       settings?.type &&
       settings.apiKey &&
       SEARCH_PROVIDERS.has(settings.type)
@@ -1326,6 +1631,11 @@ export function buildEndpointPool(settings) {
         id: `${settings.type}:0`,
         provider: settings.type,
         apiKey: settings.apiKey,
+        ...(settings.baseUrl ? { baseUrl: settings.baseUrl } : {}),
+        ...(settings.search ? { search: settings.search } : {}),
+        ...(settings.read ? { read: settings.read } : {}),
+        ...(settings.scrape ? { scrape: settings.scrape } : {}),
+        ...(settings.extract ? { extract: settings.extract } : {}),
       })
     }
   }
@@ -1519,6 +1829,11 @@ export function extractMcpSearchResults(body, query) {
 
   if (typeof body !== 'object') return []
 
+  // JSON-RPC explicit error or tool execution failure
+  if (body.error || body.result?.isError) {
+    return []
+  }
+
   // Case 1: body is an array of results
   if (Array.isArray(body)) {
     const normalized = normalizeResults(body, Number.MAX_SAFE_INTEGER, query)
@@ -1659,6 +1974,144 @@ function normalizeResults(list, max, query) {
 // The tools
 // ---------------------------------------------------------------------------
 
+export const MAX_MCP_CACHE_SIZE = 256
+export const mcpEndpointCache = new Map()
+
+export function setMcpEndpointCache(key, value) {
+  if (mcpEndpointCache.has(key)) {
+    mcpEndpointCache.delete(key)
+  } else if (mcpEndpointCache.size >= MAX_MCP_CACHE_SIZE) {
+    const oldest = mcpEndpointCache.keys().next().value
+    if (oldest !== undefined) mcpEndpointCache.delete(oldest)
+  }
+  mcpEndpointCache.set(key, value)
+}
+
+export function clearMcpEndpointCache() {
+  mcpEndpointCache.clear()
+}
+
+export function makeJsonRpcRequest(method, params, id = 1) {
+  const req = {
+    jsonrpc: '2.0',
+    id,
+    method,
+  }
+  if (params !== undefined) {
+    req.params = params
+  }
+  return req
+}
+
+export function detectSearchTool(
+  tools,
+  configuredToolName,
+  configuredQueryParam
+) {
+  let tool = null
+  if (configuredToolName && Array.isArray(tools)) {
+    tool =
+      tools.find(t => t?.name === configuredToolName) || {
+        name: configuredToolName,
+      }
+  } else if (Array.isArray(tools) && tools.length > 0) {
+    tool = tools.find(t =>
+      /search|web|brave|duckduckgo|google|tavily|bing|fetch/i.test(
+        t?.name || ''
+      )
+    )
+    if (!tool) {
+      tool = tools.find(t => /search|web/i.test(t?.description || ''))
+    }
+    if (!tool && tools.length === 1) {
+      tool = tools[0]
+    }
+  }
+
+  const toolName = configuredToolName || tool?.name || 'search'
+
+  let queryParam = configuredQueryParam
+  if (!queryParam) {
+    const props = tool?.inputSchema?.properties
+    if (props && typeof props === 'object') {
+      const candidates = [
+        'query',
+        'q',
+        'search_query',
+        'query_string',
+        'text',
+        'input',
+        'url',
+      ]
+      for (const c of candidates) {
+        if (c in props) {
+          queryParam = c
+          break
+        }
+      }
+    }
+    if (
+      !queryParam &&
+      Array.isArray(tool?.inputSchema?.required) &&
+      tool.inputSchema.required.length > 0
+    ) {
+      queryParam = tool.inputSchema.required[0]
+    }
+    if (!queryParam) {
+      queryParam = 'query'
+    }
+  }
+
+  return { toolName, queryParam }
+}
+
+function isUninitializedError(err) {
+  if (!err) return false
+  const msg = String(err.message || '')
+  return (
+    msg.includes('-32002') ||
+    /not initialized/i.test(msg) ||
+    /initialize/i.test(msg)
+  )
+}
+
+function isLegacyFallbackCandidate(err) {
+  if (!err) return false
+  const status = err.status
+  return status === 400 || status === 404 || status === 405
+}
+
+function isToolNotFoundError(body) {
+  if (!body) return false
+  if (body?.error) {
+    const msg = String(body.error.message || '').toLowerCase()
+    if (
+      body.error.code === -32601 ||
+      msg.includes('not found') ||
+      msg.includes('unknown tool') ||
+      msg.includes('no such tool')
+    ) {
+      return true
+    }
+  }
+  if (body?.result?.isError) {
+    const text = Array.isArray(body.result.content)
+      ? body.result.content
+          .map(c => (typeof c === 'string' ? c : c?.text || ''))
+          .join(' ')
+          .toLowerCase()
+      : ''
+    if (
+      text.includes('not found') ||
+      text.includes('unknown tool') ||
+      text.includes('no such tool')
+    ) {
+      return true
+    }
+  }
+  return false
+}
+
 export class AiAssistWebTools {
   /**
    * @param {{ type: 'ollama', apiKey: string } | { type: 'searxng', baseUrl: string },
@@ -1671,7 +2124,7 @@ export class AiAssistWebTools {
       fetchFn = fetch,
       fetchPage = fetchPublicUrl,
       cacheOwner = 'default',
-      browser = sharedBrowserRoute(),
+      browser,
       contextWindow,
       runJob,
       prefetch = 0,
@@ -1692,11 +2145,18 @@ export class AiAssistWebTools {
 
     this.caches = getOwnerCaches(cacheOwner, settings)
 
+    const effectiveBrowser =
+      browser !== undefined
+        ? browser
+        : fetchPage !== fetchPublicUrl
+          ? null
+          : sharedBrowserRoute()
+
     this.fetcher = new WebFetcher({
       fetchPage,
       fetchFn,
       rotator: this.rotator,
-      browser,
+      browser: effectiveBrowser,
       cache: this.caches.documents,
       cacheHours: settings.cacheHours ?? WEB_SEARCH_DEFAULTS.cacheHours,
       owner: cacheOwner,
@@ -1891,6 +2351,8 @@ export class AiAssistWebTools {
       this.settings.providers?.jina?.search ?? null,
       this.settings.providers?.langsearch?.search ?? null,
       this.settings.providers?.exa?.search ?? null,
+      this.settings.providers?.tinyfish?.search ?? null,
+      this.settings.providers?.parallel?.search ?? null,
       this.settings.providers?.ollama?.maxResults ?? null,
       this.settings.providers?.searxng?.timeRange ?? null,
       this.settings.providers?.searxng?.safeSearch ?? null,
@@ -1939,6 +2401,10 @@ export class AiAssistWebTools {
               res = await this._langsearchSearch(query, signal, endpoint)
             } else if (provider === 'exa') {
               res = await this._exaSearch(query, signal, endpoint)
+            } else if (provider === 'tinyfish') {
+              res = await this._tinyfishSearch(query, signal, endpoint)
+            } else if (provider === 'parallel') {
+              res = await this._parallelSearch(query, signal, endpoint)
             } else if (provider === 'mcp') {
               res = await this._mcpSearch(query, signal, endpoint)
             } else {
@@ -2682,30 +3148,365 @@ export class AiAssistWebTools {
     return { results: normalizeResults(results, limit, query) }
   }
 
-  /** MCP search endpoint */
-  async _mcpSearch(query, signal, endpoint) {
-    const baseUrl = endpoint?.baseUrl
-    const url = resolveDockerHostUrl(baseUrl)
+  /**
+   * TinyFish Search API with the user's chosen options. Single GET on the
+   * search root with X-API-Key. Search is search-only: pages are read by
+   * this server via direct fetch. See https://docs.tinyfish.ai/search-api/reference
+   */
+  async _tinyfishSearch(query, signal, endpoint) {
+    const options = endpoint?.search ?? {}
+    const limit = options.maxResults ?? DEFAULT_RESULTS
+    const base =
+      typeof endpoint?.baseUrl === 'string' && endpoint.baseUrl.trim()
+        ? endpoint.baseUrl.trim().replace(/\/+$/, '')
+        : typeof options.baseUrl === 'string' && options.baseUrl.trim()
+          ? options.baseUrl.trim().replace(/\/+$/, '')
+          : TINYFISH_API_BASE
+    const params = new URLSearchParams()
+    params.set('query', query)
+    if (options.domainType) params.set('domain_type', options.domainType)
+    if (options.location) params.set('location', options.location)
+    if (options.language) params.set('language', options.language)
+    if (Array.isArray(options.includeDomains) && options.includeDomains.length > 0) {
+      params.set('include_domains', options.includeDomains.join(','))
+    }
+    if (Array.isArray(options.excludeDomains) && options.excludeDomains.length > 0) {
+      params.set('exclude_domains', options.excludeDomains.join(','))
+    }
+    if (options.domainType === 'research_paper') {
+      if (Number.isInteger(options.pubYearMin)) {
+        params.set('pub_year_min', String(options.pubYearMin))
+      }
+      if (Number.isInteger(options.pubYearMax)) {
+        params.set('pub_year_max', String(options.pubYearMax))
+      }
+    } else {
+      if (Number.isInteger(options.recencyMinutes)) {
+        params.set('recency_minutes', String(options.recencyMinutes))
+      } else {
+        if (options.afterDate) params.set('after_date', options.afterDate)
+        if (options.beforeDate) params.set('before_date', options.beforeDate)
+      }
+    }
+    const url = `${resolveDockerHostUrl(base).replace(/\/+$/, '')}/?${params.toString()}`
+    const res = await this._request(
+      url,
+      {
+        method: 'GET',
+        headers: {
+          Accept: 'application/json',
+          'X-API-Key': endpoint.apiKey,
+        },
+      },
+      signal,
+      'TinyFish',
+      'tinyfish'
+    )
+    let body
+    try {
+      body = await res.json()
+    } catch {
+      throw webError('TinyFish returned a response that is not JSON.')
+    }
+    const rawResults = Array.isArray(body?.results) ? body.results : []
+    const results = rawResults.map(entry => ({
+      title: entry?.title,
+      url: entry?.url,
+      content: entry?.snippet || entry?.description || entry?.text,
+      publishedDate:
+        entry?.date || entry?.publishedDate || entry?.published_date ||
+        (Number.isInteger(entry?.year) ? String(entry.year) : undefined),
+    }))
+    return { results: normalizeResults(results, limit, query) }
+  }
 
-    const headers = {
-      'Content-Type': 'application/json',
-      Accept: 'application/json, text/plain, */*',
+  /**
+   * Parallel Search API with the user's chosen options.
+   * See https://parallel.ai/products/search
+   */
+  async _parallelSearch(query, signal, endpoint) {
+    const options = endpoint?.search ?? {}
+    const limit = options.maxResults ?? DEFAULT_RESULTS
+    const base =
+      typeof endpoint?.baseUrl === 'string' && endpoint.baseUrl.trim()
+        ? endpoint.baseUrl.trim().replace(/\/+$/, '')
+        : typeof options.baseUrl === 'string' && options.baseUrl.trim()
+          ? options.baseUrl.trim().replace(/\/+$/, '')
+          : PARALLEL_API_BASE
+
+    const advanced_settings = {
+      max_results: Math.min(PARALLEL_MAX_RESULTS, Math.max(1, limit)),
+    }
+    if (options.location) {
+      advanced_settings.location = options.location
     }
 
-    if (Array.isArray(endpoint?.headers)) {
-      for (const h of endpoint.headers) {
-        if (h && typeof h.key === 'string' && typeof h.value === 'string') {
-          headers[h.key] = h.value
-        }
-      }
-    } else if (endpoint?.headers && typeof endpoint.headers === 'object') {
-      for (const [key, value] of Object.entries(endpoint.headers)) {
-        if (typeof key === 'string' && typeof value === 'string') {
-          headers[key] = value
-        }
+    const source_policy = {}
+    if (Array.isArray(options.includeDomains) && options.includeDomains.length > 0) {
+      source_policy.include_domains = options.includeDomains
+    }
+    if (Array.isArray(options.excludeDomains) && options.excludeDomains.length > 0) {
+      source_policy.exclude_domains = options.excludeDomains
+    }
+    if (options.afterDate) {
+      source_policy.after_date = options.afterDate
+    }
+    if (Object.keys(source_policy).length > 0) {
+      advanced_settings.source_policy = source_policy
+    }
+
+    const fetch_policy = {}
+    if (Number.isInteger(options.maxAgeSeconds)) {
+      fetch_policy.max_age_seconds = Math.max(600, options.maxAgeSeconds)
+    }
+    if (Number.isInteger(options.timeoutSeconds)) {
+      fetch_policy.timeout_seconds = options.timeoutSeconds
+    }
+    if (typeof options.disableCacheFallback === 'boolean') {
+      fetch_policy.disable_cache_fallback = options.disableCacheFallback
+    }
+    if (Object.keys(fetch_policy).length > 0) {
+      advanced_settings.fetch_policy = fetch_policy
+    }
+
+    if (Number.isInteger(options.maxCharsPerResult)) {
+      advanced_settings.excerpt_settings = {
+        max_chars_per_result: options.maxCharsPerResult,
       }
     }
 
+    const q = (typeof query === 'string' ? query.trim() : '') || 'search'
+    const payload = {
+      search_queries: [q.slice(0, 200)],
+      objective: q.slice(0, 5000),
+      ...(options.mode ? { mode: options.mode } : {}),
+      ...(Number.isInteger(options.maxCharsTotal)
+        ? { max_chars_total: options.maxCharsTotal }
+        : {}),
+      advanced_settings,
+    }
+
+    const timeoutMs = Number.isInteger(options.timeoutSeconds)
+      ? Math.max(REQUEST_TIMEOUT_MS, (options.timeoutSeconds + 10) * 1000)
+      : undefined
+
+    const res = await this._request(
+      `${resolveDockerHostUrl(base).replace(/\/+$/, '')}/v1/search`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': endpoint.apiKey,
+        },
+        body: JSON.stringify(payload),
+      },
+      signal,
+      'Parallel',
+      'parallel',
+      timeoutMs
+    )
+
+    let body
+    try {
+      body = await res.json()
+    } catch {
+      throw webError('Parallel returned a response that is not JSON.')
+    }
+
+    const rawResults = Array.isArray(body?.results) ? body.results : []
+    const results = rawResults.map(entry => ({
+      title: entry?.title,
+      url: entry?.url,
+      content: Array.isArray(entry?.excerpts)
+        ? entry.excerpts.join('\n\n')
+        : entry?.content || entry?.snippet || '',
+      publishedDate:
+        entry?.publish_date || entry?.published_date || entry?.publishedDate,
+    }))
+    return { results: normalizeResults(results, limit, query) }
+  }
+
+  /** MCP search endpoint supporting JSON-RPC 2.0 tools/call and legacy webhooks */
+  async _resolveMcpPostUrl(url, headers, signal) {
+    if (url.endsWith('/sse')) {
+      try {
+        const sseRes = await this._request(
+          url,
+          {
+            method: 'GET',
+            headers: {
+              ...headers,
+              Accept: 'text/event-stream',
+            },
+          },
+          signal,
+          'MCP SSE handshake',
+          'mcp',
+          5000
+        )
+        let text = ''
+        const reader = sseRes.body?.getReader?.()
+        if (reader) {
+          try {
+            const decoder = new TextDecoder()
+            while (true) {
+              const { done, value } = await reader.read()
+              if (done) break
+              text += decoder.decode(value, { stream: true })
+              if (text.includes('data:') && text.includes('endpoint')) {
+                const match = text.match(/event:\s*endpoint[\r\n]+data:\s*([^\r\n]+)/)
+                if (match) {
+                  reader.cancel().catch(() => {})
+                  break
+                }
+              }
+            }
+          } catch {
+            // ignore stream read error
+          }
+        } else {
+          text = await sseRes.text()
+        }
+        const match = text.match(/event:\s*endpoint[\r\n]+data:\s*([^\r\n]+)/)
+        if (match && match[1]) {
+          const resolved = new URL(match[1].trim(), url)
+          const baseOrigin = new URL(url).origin
+          if (resolved.origin === baseOrigin) {
+            validateSafeProviderBaseUrl(resolved.toString())
+            return resolved.toString()
+          }
+        }
+      } catch {
+        // Fall back to original URL
+      }
+    }
+    return url
+  }
+
+  async _mcpInitialize(postUrl, headers, signal) {
+    const initPayload = makeJsonRpcRequest(
+      'initialize',
+      {
+        protocolVersion: '2024-11-05',
+        capabilities: {},
+        clientInfo: {
+          name: 'overleaf-ai-assist',
+          version: '1.0.0',
+        },
+      },
+      0
+    )
+    await this._request(
+      postUrl,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(initPayload),
+      },
+      signal,
+      'MCP Initialize',
+      'mcp'
+    ).catch(() => {})
+
+    const notifPayload = {
+      jsonrpc: '2.0',
+      method: 'notifications/initialized',
+    }
+    await this._request(
+      postUrl,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(notifPayload),
+      },
+      signal,
+      'MCP Initialized',
+      'mcp'
+    ).catch(() => {})
+  }
+
+  async _mcpDiscoverTool(postUrl, headers, signal, endpoint) {
+    if (endpoint?.toolName && endpoint?.queryParam) {
+      return {
+        toolName: endpoint.toolName,
+        queryParam: endpoint.queryParam,
+      }
+    }
+
+    const listPayload = makeJsonRpcRequest('tools/list', {}, 1)
+    let res
+    try {
+      res = await this._request(
+        postUrl,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(listPayload),
+        },
+        signal,
+        'MCP Tool Discovery',
+        'mcp'
+      )
+    } catch (err) {
+      if (isUninitializedError(err)) {
+        await this._mcpInitialize(postUrl, headers, signal)
+        res = await this._request(
+          postUrl,
+          {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(listPayload),
+          },
+          signal,
+          'MCP Tool Discovery',
+          'mcp'
+        )
+      } else {
+        throw err
+      }
+    }
+
+    let body
+    try {
+      const text = await res.text()
+      try {
+        body = JSON.parse(text)
+      } catch {
+        body = text
+      }
+    } catch {
+      return detectSearchTool([], endpoint?.toolName, endpoint?.queryParam)
+    }
+
+    if (
+      body?.error &&
+      (body.error.code === -32002 ||
+        /initialize/i.test(body.error.message || ''))
+    ) {
+      await this._mcpInitialize(postUrl, headers, signal)
+      const retryRes = await this._request(
+        postUrl,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(listPayload),
+        },
+        signal,
+        'MCP Tool Discovery',
+        'mcp'
+      )
+      try {
+        body = await retryRes.json()
+      } catch {
+        // ignore
+      }
+    }
+
+    const tools = Array.isArray(body?.result?.tools) ? body.result.tools : []
+    return detectSearchTool(tools, endpoint?.toolName, endpoint?.queryParam)
+  }
+
+  async _legacyMcpSearch(url, query, headers, signal) {
     const res = await this._request(
       url,
       {
@@ -2728,6 +3529,204 @@ export class AiAssistWebTools {
       }
     } catch {
       throw webError('MCP search returned an unreadable response.')
+    }
+
+    const results = extractMcpSearchResults(body, query)
+    return {
+      results: normalizeResults(results, Number.MAX_SAFE_INTEGER, query),
+    }
+  }
+
+  /** MCP search endpoint */
+  async _mcpSearch(query, signal, endpoint) {
+    const baseUrl = endpoint?.baseUrl
+    const rawUrl = resolveDockerHostUrl(baseUrl)
+    const cacheKey = rawUrl
+    const cached = mcpEndpointCache.get(cacheKey)
+
+    const headers = {
+      'Content-Type': 'application/json',
+      Accept: 'application/json, text/plain, */*',
+    }
+
+    if (Array.isArray(endpoint?.headers)) {
+      for (const h of endpoint.headers) {
+        if (h && typeof h.key === 'string' && typeof h.value === 'string') {
+          headers[h.key] = h.value
+        }
+      }
+    } else if (endpoint?.headers && typeof endpoint.headers === 'object') {
+      for (const [key, value] of Object.entries(endpoint.headers)) {
+        if (typeof key === 'string' && typeof value === 'string') {
+          headers[key] = value
+        }
+      }
+    }
+
+    let postUrl = cached?.postUrl || rawUrl
+    if (!cached?.postUrl && rawUrl.endsWith('/sse')) {
+      postUrl = await this._resolveMcpPostUrl(rawUrl, headers, signal)
+    }
+
+    // A tool the user named is always called as JSON-RPC; the legacy shortcut
+    // only applies to endpoints whose tool is left to be discovered.
+    if (cached?.isLegacy && !endpoint?.toolName) {
+      return this._legacyMcpSearch(postUrl, query, headers, signal)
+    }
+
+    let toolName = endpoint?.toolName || cached?.toolName || 'search'
+    let queryParam = endpoint?.queryParam || cached?.queryParam || 'query'
+
+    const callPayload = makeJsonRpcRequest(
+      'tools/call',
+      {
+        name: toolName,
+        arguments: {
+          [queryParam]: query,
+        },
+      },
+      1
+    )
+
+    let res
+    try {
+      res = await this._request(
+        postUrl,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(callPayload),
+        },
+        signal,
+        'MCP Search',
+        'mcp'
+      )
+    } catch (err) {
+      if (isUninitializedError(err)) {
+        await this._mcpInitialize(postUrl, headers, signal)
+        res = await this._request(
+          postUrl,
+          {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(callPayload),
+          },
+          signal,
+          'MCP Search',
+          'mcp'
+        )
+      } else if (!endpoint?.toolName && isLegacyFallbackCandidate(err)) {
+        try {
+          const legacyRes = await this._legacyMcpSearch(
+            postUrl,
+            query,
+            headers,
+            signal
+          )
+          setMcpEndpointCache(cacheKey, { postUrl, isLegacy: true })
+          return legacyRes
+        } catch {
+          throw err
+        }
+      } else {
+        throw err
+      }
+    }
+
+    let body
+    try {
+      const text = await res.text()
+      try {
+        body = JSON.parse(text)
+      } catch {
+        body = text
+      }
+    } catch {
+      throw webError('MCP search returned an unreadable response.')
+    }
+
+    if (
+      body?.error &&
+      (body.error.code === -32002 ||
+        /initialize/i.test(body.error.message || ''))
+    ) {
+      await this._mcpInitialize(postUrl, headers, signal)
+      const retryRes = await this._request(
+        postUrl,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(callPayload),
+        },
+        signal,
+        'MCP Search',
+        'mcp'
+      )
+      try {
+        const retryText = await retryRes.text()
+        try {
+          body = JSON.parse(retryText)
+        } catch {
+          body = retryText
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    if (!endpoint?.toolName && isToolNotFoundError(body)) {
+      try {
+        const discovered = await this._mcpDiscoverTool(
+          postUrl,
+          headers,
+          signal,
+          endpoint
+        )
+        if (discovered.toolName && discovered.toolName !== toolName) {
+          toolName = discovered.toolName
+          queryParam = discovered.queryParam
+          setMcpEndpointCache(cacheKey, {
+            postUrl,
+            toolName,
+            queryParam,
+            isLegacy: false,
+          })
+
+          const retryPayload = makeJsonRpcRequest(
+            'tools/call',
+            {
+              name: toolName,
+              arguments: {
+                [queryParam]: query,
+              },
+            },
+            2
+          )
+          const retryRes = await this._request(
+            postUrl,
+            {
+              method: 'POST',
+              headers,
+              body: JSON.stringify(retryPayload),
+            },
+            signal,
+            'MCP Search',
+            'mcp'
+          )
+          try {
+            const retryText = await retryRes.text()
+            try {
+              body = JSON.parse(retryText)
+            } catch {
+              body = retryText
+            }
+          } catch {
+            // ignore
+          }
+        }
+      } catch {
+        // keep current body
+      }
     }
 
     const results = extractMcpSearchResults(body, query)
@@ -2780,20 +3779,396 @@ export class AiAssistWebTools {
   }
 }
 
-/** Runs one small search, for the settings form's connection test. */
+/**
+ * Probes the health of a single provider endpoint without burning live search quotas.
+ */
+export async function probeProviderHealth(
+  provider,
+  endpoint,
+  { signal, fetchFn, tools } = {}
+) {
+  const startedAt = Date.now()
+  const timeoutMs = 5000
+  const timeout = AbortSignal.timeout(timeoutMs)
+  const combinedSignal = AbortSignal.any([signal, timeout].filter(Boolean))
+
+  try {
+    if (
+      ['searxng', 'firecrawlSelfHosted', 'mcp'].includes(provider) &&
+      !endpoint?.baseUrl
+    ) {
+      return {
+        provider,
+        ok: false,
+        latencyMs: 0,
+        error: 'Missing instance URL',
+      }
+    }
+    if (
+      !['searxng', 'firecrawlSelfHosted', 'mcp'].includes(provider) &&
+      !endpoint?.apiKey
+    ) {
+      return {
+        provider,
+        ok: false,
+        latencyMs: 0,
+        error: 'Missing API key',
+      }
+    }
+
+    switch (provider) {
+      case 'tavily': {
+        await apiRequest(
+          'https://api.tavily.com/usage',
+          {
+            method: 'GET',
+            headers: { Authorization: `Bearer ${endpoint.apiKey}` },
+          },
+          {
+            signal: combinedSignal,
+            label: 'Tavily',
+            providerType: 'tavily',
+            timeoutMs,
+            fetchFn,
+          }
+        )
+        break
+      }
+      case 'exa': {
+        await apiRequest(
+          'https://api.exa.ai/monitors',
+          {
+            method: 'GET',
+            headers: { 'x-api-key': endpoint.apiKey },
+          },
+          {
+            signal: combinedSignal,
+            label: 'Exa',
+            providerType: 'exa',
+            timeoutMs,
+            fetchFn,
+          }
+        )
+        break
+      }
+      case 'firecrawl': {
+        await apiRequest(
+          'https://api.firecrawl.dev/v1/team/credit-usage',
+          {
+            method: 'GET',
+            headers: { Authorization: `Bearer ${endpoint.apiKey}` },
+          },
+          {
+            signal: combinedSignal,
+            label: 'Firecrawl',
+            providerType: 'firecrawl',
+            timeoutMs,
+            fetchFn,
+          }
+        )
+        break
+      }
+      case 'firecrawlSelfHosted': {
+        const base = (endpoint.baseUrl || '').replace(/\/+$/, '')
+        try {
+          await apiRequest(
+            `${base}/v1/health`,
+            { method: 'GET' },
+            {
+              signal: combinedSignal,
+              label: 'Firecrawl (self-hosted)',
+              providerType: 'firecrawlSelfHosted',
+              timeoutMs,
+              fetchFn,
+            }
+          )
+        } catch (err) {
+          if (err?.status === 404) {
+            await apiRequest(
+              `${base}/health`,
+              { method: 'GET' },
+              {
+                signal: combinedSignal,
+                label: 'Firecrawl (self-hosted)',
+                providerType: 'firecrawlSelfHosted',
+                timeoutMs,
+                fetchFn,
+              }
+            )
+          } else {
+            throw err
+          }
+        }
+        break
+      }
+      case 'searxng': {
+        const base = (endpoint.baseUrl || '').replace(/\/+$/, '')
+        try {
+          await apiRequest(
+            `${base}/healthz`,
+            { method: 'GET' },
+            {
+              signal: combinedSignal,
+              label: 'SearXNG',
+              providerType: 'searxng',
+              timeoutMs,
+              fetchFn,
+            }
+          )
+        } catch (err) {
+          if (err?.status === 404) {
+            await apiRequest(
+              `${base}/config`,
+              { method: 'GET' },
+              {
+                signal: combinedSignal,
+                label: 'SearXNG',
+                providerType: 'searxng',
+                timeoutMs,
+                fetchFn,
+              }
+            )
+          } else {
+            throw err
+          }
+        }
+        break
+      }
+      case 'jina': {
+        await apiRequest(
+          'https://s.jina.ai/',
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${endpoint.apiKey}`,
+              'X-Respond-With': 'no-content',
+            },
+            body: JSON.stringify({ q: 'ping', num: 1 }),
+          },
+          {
+            signal: combinedSignal,
+            label: 'Jina AI',
+            providerType: 'jina',
+            timeoutMs,
+            fetchFn,
+          }
+        )
+        break
+      }
+      case 'websearchapi': {
+        await apiRequest(
+          'https://api.websearchapi.ai/ai-search',
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${endpoint.apiKey}`,
+            },
+            body: JSON.stringify({ query: 'ping', maxResults: 1 }),
+          },
+          {
+            signal: combinedSignal,
+            label: 'WebSearchAPI.ai',
+            providerType: 'websearchapi',
+            timeoutMs,
+            fetchFn,
+          }
+        )
+        break
+      }
+      case 'langsearch': {
+        await apiRequest(
+          'https://api.langsearch.com/v1/web-search',
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${endpoint.apiKey}`,
+            },
+            body: JSON.stringify({ query: 'ping', count: 1 }),
+          },
+          {
+            signal: combinedSignal,
+            label: 'LangSearch',
+            providerType: 'langsearch',
+            timeoutMs,
+            fetchFn,
+          }
+        )
+        break
+      }
+      case 'tinyfish': {
+        const base = (
+          endpoint.baseUrl || 'https://api.search.tinyfish.ai'
+        ).replace(/\/+$/, '')
+        await apiRequest(
+          `${base}/?query=ping`,
+          {
+            method: 'GET',
+            headers: { 'X-API-Key': endpoint.apiKey },
+          },
+          {
+            signal: combinedSignal,
+            label: 'TinyFish',
+            providerType: 'tinyfish',
+            timeoutMs,
+            fetchFn,
+          }
+        )
+        break
+      }
+      case 'parallel': {
+        const base = (
+          endpoint.baseUrl ||
+          endpoint.search?.baseUrl ||
+          PARALLEL_API_BASE
+        ).replace(/\/+$/, '')
+        await apiRequest(
+          `${base}/v1/search`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-api-key': endpoint.apiKey,
+            },
+            body: JSON.stringify({
+              search_queries: ['ping'],
+              objective: 'ping',
+              mode: endpoint.search?.mode || 'turbo',
+              advanced_settings: {
+                max_results: 1,
+              },
+            }),
+          },
+          {
+            signal: combinedSignal,
+            label: 'Parallel',
+            providerType: 'parallel',
+            timeoutMs,
+            fetchFn,
+          }
+        )
+        break
+      }
+      case 'ollama': {
+        await apiRequest(
+          'https://ollama.com/api/web_search',
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${endpoint.apiKey}`,
+            },
+            body: JSON.stringify({ query: 'ping', max_results: 1 }),
+          },
+          {
+            signal: combinedSignal,
+            label: 'Ollama web search',
+            providerType: 'ollama',
+            timeoutMs,
+            fetchFn,
+          }
+        )
+        break
+      }
+      case 'mcp': {
+        if (tools && typeof tools._mcpSearch === 'function') {
+          await tools._mcpSearch('ping', combinedSignal, endpoint)
+        } else {
+          const base = (endpoint.baseUrl || '').replace(/\/+$/, '')
+          await apiRequest(
+            base,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ q: 'ping' }),
+            },
+            {
+              signal: combinedSignal,
+              label: 'MCP WebSearch',
+              providerType: 'mcp',
+              timeoutMs,
+              fetchFn,
+            }
+          )
+        }
+        break
+      }
+      default:
+        throw new Error(`Unknown provider '${provider}'`)
+    }
+
+    return {
+      provider,
+      ok: true,
+      latencyMs: Date.now() - startedAt,
+    }
+  } catch (err) {
+    return {
+      provider,
+      ok: false,
+      latencyMs: Date.now() - startedAt,
+      error: err?.message || 'Connection failed',
+    }
+  }
+}
+
+/**
+ * Runs parallel zero-credit / lightweight health checks across all enabled search providers.
+ * Strictly tests only the first credential (index 0) per provider to avoid token/quota waste.
+ */
 export async function testWebSearch(settings, { signal, fetchFn } = {}) {
   const tools = new AiAssistWebTools(settings, fetchFn ? { fetchFn } : {})
-  const startedAt = Date.now()
-  const result = await tools.search(
-    { query: 'LaTeX' },
-    { signal, useCache: false }
+
+  // Group endpoints by provider and strictly select only the first endpoint (index 0)
+  const enabledProviders = new Map()
+  for (const endpoint of tools.rotator.pool) {
+    if (SEARCH_PROVIDERS.has(endpoint.provider)) {
+      if (!enabledProviders.has(endpoint.provider)) {
+        enabledProviders.set(endpoint.provider, endpoint)
+      }
+    }
+  }
+
+  const targetEndpoints = Array.from(enabledProviders.values())
+  if (targetEndpoints.length === 0) {
+    throw new ProviderError(
+      'No web search providers are configured or enabled.',
+      {
+        code: 'invalidWebSearchSettings',
+        status: 400,
+      }
+    )
+  }
+
+  const probePromises = targetEndpoints.map(endpoint =>
+    probeProviderHealth(endpoint.provider, endpoint, { signal, fetchFn, tools })
   )
+
+  const settled = await Promise.allSettled(probePromises)
+  const results = settled.map((outcome, idx) => {
+    if (outcome.status === 'fulfilled') {
+      return outcome.value
+    }
+    return {
+      provider: targetEndpoints[idx].provider,
+      ok: false,
+      latencyMs: 0,
+      error: outcome.reason?.message || 'Unexpected probe failure',
+    }
+  })
+
+  const anySuccess = results.some(r => r.ok)
+  const maxLatency = Math.max(0, ...results.map(r => r.latencyMs || 0))
+  const firstOk = results.find(r => r.ok)
+
   return {
-    latencyMs: Date.now() - startedAt,
-    resultCount: result.results.length,
-    activeEndpoints: tools.rotator.pool.filter(e =>
-      SEARCH_PROVIDERS.has(e.provider)
-    ).length,
-    provider: result.provider,
+    latencyMs: maxLatency,
+    anySuccess,
+    results,
+    activeEndpoints: results.length,
+    provider: firstOk ? firstOk.provider : results[0]?.provider || null,
+    resultCount: results.filter(r => r.ok).length,
   }
 }

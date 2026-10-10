@@ -38,6 +38,8 @@ const TYPES: { value: ProviderType; label: string }[] = [
   { value: 'ollama', label: 'Ollama' },
 ]
 
+const ALL_TYPES = TYPES.map(entry => entry.value)
+
 type Probe =
   | { state: 'idle' }
   | { state: 'busy' }
@@ -48,13 +50,22 @@ export default function ProviderForm({
   initial,
   onSave,
   onCancel,
+  types = ALL_TYPES,
+  defaultBaseUrls = DEFAULT_BASE_URLS,
+  idPrefix = 'ai-provider',
 }: {
   initial?: ProviderSettings
   onSave: (values: ProviderSettings) => void
   onCancel: () => void
+  /** The provider types offered; the first is the default. */
+  types?: ProviderType[]
+  /** The base URL saved when the field is left blank. */
+  defaultBaseUrls?: Record<ProviderType, string>
+  /** Prefix of the controls' ids, so two forms can be open at once. */
+  idPrefix?: string
 }) {
   const { t } = useTranslation()
-  const [type, setType] = useState<ProviderType>(initial?.type ?? 'openai')
+  const [type, setType] = useState<ProviderType>(initial?.type ?? types[0])
   const [baseUrl, setBaseUrl] = useState(initial?.baseUrl ?? '')
   const [model, setModel] = useState(initial?.model ?? '')
   const [apiKey, setApiKey] = useState(initial?.apiKey ?? '')
@@ -119,7 +130,7 @@ export default function ProviderForm({
     const parsedMaxOutputTokens = numeric(maxOutputTokens)
     return {
       type,
-      baseUrl: baseUrl.trim() || DEFAULT_BASE_URLS[type],
+      baseUrl: baseUrl.trim() || defaultBaseUrls[type],
       apiKey,
       model: effectiveModel,
       ...(realName ? { modelName: realName } : {}),
@@ -202,14 +213,14 @@ export default function ProviderForm({
         onSave(current())
       }}
     >
-      <OLFormGroup controlId="ai-provider-type">
+      <OLFormGroup controlId={`${idPrefix}-type`}>
         <OLFormLabel>Provider type</OLFormLabel>
         <div className="d-flex align-items-center gap-2">
           <OLFormSelect
             value={type}
             onChange={e => onChangeType(e.target.value as ProviderType)}
           >
-            {TYPES.map(entry => (
+            {TYPES.filter(entry => types.includes(entry.value)).map(entry => (
               <option key={entry.value} value={entry.value}>
                 {entry.label}
               </option>
@@ -219,20 +230,20 @@ export default function ProviderForm({
         </div>
       </OLFormGroup>
 
-      <OLFormGroup controlId="ai-provider-base-url">
+      <OLFormGroup controlId={`${idPrefix}-base-url`}>
         <OLFormLabel>Base URL</OLFormLabel>
         <OLFormControl
           value={baseUrl}
           onChange={e => setBaseUrl(e.target.value)}
-          placeholder={DEFAULT_BASE_URLS[type]}
+          placeholder={defaultBaseUrls[type]}
         />
         <OLFormText>
-          Leave blank to use the default ({DEFAULT_BASE_URLS[type]}), or enter a
+          Leave blank to use the default ({defaultBaseUrls[type]}), or enter a
           custom compatible endpoint.
         </OLFormText>
       </OLFormGroup>
 
-      <OLFormGroup controlId="ai-provider-api-key">
+      <OLFormGroup controlId={`${idPrefix}-api-key`}>
         <OLFormLabel>
           API key{type === 'ollama' ? ' (optional)' : ''}
         </OLFormLabel>
@@ -246,12 +257,12 @@ export default function ProviderForm({
           }
         />
         <OLFormText>
-          Stored in this browser only. Anyone who can run scripts on this page
-          can read it.
+          Stored in this browser, sent to Overleaf server per-request to call
+          the provider.
         </OLFormText>
       </OLFormGroup>
 
-      <OLFormGroup controlId="ai-provider-model">
+      <OLFormGroup controlId={`${idPrefix}-model`}>
         <OLFormLabel>Model</OLFormLabel>
         {manualModel ? (
           <OLFormControl
@@ -316,7 +327,7 @@ export default function ProviderForm({
         {modelsMessage ? <OLFormText>{modelsMessage}</OLFormText> : null}
       </OLFormGroup>
 
-      <OLFormGroup controlId="ai-provider-context-window">
+      <OLFormGroup controlId={`${idPrefix}-context-window`}>
         <OLFormLabel>
           {t('ai_assist_context_window', 'Context window (tokens)')}
         </OLFormLabel>
@@ -329,7 +340,7 @@ export default function ProviderForm({
         />
       </OLFormGroup>
 
-      <OLFormGroup controlId="ai-provider-max-output-tokens">
+      <OLFormGroup controlId={`${idPrefix}-max-output-tokens`}>
         <OLFormLabel>
           {t('ai_assist_max_output_tokens', 'Max output tokens')}
         </OLFormLabel>

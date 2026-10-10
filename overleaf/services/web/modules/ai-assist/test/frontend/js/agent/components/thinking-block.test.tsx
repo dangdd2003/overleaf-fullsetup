@@ -34,6 +34,7 @@ function makeScrollable(
   })
 }
 
+// The scroll container is the content element; the body only animates height.
 describe('ThinkingBlock auto-scroll', function () {
   it('auto-scrolls to bottom when dropped down while live', function () {
     const { container } = render(
@@ -42,17 +43,17 @@ describe('ThinkingBlock auto-scroll', function () {
     const button = container.querySelector(
       '.ai-assist-thinking-header'
     ) as HTMLButtonElement
-    const body = container.querySelector(
-      '.ai-assist-thinking-body'
+    const scroller = container.querySelector(
+      '.ai-assist-thinking-content'
     ) as HTMLDivElement
 
-    makeScrollable(body, { scrollHeight: 1000, clientHeight: 350 })
+    makeScrollable(scroller, { scrollHeight: 1000, clientHeight: 350 })
 
     // Click to drop down
     fireEvent.click(button)
 
     // Should force auto-scroll to the bottom (1000 - 350 = 650)
-    expect(body.scrollTop).to.equal(650)
+    expect(scroller.scrollTop).to.equal(650)
   })
 
   it('continues auto-scrolling as new thinking text generates', function () {
@@ -62,22 +63,22 @@ describe('ThinkingBlock auto-scroll', function () {
     const button = container.querySelector(
       '.ai-assist-thinking-header'
     ) as HTMLButtonElement
-    const body = container.querySelector(
-      '.ai-assist-thinking-body'
+    const scroller = container.querySelector(
+      '.ai-assist-thinking-content'
     ) as HTMLDivElement
 
-    makeScrollable(body, { scrollHeight: 600, clientHeight: 350 })
+    makeScrollable(scroller, { scrollHeight: 600, clientHeight: 350 })
     fireEvent.click(button)
-    expect(body.scrollTop).to.equal(250)
+    expect(scroller.scrollTop).to.equal(250)
 
     // New thinking text arrives and scrollHeight increases
-    makeScrollable(body, { scrollHeight: 900, clientHeight: 350 })
+    makeScrollable(scroller, { scrollHeight: 900, clientHeight: 350 })
     rerender(
       <ThinkingBlock thinking="Initial thought and more..." isLive={true} />
     )
 
     // Auto-scroll follows the latest generated text
-    expect(body.scrollTop).to.equal(550)
+    expect(scroller.scrollTop).to.equal(550)
   })
 
   it('stops auto-scrolling when user manually scrolls up to see history', function () {
@@ -87,20 +88,20 @@ describe('ThinkingBlock auto-scroll', function () {
     const button = container.querySelector(
       '.ai-assist-thinking-header'
     ) as HTMLButtonElement
-    const body = container.querySelector(
-      '.ai-assist-thinking-body'
+    const scroller = container.querySelector(
+      '.ai-assist-thinking-content'
     ) as HTMLDivElement
 
-    makeScrollable(body, { scrollHeight: 1000, clientHeight: 350 })
+    makeScrollable(scroller, { scrollHeight: 1000, clientHeight: 350 })
     fireEvent.click(button)
-    expect(body.scrollTop).to.equal(650)
+    expect(scroller.scrollTop).to.equal(650)
 
     // User manually scrolls up to view history
-    body.scrollTop = 200
-    fireEvent.scroll(body)
+    scroller.scrollTop = 200
+    fireEvent.scroll(scroller)
 
     // New text arrives
-    makeScrollable(body, { scrollHeight: 1200, clientHeight: 350 })
+    makeScrollable(scroller, { scrollHeight: 1200, clientHeight: 350 })
     rerender(
       <ThinkingBlock
         thinking="Initial thought and more text..."
@@ -109,7 +110,7 @@ describe('ThinkingBlock auto-scroll', function () {
     )
 
     // Should stop following and remain at user scrolled position
-    expect(body.scrollTop).to.equal(200)
+    expect(scroller.scrollTop).to.equal(200)
   })
 
   it('resumes auto-scrolling when user scrolls down to touch the latest result', function () {
@@ -119,24 +120,24 @@ describe('ThinkingBlock auto-scroll', function () {
     const button = container.querySelector(
       '.ai-assist-thinking-header'
     ) as HTMLButtonElement
-    const body = container.querySelector(
-      '.ai-assist-thinking-body'
+    const scroller = container.querySelector(
+      '.ai-assist-thinking-content'
     ) as HTMLDivElement
 
-    makeScrollable(body, { scrollHeight: 1000, clientHeight: 350 })
+    makeScrollable(scroller, { scrollHeight: 1000, clientHeight: 350 })
     fireEvent.click(button)
-    expect(body.scrollTop).to.equal(650)
+    expect(scroller.scrollTop).to.equal(650)
 
     // User scrolls up
-    body.scrollTop = 200
-    fireEvent.scroll(body)
+    scroller.scrollTop = 200
+    fireEvent.scroll(scroller)
 
     // User scrolls back down to touch the latest result (within 32px of bottom: 1000 - 350 = 650)
-    body.scrollTop = 640
-    fireEvent.scroll(body)
+    scroller.scrollTop = 640
+    fireEvent.scroll(scroller)
 
     // New text arrives
-    makeScrollable(body, { scrollHeight: 1300, clientHeight: 350 })
+    makeScrollable(scroller, { scrollHeight: 1300, clientHeight: 350 })
     rerender(
       <ThinkingBlock
         thinking="Initial thought and even more text..."
@@ -145,7 +146,7 @@ describe('ThinkingBlock auto-scroll', function () {
     )
 
     // Auto-scroll resumes and follows the latest text
-    expect(body.scrollTop).to.equal(950)
+    expect(scroller.scrollTop).to.equal(950)
   })
 
   it('dispatches aiAssist:stickToBottom when dropped down', function () {
@@ -241,7 +242,7 @@ describe('ThinkingBlock auto-scroll', function () {
     ) as HTMLDivElement
 
     fireEvent.click(button)
-    expect(content.textContent).to.equal('Finished thought process')
+    expect(content.textContent?.trim()).to.equal('Finished thought process')
     expect(content.querySelectorAll('.ai-assist-stream-fade')).to.have.length(0)
   })
 })

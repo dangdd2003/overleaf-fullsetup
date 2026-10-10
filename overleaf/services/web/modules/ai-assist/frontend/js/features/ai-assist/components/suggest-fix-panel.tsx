@@ -816,6 +816,32 @@ export default function SuggestFixPanel({
                         item.call.name === 'create_file')
                   )
 
+                  // accepted / rejected once decided, null while undecided
+                  const decisionOf = (call: any): 'accepted' | 'rejected' | null => {
+                    const result = call?.result as any
+                    if (
+                      result?.status === 'applied' ||
+                      decidedEdits[call?.id]?.accepted === true
+                    ) {
+                      return 'accepted'
+                    }
+                    if (
+                      result?.status === 'rejected' ||
+                      decidedEdits[call?.id]?.accepted === false
+                    ) {
+                      return 'rejected'
+                    }
+                    return null
+                  }
+                  // A decided edit collapses to its receipt below, so its diff
+                  // is kept out of the activity group
+                  const isDecidedEdit = (item: AssistantBlock) =>
+                    item.type === 'tool_call' &&
+                    (item.call.name === 'edit_file' ||
+                      item.call.name === 'create_file') &&
+                    item.call.id !== state.pendingApproval?.id &&
+                    decisionOf(item.call) !== null
+
                   const firstItem = segment.items[0]
                   const firstItemId =
                     firstItem?.type === 'tool_call'
@@ -839,7 +865,9 @@ export default function SuggestFixPanel({
                       */}
                       <SubresultGroup
                         groupId={groupId}
-                        items={segment.items}
+                        items={segment.items.filter(
+                          item => !isDecidedEdit(item)
+                        )}
                         isLive={running && isLastSegment}
                         onDecision={onDecision}
                       />
@@ -865,15 +893,10 @@ export default function SuggestFixPanel({
                           )
                         }
 
-                        const result = editItem.call.result as any
-                        const isAccepted =
-                          result?.status === 'applied' ||
-                          decidedEdits[callId]?.accepted === true
-                        const isRejected =
-                          result?.status === 'rejected' ||
-                          decidedEdits[callId]?.accepted === false
+                        const decision = decisionOf(editItem.call)
+                        const isAccepted = decision === 'accepted'
 
-                        if (isAccepted || isRejected) {
+                        if (decision) {
                           const editPath =
                             (editItem.call.args as any)?.path ?? fileName
                           const startLine =

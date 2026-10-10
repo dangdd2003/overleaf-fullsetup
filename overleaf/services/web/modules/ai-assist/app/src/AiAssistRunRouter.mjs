@@ -34,6 +34,13 @@ export default {
       AiAssistProviderController.chat
     )
 
+    // Text only: the AI inside the editor, which never gets tools
+    webRouter.post(
+      '/ai-assist/providers/editor',
+      AuthenticationController.requireLogin(),
+      AiAssistProviderController.editorText
+    )
+
     if (Settings.aiAssist?.webToolsEnabled) {
       webRouter.post(
         '/ai-assist/web-search/test',
@@ -172,6 +179,24 @@ export default {
       AuthenticationController.requireLogin(),
       AuthorizationMiddleware.ensureUserCanReadProject,
       AiAssistChatHistoryController.generateTitle
+    )
+
+    // Language suggestions' results, shared by a project's collaborators
+    const { default: AiAssistLanguageCheckController } =
+      await import('./AiAssistLanguageCheckController.mjs')
+
+    webRouter.post(
+      '/ai-assist/projects/:Project_id/language-checks/lookup',
+      AuthenticationController.requireLogin(),
+      AuthorizationMiddleware.ensureUserCanReadProject,
+      AiAssistLanguageCheckController.lookup
+    )
+
+    webRouter.post(
+      '/ai-assist/projects/:Project_id/language-checks',
+      AuthenticationController.requireLogin(),
+      AuthorizationMiddleware.ensureUserCanWriteProjectContent,
+      AiAssistLanguageCheckController.save
     )
 
     // Composer preferences (effort level, thinking switch), per user.

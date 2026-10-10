@@ -1,11 +1,21 @@
 import { expect } from 'chai'
+import sinon from 'sinon'
 import React from 'react'
 import { render, cleanup } from '@testing-library/react'
 import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { CodeMirrorViewContext } from '@/features/source-editor/components/codemirror-context'
 import { EditorOpenDocContext } from '@/features/ide-react/context/editor-open-doc-context'
-import ApplyFixListener from '../../../../frontend/js/features/ai-assist/components/apply-fix-listener'
+import { FileTreeDataContext } from '@/shared/context/file-tree-data-context'
+import { FileTreePathContext } from '@/features/file-tree/contexts/file-tree-path'
+import { EditorManagerContext } from '@/features/ide-react/context/editor-manager-context'
+import ApplyFixListener, {
+  isRangeInViewport,
+} from '../../../../frontend/js/features/ai-assist/components/apply-fix-listener'
+import {
+  smoothScrollToEdit,
+  aiEditGlowField,
+} from '../../../../frontend/js/features/ai-assist/ai-edit-glow/extension'
 import { resetMeta } from '../../../../../../test/frontend/helpers/reset-meta'
 
 describe('ApplyFixListener', function () {
@@ -246,5 +256,813 @@ describe('ApplyFixListener', function () {
 
     expect(status).to.equal('pathMismatch')
     expect(view.state.doc.toString()).to.equal('content')
+  })
+
+  it('inserts snippet at cursor when aiAssist:insertSnippet is dispatched', function () {
+    setupEditor('Hello world')
+    window.dispatchEvent(
+      new CustomEvent('aiAssist:insertSnippet', {
+        detail: { text: 'LaTeX snippet\n' },
+      })
+    )
+    expect(view.state.doc.toString()).to.equal('LaTeX snippet\nHello world')
+  })
+
+  it('triggers openFile and queues highlight when highlightAiEdit is dispatched for a different file path', async function () {
+    const editorManager = {
+      openDocWithId: sinon.stub().resolves(),
+      openFileWithId: sinon.stub(),
+      jumpToLine: sinon.stub(),
+    }
+    const fileTreeData = {
+      _id: 'root',
+      name: 'root',
+      docs: [
+        { _id: 'doc-1', name: 'main.tex' },
+        { _id: 'doc-2', name: 'chapters/intro.tex' },
+      ],
+      folders: [],
+    }
+    const fileTreeContext = {
+      findEntityByPath: sinon.stub().callsFake((path: string) => {
+        if (path === 'chapters/intro.tex') {
+          return { entity: { _id: 'doc-2' }, type: 'doc' }
+        }
+        if (path === 'main.tex') {
+          return { entity: { _id: 'doc-1' }, type: 'doc' }
+        }
+        return null
+      }),
+    }
+
+    cleanup()
+    container = document.createElement('div')
+    document.body.appendChild(container)
+
+    const state1 = EditorState.create({ doc: 'Main file content\n' })
+    view = new EditorView({ state: state1, parent: container })
+
+    window.metaAttributesCache.set('ol-aiAssistEnabled', true)
+    window.metaAttributesCache.set('ol-showAiFeatures', true)
+
+    const openDocContextValue: any = {
+      openDocName: 'main.tex',
+      currentDocumentId: 'doc-1',
+      currentDocument: { id: 'doc-1' },
+      isPending: false,
+      isPendingEditor: false,
+    }
+
+    const { rerender } = render(
+      <EditorOpenDocContext.Provider value={openDocContextValue}>
+        <FileTreeDataContext.Provider value={{ fileTreeData } as any}>
+          <FileTreePathContext.Provider value={fileTreeContext as any}>
+            <EditorManagerContext.Provider value={editorManager as any}>
+              <CodeMirrorViewContext.Provider value={view}>
+                <ApplyFixListener />
+              </CodeMirrorViewContext.Provider>
+            </EditorManagerContext.Provider>
+          </FileTreePathContext.Provider>
+        </FileTreeDataContext.Provider>
+      </EditorOpenDocContext.Provider>
+    )
+
+    // Dispatch highlight for chapters/intro.tex while editor is on main.tex
+    window.dispatchEvent(
+      new CustomEvent('aiAssist:highlightAiEdit', {
+        detail: {
+          path: 'chapters/intro.tex',
+          startLine: 2,
+          endLine: 2,
+          newText: 'Intro line 2',
+        },
+      })
+    )
+
+    // Should call openDocWithId on editorManager
+    expect(editorManager.openDocWithId.calledWith('doc-2', { gotoLine: 2 })).to.equal(true)
+
+    // Switch/mount the new editor document for chapters/intro.tex with aiEditGlowField extension
+    view.destroy()
+    const state2 = EditorState.create({
+      doc: 'Intro line 1\nIntro line 2\nIntro line 3\n',
+      extensions: [aiEditGlowField],
+    })
+    view = new EditorView({ state: state2, parent: container })
+
+    const newOpenDocContextValue: any = {
+      openDocName: 'chapters/intro.tex',
+      currentDocumentId: 'doc-2',
+      currentDocument: { id: 'doc-2' },
+      isPending: false,
+      isPendingEditor: false,
+    }
+
+    rerender(
+      <EditorOpenDocContext.Provider value={newOpenDocContextValue}>
+        <FileTreeDataContext.Provider value={{ fileTreeData } as any}>
+          <FileTreePathContext.Provider value={fileTreeContext as any}>
+            <EditorManagerContext.Provider value={editorManager as any}>
+              <CodeMirrorViewContext.Provider value={view}>
+                <ApplyFixListener />
+              </CodeMirrorViewContext.Provider>
+            </EditorManagerContext.Provider>
+          </FileTreePathContext.Provider>
+        </FileTreeDataContext.Provider>
+      </EditorOpenDocContext.Provider>
+    )
+
+    // Wait for the dequeue timeout (100ms) in ApplyFixListener
+    await new Promise(r => setTimeout(r, 200))
+
+    // Verify glow was applied to the dequeued range
+    const glows = view.state.field(aiEditGlowField)
+    expect(glows.length).to.be.greaterThan(0)
+    expect(glows[0].from).to.equal(13) // Start of "Intro line 2"
+    expect(glows[0].to).to.equal(25)
+  })
+
+  it('does not trigger openFile when detached is true for highlightAiEdit on a different file', async function () {
+    const editorManager = {
+      openDocWithId: sinon.stub().resolves(),
+      openFileWithId: sinon.stub(),
+      jumpToLine: sinon.stub(),
+    }
+    const fileTreeData = {
+      _id: 'root',
+      name: 'root',
+      docs: [
+        { _id: 'doc-1', name: 'main.tex' },
+        { _id: 'doc-2', name: 'chapters/intro.tex' },
+      ],
+      folders: [],
+    }
+    const fileTreeContext = {
+      findEntityByPath: sinon.stub().callsFake((path: string) => {
+        if (path === 'chapters/intro.tex') {
+          return { entity: { _id: 'doc-2' }, type: 'doc' }
+        }
+        if (path === 'main.tex') {
+          return { entity: { _id: 'doc-1' }, type: 'doc' }
+        }
+        return null
+      }),
+    }
+
+    cleanup()
+    container = document.createElement('div')
+    document.body.appendChild(container)
+
+    const state1 = EditorState.create({ doc: 'Main file content\n' })
+    view = new EditorView({ state: state1, parent: container })
+
+    window.metaAttributesCache.set('ol-aiAssistEnabled', true)
+    window.metaAttributesCache.set('ol-showAiFeatures', true)
+
+    const openDocContextValue: any = {
+      openDocName: 'main.tex',
+      currentDocumentId: 'doc-1',
+      currentDocument: { id: 'doc-1' },
+      isPending: false,
+      isPendingEditor: false,
+    }
+
+    render(
+      <EditorOpenDocContext.Provider value={openDocContextValue}>
+        <FileTreeDataContext.Provider value={{ fileTreeData } as any}>
+          <FileTreePathContext.Provider value={fileTreeContext as any}>
+            <EditorManagerContext.Provider value={editorManager as any}>
+              <CodeMirrorViewContext.Provider value={view}>
+                <ApplyFixListener />
+              </CodeMirrorViewContext.Provider>
+            </EditorManagerContext.Provider>
+          </FileTreePathContext.Provider>
+        </FileTreeDataContext.Provider>
+      </EditorOpenDocContext.Provider>
+    )
+
+    // Dispatch highlight with detached: true
+    window.dispatchEvent(
+      new CustomEvent('aiAssist:highlightAiEdit', {
+        detail: {
+          path: 'chapters/intro.tex',
+          startLine: 2,
+          endLine: 2,
+          newText: 'Intro line 2',
+          detached: true,
+        },
+      })
+    )
+
+    // Should NOT call openDocWithId because it is detached
+    expect(editorManager.openDocWithId.called).to.equal(false)
+  })
+
+  it('echoes requestId in readDoc and applyEdit results', async function () {
+    setupEditor('line 1\nline 2\nline 3\n', 'main.tex')
+
+    const readPromise = new Promise<any>(resolve => {
+      const onResult = (e: Event) => {
+        window.removeEventListener('aiAssist:agentReadDocResult', onResult)
+        resolve((e as CustomEvent).detail)
+      }
+      window.addEventListener('aiAssist:agentReadDocResult', onResult)
+      window.dispatchEvent(
+        new CustomEvent('aiAssist:agentReadDoc', {
+          detail: { path: 'main.tex', requestId: 'req-test-read-123' },
+        })
+      )
+    })
+    const readResult = await readPromise
+    expect(readResult.requestId).to.equal('req-test-read-123')
+
+    const editPromise = new Promise<any>(resolve => {
+      const onResult = (e: Event) => {
+        window.removeEventListener('aiAssist:agentApplyEditResult', onResult)
+        resolve((e as CustomEvent).detail)
+      }
+      window.addEventListener('aiAssist:agentApplyEditResult', onResult)
+      window.dispatchEvent(
+        new CustomEvent('aiAssist:agentApplyEdit', {
+          detail: {
+            path: 'main.tex',
+            oldText: 'line 2',
+            replacement: 'line two',
+            requestId: 'req-test-edit-456',
+          },
+        })
+      )
+    })
+    const editResult = await editPromise
+    expect(editResult.requestId).to.equal('req-test-edit-456')
+    expect(editResult.status).to.equal('applied')
+  })
+
+  it('handles highlightAiEdit directly for the active file without navigating', async function () {
+    const editorManager = {
+      openDocWithId: sinon.stub().resolves(),
+      openFileWithId: sinon.stub(),
+      jumpToLine: sinon.stub(),
+    }
+    const fileTreeData = {
+      _id: 'root',
+      name: 'root',
+      docs: [{ _id: 'doc-1', name: 'main.tex' }],
+      folders: [],
+    }
+    const fileTreeContext = {
+      findEntityByPath: sinon.stub().callsFake((path: string) => {
+        if (path === 'main.tex') {
+          return { entity: { _id: 'doc-1' }, type: 'doc' }
+        }
+        return null
+      }),
+    }
+
+    cleanup()
+    container = document.createElement('div')
+    document.body.appendChild(container)
+
+    const state = EditorState.create({
+      doc: 'Line 1\nLine 2\nLine 3\n',
+      extensions: [aiEditGlowField],
+    })
+    view = new EditorView({ state, parent: container })
+
+    window.metaAttributesCache.set('ol-aiAssistEnabled', true)
+    window.metaAttributesCache.set('ol-showAiFeatures', true)
+
+    const openDocContextValue: any = {
+      openDocName: 'main.tex',
+      currentDocumentId: 'doc-1',
+      currentDocument: { id: 'doc-1' },
+      isPending: false,
+      isPendingEditor: false,
+    }
+
+    render(
+      <EditorOpenDocContext.Provider value={openDocContextValue}>
+        <FileTreeDataContext.Provider value={{ fileTreeData } as any}>
+          <FileTreePathContext.Provider value={fileTreeContext as any}>
+            <EditorManagerContext.Provider value={editorManager as any}>
+              <CodeMirrorViewContext.Provider value={view}>
+                <ApplyFixListener />
+              </CodeMirrorViewContext.Provider>
+            </EditorManagerContext.Provider>
+          </FileTreePathContext.Provider>
+        </FileTreeDataContext.Provider>
+      </EditorOpenDocContext.Provider>
+    )
+
+    // Dispatch highlight for main.tex directly
+    window.dispatchEvent(
+      new CustomEvent('aiAssist:highlightAiEdit', {
+        detail: {
+          path: 'main.tex',
+          startLine: 2,
+          endLine: 2,
+          newText: 'Line 2',
+        },
+      })
+    )
+
+    // Should NOT call openDocWithId since the file is already open
+    expect(editorManager.openDocWithId.called).to.equal(false)
+
+    // Verify glow was applied immediately
+    const glows = view.state.field(aiEditGlowField)
+    expect(glows.length).to.be.greaterThan(0)
+    expect(glows[0].from).to.equal(7) // Start of "Line 2"
+    expect(glows[0].to).to.equal(13)
+  })
+
+  it('normalizes leading slashes in target paths for highlightAiEdit', async function () {
+    const editorManager = {
+      openDocWithId: sinon.stub().resolves(),
+      openFileWithId: sinon.stub(),
+      jumpToLine: sinon.stub(),
+    }
+    const fileTreeData = {
+      _id: 'root',
+      name: 'root',
+      docs: [
+        { _id: 'doc-1', name: 'main.tex' },
+        { _id: 'doc-2', name: 'chapters/intro.tex' },
+      ],
+      folders: [],
+    }
+    const fileTreeContext = {
+      findEntityByPath: sinon.stub().callsFake((path: string) => {
+        if (path === 'chapters/intro.tex') {
+          return { entity: { _id: 'doc-2' }, type: 'doc' }
+        }
+        return null
+      }),
+    }
+
+    cleanup()
+    container = document.createElement('div')
+    document.body.appendChild(container)
+
+    const state = EditorState.create({ doc: 'Main file content\n' })
+    view = new EditorView({ state, parent: container })
+
+    window.metaAttributesCache.set('ol-aiAssistEnabled', true)
+    window.metaAttributesCache.set('ol-showAiFeatures', true)
+
+    const openDocContextValue: any = {
+      openDocName: 'main.tex',
+      currentDocumentId: 'doc-1',
+      currentDocument: { id: 'doc-1' },
+      isPending: false,
+      isPendingEditor: false,
+    }
+
+    render(
+      <EditorOpenDocContext.Provider value={openDocContextValue}>
+        <FileTreeDataContext.Provider value={{ fileTreeData } as any}>
+          <FileTreePathContext.Provider value={fileTreeContext as any}>
+            <EditorManagerContext.Provider value={editorManager as any}>
+              <CodeMirrorViewContext.Provider value={view}>
+                <ApplyFixListener />
+              </CodeMirrorViewContext.Provider>
+            </EditorManagerContext.Provider>
+          </FileTreePathContext.Provider>
+        </FileTreeDataContext.Provider>
+      </EditorOpenDocContext.Provider>
+    )
+
+    // Dispatch highlight with leading slash
+    window.dispatchEvent(
+      new CustomEvent('aiAssist:highlightAiEdit', {
+        detail: {
+          path: '/chapters/intro.tex',
+          startLine: 1,
+          endLine: 1,
+        },
+      })
+    )
+
+    // Should resolve entity using normalized path and open doc-2
+    expect(editorManager.openDocWithId.calledWith('doc-2', { gotoLine: 1 })).to.equal(true)
+  })
+
+  it('retries highlight resolution when the document starts empty (docLen === 0)', async function () {
+    const origGetClientRects = (globalThis as any).Range?.prototype?.getClientRects
+    if ((globalThis as any).Range) {
+      ;(globalThis as any).Range.prototype.getClientRects = () => []
+    }
+    try {
+      const editorManager = {
+        openDocWithId: sinon.stub().resolves(),
+        openFileWithId: sinon.stub(),
+        jumpToLine: sinon.stub(),
+      }
+      const fileTreeData = {
+        _id: 'root',
+        name: 'root',
+        docs: [{ _id: 'doc-1', name: 'created.tex' }],
+        folders: [],
+      }
+      const fileTreeContext = {
+        findEntityByPath: sinon.stub().returns({ entity: { _id: 'doc-1' }, type: 'doc' }),
+      }
+
+      cleanup()
+      container = document.createElement('div')
+      document.body.appendChild(container)
+
+      // Initially empty document (docLen === 0)
+      const state = EditorState.create({
+        doc: '',
+        extensions: [aiEditGlowField],
+      })
+      view = new EditorView({ state, parent: container })
+
+      window.metaAttributesCache.set('ol-aiAssistEnabled', true)
+      window.metaAttributesCache.set('ol-showAiFeatures', true)
+
+      const openDocContextValue: any = {
+        openDocName: 'created.tex',
+        currentDocumentId: 'doc-1',
+        currentDocument: { id: 'doc-1' },
+        isPending: false,
+        isPendingEditor: false,
+      }
+
+      render(
+        <EditorOpenDocContext.Provider value={openDocContextValue}>
+          <FileTreeDataContext.Provider value={{ fileTreeData } as any}>
+            <FileTreePathContext.Provider value={fileTreeContext as any}>
+              <EditorManagerContext.Provider value={editorManager as any}>
+                <CodeMirrorViewContext.Provider value={view}>
+                  <ApplyFixListener />
+                </CodeMirrorViewContext.Provider>
+              </EditorManagerContext.Provider>
+            </FileTreePathContext.Provider>
+          </FileTreeDataContext.Provider>
+        </EditorOpenDocContext.Provider>
+      )
+
+      // Dispatch highlight while document is still empty
+      window.dispatchEvent(
+        new CustomEvent('aiAssist:highlightAiEdit', {
+          detail: {
+            path: 'created.tex',
+            startLine: 1,
+            endLine: 1,
+            newText: 'Hello world',
+          },
+        })
+      )
+
+      // Populate document shortly after (e.g. 30ms)
+      await new Promise(r => setTimeout(r, 30))
+      view.dispatch({
+        changes: { from: 0, to: 0, insert: 'Hello world\nSecond line' },
+      })
+
+      // Wait for the retry loop (60ms)
+      await new Promise(r => setTimeout(r, 120))
+
+      const glows = view.state.field(aiEditGlowField)
+      expect(glows.length).to.be.greaterThan(0)
+      expect(glows[0].from).to.equal(0)
+      expect(glows[0].to).to.equal(11) // "Hello world".length
+    } finally {
+      if ((globalThis as any).Range && origGetClientRects) {
+        ;(globalThis as any).Range.prototype.getClientRects = origGetClientRects
+      }
+    }
+  })
+
+  describe('smoothScrollToEdit', function () {
+    let mockView: any
+    let scrollDom: any
+    let scrolledTarget: number | null = null
+
+    beforeEach(function () {
+      scrolledTarget = null
+      scrollDom = {
+        clientHeight: 400,
+        scrollHeight: 2000,
+        scrollTop: 500,
+        getBoundingClientRect: () => ({
+          top: 100,
+          bottom: 500,
+          height: 400,
+          left: 0,
+          right: 800,
+          width: 800,
+        }),
+        scrollTo: (opts: { top: number; behavior?: string }) => {
+          scrolledTarget = opts.top
+        },
+      }
+
+      mockView = {
+        scrollDOM: scrollDom,
+        documentTop: 100,
+        state: {
+          doc: {
+            length: 1000,
+          },
+        },
+        lineBlockAt: (pos: number) => {
+          // Mock line blocks based on position
+          // Let 1 pos = 2 px for predictable math
+          const top = pos * 2
+          const bottom = top + 20
+          return { top, bottom }
+        },
+      }
+    })
+
+    it('does not scroll when edit is fully inside viewport', function () {
+      // With scrollTop 500, client viewport is [100, 500] in client coords.
+      // documentTop = 100 - scrollTop (if standard), but in our mock documentTop is client pos of doc top.
+      // With documentTop = 0, scroller top = 100, bottom = 500.
+      mockView.documentTop = -500 // doc top is 500px above viewport top (since scrollTop is 500)
+      // For pos = 350, docTop = 700, docBottom = 720
+      // clientTop = -500 + 700 = 200 (inside [100+16, 500-16] = [116, 484])
+      // clientBottom = -500 + 720 = 220 (inside)
+      const scrolled = smoothScrollToEdit(mockView, 350, 350)
+      expect(scrolled).to.equal(false)
+      expect(scrolledTarget).to.equal(null)
+    })
+
+    it('scrolls UP to top when edit is above viewport', function () {
+      mockView.documentTop = -500 // scrollTop = 500
+      // For pos = 50, docTop = 100, docBottom = 120
+      // clientTop = -500 + 100 = -400 (< 100 + 16)
+      const scrolled = smoothScrollToEdit(mockView, 50, 50)
+      expect(scrolled).to.equal(true)
+      // Target should align top of edit (docTop = 100) with top padding (16) -> 100 - 16 = 84
+      expect(scrolledTarget).to.equal(84)
+    })
+
+    it('scrolls DOWN to bottom when edit is below viewport', function () {
+      mockView.documentTop = -500 // scrollTop = 500, client viewport is [100, 500]
+      // For pos = 600, docTop = 1200, docBottom = 1220
+      // clientBottom = -500 + 1220 = 720 (> 500 - 16 = 484)
+      const scrolled = smoothScrollToEdit(mockView, 600, 600)
+      expect(scrolled).to.equal(true)
+      // Target should align bottom of edit (docBottom = 1220) with bottom padding:
+      // targetScrollTop = docBottom - viewHeight + padding = 1220 - 400 + 16 = 836
+      expect(scrolledTarget).to.equal(836)
+    })
+
+    it('scrolls to top of edit when edit is taller than viewport', function () {
+      mockView.documentTop = -500
+      // Edit spans pos 100 to pos 400 (docTop = 200, docBottom = 820 -> height = 620 > 400 - 32)
+      const scrolled = smoothScrollToEdit(mockView, 100, 400)
+      expect(scrolled).to.equal(true)
+      // Target should align top of edit with padding: 200 - 16 = 184
+      expect(scrolledTarget).to.equal(184)
+    })
+
+    it('clamps targetScrollTop to scrollHeight - clientHeight', function () {
+      mockView.documentTop = -500
+      // Large pos near bottom of 2000px doc
+      const scrolled = smoothScrollToEdit(mockView, 990, 990)
+      expect(scrolled).to.equal(true)
+      // maxScrollTop is 2000 - 400 = 1600
+      expect(scrolledTarget).to.equal(1600)
+    })
+  })
+
+  describe('acceptEdits mode behavior', function () {
+    it('does not trigger openFile or queue highlight in acceptEdits mode for a different file', async function () {
+      const editorManager = {
+        openDocWithId: sinon.stub().resolves(),
+        openFileWithId: sinon.stub(),
+        jumpToLine: sinon.stub(),
+      }
+      const fileTreeData = {
+        _id: 'root',
+        name: 'root',
+        docs: [
+          { _id: 'doc-1', name: 'main.tex' },
+          { _id: 'doc-2', name: 'chapters/intro.tex' },
+        ],
+        folders: [],
+      }
+      const fileTreeContext = {
+        findEntityByPath: sinon.stub().callsFake((path: string) => {
+          if (path === 'chapters/intro.tex') {
+            return { entity: { _id: 'doc-2' }, type: 'doc' }
+          }
+          return null
+        }),
+      }
+
+      cleanup()
+      container = document.createElement('div')
+      document.body.appendChild(container)
+
+      const state1 = EditorState.create({ doc: 'Main file content\n' })
+      view = new EditorView({ state: state1, parent: container })
+
+      window.metaAttributesCache.set('ol-aiAssistEnabled', true)
+      window.metaAttributesCache.set('ol-showAiFeatures', true)
+
+      const openDocContextValue: any = {
+        openDocName: 'main.tex',
+        currentDocumentId: 'doc-1',
+        currentDocument: { id: 'doc-1' },
+        isPending: false,
+        isPendingEditor: false,
+      }
+
+      render(
+        <EditorOpenDocContext.Provider value={openDocContextValue}>
+          <FileTreeDataContext.Provider value={{ fileTreeData } as any}>
+            <FileTreePathContext.Provider value={fileTreeContext as any}>
+              <EditorManagerContext.Provider value={editorManager as any}>
+                <CodeMirrorViewContext.Provider value={view}>
+                  <ApplyFixListener />
+                </CodeMirrorViewContext.Provider>
+              </EditorManagerContext.Provider>
+            </FileTreePathContext.Provider>
+          </FileTreeDataContext.Provider>
+        </EditorOpenDocContext.Provider>
+      )
+
+      window.dispatchEvent(
+        new CustomEvent('aiAssist:highlightAiEdit', {
+          detail: {
+            path: 'chapters/intro.tex',
+            startLine: 2,
+            endLine: 2,
+            newText: 'Intro line 2',
+            mode: 'acceptEdits',
+          },
+        })
+      )
+
+      // Should NOT call openDocWithId in acceptEdits mode
+      expect(editorManager.openDocWithId.called).to.equal(false)
+    })
+
+    it('shows animation and does not scroll when edit is inside viewport in acceptEdits mode', async function () {
+      const editorManager = {
+        openDocWithId: sinon.stub().resolves(),
+      }
+      cleanup()
+      container = document.createElement('div')
+      document.body.appendChild(container)
+
+      const state = EditorState.create({
+        doc: 'Line 1\nLine 2\nLine 3\n',
+        extensions: [aiEditGlowField],
+      })
+      view = new EditorView({ state, parent: container })
+
+      Object.defineProperty(view, 'viewport', {
+        value: { from: 0, to: 25 },
+        configurable: true,
+      })
+
+      window.metaAttributesCache.set('ol-aiAssistEnabled', true)
+      window.metaAttributesCache.set('ol-showAiFeatures', true)
+
+      const openDocContextValue: any = {
+        openDocName: 'main.tex',
+        currentDocumentId: 'doc-1',
+        currentDocument: { id: 'doc-1' },
+      }
+
+      render(
+        <EditorOpenDocContext.Provider value={openDocContextValue}>
+          <EditorManagerContext.Provider value={editorManager as any}>
+            <CodeMirrorViewContext.Provider value={view}>
+              <ApplyFixListener />
+            </CodeMirrorViewContext.Provider>
+          </EditorManagerContext.Provider>
+        </EditorOpenDocContext.Provider>
+      )
+
+      window.dispatchEvent(
+        new CustomEvent('aiAssist:highlightAiEdit', {
+          detail: {
+            path: 'main.tex',
+            startLine: 2,
+            endLine: 2,
+            newText: 'Line 2',
+            mode: 'acceptEdits',
+          },
+        })
+      )
+
+      const glows = view.state.field(aiEditGlowField)
+      expect(glows.length).to.be.greaterThan(0)
+    })
+
+    it('does not show animation when edit is outside viewport in acceptEdits mode', async function () {
+      const editorManager = {
+        openDocWithId: sinon.stub().resolves(),
+      }
+      cleanup()
+      container = document.createElement('div')
+      document.body.appendChild(container)
+
+      const state = EditorState.create({
+        doc: 'Line 1\nLine 2\nLine 3\nLine 4\nLine 5\n',
+        extensions: [aiEditGlowField],
+      })
+      view = new EditorView({ state, parent: container })
+
+      Object.defineProperty(view, 'viewport', {
+        value: { from: 0, to: 7 },
+        configurable: true,
+      })
+
+      window.metaAttributesCache.set('ol-aiAssistEnabled', true)
+      window.metaAttributesCache.set('ol-showAiFeatures', true)
+
+      const openDocContextValue: any = {
+        openDocName: 'main.tex',
+        currentDocumentId: 'doc-1',
+        currentDocument: { id: 'doc-1' },
+      }
+
+      render(
+        <EditorOpenDocContext.Provider value={openDocContextValue}>
+          <EditorManagerContext.Provider value={editorManager as any}>
+            <CodeMirrorViewContext.Provider value={view}>
+              <ApplyFixListener />
+            </CodeMirrorViewContext.Provider>
+          </EditorManagerContext.Provider>
+        </EditorOpenDocContext.Provider>
+      )
+
+      window.dispatchEvent(
+        new CustomEvent('aiAssist:highlightAiEdit', {
+          detail: {
+            path: 'main.tex',
+            startLine: 5,
+            endLine: 5,
+            newText: 'Line 5',
+            mode: 'acceptEdits',
+          },
+        })
+      )
+
+      const glows = view.state.field(aiEditGlowField)
+      expect(glows.length).to.equal(0)
+    })
+  })
+
+  describe('isRangeInViewport', function () {
+    it('returns true when range is on screen with DOM measurements', function () {
+      const mockView: any = {
+        scrollDOM: {
+          getBoundingClientRect: () => ({
+            top: 100,
+            bottom: 500,
+            height: 400,
+          }),
+        },
+        documentTop: -500,
+        lineBlockAt: (pos: number) => ({
+          top: pos * 2,
+          bottom: pos * 2 + 20,
+        }),
+      }
+      expect(isRangeInViewport(mockView, 350, 350)).to.equal(true)
+    })
+
+    it('returns false when range is off screen with DOM measurements', function () {
+      const mockView: any = {
+        scrollDOM: {
+          getBoundingClientRect: () => ({
+            top: 100,
+            bottom: 500,
+            height: 400,
+          }),
+        },
+        documentTop: -500,
+        lineBlockAt: (pos: number) => ({
+          top: pos * 2,
+          bottom: pos * 2 + 20,
+        }),
+      }
+      expect(isRangeInViewport(mockView, 600, 600)).to.equal(false)
+    })
+
+    it('falls back to view.viewport when scrollDOM height is zero', function () {
+      const mockView: any = {
+        scrollDOM: {
+          getBoundingClientRect: () => ({
+            top: 0,
+            bottom: 0,
+            height: 0,
+          }),
+        },
+        viewport: { from: 10, to: 50 },
+      }
+      expect(isRangeInViewport(mockView, 20, 30)).to.equal(true)
+      expect(isRangeInViewport(mockView, 60, 70)).to.equal(false)
+    })
   })
 })

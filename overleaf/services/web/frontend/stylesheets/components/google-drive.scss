@@ -1,10 +1,10 @@
 // Google Drive Sync dedicated styles
 
 .google-drive-modal {
-  color: var(--content-primary, #1b222c);
+  color: var(--content-primary);
 
   .modal-title {
-    color: var(--content-primary, #1b222c) !important;
+    color: var(--content-primary) !important;
   }
 
   h1,
@@ -14,19 +14,19 @@
   h5,
   h6,
   strong {
-    color: var(--content-primary, #1b222c) !important;
+    color: var(--content-primary) !important;
   }
 
   p,
   li {
-    color: var(--content-secondary, #495365);
+    color: var(--content-secondary);
   }
 
   // Never inside a button: OLButton wraps its label in a span, and this
   // would override the button's own text colour
   p span:not(.btn *),
   li span:not(.btn *) {
-    color: var(--content-secondary, #495365);
+    color: var(--content-secondary);
   }
 
   // The app-wide .text-muted maps to --content-disabled, which reads as
@@ -37,7 +37,7 @@
   // and keeps the original .text-muted (--content-disabled) color.
   .text-secondary,
   .text-muted {
-    color: var(--content-secondary, #495365) !important;
+    color: var(--content-secondary) !important;
   }
 
   .google-drive-original-muted.text-muted {
@@ -50,7 +50,7 @@
   // path that could land on a lighter value.
   h6.google-drive-folder-heading,
   .google-drive-folder-heading {
-    color: #1b222c !important;
+    color: var(--content-primary) !important;
     letter-spacing: 0.02em;
   }
 

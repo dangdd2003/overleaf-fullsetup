@@ -11,6 +11,8 @@ export const SEARCH_CAPABLE = new Set([
   'jina',
   'langsearch',
   'exa',
+  'tinyfish',
+  'parallel',
   'mcp',
 ])
 export const READ_CAPABLE = new Set([
@@ -21,6 +23,7 @@ export const READ_CAPABLE = new Set([
   'firecrawlSelfHosted',
   'jina',
   'exa',
+  'parallel',
 ])
 
 const MAX_PAUSE_MS = 10 * 60 * 1000 // 10 minutes

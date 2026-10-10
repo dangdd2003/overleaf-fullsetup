@@ -15,6 +15,9 @@ import * as commands from '../../extensions/toolbar/commands'
 import { useCodeMirrorViewContext } from '../codemirror-context'
 import { emitToolbarEvent } from '../../extensions/toolbar/utils/analytics'
 import getMeta from '@/utils/meta'
+import { findGenerator } from './ai-generators'
+
+export const findTableGenerator = () => findGenerator('table')
 
 export const TableDropdown = memo(function TableDropdown() {
   const { t } = useTranslation()
@@ -52,7 +55,11 @@ export const TableDropdown = memo(function TableDropdown() {
             disabled={showAiFeaturesDisabled}
             disabledReason={t('ai_features_unavailable_on_this_project')}
             onClick={() => {
-              writefullInstance?.openTableGenerator()
+              if (writefullInstance) {
+                writefullInstance.openTableGenerator()
+              } else {
+                findGenerator('table')?.open(view)
+              }
             }}
           >
             <img

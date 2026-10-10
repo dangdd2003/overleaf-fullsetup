@@ -474,10 +474,7 @@ export default function GoogleDriveModal({
         {/* Google Drive folder link */}
         {folderUrl && (
           <div className="mt-3 pt-3 border-top">
-            <h6
-              className="google-drive-folder-heading small text-uppercase fw-bold mb-2"
-              style={{ color: '#1b222c' }}
-            >
+            <h6 className="google-drive-folder-heading small text-uppercase fw-bold mb-2">
               {t('google_drive_folder', 'Google Drive Folder')}
             </h6>
             <OLButton

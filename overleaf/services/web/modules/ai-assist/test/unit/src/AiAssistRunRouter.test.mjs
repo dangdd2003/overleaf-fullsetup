@@ -49,7 +49,9 @@ describe('AiAssistRunRouter', function () {
 
   it('registers the fix run web tool routes only with web tools on', async function () {
     const origWeb = Settings.aiAssist.webToolsEnabled
+    const origEnv = process.env.AI_ASSIST_WEB_TOOLS_ENABLED
     try {
+      process.env.AI_ASSIST_WEB_TOOLS_ENABLED = 'false'
       Settings.aiAssist.webToolsEnabled = false
       await routerModule.apply(webRouter)
       let postRoutes = webRouter.post.args.map(call => call[0])
@@ -60,6 +62,7 @@ describe('AiAssistRunRouter', function () {
       webRouter.post.resetHistory()
       // The first apply imported ModuleSettings.mjs, which rebuilds
       // Settings.aiAssist from the environment
+      process.env.AI_ASSIST_WEB_TOOLS_ENABLED = 'true'
       Settings.aiAssist.enabled = true
       Settings.aiAssist.webToolsEnabled = true
       await routerModule.apply(webRouter)
@@ -75,6 +78,11 @@ describe('AiAssistRunRouter', function () {
       expect(route).to.have.length(4)
     } finally {
       Settings.aiAssist.webToolsEnabled = origWeb
+      if (origEnv !== undefined) {
+        process.env.AI_ASSIST_WEB_TOOLS_ENABLED = origEnv
+      } else {
+        delete process.env.AI_ASSIST_WEB_TOOLS_ENABLED
+      }
     }
   })
 
@@ -86,6 +94,7 @@ describe('AiAssistRunRouter', function () {
     expect(postRoutes).to.include('/ai-assist/providers/models')
     expect(postRoutes).to.include('/ai-assist/providers/test')
     expect(postRoutes).to.include('/ai-assist/providers/chat')
+    expect(postRoutes).to.include('/ai-assist/providers/editor')
   })
 
   it('registers chat history routes', async function () {

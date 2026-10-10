@@ -21,6 +21,7 @@ export const JINA_READER_BASE = 'https://r.jina.ai'
 /** Jina waits up to 25s for pages unless given an X-Timeout. */
 const JINA_DEFAULT_TIMEOUT_S = 25
 export const EXA_API_BASE = 'https://api.exa.ai'
+export const PARALLEL_API_BASE = 'https://api.parallel.ai'
 const READER_TIMEOUT_MS = 30_000
 
 export const READER_ORDER = [
@@ -31,6 +32,7 @@ export const READER_ORDER = [
   'firecrawlSelfHosted',
   'jina',
   'exa',
+  'parallel',
 ]
 export const READER_LABELS = {
   ollama: 'Ollama',
@@ -40,6 +42,7 @@ export const READER_LABELS = {
   firecrawlSelfHosted: 'Firecrawl (self-hosted)',
   jina: 'Jina Reader',
   exa: 'Exa',
+  parallel: 'Parallel',
 }
 
 function text(value) {
@@ -117,6 +120,14 @@ export function exaTimeoutMs(timeoutMs) {
   return READER_TIMEOUT_MS
 }
 
+/** Long enough for Parallel to hit its extract timeout. */
+export function parallelTimeoutMs(timeoutSeconds) {
+  if (Number.isInteger(timeoutSeconds) && timeoutSeconds > 0) {
+    return Math.max(REQUEST_TIMEOUT_MS, (timeoutSeconds + 10) * 1000)
+  }
+  return READER_TIMEOUT_MS
+}
+
 /**
  * Jina takes its options as headers. JSON mode returns the page with its
  * title and the status the page itself answered with.
@@ -187,6 +198,12 @@ export function readerTimeoutMs(name, router) {
     return Math.max(
       READER_TIMEOUT_MS,
       exaTimeoutMs(endpoint?.read?.livecrawlTimeout)
+    )
+  }
+  if (name === 'parallel') {
+    return Math.max(
+      READER_TIMEOUT_MS,
+      parallelTimeoutMs(endpoint?.read?.timeoutSeconds)
     )
   }
   return READER_TIMEOUT_MS
@@ -556,6 +573,110 @@ export function exaReader(
   })
 }
 
+/**
+ * Parallel's Extract API. Reads a web page and returns its extracted text.
+ */
+export function parallelReader(
+  url,
+  { signal, endpoints, rotator, router = rotator, fetchFn }
+) {
+  const targetEndpoints =
+    endpoints || router?.pool?.filter(e => e.provider === 'parallel') || []
+  return withEndpoints('parallel', targetEndpoints, router, async endpoint => {
+    const read = endpoint.read ?? {}
+    const base = endpoint.baseUrl
+      ? resolveDockerHostUrl(endpoint.baseUrl)
+      : PARALLEL_API_BASE
+
+    const advanced_settings = {}
+    if (read.fullContent !== false) {
+      advanced_settings.full_content = true
+    } else {
+      advanced_settings.full_content = false
+    }
+
+    if (Number.isInteger(read.maxCharsPerResult)) {
+      advanced_settings.excerpt_settings = {
+        max_chars_per_result: read.maxCharsPerResult,
+      }
+    }
+
+    const fetchPolicy = {}
+    if (Number.isInteger(read.maxAgeSeconds)) {
+      fetchPolicy.max_age_seconds = Math.max(600, read.maxAgeSeconds)
+    }
+    if (Number.isInteger(read.timeoutSeconds)) {
+      fetchPolicy.timeout_seconds = read.timeoutSeconds
+    }
+    if (typeof read.disableCacheFallback === 'boolean') {
+      fetchPolicy.disable_cache_fallback = read.disableCacheFallback
+    }
+    if (Object.keys(fetchPolicy).length > 0) {
+      advanced_settings.fetch_policy = fetchPolicy
+    }
+
+    const payload = {
+      urls: [url],
+      ...(Object.keys(advanced_settings).length > 0 ? { advanced_settings } : {}),
+    }
+
+    const body = await apiJson(
+      `${base}/v1/extract`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': endpoint.apiKey,
+        },
+        body: JSON.stringify(payload),
+      },
+      {
+        signal,
+        label: READER_LABELS.parallel,
+        providerType: 'parallel',
+        fetchFn,
+        timeoutMs: parallelTimeoutMs(read.timeoutSeconds),
+      }
+    )
+
+    const error = Array.isArray(body?.errors)
+      ? body.errors.find(e => e.url === url) || body.errors[0]
+      : null
+    if (error) {
+      throw webError(
+        `${READER_LABELS.parallel} could not read ${url}: ${error.content || error.error_type || 'extraction failed'}.`
+      )
+    }
+
+    const data = Array.isArray(body?.results)
+      ? body.results.find(r => r.url === url) || body.results[0]
+      : null
+    if (!data) {
+      throw webError(
+        `${READER_LABELS.parallel} could not read ${url}: no content returned.`
+      )
+    }
+
+    const content =
+      text(data.full_content) ||
+      (Array.isArray(data.excerpts) ? data.excerpts.join('\n\n') : '')
+
+    if (!content) {
+      throw webError(
+        `${READER_LABELS.parallel} could not read ${url}: page text was empty.`
+      )
+    }
+
+    const published = isoDay(data.publish_date)
+    return makeDocument({
+      url,
+      title: text(data.title),
+      text: content,
+      ...(published ? { published } : {}),
+    })
+  })
+}
+
 export const READERS = {
   ollama: ollamaReader,
   websearchapi: websearchapiReader,
@@ -564,4 +685,5 @@ export const READERS = {
   firecrawlSelfHosted: firecrawlSelfHostedReader,
   jina: jinaReader,
   exa: exaReader,
+  parallel: parallelReader,
 }

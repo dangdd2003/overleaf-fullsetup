@@ -6,8 +6,15 @@ import {
   copyTextToClipboard,
 } from '../../../../../frontend/js/features/ai-assist/components/agent/markdown-content'
 import { holdBackIncomplete } from '../../../../../frontend/js/features/ai-assist/hooks/use-stream-reveal'
+import { resetDocumentFocus } from '../../helpers/document-focus'
 
 describe('MarkdownContent', function () {
+  // copyTextToClipboard focuses a textarea and removes it again. The removal
+  // leaves jsdom reporting document.hasFocus() as true for later tests.
+  afterEach(function () {
+    resetDocumentFocus()
+  })
+
   it('renders bold, italic, and paragraphs', function () {
     const { container } = render(
       <MarkdownContent content="This is **bold** and *italic* text." />
@@ -32,11 +39,25 @@ describe('MarkdownContent', function () {
     const inlineCode = container.querySelector('p > code')
     expect(inlineCode?.textContent).to.equal('\\section{intro}')
 
+    const root = container.querySelector('.ai-assist-markdown') as HTMLElement
+    expect(root?.style.getPropertyValue('--editor-bg')).to.exist
+    expect(root?.style.getPropertyValue('--gutter-bg')).to.exist
+
     const pre = container.querySelector('pre')
     expect(pre).to.exist
     const blockCode = pre?.querySelector('code')
     expect(blockCode?.className).to.contain('language-latex')
     expect(blockCode?.textContent).to.contain('\\section{Conclusion}')
+
+    const lines = container.querySelectorAll('.ai-assist-code-line')
+    expect(lines).to.have.length(2)
+    const lineNums = container.querySelectorAll('.ai-assist-code-line-num')
+    expect(lineNums).to.have.length(2)
+    expect(lineNums[0].textContent).to.equal('1')
+    expect(lineNums[1].textContent).to.equal('2')
+    const lineContents = container.querySelectorAll('.ai-assist-code-line-content')
+    expect(lineContents[0].textContent).to.contain('\\section{Conclusion}')
+    expect(lineContents[1].textContent).to.contain('\\label{sec:conclusion}')
   })
 
   it('renders ordered and unordered lists', function () {
@@ -246,13 +267,13 @@ describe('MarkdownContent', function () {
     ].join('\n')
 
     let snippetEvent: any = null
-    let symbolEvent: any = null
+    let symbolEventCount = 0
 
     const snippetListener = (e: any) => {
       snippetEvent = e.detail
     }
-    const symbolListener = (e: any) => {
-      symbolEvent = e.detail
+    const symbolListener = () => {
+      symbolEventCount++
     }
 
     window.addEventListener('aiAssist:insertSnippet', snippetListener)
@@ -272,9 +293,8 @@ describe('MarkdownContent', function () {
       expect(snippetEvent).to.deep.equal({
         text: '\\begin{table}\n  \\caption{Sample}\n\\end{table}',
       })
-      expect(symbolEvent).to.deep.equal({
-        command: '\\begin{table}\n  \\caption{Sample}\n\\end{table}',
-      })
+      // Must not dispatch editor:insert-symbol to avoid duplicate insertion in CodeMirror
+      expect(symbolEventCount).to.equal(0)
       expect(insertBtn.classList.contains('is-inserted')).to.be.true
       expect(insertBtn.textContent).to.contain('Inserted!')
     } finally {

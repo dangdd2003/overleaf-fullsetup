@@ -25,6 +25,7 @@ import { DiffStatBadge } from './diff-stat-badge'
 import { useOpenFileInEditor } from '../../hooks/use-open-file'
 import { SiteIcon, ToolCallDetailView, WEB_TOOLS } from './tool-call-detail'
 import { hostOf } from '../../agent/web-sources'
+import { subresultExpansionStore } from './subresult-expansion-store'
 
 export function getToolIcon(name: string, size = 13) {
   switch (name) {
@@ -505,7 +506,26 @@ export function toolCallDetailClass(call: ToolCallRecord, extra = '') {
     .join(' ')
 }
 
-export const toolCallExpansionStore = new Map<string, boolean>()
+export const toolCallExpansionStore = {
+  _map: new Map<string, boolean>(),
+  get(key: string): boolean {
+    if (this._map.has(key)) return this._map.get(key)!
+    return subresultExpansionStore.get(`tool:${key}`)
+  },
+  set(key: string, value: boolean) {
+    this._map.set(key, value)
+    subresultExpansionStore.set(`tool:${key}`, value)
+    return this
+  },
+  has(key: string): boolean {
+    if (this._map.has(key)) return true
+    return subresultExpansionStore.has(`tool:${key}`)
+  },
+  clear() {
+    this._map.clear()
+    subresultExpansionStore.clear()
+  },
+}
 
 export function ToolCallCard({
   call,
@@ -516,16 +536,18 @@ export function ToolCallCard({
 }) {
   const [userToggled, setUserToggled] = useState<boolean | null>(() => {
     if (call?.id && toolCallExpansionStore.has(call.id)) {
-      return toolCallExpansionStore.get(call.id)!
+      return toolCallExpansionStore.get(call.id)
     }
     return null
   })
 
+  // Drop down sub activity lines are static and follow only user behaviour.
+  // AI actions or subsequent activities must never fold or unfold them.
   const expanded =
     userToggled !== null
       ? userToggled
       : call?.id && toolCallExpansionStore.has(call.id)
-        ? toolCallExpansionStore.get(call.id)!
+        ? toolCallExpansionStore.get(call.id)
         : defaultExpanded
 
   const handleToggle = () => {

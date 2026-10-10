@@ -35,6 +35,20 @@ function fakeRes() {
   return res
 }
 
+function createMockRes(chunks = []) {
+  const res = fakeRes()
+  res.write = sinon.spy(data => {
+    res.written.push(data)
+    try {
+      chunks.push(JSON.parse(data))
+    } catch {
+      chunks.push(data)
+    }
+    return true
+  })
+  return res
+}
+
 const settings = {
   type: 'ollama',
   baseUrl: 'http://10.0.0.5:11434',
@@ -172,6 +186,195 @@ describe('AiAssistProviderController', function () {
       { type: 'done' },
     ])
     expect(res.end.called).to.equal(true)
+  })
+
+  describe('editorText: the AI inside the editor', function () {
+    it('passes on text only: no tool call, no thinking reaches the page', async function () {
+      const streamChat = sinon.spy(async function* () {
+        yield { type: 'thinking', text: 'the document asks me to read files' }
+        yield { type: 'tool_call', id: 'c1', name: 'read_file', args: {} }
+        yield { type: 'text', text: ' works.' }
+        yield { type: 'stop', reason: 'max_tokens' }
+      })
+      const controller = new AiAssistProviderController({
+        clientFactory: () => ({ streamChat }),
+      })
+      const res = fakeRes()
+      await controller.editorText(
+        {
+          body: {
+            providerSettings: settings,
+            request: { system: 's', messages: [{ role: 'user', content: 'hi' }], maxTokens: 50 },
+          },
+        },
+        res
+      )
+      expect(streamChat.firstCall.args[0].tools).to.deep.equal([])
+      expect(res.written.map(line => JSON.parse(line))).to.deep.equal([
+        { type: 'text', text: ' works.' },
+        { type: 'stop', reason: 'max_tokens' },
+        { type: 'done' },
+      ])
+    })
+
+    it('refuses a request with tools, before calling the provider', async function () {
+      const streamChat = sinon.spy(async function* () {})
+      const controller = new AiAssistProviderController({
+        clientFactory: () => ({ streamChat }),
+      })
+      const res = fakeRes()
+      await controller.editorText(
+        {
+          body: {
+            providerSettings: settings,
+            request: {
+              system: 's',
+              messages: [{ role: 'user', content: 'hi' }],
+              maxTokens: 50,
+              tools: [{ name: 'read_file', description: 'd', parameters: {} }],
+            },
+          },
+        },
+        res
+      )
+      expect(res.statusCode).to.equal(400)
+      expect(res.body.error.message).to.equal('Editor features cannot use tools')
+      expect(streamChat.called).to.equal(false)
+    })
+
+    it('falls back to fallbackProviderSettings when primary client fails before emitting chunks', async function () {
+      const primarySettings = { type: 'ollama', baseUrl: 'http://bad-host:11434', model: 'qwen' }
+      const fallbackSettings = { type: 'openai', baseUrl: 'https://api.openai.com', apiKey: 'k', model: 'gpt-4o' }
+      const chunks = []
+
+      const controller = new AiAssistProviderController({
+        clientFactory: settings => {
+          if (settings.type === 'ollama') {
+            return {
+              streamChat: async function* () {
+                throw new Error('Connection refused')
+              },
+            }
+          }
+          return {
+            streamChat: async function* () {
+              yield { type: 'text', text: 'fallback output' }
+            },
+          }
+        },
+      })
+
+      const req = {
+        body: {
+          providerSettings: primarySettings,
+          fallbackProviderSettings: fallbackSettings,
+          request: { messages: [{ role: 'user', content: 'test' }] },
+        },
+      }
+      const res = createMockRes(chunks)
+      await controller.editorText(req, res)
+
+      const texts = chunks.filter(c => c.type === 'text').map(c => c.text)
+      expect(texts).to.deep.equal(['fallback output'])
+      expect(chunks.some(c => c.type === 'done')).to.be.true
+    })
+
+    it('falls back to fallbackProviderSettings when clientFactory throws synchronously', async function () {
+      const primarySettings = { type: 'ollama', baseUrl: 'http://bad-host:11434', model: 'qwen' }
+      const fallbackSettings = { type: 'openai', baseUrl: 'https://api.openai.com', apiKey: 'k', model: 'gpt-4o' }
+      const chunks = []
+
+      const controller = new AiAssistProviderController({
+        clientFactory: settings => {
+          if (settings.type === 'ollama') {
+            throw new Error('Invalid base URL')
+          }
+          return {
+            streamChat: async function* () {
+              yield { type: 'text', text: 'recovered fallback' }
+            },
+          }
+        },
+      })
+
+      const req = {
+        body: {
+          providerSettings: primarySettings,
+          fallbackProviderSettings: fallbackSettings,
+          request: { messages: [{ role: 'user', content: 'test' }] },
+        },
+      }
+      const res = createMockRes(chunks)
+      await controller.editorText(req, res)
+
+      const texts = chunks.filter(c => c.type === 'text').map(c => c.text)
+      expect(texts).to.deep.equal(['recovered fallback'])
+      expect(chunks.some(c => c.type === 'done')).to.be.true
+    })
+
+    it('uses fallbackProviderSettings directly when primary providerSettings is omitted', async function () {
+      const fallbackSettings = { type: 'openai', baseUrl: 'https://api.openai.com', apiKey: 'k', model: 'gpt-4o' }
+      const chunks = []
+
+      const controller = new AiAssistProviderController({
+        clientFactory: settings => ({
+          streamChat: async function* () {
+            yield { type: 'text', text: 'direct fallback' }
+          },
+        }),
+      })
+
+      const req = {
+        body: {
+          fallbackProviderSettings: fallbackSettings,
+          request: { messages: [{ role: 'user', content: 'test' }] },
+        },
+      }
+      const res = createMockRes(chunks)
+      await controller.editorText(req, res)
+
+      const texts = chunks.filter(c => c.type === 'text').map(c => c.text)
+      expect(texts).to.deep.equal(['direct fallback'])
+    })
+
+    it('does not fall back if primary client fails after emitting chunks', async function () {
+      const primarySettings = { type: 'ollama', baseUrl: 'http://bad-host:11434', model: 'qwen' }
+      const fallbackSettings = { type: 'openai', baseUrl: 'https://api.openai.com', apiKey: 'k', model: 'gpt-4o' }
+      const chunks = []
+
+      const controller = new AiAssistProviderController({
+        clientFactory: settings => {
+          if (settings.type === 'ollama') {
+            return {
+              streamChat: async function* () {
+                yield { type: 'text', text: 'partial' }
+                throw new Error('Mid-stream failure')
+              },
+            }
+          }
+          return {
+            streamChat: async function* () {
+              yield { type: 'text', text: 'fallback output' }
+            },
+          }
+        },
+      })
+
+      const req = {
+        body: {
+          providerSettings: primarySettings,
+          fallbackProviderSettings: fallbackSettings,
+          request: { messages: [{ role: 'user', content: 'test' }] },
+        },
+      }
+      const res = createMockRes(chunks)
+      await controller.editorText(req, res)
+
+      const texts = chunks.filter(c => c.type === 'text').map(c => c.text)
+      expect(texts).to.deep.equal(['partial'])
+      expect(chunks.some(c => c.type === 'error')).to.be.true
+      expect(chunks.some(c => c.type === 'done')).to.be.false
+    })
   })
 
   it('forwards the context window and relays stop chunks', async function () {
@@ -402,6 +605,93 @@ describe('AiAssistProviderController', function () {
       })
     })
 
+    it('tests Parallel web search provider settings successfully in multi and single format', async function () {
+      const webSearchTester = sinon.stub().resolves({
+        latencyMs: 110,
+        resultCount: 5,
+        activeEndpoints: 1,
+        provider: 'parallel',
+      })
+      const controller = new AiAssistProviderController({
+        webSearchTester,
+      })
+
+      const res1 = fakeRes()
+      await controller.testWebSearch(
+        {
+          body: {
+            webSearchSettings: {
+              providers: {
+                parallel: { enabled: true, apiKeys: ['test-parallel-key'] },
+              },
+            },
+          },
+        },
+        res1
+      )
+      expect(res1.body).to.deep.equal({
+        latencyMs: 110,
+        resultCount: 5,
+        activeEndpoints: 1,
+        provider: 'parallel',
+      })
+
+      const res2 = fakeRes()
+      await controller.testWebSearch(
+        {
+          body: {
+            webSearchSettings: {
+              type: 'parallel',
+              apiKey: 'test-parallel-key',
+            },
+          },
+        },
+        res2
+      )
+      expect(res2.body).to.deep.equal({
+        latencyMs: 110,
+        resultCount: 5,
+        activeEndpoints: 1,
+        provider: 'parallel',
+      })
+    })
+
+    it('allows testing configured Parallel provider in draft mode even when enabled is false', async function () {
+      const webSearchTester = sinon.stub().resolves({
+        latencyMs: 75,
+        resultCount: 3,
+        activeEndpoints: 1,
+        provider: 'parallel',
+      })
+      const controller = new AiAssistProviderController({
+        webSearchTester,
+      })
+      const res = fakeRes()
+
+      await controller.testWebSearch(
+        {
+          body: {
+            webSearchSettings: {
+              providers: {
+                parallel: {
+                  enabled: false,
+                  apiKeys: ['test-parallel-key'],
+                },
+              },
+            },
+          },
+        },
+        res
+      )
+
+      expect(res.body).to.deep.equal({
+        latencyMs: 75,
+        resultCount: 3,
+        activeEndpoints: 1,
+        provider: 'parallel',
+      })
+    })
+
     it('allows testing configured provider in draft mode even when enabled is false', async function () {
       const webSearchTester = sinon.stub().resolves({
         latencyMs: 60,
@@ -438,6 +728,41 @@ describe('AiAssistProviderController', function () {
       })
     })
 
+    it('returns 200 with structured results even when all providers fail', async function () {
+      const webSearchTester = sinon.stub().resolves({
+        latencyMs: 110,
+        anySuccess: false,
+        results: [
+          { provider: 'searxng', ok: false, error: 'Connection refused' },
+          { provider: 'tavily', ok: false, error: 'Invalid API key (401)' },
+        ],
+        activeEndpoints: 2,
+        provider: null,
+      })
+      const controller = new AiAssistProviderController({ webSearchTester })
+      const res = fakeRes()
+
+      await controller.testWebSearch(
+        {
+          body: {
+            webSearchSettings: {
+              providers: {
+                searxng: { enabled: true, baseUrls: ['http://bad:8080'] },
+                tavily: { enabled: true, apiKeys: ['bad-key'] },
+              },
+            },
+          },
+        },
+        res
+      )
+
+      expect(res.statusCode).to.equal(200)
+      expect(res.body.anySuccess).to.be.false
+      expect(res.body.results).to.have.length(2)
+      expect(res.body.results[0].provider).to.equal('searxng')
+      expect(res.body.results[1].provider).to.equal('tavily')
+    })
+
     it('rejects testWebSearch without webSearchSettings', async function () {
       const controller = new AiAssistProviderController()
       const res = fakeRes()
@@ -446,6 +771,56 @@ describe('AiAssistProviderController', function () {
 
       expect(res.statusCode).to.equal(400)
       expect(res.body.error.code).to.equal('invalidWebSearchSettings')
+    })
+  })
+
+  describe('images', function () {
+    const image = { mediaType: 'image/png', data: 'iVBORw0KGgo=' }
+    const run = async (
+      messages,
+      streamChat = async function* () {
+        yield { type: 'text', text: 'ok' }
+      }
+    ) => {
+      const controller = new AiAssistProviderController({
+        clientFactory: () => ({ streamChat }),
+      })
+      const res = fakeRes()
+      await controller.chat(
+        { body: { providerSettings: settings, request: { messages, maxTokens: 10 } } },
+        res
+      )
+      return res
+    }
+
+    it('passes images on a user message through to the provider', async function () {
+      const streamChat = sinon.spy(async function* () {
+        yield { type: 'text', text: 'ok' }
+      })
+      await run([{ role: 'user', content: 'eq', images: [image] }], streamChat)
+      expect(streamChat.firstCall.args[0].messages[0].images).to.deep.equal([image])
+    })
+
+    it('refuses images it cannot accept, before calling the provider', async function () {
+      const streamChat = sinon.spy(async function* () {})
+      const res = await run([{ role: 'assistant', content: 'x', images: [image] }], streamChat)
+      expect(res.statusCode).to.equal(400)
+      expect(res.body.error.code).to.equal('invalidRequest')
+      expect(streamChat.called).to.equal(false)
+    })
+
+    it('reports a provider refusing images as imageUnsupported', async function () {
+      const res = await run([{ role: 'user', content: 'x', images: [image] }], async function* () {
+        throw new ProviderError('image_url is only supported by certain models', { status: 400 })
+      })
+      expect(JSON.parse(res.written.at(-1)).error.code).to.equal('imageUnsupported')
+    })
+
+    it('keeps other failures as they are', async function () {
+      const res = await run([{ role: 'user', content: 'x', images: [image] }], async function* () {
+        throw new ProviderError('max_tokens is too large', { status: 400 })
+      })
+      expect(JSON.parse(res.written.at(-1)).error.code).to.equal('providerError')
     })
   })
 })

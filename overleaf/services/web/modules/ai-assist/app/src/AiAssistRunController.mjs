@@ -172,7 +172,7 @@ export class AiAssistRunController {
       } catch {}
     }
 
-    let counted = false
+    let watcherRegistered = false
     let closed = false
     // `watch=0` is a panel following a chat it is not showing, to save the
     // reply when it lands. It keeps the run from being reaped, but cannot
@@ -183,7 +183,8 @@ export class AiAssistRunController {
     const releaseWatcher = () => {
       if (closed) return
       closed = true
-      if (counted) {
+      if (watcherRegistered) {
+        watcherRegistered = false
         void this.store.removeWatcher(...watchArgs).catch(() => {})
       }
     }
@@ -212,8 +213,13 @@ export class AiAssistRunController {
       return
     }
 
-    counted = true
     await this.store.addWatcher(...watchArgs)
+    if (closed) {
+      await this.store.removeWatcher(...watchArgs).catch(() => {})
+      res.end()
+      return
+    }
+    watcherRegistered = true
 
     const keepAliveSeconds = Settings.aiAssist?.streamKeepAliveSeconds ?? 15
     if (keepAliveSeconds > 0) {

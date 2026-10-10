@@ -13,13 +13,36 @@ export async function upstreamError(res, label, type) {
   let detail = /<html|<!doctype/i.test(raw) ? '' : raw.slice(0, 300).trim()
   try {
     const parsed = JSON.parse(raw)
-    const candidate =
+    let candidate =
       parsed?.error?.message ??
-      parsed?.error ??
+      (typeof parsed?.error === 'string' ? parsed.error : null) ??
       parsed?.detail?.error ??
       parsed?.readableMessage ??
       parsed?.message
-    if (typeof candidate === 'string') detail = candidate
+    if (Array.isArray(parsed?.detail)) {
+      const fieldDetails = parsed.detail
+        .map(d =>
+          typeof d === 'string'
+            ? d
+            : `${d?.loc?.filter(x => x !== 'body')?.join('.') || 'param'}: ${d?.msg || 'invalid'}`
+        )
+        .filter(Boolean)
+        .join('; ')
+      if (fieldDetails) {
+        candidate = candidate ? `${candidate} (${fieldDetails})` : fieldDetails
+      }
+    } else if (typeof parsed?.detail === 'string') {
+      candidate = parsed.detail
+    } else if (Array.isArray(parsed?.errors)) {
+      const errorList = parsed.errors
+        .map(e => e?.message || e?.msg || (typeof e === 'string' ? e : ''))
+        .filter(Boolean)
+        .join('; ')
+      if (errorList) {
+        candidate = candidate ? `${candidate} (${errorList})` : errorList
+      }
+    }
+    if (typeof candidate === 'string') detail = candidate.trim()
   } catch {
     // keep the raw text
   }
@@ -79,6 +102,14 @@ export async function upstreamError(res, label, type) {
       'The Exa API key was rejected or is out of credits. Create one at https://dashboard.exa.ai/api-keys and update it in Account Settings.'
   } else if (type === 'exa' && res.status === 429) {
     hint = "Exa's rate limit was reached. Wait a moment before trying again."
+  } else if (
+    type === 'parallel' &&
+    (res.status === 401 || res.status === 402 || res.status === 403)
+  ) {
+    hint =
+      'The Parallel API key was rejected or is out of credits. Create one at https://parallel.ai and update it in Account Settings.'
+  } else if (type === 'parallel' && res.status === 429) {
+    hint = "Parallel's rate limit was reached. Wait a moment before trying again."
   } else if (res.status === 401 || res.status === 403) {
     hint =
       'The Ollama API key was rejected. Create one at https://ollama.com/settings/keys and update it in Account Settings.'
@@ -86,7 +117,8 @@ export async function upstreamError(res, label, type) {
     hint =
       'The web search rate limit was reached. Wait a moment before searching again.'
   }
-  const message = `${label} returned HTTP ${res.status}${detail ? `: ${detail}` : ''}.${hint ? ` ${hint}` : ''}`
+  const cleanDetail = detail ? detail.replace(/\.+$/, '') : ''
+  const message = `${label} returned HTTP ${res.status}${cleanDetail ? `: ${cleanDetail}` : ''}.${hint ? ` ${hint}` : ''}`
   return webError(message, { status: res.status, hint })
 }
 

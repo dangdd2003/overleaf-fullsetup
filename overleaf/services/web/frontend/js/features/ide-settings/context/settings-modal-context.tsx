@@ -48,6 +48,7 @@ import EditorTabsSetting from '../components/editor-settings/editor-tabs-setting
 import FloatingMenuSetting from '../components/editor-settings/floating-menu-setting'
 import useEventListener from '@/shared/hooks/use-event-listener'
 import OptimizeCompileSetting from '../components/compiler-settings/optimize-compile-setting'
+import { hasReviewTooltipMenuActions } from '@/features/review-panel/components/review-tooltip-menu'
 
 const [referenceSearchSettingModule] = importOverleafModules(
   'referenceSearchSetting'
@@ -103,6 +104,9 @@ export const SettingsModalProvider: FC<React.PropsWithChildren> = ({
 
   const hasEmailNotifications = useFeatureFlag('email-notifications')
   const hasToolbarMigration = useFeatureFlag('writefull-toolbar-migration')
+  // Modules (AI Writing tools) add rows to the selection's quick actions; the
+  // toggle for them then sits with the other editor tools
+  const hasQuickActionRows = hasReviewTooltipMenuActions()
 
   const editorTabExtraSections = useSlotSections(editorTabExtraSectionHooks)
   const spellcheckExtraSections = useSlotSections(spellcheckExtraSectionHooks)
@@ -152,7 +156,8 @@ export const SettingsModalProvider: FC<React.PropsWithChildren> = ({
               {
                 key: 'floating-menu',
                 component: <FloatingMenuSetting />,
-                hidden: !hasToolbarMigration && floatingMenu,
+                hidden:
+                  hasQuickActionRows || (!hasToolbarMigration && floatingMenu),
               },
             ],
           },
@@ -167,6 +172,11 @@ export const SettingsModalProvider: FC<React.PropsWithChildren> = ({
               {
                 key: 'mathPreview',
                 component: <MathPreviewSetting />,
+              },
+              {
+                key: 'floating-menu-tools',
+                component: <FloatingMenuSetting />,
+                hidden: !hasQuickActionRows,
               },
             ],
           },
@@ -339,6 +349,7 @@ export const SettingsModalProvider: FC<React.PropsWithChildren> = ({
       editorTabExtraSections,
       spellcheckExtraSections,
       hasToolbarMigration,
+      hasQuickActionRows,
       floatingMenu,
     ]
   )

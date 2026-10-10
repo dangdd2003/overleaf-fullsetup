@@ -61,6 +61,9 @@ describe('useEditorThemeStyles', function () {
     expect(result.current.styles.lineHeight).to.equal(2)
     expect(result.current.editorStyle.fontFamily).to.contain('Lucida Console')
     expect(result.current.editorStyle.fontSize).to.equal('16px')
-    expect(result.current.editorStyle.backgroundColor).to.equal('#272822')
+    expect((result.current.editorStyle as any)['--editor-bg']).to.equal('#272822')
+    expect((result.current.editorVars as any)['--editor-bg']).to.equal('#272822')
+    expect((result.current.editorVars as any)['--gutter-bg']).to.equal('#2F3129')
+    expect((result.current.editorVars as any)['--gutter-border']).to.exist
   })
 })

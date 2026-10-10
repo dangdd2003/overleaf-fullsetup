@@ -10,6 +10,7 @@ import { useTranslation } from 'react-i18next'
 import { MathDropdown } from './math-dropdown'
 import { InsertListDropdown } from './insert-list-dropdown'
 import { TableDropdown } from './table-dropdown'
+import { findGenerator } from './ai-generators'
 import { LegacyTableDropdown } from './table-inserter-dropdown-legacy'
 import { withinFormattingCommand } from '@/features/source-editor/utils/tree-operations/formatting'
 import { isMac } from '@/shared/utils/os'
@@ -169,7 +170,9 @@ export const ToolbarItems: FC<{
             )}
             {showGroup('misc-table') && (
               <div data-overflow="misc-table">
-                {writefullInstance || showAiFeaturesDisabled ? (
+                {writefullInstance ||
+                showAiFeaturesDisabled ||
+                findGenerator('table') ? (
                   <TableDropdown />
                 ) : (
                   <LegacyTableDropdown />

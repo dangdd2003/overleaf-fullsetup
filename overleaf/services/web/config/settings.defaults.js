@@ -1028,12 +1028,61 @@ module.exports = {
     tprFileViewRefreshButton: [],
     tprFileViewNotOriginalImporter: [],
     contactUsModal: [],
-    sourceEditorExtensions: [],
+    sourceEditorExtensions: [
+      Path.resolve(
+        __dirname,
+        '../modules/ai-assist/frontend/js/features/ai-assist/ai-edit-glow/extension.ts'
+      ),
+      Path.resolve(
+        __dirname,
+        '../modules/ai-assist/frontend/js/features/ai-assist/writing-tools/extension.ts'
+      ),
+      Path.resolve(
+        __dirname,
+        '../modules/ai-assist/frontend/js/features/ai-assist/texgpt/extension.ts'
+      ),
+      Path.resolve(
+        __dirname,
+        '../modules/ai-assist/frontend/js/features/ai-assist/equation/extension.ts'
+      ),
+      Path.resolve(
+        __dirname,
+        '../modules/ai-assist/frontend/js/features/ai-assist/table/extension.ts'
+      ),
+      Path.resolve(
+        __dirname,
+        '../modules/ai-assist/frontend/js/features/ai-assist/language-suggestions/extension.ts'
+      ),
+      Path.resolve(
+        __dirname,
+        '../modules/ai-assist/frontend/js/features/ai-assist/inline-suggestion/extension.ts'
+      ),
+    ],
     sourceEditorVisualExtensions: [],
     sourceEditorComponents: [
       Path.resolve(
         __dirname,
         '../modules/ai-assist/frontend/js/features/ai-assist/components/apply-fix-listener.tsx'
+      ),
+      Path.resolve(
+        __dirname,
+        '../modules/ai-assist/frontend/js/features/ai-assist/components/writing-tools/writing-tools-card.tsx'
+      ),
+      Path.resolve(
+        __dirname,
+        '../modules/ai-assist/frontend/js/features/ai-assist/components/equation/equation-host.tsx'
+      ),
+      Path.resolve(
+        __dirname,
+        '../modules/ai-assist/frontend/js/features/ai-assist/components/table/table-host.tsx'
+      ),
+      Path.resolve(
+        __dirname,
+        '../modules/ai-assist/frontend/js/features/ai-assist/components/language-suggestions/suggestion-card-host.tsx'
+      ),
+      Path.resolve(
+        __dirname,
+        '../modules/ai-assist/frontend/js/features/ai-assist/components/inline-suggestion/inline-popup.tsx'
       ),
     ],
     pdfLogEntryHeaderActionComponents: [
@@ -1063,10 +1112,32 @@ module.exports = {
     ],
     sourceEditorCompletionSources: [],
     sourceEditorSymbolPalette: [],
-    sourceEditorToolbarStartButtons: [],
+    sourceEditorToolbarStartButtons: [
+      Path.resolve(
+        __dirname,
+        '../modules/ai-assist/frontend/js/features/ai-assist/components/texgpt/texgpt-button.tsx'
+      ),
+    ],
     sourceEditorToolbarButtonGroups: [],
     sourceEditorToolbarComponents: [],
-    sourceEditorToolbarEndButtons: [],
+    sourceEditorToolbarEndButtons: [
+      Path.resolve(
+        __dirname,
+        '../modules/ai-assist/frontend/js/features/ai-assist/components/language-suggestions/toolbar-control.tsx'
+      ),
+    ],
+    sourceEditorMathGenerators: [
+      Path.resolve(
+        __dirname,
+        '../modules/ai-assist/frontend/js/features/ai-assist/equation/math-generator.ts'
+      ),
+    ],
+    sourceEditorTableGenerators: [
+      Path.resolve(
+        __dirname,
+        '../modules/ai-assist/frontend/js/features/ai-assist/table/table-generator.ts'
+      ),
+    ],
     rootContextProviders: [],
     mainEditorLayoutModals: [],
     mainEditorLayoutPanels: [
@@ -1152,9 +1223,25 @@ module.exports = {
       ),
     ],
     referenceSearchSetting: [],
-    settingsModalEditorTabSections: [],
-    settingsModalSpellcheckSections: [],
+    settingsModalEditorTabSections: [
+      Path.resolve(
+        __dirname,
+        '../modules/ai-assist/frontend/js/features/ai-assist/components/inline-suggestion/ai-assistance-section.tsx'
+      ),
+    ],
+    settingsModalSpellcheckSections: [
+      Path.resolve(
+        __dirname,
+        '../modules/ai-assist/frontend/js/features/ai-assist/components/language-suggestions/language-suggestions-section.tsx'
+      ),
+    ],
     editorFloatingMenuActions: [],
+    reviewTooltipMenuActions: [
+      Path.resolve(
+        __dirname,
+        '../modules/ai-assist/frontend/js/features/ai-assist/components/writing-tools/writing-tools-action.tsx'
+      ),
+    ],
     referenceIndices: [],
     railEntries: [
       Path.resolve(

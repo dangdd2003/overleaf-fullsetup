@@ -6,7 +6,7 @@ All extension modules are completely modular, cleanly isolated, and disabled by 
 
 ### Key Features at a Glance
 
-- **AI Assist**: In-editor LLM assistant for LaTeX authoring, real-time compilation error diagnostics, automated code corrections, and persistent chat history. Includes optional live web research (SearXNG, Tavily, Exa, Jina, Firecrawl, Ollama, etc.) and an optional isolated, sandbox-hardened headless browser container (`overleaf-browser`) for dynamic page rendering.
+- **AI Assist**: In-editor LLM agent for LaTeX authoring with three execution modes (Manual, Accept Edits, Plan), 18 project and web tools, structure-aware inline auto-completion, ghost-text suggestions, grammar and language suggestions, contextual writing tools (rephrase, shorten, scientific, split, join, translate, synonyms), TeXGPT natural-language generation (titles, abstracts, keywords), image-to-LaTeX equation generation, table and figure generation, empty-line prompt bar, one-click suggest-fix for compile errors, project-derived starter prompts, persistent chat history with auto-generated titles, background/detached agent runs, vision/multimodal image attachments, and user-configurable BYO model providers (OpenAI, Anthropic, Google, Ollama) with adjustable reasoning effort. Includes optional live web research (SearXNG, Tavily, Exa, Jina, Firecrawl, LangSearch, Ollama, WebSearchAPI, TinyFish, Parallel, and MCP servers) and an optional isolated, sandbox-hardened headless browser container (`overleaf-browser`) for dynamic page rendering.
 - **Full Collaboration & Review**: Upstream-grade inline commenting, comment resolution threads, user @mentions, track changes with per-user suggestions, accept/reject workflows, the dedicated Reviewer role, and batched email digest notifications.
 - **Bi-directional Google Drive Sync**: OAuth 2.0 account linking, automated project backup, real-time Google Drive push webhook integration, and background synchronization reconciliation workers.
 - **GitHub Sync**: Bi-directional project synchronization with GitHub repositories via OAuth 2.0 and local Git operations.
@@ -163,6 +163,7 @@ AI Assist integrates an intelligent LLM agent into Overleaf for LaTeX authoring,
 | `AI_ASSIST_ORPHAN_GRACE_SECONDS` | `300` | Grace period in seconds before removing disconnected agent runs. |
 | `AI_ASSIST_HEARTBEAT_STALE_SECONDS` | `1800` | Inactivity period in seconds before marking a run heartbeat stale. |
 | `AI_ASSIST_STREAM_KEEPALIVE_SECONDS` | `15` | Interval in seconds for SSE keepalive ping comments on active run streams. |
+| `AI_ASSIST_STREAM_IDLE_SECONDS` | `0` | Idle timeout in seconds for provider streaming responses. `0` disables it; providers fall back to a 120-second default. |
 | `AI_ASSIST_MAX_TRANSCRIPT_BYTES` | `5000000` | Maximum allowed payload size in bytes for chat run transcripts. |
 
 #### Optional Web Research & Search Providers
@@ -171,7 +172,7 @@ AI Assist integrates an intelligent LLM agent into Overleaf for LaTeX authoring,
 | :--- | :--- | :--- |
 | `AI_ASSIST_WEB_TOOLS_ENABLED`* | `false` | Enables web search and fetch tools for the AI assistant. |
 | `AI_ASSIST_WEB_SEARCH_SERVER_ENABLED` | `false` | Enables server-configured web search providers for users without individual API keys. |
-| `AI_ASSIST_WEB_SEARCH_PRIMARY_PROVIDER` | `searxng` | Primary search provider fallback (`searxng`, `tavily`, `exa`, `jina`, `firecrawl`, `ollama`, `langsearch`, `websearchapi`, `mcp`). |
+| `AI_ASSIST_WEB_SEARCH_PRIMARY_PROVIDER` | `searxng` | Primary search provider fallback (`searxng`, `tavily`, `exa`, `jina`, `firecrawl`, `ollama`, `langsearch`, `websearchapi`, `tinyfish`, `parallel`, `mcp`). |
 | `AI_ASSIST_WEB_SEARCH_ROTATION_STRATEGY` | `round-robin` | Provider rotation strategy (`round-robin`, `provider-priority`, or `sticky`). |
 | `AI_ASSIST_SEARXNG_URL` / `AI_ASSIST_SEARXNG_URLS` | `""` | Comma-separated base URL(s) of SearXNG instances. |
 | `AI_ASSIST_SEARXNG_DEFAULT_CATEGORIES` | `""` | Default search categories for SearXNG queries (e.g. `general,science`). |
@@ -184,6 +185,10 @@ AI Assist integrates an intelligent LLM agent into Overleaf for LaTeX authoring,
 | `AI_ASSIST_LANGSEARCH_API_KEY` / `_KEYS` | `""` | Comma-separated API key(s) for LangSearch provider. |
 | `AI_ASSIST_OLLAMA_API_KEY` / `_KEYS` | `""` | Comma-separated API key(s) for Ollama web search. |
 | `AI_ASSIST_WEBSEARCHAPI_API_KEY` / `_KEYS` | `""` | Comma-separated API key(s) for WebSearchAPI provider. |
+| `AI_ASSIST_TINYFISH_API_KEY` / `_KEYS` | `""` | Comma-separated API key(s) for TinyFish search provider. |
+| `AI_ASSIST_TINYFISH_BASE_URL` | `https://api.search.tinyfish.ai` | Base URL for TinyFish search API. |
+| `AI_ASSIST_PARALLEL_API_KEY` / `_KEYS` | `""` | Comma-separated API key(s) for Parallel search & extract provider. |
+| `AI_ASSIST_PARALLEL_BASE_URL` | `https://api.parallel.ai` | Base URL for Parallel search & extract API. |
 | `AI_ASSIST_MCP_URL` / `AI_ASSIST_MCP_URLS` | `""` | Comma-separated HTTP/SSE endpoint URL(s) for MCP web search servers. |
 | `AI_ASSIST_MCP_BEARER_TOKEN` / `_API_KEY` | `""` | Bearer authorization token or API key for MCP server requests. |
 | `AI_ASSIST_MCP_HEADERS` | `""` | Custom headers for MCP server requests (JSON or `Key: Value` format). |
@@ -219,6 +224,109 @@ The browser capability is divided between two separate services running in indep
 | `BROWSER_CAPACITY` | `2` | Maximum number of concurrent Chrome browser tabs/pages allowed in the container. |
 | `BROWSER_LANG` | `en-US` | Default `Accept-Language` and UI locale passed to the Chrome process. |
 | `UPSTREAM_PROXY` | `""` | Optional upstream proxy (`http://user:pass@host:port` or `socks5://...`) to chain all outbound browser traffic through. |
+
+#### Agent Modes
+
+The AI agent operates in three execution modes that control how tool calls are handled. The mode is chosen in the chat composer and enforced server-side on every tool invocation. Tool definitions stay identical across modes to preserve provider prompt caching.
+
+| Mode | Behaviour |
+| :--- | :--- |
+| **Manual** | Every file edit, file creation, and settings change asks the user for approval before executing. Read-only tools (outline, search, compile, etc.) run automatically. |
+| **Accept Edits** | File edits, file creations, and project compiler settings apply automatically without asking. Account-level settings (appearance, editor preferences) still require confirmation because they persist across projects. |
+| **Plan** | The agent researches and presents a plan for user approval. All file-editing and settings tools are denied; only read-only tools and `present_plan` are available. |
+
+#### Agent Tools
+
+The agent has access to 18 tools. Read-only tools execute automatically in all modes; editing and settings tools are gated by the active mode.
+
+**Project tools** (15):
+
+| Tool | Description |
+| :--- | :--- |
+| `get_outline` | Section tree with file and line ranges, plus the `\input` graph. |
+| `get_packages` | Document class and every `\usepackage` with file and line. |
+| `get_references` | Every `\label`, `\ref`, and `\cite` with resolution status and duplicate labels. |
+| `list_files` | Project files with type and line count (glob filter). |
+| `read_file` | Read a text file or line range as numbered lines (first 500 by default). |
+| `search_text` | Find a string or regex across project text files with context lines. |
+| `edit_file` | Replace text by match or line range, append, or delete in a project file. |
+| `create_file` | Create a new project file with initial content. |
+| `compile_project` | Compile the project and return errors and warnings. Supports clean rebuild. |
+| `get_compile_result` | Errors and warnings of the last compile without rebuilding. |
+| `get_project_settings` | Read current compiler, appearance, editor, and spelling settings. |
+| `configure_appearance_settings` | Set theme, syntax themes, font, line height, dark-mode PDF (account preferences; always asks). |
+| `configure_compiler_settings` | Set engine, TeX Live image, root document, draft mode, stop-on-first-error (project state; auto-applied in Accept Edits). |
+| `configure_editor_settings` | Set keybinding mode, auto-complete, bracket pairing, syntax validation, PDF viewer, math preview, breadcrumbs, tabs, spellcheck language (account preferences; always asks). |
+| `list_available_settings` | List allowed values for every setting (compilers, TeX Live versions, themes, fonts, sizes, viewers, languages). |
+
+**Web tools** (2):
+
+| Tool | Description |
+| :--- | :--- |
+| `web_search` | Search the web for current information. Returns numbered cited sources with title, URL, date, and snippet. |
+| `web_fetch` | Read a web page, PDF, or text file as Markdown. Long documents are paginated; supports `find` for full-document passage search and `page` for section jumps. |
+
+**Mode tool** (1):
+
+| Tool | Description |
+| :--- | :--- |
+| `present_plan` | Plan mode only. Present a finished plan for user approval. Call once research is complete. |
+
+#### Inline AI Editor Features
+
+Beyond the chat agent, AI Assist provides editor-integrated features that run their own lightweight provider calls. All inline features are gated by `AI_ASSIST_ENABLED` and the user's AI preference toggle; they require no additional environment variables.
+
+| Feature | Description |
+| :--- | :--- |
+| **Inline Auto-Completion** | Context-aware completion at the cursor with any configured chat model (Shift+Space for manual, or Automatic after a pause in typing). Detects where a suggestion fits — blocked in comments, command names, key/path/option arguments, bibliography entries, and mid-line gaps with text after the cursor — and classifies what goes there: prose continuation, the next block (table, figure, formula, list, code), a math expression, or preamble lines. Sends the document's full context (title, abstract, section outline, packages, macros, labels, citations) as structured tags alongside an excerpt marked at the cursor, and holds the reply to the structure: rows with the correct number of cells, arguments closed exactly once, display blocks on their own lines, no root commands inside the document body. Automatic mode also stays quiet on empty lines (where Space opens the writing prompt), in the preamble, and at blank-line block boundaries where there is nothing yet to continue. |
+| **Inline Ghost-Text Suggestions** | Streaming ghost-text suggestions in the editor, triggered by an explicit prompt bar, Shift+Space, or a pause in typing (automatic). Accepted with Tab; partial acceptance by typing through. |
+| **Language & Grammar Suggestions** | Batch grammar and language checks across the open file. Masks math, keys, command names, and comments before sending prose to the model. Applied per-suggestion with a diff preview. |
+| **Writing Tools** | Contextual rewrite actions on selected text: Rephrase, Shorten, Make scientific, Split long sentences, Join short sentences, Translate, and Synonyms. Adapts available actions to the selection shape (word, phrase, sentence). Includes LaTeX-specific validation checks. |
+| **TeXGPT** | Natural-language generation of LaTeX content: Title, Abstract, and Keywords generators. Detects existing blocks (`\title`, `abstract` environment, keyword environments) and replaces or appends intelligently. Preserves separator conventions (`\sep`, `\and`, commas). |
+| **Equation Generator** | Convert an image of a math expression (or text description) to LaTeX. Sends a rendered math image to a vision-capable model. Supports clipboard paste, file upload, and automatic image resizing (max 1568px long edge, min 768px). |
+| **Table Generator** | Generate LaTeX tables from natural-language descriptions or images. Accessible from the editor's Insert Table menu ("From text or image"). Infers column structure, packages, and formatting. |
+| **Figure Generator** | Generate LaTeX figure environments with optional image attachments. Supports clipboard image paste and file upload (PNG, JPEG, WebP, GIF up to 20 MB). |
+| **Empty Line Prompt** | Pressing Space on an empty line opens an inline AI prompt bar at the cursor position, enabling quick natural-language-to-LaTeX generation without leaving the editor. |
+| **AI Edit Glow** | Visual animation in CodeMirror highlighting newly applied AI modifications and smoothly scrolling newly inserted or edited lines into view. |
+
+#### Chat History & Background Runs
+
+| Feature | Description |
+| :--- | :--- |
+| **Persistent Chat History** | Chat transcripts are persisted to the filesystem (`AI_ASSIST_CHAT_HISTORY_DIR`) and restored when reopening a chat. Each chat appears in a history menu accessible from the agent panel. |
+| **Auto-Generated Chat Titles** | A background LLM call generates a concise title for each new chat, replacing the default timestamp label. Titles are visible in the chat history menu. |
+| **Background / Detached Agent Runs** | When the user switches to another chat mid-run, the previous run continues on the server. Up to 3 detached runs are followed in parallel (browser connection limits); progress is saved to chat history periodically. Reopening a chat picks up the run from where it left off. |
+
+#### Suggest Fix & Project Starters
+
+| Feature | Description |
+| :--- | :--- |
+| **Suggest Fix** | A one-click "Suggest fix" action on any compile error or warning in the log panel. Launches a focused agent run that investigates the error (checking preamble, compile log, and source context), proposes the smallest fix as an `edit_file` call, and presents a diff for approval. No reply box — the run completes autonomously. |
+| **Project-Derived Starters** | The empty chat state shows up to 5 contextual starter prompts derived from the project's structure, file listing, and last compile result. Starters are deterministic and require no provider call — they appear instantly on first paint. Examples: "Fix compile errors", "Resolve broken references", "Draft a conclusion", "Add a summary table", "Generate a TikZ diagram". |
+
+#### AGENTS.md — Per-Project Instructions
+
+Place an `AGENTS.md` file in the **project root** to give the agent project-specific instructions (style rules, conventions, terminology). Always active when `AI_ASSIST_ENABLED=true` — no extra env var needed.
+
+| Behaviour | Detail |
+| :--- | :--- |
+| **Matching** | Case-insensitive (`agents.md`, `AGENTS.md`, `Agents.MD`). Root only — subfolders ignored. |
+| **Timing** | Read once per run at startup. Mid-run edits take effect on the next run. |
+| **Size** | No limit. Blank/whitespace-only file is treated as absent. |
+| **Errors** | Failure to read is silently ignored; the run continues without instructions. |
+| **Prompt position** | Injected as a second system block after the base prompt. Overrides general style guidance but not tool contract, modes, or the user's request. |
+
+#### BYO Model Provider & Vision
+
+AI Assist uses a bring-your-own-model architecture: each user configures their own LLM provider and API key in the AI Assist settings panel. No model provider keys are stored in server environment variables.
+
+| Feature | Description |
+| :--- | :--- |
+| **Multi-Provider Support** | Users can configure any OpenAI-compatible endpoint (OpenAI, Azure, local), Anthropic (Claude), Google (Gemini), or Ollama (self-hosted). Provider URLs are validated server-side to block internal service access (MongoDB, Redis, CLSI, cloud metadata, etc.). |
+| **Dual Model Slots (Main & Fast)** | Separate slots for the main model (used by the AI assistant panel and writing tools) and a lightweight/fast model (used for inline code completion and language suggestions) to optimize latency and token costs. |
+| **Reasoning Effort** | Adjustable reasoning effort for supported models (e.g. Claude's extended thinking). Controls how many thinking tokens the model spends before answering. Configured per-user in the agent panel. |
+| **Vision / Multimodal** | Users can attach images (PNG, JPEG, WebP, GIF; max 2 images, 4 MB each) to chat messages. The equation generator also sends rendered math images to vision-capable models. Images are validated server-side before forwarding to the provider. |
+| **Live Settings Sync** | When the agent calls `configure_compiler_settings`, `configure_appearance_settings`, or `configure_editor_settings`, the changes are applied live to the editor UI in real time, with an approval card showing the diff. |
 
 ---
 

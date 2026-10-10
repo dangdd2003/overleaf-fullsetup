@@ -5,6 +5,9 @@ import {
   anthropicSystemField,
   cacheControlValue,
   createProviderClient,
+  GoogleServerClient,
+  OllamaServerClient,
+  OpenAiServerClient,
   ProviderError,
   fetchWithRetry,
   isOfficialOpenAiUrl,
@@ -13,6 +16,7 @@ import {
   promptCacheKey,
   safeParseToolArgs,
   toGeminiContents,
+  toOllamaMessages,
   validateSafeProviderBaseUrl,
 } from '../../../app/src/AiAssistProviders.mjs'
 import Settings from '@overleaf/settings'
@@ -1016,6 +1020,41 @@ describe('AiAssistProviders', function () {
       expect(fetchStub.calledTwice).to.be.true
     })
 
+    it('consumes response body before retry to release socket', async function () {
+      const textStub = sinon.stub().resolves('')
+      const failResponse = {
+        ok: false,
+        status: 429,
+        headers: new Map(),
+        text: textStub,
+      }
+      failResponse.headers.get = () => null
+
+      const successResponse = {
+        ok: true,
+        status: 200,
+      }
+
+      const fetchStub = sinon.stub()
+      fetchStub.onFirstCall().resolves(failResponse)
+      fetchStub.onSecondCall().resolves(successResponse)
+
+      const { fetchWithRetry } =
+        await import('../../../app/src/AiAssistProviders.mjs')
+      const res = await fetchWithRetry(
+        'https://api.example.com',
+        {},
+        {
+          maxRetries: 2,
+          initialDelayMs: 10,
+          fetchFn: fetchStub,
+        }
+      )
+
+      expect(res.status).to.equal(200)
+      expect(textStub.calledOnce).to.be.true
+    })
+
     it('aborts mid-backoff and throws ProviderError with code aborted and message Request was cancelled', async function () {
       const failResponse = {
         ok: false,
@@ -1794,6 +1833,87 @@ describe('AiAssistProviders', function () {
       expect(sentPayload.system[1]).to.deep.equal({
         type: 'text',
         text: 'AGENTS',
+      })
+    })
+  })
+
+  describe('images on user messages', function () {
+    const IMAGE = { mediaType: 'image/png', data: 'iVBORw0KGgo=' }
+    const withImage = [{ role: 'user', content: 'what is this', images: [IMAGE] }]
+
+    async function sentBody(type, sse) {
+      let body = null
+      const fetchFn = sinon.stub().callsFake((_url, opts) => {
+        body = JSON.parse(opts.body)
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          body: (async function* () {
+            yield new TextEncoder().encode(sse)
+          })(),
+        })
+      })
+      const client = createProviderClient({ type, apiKey: 'k', model: 'm', fetchFn })
+      for await (const _ of client.streamChat({
+        system: 'sys',
+        messages: withImage,
+        maxTokens: 100,
+      })) {
+      }
+      return body
+    }
+
+    it('Ollama: sends the images beside the text', function () {
+      expect(toOllamaMessages('sys', withImage)).to.deep.equal([
+        { role: 'system', content: 'sys' },
+        { role: 'user', content: 'what is this', images: ['iVBORw0KGgo='] },
+      ])
+      expect(toOllamaMessages('', [{ role: 'user', content: 'hi' }])).to.deep.equal([
+        { role: 'user', content: 'hi' },
+      ])
+    })
+
+    it('Gemini: puts inline data before the text', function () {
+      expect(toGeminiContents(withImage)).to.deep.equal([
+        {
+          role: 'user',
+          parts: [
+            { inlineData: { mimeType: 'image/png', data: 'iVBORw0KGgo=' } },
+            { text: 'what is this' },
+          ],
+        },
+      ])
+    })
+
+    it('Anthropic: sends an image block before the text', async function () {
+      const body = await sentBody(
+        'anthropic',
+        'event: message_stop\ndata: {"type":"message_stop"}\n\n'
+      )
+      expect(body.messages[0]).to.deep.equal({
+        role: 'user',
+        content: [
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0KGgo=' } },
+          { type: 'text', text: 'what is this' },
+        ],
+      })
+    })
+
+    it('OpenAI: sends a data URL image part before the text', async function () {
+      const body = await sentBody(
+        'openai',
+        'data: {"choices":[{"delta":{"content":"hi"},"finish_reason":"stop"}]}\n\n'
+      )
+      const user = body.messages.find(message => message.role === 'user')
+      expect(user).to.deep.equal({
+        role: 'user',
+        content: [
+          {
+            type: 'image_url',
+            image_url: { url: 'data:image/png;base64,iVBORw0KGgo=', detail: 'high' },
+          },
+          { type: 'text', text: 'what is this' },
+        ],
       })
     })
   })

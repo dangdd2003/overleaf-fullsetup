@@ -1,6 +1,9 @@
 import { expect } from 'chai'
 import sinon from 'sinon'
-import { ServerProviderClient } from '../../../frontend/js/features/ai-assist/providers/server-client'
+import {
+  EditorTextClient,
+  ServerProviderClient,
+} from '../../../frontend/js/features/ai-assist/providers/server-client'
 import {
   ProviderError,
   ProviderSettings,
@@ -120,5 +123,75 @@ describe('ServerProviderClient', function () {
     } catch (error: any) {
       expect(error.code).to.equal('network')
     }
+  })
+
+  it('turns malformed or truncated JSON chunks into network ProviderError', async function () {
+    fakeFetch.resolves(ndjsonResponse(['{"type":"text","text":"x"}\n{"type":"text","text":']))
+    try {
+      await collect(new ServerProviderClient(settings))
+      expect.fail('should reject')
+    } catch (error: any) {
+      expect(error.code).to.equal('network')
+      expect(error.message).to.equal('The provider stream ended unexpectedly.')
+    }
+  })
+
+  describe('EditorTextClient', function () {
+    it('sends the editor features to the text-only route, never with tools', async function () {
+      fakeFetch.resolves(ndjsonResponse(['{"type":"text","text":"ok"}\n', '{"type":"done"}\n']))
+      const chunks: any[] = []
+      const request: any = {
+        system: 's',
+        messages: [{ role: 'user', content: 'hi' }],
+        maxTokens: 10,
+        // Smuggled past the types: still never sent
+        tools: [{ name: 'read_file', description: 'd', parameters: {} }],
+      }
+      for await (const chunk of new EditorTextClient(settings).streamChat(request)) chunks.push(chunk)
+      expect(chunks).to.deep.equal([{ type: 'text', text: 'ok' }, { type: 'done' }])
+      expect(fakeFetch.firstCall.args[0]).to.equal('/ai-assist/providers/editor')
+      const body = JSON.parse(fakeFetch.firstCall.args[1].body)
+      expect(body.request).to.not.have.property('tools')
+      expect(body.request).to.include({ system: 's', maxTokens: 10 })
+    })
+
+    it('sends fallbackProviderSettings in request body when provided', async function () {
+      const fallback: ProviderSettings = {
+        type: 'openai',
+        baseUrl: 'https://api.openai.com',
+        apiKey: 'key2',
+        model: 'gpt-4o',
+      }
+      fakeFetch.resolves(
+        ndjsonResponse(['{"type":"text","text":"hi"}\n', '{"type":"done"}\n'])
+      )
+      const request: any = {
+        system: 's',
+        messages: [{ role: 'user', content: 'hi' }],
+        maxTokens: 10,
+      }
+      const client = new EditorTextClient(settings, fallback)
+      for await (const chunk of client.streamChat(request)) {}
+      const [url, init] = fakeFetch.firstCall.args
+      expect(url).to.equal('/ai-assist/providers/editor')
+      const body = JSON.parse(init.body)
+      expect(body.fallbackProviderSettings).to.deep.equal(fallback)
+    })
+
+    it('omits fallbackProviderSettings when not provided or null', async function () {
+      fakeFetch.resolves(
+        ndjsonResponse(['{"type":"text","text":"hi"}\n', '{"type":"done"}\n'])
+      )
+      const request: any = {
+        system: 's',
+        messages: [{ role: 'user', content: 'hi' }],
+        maxTokens: 10,
+      }
+      const client = new EditorTextClient(settings, null)
+      for await (const chunk of client.streamChat(request)) {}
+      const [, init] = fakeFetch.firstCall.args
+      const body = JSON.parse(init.body)
+      expect(body).to.not.have.property('fallbackProviderSettings')
+    })
   })
 })

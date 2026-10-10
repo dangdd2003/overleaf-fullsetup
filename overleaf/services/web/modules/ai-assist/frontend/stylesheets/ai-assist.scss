@@ -5,7 +5,7 @@
 $font-family-monospace: 'DM Mono', monospace !default;
 $code-font-family: var(
   --ai-editor-font-family,
-  var(--source-font-family, #{$font-family-monospace}, monospace)
+  var(--source-font-family)
 );
 
 // Every floating box in the panel (the mode menu, chat history, @-mentions,
@@ -17,11 +17,13 @@ $code-font-family: var(
     $imp: !important;
   }
   padding: 4px $imp;
-  border-radius: var(--border-radius-medium, 8px) $imp;
-  background-color: var(--dropdown-background, var(--bg-dark-primary, #1b222c))
-    $imp;
-  border: 1px solid var(--border-divider-themed, rgba(255, 255, 255, 0.12)) $imp;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45) $imp;
+  border-radius: var(--border-radius-medium) $imp;
+  background-color: var(--bg-primary-themed) $imp;
+  color: var(--content-primary-themed) $imp;
+  border: 1px solid var(--border-divider-themed) $imp;
+  box-shadow:
+    0 4px 12px 0 rgba(0, 0, 0, 0.16),
+    0 1px 2px 0 rgba(0, 0, 0, 0.08) $imp;
   animation: ai-assist-dropdown-in 0.18s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
@@ -36,7 +38,7 @@ $code-font-family: var(
 @mixin ai-assist-floating-box-header {
   font-size: 0.6875rem;
   font-weight: 600;
-  color: var(--content-secondary-themed, #94a3b8);
+  color: var(--content-secondary-themed);
   padding: 3px 8px 5px;
   user-select: none;
   letter-spacing: 0.02em;
@@ -47,12 +49,8 @@ $code-font-family: var(
   @if $important {
     $imp: !important;
   }
-  background-color: var(
-      --file-tree-item-hover-bg,
-      var(--bg-dark-secondary, rgba(255, 255, 255, 0.08))
-    )
-    $imp;
-  color: var(--content-primary-themed, #ffffff) $imp;
+  background-color: var(--bg-secondary-themed) $imp;
+  color: var(--content-primary-themed) $imp;
 }
 
 // Every button in the chat box: one size, shape, colour and hover
@@ -63,7 +61,7 @@ $code-font-family: var(
   flex-shrink: 0;
   height: 28px;
   min-width: 28px;
-  border-radius: var(--border-radius-base, 4px) !important;
+  border-radius: var(--border-radius-base) !important;
   border: none !important;
   background-color: transparent !important;
   color: var(--content-secondary-themed);
@@ -417,7 +415,7 @@ $code-font-family: var(
 // system components; the rules below only handle layout, never chrome.
 
 .ai-assist-panel {
-  --ai-status-accent: var(--content-positive-themed, #138a07);
+  --ai-status-accent: var(--content-positive-themed);
   container-type: size;
   display: flex;
   flex-direction: column;
@@ -466,9 +464,9 @@ $code-font-family: var(
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  border: 1px solid var(--border-divider-themed, rgba(0, 0, 0, 0.12));
-  background: var(--bg-primary-themed, #ffffff);
-  color: var(--content-secondary-themed, #666666);
+  border: 1px solid var(--border-divider-themed);
+  background: var(--bg-primary-themed);
+  color: var(--content-secondary-themed);
   box-shadow:
     0 2px 8px rgba(0, 0, 0, 0.12),
     0 1px 3px rgba(0, 0, 0, 0.08);
@@ -484,8 +482,8 @@ $code-font-family: var(
     transform 0.15s ease;
 
   &:hover {
-    background: var(--bg-secondary-themed, #f5f5f5);
-    color: var(--content-primary-themed, #111111);
+    background: var(--bg-secondary-themed);
+    color: var(--content-primary-themed);
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.16);
     transform: translateX(-50%) translateY(-1px);
   }
@@ -496,7 +494,7 @@ $code-font-family: var(
   }
 
   &:focus-visible {
-    outline: 2px solid var(--focus-color, #0284c7);
+    outline: 2px solid var(--blue-30);
     outline-offset: 2px;
   }
 }
@@ -507,7 +505,7 @@ $code-font-family: var(
   gap: var(--spacing-03);
   max-width: 100%;
   font-size: var(--font-size-02);
-  line-height: var(--line-height-03, 1.5);
+  line-height: var(--line-height-03);
 }
 
 // The message the user just sent pops into the transcript the way it does in
@@ -567,7 +565,7 @@ $code-font-family: var(
   }
 
   .ai-assist-message-user-text {
-    line-height: var(--line-height-03, 1.5);
+    line-height: var(--line-height-03);
   }
 
   // Sent while the run was going and not read by it yet
@@ -707,11 +705,11 @@ $code-font-family: var(
 }
 
 .ai-assist-diff-stat-added {
-  color: var(--content-positive-themed, #22c55e);
+  color: var(--content-positive-themed);
 }
 
 .ai-assist-diff-stat-removed {
-  color: var(--content-danger, #d32f2f);
+  color: var(--content-danger-themed);
 }
 
 .ai-assist-tool-call-summary .ai-assist-diff-stat {
@@ -903,7 +901,7 @@ $code-font-family: var(
     text-decoration 0.15s ease;
 
   &:hover {
-    color: var(--link-ui-hover-themed, var(--content-primary-themed));
+    color: var(--link-ui-hover-themed);
     text-decoration: underline;
   }
 }
@@ -1050,7 +1048,7 @@ $code-font-family: var(
       align-items: center;
       gap: var(--spacing-02);
       min-width: 0;
-      font-family: var(--bs-body-font-family, sans-serif);
+      font-family: var(--bs-body-font-family);
       font-size: var(--font-size-01);
       white-space: nowrap;
 
@@ -1139,12 +1137,12 @@ $code-font-family: var(
       }
 
       &.error .ai-assist-log-loc {
-        color: var(--content-danger, #ef4444);
+        color: var(--content-danger-themed);
         font-weight: 600;
       }
 
       &.warning .ai-assist-log-loc {
-        color: #f59e0b;
+        color: var(--content-warning-themed);
         font-weight: 600;
       }
 
@@ -1175,7 +1173,7 @@ $code-font-family: var(
       gap: 8px;
 
       .ai-assist-search-loc {
-        color: var(--interactive-primary-themed, #3b82f6);
+        color: var(--link-ui-themed);
         flex-shrink: 0;
       }
 
@@ -1237,7 +1235,7 @@ $code-font-family: var(
 
     &:hover,
     &:focus-visible {
-      background-color: var(--bg-tertiary-themed, rgba(255, 255, 255, 0.08));
+      background-color: var(--bg-tertiary-themed);
       color: var(--content-primary-themed);
       text-decoration: none;
     }
@@ -1289,7 +1287,7 @@ $code-font-family: var(
     line-height: 1.45;
 
     &.is-error {
-      color: var(--content-danger, #ef4444);
+      color: var(--content-danger-themed);
       opacity: 0.9;
     }
   }
@@ -1315,7 +1313,7 @@ $code-font-family: var(
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: var(--content-danger-themed, #ef4444);
+    background: var(--content-danger-themed);
     // the dot sits on the first line's x-height
     transform: translateY(-1px);
     font-size: 0;
@@ -1421,7 +1419,7 @@ $code-font-family: var(
     min-width: 0;
     max-width: 100%;
     margin: 0 0 6px 0;
-    font-size: var(--font-size-01, 12px);
+    font-size: var(--font-size-01);
     line-height: 1.4;
 
     .ai-assist-web-fetch-url {
@@ -1524,7 +1522,7 @@ $code-font-family: var(
 
   .ai-assist-web-fetch-passage {
     padding: 6px 0;
-    border-bottom: 1px solid var(--border-divider-themed, rgba(0, 0, 0, 0.08));
+    border-bottom: 1px solid var(--border-divider-themed);
 
     &:first-child {
       padding-top: 0;
@@ -1539,7 +1537,7 @@ $code-font-family: var(
   .ai-assist-web-fetch-heading {
     font-weight: 600;
     font-size: 0.75rem;
-    color: var(--interactive-primary-themed, #3b82f6);
+    color: var(--link-ui-themed);
     margin-bottom: 4px;
   }
 
@@ -1597,7 +1595,7 @@ $code-font-family: var(
     display: flex;
     flex-direction: column;
     gap: 8px;
-    font-family: var(--bs-body-font-family, sans-serif);
+    font-family: var(--bs-body-font-family);
     font-size: 0.71875rem;
     line-height: 1.4;
 
@@ -1605,7 +1603,7 @@ $code-font-family: var(
       font-size: 0.71875rem;
       color: var(--content-primary-themed);
       padding-bottom: 4px;
-      border-bottom: 1px solid var(--border-divider-themed, rgba(0, 0, 0, 0.08));
+      border-bottom: 1px solid var(--border-divider-themed);
     }
 
     .ai-assist-settings-group {
@@ -1635,9 +1633,9 @@ $code-font-family: var(
         font-size: 0.6875rem;
         font-family: $font-family-monospace;
         border-radius: 4px;
-        background: var(--surface-secondary-themed, rgba(0, 0, 0, 0.04));
+        background: var(--bg-secondary-themed);
         color: var(--content-primary-themed);
-        border: 1px solid var(--border-divider-themed, rgba(0, 0, 0, 0.06));
+        border: 1px solid var(--border-divider-themed);
         line-height: 1.3;
       }
 
@@ -1681,7 +1679,7 @@ $code-font-family: var(
   .ai-assist-tool-detail-raw {
     margin: 0;
     padding: 6px 8px;
-    background: var(--surface-secondary-themed, rgba(0, 0, 0, 0.03));
+    background: var(--bg-secondary-themed);
     border-radius: 4px;
     font-family: $font-family-monospace;
     font-size: 0.6875rem;
@@ -1689,7 +1687,7 @@ $code-font-family: var(
     color: var(--content-primary-themed);
     white-space: pre-wrap;
     word-break: break-all;
-    border: 1px solid var(--border-divider-themed, rgba(0, 0, 0, 0.05));
+    border: 1px solid var(--border-divider-themed);
   }
 
   .ai-assist-tool-detail-generic {
@@ -1730,12 +1728,12 @@ $code-font-family: var(
     line-height: 1.4;
 
     .ai-assist-refs-warning {
-      color: var(--content-warning-themed, #eab308);
+      color: var(--content-warning-themed);
       font-size: 0.6875rem;
       padding: 4px 8px;
       border-radius: 4px;
-      background: rgba(234, 179, 8, 0.1);
-      border: 1px solid rgba(234, 179, 8, 0.2);
+      background: color-mix(in srgb, var(--content-warning-themed) 10%, transparent);
+      border: 1px solid color-mix(in srgb, var(--content-warning-themed) 20%, transparent);
     }
 
     .ai-assist-refs-section {
@@ -1791,13 +1789,13 @@ $code-font-family: var(
           border-radius: 3px;
 
           &.resolved {
-            color: var(--content-positive-themed, #22c55e);
-            background: rgba(34, 197, 94, 0.1);
+            color: var(--content-positive-themed);
+            background: color-mix(in srgb, var(--content-positive-themed) 10%, transparent);
           }
 
           &.unresolved {
-            color: var(--content-danger-themed, #ef4444);
-            background: rgba(239, 68, 68, 0.1);
+            color: var(--content-danger-themed);
+            background: color-mix(in srgb, var(--content-danger-themed) 10%, transparent);
           }
         }
       }
@@ -1813,13 +1811,13 @@ $code-font-family: var(
   }
 
   .ai-assist-tool-detail-success {
-    color: var(--content-positive-themed, #22c55e);
+    color: var(--content-positive-themed);
     font-weight: 500;
   }
 
   .ai-assist-tool-detail-error,
   .ai-assist-tool-detail-rejected {
-    color: var(--content-danger, #ef4444);
+    color: var(--content-danger-themed);
 
     .ai-assist-tool-detail-badge {
       display: inline-block;
@@ -1828,7 +1826,7 @@ $code-font-family: var(
       font-weight: 700;
       text-transform: uppercase;
       border-radius: 3px;
-      background: rgba(239, 68, 68, 0.2);
+      background: color-mix(in srgb, var(--content-danger-themed) 20%, transparent);
       margin-bottom: 4px;
     }
   }
@@ -1840,8 +1838,8 @@ $code-font-family: var(
     font-weight: 700;
     text-transform: uppercase;
     border-radius: 3px;
-    background: rgba(239, 68, 68, 0.2);
-    color: var(--content-danger-themed, #ef4444);
+    background: color-mix(in srgb, var(--content-danger-themed) 20%, transparent);
+    color: var(--content-danger-themed);
     margin-left: 6px;
   }
 
@@ -1852,23 +1850,23 @@ $code-font-family: var(
     font-weight: 700;
     text-transform: uppercase;
     border-radius: 3px;
-    background: rgba(148, 163, 184, 0.18);
-    color: var(--content-secondary-themed, #94a3b8);
+    background: color-mix(in srgb, var(--content-secondary-themed) 18%, transparent);
+    color: var(--content-secondary-themed);
     margin-left: 6px;
   }
 
   .ai-assist-tool-detail-rejection {
-    color: var(--content-danger-themed, #ef4444);
+    color: var(--content-danger-themed);
     font-size: 0.6875rem;
     margin-top: 4px;
   }
 
   .ai-assist-tool-detail-diff.is-rejected {
-    border-color: rgba(239, 68, 68, 0.3);
+    border-color: color-mix(in srgb, var(--content-danger-themed) 30%, transparent);
   }
 
   .ai-assist-tool-detail-diff.is-cancelled {
-    border-color: var(--border-divider-themed, rgba(255, 255, 255, 0.12));
+    border-color: var(--border-divider-themed);
   }
 }
 
@@ -1981,8 +1979,15 @@ $code-font-family: var(
       flex-shrink: 0;
     }
 
-    .form-check-input:focus {
-      box-shadow: none;
+    .form-check-input {
+      &:focus,
+      &:focus-visible,
+      &:active {
+        outline: 0;
+        border: 1px solid var(--border-active-themed);
+        box-shadow: 0 0 0 2px
+          color-mix(in srgb, var(--border-active-themed) 40%, transparent);
+      }
     }
   }
 
@@ -1996,9 +2001,9 @@ $code-font-family: var(
     margin: 1px 0 !important;
     border: none !important;
     outline: none !important;
-    border-radius: var(--border-radius-base, 4px) !important;
+    border-radius: var(--border-radius-base) !important;
     background-color: transparent !important;
-    color: var(--content-primary-themed, #ffffff) !important;
+    color: var(--content-primary-themed) !important;
     text-decoration: none !important;
     cursor: pointer !important;
     box-sizing: border-box !important;
@@ -2013,7 +2018,7 @@ $code-font-family: var(
     &.is-selected {
       border: none !important;
       background-color: transparent !important;
-      color: var(--content-primary-themed, #ffffff) !important;
+      color: var(--content-primary-themed) !important;
 
       &:hover,
       &:focus-visible {
@@ -2028,7 +2033,7 @@ $code-font-family: var(
     justify-content: center;
     width: 20px;
     margin-right: 10px;
-    color: var(--content-secondary-themed, #94a3b8);
+    color: var(--content-secondary-themed);
     flex-shrink: 0;
   }
 
@@ -2052,14 +2057,14 @@ $code-font-family: var(
     font-size: 0.8125rem;
     font-weight: 600;
     line-height: 1.3;
-    color: var(--content-primary-themed, #ffffff);
+    color: var(--content-primary-themed);
     white-space: nowrap;
   }
 
   .ai-assist-mode-item-desc {
     font-size: 0.71875rem;
     line-height: 1.35;
-    color: var(--content-secondary-themed, #94a3b8);
+    color: var(--content-secondary-themed);
     opacity: 0.65;
     margin-top: 2px;
     white-space: nowrap;
@@ -2068,7 +2073,7 @@ $code-font-family: var(
   .ai-assist-mode-item-num {
     font-size: 0.8125rem;
     font-weight: 500;
-    color: var(--content-secondary-themed, #94a3b8);
+    color: var(--content-secondary-themed);
     opacity: 0.45;
     margin-left: 16px;
     flex-shrink: 0;
@@ -2079,11 +2084,11 @@ $code-font-family: var(
 .ai-assist-plan-body {
   max-height: 280px;
   overflow-y: auto;
-  padding: var(--spacing-02, 8px);
-  margin: var(--spacing-02, 8px) 0;
+  padding: var(--spacing-02);
+  margin: var(--spacing-02) 0;
   background: var(--bg-primary-themed);
   border: 1px solid var(--border-divider-themed);
-  border-radius: var(--border-radius-base, 4px);
+  border-radius: var(--border-radius-base);
   color: var(--content-primary-themed);
   font-size: var(--font-size-01);
   line-height: 1.45;
@@ -2094,11 +2099,11 @@ $code-font-family: var(
 }
 
 .ai-assist-settings-list {
-  padding: var(--spacing-02, 8px);
-  margin: var(--spacing-02, 8px) 0;
+  padding: var(--spacing-02);
+  margin: var(--spacing-02) 0;
   background: var(--bg-primary-themed);
   border: 1px solid var(--border-divider-themed);
-  border-radius: var(--border-radius-base, 4px);
+  border-radius: var(--border-radius-base);
   font-family: $code-font-family;
   font-size: var(--font-size-01);
   color: var(--content-primary-themed);
@@ -2251,8 +2256,8 @@ $code-font-family: var(
 // `✳ 12s · ↓ 1.2k tokens · Running tools…`. The mark and the word share one
 // accent; the counters stay muted.
 .ai-assist-status-line {
-  --ai-status-accent: var(--content-positive-themed, #138a07);
-  --ai-status-highlight: color-mix(in srgb, var(--ai-status-accent) 50%, #fff);
+  --ai-status-accent: var(--content-positive-themed);
+  --ai-status-highlight: color-mix(in srgb, var(--ai-status-accent) 50%, var(--bg-primary-themed));
 
   display: flex;
   align-items: center;
@@ -2260,25 +2265,25 @@ $code-font-family: var(
   min-width: 0;
   padding: 6px 0;
   font-size: 0.78125rem;
-  color: var(--content-secondary-themed, #71717a);
+  color: var(--content-secondary-themed);
   transition: --ai-status-accent 1.5s ease;
 
   // No tokens for a few seconds outside a tool call: drift to the danger
   // colour so a hung provider reads differently from a busy one.
   &.is-stalled {
-    --ai-status-accent: var(--content-danger-themed, #b83a33);
+    --ai-status-accent: var(--content-danger-themed);
   }
 
   &.is-completed,
   &.is-paused {
-    color: var(--content-secondary-themed, #71717a);
+    color: var(--content-secondary-themed);
 
     .ai-assist-status-mark,
     .ai-assist-status-mark-static {
       animation: none;
       transform: none;
       opacity: 0.9;
-      fill: var(--green-50, #138a07);
+      fill: var(--green-50);
     }
   }
 }
@@ -2312,7 +2317,7 @@ $code-font-family: var(
 }
 
 .ai-assist-status-mark-static {
-  fill: var(--green-50, #138a07);
+  fill: var(--green-50);
   transform-box: view-box;
   transform-origin: 50% 50%;
   animation: none;
@@ -2332,9 +2337,9 @@ $code-font-family: var(
   }
 }
 
-// The word carries the state. A lighter band sweeps across it: quick and
-// forward while waiting on the provider, slow and backward while tokens
-// stream in, as Claude Code's does.
+// The word carries the state. A lighter band sweeps across it from left to
+// right: quick while waiting on the provider, and steady while tokens
+// stream in.
 .ai-assist-status-verb {
   flex-shrink: 0;
   font-weight: 500;
@@ -2348,11 +2353,10 @@ $code-font-family: var(
   background-size: 300% 100%;
   background-clip: text;
   -webkit-text-fill-color: transparent;
-  animation: ai-assist-status-shimmer 2.8s linear infinite reverse;
+  animation: ai-assist-status-shimmer 2.8s linear infinite;
 
   .is-requesting & {
     animation-duration: 1.2s;
-    animation-direction: normal;
   }
 
   // A tool is running: no tokens to sweep with, so the whole word breathes.
@@ -2395,7 +2399,7 @@ $code-font-family: var(
 
 .ai-assist-status-meta {
   font-variant-numeric: tabular-nums;
-  color: var(--content-secondary-themed, #71717a);
+  color: var(--content-secondary-themed);
 }
 
 // The elapsed time ticks over like Claude's: a changed digit rolls up out of
@@ -2468,14 +2472,14 @@ $code-font-family: var(
 
 .ai-assist-status-text {
   font-variant-numeric: tabular-nums;
-  color: var(--content-secondary-themed, #71717a);
+  color: var(--content-secondary-themed);
 }
 
 .ai-assist-thinking-pulse {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background-color: var(--interactive-primary-themed, #00805a);
+  background-color: var(--content-positive-themed);
   display: inline-block;
   animation: ai-assist-pulse 1.4s ease-in-out infinite;
 }
@@ -2562,7 +2566,7 @@ $code-font-family: var(
     font-size: inherit;
     font-weight: inherit;
     color: var(--link-ui-themed);
-    text-decoration: var(--link-text-decoration, underline);
+    text-decoration: var(--link-text-decoration);
     cursor: pointer;
     background: none;
     border: none;
@@ -2572,7 +2576,7 @@ $code-font-family: var(
 
     &:hover {
       color: var(--link-ui-hover-themed);
-      text-decoration: var(--link-hover-text-decoration, none);
+      text-decoration: var(--link-hover-text-decoration);
     }
   }
 
@@ -2583,7 +2587,7 @@ $code-font-family: var(
   .ai-assist-code-block {
     margin: 6px 0 !important;
     border: 1px solid var(--border-divider-themed) !important;
-    border-radius: var(--border-radius-base, 4px) !important;
+    border-radius: var(--border-radius-base) !important;
     background: var(--bg-tertiary-themed) !important;
     overflow: hidden;
   }
@@ -2607,7 +2611,7 @@ $code-font-family: var(
     padding: 8px 12px !important;
     background: var(--bg-tertiary-themed) !important;
     border: 1px solid var(--border-divider-themed) !important;
-    border-radius: var(--border-radius-base, 4px) !important;
+    border-radius: var(--border-radius-base) !important;
     overflow-x: auto;
     font-family: $font-family-monospace !important;
     font-size: 0.8125rem !important;
@@ -2621,6 +2625,48 @@ $code-font-family: var(
       background: transparent;
       border: none;
       color: inherit;
+    }
+  }
+
+  .ai-assist-thinking-code-block {
+    padding: 6px 0 !important;
+
+    code {
+      display: block;
+      min-width: 100%;
+      width: max-content;
+    }
+
+    .ai-assist-code-line {
+      display: flex;
+      align-items: baseline;
+      min-width: 100%;
+      width: max-content;
+      line-height: 1.45;
+    }
+
+    .ai-assist-code-line-num {
+      user-select: none;
+      -webkit-user-select: none;
+      min-width: 28px;
+      padding: 0 8px 0 10px;
+      text-align: right;
+      color: var(--content-secondary-themed);
+      opacity: 0.5;
+      font-size: 0.71875rem;
+      font-variant-numeric: tabular-nums;
+      flex-shrink: 0;
+      box-sizing: border-box;
+      position: sticky;
+      left: 0;
+      background: var(--bg-tertiary-themed) !important;
+      z-index: 1;
+    }
+
+    .ai-assist-code-line-content {
+      flex: 1;
+      padding-right: 12px;
+      white-space: pre;
     }
   }
 
@@ -2661,7 +2707,7 @@ $code-font-family: var(
   word-break: break-word;
 
   p {
-    margin: 0 0 var(--spacing-02, 8px) 0;
+    margin: 0 0 var(--spacing-02) 0;
     line-height: 1.55;
 
     &:last-child {
@@ -2671,7 +2717,7 @@ $code-font-family: var(
 
   ul,
   ol {
-    margin: 0 0 var(--spacing-02, 8px) 0;
+    margin: 0 0 var(--spacing-02) 0;
     padding-left: 1.25rem;
 
     &:last-child {
@@ -2718,7 +2764,7 @@ $code-font-family: var(
   h6 {
     color: var(--content-primary-themed);
     line-height: 1.35;
-    margin: var(--spacing-03, 10px) 0 var(--spacing-01, 4px) 0;
+    margin: var(--spacing-03) 0 var(--spacing-01) 0;
 
     &:first-child {
       margin-top: 0;
@@ -2756,7 +2802,7 @@ $code-font-family: var(
     font-family: $code-font-family;
     font-size: 0.85em;
     padding: 1.5px 5px;
-    border-radius: var(--border-radius-base, 4px);
+    border-radius: var(--border-radius-base);
     background: var(--bg-secondary-themed);
     color: var(--content-primary-themed);
     border: 1px solid var(--border-divider-themed);
@@ -2764,11 +2810,11 @@ $code-font-family: var(
   }
 
   .ai-assist-code-block {
-    margin: var(--spacing-02, 8px) 0;
+    margin: var(--spacing-02) 0;
     border: 1px solid var(--gutter-border, var(--border-divider-themed));
-    border-radius: var(--border-radius-base, 6px);
+    border-radius: var(--border-radius-base);
     background: var(--editor-bg, var(--bg-secondary-themed));
-    color: var(--editor-fg, inherit);
+    color: var(--editor-fg, var(--content-primary-themed));
     overflow: hidden;
 
     &:last-child {
@@ -2806,7 +2852,7 @@ $code-font-family: var(
         gap: 5px;
         padding: 3px 8px;
         border: 1px solid transparent;
-        border-radius: var(--border-radius-base, 4px);
+        border-radius: var(--border-radius-base);
         background: transparent;
         color: var(--content-secondary-themed);
         font-size: 0.6875rem;
@@ -2836,7 +2882,7 @@ $code-font-family: var(
 
         &.is-inserted,
         &.is-copied {
-          color: var(--content-positive-themed, #22c55e);
+          color: var(--content-positive-themed);
 
           .ai-assist-icon-insert,
           .ai-assist-icon-copy {
@@ -2845,7 +2891,7 @@ $code-font-family: var(
 
           .ai-assist-icon-check {
             display: inline-block;
-            color: var(--content-positive-themed, #22c55e);
+            color: var(--content-positive-themed);
           }
         }
       }
@@ -2853,7 +2899,7 @@ $code-font-family: var(
 
     pre {
       margin: 0;
-      padding: var(--spacing-03);
+      padding: var(--spacing-02) 0;
       border: none;
       border-radius: 0;
       background: transparent;
@@ -2868,17 +2914,59 @@ $code-font-family: var(
         font-size: 0.8125rem;
         line-height: 1.45;
         color: inherit;
-        white-space: pre;
+        display: block;
+        min-width: 100%;
+        width: max-content;
       }
+    }
+
+    .ai-assist-code-line {
+      display: flex;
+      align-items: baseline;
+      min-width: 100%;
+      width: max-content;
+      line-height: 1.45;
+
+      &:hover {
+        background-color: color-mix(
+          in srgb,
+          var(--gutter-fg, #888) 5%,
+          transparent
+        );
+      }
+    }
+
+    .ai-assist-code-line-num {
+      user-select: none;
+      -webkit-user-select: none;
+      min-width: 32px;
+      padding: 0 10px 0 12px;
+      text-align: right;
+      color: var(--gutter-fg, var(--content-secondary-themed));
+      opacity: 0.55;
+      font-size: 0.75rem;
+      font-variant-numeric: tabular-nums;
+      flex-shrink: 0;
+      box-sizing: border-box;
+      position: sticky;
+      left: 0;
+      background: var(--editor-bg, var(--bg-secondary-themed));
+      z-index: 1;
+    }
+
+    .ai-assist-code-line-content {
+      flex: 1;
+      padding-right: 16px;
+      white-space: pre;
     }
   }
 
   pre {
-    margin: var(--spacing-02, 8px) 0;
+    margin: var(--spacing-02) 0;
     padding: var(--spacing-03);
     background: var(--bg-secondary-themed);
     border: 1px solid var(--border-divider-themed);
-    border-radius: var(--border-radius-base, 4px);
+    border-radius: var(--border-radius-base);
     overflow-x: auto;
     font-family: $code-font-family;
     font-size: 0.8125rem;
@@ -2901,11 +2989,11 @@ $code-font-family: var(
   }
 
   blockquote {
-    margin: var(--spacing-02, 8px) 0;
-    padding: var(--spacing-02, 6px) var(--spacing-03, 12px);
+    margin: var(--spacing-02) 0;
+    padding: var(--spacing-02) var(--spacing-03);
     border-left: 3px solid var(--border-primary-themed);
-    border-radius: 0 var(--border-radius-base, 4px)
-      var(--border-radius-base, 4px) 0;
+    border-radius: 0 var(--border-radius-base)
+      var(--border-radius-base) 0;
     background: var(--bg-secondary-themed);
     color: var(--content-secondary-themed);
 
@@ -2931,7 +3019,7 @@ $code-font-family: var(
   }
 
   hr {
-    margin: var(--spacing-04, 12px) 0;
+    margin: var(--spacing-04) 0;
     border: 0;
     border-top: 1px solid var(--border-divider-themed);
     opacity: 1;
@@ -2943,7 +3031,7 @@ $code-font-family: var(
     padding: 1px 5px;
     border: 1px solid var(--border-divider-themed);
     border-bottom-width: 2px;
-    border-radius: var(--border-radius-base, 4px);
+    border-radius: var(--border-radius-base);
     background: var(--bg-secondary-themed);
     color: var(--content-primary-themed);
     box-shadow: none;
@@ -2952,12 +3040,12 @@ $code-font-family: var(
   mark {
     padding: 0 2px;
     border-radius: 2px;
-    background: rgba(250, 204, 21, 0.3);
+    background: color-mix(in srgb, var(--content-warning-themed) 30%, transparent);
     color: inherit;
   }
 
   details {
-    margin: var(--spacing-02, 8px) 0;
+    margin: var(--spacing-02) 0;
   }
 
   summary {
@@ -2976,8 +3064,8 @@ $code-font-family: var(
   }
 
   .ai-assist-footnotes {
-    margin-top: var(--spacing-04, 12px);
-    padding-top: var(--spacing-02, 8px);
+    margin-top: var(--spacing-04);
+    padding-top: var(--spacing-02);
     border-top: 1px solid var(--border-divider-themed);
     font-size: 0.8125rem;
     color: var(--content-secondary-themed);
@@ -2985,11 +3073,11 @@ $code-font-family: var(
 
   a {
     color: var(--link-ui-themed);
-    text-decoration: var(--link-text-decoration, underline);
+    text-decoration: var(--link-text-decoration);
 
     &:hover {
       color: var(--link-ui-hover-themed);
-      text-decoration: var(--link-hover-text-decoration, none);
+      text-decoration: var(--link-hover-text-decoration);
     }
   }
 
@@ -3095,8 +3183,8 @@ $code-font-family: var(
     min-height: 44px;
     padding: 4px 8px;
     margin: 1px 0;
-    border-radius: var(--border-radius-base, 4px);
-    color: var(--content-primary-themed, #ffffff);
+    border-radius: var(--border-radius-base);
+    color: var(--content-primary-themed);
     text-decoration: none;
     transition: background-color 0.15s ease;
 
@@ -3135,7 +3223,7 @@ $code-font-family: var(
     font-size: 0.8125rem;
     font-weight: 600;
     line-height: 1.3;
-    color: var(--content-primary-themed, #ffffff);
+    color: var(--content-primary-themed);
     white-space: normal;
     display: -webkit-box;
     -webkit-line-clamp: 2;
@@ -3147,7 +3235,7 @@ $code-font-family: var(
     margin-top: 2px;
     font-size: 0.6875rem;
     line-height: 1.35;
-    color: var(--content-secondary-themed, #94a3b8);
+    color: var(--content-secondary-themed);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -3161,7 +3249,7 @@ $code-font-family: var(
     font-size: inherit;
     font-weight: inherit;
     color: var(--link-ui-themed);
-    text-decoration: var(--link-text-decoration, underline);
+    text-decoration: var(--link-text-decoration);
     cursor: pointer;
     background: none;
     border: none;
@@ -3190,7 +3278,7 @@ $code-font-family: var(
       background: none;
       border: none;
       color: var(--link-ui-hover-themed);
-      text-decoration: var(--link-hover-text-decoration, none);
+      text-decoration: var(--link-hover-text-decoration);
     }
 
     &:focus-visible {
@@ -3212,7 +3300,7 @@ $code-font-family: var(
   .ai-assist-table-wrapper {
     width: 100%;
     overflow: hidden;
-    margin: var(--spacing-02, 8px) 0;
+    margin: var(--spacing-02) 0;
     border: 1px solid $table-rule;
     border-radius: 6px;
     background-color: var(--bg-secondary-themed);
@@ -3265,7 +3353,7 @@ $code-font-family: var(
         gap: 5px;
         padding: 3px 8px;
         border: 1px solid transparent;
-        border-radius: var(--border-radius-base, 4px);
+        border-radius: var(--border-radius-base);
         background: transparent;
         color: var(--content-secondary-themed);
         font-size: 0.6875rem;
@@ -3293,7 +3381,7 @@ $code-font-family: var(
         }
 
         &.is-inserted {
-          color: var(--content-positive-themed, #22c55e);
+          color: var(--content-positive-themed);
 
           .ai-assist-icon-insert {
             display: none;
@@ -3301,7 +3389,7 @@ $code-font-family: var(
 
           .ai-assist-icon-check {
             display: inline-block;
-            color: var(--content-positive-themed, #22c55e);
+            color: var(--content-positive-themed);
           }
         }
       }
@@ -3496,11 +3584,11 @@ $code-font-family: var(
 
   .katex-error {
     display: inline-block;
-    color: var(--content-danger, #ef4444);
+    color: var(--content-danger-themed);
     font-family: $font-family-monospace;
     font-size: var(--font-size-01);
-    background: rgba(239, 68, 68, 0.08);
-    border: 1px solid rgba(239, 68, 68, 0.2);
+    background: color-mix(in srgb, var(--content-danger-themed) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--content-danger-themed) 20%, transparent);
     border-radius: 4px;
     padding: 2px 6px;
   }
@@ -3519,7 +3607,7 @@ $code-font-family: var(
 
       input[type='checkbox'] {
         margin: 3px 0 0 0;
-        accent-color: var(--interactive-primary-themed, #0ea5e9);
+        accent-color: var(--bg-accent-01);
         cursor: default;
       }
     }
@@ -3539,6 +3627,21 @@ $code-font-family: var(
   animation: ai-assist-stream-fade 400ms ease-out backwards;
 }
 
+// A finished result fades in as one box, swept from the top left to the
+// bottom right, when it replaces the streamed text with the diff (RevealBox
+// decides). Toggling the diff or paging versions never replays it.
+.ai-assist-reveal {
+  animation: ai-assist-reveal 900ms cubic-bezier(0.45, 0.05, 0.35, 1) backwards;
+}
+
+.ai-generator-card-body > .ai-reveal-box,
+.ai-texgpt-result-body > .ai-reveal-box {
+  // Keep the body's spacing between the parts it wraps
+  display: flex;
+  flex-direction: column;
+  gap: inherit;
+}
+
 @keyframes ai-assist-stream-fade {
   from {
     opacity: 0;
@@ -3548,12 +3651,49 @@ $code-font-family: var(
   }
 }
 
+// The mask is 3× the box: its opaque corner slides over the box from the top
+// left. Set in the keyframes only, so no mask is left once the sweep ends.
+@keyframes ai-assist-reveal {
+  from {
+    opacity: 0;
+    filter: blur(3px);
+    -webkit-mask-image: linear-gradient(135deg, #000 40%, transparent 60%);
+    mask-image: linear-gradient(135deg, #000 40%, transparent 60%);
+    -webkit-mask-size: 300% 300%;
+    mask-size: 300% 300%;
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+    -webkit-mask-position: 100% 100%;
+    mask-position: 100% 100%;
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+    -webkit-mask-image: linear-gradient(135deg, #000 40%, transparent 60%);
+    mask-image: linear-gradient(135deg, #000 40%, transparent 60%);
+    -webkit-mask-size: 300% 300%;
+    mask-size: 300% 300%;
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+    -webkit-mask-position: 0% 0%;
+    mask-position: 0% 0%;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .ai-assist-markdown,
-  .ai-assist-thinking-content {
+  .ai-assist-thinking-content,
+  .ai-writing-tools-card,
+  .ai-generator-card,
+  .ai-texgpt-result,
+  .ai-texgpt-popup {
     .ai-assist-stream-fade {
       animation: none !important;
     }
+  }
+
+  .ai-assist-reveal {
+    animation: none !important;
   }
 }
 
@@ -3823,7 +3963,7 @@ $code-font-family: var(
     }
 
     &::placeholder {
-      color: var(--content-placeholder-themed, var(--content-secondary-themed));
+      color: var(--content-placeholder-themed);
       opacity: 0.6;
       font-size: 0.875rem;
     }
@@ -3859,7 +3999,7 @@ $code-font-family: var(
     text-align: left;
     background: transparent;
     border: none;
-    border-radius: var(--border-radius-base, 4px);
+    border-radius: var(--border-radius-base);
     padding: 7px 8px;
     font-size: 0.8125rem;
     color: var(--content-primary-themed);
@@ -3907,7 +4047,7 @@ $code-font-family: var(
   padding: 2px 8px;
   background: var(--bg-tertiary-themed);
   border: 1px solid var(--border-divider-themed);
-  border-radius: var(--border-radius-base, 4px);
+  border-radius: var(--border-radius-base);
   font-size: 0.6875rem;
   font-family: $font-family-monospace;
   color: var(--content-secondary-themed);
@@ -4000,7 +4140,7 @@ $code-font-family: var(
   justify-content: center;
   width: 28px;
   height: 28px;
-  border-radius: var(--border-radius-full, 9999px) !important;
+  border-radius: var(--border-radius-full) !important;
   border: none !important;
   background-color: transparent !important;
   color: var(--content-secondary-themed);
@@ -4037,8 +4177,8 @@ $code-font-family: var(
   height: 28px;
   border-radius: 50% !important;
   border: none !important;
-  background-color: rgba(239, 68, 68, 0.18) !important;
-  color: var(--content-danger-themed, #ef4444);
+  background-color: color-mix(in srgb, var(--content-danger-themed) 18%, transparent) !important;
+  color: var(--content-danger-themed);
   cursor: pointer;
   opacity: 1;
   transition: all 0.15s ease;
@@ -4046,8 +4186,8 @@ $code-font-family: var(
 
   &:hover,
   &:focus-visible {
-    background-color: rgba(239, 68, 68, 0.32) !important;
-    color: #ffffff;
+    background-color: color-mix(in srgb, var(--content-danger-themed) 32%, transparent) !important;
+    color: var(--content-danger-themed);
     transform: scale(1.05);
   }
 
@@ -4115,7 +4255,7 @@ $code-font-family: var(
   gap: var(--spacing-02);
   padding: var(--spacing-03);
   border: 1px solid var(--border-divider-themed);
-  border-radius: var(--border-radius-base, 6px);
+  border-radius: var(--border-radius-base);
   background: var(--bg-secondary-themed);
   color: var(--content-primary-themed);
   margin: var(--spacing-02) 0;
@@ -4140,13 +4280,13 @@ $code-font-family: var(
       border-radius: 4px;
 
       &.is-accepted {
-        background: rgba(34, 197, 94, 0.15);
-        color: var(--content-positive-themed, #22c55e);
+        background: color-mix(in srgb, var(--content-positive-themed) 15%, transparent);
+        color: var(--content-positive-themed);
       }
 
       &.is-rejected {
-        background: rgba(239, 68, 68, 0.15);
-        color: var(--content-danger-themed, #ef4444);
+        background: color-mix(in srgb, var(--content-danger-themed) 15%, transparent);
+        color: var(--content-danger-themed);
       }
     }
   }
@@ -4160,7 +4300,7 @@ $code-font-family: var(
 
     .ai-assist-file-link {
       cursor: pointer;
-      color: var(--content-accent-themed, #38bdf8);
+      color: var(--link-ui-themed);
       text-decoration: none;
 
       &:hover {
@@ -4182,7 +4322,7 @@ $code-font-family: var(
     &:focus {
       background-color: var(--bg-secondary-themed);
       color: var(--content-primary-themed);
-      border-color: var(--interactive-primary-themed, #38bdf8);
+      border-color: var(--link-ui-themed);
       box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2);
     }
   }
@@ -4200,7 +4340,7 @@ $code-font-family: var(
   transition: all 0.15s ease;
 
   &:hover {
-    color: var(--content-accent-themed, #38bdf8) !important;
+    color: var(--link-ui-themed) !important;
     text-decoration: underline;
   }
 }
@@ -4210,7 +4350,7 @@ $code-font-family: var(
   padding: var(--spacing-02);
   background: var(--bg-primary-themed);
   border: 1px solid var(--border-divider-themed);
-  border-radius: var(--border-radius-base, 4px);
+  border-radius: var(--border-radius-base);
   font-family: $code-font-family;
   font-size: var(--font-size-01);
   white-space: pre-wrap;
@@ -4226,13 +4366,13 @@ $code-font-family: var(
   }
 
   del {
-    background: var(--diff-del-tint, rgba(239, 68, 68, 0.2));
-    color: var(--content-danger-themed, #cf222e);
+    background: var(--diff-del-tint, color-mix(in srgb, var(--content-danger-themed) 20%, transparent));
+    color: var(--content-danger-themed);
   }
 
   ins {
-    background: var(--diff-ins-tint, rgba(34, 197, 94, 0.2));
-    color: var(--content-positive-themed, #1a7f37);
+    background: var(--diff-ins-tint, color-mix(in srgb, var(--content-positive-themed) 20%, transparent));
+    color: var(--content-positive-themed);
   }
 }
 
@@ -4240,10 +4380,11 @@ $code-font-family: var(
 
 .ai-assist-error {
   padding: var(--spacing-03);
-  background: var(--bg-danger-03);
-  color: var(--content-danger);
-  border: 1px solid var(--border-danger, #fecaca);
-  border-radius: var(--border-radius-base, 4px);
+  background: color-mix(in srgb, var(--content-danger-themed) 10%, transparent);
+  color: var(--content-danger-themed);
+  border: 1px solid
+    color-mix(in srgb, var(--content-danger-themed) 35%, transparent);
+  border-radius: var(--border-radius-base);
   font-size: var(--font-size-02);
   line-height: var(--line-height-02);
   display: flex;
@@ -4263,7 +4404,7 @@ $code-font-family: var(
   .ai-assist-error-title {
     font-weight: 600;
     font-size: var(--font-size-02);
-    color: var(--content-danger);
+    color: var(--content-danger-themed);
   }
 
   .ai-assist-error-badge {
@@ -4271,8 +4412,8 @@ $code-font-family: var(
     font-family: $font-family-monospace;
     padding: 1px 6px;
     border-radius: 4px;
-    background: rgba(0, 0, 0, 0.08);
-    color: var(--content-danger);
+    background: color-mix(in srgb, var(--content-danger-themed) 12%, transparent);
+    color: var(--content-danger-themed);
   }
 
   .ai-assist-error-body {
@@ -4339,7 +4480,7 @@ $code-font-family: var(
   padding: var(--spacing-03);
   background: var(--bg-secondary-themed);
   border: 1px solid var(--border-divider-themed);
-  border-radius: var(--border-radius-base, 4px);
+  border-radius: var(--border-radius-base);
   font-size: var(--font-size-02);
   line-height: var(--line-height-02);
 
@@ -4392,7 +4533,7 @@ $code-font-family: var(
   outline: none !important;
   box-shadow: none !important;
   border-radius: 50% !important;
-  color: var(--content-accent-themed, #38bdf8) !important;
+  color: var(--link-ui-themed) !important;
   display: inline-flex !important;
   align-items: center !important;
   justify-content: center !important;
@@ -4420,7 +4561,7 @@ $code-font-family: var(
   &:active {
     background: transparent !important;
     background-color: var(--bg-secondary-themed) !important;
-    color: var(--content-accent-hover-themed, #60a5fa) !important;
+    color: var(--link-ui-hover-themed) !important;
     border: none !important;
     border-width: 0 !important;
     border-style: none !important;
@@ -4434,7 +4575,7 @@ $code-font-family: var(
   &:disabled {
     cursor: not-allowed !important;
     opacity: 0.45 !important;
-    color: var(--content-secondary-themed, #9ca3af) !important;
+    color: var(--content-secondary-themed) !important;
 
     * {
       cursor: not-allowed !important;
@@ -4446,7 +4587,7 @@ $code-font-family: var(
     &:active {
       background: transparent !important;
       background-color: transparent !important;
-      color: var(--content-secondary-themed, #9ca3af) !important;
+      color: var(--content-secondary-themed) !important;
       border: none !important;
       outline: none !important;
       box-shadow: none !important;
@@ -4480,7 +4621,7 @@ $code-font-family: var(
 
 .ai-suggest-fix-icon {
   font-size: var(--font-size-03);
-  color: var(--content-accent-themed, #38bdf8);
+  color: var(--link-ui-themed);
   flex-shrink: 0;
 
   &.is-loading {
@@ -4491,7 +4632,7 @@ $code-font-family: var(
 .ai-suggest-fix-title {
   font-size: 0.84375rem;
   font-weight: 600;
-  line-height: var(--line-height-01, 1.4);
+  line-height: var(--line-height-01);
   color: var(--content-primary-themed);
   margin: 0;
   letter-spacing: normal;
@@ -4533,7 +4674,7 @@ $code-font-family: var(
   border: 1px solid var(--border-divider-themed) !important;
   border-radius: var(--border-radius-base) !important;
   padding: 4px !important;
-  margin-bottom: var(--spacing-02, 8px);
+  margin-bottom: var(--spacing-02);
   cursor: default;
 
   .ai-suggest-fix-folded-row {
@@ -4605,7 +4746,7 @@ $code-font-family: var(
 
 .ai-suggest-fix-reopen-btn {
   flex-shrink: 0;
-  border-radius: var(--border-radius-full, 999px) !important;
+  border-radius: var(--border-radius-full) !important;
 }
 
 .ai-assist-edit-receipt {
@@ -4619,13 +4760,13 @@ $code-font-family: var(
   padding: 3px 8px;
   background-color: var(--bg-secondary-themed);
   border: 1px solid var(--border-divider-themed);
-  border-radius: var(--border-radius-base, 4px);
+  border-radius: var(--border-radius-base);
   width: fit-content;
 
   &.is-accepted {
-    color: var(--content-positive-themed, #22c55e);
-    background-color: rgba(34, 197, 94, 0.12);
-    border-color: rgba(34, 197, 94, 0.3);
+    color: var(--content-positive-themed);
+    background-color: color-mix(in srgb, var(--content-positive-themed) 12%, transparent);
+    border-color: color-mix(in srgb, var(--content-positive-themed) 30%, transparent);
   }
 
   &.is-rejected {
@@ -4717,7 +4858,7 @@ $code-font-family: var(
   padding: 0 var(--spacing-03);
   background-color: var(--bg-tertiary-themed);
   border-left: 2px solid var(--border-divider-themed);
-  border-radius: 0 var(--border-radius-base, 4px) var(--border-radius-base, 4px)
+  border-radius: 0 var(--border-radius-base) var(--border-radius-base)
     0;
   font-size: var(--font-size-01);
   line-height: 1.5;
@@ -4751,7 +4892,7 @@ $code-font-family: var(
 .ai-finding-fix-status {
   display: flex;
   align-items: center;
-  gap: var(--spacing-02, 8px);
+  gap: var(--spacing-02);
   font-size: var(--font-size-01);
   color: var(--content-secondary-themed);
   margin-bottom: var(--spacing-02);
@@ -4761,7 +4902,7 @@ $code-font-family: var(
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background-color: var(--content-accent-themed, #38bdf8);
+  background-color: var(--link-ui-themed);
   animation: ai-pulse 1.2s infinite ease-in-out;
   display: inline-block;
   flex-shrink: 0;
@@ -4774,14 +4915,14 @@ $code-font-family: var(
   display: block;
 
   & + .ai-suggest-entry {
-    margin-top: var(--spacing-03, 12px);
+    margin-top: var(--spacing-03);
   }
 }
 
 // Wraps an AgentWorkRow plus the edit cards it produced, keeping them tight
 // against each other and separated from the surrounding prose.
 .ai-suggest-segment-group {
-  margin: var(--spacing-02, 8px) 0;
+  margin: var(--spacing-02) 0;
 }
 
 .ai-suggest-explanation {
@@ -4803,7 +4944,7 @@ $code-font-family: var(
 .ai-suggest-code-box {
   margin: var(--spacing-02) 0;
   border: 1px solid var(--border-divider-themed);
-  border-radius: var(--border-radius-base, 6px);
+  border-radius: var(--border-radius-base);
   overflow: hidden;
   background-color: var(--bg-primary-themed);
 }
@@ -4820,7 +4961,7 @@ $code-font-family: var(
 
 .ai-suggest-sparkle-icon {
   font-size: var(--font-size-02);
-  color: var(--content-accent-themed, #38bdf8);
+  color: var(--link-ui-themed);
   flex-shrink: 0;
 }
 
@@ -4833,7 +4974,7 @@ $code-font-family: var(
   align-items: center;
   gap: 4px;
   padding: 2px 8px;
-  border-radius: var(--border-radius-base, 4px);
+  border-radius: var(--border-radius-base);
   cursor: pointer;
   transition:
     color 0.15s ease,
@@ -4850,13 +4991,13 @@ $code-font-family: var(
 }
 
 .ai-suggest-code-diff {
-  font-family: var(--source-font-family, #{$font-family-monospace}, monospace);
-  font-size: var(--font-size, 12px);
-  line-height: var(--line-height, 1.6);
-  background-color: var(--editor-bg, var(--bg-secondary-themed));
-  color: var(--editor-fg, inherit);
+  font-family: var(--source-font-family);
+  font-size: var(--font-size);
+  line-height: var(--line-height);
+  background-color: var(--editor-bg);
+  color: var(--editor-fg);
   border: 1px solid var(--border-divider-themed);
-  border-radius: var(--border-radius-base, 4px);
+  border-radius: var(--border-radius-base);
   overflow-y: auto;
   overflow-x: auto;
   max-height: 360px;
@@ -4879,7 +5020,7 @@ $code-font-family: var(
   .diff-line {
     display: flex;
     align-items: stretch;
-    min-height: calc(var(--font-size, 12px) * var(--line-height, 1.6));
+    min-height: calc(var(--font-size) * var(--line-height));
     width: 100%;
     box-sizing: border-box;
 
@@ -4889,8 +5030,8 @@ $code-font-family: var(
     }
 
     &.diff-line-fold {
-      background-color: rgba(128, 128, 128, 0.05);
-      color: var(--content-secondary-themed, #888);
+      background-color: color-mix(in srgb, var(--content-secondary-themed) 5%, transparent);
+      color: var(--content-secondary-themed);
       font-style: italic;
     }
   }
@@ -4911,9 +5052,9 @@ $code-font-family: var(
     position: sticky;
     left: 0;
     z-index: 2;
-    border-right: 1px solid var(--gutter-border, rgba(128, 128, 128, 0.15));
-    background-color: var(--gutter-bg, rgba(128, 128, 128, 0.08));
-    color: var(--gutter-fg, inherit);
+    border-right: 1px solid var(--gutter-border, color-mix(in srgb, var(--content-secondary-themed) 15%, transparent));
+    background-color: var(--gutter-bg, color-mix(in srgb, var(--content-secondary-themed) 8%, transparent));
+    color: var(--gutter-fg);
 
     &.diff-gutter-clickable {
       cursor: pointer;
@@ -4922,7 +5063,7 @@ $code-font-family: var(
         background-color 0.15s ease;
 
       &:hover {
-        color: var(--content-accent-themed, #38bdf8) !important;
+        color: var(--link-ui-themed) !important;
         text-decoration: underline;
       }
     }
@@ -4946,12 +5087,12 @@ $code-font-family: var(
     background-color: var(--bg-secondary-themed);
     color: var(--content-primary-themed);
 
-    --diff-ins-tint: rgba(46, 160, 67, 0.14);
-    --diff-ins-mark: rgba(46, 160, 67, 0.36);
-    --diff-ins-sign: #1a7f37;
-    --diff-del-tint: rgba(248, 81, 73, 0.12);
-    --diff-del-mark: rgba(248, 81, 73, 0.32);
-    --diff-del-sign: #cf222e;
+    --diff-ins-tint: color-mix(in srgb, var(--content-positive-themed) 14%, transparent);
+    --diff-ins-mark: color-mix(in srgb, var(--content-positive-themed) 36%, transparent);
+    --diff-ins-sign: var(--content-positive-themed);
+    --diff-del-tint: color-mix(in srgb, var(--content-danger-themed) 12%, transparent);
+    --diff-del-mark: color-mix(in srgb, var(--content-danger-themed) 32%, transparent);
+    --diff-del-sign: var(--content-danger-themed);
 
     .cm-content {
       padding: 4px 0;
@@ -4981,11 +5122,11 @@ $code-font-family: var(
       background:
         linear-gradient(var(--diff-row-tint), var(--diff-row-tint)),
         var(--bg-secondary-themed);
-      color: color-mix(in srgb, var(--content-primary-themed, currentColor) 45%, transparent);
+      color: color-mix(in srgb, var(--content-primary-themed) 45%, transparent);
     }
 
     .diff-line-no {
-      min-width: calc(var(--diff-line-no-chars, 3) * 1ch);
+      min-width: calc(var(--diff-line-no-chars) * 1ch);
       text-align: right;
       font-variant-numeric: tabular-nums;
     }
@@ -4996,7 +5137,7 @@ $code-font-family: var(
       text-decoration: none;
 
       .diff-line-no {
-        color: var(--content-accent-themed, #38bdf8);
+        color: var(--link-ui-themed);
         text-decoration: underline;
       }
     }
@@ -5035,12 +5176,12 @@ $code-font-family: var(
     }
 
     &.overall-theme-dark {
-      --diff-ins-tint: rgba(46, 160, 67, 0.2);
-      --diff-ins-mark: rgba(46, 160, 67, 0.45);
-      --diff-ins-sign: #3fb950;
-      --diff-del-tint: rgba(248, 81, 73, 0.16);
-      --diff-del-mark: rgba(248, 81, 73, 0.42);
-      --diff-del-sign: #f85149;
+      --diff-ins-tint: color-mix(in srgb, var(--content-positive-themed) 20%, transparent);
+      --diff-ins-mark: color-mix(in srgb, var(--content-positive-themed) 45%, transparent);
+      --diff-ins-sign: var(--content-positive-themed);
+      --diff-del-tint: color-mix(in srgb, var(--content-danger-themed) 16%, transparent);
+      --diff-del-mark: color-mix(in srgb, var(--content-danger-themed) 42%, transparent);
+      --diff-del-sign: var(--content-danger-themed);
     }
   }
 }
@@ -5072,7 +5213,7 @@ $code-font-family: var(
     background: transparent;
     border: none;
     padding: 4px;
-    border-radius: var(--border-radius-base, 4px);
+    border-radius: var(--border-radius-base);
     color: var(--content-secondary-themed);
     cursor: pointer;
     display: inline-flex;
@@ -5089,7 +5230,7 @@ $code-font-family: var(
     }
 
     &.active {
-      color: var(--content-accent-themed, #38bdf8);
+      color: var(--link-ui-themed);
     }
   }
 }
@@ -5105,20 +5246,20 @@ $code-font-family: var(
   font-weight: 500;
   line-height: 1.4;
   background-color: transparent;
-  border: 1px solid var(--border-primary-themed, rgba(255, 255, 255, 0.4));
+  border: 1px solid var(--border-primary-themed);
   color: var(--content-primary-themed);
   cursor: pointer;
   transition: all 0.15s ease;
   white-space: nowrap;
 
   &:hover {
-    background-color: var(--bg-tertiary-themed, rgba(255, 255, 255, 0.1));
-    border-color: var(--border-active-themed, var(--content-primary-themed));
+    background-color: var(--bg-tertiary-themed);
+    border-color: var(--border-active-themed);
     color: var(--content-primary-themed);
   }
 
   &:focus-visible {
-    outline: 2px solid var(--border-active-themed, #38bdf8);
+    outline: 2px solid var(--border-active-themed);
     outline-offset: 1px;
   }
 }
@@ -5130,7 +5271,7 @@ $code-font-family: var(
 // .ai-suggest-fix-reopen-btn does.
 .ai-suggest-chat-btn {
   flex-shrink: 0;
-  border-radius: var(--border-radius-full, 999px) !important;
+  border-radius: var(--border-radius-full) !important;
 }
 
 // Only ever rendered after the user clicks into a busy assistant, and removed
@@ -5155,7 +5296,7 @@ $code-font-family: var(
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  color: var(--content-positive-themed, #22c55e);
+  color: var(--content-positive-themed);
   font-size: var(--font-size-01);
   font-weight: 500;
 
@@ -5166,7 +5307,7 @@ $code-font-family: var(
 
 .ai-suggest-apply-error {
   font-size: 0.6875rem;
-  color: var(--content-danger-themed, #ef4444);
+  color: var(--content-danger-themed);
 }
 
 // Chat history dropdown in the panel header.
@@ -5185,7 +5326,7 @@ $code-font-family: var(
   display: flex;
   align-items: center;
   justify-content: space-between;
-  border-radius: var(--border-radius-base, 4px);
+  border-radius: var(--border-radius-base);
   margin-bottom: 2px;
   padding: 2px 4px 2px 8px;
   border-left: 3px solid transparent;
@@ -5197,25 +5338,25 @@ $code-font-family: var(
     @include ai-assist-floating-box-row-hover;
 
     .ai-assist-history-when {
-      color: var(--content-primary-themed, #ffffff);
+      color: var(--content-primary-themed);
     }
   }
 
   &.is-active {
-    background-color: rgba(16, 185, 129, 0.14);
-    border-left-color: var(--content-positive-themed, #10b981);
+    background-color: color-mix(in srgb, var(--content-positive-themed) 14%, transparent);
+    border-left-color: var(--content-positive-themed);
 
     &:hover {
-      background-color: rgba(16, 185, 129, 0.22);
+      background-color: color-mix(in srgb, var(--content-positive-themed) 22%, transparent);
     }
 
     .ai-assist-history-title {
-      color: var(--content-primary-themed, #ffffff);
+      color: var(--content-primary-themed);
       font-weight: 600;
     }
 
     .ai-assist-history-when {
-      color: #34d399;
+      color: var(--content-positive-themed);
       font-weight: 600;
     }
   }
@@ -5237,7 +5378,7 @@ $code-font-family: var(
   outline: none;
 
   &:focus-visible {
-    outline: 2px solid var(--focus-color, #0284c7);
+    outline: 2px solid var(--blue-30);
     outline-offset: 1px;
     border-radius: 4px;
   }
@@ -5251,7 +5392,7 @@ $code-font-family: var(
   white-space: nowrap;
   font-size: 0.8125rem;
   line-height: 1.4;
-  color: var(--content-primary-themed, #e4e4e7);
+  color: var(--content-primary-themed);
   font-weight: 400;
 }
 
@@ -5259,7 +5400,7 @@ $code-font-family: var(
   flex-shrink: 0;
   font-size: 0.6875rem;
   font-weight: 500;
-  color: var(--content-secondary-themed, #9ca3af);
+  color: var(--content-secondary-themed);
   letter-spacing: 0.2px;
   white-space: nowrap;
   transition: color 0.15s ease;
@@ -5276,7 +5417,7 @@ $code-font-family: var(
   border: none;
   background: transparent;
   border-radius: 4px;
-  color: #f87171;
+  color: var(--content-danger-themed);
   cursor: pointer;
   opacity: 0.85;
   transition:
@@ -5288,8 +5429,8 @@ $code-font-family: var(
   &:hover,
   &:focus-visible {
     opacity: 1;
-    color: #ef4444;
-    background-color: rgba(239, 68, 68, 0.2);
+    color: var(--content-danger-themed);
+    background-color: color-mix(in srgb, var(--content-danger-themed) 20%, transparent);
     transform: scale(1.05);
   }
 }
@@ -5298,7 +5439,7 @@ $code-font-family: var(
   padding: 16px 12px;
   font-size: var(--font-size-01);
   text-align: center;
-  color: var(--content-secondary-themed, #9ca3af);
+  color: var(--content-secondary-themed);
 }
 
 .ai-diagnostic-suggest-fix {
@@ -5312,9 +5453,9 @@ $code-font-family: var(
   &:disabled {
     cursor: not-allowed !important;
     opacity: 0.5 !important;
-    background-color: var(--bg-tertiary-themed, #e5e7eb) !important;
-    border-color: var(--border-divider-themed, #d1d5db) !important;
-    color: var(--content-secondary-themed, #9ca3af) !important;
+    background-color: var(--bg-tertiary-themed) !important;
+    border-color: var(--border-divider-themed) !important;
+    color: var(--content-secondary-themed) !important;
 
     * {
       cursor: not-allowed !important;
@@ -5324,9 +5465,9 @@ $code-font-family: var(
     &:focus,
     &:focus-visible,
     &:active {
-      background-color: var(--bg-tertiary-themed, #e5e7eb) !important;
-      border-color: var(--border-divider-themed, #d1d5db) !important;
-      color: var(--content-secondary-themed, #9ca3af) !important;
+      background-color: var(--bg-tertiary-themed) !important;
+      border-color: var(--border-divider-themed) !important;
+      color: var(--content-secondary-themed) !important;
       box-shadow: none !important;
     }
   }
@@ -5366,7 +5507,7 @@ $code-font-family: var(
   white-space: nowrap;
   font-size: var(--font-size-02);
   font-weight: 600;
-  color: var(--content-primary-themed, #ffffff);
+  color: var(--content-primary-themed);
 
   &.is-editable {
     cursor: pointer;
@@ -5376,10 +5517,7 @@ $code-font-family: var(
     transition: background-color 0.15s ease;
 
     &:hover {
-      background-color: var(
-        --dropdown-background-hover,
-        rgba(255, 255, 255, 0.08)
-      );
+      background-color: var(--bg-secondary-themed);
     }
   }
 }
@@ -5399,7 +5537,7 @@ $code-font-family: var(
   white-space: nowrap;
   mask-size: 250% 100%;
   mask-repeat: no-repeat;
-  animation: ai-assist-title-sweep var(--ai-title-animation-duration, 2.5s)
+  animation: ai-assist-title-sweep var(--ai-title-animation-duration)
     linear both;
 }
 
@@ -5452,7 +5590,7 @@ $code-font-family: var(
   border: none;
   background: transparent;
   border-radius: 4px;
-  color: var(--content-secondary-themed, #9ca3af);
+  color: var(--content-secondary-themed);
   cursor: pointer;
   opacity: 0;
   transition:
@@ -5463,11 +5601,8 @@ $code-font-family: var(
   &:hover,
   &:focus-visible {
     opacity: 1;
-    color: var(--content-primary-themed, #ffffff);
-    background-color: var(
-      --dropdown-background-hover,
-      rgba(255, 255, 255, 0.12)
-    );
+    color: var(--content-primary-themed);
+    background-color: var(--bg-secondary-themed);
   }
 }
 
@@ -5486,15 +5621,15 @@ $code-font-family: var(
   padding: 2px 8px;
   font-size: 0.8125rem;
   font-weight: 600;
-  color: var(--content-primary-themed, #ffffff);
-  background-color: var(--bg-secondary-themed, #24262e);
-  border: 1px solid var(--border-divider-themed, #0284c7);
+  color: var(--content-primary-themed);
+  background-color: var(--bg-secondary-themed);
+  border: 1px solid var(--border-divider-themed);
   border-radius: 4px;
   outline: none;
 
   &:focus {
-    border-color: #38bdf8;
-    box-shadow: 0 0 0 1px #38bdf8;
+    border-color: var(--border-active-themed);
+    box-shadow: 0 0 0 1px var(--border-active-themed);
   }
 }
 
@@ -5508,16 +5643,16 @@ $code-font-family: var(
 }
 
 .ai-assist-header-edit-save {
-  color: var(--content-positive-themed, #34d399) !important;
+  color: var(--content-positive-themed) !important;
   &:hover {
-    background-color: rgba(52, 211, 153, 0.15) !important;
+    background-color: color-mix(in srgb, var(--content-positive-themed) 15%, transparent) !important;
   }
 }
 
 .ai-assist-header-edit-cancel {
-  color: var(--content-secondary-themed, #9ca3af) !important;
+  color: var(--content-secondary-themed) !important;
   &:hover {
-    background-color: rgba(255, 255, 255, 0.1) !important;
+    background-color: color-mix(in srgb, var(--content-primary-themed) 10%, transparent) !important;
   }
 }
 
@@ -5540,7 +5675,7 @@ $code-font-family: var(
   border: none;
   background: transparent;
   border-radius: 4px;
-  color: var(--content-secondary-themed, #9ca3af);
+  color: var(--content-secondary-themed);
   cursor: pointer;
   opacity: 0.8;
   transition:
@@ -5552,11 +5687,8 @@ $code-font-family: var(
   &:hover,
   &:focus-visible {
     opacity: 1;
-    color: var(--content-primary-themed, #ffffff);
-    background-color: var(
-      --dropdown-background-hover,
-      rgba(255, 255, 255, 0.12)
-    );
+    color: var(--content-primary-themed);
+    background-color: var(--bg-secondary-themed);
     transform: scale(1.05);
   }
 }
@@ -5575,14 +5707,14 @@ $code-font-family: var(
   height: 26px;
   padding: 2px 6px;
   font-size: var(--font-size-01);
-  color: var(--content-primary-themed, #ffffff);
-  background-color: var(--bg-secondary-themed, #24262e);
-  border: 1px solid #0284c7;
+  color: var(--content-primary-themed);
+  background-color: var(--bg-secondary-themed);
+  border: 1px solid var(--border-primary-themed);
   border-radius: 4px;
   outline: none;
 
   &:focus {
-    border-color: #38bdf8;
+    border-color: var(--border-active-themed);
   }
 }
 
@@ -5600,15 +5732,1799 @@ $code-font-family: var(
 }
 
 .ai-assist-history-edit-confirm {
-  color: #34d399;
+  color: var(--content-positive-themed);
   &:hover {
-    background-color: rgba(52, 211, 153, 0.18);
+    background-color: color-mix(in srgb, var(--content-positive-themed) 18%, transparent);
   }
 }
 
 .ai-assist-history-edit-cancel {
-  color: #9ca3af;
+  color: var(--content-secondary-themed);
   &:hover {
-    background-color: rgba(255, 255, 255, 0.1);
+    background-color: color-mix(in srgb, var(--content-primary-themed) 10%, transparent);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Writing tools: selection-box row, action menu, result card
+// ---------------------------------------------------------------------------
+
+// The selection's quick actions, once the AI rows join them, follow Overleaf's
+// system theme like every other AI popup. Upstream colours this tooltip by
+// the editor theme (review-tooltip.ts); the plain Add comment tooltip, without
+// the AI module, stays as upstream.
+.review-tooltip-menu-container .review-tooltip-menu.review-tooltip-menu-stacked {
+  border: 1px solid var(--border-divider-themed);
+  background-color: var(--bg-primary-themed);
+  color: var(--content-primary-themed);
+
+  .review-tooltip-menu-button {
+    color: var(--content-primary-themed);
+
+    &:hover,
+    &:focus-visible {
+      background-color: var(--bg-secondary-themed);
+    }
+  }
+
+  .review-tooltip-menu-divider {
+    background-color: var(--border-divider-themed);
+  }
+}
+
+.ai-writing-tools-action {
+  position: relative;
+}
+
+.ai-writing-tools-button {
+  width: 100%;
+}
+
+// The action menu is the TeXGPT menu card (see TeXGPT below); these rules
+// only place it under the selection's Writing tools button, or in the
+// TeXGPT popup under its prompt bar
+.ai-writing-tools-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 1000;
+
+  &.ai-writing-tools-menu-above {
+    top: auto;
+    bottom: calc(100% + 4px);
+  }
+
+  &.ai-writing-tools-menu-inline {
+    position: static;
+  }
+}
+
+.ai-writing-tools-translate-wrapper {
+  position: relative;
+  width: 100%;
+}
+
+.ai-writing-tools-popup-wrapper {
+  position: relative;
+  display: block;
+  outline: none;
+}
+
+// Every AI result card shares one width (AI_CARD_WIDTH in card-width.ts),
+// so a footer of actions always fits on a line. Language suggestions are
+// smaller and keep their own card.
+$ai-card-width: 600px;
+
+.ai-writing-tools-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-03);
+  width: min(#{$ai-card-width}, calc(100vw - 32px));
+  max-width: $ai-card-width;
+  // The footer drops its secondary labels when the card is squeezed
+  container: ai-card / inline-size;
+  max-height: 480px;
+  padding: var(--spacing-03) var(--spacing-04) var(--spacing-04);
+  box-sizing: border-box;
+  border: 1px solid var(--border-divider-themed);
+  border-radius: var(--border-radius-medium);
+  background-color: var(--bg-primary-themed);
+  box-shadow: 0 8px 24px 0 rgba(0, 0, 0, 0.12), 0 2px 6px 0 rgba(0, 0, 0, 0.04);
+  color: var(--content-primary-themed);
+  font-family: inherit;
+  font-size: var(--font-size-02);
+  line-height: var(--line-height-03);
+
+  &:focus {
+    outline: none;
+  }
+}
+
+@keyframes ai-writing-tools-settings-zoom-in {
+  from {
+    opacity: 0;
+    transform: scale(0.333);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes ai-writing-tools-settings-zoom-out {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.333);
+  }
+}
+
+.ai-writing-tools-settings-card {
+  position: absolute;
+  top: 0;
+  left: calc(100% + var(--spacing-02));
+  width: 290px;
+  max-height: 460px;
+  overflow-y: auto;
+  padding: var(--spacing-04);
+  border: 1px solid var(--border-divider-themed);
+  border-radius: var(--border-radius-medium);
+  background-color: var(--bg-primary-themed);
+  box-shadow: 0 4px 16px 0 #1e253033;
+  color: var(--content-primary-themed);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-03);
+  z-index: 10;
+  transform-origin: -8px 24px;
+  animation: ai-writing-tools-settings-zoom-in 0.2s cubic-bezier(0.16, 1, 0.3, 1) both;
+
+  &.ai-writing-tools-settings-card-closing {
+    animation: ai-writing-tools-settings-zoom-out 0.16s cubic-bezier(0.25, 0.1, 0.25, 1) both;
+    pointer-events: none;
+  }
+}
+
+.ai-writing-tools-popup-wrapper.ai-writing-tools-popup-wrapper-reverse .ai-writing-tools-settings-card {
+  left: auto;
+  right: calc(100% + var(--spacing-02));
+  transform-origin: calc(100% + 8px) 24px;
+}
+
+.ai-writing-tools-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-03);
+}
+
+.ai-writing-tools-card-title {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-03);
+  font-size: var(--font-size-03);
+  font-weight: 600;
+
+  svg {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+  }
+}
+
+.ai-writing-tools-card-tools,
+.ai-writing-tools-versions,
+.ai-writing-tools-card-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-02);
+}
+
+.ai-writing-tools-back {
+  align-self: flex-start;
+}
+
+.ai-writing-tools-card-body {
+  overflow-y: auto;
+}
+
+.ai-writing-tools-text {
+  font-family: inherit;
+  font-size: var(--font-size-02);
+  line-height: 1.6;
+  color: var(--content-primary-themed);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+
+  del {
+    color: var(--content-secondary-themed);
+    text-decoration: line-through;
+  }
+
+  ins {
+    font-weight: 700;
+    text-decoration: none;
+  }
+}
+
+.ai-writing-tools-status {
+  color: var(--content-secondary-themed);
+}
+
+.ai-popup-status-line {
+  padding: 4px 0;
+  margin: 4px 0 2px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.78125rem;
+
+  &.is-completed {
+    margin-top: var(--spacing-02);
+    padding-top: var(--spacing-01);
+
+    .ai-assist-status-text {
+      font-size: 0.78125rem;
+      color: var(--content-secondary-themed);
+      font-variant-numeric: tabular-nums;
+    }
+  }
+
+  .ai-assist-status-subtext {
+    color: var(--content-secondary-themed);
+    font-size: 0.78125rem;
+  }
+}
+
+.ai-writing-tools-notice {
+  margin: 0;
+  color: var(--content-secondary-themed);
+  font-size: 14px;
+
+  p {
+    margin: 0 0 var(--spacing-03);
+  }
+}
+
+.ai-writing-tools-error {
+  color: var(--content-danger-themed);
+}
+
+.ai-writing-tools-warnings {
+  margin: var(--spacing-03) 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--content-warning-themed);
+  font-size: 13px;
+
+  li {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-02);
+
+    svg {
+      width: 16px;
+      height: 16px;
+      flex-shrink: 0;
+    }
+  }
+}
+
+.ai-writing-tools-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-03);
+  padding-top: var(--spacing-02);
+}
+
+// One line of actions in every AI card: buttons never wrap or squeeze their
+// text onto two lines
+.ai-card-footer {
+  flex-wrap: nowrap;
+
+  .ai-writing-tools-card-actions {
+    flex-wrap: nowrap;
+    min-width: 0;
+  }
+
+  .btn {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+}
+
+// On a narrow screen Retry, Copy and Edit prompt keep only their icons
+@container ai-card (max-width: 540px) {
+  .ai-card-footer .ai-card-label {
+    display: none;
+  }
+}
+
+.ai-writing-tools-synonyms,
+.ai-writing-tools-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-02);
+}
+
+.ai-writing-tools-settings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-03);
+}
+
+.ai-writing-tools-settings-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.ai-writing-tools-settings-label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-01);
+  font-size: 13px;
+  color: var(--content-secondary-themed);
+}
+
+.ai-writing-tools-prompt {
+  width: 100%;
+  padding: var(--spacing-02) var(--spacing-03);
+  border: 1px solid var(--border-divider-themed);
+  border-radius: var(--border-radius-base);
+  background-color: var(--bg-secondary-themed);
+  color: var(--content-primary-themed);
+  font-family: inherit;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  resize: vertical;
+
+  &:focus {
+    border-color: var(--border-active-themed);
+    outline: none;
+  }
+
+  &::placeholder {
+    color: var(--content-placeholder-themed);
+    font-size: 0.875rem;
+    opacity: 0.6;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// TeXGPT: toolbar button, popup (prompt bar, menu, result)
+//
+// Three separate cards stacked under the toolbar button, as in the Writefull
+// context menu: the prompt bar on top, then the menu or the result. Every
+// card sets its own surface and text colours from the themed tokens, so
+// nothing inherits the page's colours.
+// ---------------------------------------------------------------------------
+
+@mixin ai-texgpt-surface {
+  box-sizing: border-box;
+  border: 1px solid var(--border-divider-themed);
+  border-radius: var(--border-radius-medium);
+  background-color: var(--bg-primary-themed);
+  color: var(--content-primary-themed);
+  box-shadow:
+    0 4px 12px 0 rgba(0, 0, 0, 0.16),
+    0 1px 2px 0 rgba(0, 0, 0, 0.08);
+  pointer-events: auto;
+}
+
+.ai-texgpt-toolbar-button {
+  .material-symbols {
+    font-size: 18px;
+    line-height: 18px;
+  }
+}
+
+.ai-texgpt-popup {
+  position: fixed;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--spacing-03);
+  min-height: 0;
+  box-sizing: border-box;
+  // The gaps between the cards let clicks through to the editor
+  pointer-events: none;
+  color: var(--content-primary-themed);
+  font-family: inherit;
+  font-size: var(--font-size-02);
+  line-height: var(--line-height-03);
+
+  // With a result, the bar and the result share one width
+  &.has-result {
+    align-items: stretch;
+
+    .ai-texgpt-bar {
+      width: auto;
+    }
+  }
+}
+
+// A Writing tool chosen in the popup runs in its card, in place of the bar
+// and menu
+.ai-texgpt-popup .ai-writing-tools-popup-wrapper.is-embedded {
+  min-height: 0;
+  pointer-events: auto;
+
+  .ai-writing-tools-card {
+    max-width: none;
+    max-height: calc(100vh - 140px);
+  }
+}
+
+// A TeXGPT result: the shared AI card, filling the popup's width, with its
+// follow-up bar inside
+.ai-texgpt-popup .ai-texgpt-card {
+  flex: 0 1 auto;
+  width: auto;
+  max-width: none;
+  max-height: none;
+  min-height: 0;
+  overflow: hidden;
+  pointer-events: auto;
+
+  .ai-texgpt-bar {
+    width: auto;
+    box-shadow: none;
+  }
+}
+
+.ai-texgpt-card-title {
+  min-width: 0;
+}
+
+.ai-texgpt-card-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+
+  .material-symbols {
+    font-size: 18px;
+  }
+}
+
+.ai-texgpt-card-title-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+// Prompt bar
+
+.ai-texgpt-bar {
+  @include ai-texgpt-surface;
+
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--spacing-03);
+  width: min(480px, calc(100vw - 32px));
+  padding: var(--spacing-03) var(--spacing-03) var(--spacing-03)
+    var(--spacing-04);
+}
+
+.ai-texgpt-popup .ai-texgpt-bar-icon {
+  flex-shrink: 0;
+  font-size: 20px;
+  color: var(--content-secondary-themed);
+}
+
+.ai-texgpt-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 24px;
+  height: 24px;
+  max-height: 120px;
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  border: none;
+  outline: none;
+  resize: none;
+  overflow-y: auto;
+  background: transparent;
+  color: var(--content-primary-themed);
+  font-family: inherit;
+  font-size: 0.875rem;
+  line-height: 1.5;
+
+  &:focus {
+    outline: none;
+  }
+
+  &::placeholder {
+    overflow: hidden;
+    color: var(--content-placeholder-themed);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.875rem;
+    opacity: 0.6;
+  }
+}
+
+// Menu: the generators, or the Writing tools on a selection
+
+.ai-texgpt-menu {
+  @include ai-texgpt-surface;
+
+  display: flex;
+  flex-direction: column;
+  width: max-content;
+  min-width: 220px;
+  max-width: 280px;
+  padding: var(--spacing-03) 0;
+  font-family: inherit;
+  font-size: var(--font-size-02);
+  line-height: 20px;
+  text-align: left;
+
+  .material-symbols {
+    font-size: 20px;
+    line-height: 1;
+  }
+}
+
+.ai-texgpt-menu-group {
+  display: flex;
+  flex-direction: column;
+  padding: 0 var(--spacing-02);
+}
+
+.ai-texgpt-menu-divider {
+  margin: var(--spacing-03) 0;
+  border: none;
+  border-top: 1px solid var(--border-divider-themed);
+  opacity: 1;
+}
+
+.ai-texgpt-menu-empty {
+  padding: var(--spacing-02) var(--spacing-04);
+  color: var(--content-secondary-themed);
+}
+
+.ai-texgpt-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-04);
+  width: 100%;
+  padding: 5px var(--spacing-04);
+  border: none;
+  border-radius: var(--border-radius-base);
+  background: none;
+  color: var(--content-primary-themed);
+  font-family: inherit;
+  font-size: var(--font-size-02);
+  line-height: 20px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+
+  // Only the pointer or the keyboard lights a row up: the focus the menu
+  // puts on its first row when it opens stays invisible
+  &:focus {
+    outline: none;
+  }
+
+  &:hover,
+  &:focus-visible,
+  &.active {
+    background-color: var(--bg-secondary-themed);
+  }
+
+  &:hover .ai-texgpt-menu-item-action,
+  &:focus-visible .ai-texgpt-menu-item-action {
+    visibility: visible;
+  }
+}
+
+.ai-texgpt-menu-item-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  color: var(--content-primary-themed);
+}
+
+.ai-texgpt-menu-item-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ai-texgpt-menu .ai-texgpt-menu-item-action {
+  visibility: hidden;
+  flex-shrink: 0;
+  font-size: 18px;
+  color: var(--content-secondary-themed);
+}
+
+.ai-texgpt-menu .ai-texgpt-menu-item-caret {
+  flex-shrink: 0;
+  font-size: 18px;
+  color: var(--content-secondary-themed);
+}
+
+// Translate flyout: the same card beside the Translate row, its top row
+// level with it
+.ai-texgpt-submenu {
+  position: absolute;
+  top: calc(-1 * var(--spacing-03) - 1px);
+  left: calc(100% + var(--spacing-02) + var(--spacing-03));
+  z-index: 1010;
+  width: 220px;
+  min-width: 0;
+  max-width: none;
+
+  .ai-writing-tools-menu-above & {
+    top: auto;
+    bottom: calc(-1 * var(--spacing-03) - 1px);
+  }
+}
+
+.ai-texgpt-language-list {
+  max-height: 248px;
+  overflow-y: auto;
+
+  &::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    border-radius: 3px;
+    background: var(--border-divider-themed);
+  }
+}
+
+.ai-texgpt-search {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-03);
+  margin: 0 var(--spacing-02);
+  padding: 5px var(--spacing-04);
+  border-radius: var(--border-radius-base);
+  color: var(--content-secondary-themed);
+  font-weight: normal;
+  cursor: text;
+
+  &:focus-within {
+    background-color: var(--bg-secondary-themed);
+  }
+
+  input {
+    flex: 1;
+    min-width: 0;
+    padding: 0;
+    border: none;
+    outline: none;
+    background: none;
+    color: var(--content-primary-themed);
+    font-family: inherit;
+    font-size: 0.875rem;
+    line-height: 1.5;
+
+    &::placeholder {
+      color: var(--content-placeholder-themed);
+      font-size: 0.875rem;
+      opacity: 0.6;
+    }
+  }
+}
+
+// Result
+
+.ai-texgpt-result {
+  @include ai-texgpt-surface;
+
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
+  gap: var(--spacing-04);
+  min-height: 0;
+  overflow: hidden;
+  padding: var(--spacing-03) var(--spacing-05) var(--spacing-05);
+}
+
+.ai-texgpt-result-header {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--spacing-03);
+  min-height: 32px;
+}
+
+.ai-texgpt-result-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--content-primary-themed);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-texgpt-result-tools,
+.ai-texgpt-versions {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--spacing-02);
+}
+
+// The version counter between the arrows, in every AI card
+.ai-texgpt-versions-count,
+.ai-writing-tools-versions-count {
+  color: var(--content-secondary-themed);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ai-texgpt-result-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-04);
+  min-height: 0;
+  overflow-y: auto;
+  color: var(--content-primary-themed);
+}
+
+.ai-texgpt-diff {
+  margin: 0;
+  max-height: 50vh;
+  overflow: auto;
+  padding: var(--spacing-04);
+  border: 1px solid var(--border-divider-themed);
+  border-radius: var(--border-radius-base);
+  background-color: var(--bg-secondary-themed);
+  color: var(--content-primary-themed);
+  font-family: inherit;
+  font-size: var(--font-size-02);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+
+  del {
+    color: var(--content-secondary-themed);
+    text-decoration: line-through;
+  }
+
+  ins {
+    font-weight: 700;
+    text-decoration: none;
+  }
+}
+
+// Title Generator: one card per suggestion, the chosen one outlined
+.ai-texgpt-options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-03);
+}
+
+.ai-texgpt-option {
+  width: 100%;
+  padding: var(--spacing-03) var(--spacing-04);
+  border: 1px solid var(--border-divider-themed);
+  border-radius: var(--border-radius-base);
+  background-color: var(--bg-secondary-themed);
+  color: var(--content-primary-themed);
+  font-size: var(--font-size-02);
+  line-height: 20px;
+  text-align: left;
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--border-primary-themed);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--border-active-themed);
+    outline-offset: 1px;
+  }
+
+  &[aria-checked='true'] {
+    border-color: var(--border-active-themed);
+    box-shadow: inset 0 0 0 1px var(--border-active-themed);
+    font-weight: 600;
+  }
+}
+
+.ai-texgpt-notice {
+  margin: 0;
+  color: var(--content-secondary-themed);
+
+  p {
+    margin: 0 0 var(--spacing-03);
+    color: inherit;
+  }
+
+  a {
+    color: var(--link-ui-themed);
+  }
+
+  &.is-warning {
+    color: var(--content-warning-themed);
+  }
+
+  &.is-error {
+    color: var(--content-danger-themed);
+  }
+}
+
+.ai-texgpt-note {
+  margin: 0;
+  color: var(--content-secondary-themed);
+  font-size: 13px;
+}
+
+.ai-texgpt-warnings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-02);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--content-warning-themed);
+  font-size: 13px;
+
+  li {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-02);
+  }
+
+  .ai-texgpt-popup & .material-symbols {
+    font-size: 16px;
+  }
+}
+
+.ai-texgpt-result .ai-popup-status-line {
+  margin: 0;
+  color: var(--content-secondary-themed);
+}
+
+.ai-texgpt-result-footer {
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-03);
+}
+
+.ai-texgpt-result-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacing-02);
+}
+
+// Shared with the equation and table cards: highlighted LaTeX, answers,
+// streamed options and the preamble checkbox
+
+.ai-texgpt-code {
+  margin: 0;
+  max-height: 50vh;
+  overflow: auto;
+  padding: var(--spacing-03) var(--spacing-04);
+  border: 1px solid var(--border-divider-themed);
+  border-radius: var(--border-radius-base);
+  background-color: var(--editor-bg);
+  color: var(--editor-fg);
+  font-family: $code-font-family;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.ai-texgpt-answer {
+  overflow-wrap: anywhere;
+}
+
+.ai-texgpt-streaming-options {
+  margin: 0;
+  padding-left: var(--spacing-05);
+  color: var(--content-primary-themed);
+}
+
+.ai-texgpt-packages {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-02);
+  margin: 0;
+  color: var(--content-secondary-themed);
+  font-size: 13px;
+  font-weight: normal;
+
+  input {
+    margin: 0;
+  }
+}
+
+// Generators (equation, table): the dialog
+
+.ai-generator-dialog {
+  color: var(--content-primary);
+
+  .modal-title {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-04);
+    color: var(--content-primary) !important;
+  }
+
+  p,
+  li {
+    color: var(--content-secondary);
+  }
+}
+
+// The two-star sparkle after the title, as in the Writefull dialogs
+.ai-generator-dialog-sparkle {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.ai-generator-dialog-lead {
+  display: block;
+  margin-bottom: var(--spacing-06);
+  font-size: var(--font-size-02);
+  font-weight: normal;
+  color: var(--content-primary);
+}
+
+.ai-generator-dialog-inputs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--spacing-06);
+
+  @media (max-width: 575px) {
+    grid-template-columns: 1fr;
+  }
+}
+
+.ai-generator-prompt {
+  // Dragging the corner grows the box (and the image box beside it) only
+  // within these bounds, so it never spills out of the dialog
+  min-height: 90px;
+  max-height: min(14rem, 40vh);
+  resize: vertical;
+  padding: var(--spacing-04);
+  background-color: var(--bg-light-primary);
+  color: var(--content-primary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--border-radius-base);
+  font-family: inherit;
+  font-size: 0.875rem;
+  line-height: 1.5;
+
+  &::placeholder {
+    color: var(--content-placeholder);
+    font-size: 0.875rem;
+    opacity: 0.6;
+  }
+
+  &:focus {
+    border-color: var(--border-active);
+    box-shadow: 0 0 0 2px var(--blue-30);
+    outline: none;
+  }
+}
+
+.ai-generator-image-column {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+// Grey dashed box with square corners, as in the Writefull dialogs
+.ai-generator-image {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-02);
+  min-height: 90px;
+  padding: var(--spacing-06);
+  border: 1px dashed var(--content-secondary);
+  border-radius: 0;
+  background-color: var(--bg-light-secondary);
+  color: var(--content-secondary);
+  font-family: inherit;
+  font-size: var(--font-size-02);
+  text-align: center;
+
+  p {
+    margin: 0;
+    color: var(--content-secondary);
+  }
+
+  &.is-over {
+    border-color: var(--border-active);
+    background-color: var(--bg-info-03);
+  }
+
+  &.is-disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  &.has-image {
+    flex-direction: row;
+    justify-content: flex-start;
+    gap: var(--spacing-04);
+    padding: var(--spacing-04);
+    border-style: solid;
+    border-color: var(--border-primary);
+    background-color: var(--bg-light-primary);
+    text-align: left;
+
+    img {
+      max-width: 55%;
+      max-height: 120px;
+      object-fit: contain;
+      background-color: var(--bg-light-primary);
+    }
+  }
+}
+
+.ai-generator-image .ai-generator-image-alternatives {
+  font-size: var(--font-size-02);
+  color: var(--content-secondary);
+}
+
+.ai-generator-image-browse {
+  padding: 0;
+  border: none;
+  background: none;
+  vertical-align: baseline;
+  font-size: inherit;
+  color: var(--link-ui);
+  text-decoration: underline;
+}
+
+.ai-generator-image-meta {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  font-size: var(--font-size-02);
+}
+
+.ai-generator-image-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--content-primary);
+}
+
+.ai-generator-image-remove {
+  align-self: flex-start;
+  padding: 2px;
+  border: none;
+  border-radius: var(--border-radius-base);
+  background: none;
+  color: var(--content-secondary);
+
+  &:hover {
+    background-color: var(--bg-light-secondary);
+    color: var(--content-primary);
+  }
+}
+
+.ai-generator-image-error,
+.ai-generator-dialog-error {
+  margin: var(--spacing-02) 0 0;
+  color: var(--content-danger);
+  font-size: 13px;
+}
+
+.ai-generator-dialog-note {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-02);
+  margin: var(--spacing-04) 0 0;
+  font-size: var(--font-size-02);
+  color: var(--content-secondary);
+}
+
+// Generators (equation, table): the review card
+
+.ai-generator-card {
+  width: min(#{$ai-card-width}, calc(100vw - 32px));
+  max-width: $ai-card-width;
+  height: auto;
+  max-height: min(700px, 80vh);
+}
+
+.ai-generator-card-title {
+  min-width: 0;
+}
+
+.ai-generator-card-request {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: normal;
+  color: var(--content-secondary-themed);
+
+  &::before {
+    content: '·';
+    margin-right: var(--spacing-02);
+  }
+}
+
+.ai-generator-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-03);
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: var(--spacing-01);
+}
+
+.ai-equation-preview {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  height: auto;
+  min-height: 52px;
+  max-height: 320px;
+  padding: var(--spacing-03) var(--spacing-04);
+  overflow: auto;
+  border: 1px solid var(--border-divider-themed);
+  border-radius: var(--border-radius-base);
+  background-color: var(--bg-secondary-themed);
+  color: var(--content-primary-themed);
+
+  &.is-inline {
+    .ai-equation-preview-math {
+      justify-content: flex-start;
+    }
+  }
+}
+
+.ai-equation-preview-math {
+  max-width: 100%;
+  width: 100%;
+  margin: auto;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+
+  svg,
+  mjx-container {
+    max-width: 100%;
+    height: auto;
+  }
+}
+
+.ai-equation-preview-note {
+  margin: 0;
+  font-size: 13px;
+  color: var(--content-secondary-themed);
+}
+
+.ai-equation-preview-error {
+  margin: var(--spacing-02) 0 0;
+  font-size: 13px;
+  color: var(--content-danger-themed);
+}
+
+.ai-generator-latex-details {
+  flex-shrink: 0;
+
+  summary {
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--content-secondary-themed);
+    user-select: none;
+    margin-bottom: var(--spacing-01);
+
+    &:hover {
+      color: var(--content-primary-themed);
+    }
+  }
+}
+
+.ai-generator-latex {
+  margin-top: var(--spacing-01);
+  height: auto;
+
+  .ai-texgpt-code {
+    height: auto;
+    max-height: 280px;
+    overflow: auto;
+    margin: 0;
+    padding: var(--spacing-02) var(--spacing-03);
+    border: 1px solid var(--border-divider-themed);
+    border-radius: var(--border-radius-base);
+  }
+}
+
+.ai-equation-latex .ai-texgpt-code {
+  max-height: 280px;
+}
+
+.ai-texgpt-latex .ai-texgpt-code {
+  max-height: 320px;
+}
+
+.ai-generator-section-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.ai-generator-diff {
+  font-family: $code-font-family;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  flex-shrink: 0;
+  height: auto;
+  max-height: 200px;
+  overflow: auto;
+  padding: var(--spacing-02) var(--spacing-03);
+  border: 1px solid var(--border-divider-themed);
+  border-radius: var(--border-radius-base);
+  background-color: var(--bg-secondary-themed);
+}
+
+.ai-generator-notes {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-02);
+  margin: 0;
+  font-size: 13px;
+  color: var(--content-secondary-themed);
+  flex-shrink: 0;
+  white-space: pre-line;
+}
+
+// Table generator: the review card's own parts
+
+.ai-table-summary {
+  margin: 0;
+  font-size: 13px;
+  color: var(--content-secondary-themed);
+  flex-shrink: 0;
+}
+
+.ai-table-latex .ai-texgpt-code {
+  max-height: 360px;
+}
+
+// Text the AI just wrote into the editor: a soft glow that rises and fades,
+// like the change highlight on cloud Overleaf. Keep the duration in step with
+// GLOW_DURATION_MS in ai-edit-glow/extension.ts.
+
+.cm-content .ai-edit-glow {
+  border-radius: 3px;
+  animation: ai-edit-glow 2.6s ease-in-out 1 both;
+}
+
+@keyframes ai-edit-glow {
+  0%,
+  100% {
+    background-color: transparent;
+    box-shadow: 0 0 0 0 transparent;
+  }
+
+  35%,
+  60% {
+    background-color: color-mix(in srgb, var(--content-positive-themed) 38%, transparent);
+    box-shadow: 0 0 10px 3px color-mix(in srgb, var(--content-positive-themed) 45%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cm-content .ai-edit-glow {
+    animation-duration: 2.6s;
+    animation-name: ai-edit-glow-static;
+  }
+
+  @keyframes ai-edit-glow-static {
+    0%,
+    100% {
+      background-color: transparent;
+    }
+
+    10%,
+    80% {
+      background-color: color-mix(in srgb, var(--content-positive-themed) 30%, transparent);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Language suggestions: Account settings model slots, settings rows, card,
+// blocked list, toolbar control
+// ---------------------------------------------------------------------------
+
+.linking-ai-assist-slot {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-03);
+  margin-top: var(--spacing-06);
+}
+
+.linking-ai-assist-slot-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-01);
+}
+
+.ai-language-suggestions-select {
+  width: 200px;
+}
+
+.ai-language-suggestions-select-wide {
+  width: 240px;
+}
+
+.ai-language-suggestions-consent {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--spacing-02);
+}
+
+.ai-language-suggestion-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-03);
+  width: min(480px, calc(100vw - 32px));
+  padding: var(--spacing-03) var(--spacing-04) var(--spacing-04);
+  box-sizing: border-box;
+  border: 1px solid var(--border-divider-themed);
+  border-radius: var(--border-radius-medium);
+  background-color: var(--bg-primary-themed);
+  box-shadow: 0 8px 24px 0 rgba(0, 0, 0, 0.12), 0 2px 6px 0 rgba(0, 0, 0, 0.04);
+  color: var(--content-primary-themed);
+  font-family: inherit;
+  font-size: var(--font-size-02);
+  line-height: var(--line-height-03);
+
+  &:focus {
+    outline: none;
+  }
+}
+
+.ai-language-suggestion-card-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--content-primary-themed);
+
+  del {
+    color: var(--content-secondary-themed);
+    text-decoration: line-through;
+  }
+
+  ins {
+    font-weight: 700;
+    text-decoration: none;
+  }
+}
+
+.ai-language-suggestion-preview-text-taken {
+  padding: 0 2px;
+  border-radius: var(--border-radius-base);
+  background-color: color-mix(in srgb, var(--content-warning-themed) 18%, transparent);
+}
+
+.ai-language-suggestion-change {
+  padding: 1px 3px;
+  border-radius: var(--border-radius-base);
+  cursor: pointer;
+  // Wraps with the sentence; each line keeps its own rounded highlight
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  transition: background-color 0.15s ease, color 0.15s ease;
+
+  &[aria-disabled='true'] {
+    cursor: default;
+  }
+
+  &:focus {
+    outline: none;
+  }
+
+  // Corrections in orange, style in blue, as underlined in the editor
+  &.ai-language-suggestion-change-grammar {
+    --ai-language-suggestion-kind: #e8710a;
+  }
+
+  &.ai-language-suggestion-change-style {
+    --ai-language-suggestion-kind: #3b82f6;
+  }
+
+  ins {
+    color: var(--ai-language-suggestion-kind);
+    text-decoration: none;
+  }
+
+  &.active {
+    background-color: color-mix(in srgb, var(--ai-language-suggestion-kind, #e8710a) 18%, transparent);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--border-active-themed);
+    outline-offset: 1px;
+  }
+}
+
+/* The author's text, chosen over the suggestion */
+.ai-language-suggestion-kept {
+  text-decoration: underline dashed var(--content-secondary-themed);
+  text-underline-offset: 3px;
+}
+
+.ai-language-suggestion-card-text del.ai-language-suggestion-dropped,
+.ai-writing-tools-text del.ai-language-suggestion-dropped {
+  margin-left: 2px;
+  opacity: 0.6;
+}
+
+/* Writing tools: the phrase under the pointer is the one a click switches */
+.ai-writing-tools-change:hover {
+  background-color: color-mix(in srgb, var(--content-warning-themed) 18%, transparent);
+}
+
+/* The pointer itself is the action: a red ✗ keeps your text */
+.ai-language-suggestion-change-taken:not([aria-disabled='true']) {
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath d='M3 3l10 10M13 3L3 13' stroke='%23d0382f' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E") 8 8, pointer;
+
+  &:hover {
+    background-color: color-mix(in srgb, var(--content-danger-themed) 18%, transparent);
+    del {
+      color: var(--content-danger-themed);
+    }
+  }
+}
+
+/* …and a green ✓ takes the suggestion */
+.ai-language-suggestion-change-kept:not([aria-disabled='true']) {
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath d='M3 8.5l3.5 4L13 3' stroke='%23098842' stroke-width='2.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") 8 8, pointer;
+
+  &:hover {
+    background-color: color-mix(in srgb, var(--content-positive-themed) 18%, transparent);
+    .ai-language-suggestion-kept {
+      color: var(--content-positive-themed);
+    }
+    del {
+      color: var(--content-positive-themed);
+      opacity: 1;
+    }
+  }
+}
+
+.ai-language-suggestion-latex {
+  padding: 0 2px;
+  border-radius: var(--border-radius-base);
+  background-color: var(--bg-secondary-themed);
+  color: var(--content-secondary-themed);
+  font-family: $font-family-monospace;
+  font-size: 12px;
+}
+
+.ai-language-suggestion-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-02);
+  padding-top: var(--spacing-02);
+
+  .ai-language-suggestion-card-tools,
+  .ai-language-suggestion-card-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-02);
+  }
+
+  // Circular icon buttons matching Overleaf official (Image 1)
+  .icon-button {
+    width: 26px;
+    height: 26px;
+    min-width: 26px;
+    min-height: 26px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background-color: transparent;
+    color: var(--content-primary-themed);
+    border: 1px solid var(--border-divider-themed);
+
+    &:hover:not(:disabled) {
+      background-color: var(--bg-secondary-themed);
+      color: var(--content-primary-themed);
+      border-color: var(--border-primary-themed, var(--content-secondary-themed));
+    }
+
+    &.active {
+      color: var(--content-active-themed);
+      border-color: var(--border-active-themed, currentColor);
+      background-color: color-mix(in srgb, var(--content-active-themed) 14%, transparent);
+    }
+
+    .material-symbols {
+      font-size: 15px;
+      line-height: 1;
+    }
+  }
+
+  // Pill buttons for Accept and Reject matching Overleaf official (Image 1)
+  .btn:not(.icon-button) {
+    height: 26px;
+    min-height: 26px;
+    padding: 2px 14px;
+    font-size: var(--font-size-01);
+    font-weight: 600;
+    line-height: 1.2;
+    border-radius: 9999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    white-space: nowrap;
+    gap: 4px;
+    border: 1px solid var(--border-divider-themed);
+
+    &.btn-primary {
+      background-color: var(--btn-primary-background);
+      border-color: var(--btn-primary-background);
+      color: var(--btn-primary-color);
+
+      &:hover:not(:disabled) {
+        background-color: var(--btn-primary-hover-background);
+        border-color: var(--btn-primary-hover-border);
+      }
+    }
+
+    &.btn-secondary {
+      background-color: transparent;
+      border-color: var(--border-divider-themed);
+      color: var(--content-primary-themed);
+
+      &:hover:not(:disabled) {
+        background-color: var(--bg-secondary-themed);
+        border-color: var(--content-secondary-themed);
+      }
+    }
+  }
+}
+
+.ai-language-suggestion-count {
+  margin-left: 2px;
+  border-radius: 999px;
+  padding: 0 5px;
+  font-size: 10px;
+  line-height: 13px;
+  font-weight: 600;
+  background-color: var(--bg-secondary-themed);
+  color: var(--content-primary-themed);
+}
+
+.ai-language-suggestion-card-preview {
+  width: 100%;
+  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.08);
+
+  .ai-language-suggestion-plain-text,
+  .ai-language-suggestion-latex {
+    filter: blur(3.5px);
+    user-select: none;
+    pointer-events: none;
+    opacity: 0.85;
+  }
+
+  .ai-language-suggestion-change {
+    filter: none !important;
+    user-select: auto;
+    pointer-events: auto;
+    position: relative;
+    z-index: 2;
+  }
+}
+
+.ai-language-suggestion-card-pinned {
+  border-color: var(--border-active-themed);
+}
+
+.ai-blocked-suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-04);
+  padding: var(--spacing-02) var(--spacing-02) 0;
+
+  p {
+    margin: 0;
+    color: var(--content-secondary-themed);
+    line-height: 1.6;
+    font-size: var(--font-size-02);
+  }
+
+  .ai-blocked-suggestion-inline-icon {
+    display: inline-flex;
+    vertical-align: -3px;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: 1px solid var(--border-divider-themed);
+    background-color: var(--bg-secondary-themed);
+    color: var(--content-primary-themed);
+    margin: 0 3px;
+
+    .material-symbols {
+      font-size: 15px;
+    }
+  }
+}
+
+.ai-blocked-suggestions-table {
+  max-height: 50vh;
+  overflow-y: auto;
+  padding: var(--spacing-04) var(--spacing-06);
+  border: 1px solid var(--border-divider-themed);
+  border-radius: var(--border-radius-base);
+
+  .table {
+    margin: 0;
+    color: inherit;
+    background-color: transparent;
+    --bs-table-bg: transparent;
+    --bs-table-color: inherit;
+  }
+
+  th,
+  td {
+    padding: var(--spacing-02) var(--spacing-04) var(--spacing-02) 0;
+    border: none;
+    overflow-wrap: anywhere;
+    vertical-align: middle;
+  }
+
+  th {
+    font-weight: 600;
+    padding-bottom: var(--spacing-04);
+  }
+}
+
+.ai-blocked-suggestion-delete {
+  border-radius: 999px;
+  padding-inline: var(--spacing-04);
+  font-weight: 600;
+}
+
+.ai-language-suggestions-toolbar {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  padding: 0 !important;
+  margin: 0 !important;
+  border-left: none !important;
+
+  .ol-cm-toolbar-button.ai-language-suggestions-toolbar-main {
+    width: auto !important;
+    min-width: 28px;
+    height: 24px;
+    padding: 0 6px !important;
+    gap: 5px;
+    overflow: visible !important;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--border-radius-base);
+    cursor: pointer;
+    background-color: transparent;
+    color: inherit;
+    transition: background-color 0.12s ease;
+
+    &:hover:not([disabled]):not([aria-disabled='true']) {
+      background-color: var(--bg-secondary-themed);
+    }
+
+    &:active:not([disabled]):not([aria-disabled='true']) {
+      background-color: var(--bg-tertiary-themed);
+    }
+
+    &[aria-disabled='true'] {
+      cursor: default;
+      opacity: 1 !important;
+    }
+  }
+
+  .ai-language-suggestions-toolbar-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    line-height: 1;
+
+    .material-symbols {
+      font-size: 16px;
+      width: 16px;
+      height: 16px;
+      line-height: 16px;
+    }
+
+    svg {
+      display: block;
+    }
+  }
+
+  .ai-language-suggestions-toolbar-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    border-radius: var(--border-radius-full);
+    background-color: var(--bg-tertiary-themed);
+    color: var(--content-primary-themed);
+    font-variant-numeric: tabular-nums;
+    opacity: 1;
+    transition: opacity 0.2s ease;
+
+    &.checking {
+      opacity: 0.6;
+    }
+  }
+
+  .ol-cm-toolbar-button.ai-language-suggestions-toolbar-nav {
+    width: 20px !important;
+    min-width: 20px;
+    height: 24px;
+    padding: 0 !important;
+    margin: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--border-radius-base);
+    cursor: pointer;
+    background-color: transparent;
+    color: inherit;
+    transition: background-color 0.12s ease, opacity 0.12s ease;
+
+    &:hover:not([disabled]) {
+      background-color: var(--bg-secondary-themed);
+    }
+
+    &:active:not([disabled]) {
+      background-color: var(--bg-tertiary-themed);
+    }
+
+    &:disabled {
+      opacity: 0.3;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
+  }
+}
+
+// The inline AI popup (empty-line prompt bar, sentence completion notices)
+// sits in a CodeMirror tooltip, which places it: drop the TeXGPT popup's
+// fixed positioning and keep the rest of its look.
+.ai-inline-popup {
+  position: static;
 }

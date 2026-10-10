@@ -14,20 +14,33 @@ import {
   WebSearchSettings,
 } from './providers/types'
 
-const SETTINGS_KEY = 'ai-assist:provider'
+export const SETTINGS_KEY = 'ai-assist:provider'
+export const FAST_SETTINGS_KEY = 'ai-assist:fast-provider'
 const WEB_SEARCH_KEY = 'ai-assist:web-search'
 const CONSENT_KEY = 'ai-assist:consent'
 const AI_ENABLED_KEY = 'ai-assist:enabled'
 const REASONING_EFFORT_KEY = 'ai-assist:reasoning-effort'
 const THINKING_KEY = 'ai-assist:thinking'
+/** The writing tools' remembered choices (see writing-tools/preferences.ts). */
+export const WRITING_TOOLS_KEY = 'ai-assist:writing-tools'
+/** Language suggestions' settings and blocked list (see language-suggestions/preferences.ts). */
+export const LANGUAGE_SUGGESTIONS_KEY = 'ai-assist:language-suggestions'
+/** Fired on `window` whenever those settings change in this tab. */
+export const LANGUAGE_SUGGESTIONS_CHANGED_EVENT =
+  'ai-assist:language-suggestions-changed'
+
+/** The editor's AI shortcut switches (see inline-suggestion/preferences.ts). */
+export const INLINE_SUGGESTIONS_KEY = 'ai-assist:inline-suggestions'
+/** Fired on `window` whenever those switches change in this tab. */
+export const INLINE_SUGGESTIONS_CHANGED_EVENT =
+  'ai-assist:inline-suggestions-changed'
 
 /**
  * Where the provider configuration lives.
  *
- * The browser calls the provider directly, the way Overleaf's own AI assistant
- * does, so the key stays in this browser and never reaches an Overleaf server.
- * That is the trade this design makes: no server-side storage, no server-side
- * quota, and a key that is readable by anything running on this origin.
+ * Configuration is stored in this browser (localStorage). On each request,
+ * provider settings (including API key) are sent to the Overleaf server,
+ * which calls the provider and relays the response.
  *
  * Storage goes through `customLocalStorage`, which JSON-encodes on the way in,
  * JSON-decodes on the way out, and turns a denied or full store into `null`
@@ -42,6 +55,10 @@ export function readSettings(): ProviderSettings | null {
   if ((type as any) === 'openai-compatible') type = 'openai'
   if ((type as any) === 'anthropic-compatible') type = 'anthropic'
 
+  if (!Object.prototype.hasOwnProperty.call(DEFAULT_BASE_URLS, type)) {
+    return null
+  }
+
   const result: ProviderSettings = {
     type,
     baseUrl: (parsed.baseUrl || DEFAULT_BASE_URLS[type] || '').trim(),
@@ -54,18 +71,69 @@ export function readSettings(): ProviderSettings | null {
   return result
 }
 
+function notify(eventName: string) {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(eventName))
+  }
+}
+
 export function writeSettings(settings: ProviderSettings) {
   customLocalStorage.setItem(SETTINGS_KEY, settings)
-  if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent('aiAssist:providerChanged'))
-  }
+  notify('aiAssist:providerChanged')
 }
 
 export function clearSettings() {
   customLocalStorage.removeItem(SETTINGS_KEY)
-  if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent('aiAssist:providerChanged'))
+  notify('aiAssist:providerChanged')
+}
+
+function positiveNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? value
+    : undefined
+}
+
+/**
+ * The fast model saved in this browser, stored like the main provider but on
+ * its own, for any provider type. The slot used to talk OpenAI to Gemini, so
+ * an old Gemini URL ending in `/openai` is read without that part.
+ */
+export function readFastSettings(): ProviderSettings | null {
+  const parsed = customLocalStorage.getItem(FAST_SETTINGS_KEY)
+  if (!parsed?.type) return null
+
+  let type = parsed.type as ProviderType
+  if ((type as any) === 'openai-compatible') type = 'openai'
+  if ((type as any) === 'anthropic-compatible') type = 'anthropic'
+
+  if (!Object.prototype.hasOwnProperty.call(DEFAULT_BASE_URLS, type)) {
+    return null
   }
+
+  let baseUrl = (parsed.baseUrl || DEFAULT_BASE_URLS[type]).trim()
+  if (type === 'google') baseUrl = baseUrl.replace(/\/openai\/?$/, '')
+  const result: ProviderSettings = {
+    type,
+    baseUrl,
+    apiKey: (parsed.apiKey ?? '').trim(),
+    model: (parsed.model ?? '').trim(),
+  }
+  if (parsed.modelName) result.modelName = parsed.modelName
+  const contextWindow = positiveNumber(parsed.contextWindow)
+  if (contextWindow) result.contextWindow = contextWindow
+  const maxOutputTokens = positiveNumber(parsed.maxOutputTokens)
+  if (maxOutputTokens) result.maxOutputTokens = maxOutputTokens
+  return result
+}
+
+export function writeFastSettings(settings: ProviderSettings) {
+  customLocalStorage.setItem(FAST_SETTINGS_KEY, settings)
+  notify('aiAssist:fastProviderChanged')
+}
+
+export function clearFastSettings() {
+  customLocalStorage.removeItem(FAST_SETTINGS_KEY)
+  notify('aiAssist:fastProviderChanged')
 }
 
 /** Whether this instance offers web_search and web_fetch at all. */
@@ -167,6 +235,8 @@ export function migrateLegacyWebSearchSettings(
         'jina',
         'langsearch',
         'exa',
+        'tinyfish',
+        'parallel',
       ].includes(type)
     ) {
       return {
@@ -239,6 +309,18 @@ export function migrateLegacyWebSearchSettings(
           .filter(Boolean)
       : []
 
+    const tinyfishKeys = Array.isArray(parsed.providers.tinyfish?.apiKeys)
+      ? parsed.providers.tinyfish.apiKeys
+          .map((k: any) => String(k ?? '').trim())
+          .filter(Boolean)
+      : []
+
+    const parallelKeys = Array.isArray(parsed.providers.parallel?.apiKeys)
+      ? parsed.providers.parallel.apiKeys
+          .map((k: any) => String(k ?? '').trim())
+          .filter(Boolean)
+      : []
+
     const mcpUrls = Array.isArray(parsed.providers.mcp?.serverUrls)
       ? parsed.providers.mcp.serverUrls
           .map((u: any) => String(u ?? '').trim())
@@ -251,6 +333,18 @@ export function migrateLegacyWebSearchSettings(
           .map((h: any) => ({ key: String(h.key).trim(), value: String(h.value).trim() }))
           .filter((h: any) => h.key && h.value)
       : undefined
+
+    const mcpToolName =
+      typeof parsed.providers.mcp?.toolName === 'string' &&
+      parsed.providers.mcp.toolName.trim()
+        ? parsed.providers.mcp.toolName.trim()
+        : undefined
+
+    const mcpQueryParam =
+      typeof parsed.providers.mcp?.queryParam === 'string' &&
+      parsed.providers.mcp.queryParam.trim()
+        ? parsed.providers.mcp.queryParam.trim()
+        : undefined
 
     const ollamaEnabled = Boolean(
       parsed.providers.ollama?.enabled && ollamaKeys.length > 0
@@ -288,23 +382,33 @@ export function migrateLegacyWebSearchSettings(
       parsed.providers.exa?.enabled && exaKeys.length > 0
     )
 
+    const tinyfishEnabled = Boolean(
+      parsed.providers.tinyfish?.enabled && tinyfishKeys.length > 0
+    )
+
+    const parallelEnabled = Boolean(
+      parsed.providers.parallel?.enabled && parallelKeys.length > 0
+    )
+
     const mcpEnabled = Boolean(
       parsed.providers.mcp?.enabled && mcpUrls.length > 0
     )
 
-    if (
-      !ollamaEnabled &&
-      !searxngEnabled &&
-      !websearchapiEnabled &&
-      !tavilyEnabled &&
-      !firecrawlEnabled &&
-      !firecrawlSelfHostedEnabled &&
-      !jinaEnabled &&
-      !langsearchEnabled &&
-      !exaEnabled &&
-      !mcpEnabled
-    )
-      return null
+    const hasAnyConfigured =
+      ollamaKeys.length > 0 ||
+      searxngUrls.length > 0 ||
+      websearchapiKeys.length > 0 ||
+      tavilyKeys.length > 0 ||
+      firecrawlKeys.length > 0 ||
+      firecrawlSelfHostedUrls.length > 0 ||
+      jinaKeys.length > 0 ||
+      langsearchKeys.length > 0 ||
+      exaKeys.length > 0 ||
+      tinyfishKeys.length > 0 ||
+      parallelKeys.length > 0 ||
+      mcpUrls.length > 0
+
+    if (!hasAnyConfigured) return null
 
     return {
       sourceMode: 'custom',
@@ -392,12 +496,41 @@ export function migrateLegacyWebSearchSettings(
             ? { read: parsed.providers.exa.read }
             : {}),
         },
+        tinyfish: {
+          enabled: tinyfishEnabled,
+          apiKeys: tinyfishKeys,
+          ...(typeof parsed.providers.tinyfish?.baseUrl === 'string' &&
+          parsed.providers.tinyfish.baseUrl.trim()
+            ? { baseUrl: parsed.providers.tinyfish.baseUrl.trim() }
+            : {}),
+          // Validated by the server, which drops anything it does not accept
+          ...(isPlainObject(parsed.providers.tinyfish?.search)
+            ? { search: parsed.providers.tinyfish.search }
+            : {}),
+        },
+        parallel: {
+          enabled: parallelEnabled,
+          apiKeys: parallelKeys,
+          ...(typeof parsed.providers.parallel?.baseUrl === 'string' &&
+          parsed.providers.parallel.baseUrl.trim()
+            ? { baseUrl: parsed.providers.parallel.baseUrl.trim() }
+            : {}),
+          // Validated by the server, which drops anything it does not accept
+          ...(isPlainObject(parsed.providers.parallel?.search)
+            ? { search: parsed.providers.parallel.search }
+            : {}),
+          ...(isPlainObject(parsed.providers.parallel?.read)
+            ? { read: parsed.providers.parallel.read }
+            : {}),
+        },
         mcp: {
           enabled: mcpEnabled,
           serverUrls: mcpUrls,
           ...(mcpHeaders && mcpHeaders.length > 0
             ? { headers: mcpHeaders }
             : {}),
+          ...(mcpToolName ? { toolName: mcpToolName } : {}),
+          ...(mcpQueryParam ? { queryParam: mcpQueryParam } : {}),
         },
         searxng: {
           enabled: searxngEnabled,
@@ -429,6 +562,8 @@ export function migrateLegacyWebSearchSettings(
         parsed.primaryProvider === 'jina' ||
         parsed.primaryProvider === 'langsearch' ||
         parsed.primaryProvider === 'exa' ||
+        parsed.primaryProvider === 'tinyfish' ||
+        parsed.primaryProvider === 'parallel' ||
         parsed.primaryProvider === 'mcp'
           ? parsed.primaryProvider
           : 'searxng',
@@ -559,19 +694,38 @@ const PREFERENCES_URL = '/ai-assist/preferences'
 type ComposerPreferences = {
   reasoningEffort: Partial<Record<ProviderType, ReasoningEffort>>
   thinking: Partial<Record<ProviderType, boolean>>
+  writingTools?: object
+  languageSuggestions?: object
+  inlineSuggestions?: object
 }
+
+/** Preferences kept as one object each, with the event that announces a load. */
+const OBJECT_PREFERENCES = [
+  ['writingTools', WRITING_TOOLS_KEY, null],
+  ['languageSuggestions', LANGUAGE_SUGGESTIONS_KEY, LANGUAGE_SUGGESTIONS_CHANGED_EVENT],
+  ['inlineSuggestions', INLINE_SUGGESTIONS_KEY, INLINE_SUGGESTIONS_CHANGED_EVENT],
+] as const
 
 function localComposerPreferences(): ComposerPreferences {
   const efforts = customLocalStorage.getItem(REASONING_EFFORT_KEY)
   const thinking = customLocalStorage.getItem(THINKING_KEY)
+  const objects: Partial<ComposerPreferences> = {}
+  for (const [name, key] of OBJECT_PREFERENCES) {
+    const value = customLocalStorage.getItem(key)
+    if (value && typeof value === 'object') objects[name] = value
+  }
   return {
     reasoningEffort: efforts && typeof efforts === 'object' ? efforts : {},
     thinking: thinking && typeof thinking === 'object' ? thinking : {},
+    ...objects,
   }
 }
 
-/** Saves the effort levels and thinking switches to the user's account. */
-function saveComposerPreferences() {
+/**
+ * Saves the effort levels, thinking switches and writing tools choices to the
+ * user's account.
+ */
+export function saveComposerPreferences() {
   putJSON(PREFERENCES_URL, {
     body: { preferences: localComposerPreferences() },
   }).catch(() => {})
@@ -590,11 +744,21 @@ export async function loadComposerPreferences() {
       saveComposerPreferences()
       return
     }
-    customLocalStorage.setItem(
-      REASONING_EFFORT_KEY,
-      res.preferences.reasoningEffort
-    )
-    customLocalStorage.setItem(THINKING_KEY, res.preferences.thinking)
+    if (res.preferences.reasoningEffort !== undefined) {
+      customLocalStorage.setItem(
+        REASONING_EFFORT_KEY,
+        res.preferences.reasoningEffort
+      )
+    }
+    if (res.preferences.thinking !== undefined) {
+      customLocalStorage.setItem(THINKING_KEY, res.preferences.thinking)
+    }
+    for (const [name, key, event] of OBJECT_PREFERENCES) {
+      const value = res.preferences[name]
+      if (!value) continue
+      customLocalStorage.setItem(key, value)
+      if (event) window.dispatchEvent(new CustomEvent(event))
+    }
   } catch {
     // Silently ignore preference sync errors in environments/tests where endpoint isn't available
   }

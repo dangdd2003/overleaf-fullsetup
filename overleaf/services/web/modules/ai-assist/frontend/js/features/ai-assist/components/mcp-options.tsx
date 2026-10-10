@@ -9,6 +9,8 @@ import { McpHeader, McpProviderConfig } from '../providers/types'
 export interface DraftMcpConfig {
   serverUrls: string[]
   headers: McpHeader[]
+  toolName?: string
+  queryParam?: string
 }
 
 export function draftFromMcp(config?: McpProviderConfig): DraftMcpConfig {
@@ -24,12 +26,16 @@ export function draftFromMcp(config?: McpProviderConfig): DraftMcpConfig {
   return {
     serverUrls,
     headers,
+    toolName: config?.toolName || '',
+    queryParam: config?.queryParam || '',
   }
 }
 
 export function mcpOptionsFromDraft(draft: DraftMcpConfig): {
   serverUrls: string[]
   headers?: McpHeader[]
+  toolName?: string
+  queryParam?: string
 } {
   const serverUrls = draft.serverUrls
     .map(url => url.trim())
@@ -39,9 +45,14 @@ export function mcpOptionsFromDraft(draft: DraftMcpConfig): {
     .map(h => ({ key: h.key.trim(), value: h.value.trim() }))
     .filter(h => h.key && h.value)
 
+  const toolName = draft.toolName?.trim() || undefined
+  const queryParam = draft.queryParam?.trim() || undefined
+
   return {
     serverUrls,
     ...(headers.length > 0 ? { headers } : {}),
+    ...(toolName ? { toolName } : {}),
+    ...(queryParam ? { queryParam } : {}),
   }
 }
 
@@ -88,12 +99,46 @@ export default function McpOptions({
         <ListSetting
           id="ai-web-search-mcp-url"
           label="Custom URLs"
-          description="POST endpoints accepting {q} JSON and returning search results"
+          description="Model Context Protocol (MCP) server endpoints (HTTP or SSE) supporting search tools"
           itemLabel="URL"
           values={value.serverUrls}
           placeholder="https://<url>/mcp"
           onChange={setServerUrls}
         />
+      </SettingsGroup>
+
+      <SettingsGroup title="Tool settings (Optional)">
+        <Setting
+          controlId="ai-web-search-mcp-tool-name"
+          label="Tool name"
+          description="Name of the MCP tool to invoke. Leave blank to auto-detect from tools/list (e.g. brave_web_search, search)."
+        >
+          <OLFormControl
+            id="ai-web-search-mcp-tool-name"
+            size="sm"
+            type="text"
+            autoComplete="off"
+            value={value.toolName || ''}
+            placeholder="Auto-detect (e.g. brave_web_search)"
+            onChange={e => onChange({ ...value, toolName: e.target.value })}
+          />
+        </Setting>
+
+        <Setting
+          controlId="ai-web-search-mcp-query-param"
+          label="Query argument name"
+          description="Argument name for the search query. Leave blank to auto-detect from the tool's schema (e.g. query, q)."
+        >
+          <OLFormControl
+            id="ai-web-search-mcp-query-param"
+            size="sm"
+            type="text"
+            autoComplete="off"
+            value={value.queryParam || ''}
+            placeholder="Auto-detect (e.g. query)"
+            onChange={e => onChange({ ...value, queryParam: e.target.value })}
+          />
+        </Setting>
       </SettingsGroup>
 
       <SettingsGroup title="Custom headers">

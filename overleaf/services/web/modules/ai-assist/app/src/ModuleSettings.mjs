@@ -59,6 +59,21 @@ const serverWebSearchEnabled =
   process.env.AI_ASSIST_WEB_SEARCH_SERVER_ENABLED === 'true'
 
 let serverWebSearch = null
+function providerConfig(enabled, extra = {}, secrets = {}) {
+  const conf = { enabled, ...extra }
+  for (const [key, val] of Object.entries(secrets)) {
+    if (val !== undefined) {
+      Object.defineProperty(conf, key, {
+        value: val,
+        enumerable: false,
+        writable: true,
+        configurable: true,
+      })
+    }
+  }
+  return conf
+}
+
 if (serverWebSearchEnabled) {
   const searxngUrlsRaw =
     process.env.AI_ASSIST_SEARXNG_URLS ||
@@ -139,6 +154,64 @@ if (serverWebSearchEnabled) {
     .split(',')
     .map(k => k.trim())
     .filter(Boolean)
+
+  const tinyfishKeys = (
+    process.env.AI_ASSIST_TINYFISH_API_KEYS ||
+    process.env.AI_ASSIST_TINYFISH_API_KEY ||
+    ''
+  )
+    .split(',')
+    .map(k => k.trim())
+    .filter(Boolean)
+
+  const tinyfishBaseUrlRaw = (
+    process.env.AI_ASSIST_TINYFISH_BASE_URL || ''
+  ).trim()
+  let tinyfishBaseUrl = ''
+  if (tinyfishBaseUrlRaw) {
+    let value = tinyfishBaseUrlRaw
+    if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) value = `http://${value}`
+    try {
+      const parsed = new URL(value)
+      parsed.search = ''
+      parsed.hash = ''
+      parsed.pathname = parsed.pathname.replace(/\/+$/, '')
+      const normalized = parsed.toString().replace(/\/+$/, '')
+      validateSafeProviderBaseUrl(normalized)
+      tinyfishBaseUrl = normalized
+    } catch {
+      tinyfishBaseUrl = ''
+    }
+  }
+
+  const parallelKeys = (
+    process.env.AI_ASSIST_PARALLEL_API_KEYS ||
+    process.env.AI_ASSIST_PARALLEL_API_KEY ||
+    ''
+  )
+    .split(',')
+    .map(k => k.trim())
+    .filter(Boolean)
+
+  const parallelBaseUrlRaw = (
+    process.env.AI_ASSIST_PARALLEL_BASE_URL || ''
+  ).trim()
+  let parallelBaseUrl = ''
+  if (parallelBaseUrlRaw) {
+    let value = parallelBaseUrlRaw
+    if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) value = `http://${value}`
+    try {
+      const parsed = new URL(value)
+      parsed.search = ''
+      parsed.hash = ''
+      parsed.pathname = parsed.pathname.replace(/\/+$/, '')
+      const normalized = parsed.toString().replace(/\/+$/, '')
+      validateSafeProviderBaseUrl(normalized)
+      parallelBaseUrl = normalized
+    } catch {
+      parallelBaseUrl = ''
+    }
+  }
 
   const mcpUrlsRaw =
     process.env.AI_ASSIST_MCP_URLS ||
@@ -243,6 +316,8 @@ if (serverWebSearchEnabled) {
     'jina',
     'langsearch',
     'exa',
+    'tinyfish',
+    'parallel',
     'mcp',
   ].includes(process.env.AI_ASSIST_WEB_SEARCH_PRIMARY_PROVIDER)
     ? process.env.AI_ASSIST_WEB_SEARCH_PRIMARY_PROVIDER
@@ -258,6 +333,8 @@ if (serverWebSearchEnabled) {
   const jinaEnabled = jinaKeys.length > 0
   const langsearchEnabled = langsearchKeys.length > 0
   const exaEnabled = exaKeys.length > 0
+  const tinyfishEnabled = tinyfishKeys.length > 0
+  const parallelEnabled = parallelKeys.length > 0
   const mcpEnabled = mcpUrls.length > 0
 
   if (
@@ -270,54 +347,66 @@ if (serverWebSearchEnabled) {
     jinaEnabled ||
     langsearchEnabled ||
     exaEnabled ||
+    tinyfishEnabled ||
+    parallelEnabled ||
     mcpEnabled
   ) {
     serverWebSearch = {
       enabled: true,
       providers: {
-        searxng: {
-          enabled: searxngEnabled,
-          baseUrls: searxngUrls,
-          ...(defaultCategories ? { defaultCategories } : {}),
-          ...(defaultLanguage ? { defaultLanguage } : {}),
-        },
-        ollama: {
-          enabled: ollamaEnabled,
-          apiKeys: ollamaKeys,
-        },
-        websearchapi: {
-          enabled: websearchapiEnabled,
-          apiKeys: websearchapiKeys,
-        },
-        tavily: {
-          enabled: tavilyEnabled,
-          apiKeys: tavilyKeys,
-        },
-        firecrawl: {
-          enabled: firecrawlEnabled,
-          apiKeys: firecrawlKeys,
-        },
-        firecrawlSelfHosted: {
-          enabled: firecrawlSelfHostedEnabled,
-          baseUrls: firecrawlSelfHostedUrls,
-        },
-        jina: {
-          enabled: jinaEnabled,
-          apiKeys: jinaKeys,
-        },
-        langsearch: {
-          enabled: langsearchEnabled,
-          apiKeys: langsearchKeys,
-        },
-        exa: {
-          enabled: exaEnabled,
-          apiKeys: exaKeys,
-        },
-        mcp: {
-          enabled: mcpEnabled,
-          serverUrls: mcpUrls,
-          ...(mcpHeaders.length > 0 ? { headers: mcpHeaders } : {}),
-        },
+        searxng: providerConfig(
+          searxngEnabled,
+          {
+            ...(defaultCategories ? { defaultCategories } : {}),
+            ...(defaultLanguage ? { defaultLanguage } : {}),
+          },
+          { baseUrls: searxngUrls }
+        ),
+        ollama: providerConfig(ollamaEnabled, {}, { apiKeys: ollamaKeys }),
+        websearchapi: providerConfig(
+          websearchapiEnabled,
+          {},
+          { apiKeys: websearchapiKeys }
+        ),
+        tavily: providerConfig(tavilyEnabled, {}, { apiKeys: tavilyKeys }),
+        firecrawl: providerConfig(
+          firecrawlEnabled,
+          {},
+          { apiKeys: firecrawlKeys }
+        ),
+        firecrawlSelfHosted: providerConfig(
+          firecrawlSelfHostedEnabled,
+          {},
+          { baseUrls: firecrawlSelfHostedUrls }
+        ),
+        jina: providerConfig(jinaEnabled, {}, { apiKeys: jinaKeys }),
+        langsearch: providerConfig(
+          langsearchEnabled,
+          {},
+          { apiKeys: langsearchKeys }
+        ),
+        exa: providerConfig(exaEnabled, {}, { apiKeys: exaKeys }),
+        tinyfish: providerConfig(
+          tinyfishEnabled,
+          {},
+          {
+            apiKeys: tinyfishKeys,
+            ...(tinyfishBaseUrl ? { baseUrl: tinyfishBaseUrl } : {}),
+          }
+        ),
+        parallel: providerConfig(
+          parallelEnabled,
+          {},
+          {
+            apiKeys: parallelKeys,
+            ...(parallelBaseUrl ? { baseUrl: parallelBaseUrl } : {}),
+          }
+        ),
+        mcp: providerConfig(
+          mcpEnabled,
+          { ...(mcpHeaders.length > 0 ? { headers: mcpHeaders } : {}) },
+          { serverUrls: mcpUrls }
+        ),
       },
       rotationStrategy,
       primaryProvider,

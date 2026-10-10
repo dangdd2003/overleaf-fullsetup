@@ -81,6 +81,13 @@ export const ThinkingBlock: FC<{
       if (storageKey) {
         subresultExpansionStore.set(storageKey, next)
       }
+      if (groupId) {
+        subresultExpansionStore.set(groupId, next)
+        const entryPrefix = groupId.split('-subresults-')[0]
+        if (entryPrefix) {
+          subresultExpansionStore.set(`${entryPrefix}-activity`, next)
+        }
+      }
       if (next) {
         window.dispatchEvent(new CustomEvent('aiAssist:stickToBottom'))
         setTimeout(() => scrollToBottom({ smooth: false }), 0)

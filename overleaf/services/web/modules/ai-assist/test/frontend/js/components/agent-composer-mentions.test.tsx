@@ -185,6 +185,46 @@ describe('AgentComposer attachments', function () {
     expect(screen.queryByText(/main\.tex: 23-31/)).to.equal(null)
   })
 
+  it('removes selection chip when clicking close button and ignores identical selection change events', function () {
+    renderComposer()
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent('aiAssist:selectionChanged', {
+          detail: { path: 'main.tex', from: 23, to: 31, text: 'selected text' },
+        })
+      )
+    })
+    expect(screen.getByText(/main\.tex: 23-31/)).to.exist
+
+    const closeBtn = screen.getByRole('button', { name: /remove selection/i })
+    fireEvent.click(closeBtn)
+
+    expect(screen.queryByText(/main\.tex: 23-31/)).to.equal(null)
+
+    // A selectionchange event fires from the editor with the SAME selection (still highlighted)
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent('aiAssist:selectionChanged', {
+          detail: { path: 'main.tex', from: 23, to: 31, text: 'selected text' },
+        })
+      )
+    })
+
+    // It should still NOT re-add the dismissed selection
+    expect(screen.queryByText(/main\.tex: 23-31/)).to.equal(null)
+
+    // But if a DIFFERENT selection arrives, it should attach
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent('aiAssist:selectionChanged', {
+          detail: { path: 'main.tex', from: 50, to: 60, text: 'different text' },
+        })
+      )
+    })
+    expect(screen.getByText(/main\.tex: 50-60/)).to.exist
+  })
+
   it('passes attachedSelection to onSend and clears it', function () {
     const { onSend } = renderComposer()
 

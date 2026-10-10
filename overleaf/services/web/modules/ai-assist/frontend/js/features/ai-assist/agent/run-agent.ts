@@ -464,7 +464,7 @@ export async function* runAgent({
         }
       }
 
-      yield { type: 'toolCallFinished', id: call.id, result, isError }
+      yield { type: 'toolCallFinished', id: call.id, name: call.name, result, isError }
 
       const rendered =
         tool?.render && !isError ? tool.render(result) : JSON.stringify(result)

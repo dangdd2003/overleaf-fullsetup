@@ -532,4 +532,187 @@ describe('SubresultGroup Component', function () {
     )
     expect(updatedHeader?.getAttribute('aria-expanded')).to.equal('false')
   })
+
+  it('appends 2nd activity next to 1st activity without folding activity bar or sub activity lines', function () {
+    const initialItems: any[] = [
+      {
+        type: 'tool_call',
+        call: {
+          id: 'c1',
+          name: 'read_file',
+          args: { path: 'main.tex' },
+          result: { content: 'doc' },
+        },
+      },
+    ]
+
+    const { container, rerender } = render(
+      <SubresultGroup
+        groupId="group-append-test"
+        items={initialItems}
+        isLive={true}
+        onDecision={sinon.stub()}
+      />
+    )
+
+    // User unfolds the activity bar with only 1 activity
+    const headerBtn = container.querySelector(
+      '.ai-assist-subresult-group-header'
+    )!
+    fireEvent.click(headerBtn)
+    expect(headerBtn.getAttribute('aria-expanded')).to.equal('true')
+
+    // Inside dropdown: 1st activity line is present and folded by default
+    const subItemsBefore = container.querySelectorAll('.ai-assist-subresult-item')
+    expect(subItemsBefore).to.have.length(1)
+    const firstSubToggle = subItemsBefore[0].querySelector('.ai-assist-tool-call-summary')!
+    expect(firstSubToggle.getAttribute('aria-expanded')).to.equal('false')
+
+    // User unfolds the 1st sub-activity line
+    fireEvent.click(firstSubToggle)
+    expect(firstSubToggle.getAttribute('aria-expanded')).to.equal('true')
+
+    // 2nd activity is added in
+    const updatedItems: any[] = [
+      ...initialItems,
+      {
+        type: 'tool_call',
+        call: {
+          id: 'c2',
+          name: 'edit_file',
+          args: { path: 'main.tex', oldText: 'a', newText: 'b' },
+          result: { status: 'applied' },
+        },
+      },
+    ]
+
+    rerender(
+      <SubresultGroup
+        groupId="group-append-test"
+        items={updatedItems}
+        isLive={true}
+        onDecision={sinon.stub()}
+      />
+    )
+
+    // 1. The activity bar MUST STAY unfolded
+    const updatedHeader = container.querySelector(
+      '.ai-assist-subresult-group-header'
+    )!
+    expect(updatedHeader.getAttribute('aria-expanded')).to.equal('true')
+
+    // 2. 2nd activity appends next to 1st activity in dropdown
+    const subItemsAfter = container.querySelectorAll('.ai-assist-subresult-item')
+    expect(subItemsAfter).to.have.length(2)
+
+    // 3. 1st activity MUST NOT fold — user unfolded it, so it remains unfolded
+    const firstSubToggleAfter = subItemsAfter[0].querySelector('.ai-assist-tool-call-summary')!
+    expect(firstSubToggleAfter.getAttribute('aria-expanded')).to.equal('true')
+
+    // 4. 2nd activity starts folded (static), user choice to unfold
+    const secondSubToggle = subItemsAfter[1].querySelector('.ai-assist-tool-call-summary')!
+    expect(secondSubToggle.getAttribute('aria-expanded')).to.equal('false')
+  })
+
+  it('keeps activity bar open when next activity is added in-flight without result', function () {
+    const initialItems: any[] = [
+      {
+        type: 'tool_call',
+        call: {
+          id: 'c1',
+          name: 'read_file',
+          args: { path: 'main.tex' },
+          result: { content: 'doc' },
+        },
+      },
+    ]
+
+    const { container, rerender } = render(
+      <SubresultGroup
+        groupId="group-live-append-test"
+        items={initialItems}
+        isLive={true}
+        onDecision={sinon.stub()}
+      />
+    )
+
+    // User unfolds the activity bar
+    const headerBtn = container.querySelector(
+      '.ai-assist-subresult-group-header'
+    )!
+    fireEvent.click(headerBtn)
+    expect(headerBtn.getAttribute('aria-expanded')).to.equal('true')
+
+    // Next activity starts in-flight (no result property yet)
+    const inFlightItems: any[] = [
+      ...initialItems,
+      {
+        type: 'tool_call',
+        call: {
+          id: 'c2',
+          name: 'search_project',
+          args: { query: 'theorem' },
+        },
+      },
+    ]
+
+    rerender(
+      <SubresultGroup
+        groupId="group-live-append-test"
+        items={inFlightItems}
+        isLive={true}
+        onDecision={sinon.stub()}
+      />
+    )
+
+    // Activity bar MUST REMAIN open and rendered without blinking or folding
+    const updatedHeader = container.querySelector(
+      '.ai-assist-subresult-group-header'
+    )!
+    expect(updatedHeader).to.exist
+    expect(updatedHeader.getAttribute('aria-expanded')).to.equal('true')
+
+    // In-flight call is appended as 2nd item in dropdown
+    const subItems = container.querySelectorAll('.ai-assist-subresult-item')
+    expect(subItems).to.have.length(2)
+  })
+
+  it('inherits entry expansion state across segmented groups so activities never fold when text intervenes', function () {
+    const { container: c1 } = render(
+      <SubresultGroup
+        groupId="entryA-subresults-0"
+        items={[
+          {
+            type: 'tool_call',
+            call: { id: 'c1', name: 'read_file', args: {}, result: {} },
+          },
+        ]}
+        isLive={false}
+        onDecision={sinon.stub()}
+      />
+    )
+
+    const btn1 = c1.querySelector('.ai-assist-subresult-group-header')!
+    fireEvent.click(btn1)
+    expect(btn1.getAttribute('aria-expanded')).to.equal('true')
+
+    // A subsequent segment in the same entry (e.g. after model emitted text)
+    const { container: c2 } = render(
+      <SubresultGroup
+        groupId="entryA-subresults-2"
+        items={[
+          {
+            type: 'tool_call',
+            call: { id: 'c2', name: 'edit_file', args: {}, result: {} },
+          },
+        ]}
+        isLive={false}
+        onDecision={sinon.stub()}
+      />
+    )
+
+    const btn2 = c2.querySelector('.ai-assist-subresult-group-header')!
+    // Must inherit the unfolded state from entryA
+    expect(btn2.getAttribute('aria-expanded')).to.equal('true')
+  })
 })

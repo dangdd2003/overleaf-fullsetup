@@ -10,7 +10,10 @@ const SPECIALS = /[.+^${}()|[\]\\]/g
  * shaped patterns, and a full glob library is a lot of bundle for that.
  */
 export function matchesGlob(path: string, pattern: string): boolean {
-  const source = pattern
+  const sanitized = String(pattern || '')
+    .replace(/(?:\*\*\/)+/g, '**/')
+    .replace(/\*{2,}/g, '**')
+  const source = sanitized
     .split(/(\*\*\/|\*\*|\*|\?)/)
     .filter(Boolean)
     .map(token => {

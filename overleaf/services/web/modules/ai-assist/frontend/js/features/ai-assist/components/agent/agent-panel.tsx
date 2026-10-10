@@ -43,7 +43,11 @@ import { ChatHistoryMenu } from './chat-history-menu'
 import { AgentMessageView } from './agent-message'
 import { collectWebSources, WebSources } from '../../agent/web-sources'
 import { AgentEmptyState, PickedStarter } from './agent-empty-state'
-import { AgentComposer, AttachedSelection } from './agent-composer'
+import {
+  AgentComposer,
+  AttachedSelection,
+  isSameSelection,
+} from './agent-composer'
 import { AgentStatusLine } from './agent-status-line'
 import { takePendingHandoff } from '../../agent/chat-handoff'
 import { setChatBusy } from '../../agent/chat-activity'
@@ -71,6 +75,7 @@ import {
   takeFollowedRun,
 } from '../../agent/background/detached-run-follower'
 import { useAiDock, DockPosition } from '../../hooks/use-ai-dock'
+import { useEditorThemeStyles } from '../../hooks/use-editor-theme-styles'
 import { StreamCatchUpContext } from '../../hooks/use-stream-reveal'
 
 export async function buildUserEntry({
@@ -109,7 +114,10 @@ export async function buildUserEntry({
     | undefined
   const turn = (previousUser?.envelopeState?.turn ?? 0) + 1
 
-  const activeSel = attachedSelection ?? handle.currentSelection()
+  const activeSel =
+    attachedSelection !== undefined
+      ? attachedSelection
+      : handle.currentSelection()
 
   const allAttachments: Attachment[] = [...attachments]
   if (
@@ -190,6 +198,7 @@ function AgentPanelInner({
   const { t } = useTranslation()
   const { projectId } = useProjectContext()
   const { dock: storedDock, setDock, setIsRightOpen } = useAiDock()
+  const { editorVars } = useEditorThemeStyles()
   const activeDock = dockProp ?? storedDock
 
   const handleToggleDock = useCallback(() => {
@@ -528,12 +537,38 @@ function AgentPanelInner({
   const [attachments, setAttachments] = useState<AttachmentRef[]>([])
   const [attachedSelection, setAttachedSelection] =
     useState<AttachedSelection | null>(null)
+  const dismissedSelectionRef = useRef<AttachedSelection | null>(null)
+
+  const handleSetAttachedSelection = useCallback(
+    (action: React.SetStateAction<AttachedSelection | null>) => {
+      setAttachedSelection(prev => {
+        const next = typeof action === 'function' ? action(prev) : action
+        if (next === null) {
+          if (prev !== null) {
+            dismissedSelectionRef.current = prev
+          }
+        } else {
+          dismissedSelectionRef.current = null
+        }
+        return next
+      })
+    },
+    []
+  )
 
   useEventListener('aiAssist:selectionChanged', (event: Event) => {
     const detail = (event as CustomEvent<AttachedSelection | null>).detail
     if (detail && detail.text) {
+      if (
+        dismissedSelectionRef.current &&
+        isSameSelection(detail, dismissedSelectionRef.current)
+      ) {
+        return
+      }
+      dismissedSelectionRef.current = null
       setAttachedSelection(detail)
     } else {
+      dismissedSelectionRef.current = null
       setAttachedSelection(null)
     }
   })
@@ -718,12 +753,8 @@ function AgentPanelInner({
             // parallel with the chat now on screen.
             const left = leftChatsRef.current.get(epoch)
             if (queueing || !left) return
-            const transcript = left.transcript.flatMap(entry =>
-              entry.id === entryId
-                ? [userEntry]
-                : entry.role === 'user' && entry.pending
-                  ? []
-                  : [entry]
+            const transcript = left.transcript.map(entry =>
+              entry.id === entryId ? userEntry : entry
             )
             saveConversation(projectId, left.chatId, transcript)
             await runDetached(left.chatId, transcript, left.mode)
@@ -813,7 +844,7 @@ function AgentPanelInner({
       const finalSelection =
         selection !== undefined
           ? selection
-          : (attachedSelection ?? handle.currentSelection())
+          : attachedSelection
 
       void sendPrompt({
         text,
@@ -1221,7 +1252,7 @@ function AgentPanelInner({
   }, [projectId])
 
   return (
-    <div className="ai-assist-panel">
+    <div className="ai-assist-panel" style={editorVars}>
       <AgentPanelHeader
         title={chatTitle || t('ai_assist_panel_title', 'AI assistant')}
         isGeneratingTitle={animateTitle}
@@ -1472,7 +1503,7 @@ function AgentPanelInner({
         attachments={attachments}
         setAttachments={setAttachments}
         attachedSelection={attachedSelection}
-        setAttachedSelection={setAttachedSelection}
+        setAttachedSelection={handleSetAttachedSelection}
         history={promptHistory}
         restoredDraft={restoredDraft}
       />

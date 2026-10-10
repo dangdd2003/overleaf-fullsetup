@@ -24,6 +24,14 @@ const STORED = {
   modelName: 'GPT-4o mini',
 }
 
+const FAST = {
+  type: 'ollama',
+  baseUrl: 'http://ollama:11434/v1',
+  apiKey: '',
+  model: 'qwen3:4b',
+  modelName: 'Qwen3 4B',
+}
+
 describe('AiProvidersWidget', function () {
   beforeEach(function () {
     fetchMock.removeRoutes().clearHistory()
@@ -248,5 +256,42 @@ describe('AiProvidersWidget', function () {
       expect(customLocalStorage.getItem('ai-assist:web-search')).to.equal(null)
       expect(screen.getByRole('button', { name: 'Set up web search' })).to.exist
     })
+  })
+
+  it('shows an empty fast model slot next to the main one', function () {
+    render(<AiProvidersWidget />)
+    expect(screen.getByText('Main model')).to.exist
+    expect(screen.getByText('Fast model')).to.exist
+    expect(screen.getByText(/no fast model configured/i)).to.exist
+    expect(screen.getByRole('button', { name: /add fast model/i })).to.exist
+  })
+
+  it('shows the fast model stored in this browser and removes only it', function () {
+    customLocalStorage.setItem('ai-assist:provider', STORED)
+    customLocalStorage.setItem('ai-assist:fast-provider', FAST)
+    render(<AiProvidersWidget />)
+
+    const card = screen.getByTestId('fast-provider-current')
+    expect(card.textContent).to.contain('Qwen3 4B')
+    expect(card.textContent).to.contain('http://ollama:11434/v1')
+    expect(card.textContent).to.contain('Ollama')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove fast model' }))
+    expect(customLocalStorage.getItem('ai-assist:fast-provider')).to.be.null
+    expect(customLocalStorage.getItem('ai-assist:provider')).to.deep.equal(STORED)
+    expect(screen.getByText(/no fast model configured/i)).to.exist
+  })
+
+  it('offers every provider for the fast model', function () {
+    render(<AiProvidersWidget />)
+    fireEvent.click(screen.getByRole('button', { name: /add fast model/i }))
+    const select = screen.getByLabelText('Provider type') as HTMLSelectElement
+    expect([...select.options].map(option => option.textContent)).to.deep.equal([
+      'OpenAI',
+      'Anthropic',
+      'Google Gemini',
+      'Ollama',
+    ])
+    expect(screen.getByText(/code completion and language suggestions/i)).to.exist
   })
 })

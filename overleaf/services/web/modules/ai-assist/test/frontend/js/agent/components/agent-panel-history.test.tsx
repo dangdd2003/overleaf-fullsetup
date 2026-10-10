@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import fetchMock from 'fetch-mock'
 import customLocalStorage from '@/infrastructure/local-storage'
+import { resetDocumentFocus } from '../../helpers/document-focus'
 import { AgentPanel } from '../../../../../frontend/js/features/ai-assist/components/agent/agent-panel'
 import {
   getStoredChatMode,
@@ -21,6 +22,10 @@ describe('AgentPanel chat history', function () {
   afterEach(function () {
     fetchMock.removeRoutes().clearHistory()
     customLocalStorage.clear()
+    // Renaming focuses an input inside the panel. Removing it leaves jsdom
+    // reporting document.hasFocus() as true for every later test, so clear the
+    // focus here.
+    resetDocumentFocus()
   })
 
   it('lists saved chats and opens the picked one with title in header', async function () {

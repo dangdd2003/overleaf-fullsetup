@@ -316,37 +316,67 @@ export function findFuzzyWordWindow(
   const minW = Math.max(3, nLen - 4)
   const maxW = Math.min(docWords.length, nLen + 4)
 
-  for (let i = 0; i <= docWords.length - minW; i++) {
-    for (let w = minW; w <= Math.min(docWords.length - i, maxW); w++) {
-      let matches = 0
-      let d = 0
-      let n = 0
-      while (d < w && n < nLen) {
-        if (docWords[i + d].clean === needleWords[n]) {
-          matches++
-          d++
-          n++
-        } else if (d + 1 < w && docWords[i + d + 1].clean === needleWords[n]) {
-          d += 2
-          n++
-          matches += 0.8
-        } else if (
-          n + 1 < nLen &&
-          docWords[i + d].clean === needleWords[n + 1]
-        ) {
-          d++
-          n += 2
-          matches += 0.8
-        } else {
-          d++
-          n++
+  // Candidate filtering: the anchor must align near the start with one of the first 3 needle words
+  const headWords = new Set<string>()
+  for (let k = 0; k < Math.min(3, nLen); k++) {
+    headWords.add(needleWords[k])
+  }
+
+  const candidateStarts = new Set<number>()
+  for (let p = 0; p < docWords.length; p++) {
+    if (headWords.has(docWords[p].clean)) {
+      const from = Math.max(0, p - 2)
+      for (let i = from; i <= p; i++) {
+        if (i <= docWords.length - minW) {
+          candidateStarts.add(i)
         }
       }
-      const score = (2 * matches) / (w + nLen)
-      if (score >= threshold) {
-        hits.push({ startIdx: i, endIdx: i + w - 1, score })
+    }
+  }
+
+  const scanStarts = (starts: Iterable<number>) => {
+    for (const i of starts) {
+      for (let w = minW; w <= Math.min(docWords.length - i, maxW); w++) {
+        let matches = 0
+        let d = 0
+        let n = 0
+        while (d < w && n < nLen) {
+          if (docWords[i + d].clean === needleWords[n]) {
+            matches++
+            d++
+            n++
+          } else if (d + 1 < w && docWords[i + d + 1].clean === needleWords[n]) {
+            d += 2
+            n++
+            matches += 0.8
+          } else if (
+            n + 1 < nLen &&
+            docWords[i + d].clean === needleWords[n + 1]
+          ) {
+            d++
+            n += 2
+            matches += 0.8
+          } else {
+            d++
+            n++
+          }
+        }
+        const score = (2 * matches) / (w + nLen)
+        if (score >= threshold) {
+          hits.push({ startIdx: i, endIdx: i + w - 1, score })
+        }
       }
     }
+  }
+
+  scanStarts(candidateStarts)
+  // The head-word filter can miss a window whose first words are all corrupted
+  // in the document; when it finds nothing, every start is tried, as before.
+  if (hits.length === 0) {
+    const allStarts = function* () {
+      for (let i = 0; i <= docWords.length - minW; i++) yield i
+    }
+    scanStarts(allStarts())
   }
 
   if (hits.length === 0) return null

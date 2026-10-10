@@ -22,8 +22,10 @@ describe('routing.mjs', function () {
       expect(SEARCH_CAPABLE.has('ollama')).to.be.true
       expect(SEARCH_CAPABLE.has('websearchapi')).to.be.true
       expect(SEARCH_CAPABLE.has('langsearch')).to.be.true
+      expect(SEARCH_CAPABLE.has('parallel')).to.be.true
       expect(READ_CAPABLE.has('ollama')).to.be.true
       expect(READ_CAPABLE.has('websearchapi')).to.be.true
+      expect(READ_CAPABLE.has('parallel')).to.be.true
       expect(READ_CAPABLE.has('searxng')).to.be.false
       expect(READ_CAPABLE.has('langsearch')).to.be.false
     })

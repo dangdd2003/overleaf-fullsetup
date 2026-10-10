@@ -1438,9 +1438,16 @@ function GenericToolDetail({
   call: ToolCallRecord
   result: any
 }) {
-  const hasArgs = call.args && Object.keys(call.args).length > 0
-  const hasResult =
-    result && typeof result === 'object' && Object.keys(result).length > 0
+  const callArgsObj =
+    call.args && typeof call.args === 'object' && !Array.isArray(call.args)
+      ? (call.args as Record<string, unknown>)
+      : null
+  const hasArgs = Boolean(callArgsObj && Object.keys(callArgsObj).length > 0)
+  const resultObj =
+    result && typeof result === 'object' && !Array.isArray(result)
+      ? (result as Record<string, unknown>)
+      : null
+  const hasResult = Boolean(resultObj && Object.keys(resultObj).length > 0)
 
   if (!hasArgs && !hasResult) {
     if (typeof result === 'string' && result.trim()) {
@@ -1455,9 +1462,9 @@ function GenericToolDetail({
 
   return (
     <div className="ai-assist-tool-detail-generic">
-      {hasArgs && (
+      {hasArgs && callArgsObj && (
         <div className="ai-assist-settings-rows">
-          {Object.entries(call.args).map(([k, v]) => (
+          {Object.entries(callArgsObj).map(([k, v]) => (
             <div key={`arg-${k}`} className="ai-assist-settings-row">
               <span className="ai-assist-settings-key">{k}:</span>
               <span className="ai-assist-settings-val">
@@ -1467,9 +1474,9 @@ function GenericToolDetail({
           ))}
         </div>
       )}
-      {hasResult && !hasArgs && (
+      {hasResult && !hasArgs && resultObj && (
         <div className="ai-assist-settings-rows">
-          {Object.entries(result).map(([k, v]) => (
+          {Object.entries(resultObj).map(([k, v]) => (
             <div key={`res-${k}`} className="ai-assist-settings-row">
               <span className="ai-assist-settings-key">{k}:</span>
               <span className="ai-assist-settings-val">

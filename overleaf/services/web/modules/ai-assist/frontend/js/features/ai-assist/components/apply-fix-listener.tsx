@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useContext } from 'react'
+import { useCallback, useEffect, useContext, useRef } from 'react'
+import { EditorView } from '@codemirror/view'
 import { useCodeMirrorViewContext } from '@/features/source-editor/components/codemirror-context'
 import { useEditorOpenDocContext } from '@/features/ide-react/context/editor-open-doc-context'
 import { FileTreeDataContext } from '@/shared/context/file-tree-data-context'
@@ -6,9 +7,59 @@ import { LocalCompileContext } from '@/shared/context/local-compile-context'
 import { pathInFolder } from '@/features/file-tree/util/path'
 import useEventListener from '@/shared/hooks/use-event-listener'
 import getMeta from '@/utils/meta'
+import { AgentMode } from '../agent/agent-mode'
 import { findUniqueSpan } from '../agent/use-project-handle'
 import { setCompileLogEntries } from '../log-entry-levels'
+import { aiEdit, markAiGlow, smoothScrollToEdit, isRangeOnScreen } from '../ai-edit-glow/extension'
+import { useOpenFileInEditor } from '../hooks/use-open-file'
 import '../../../../stylesheets/ai-assist.scss'
+
+type HighlightDetail = {
+  path?: string
+  startLine?: number
+  endLine?: number
+  newText?: string
+  oldText?: string
+  mode?: AgentMode
+  detached?: boolean
+}
+
+
+export function isRangeInViewport(
+  view: EditorView,
+  from: number,
+  to: number
+): boolean {
+  if (!view) return false
+  const scroller = view.scrollDOM
+  if (scroller) {
+    const rect = scroller.getBoundingClientRect?.()
+    if (rect && rect.height > 0) {
+      return isRangeOnScreen(view, from, to)
+    }
+  }
+  if (view.viewport) {
+    return from <= view.viewport.to && to >= view.viewport.from
+  }
+  return false
+}
+
+const MAX_PENDING_PATHS = 50
+const MAX_HIGHLIGHTS_PER_PATH = 20
+const pendingHighlightsByPath = new Map<string, HighlightDetail[]>()
+
+function queuePendingHighlight(path: string, detail: HighlightDetail) {
+  if (!pendingHighlightsByPath.has(path) && pendingHighlightsByPath.size >= MAX_PENDING_PATHS) {
+    const oldest = pendingHighlightsByPath.keys().next().value
+    if (oldest) pendingHighlightsByPath.delete(oldest)
+  }
+  const existing = pendingHighlightsByPath.get(path) || []
+  if (existing.length >= MAX_HIGHLIGHTS_PER_PATH) {
+    existing.shift()
+  }
+  existing.push(detail)
+  pendingHighlightsByPath.set(path, existing)
+}
 
 function lineRangeToOffsets(
   doc: { lines: number; line: (n: number) => { from: number; to: number } },
@@ -33,6 +84,16 @@ function ApplyFixListenerInner() {
   const fileTreeContext = useContext(FileTreeDataContext)
   const fileTreeData = fileTreeContext?.fileTreeData
   const logEntries = useContext(LocalCompileContext)?.logEntries
+  const openFile = useOpenFileInEditor()
+  const highlightTimersRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set())
+
+  useEffect(() => {
+    const timers = highlightTimersRef.current
+    return () => {
+      timers.forEach(t => clearTimeout(t))
+      timers.clear()
+    }
+  }, [])
 
   // The inline "Suggest fix" in the editor tooltip only knows a diagnostic's
   // entry id; publish each entry's real level so it can apply the logs pane's
@@ -53,6 +114,12 @@ function ApplyFixListenerInner() {
       if (active && !view.dom.contains(active) && active !== document.body) {
         return
       }
+      announceSelection()
+    }
+
+    // Tells the chat what is selected, wherever the focus is: "Custom prompt"
+    // asks for it when it opens the chat from a TeXGPT or Writing tools menu
+    const announceSelection = () => {
       const { from, to } = view.state.selection.main
       if (from !== to) {
         const startLine = view.state.doc.lineAt(from).number
@@ -84,12 +151,14 @@ function ApplyFixListenerInner() {
     handleSelectionChange()
 
     const dom = view.dom
+    window.addEventListener('aiAssist:announceSelection', announceSelection)
     dom.addEventListener('mouseup', handleSelectionChange)
     dom.addEventListener('keyup', handleSelectionChange)
     dom.addEventListener('pointerup', handleSelectionChange)
     document.addEventListener('selectionchange', handleSelectionChange)
 
     return () => {
+      window.removeEventListener('aiAssist:announceSelection', announceSelection)
       dom.removeEventListener('mouseup', handleSelectionChange)
       dom.removeEventListener('keyup', handleSelectionChange)
       dom.removeEventListener('pointerup', handleSelectionChange)
@@ -104,14 +173,16 @@ function ApplyFixListenerInner() {
 
   const onAgentReadDoc = useCallback(
     (event: Event) => {
-      const detail = (event as CustomEvent<{ path?: string; docId?: string }> | undefined)?.detail
+      const detail = (event as CustomEvent<{ path?: string; docId?: string; requestId?: string }> | undefined)?.detail
       const requestedPath = normalizePath(detail?.path)
       const requestedDocId = detail?.docId
+      const requestId = detail?.requestId
 
       if (requestedPath && (!currentPath || requestedPath !== currentPath)) {
         return window.dispatchEvent(
           new CustomEvent('aiAssist:agentReadDocResult', {
             detail: {
+              requestId,
               text: null,
               path: currentPath,
               docId: currentDocumentId,
@@ -125,6 +196,7 @@ function ApplyFixListenerInner() {
         return window.dispatchEvent(
           new CustomEvent('aiAssist:agentReadDocResult', {
             detail: {
+              requestId,
               text: null,
               path: currentPath,
               docId: currentDocumentId,
@@ -137,6 +209,7 @@ function ApplyFixListenerInner() {
       window.dispatchEvent(
         new CustomEvent('aiAssist:agentReadDocResult', {
           detail: {
+            requestId,
             text: view.state.doc.toString(),
             path: currentPath,
             docId: currentDocumentId,
@@ -151,6 +224,7 @@ function ApplyFixListenerInner() {
     (event: Event) => {
       const detail = (event as CustomEvent<any>).detail ?? {}
       const {
+        requestId,
         path,
         docId,
         from,
@@ -164,7 +238,9 @@ function ApplyFixListenerInner() {
 
       const respond = (status: string, message?: string) =>
         window.dispatchEvent(
-          new CustomEvent('aiAssist:agentApplyEditResult', { detail: { status, message } })
+          new CustomEvent('aiAssist:agentApplyEditResult', {
+            detail: { requestId, status, message },
+          })
         )
 
       const requestedPath = normalizePath(path)
@@ -183,8 +259,21 @@ function ApplyFixListenerInner() {
         )
       }
 
+
       const doc = view.state.doc
       const docText = doc.toString()
+
+      const applyAiChange = (from: number, to: number, insert: string) => {
+        view.dispatch({
+          changes: { from, to, insert },
+          annotations: aiEdit.of(true),
+        })
+        const end = from + insert.length
+        if (detail.mode !== 'acceptEdits') {
+          requestAnimationFrame(() => smoothScrollToEdit(view, from, end))
+        }
+        return respond('applied')
+      }
 
       // 1. Append mode: when oldText is empty or isAppend is true
       if (isAppend || oldText === '') {
@@ -194,10 +283,7 @@ function ApplyFixListenerInner() {
         if (docLen > 0 && !docText.endsWith('\n')) {
           insertText = '\n' + replacement
         }
-        view.dispatch({
-          changes: { from: docLen, to: docLen, insert: insertText },
-        })
-        return respond('applied')
+        return applyAiChange(docLen, docLen, insertText)
       }
 
       // Helper to compute clean line deletion offsets
@@ -246,10 +332,7 @@ function ApplyFixListenerInner() {
               fromOffset,
               toOffset
             )
-            view.dispatch({
-              changes: { from: cFrom, to: cTo, insert: replacement },
-            })
-            return respond('applied')
+            return applyAiChange(cFrom, cTo, replacement)
           }
         }
       }
@@ -264,10 +347,7 @@ function ApplyFixListenerInner() {
             cFrom,
             cTo
           )
-          view.dispatch({
-            changes: { from: adjFrom, to: adjTo, insert: replacement },
-          })
-          return respond('applied')
+          return applyAiChange(adjFrom, adjTo, replacement)
         } else if (span.status === 'ambiguous') {
           return respond('drifted', 'Anchor is ambiguous in the document.')
         }
@@ -288,10 +368,7 @@ function ApplyFixListenerInner() {
             offsets.from,
             offsets.to
           )
-          view.dispatch({
-            changes: { from: cFrom, to: cTo, insert: replacement },
-          })
-          return respond('applied')
+          return applyAiChange(cFrom, cTo, replacement)
         }
       }
 
@@ -344,6 +421,7 @@ function ApplyFixListenerInner() {
       const { from, to } = view.state.selection.main
       view.dispatch({
         changes: { from, to, insert: text },
+        annotations: aiEdit.of(true),
         selection: { anchor: from + text.length, head: from + text.length },
         scrollIntoView: true,
       })
@@ -351,11 +429,183 @@ function ApplyFixListenerInner() {
     [view]
   )
 
+  const applyHighlight = useCallback(
+    (detail: HighlightDetail) => {
+      if (!view) return
+
+      let attempts = 0
+      const maxAttempts = 20
+
+      const scheduleResolve = (fn: () => void, delay: number) => {
+        const timer = setTimeout(() => {
+          highlightTimersRef.current.delete(timer)
+          fn()
+        }, delay)
+        highlightTimersRef.current.add(timer)
+      }
+
+      const tryResolve = () => {
+        attempts++
+        const doc = view.state.doc
+        const docLen = doc.length
+        if (docLen === 0) {
+          if (attempts < maxAttempts) {
+            scheduleResolve(tryResolve, 60)
+          }
+          return
+        }
+
+        const { startLine, endLine, newText } = detail
+        let from: number | null = null
+        let to: number | null = null
+
+        const hasNewText = typeof newText === 'string' && newText.length > 0
+
+        if (hasNewText) {
+          const sLine =
+            typeof startLine === 'number' && startLine >= 1
+              ? Math.min(doc.lines, startLine)
+              : 1
+          const startOffset = doc.line(sLine).from
+
+          // 1. Fast window search around startLine (avoiding full doc string conversion)
+          const windowMargin = 100
+          const winStartLine = Math.max(1, sLine - windowMargin)
+          const winEndLine = Math.min(
+            doc.lines,
+            (typeof endLine === 'number' && endLine >= sLine ? endLine : sLine) + windowMargin
+          )
+          const winFrom = doc.line(winStartLine).from
+          const winTo = doc.line(winEndLine).to
+          const winText =
+            typeof (doc as any).sliceString === 'function'
+              ? (doc as any).sliceString(winFrom, winTo)
+              : doc.toString().slice(winFrom, winTo)
+          let idx = -1
+
+          const relOffset = Math.max(0, startOffset - winFrom)
+          const localIdx = winText.indexOf(newText, relOffset)
+          if (localIdx !== -1) {
+            idx = winFrom + localIdx
+          } else {
+            const fallbackLocalIdx = winText.indexOf(newText)
+            if (fallbackLocalIdx !== -1) {
+              idx = winFrom + fallbackLocalIdx
+            }
+          }
+
+          // 2. If not found in the local window, search the full document preferring nearest occurrence
+          if (idx === -1) {
+            const docString = doc.toString()
+            const forwardIdx = docString.indexOf(newText, startOffset)
+            if (forwardIdx !== -1) {
+              idx = forwardIdx
+            } else {
+              const backwardIdx = docString.lastIndexOf(newText, startOffset)
+              if (backwardIdx !== -1) {
+                idx = backwardIdx
+              } else {
+                idx = docString.indexOf(newText)
+              }
+            }
+          }
+
+          if (idx !== -1) {
+            from = idx
+            to = idx + newText.length
+          } else if (attempts < maxAttempts) {
+            scheduleResolve(tryResolve, 60)
+            return
+          }
+        }
+
+        if (from === null && typeof startLine === 'number' && startLine >= 1) {
+          const sLine = Math.min(doc.lines, startLine)
+          const eLine =
+            typeof endLine === 'number' && endLine >= sLine
+              ? Math.min(doc.lines, endLine)
+              : sLine
+
+          from = doc.line(sLine).from
+          to = doc.line(eLine).to
+        }
+
+        if (from !== null && to !== null) {
+          if (from === to && docLen > 0) {
+            to = from < docLen ? from + 1 : from
+            from = from < docLen ? from : from - 1
+          }
+
+          if (to > from) {
+            if (detail.mode === 'acceptEdits') {
+              if (isRangeInViewport(view, from, to)) {
+                markAiGlow(view, [{ from, to }])
+              }
+            } else {
+              markAiGlow(view, [{ from, to }])
+              requestAnimationFrame(() => {
+                smoothScrollToEdit(view, from!, to!)
+              })
+            }
+          }
+        }
+      }
+
+      tryResolve()
+    },
+    [view]
+  )
+
+  const onHighlightAiEdit = useCallback(
+    (event: Event) => {
+      const detail = (event as CustomEvent<HighlightDetail>).detail
+      if (!detail) return
+      const targetPath = normalizePath(detail.path)
+      const isAcceptEdits = detail.mode === 'acceptEdits'
+
+      if (isAcceptEdits) {
+        if (!currentPath || (targetPath && targetPath !== currentPath)) {
+          return
+        }
+        applyHighlight(detail)
+        return
+      }
+
+      if (targetPath && currentPath && targetPath !== currentPath) {
+        queuePendingHighlight(targetPath, detail)
+        if (!detail.detached) {
+          try {
+            openFile(targetPath, detail.startLine)
+          } catch {}
+        }
+        return
+      }
+
+      applyHighlight(detail)
+    },
+    [currentPath, applyHighlight, openFile]
+  )
+
+  useEffect(() => {
+    if (!currentPath) return
+    const queued = pendingHighlightsByPath.get(currentPath)
+    if (queued && queued.length > 0) {
+      pendingHighlightsByPath.delete(currentPath)
+      const timer = setTimeout(() => {
+        for (const item of queued) {
+          applyHighlight(item)
+        }
+      }, 100)
+      return () => clearTimeout(timer)
+    }
+  }, [currentPath, applyHighlight])
+
   useEventListener('aiAssist:agentReadDoc', onAgentReadDoc)
   useEventListener('aiAssist:agentApplyEdit', onAgentApplyEdit)
   useEventListener('aiAssist:agentReadSelection', onAgentReadSelection)
   useEventListener('aiAssist:jumpToLine', onJumpToLine)
   useEventListener('aiAssist:insertSnippet', onInsertSnippet)
+  useEventListener('aiAssist:highlightAiEdit', onHighlightAiEdit)
 
   return null
 }

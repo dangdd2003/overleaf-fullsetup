@@ -13,6 +13,9 @@ import { SettingsApprovalCard } from './settings-approval-card'
 import { PlanApprovalCard } from './plan-approval-card'
 import { DiffStats, sumDiffStats } from './diff-stats'
 import { DiffStatBadge } from './diff-stat-badge'
+import { subresultExpansionStore } from './subresult-expansion-store'
+
+export { subresultExpansionStore }
 
 function renderApprovalCard(
   pendingCall: any,
@@ -83,7 +86,7 @@ export function summariseToolCallActions(
         rejectedEdits++
         continue
       }
-      if (isCancelled || (status && status !== 'applied')) {
+      if (isCancelled || !call.result || (status && status !== 'applied')) {
         cancelledEdits++
         continue
       }
@@ -93,7 +96,7 @@ export function summariseToolCallActions(
         rejectedCreations++
         continue
       }
-      if (isCancelled || (status && status !== 'applied')) {
+      if (isCancelled || !call.result || (status && status !== 'applied')) {
         cancelledCreations++
         continue
       }
@@ -222,15 +225,17 @@ export function formatSubresultsSummary(
   const totalSec = Math.max(1, Math.round(totalThinkingMs / 1000))
   const thoughtTimeStr = totalThinkingMs > 0 ? `Thought for ${totalSec}s` : null
 
-  if (toolCalls.length === 0) {
-    if (thoughtTimeStr) {
+  if (callsToTally.length === 0) {
+    if (!isLive && thoughtTimeStr) {
       return { title: thoughtTimeStr, isOnlyThinking: true, diffStats: null }
     }
-    return { title: '', isOnlyThinking: true, diffStats: null }
+    return { title: '', isOnlyThinking: false, diffStats: null }
   }
 
-  const targetCalls = callsToTally.length > 0 ? callsToTally : toolCalls
-  const actionsStr = summariseToolCallActions(targetCalls) || 'Running action'
+  const actionsStr = summariseToolCallActions(callsToTally)
+  if (!actionsStr) {
+    return { title: '', isOnlyThinking: false, diffStats: null }
+  }
 
   if (!isLive && thoughtTimeStr) {
     return {
@@ -282,42 +287,6 @@ function getSafeEdit(call: any) {
   }
 }
 
-/**
- * Persistent store for user fold/unfold intent keyed by group ID.
- * This guarantees that when a user unfolds or folds an activity group or thinking block,
- * subsequent AI actions (new tool calls, chunk streams, UI re-renders, mode transitions)
- * never automatically flip or collapse the user's chosen expansion state.
- */
-export const subresultExpansionStore = {
-  get(key: string): boolean {
-    if (typeof window === 'undefined') return false
-    try {
-      const val = window.sessionStorage.getItem(`ai-assist:expand:${key}`)
-      return val === '1'
-    } catch {
-      return false
-    }
-  },
-  set(key: string, value: boolean) {
-    if (typeof window === 'undefined') return
-    try {
-      if (value) {
-        window.sessionStorage.setItem(`ai-assist:expand:${key}`, '1')
-      } else {
-        window.sessionStorage.removeItem(`ai-assist:expand:${key}`)
-      }
-    } catch {}
-  },
-  has(key: string): boolean {
-    if (typeof window === 'undefined') return false
-    try {
-      return window.sessionStorage.getItem(`ai-assist:expand:${key}`) !== null
-    } catch {
-      return false
-    }
-  },
-}
-
 export const SubresultGroup: FC<{
   groupId?: string
   items: SubresultItem[]
@@ -335,9 +304,24 @@ export const SubresultGroup: FC<{
 }) => {
   const { t } = useTranslation()
 
+  const entryPrefix = groupId?.split('-subresults-')[0]
+
+  const getStoredExpanded = () => {
+    if (groupId && subresultExpansionStore.has(groupId)) {
+      return subresultExpansionStore.get(groupId)!
+    }
+    if (entryPrefix && subresultExpansionStore.has(`${entryPrefix}-activity`)) {
+      return subresultExpansionStore.get(`${entryPrefix}-activity`)!
+    }
+    return false
+  }
+
   const [userToggled, setUserToggled] = useState<boolean | null>(() => {
     if (groupId && subresultExpansionStore.has(groupId)) {
       return subresultExpansionStore.get(groupId)!
+    }
+    if (entryPrefix && subresultExpansionStore.has(`${entryPrefix}-activity`)) {
+      return subresultExpansionStore.get(`${entryPrefix}-activity`)!
     }
     return null
   })
@@ -349,13 +333,16 @@ export const SubresultGroup: FC<{
       ? userToggled
       : groupId && subresultExpansionStore.has(groupId)
         ? subresultExpansionStore.get(groupId)!
-        : false
+        : getStoredExpanded()
 
   const handleToggle = () => {
     const next = !expanded
     setUserToggled(next)
     if (groupId) {
       subresultExpansionStore.set(groupId, next)
+      if (entryPrefix) {
+        subresultExpansionStore.set(`${entryPrefix}-activity`, next)
+      }
     }
     if (next) {
       window.dispatchEvent(new CustomEvent('aiAssist:stickToBottom'))
@@ -412,8 +399,21 @@ export const SubresultGroup: FC<{
     )
   }
 
-  const { title, diffStats } = formatSubresultsSummary(pastItems, isLive, t)
-  const isSingleToolCall = toolCalls.length === 1 && pastItems.length === 1
+  const { title: rawTitle, diffStats } = formatSubresultsSummary(pastItems, isLive, t)
+
+  const callsForSummary = isLive
+    ? toolCalls
+        .map(i => i.call)
+        .filter(call => 'result' in call && call.result !== undefined)
+    : toolCalls.map(i => i.call)
+
+  // If the user already opened the activity bar, it must NEVER vanish or return null while a live tool call is running.
+  const title =
+    rawTitle && rawTitle.trim()
+      ? rawTitle
+      : expanded && toolCalls.length > 0
+        ? (summariseToolCallActions(callsForSummary) || 'Running tools')
+        : rawTitle
 
   const hasTitle = Boolean(title && title.trim())
 
@@ -500,10 +500,7 @@ export const SubresultGroup: FC<{
                   key={call.id || `call-${idx}`}
                   className="ai-assist-subresult-item"
                 >
-                  <ToolCallCard
-                    call={call}
-                    defaultExpanded={pastItems.length === 1}
-                  />
+                  <ToolCallCard call={call} />
                 </div>
               )
             })}

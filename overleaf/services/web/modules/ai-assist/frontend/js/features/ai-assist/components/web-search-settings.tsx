@@ -26,6 +26,8 @@ export const WEB_SEARCH_LABELS: Record<WebSearchProviderType, string> = {
   jina: 'Jina AI',
   langsearch: 'LangSearch',
   exa: 'Exa',
+  tinyfish: 'TinyFish',
+  parallel: 'Parallel',
   mcp: 'MCP WebSearch',
 }
 
@@ -46,6 +48,10 @@ export const WEB_SEARCH_NOTES: Record<WebSearchProviderType, string> = {
   langsearch:
     'Hosted search through api.langsearch.com. Search uses credits; pages are read by this server.',
   exa: 'Hosted neural and keyword search and page reading through api.exa.ai. Every search and page read uses credits.',
+  tinyfish:
+    'Hosted search through api.search.tinyfish.ai with X-API-Key. Free up to daily allowance; pages are read by this server.',
+  parallel:
+    'Hosted search and page extraction through api.parallel.ai. Every search and page read uses credits.',
   mcp: 'Custom POST endpoint accepting {q} JSON and returning search results, or remote MCP WebSearch server.',
 }
 
@@ -152,6 +158,25 @@ export const WEB_SEARCH_LINKS: Record<
       { label: 'Website', href: 'https://exa.ai' },
       { label: 'API docs', href: 'https://docs.exa.ai' },
       { label: 'Get API keys', href: 'https://dashboard.exa.ai/api-keys' },
+    ],
+  },
+  tinyfish: {
+    icon: 'https://tinyfish.ai',
+    links: [
+      { label: 'Website', href: 'https://tinyfish.ai' },
+      {
+        label: 'API docs',
+        href: 'https://docs.tinyfish.ai/search-api/reference',
+      },
+      { label: 'Get API keys', href: 'https://agent.tinyfish.ai/api-keys' },
+    ],
+  },
+  parallel: {
+    icon: 'https://parallel.ai',
+    links: [
+      { label: 'Website', href: 'https://parallel.ai' },
+      { label: 'API docs', href: 'https://docs.parallel.ai' },
+      { label: 'Get API keys', href: 'https://platform.parallel.ai' },
     ],
   },
   mcp: {

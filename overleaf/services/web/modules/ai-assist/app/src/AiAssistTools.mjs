@@ -1597,6 +1597,8 @@ export class AiAssistTools {
         return {
           status: 'applied',
           path: plan.path,
+          newText: plan.newText,
+          oldText: plan.oldText,
           ...describeAppliedEdit(plan),
           ...(plan.note ? { note: plan.note } : {}),
         }
@@ -1605,6 +1607,14 @@ export class AiAssistTools {
       case 'create_file': {
         const lines = (args.content || '').split('\n')
         const normalizedPath = (args.path || '').replace(/^\//, '')
+        const created = docId => ({
+          status: 'applied',
+          path: args.path,
+          docId,
+          newText: args.content,
+          startLine: 1,
+          endLine: lines.length,
+        })
 
         if (this.editorController?.promises?.upsertDocWithPath) {
           try {
@@ -1616,7 +1626,7 @@ export class AiAssistTools {
               userId
             )
             this.invalidateSnapshot(projectId)
-            return { status: 'applied', path: args.path, docId: doc?._id }
+            return created(doc?._id)
           } catch (err) {
             // fall through to addDoc
           }
@@ -1635,11 +1645,7 @@ export class AiAssistTools {
             (err, newDoc) => {
               if (err) return reject(err)
               this.invalidateSnapshot(projectId)
-              resolve({
-                status: 'applied',
-                path: args.path,
-                docId: newDoc?._id,
-              })
+              resolve(created(newDoc?._id))
             }
           )
         })

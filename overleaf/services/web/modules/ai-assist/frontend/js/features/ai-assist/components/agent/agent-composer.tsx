@@ -9,7 +9,6 @@ import {
 import { useTranslation } from 'react-i18next'
 import {
   FileText,
-  PaperPlaneRight,
   HandPalm,
   PencilSimple,
   ListChecks,
@@ -26,12 +25,26 @@ import { AttachmentRef } from '../../agent/context/types'
 import { parseAttachmentRef } from '../../agent/context/attachments'
 import { AgentMode, nextMode } from '../../agent/agent-mode'
 import { ReasoningEffortPicker } from './reasoning-effort-picker'
+import { ChatSendButton } from './chat-send-button'
 
 export interface AttachedSelection {
   path: string
   from: number
   to: number
   text: string
+}
+
+export function isSameSelection(
+  a: AttachedSelection | null | undefined,
+  b: AttachedSelection | null | undefined
+): boolean {
+  if (!a || !b) return false
+  return (
+    a.path === b.path &&
+    a.from === b.from &&
+    a.to === b.to &&
+    a.text === b.text
+  )
 }
 
 const MENTION_RE = /@([^\s@]*)$/
@@ -92,6 +105,24 @@ export function AgentComposer({
   >([])
   const [internalAttachedSelection, setInternalAttachedSelection] =
     useState<AttachedSelection | null>(null)
+  const dismissedSelectionRef = useRef<AttachedSelection | null>(null)
+
+  const handleSetAttachedSelection = useCallback(
+    (action: React.SetStateAction<AttachedSelection | null>) => {
+      setInternalAttachedSelection(prev => {
+        const next = typeof action === 'function' ? action(prev) : action
+        if (next === null) {
+          if (prev !== null) {
+            dismissedSelectionRef.current = prev
+          }
+        } else {
+          dismissedSelectionRef.current = null
+        }
+        return next
+      })
+    },
+    []
+  )
 
   const attachments = externalAttachments ?? internalAttachments
   const setAttachments = externalSetAttachments ?? setInternalAttachments
@@ -100,7 +131,7 @@ export function AgentComposer({
       ? externalAttachedSelection
       : internalAttachedSelection
   const setAttachedSelection =
-    externalSetAttachedSelection ?? setInternalAttachedSelection
+    externalSetAttachedSelection ?? handleSetAttachedSelection
 
   const [query, setQuery] = useState<string | null>(null)
   const [modeMenuOpen, setModeMenuOpen] = useState(false)
@@ -251,12 +282,25 @@ export function AgentComposer({
     textareaRef.current?.focus()
   }, [restoredDraft])
 
+  // "Custom prompt" in TeXGPT and Writing tools opens the chat here
+  useEventListener('aiAssist:focusComposer', () => {
+    textareaRef.current?.focus()
+  })
+
   useEventListener('aiAssist:selectionChanged', (event: Event) => {
     if (externalSetAttachedSelection) return
     const detail = (event as CustomEvent<AttachedSelection | null>).detail
     if (detail && detail.text) {
+      if (
+        dismissedSelectionRef.current &&
+        isSameSelection(detail, dismissedSelectionRef.current)
+      ) {
+        return
+      }
+      dismissedSelectionRef.current = null
       setAttachedSelection(detail)
     } else {
+      dismissedSelectionRef.current = null
       setAttachedSelection(null)
     }
   })
@@ -468,7 +512,11 @@ export function AgentComposer({
                 <button
                   type="button"
                   className="ai-assist-selection-chip-close"
-                  onClick={() => setAttachedSelection(null)}
+                  onClick={event => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    setAttachedSelection(null)
+                  }}
                   aria-label={t('remove_selection', 'Remove selection')}
                   title={t('remove_selection', 'Remove selection')}
                 >
@@ -665,36 +713,13 @@ export function AgentComposer({
 
           <div className="ai-assist-composer-right-actions">
             <ReasoningEffortPicker />
-            {running && !hasContent ? (
-              <button
-                type="button"
-                className="ai-assist-send-btn ai-assist-stop-btn"
-                onClick={onStop}
-                aria-label={t('stop_esc', 'Stop (Esc)')}
-                title={t('stop_esc', 'Stop (Esc)')}
-              >
-                <svg
-                  viewBox="0 0 16 16"
-                  width="14"
-                  height="14"
-                  fill="currentColor"
-                  aria-hidden="true"
-                >
-                  <rect x="3" y="3" width="10" height="10" rx="2" />
-                </svg>
-              </button>
-            ) : (
-              <button
-                type="button"
-                className={`ai-assist-send-btn ${hasContent && !disabled ? 'is-active' : ''}`}
-                disabled={disabled || !hasContent}
-                onClick={send}
-                aria-label={sendLabel}
-                title={sendLabel}
-              >
-                <PaperPlaneRight size={16} weight="fill" />
-              </button>
-            )}
+            <ChatSendButton
+              running={running && !hasContent}
+              canSend={hasContent && !disabled}
+              sendLabel={sendLabel}
+              onSend={send}
+              onStop={onStop}
+            />
           </div>
         </div>
       </div>

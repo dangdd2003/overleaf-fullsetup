@@ -1647,12 +1647,14 @@ export class AiAssistRunManager {
           }
           if (notices.length) result = withNotice(result, notices.join(' '))
 
+          const currentMode = this.activeRuns.get(runId)?.mode || liveMode
           await emitEvent({
             type: 'toolCallFinished',
             id: call.id,
             name: call.name,
             result,
             isError,
+            mode: currentMode,
           })
 
           if (isFailed) {

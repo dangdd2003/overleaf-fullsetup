@@ -194,9 +194,10 @@ describe('the error panel renders activity like the main chat', function () {
   })
 
   it('exposes the thought process when the row is expanded', function () {
-    renderPanel()
+    const { container } = renderPanel()
 
     fireEvent.click(screen.getByText(/Read 1 file/))
+    fireEvent.click(container.querySelector('.ai-assist-thinking-header')!)
 
     expect(screen.getByText(/The preamble never loads graphicx/)).to.exist
   })

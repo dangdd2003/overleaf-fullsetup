@@ -1,4 +1,5 @@
 import {
+  ComponentType,
   CSSProperties,
   FC,
   memo,
@@ -8,6 +9,7 @@ import {
   useState,
 } from 'react'
 import ReactDOM from 'react-dom'
+import importOverleafModules from '../../../../macros/import-overleaf-module.macro'
 import MaterialIcon from '@/shared/components/material-icon'
 import { useTranslation } from 'react-i18next'
 import {
@@ -42,8 +44,34 @@ const EDIT_MODE_SWITCH_WIDGET_HEIGHT = 40
 const CM_LINE_RIGHT_PADDING = 8
 const TOOLTIP_SHOW_DELAY = 120
 
+type ReviewTooltipMenuAction = {
+  import: { default: ComponentType; isAvailable?: () => boolean }
+  path: string
+}
+
+// Extra rows from modules, shown under "Add comment". Each module decides at
+// runtime whether its row exists via its `isAvailable` export.
+const reviewTooltipMenuActions = importOverleafModules(
+  'reviewTooltipMenuActions'
+) as ReviewTooltipMenuAction[]
+
+function availableReviewTooltipMenuActions() {
+  return reviewTooltipMenuActions.filter(
+    ({ import: { isAvailable } }) => isAvailable?.() ?? true
+  )
+}
+
+/** Whether the menu has anything to show even when review features are off. */
+export function hasReviewTooltipMenuActions() {
+  return reviewTooltipMenuActions.some(
+    ({ import: { isAvailable } }) => isAvailable?.() ?? true
+  )
+}
+
 // TODO remove when `writefull-toolbar-migration` fully rolled out
-const ReviewTooltipMenu: FC = () => {
+const ReviewTooltipMenu: FC<{ reviewFeaturesVisible?: boolean }> = ({
+  reviewFeaturesVisible = true,
+}) => {
   const state = useCodeMirrorStateContext()
   const view = useCodeMirrorViewContext()
   const permissions = usePermissionsContext()
@@ -52,6 +80,9 @@ const ReviewTooltipMenu: FC = () => {
   const { openReviewPanel } = useReviewPanelLayout()
   const tooltipState = state.field(reviewTooltipField, false)
   const previousTooltipState = usePreviousValue(tooltipState)
+  const actions = useMemo(availableReviewTooltipMenuActions, [])
+  const canComment = reviewFeaturesVisible && permissions.comment
+  const hasContent = canComment || actions.length > 0
 
   useEffect(() => {
     if (tooltipState !== null && previousTooltipState === null) {
@@ -60,7 +91,7 @@ const ReviewTooltipMenu: FC = () => {
   }, [tooltipState, previousTooltipState])
 
   useEffect(() => {
-    if (!show || !tooltipState || !permissions.comment) {
+    if (!show || !tooltipState || !hasContent) {
       return
     }
     const handleMouseDown = (event: MouseEvent) => {
@@ -78,10 +109,10 @@ const ReviewTooltipMenu: FC = () => {
     return () => {
       document.removeEventListener('mousedown', handleMouseDown)
     }
-  }, [show, tooltipState, permissions.comment, view])
+  }, [show, tooltipState, hasContent, view])
 
   const addComment = useCallback(() => {
-    if (!permissions.comment) {
+    if (!canComment) {
       return
     }
 
@@ -110,11 +141,11 @@ const ReviewTooltipMenu: FC = () => {
       effects,
     })
     setShow(false)
-  }, [view, permissions.comment, openReviewPanel, setView])
+  }, [view, canComment, openReviewPanel, setView])
 
   useEventListener('add-new-review-comment', addComment)
 
-  if (!permissions.comment || !show || !tooltipState) {
+  if (!hasContent || !show || !tooltipState) {
     return null
   }
 
@@ -125,13 +156,21 @@ const ReviewTooltipMenu: FC = () => {
   }
 
   return ReactDOM.createPortal(
-    <ReviewTooltipMenuContent onAddComment={addComment} />,
+    <ReviewTooltipMenuContent
+      onAddComment={addComment}
+      canComment={canComment}
+      actions={actions}
+    />,
     tooltipView.dom
   )
 }
 
-const ReviewTooltipMenuContent = memo<{ onAddComment: () => void }>(
-  function ReviewTooltipMenuContent({ onAddComment }) {
+const ReviewTooltipMenuContent = memo<{
+  onAddComment: () => void
+  canComment: boolean
+  actions: ReviewTooltipMenuAction[]
+}>(
+  function ReviewTooltipMenuContent({ onAddComment, canComment, actions }) {
     const { t } = useTranslation()
     const view = useCodeMirrorViewContext()
     const state = useCodeMirrorStateContext()
@@ -208,7 +247,7 @@ const ReviewTooltipMenuContent = memo<{ onAddComment: () => void }>(
     ])
 
     const showChangesButtons =
-      permissions.write && changesInSelection.length > 0
+      canComment && permissions.write && changesInSelection.length > 0
 
     useEffect(() => {
       view.requestMeasure({
@@ -254,13 +293,8 @@ const ReviewTooltipMenuContent = memo<{ onAddComment: () => void }>(
       }
     }, [])
 
-    return (
-      <div
-        className={classNames('review-tooltip-menu', {
-          'review-tooltip-menu-visible': visible,
-        })}
-        style={tooltipStyle}
-      >
+    const reviewRow = canComment ? (
+      <>
         <button
           className="review-tooltip-menu-button review-tooltip-add-comment-button"
           onClick={handleAddCommentClick}
@@ -297,6 +331,29 @@ const ReviewTooltipMenuContent = memo<{ onAddComment: () => void }>(
                 <MaterialIcon type="clear" />
               </button>
             </OLTooltip>
+          </>
+        )}
+      </>
+    ) : null
+
+    return (
+      <div
+        className={classNames('review-tooltip-menu', {
+          'review-tooltip-menu-visible': visible,
+          'review-tooltip-menu-stacked': actions.length > 0,
+        })}
+        style={tooltipStyle}
+      >
+        {actions.length === 0 ? (
+          reviewRow
+        ) : (
+          <>
+            {reviewRow && (
+              <div className="review-tooltip-menu-row">{reviewRow}</div>
+            )}
+            {actions.map(({ import: { default: Action }, path }) => (
+              <Action key={path} />
+            ))}
           </>
         )}
       </div>

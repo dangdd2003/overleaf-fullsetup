@@ -28,6 +28,7 @@ import {
   WEB_TOOL_SPECS,
   extractMcpSearchResults,
   parseTextSearchResults,
+  clearMcpEndpointCache,
 } from '../../../app/src/AiAssistWebTools.mjs'
 import { renderToolResult } from '../../../app/src/AiAssistToolRender.mjs'
 import { webError } from '../../../app/src/web-fetch/util.mjs'
@@ -69,6 +70,7 @@ describe('AiAssistWebTools', function () {
 
   beforeEach(function () {
     clearWebDocumentCache()
+    clearMcpEndpointCache()
   })
 
   describe('normalizeWebSearchSettings', function () {
@@ -2865,14 +2867,455 @@ describe('AiAssistWebTools', function () {
       })
     })
 
+    describe('Parallel', function () {
+      const parallelOnly = {
+        providers: {
+          parallel: { enabled: true, apiKeys: ['parallel-key-1', 'parallel-key-2'] },
+        },
+      }
+
+      it('keeps valid search and read options and drops invalid values', function () {
+        const settings = normalizeWebSearchSettings({
+          providers: {
+            parallel: {
+              enabled: true,
+              apiKeys: [' parallel-1 ', ''],
+              baseUrl: 'https://custom-parallel.lan',
+              search: {
+                maxResults: 50,
+                mode: 'advanced',
+                location: 'US',
+                includeDomains: ['https://arxiv.org/abs', 'invalid-domain'],
+                excludeDomains: ['spam.com'],
+                afterDate: '2026-01-01',
+                maxCharsTotal: 15000,
+                maxCharsPerResult: 3000,
+                maxAgeSeconds: 3600,
+                timeoutSeconds: 25,
+                disableCacheFallback: true,
+              },
+              read: {
+                fullContent: false,
+                maxCharsPerResult: 4000,
+                maxAgeSeconds: 7200,
+                timeoutSeconds: 30,
+                disableCacheFallback: true,
+              },
+            },
+          },
+          primaryProvider: 'parallel',
+        })
+        expect(settings.type).to.equal('parallel')
+        expect(settings.primaryProvider).to.equal('parallel')
+        expect(settings.providers.parallel).to.deep.equal({
+          enabled: true,
+          apiKeys: ['parallel-1'],
+          baseUrl: 'https://custom-parallel.lan',
+          search: {
+            maxResults: 20,
+            mode: 'advanced',
+            location: 'us',
+            includeDomains: ['arxiv.org'],
+            excludeDomains: ['spam.com'],
+            afterDate: '2026-01-01',
+            maxCharsTotal: 15000,
+            maxCharsPerResult: 3000,
+            maxAgeSeconds: 3600,
+            timeoutSeconds: 25,
+            disableCacheFallback: true,
+          },
+          read: {
+            fullContent: false,
+            maxCharsPerResult: 4000,
+            maxAgeSeconds: 7200,
+            timeoutSeconds: 30,
+            disableCacheFallback: true,
+          },
+        })
+        expect(buildEndpointPool(settings).map(e => e.id)).to.deep.equal([
+          'parallel:0',
+        ])
+        expect(buildEndpointPool(settings)[0].baseUrl).to.equal(
+          'https://custom-parallel.lan'
+        )
+      })
+
+      it('searches Parallel API with default count and proper x-api-key header', async function () {
+        let request = null
+        const fetchFn = sinon.stub().callsFake(async (url, init) => {
+          request = { url, init }
+          return jsonResponse({
+            search_id: 'search_1',
+            results: [
+              {
+                title: 'siunitx Package',
+                url: 'https://ctan.org/pkg/siunitx',
+                excerpts: ['A comprehensive (SI) units package for LaTeX.'],
+                publish_date: '2026-03-01T00:00:00.000Z',
+              },
+            ],
+          })
+        })
+
+        const tools = new AiAssistWebTools(parallelOnly, { fetchFn })
+        const result = await tools.search(
+          { query: 'siunitx latex' },
+          { useCache: false }
+        )
+
+        expect(request.url).to.equal('https://api.parallel.ai/v1/search')
+        expect(request.init.headers['x-api-key']).to.equal('parallel-key-1')
+        expect(request.init.headers['Content-Type']).to.equal(
+          'application/json'
+        )
+        const body = JSON.parse(request.init.body)
+        expect(body).to.deep.equal({
+          search_queries: ['siunitx latex'],
+          objective: 'siunitx latex',
+          advanced_settings: {
+            max_results: 10,
+          },
+        })
+        expect(result.provider).to.equal('parallel')
+        expect(result.results).to.have.lengthOf(1)
+        expect(result.results[0]).to.deep.equal({
+          source: 1,
+          title: 'siunitx Package',
+          url: 'https://ctan.org/pkg/siunitx',
+          snippet: 'A comprehensive (SI) units package for LaTeX.',
+          published: '2026-03-01',
+        })
+      })
+
+      it('passes configured search options and policies in advanced_settings', async function () {
+        let request = null
+        const fetchFn = sinon.stub().callsFake(async (url, init) => {
+          request = { url, init }
+          return jsonResponse({
+            search_id: 'search_2',
+            results: [
+              {
+                title: 'Quantum Computing Research',
+                url: 'https://arxiv.org/abs/2601.99999',
+                excerpts: ['Quantum error correction excerpt.'],
+                publish_date: '2026-01-20T12:00:00.000Z',
+              },
+            ],
+          })
+        })
+
+        const tools = new AiAssistWebTools(
+          normalizeWebSearchSettings({
+            providers: {
+              parallel: {
+                enabled: true,
+                apiKeys: ['parallel-key-1'],
+                search: {
+                  maxResults: 15,
+                  mode: 'turbo',
+                  location: 'us',
+                  includeDomains: ['arxiv.org'],
+                  excludeDomains: ['spam.com'],
+                  afterDate: '2026-01-01',
+                  maxCharsTotal: 10000,
+                  maxCharsPerResult: 2000,
+                  maxAgeSeconds: 3600,
+                  timeoutSeconds: 20,
+                  disableCacheFallback: true,
+                },
+              },
+            },
+          }),
+          { fetchFn }
+        )
+
+        const result = await tools.search(
+          { query: 'quantum error correction' },
+          { useCache: false }
+        )
+        const body = JSON.parse(request.init.body)
+        expect(body).to.deep.equal({
+          search_queries: ['quantum error correction'],
+          objective: 'quantum error correction',
+          mode: 'turbo',
+          max_chars_total: 10000,
+          advanced_settings: {
+            max_results: 15,
+            location: 'us',
+            source_policy: {
+              include_domains: ['arxiv.org'],
+              exclude_domains: ['spam.com'],
+              after_date: '2026-01-01',
+            },
+            fetch_policy: {
+              max_age_seconds: 3600,
+              timeout_seconds: 20,
+              disable_cache_fallback: true,
+            },
+            excerpt_settings: {
+              max_chars_per_result: 2000,
+            },
+          },
+        })
+        expect(result.results[0].snippet).to.equal(
+          'Quantum error correction excerpt.'
+        )
+        expect(result.results[0].published).to.equal('2026-01-20')
+      })
+
+      it('reads pages via Parallel extract API after direct fetch is refused', async function () {
+        let request = null
+        const fetchFn = sinon.stub().callsFake(async (url, init) => {
+          request = { url, init }
+          return jsonResponse({
+            extract_id: 'ext_1',
+            results: [
+              {
+                url: 'https://example.com/protected-page',
+                title: 'Protected Page',
+                full_content: '# Protected\n\nContent retrieved via Parallel.',
+                publish_date: '2026-02-10T00:00:00.000Z',
+              },
+            ],
+          })
+        })
+
+        const tools = new AiAssistWebTools(parallelOnly, {
+          fetchFn,
+          fetchPage: refusingSite(),
+        })
+        const result = await tools.execute('web_fetch', {
+          url: 'https://example.com/protected-page',
+        })
+
+        expect(request.url).to.equal('https://api.parallel.ai/v1/extract')
+        expect(request.init.headers['x-api-key']).to.equal('parallel-key-1')
+        expect(result.title).to.equal('Protected Page')
+        expect(result.content).to.include('Content retrieved via Parallel.')
+        expect(result.via).to.equal('parallel')
+      })
+
+      it('runs testWebSearch successfully on Parallel provider in multi and single provider format', async function () {
+        const calls = []
+        const fetchFn = sinon.stub().callsFake(async (url, init) => {
+          calls.push({ url, init })
+          return jsonResponse({
+            search_id: 'test_search',
+            results: [
+              {
+                title: 'LaTeX Overview',
+                url: 'https://www.latex-project.org/',
+                excerpts: ['LaTeX is a high-quality typesetting system.'],
+              },
+            ],
+          })
+        })
+
+        const multiOutcome = await testWebSearch(
+          normalizeWebSearchSettings({
+            providers: {
+              parallel: { enabled: true, apiKeys: ['parallel-key-test'] },
+            },
+          }),
+          { fetchFn }
+        )
+        expect(multiOutcome.provider).to.equal('parallel')
+        expect(multiOutcome.resultCount).to.equal(1)
+        expect(multiOutcome.activeEndpoints).to.equal(1)
+
+        // Verify the exact probe request structure
+        expect(calls[0].url).to.equal('https://api.parallel.ai/v1/search')
+        expect(calls[0].init.headers['x-api-key']).to.equal('parallel-key-test')
+        expect(calls[0].init.headers.Authorization).to.be.undefined
+        const probeBody = JSON.parse(calls[0].init.body)
+        expect(probeBody).to.deep.equal({
+          search_queries: ['ping'],
+          objective: 'ping',
+          mode: 'turbo',
+          advanced_settings: {
+            max_results: 1,
+          },
+        })
+        expect(probeBody.query).to.be.undefined
+
+        const singleOutcome = await testWebSearch(
+          normalizeWebSearchSettings({
+            type: 'parallel',
+            apiKey: 'parallel-key-test',
+          }),
+          { fetchFn }
+        )
+        expect(singleOutcome.provider).to.equal('parallel')
+        expect(singleOutcome.resultCount).to.equal(1)
+        expect(singleOutcome.activeEndpoints).to.equal(1)
+      })
+
+      it('formats upstream HTTP 422 validation errors with field details and no trailing double periods', async function () {
+        const fetchFn = sinon.stub().callsFake(async () => {
+          return new Response(
+            JSON.stringify({
+              detail: [
+                {
+                  loc: ['body', 'search_queries'],
+                  msg: 'field required',
+                  type: 'value_error.missing',
+                },
+              ],
+              message: 'Request validation error.',
+            }),
+            {
+              status: 422,
+              headers: { 'Content-Type': 'application/json' },
+            }
+          )
+        })
+
+        const outcome = await testWebSearch(
+          normalizeWebSearchSettings({
+            providers: {
+              parallel: { enabled: true, apiKeys: ['test-key'] },
+            },
+          }),
+          { fetchFn }
+        )
+        expect(outcome.anySuccess).to.be.false
+        const res = outcome.results.find(r => r.provider === 'parallel')
+        expect(res.ok).to.be.false
+        expect(res.error).to.include('Parallel returned HTTP 422')
+        expect(res.error).to.include('Request validation error')
+        expect(res.error).to.include('search_queries: field required')
+        expect(res.error).to.not.include('..')
+      })
+    })
+
+    describe('TinyFish', () => {
+      it('normalizes single and multi-provider TinyFish settings', () => {
+        const single = normalizeWebSearchSettings({
+          type: 'tinyfish',
+          apiKey: 'tiny-key-1',
+          search: {
+            domainType: 'research_paper',
+            pubYearMin: 2020,
+            pubYearMax: 2024,
+            includeDomains: ['arxiv.org'],
+          },
+        })
+        expect(single.type).to.equal('tinyfish')
+        expect(single.apiKey).to.equal('tiny-key-1')
+        expect(single.search.domainType).to.equal('research_paper')
+        expect(single.search.pubYearMin).to.equal(2020)
+        expect(single.search.includeDomains).to.deep.equal(['arxiv.org'])
+
+        const multi = normalizeWebSearchSettings({
+          providers: {
+            tinyfish: {
+              enabled: true,
+              apiKeys: ['tiny-key-2'],
+              search: {
+                location: 'US',
+                language: 'en',
+              },
+            },
+          },
+        })
+        expect(multi.providers.tinyfish.apiKeys).to.deep.equal(['tiny-key-2'])
+        expect(multi.providers.tinyfish.search.location).to.equal('US')
+        expect(multi.providers.tinyfish.search.language).to.equal('en')
+      })
+
+      it('searches TinyFish API with configured query parameters and X-API-Key header', async function () {
+        let request = null
+        const fetchFn = sinon.stub().callsFake(async (url, init) => {
+          request = { url, init }
+          return jsonResponse({
+            results: [
+              {
+                title: 'Quantum Teleportation Paper',
+                url: 'https://arxiv.org/abs/2001.00001',
+                snippet: 'Experimental realization of quantum teleportation.',
+                year: 2021,
+              },
+            ],
+          })
+        })
+
+        const tools = new AiAssistWebTools(
+          {
+            providers: {
+              tinyfish: {
+                enabled: true,
+                apiKeys: ['tiny-key-test'],
+                search: {
+                  domainType: 'research_paper',
+                  pubYearMin: 2020,
+                  includeDomains: ['arxiv.org'],
+                },
+              },
+            },
+          },
+          { fetchFn }
+        )
+
+        const result = await tools.search({ query: 'quantum' }, { useCache: false })
+        expect(request.init.headers['X-API-Key']).to.equal('tiny-key-test')
+        const parsedUrl = new URL(request.url)
+        expect(parsedUrl.searchParams.get('query')).to.equal('quantum')
+        expect(parsedUrl.searchParams.get('domain_type')).to.equal('research_paper')
+        expect(parsedUrl.searchParams.get('pub_year_min')).to.equal('2020')
+        expect(parsedUrl.searchParams.get('include_domains')).to.equal('arxiv.org')
+        expect(result.results).to.have.lengthOf(1)
+        expect(result.results[0].title).to.equal('Quantum Teleportation Paper')
+        expect(result.results[0].published).to.equal('2021-01-01')
+      })
+
+      it('runs testWebSearch successfully on TinyFish provider in single and multi provider format', async function () {
+        const fetchFn = sinon.stub().callsFake(async (url, init) => {
+          return jsonResponse({
+            results: [
+              {
+                title: 'Overleaf Documentation',
+                url: 'https://www.overleaf.com/learn',
+                snippet: 'Learn LaTeX with Overleaf.',
+              },
+            ],
+          })
+        })
+
+        const singleOutcome = await testWebSearch(
+          normalizeWebSearchSettings({
+            type: 'tinyfish',
+            apiKey: 'tiny-key-1',
+          }),
+          { fetchFn }
+        )
+        expect(singleOutcome.provider).to.equal('tinyfish')
+        expect(singleOutcome.resultCount).to.equal(1)
+        expect(singleOutcome.activeEndpoints).to.equal(1)
+
+        const multiOutcome = await testWebSearch(
+          normalizeWebSearchSettings({
+            providers: {
+              tinyfish: { enabled: true, apiKeys: ['tiny-key-2'] },
+            },
+          }),
+          { fetchFn }
+        )
+        expect(multiOutcome.provider).to.equal('tinyfish')
+        expect(multiOutcome.resultCount).to.equal(1)
+        expect(multiOutcome.activeEndpoints).to.equal(1)
+      })
+    })
+
     describe('mcp provider settings and execution', () => {
-      it('normalizes multi-provider mcp settings with serverUrls and headers', () => {
+      it('normalizes multi-provider mcp settings with serverUrls, headers, toolName, and queryParam', () => {
         const raw = {
           providers: {
             mcp: {
               enabled: true,
               serverUrls: ['https://api.agentshop247.com/api/mcp'],
               headers: [{ key: 'Authorization', value: 'Bearer as_key_123' }],
+              toolName: 'brave_web_search',
+              queryParam: 'query',
             },
           },
         }
@@ -2881,16 +3324,20 @@ describe('AiAssistWebTools', function () {
           enabled: true,
           serverUrls: ['https://api.agentshop247.com/api/mcp'],
           headers: [{ key: 'Authorization', value: 'Bearer as_key_123' }],
+          toolName: 'brave_web_search',
+          queryParam: 'query',
         })
       })
 
-      it('builds endpoint pool for mcp provider with custom headers', () => {
+      it('builds endpoint pool for mcp provider with custom headers, toolName, and queryParam', () => {
         const settings = {
           providers: {
             mcp: {
               enabled: true,
               serverUrls: ['https://api.agentshop247.com/api/mcp'],
               headers: [{ key: 'Authorization', value: 'Bearer as_key_123' }],
+              toolName: 'brave_web_search',
+              queryParam: 'query',
             },
           },
         }
@@ -2900,16 +3347,29 @@ describe('AiAssistWebTools', function () {
           provider: 'mcp',
           baseUrl: 'https://api.agentshop247.com/api/mcp',
           headers: [{ key: 'Authorization', value: 'Bearer as_key_123' }],
+          toolName: 'brave_web_search',
+          queryParam: 'query',
         })
       })
 
-      it('executes POST request with strict { q: query } body and custom headers', async () => {
+      it('executes MCP JSON-RPC 2.0 tools/call request with custom headers', async () => {
         let capturedRequest = null
         const fetchFn = async (url, init) => {
           capturedRequest = { url, init }
           return new Response(
-            `1. Result Title\nhttps://example.com/res\nResult snippet text.`,
-            { status: 200, headers: { 'Content-Type': 'text/plain' } }
+            JSON.stringify({
+              jsonrpc: '2.0',
+              id: 1,
+              result: {
+                content: [
+                  {
+                    type: 'text',
+                    text: `1. Result Title\nhttps://example.com/res\nResult snippet text.`,
+                  },
+                ],
+              },
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
           )
         }
 
@@ -2920,6 +3380,8 @@ describe('AiAssistWebTools', function () {
                 enabled: true,
                 serverUrls: ['https://api.agentshop247.com/api/mcp'],
                 headers: [{ key: 'Authorization', value: 'Bearer as_key_123' }],
+                toolName: 'brave_web_search',
+                queryParam: 'query',
               },
             },
           },
@@ -2931,11 +3393,224 @@ describe('AiAssistWebTools', function () {
         expect(capturedRequest.init.method).to.equal('POST')
         expect(capturedRequest.init.headers['Authorization']).to.equal('Bearer as_key_123')
         expect(capturedRequest.init.headers['Content-Type']).to.equal('application/json')
-        expect(capturedRequest.init.headers['Accept']).to.equal('application/json, text/plain, */*')
-        expect(JSON.parse(capturedRequest.init.body)).to.deep.equal({ q: 'To Lam latest news' })
+        const body = JSON.parse(capturedRequest.init.body)
+        expect(body.jsonrpc).to.equal('2.0')
+        expect(body.method).to.equal('tools/call')
+        expect(body.params.name).to.equal('brave_web_search')
+        expect(body.params.arguments).to.deep.equal({ query: 'To Lam latest news' })
         expect(res.results).to.have.lengthOf(1)
         expect(res.results[0].title).to.equal('Result Title')
         expect(res.results[0].url).to.equal('https://example.com/res')
+      })
+
+      it('auto-discovers tool and argument schema via tools/list when tool not found initially', async () => {
+        const calls = []
+        const fetchFn = async (url, init) => {
+          const body = JSON.parse(init.body)
+          calls.push({ method: body.method, body })
+
+          if (body.method === 'tools/call' && body.params?.name === 'search') {
+            // First call with default tool name returns tool not found
+            return new Response(
+              JSON.stringify({
+                jsonrpc: '2.0',
+                id: body.id,
+                error: { code: -32601, message: "Tool 'search' not found" },
+              }),
+              { status: 200, headers: { 'Content-Type': 'application/json' } }
+            )
+          }
+
+          if (body.method === 'tools/list') {
+            return new Response(
+              JSON.stringify({
+                jsonrpc: '2.0',
+                id: body.id,
+                result: {
+                  tools: [
+                    {
+                      name: 'brave_web_search',
+                      description: 'Search the web using Brave',
+                      inputSchema: {
+                        type: 'object',
+                        properties: { query: { type: 'string' } },
+                        required: ['query'],
+                      },
+                    },
+                  ],
+                },
+              }),
+              { status: 200, headers: { 'Content-Type': 'application/json' } }
+            )
+          }
+
+          if (body.method === 'tools/call' && body.params?.name === 'brave_web_search') {
+            return new Response(
+              JSON.stringify({
+                jsonrpc: '2.0',
+                id: body.id,
+                result: {
+                  content: [
+                    {
+                      type: 'text',
+                      text: `1. Discovered Hit\nhttps://example.com/discovered\nDiscovered text.`,
+                    },
+                  ],
+                },
+              }),
+              { status: 200, headers: { 'Content-Type': 'application/json' } }
+            )
+          }
+
+          return new Response('{}', { status: 200 })
+        }
+
+        const tools = new AiAssistWebTools(
+          {
+            providers: {
+              mcp: {
+                enabled: true,
+                serverUrls: ['https://mcp-discovery.lan/mcp'],
+              },
+            },
+          },
+          { fetchFn }
+        )
+
+        const res = await tools.search({ query: 'test query' }, { useCache: false })
+        expect(res.results).to.have.lengthOf(1)
+        expect(res.results[0].title).to.equal('Discovered Hit')
+        expect(calls.map(c => c.method)).to.deep.equal(['tools/call', 'tools/list', 'tools/call'])
+        expect(calls[2].body.params.name).to.equal('brave_web_search')
+        expect(calls[2].body.params.arguments).to.deep.equal({ query: 'test query' })
+      })
+
+      it('recovers automatically via initialize handshake when server returns -32002', async () => {
+        const calls = []
+        let initialized = false
+        const fetchFn = async (url, init) => {
+          const body = JSON.parse(init.body)
+          calls.push({ method: body.method, body })
+
+          if (body.method === 'initialize') {
+            initialized = true
+            return new Response(
+              JSON.stringify({
+                jsonrpc: '2.0',
+                id: body.id,
+                result: {
+                  protocolVersion: '2024-11-05',
+                  capabilities: { tools: {} },
+                  serverInfo: { name: 'test-mcp', version: '1.0' },
+                },
+              }),
+              { status: 200, headers: { 'Content-Type': 'application/json' } }
+            )
+          }
+
+          if (body.method === 'notifications/initialized') {
+            return new Response('', { status: 200 })
+          }
+
+          if (body.method === 'tools/call') {
+            if (!initialized) {
+              return new Response(
+                JSON.stringify({
+                  jsonrpc: '2.0',
+                  id: body.id,
+                  error: { code: -32002, message: 'Server not initialized' },
+                }),
+                { status: 200, headers: { 'Content-Type': 'application/json' } }
+              )
+            }
+            return new Response(
+              JSON.stringify({
+                jsonrpc: '2.0',
+                id: body.id,
+                result: {
+                  content: [
+                    {
+                      type: 'text',
+                      text: `1. Initialized Result\nhttps://example.com/init\nInit snippet.`,
+                    },
+                  ],
+                },
+              }),
+              { status: 200, headers: { 'Content-Type': 'application/json' } }
+            )
+          }
+
+          return new Response('{}', { status: 200 })
+        }
+
+        const tools = new AiAssistWebTools(
+          {
+            providers: {
+              mcp: {
+                enabled: true,
+                serverUrls: ['https://mcp-stateful.lan/mcp'],
+              },
+            },
+          },
+          { fetchFn }
+        )
+
+        const res = await tools.search({ query: 'stateful test' }, { useCache: false })
+        expect(res.results).to.have.lengthOf(1)
+        expect(res.results[0].title).to.equal('Initialized Result')
+        expect(calls.map(c => c.method)).to.deep.equal([
+          'tools/call',
+          'initialize',
+          'notifications/initialized',
+          'tools/call',
+        ])
+      })
+
+      it('falls back to legacy { q: query } webhook when endpoint rejects JSON-RPC with HTTP 400', async () => {
+        let legacyCalled = false
+        const fetchFn = async (url, init) => {
+          const body = JSON.parse(init.body)
+          if (body.jsonrpc === '2.0') {
+            // Rejects JSON-RPC as invalid custom webhook format
+            return new Response(
+              JSON.stringify({ error: "Missing required query field 'q'" }),
+              { status: 400, headers: { 'Content-Type': 'application/json' } }
+            )
+          }
+          if (body.q) {
+            legacyCalled = true
+            return new Response(
+              JSON.stringify({
+                results: [
+                  {
+                    title: 'Legacy Webhook Result',
+                    url: 'https://example.com/legacy',
+                    snippet: 'Legacy response',
+                  },
+                ],
+              }),
+              { status: 200, headers: { 'Content-Type': 'application/json' } }
+            )
+          }
+          return new Response('{}', { status: 400 })
+        }
+
+        const tools = new AiAssistWebTools(
+          {
+            providers: {
+              mcp: {
+                enabled: true,
+                serverUrls: ['https://legacy-webhook.lan/search'],
+              },
+            },
+          },
+          { fetchFn }
+        )
+
+        const res = await tools.search({ query: 'fallback test' }, { useCache: false })
+        expect(legacyCalled).to.be.true
+        expect(res.results).to.have.lengthOf(1)
+        expect(res.results[0].title).to.equal('Legacy Webhook Result')
       })
 
       it('handles JSON response from MCP search', async () => {
@@ -3255,6 +3930,101 @@ describe('AiAssistWebTools', function () {
       expect(thrown.message).to.include('All web search endpoints failed')
       expect(thrown.message).to.include('searxng:0')
       expect(thrown.message).to.include('searxng:1')
+    })
+
+    describe('testWebSearch parallel health checks', function () {
+      it('runs parallel health checks across all enabled providers testing only the first key', async function () {
+        const fetchCalls = []
+        const fetchFn = sinon.stub().callsFake(async (url, init) => {
+          fetchCalls.push({ url: String(url), headers: init?.headers })
+          if (String(url).includes('tavily.com/usage')) {
+            return jsonResponse({ plan: 'pro', usage: 10 })
+          }
+          if (String(url).includes('exa.ai/monitors')) {
+            return jsonResponse({ error: 'Unauthorized' }, 401)
+          }
+          return jsonResponse({}, 404)
+        })
+
+        const outcome = await testWebSearch(
+          normalizeWebSearchSettings({
+            providers: {
+              tavily: { enabled: true, apiKeys: ['tavily-key-1', 'tavily-key-2'] },
+              exa: { enabled: true, apiKeys: ['exa-key-1'] },
+            },
+          }),
+          { fetchFn }
+        )
+
+        expect(outcome.anySuccess).to.be.true
+        expect(outcome.results).to.have.length(2)
+        expect(fetchCalls.filter(c => c.url.includes('tavily'))).to.have.length(1)
+        const tavilyRes = outcome.results.find(r => r.provider === 'tavily')
+        const exaRes = outcome.results.find(r => r.provider === 'exa')
+        expect(tavilyRes.ok).to.be.true
+        expect(exaRes.ok).to.be.false
+        expect(exaRes.error).to.include('401')
+      })
+
+      it('returns anySuccess: false and all failures when all tested providers fail', async function () {
+        const fetchFn = sinon.stub().callsFake(async (url, init) => {
+          return jsonResponse({ error: 'Unauthorized' }, 401)
+        })
+
+        const outcome = await testWebSearch(
+          normalizeWebSearchSettings({
+            providers: {
+              tavily: { enabled: true, apiKeys: ['bad-tavily'] },
+              exa: { enabled: true, apiKeys: ['bad-exa'] },
+            },
+          }),
+          { fetchFn }
+        )
+
+        expect(outcome.anySuccess).to.be.false
+        expect(outcome.results).to.have.length(2)
+        expect(outcome.results.every(r => !r.ok)).to.be.true
+      })
+
+      it('probes SearXNG, Jina, and MCP with their respective endpoints and headers', async function () {
+        const calls = []
+        const fetchFn = sinon.stub().callsFake(async (url, init) => {
+          calls.push({ url: String(url), headers: init?.headers, method: init?.method })
+          if (String(url).includes('searx.lan/healthz')) {
+            return new Response('OK', { status: 200 })
+          }
+          if (String(url).includes('s.jina.ai')) {
+            return new Response('', { status: 200 })
+          }
+          if (String(url).includes('mcp.lan/search')) {
+            return new Response(
+              `1. Title\nhttps://example.com\nSnippet`,
+              { status: 200, headers: { 'Content-Type': 'text/plain' } }
+            )
+          }
+          return jsonResponse({}, 404)
+        })
+
+        const outcome = await testWebSearch(
+          normalizeWebSearchSettings({
+            providers: {
+              searxng: { enabled: true, baseUrls: ['http://searx.lan'] },
+              jina: { enabled: true, apiKeys: ['jina-test-key'] },
+              mcp: { enabled: true, serverUrls: ['http://mcp.lan/search'] },
+            },
+          }),
+          { fetchFn }
+        )
+
+        expect(outcome.anySuccess).to.be.true
+        expect(outcome.results).to.have.length(3)
+        expect(outcome.results.every(r => r.ok)).to.be.true
+
+        const jinaCall = calls.find(c => c.url.includes('s.jina.ai'))
+        expect(jinaCall.headers['X-Respond-With']).to.equal('no-content')
+        const searxCall = calls.find(c => c.url.includes('/healthz'))
+        expect(searxCall).to.exist
+      })
     })
   })
 })

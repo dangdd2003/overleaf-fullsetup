@@ -14,6 +14,9 @@ import OLListGroupItem from '@/shared/components/ol/ol-list-group-item'
 import sparkleWhite from '@/shared/svgs/sparkle-small-white.svg'
 import sparkle from '@/shared/svgs/ai-sparkle-text.svg'
 import getMeta from '@/utils/meta'
+import { findGenerator } from './ai-generators'
+
+export const findMathGenerator = () => findGenerator('math')
 
 export const MathDropdown = memo(function MathDropdown() {
   const { t } = useTranslation()
@@ -21,7 +24,10 @@ export const MathDropdown = memo(function MathDropdown() {
   const { writefullInstance } = useEditorContext()
   const showAiFeaturesDisabled = getMeta('ol-showAiFeaturesDisabled')
 
-  const renderAIButton = writefullInstance || showAiFeaturesDisabled
+  const generator = findGenerator('math')
+
+  const renderAIButton =
+    writefullInstance || showAiFeaturesDisabled || generator
 
   return (
     <ToolbarButtonMenu
@@ -40,7 +46,11 @@ export const MathDropdown = memo(function MathDropdown() {
             disabled={showAiFeaturesDisabled}
             disabledReason={t('ai_features_unavailable_on_this_project')}
             onClick={() => {
-              writefullInstance?.openEquationGenerator()
+              if (writefullInstance) {
+                writefullInstance.openEquationGenerator()
+              } else {
+                generator?.open(view)
+              }
             }}
           >
             <img

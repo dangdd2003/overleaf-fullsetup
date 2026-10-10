@@ -7,6 +7,7 @@ import {
   ProviderErrorCode,
   ProviderModel,
   ProviderSettings,
+  WebSearchProviderType,
   WebSearchSettings,
 } from './types'
 
@@ -58,15 +59,27 @@ async function post(
   return response
 }
 
-/** Runs one small search through the server, for the settings form. */
-export async function testWebSearch(
-  webSearchSettings: WebSearchSettings
-): Promise<{
+export interface WebSearchProviderTestResult {
+  provider: WebSearchProviderType
+  ok: boolean
+  latencyMs?: number
+  error?: string
+  details?: string
+}
+
+export interface WebSearchTestOutcome {
   latencyMs: number
-  resultCount: number
+  anySuccess: boolean
+  results: WebSearchProviderTestResult[]
   activeEndpoints?: number
   provider?: string
-}> {
+  resultCount?: number
+}
+
+/** Runs parallel health checks across configured search providers. */
+export async function testWebSearch(
+  webSearchSettings: WebSearchSettings
+): Promise<WebSearchTestOutcome> {
   const response = await post('/ai-assist/web-search/test', {
     webSearchSettings,
   })
@@ -136,11 +149,20 @@ export class ServerProviderClient implements ProviderClient {
 
   async *streamChat(request: ChatRequest): AsyncGenerator<ChatChunk> {
     const { signal, ...rest } = request
-    const response = await post(
+    yield* this.streamNdjson(
       '/ai-assist/providers/chat',
       { providerSettings: this.settings, request: rest },
       signal
     )
+  }
+
+  /** Reads the relay's NDJSON reply; an error line throws, a missing `done` is a cut connection. */
+  async *streamNdjson(
+    path: string,
+    body: unknown,
+    signal?: AbortSignal
+  ): AsyncGenerator<ChatChunk> {
+    const response = await post(path, body, signal)
     if (!response.body) {
       throw new ProviderError('providerError', 'The server sent no response.')
     }
@@ -151,7 +173,15 @@ export class ServerProviderClient implements ProviderClient {
 
     const parse = function* (line: string): Generator<ChatChunk> {
       if (!line.trim()) return
-      const chunk = JSON.parse(line)
+      let chunk: any
+      try {
+        chunk = JSON.parse(line)
+      } catch {
+        throw new ProviderError(
+          'network',
+          'The provider stream ended unexpectedly.'
+        )
+      }
       if (chunk.type === 'error') throw toError(chunk.error)
       if (chunk.type === 'done') finished = true
       yield chunk as ChatChunk
@@ -197,5 +227,43 @@ export class ServerProviderClient implements ProviderClient {
         'The provider stream ended unexpectedly.'
       )
     }
+  }
+}
+
+/** A model call from the AI inside the editor: text in, text out, never tools. */
+export type EditorTextRequest = Omit<ChatRequest, 'tools'>
+
+/**
+ * The only client the AI inside the editor (completion, language
+ * suggestions, writing tools, TeXGPT, the table and equation generators)
+ * talks to the model with. Its requests carry no tools and go to the
+ * relay's text-only route, which refuses tools and drops any tool call or
+ * thinking from the reply: these features see the editor's text and
+ * nothing else. The chat panel and Error Assist use `ServerProviderClient`.
+ */
+export class EditorTextClient {
+  private relay: ServerProviderClient
+
+  constructor(
+    private readonly settings: ProviderSettings,
+    private readonly fallbackSettings?: ProviderSettings | null
+  ) {
+    this.relay = new ServerProviderClient(settings)
+  }
+
+  async *streamChat(request: EditorTextRequest): AsyncGenerator<ChatChunk> {
+    // Whatever the caller's object holds, no tools leave this client
+    const { signal, tools: _tools, ...text } = request as ChatRequest
+    yield* this.relay.streamNdjson(
+      '/ai-assist/providers/editor',
+      {
+        providerSettings: this.settings,
+        ...(this.fallbackSettings
+          ? { fallbackProviderSettings: this.fallbackSettings }
+          : {}),
+        request: text,
+      },
+      signal
+    )
   }
 }

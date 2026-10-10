@@ -27,7 +27,14 @@ export type EditRequest = {
 }
 
 export type EditOutcome =
-  | { status: 'applied'; startLine?: number }
+  | {
+      status: 'applied'
+      path?: string
+      startLine?: number
+      endLine?: number
+      newText?: string
+      oldText?: string
+    }
   | { status: 'rejected'; note?: string }
   | { status: 'noMatch'; message?: string }
   | { status: 'ambiguous'; matches: number; message?: string }

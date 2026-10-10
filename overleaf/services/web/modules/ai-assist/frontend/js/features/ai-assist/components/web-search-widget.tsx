@@ -77,6 +77,14 @@ function statusSummary(settings: MultiWebSearchSettings) {
   if (exa?.enabled && exa.apiKeys?.length) {
     providers.push(`Exa (${plural(exa.apiKeys.length, 'API key')})`)
   }
+  const tinyfish = settings.providers?.tinyfish
+  if (tinyfish?.enabled && tinyfish.apiKeys?.length) {
+    providers.push(`TinyFish (${plural(tinyfish.apiKeys.length, 'API key')})`)
+  }
+  const parallel = settings.providers?.parallel
+  if (parallel?.enabled && parallel.apiKeys?.length) {
+    providers.push(`Parallel (${plural(parallel.apiKeys.length, 'API key')})`)
+  }
   const mcp = settings.providers?.mcp
   if (mcp?.enabled && mcp.serverUrls?.length) {
     providers.push(
@@ -101,9 +109,13 @@ function statusSummary(settings: MultiWebSearchSettings) {
                   ? 'LangSearch'
                   : settings.primaryProvider === 'exa'
                     ? 'Exa'
-                    : settings.primaryProvider === 'mcp'
-                      ? 'MCP WebSearch'
-                      : 'SearXNG'
+                    : settings.primaryProvider === 'tinyfish'
+                      ? 'TinyFish'
+                      : settings.primaryProvider === 'parallel'
+                        ? 'Parallel'
+                        : settings.primaryProvider === 'mcp'
+                          ? 'MCP WebSearch'
+                          : 'SearXNG'
   const rotation =
     settings.rotationStrategy === 'provider-priority'
       ? `Searches go to ${primary} first, then the others.`

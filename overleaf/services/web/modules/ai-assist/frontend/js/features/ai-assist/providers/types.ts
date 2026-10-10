@@ -60,6 +60,8 @@ export type WebSearchPrimaryProvider =
   | 'jina'
   | 'langsearch'
   | 'exa'
+  | 'tinyfish'
+  | 'parallel'
   | 'mcp'
 
 export interface McpHeader {
@@ -71,6 +73,8 @@ export interface McpProviderConfig {
   enabled: boolean
   serverUrls: string[]
   headers?: McpHeader[]
+  toolName?: string
+  queryParam?: string
 }
 
 export interface OllamaProviderConfig {
@@ -355,6 +359,77 @@ export interface ExaProviderConfig {
   read?: ExaReadOptions
 }
 
+export type TinyfishDomainType = 'web' | 'news' | 'research_paper'
+
+/** Defaults for TinyFish Search API; a missing one is the API's (US/en, web, page 0). */
+export interface TinyfishSearchOptions {
+  /** 1 to 20; unset asks for 10 (applied client-side, API paginates via page). */
+  maxResults?: number
+  domainType?: TinyfishDomainType
+  /** ISO country code, e.g. US, BR. Blank uses API default/auto-resolve. */
+  location?: string
+  /** Language code, e.g. en, fr. Blank uses API default/auto-resolve. */
+  language?: string
+  includeDomains?: string[]
+  excludeDomains?: string[]
+  /** 1 to 5256000 minutes; mutually exclusive with after/before dates. */
+  recencyMinutes?: number
+  /** YYYY-MM-DD; ignored for research_paper and when recencyMinutes is set. */
+  afterDate?: string
+  /** YYYY-MM-DD; ignored for research_paper and when recencyMinutes is set. */
+  beforeDate?: string
+  /** 0 to 9999; research_paper only. */
+  pubYearMin?: number
+  /** 0 to 9999; research_paper only. */
+  pubYearMax?: number
+}
+
+export interface TinyfishProviderConfig {
+  enabled: boolean
+  apiKeys: string[]
+  /** Optional proxy/mock override; blank uses https://api.search.tinyfish.ai. */
+  baseUrl?: string
+  search?: TinyfishSearchOptions
+}
+
+export type ParallelSearchMode = 'turbo' | 'fast' | 'basic' | 'advanced'
+
+/** Defaults for Parallel's Search API; a missing one is the API's. */
+export interface ParallelSearchOptions {
+  /** 1 to 20; unset asks for 10. */
+  maxResults?: number
+  mode?: ParallelSearchMode
+  /** ISO 3166-1 alpha-2 country code, e.g. 'us', 'gb', 'de', 'jp'. */
+  location?: string
+  includeDomains?: string[]
+  excludeDomains?: string[]
+  /** YYYY-MM-DD RFC 3339 date string. */
+  afterDate?: string
+  maxCharsTotal?: number
+  maxCharsPerResult?: number
+  maxAgeSeconds?: number
+  timeoutSeconds?: number
+  disableCacheFallback?: boolean
+}
+
+/** How Parallel's Extract API reads pages for web_fetch. */
+export interface ParallelExtractOptions {
+  fullContent?: boolean
+  maxCharsPerResult?: number
+  maxAgeSeconds?: number
+  timeoutSeconds?: number
+  disableCacheFallback?: boolean
+}
+
+export interface ParallelProviderConfig {
+  enabled: boolean
+  apiKeys: string[]
+  /** Optional proxy/mock override; blank uses https://api.parallel.ai. */
+  baseUrl?: string
+  search?: ParallelSearchOptions
+  read?: ParallelExtractOptions
+}
+
 export interface SearxngProviderConfig {
   enabled: boolean
   baseUrls: string[]
@@ -390,6 +465,8 @@ export interface MultiWebSearchSettings extends WebSearchPreferences {
     jina?: JinaProviderConfig
     langsearch?: LangsearchProviderConfig
     exa?: ExaProviderConfig
+    tinyfish?: TinyfishProviderConfig
+    parallel?: ParallelProviderConfig
     mcp?: McpProviderConfig
   }
   rotationStrategy?: WebSearchRotationStrategy
@@ -406,7 +483,15 @@ export type LegacyWebSearchSettings = (
   | { type: 'jina'; apiKey: string }
   | { type: 'langsearch'; apiKey: string }
   | { type: 'exa'; apiKey: string }
-  | { type: 'mcp'; baseUrl: string; headers?: McpHeader[] }
+  | { type: 'tinyfish'; apiKey: string }
+  | { type: 'parallel'; apiKey: string }
+  | {
+      type: 'mcp'
+      baseUrl: string
+      headers?: McpHeader[]
+      toolName?: string
+      queryParam?: string
+    }
 ) &
   WebSearchPreferences
 
@@ -436,6 +521,8 @@ export type WebSearchProviderType =
   | 'jina'
   | 'langsearch'
   | 'exa'
+  | 'tinyfish'
+  | 'parallel'
   | 'mcp'
 
 export type Limits = {
@@ -481,8 +568,14 @@ export type ToolCall = {
   args: unknown
 }
 
+/** An image on a user message (base64, no `data:` prefix). Only the equation generator sends one. */
+export type ChatImage = {
+  mediaType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
+  data: string
+}
+
 export type AgentMessage =
-  | { role: 'user'; content: string }
+  | { role: 'user'; content: string; images?: ChatImage[] }
   | { role: 'assistant'; content: string; toolCalls?: ToolCall[] }
   | {
       role: 'tool'
@@ -585,6 +678,8 @@ export type ProviderErrorCode =
   | 'runawayToolLoop'
   | 'consecutiveToolFailures'
   | 'outputTruncated'
+  | 'imageUnsupported'
+  | 'modelNotFound'
 
 /**
  * A failure talking to the provider.
@@ -728,3 +823,12 @@ export async function toProviderError(response: Response) {
     hint,
   })
 }
+
+/** How each provider type is named in the UI. */
+export const PROVIDER_TYPE_LABELS: Record<ProviderType, string> = {
+  openai: 'OpenAI',
+  anthropic: 'Anthropic',
+  google: 'Google Gemini',
+  ollama: 'Ollama',
+}
+

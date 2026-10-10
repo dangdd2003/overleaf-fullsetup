@@ -1,6 +1,6 @@
 import { expect } from 'chai'
 import sinon from 'sinon'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import {
   AgentPanel,
   buildUserEntry,
@@ -143,6 +143,31 @@ describe('buildUserEntry', function () {
     })
     expect((entry as any).contextText).to.include('<selection file="main.tex"')
     expect((entry as any).contextText).to.include('<file path="refs.bib">')
+  })
+
+  it('does not include selection in buildUserEntry when attachedSelection is explicitly null', async function () {
+    const { handle } = createFakeHandle({
+      docs: { 'main.tex': 'hello world line 1\nline 2' },
+    })
+    handle.currentSelection = () => ({
+      path: 'main.tex',
+      from: 1,
+      to: 2,
+      text: 'hello world line 1\nline 2',
+    })
+
+    const entry = await buildUserEntry({
+      handle,
+      transcript: [],
+      text: 'explain selection',
+      attachedSelection: null,
+    })
+
+    expect(entry.role).to.equal('user')
+    if (entry.role !== 'user') throw new Error('expected user entry')
+    expect(entry.attachments).to.have.length(0)
+    expect((entry as any).contextText).not.to.include('<attachments>')
+    expect((entry as any).contextText).not.to.include('<selection')
   })
 })
 
@@ -524,6 +549,9 @@ describe('AgentPanel', function () {
       String(Date.now())
     )
     customLocalStorage.setItem(`ai-assist:chat-id:${PROJECT_ID}`, 'chat_left')
+    saveConversation(PROJECT_ID, 'chat_left', [
+      { id: 'u0', role: 'user', text: 'tell me about quantum computing' },
+    ])
 
     fakeFetch = sinon.stub(globalThis, 'fetch' as any).resolves({
       ok: true,
@@ -770,5 +798,67 @@ describe('AgentPanel', function () {
       /what would you like to do/i
     ) as HTMLTextAreaElement
     expect(textarea.disabled).to.be.false
+  })
+
+  it('removes selection chip on close click and ignores re-announcement of same selection', async function () {
+    customLocalStorage.setItem('ai-assist:provider', {
+      type: 'openai',
+      baseUrl: 'https://api.openai.com/v1',
+      apiKey: 'sk-test',
+      model: 'gpt-4o-mini',
+    })
+
+    render(
+      <EditorProviders mockCompileOnLoad>
+        <AgentPanel />
+      </EditorProviders>
+    )
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent('aiAssist:selectionChanged', {
+          detail: {
+            path: 'main.tex',
+            from: 10,
+            to: 20,
+            text: 'some selected code',
+          },
+        })
+      )
+    })
+
+    expect(screen.getByText(/main\.tex: 10-20/)).to.exist
+
+    const closeBtn = screen.getByRole('button', { name: /remove selection/i })
+    fireEvent.click(closeBtn)
+
+    expect(screen.queryByText(/main\.tex: 10-20/)).to.equal(null)
+
+    // Selection change event fires from editor with same selection (editor text remains highlighted)
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent('aiAssist:selectionChanged', {
+          detail: {
+            path: 'main.tex',
+            from: 10,
+            to: 20,
+            text: 'some selected code',
+          },
+        })
+      )
+    })
+
+    // Chip must remain removed from chatbox
+    expect(screen.queryByText(/main\.tex: 10-20/)).to.equal(null)
+
+    // But if a different selection arrives, it should attach
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent('aiAssist:selectionChanged', {
+          detail: { path: 'main.tex', from: 30, to: 40, text: 'different code' },
+        })
+      )
+    })
+    expect(screen.getByText(/main\.tex: 30-40/)).to.exist
   })
 })

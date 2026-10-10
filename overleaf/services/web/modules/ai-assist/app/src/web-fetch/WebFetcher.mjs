@@ -54,6 +54,7 @@ const ARCHIVES = [
   ['archive.today', archiveTodayRoute],
 ]
 const FAILURE_TTL_MS = 10 * 60 * 1000 // 10 minutes
+const MAX_FAILURE_CACHE_ENTRIES = 1000
 const failureCache = new Map() // cacheKey -> { at: number, error: Error }
 /**
  * How long a reader has before the next one is started alongside it. Most
@@ -151,6 +152,7 @@ export class WebFetcher {
       if (failed && this.now() - failed.at < FAILURE_TTL_MS) {
         throw failed.error
       }
+      if (failed) failureCache.delete(key)
     }
 
     // Calls for one page at the same time (page 1 and a find, a prefetch and
@@ -236,7 +238,7 @@ export class WebFetcher {
         err?.status !== 429 &&
         !(err?.status >= 500)
       ) {
-        failureCache.set(key, { at: this.now(), error: err })
+        rememberFailure(key, { at: this.now(), error: err })
       }
       throw err
     }
@@ -518,4 +520,18 @@ export class WebFetcher {
         this.browser && !this.browser.available() ? 'network' : 'ladder-failed',
     })
   }
+}
+
+function rememberFailure(key, entry) {
+  const now = entry.at
+  for (const [cachedKey, cached] of failureCache) {
+    if (now - cached.at >= FAILURE_TTL_MS) failureCache.delete(cachedKey)
+  }
+  // Map insertion order gives us a simple FIFO cap when failures arrive faster
+  // than the TTL can clear them.
+  failureCache.delete(key)
+  while (failureCache.size >= MAX_FAILURE_CACHE_ENTRIES) {
+    failureCache.delete(failureCache.keys().next().value)
+  }
+  failureCache.set(key, entry)
 }

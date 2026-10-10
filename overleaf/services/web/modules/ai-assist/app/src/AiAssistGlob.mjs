@@ -5,7 +5,10 @@ const SPECIALS = /[.+^${}()|[\]\\]/g
  * Port of frontend/js/features/ai-assist/agent/tools/search-text.ts:matchesGlob.
  */
 export function matchesGlob(path, pattern) {
-  const source = pattern
+  const sanitized = String(pattern || '')
+    .replace(/(?:\*\*\/)+/g, '**/')
+    .replace(/\*{2,}/g, '**')
+  const source = sanitized
     .split(/(\*\*\/|\*\*|\*|\?)/)
     .filter(Boolean)
     .map(token => {

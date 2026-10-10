@@ -7,6 +7,7 @@ import AgentPanelHeader from '../../../../frontend/js/features/ai-assist/compone
 import { RailProvider } from '@/features/ide-react/context/rail-context'
 import { ProjectContext } from '@/shared/context/project-context'
 import { Nav } from 'react-bootstrap'
+import { PanelGroup } from 'react-resizable-panels'
 
 describe('AI panel docking', function () {
   beforeEach(function () {
@@ -82,7 +83,15 @@ describe('AI panel docking', function () {
 
     it('renders panel and resize handle when docked to right', function () {
       localStorage.setItem('ai-assist:dock-position', 'right')
-      const { container } = render(<AiAssistRightPanel order={3} />)
+      // In the IDE the panel is a child of the outer PanelGroup (main-layout)
+      // inside the project provider
+      const { container } = render(
+        <ProjectContext.Provider value={{ projectId: 'test-project' } as any}>
+          <PanelGroup direction="horizontal">
+            <AiAssistRightPanel order={3} />
+          </PanelGroup>
+        </ProjectContext.Provider>
+      )
       expect(container.querySelector('#ide-redesign-ai-assist-resize-handle')).to
         .exist
       expect(container.querySelector('#ide-redesign-ai-assist-right-panel')).to

@@ -18,7 +18,7 @@ import { AgentTool } from '../agent/tools/registry'
 import { EditRequest } from '../agent/project-handle'
 import { locateAnchorInText } from '../agent/latex-matcher'
 import { TranscriptEntry } from '../agent/agent-messages'
-import { AgentEvent } from '../agent/agent-events'
+import { AgentEvent, dispatchAiEditHighlight } from '../agent/agent-events'
 import { AgentMode } from '../agent/agent-mode'
 import {
   AgentState,
@@ -169,6 +169,9 @@ export function useAgentRun({
   }, [])
 
   const handleStreamEvent = useCallback((event: AgentEvent) => {
+    if (event.type === 'modeChanged') {
+      modeRef.current = event.mode
+    }
     if (event.type === 'toolCallStarted') {
       const e: any = event
       const id = e.id || e.call?.id
@@ -181,15 +184,19 @@ export function useAgentRun({
       const e: any = event
       const name = e.name || e.call?.name || callMapRef.current.get(e.id) || ''
       const result = e.result
-      if (result && result.status === 'applied' && result.updatedSettings) {
-        try {
-          applyLiveSettingsUpdate(name, result.updatedSettings, {
-            userSettingsContext: userSettingsContextRef.current,
-            projectContext: projectContextRef.current,
-            projectId: projectIdRef.current,
-          })
-        } catch (err) {
-          debugConsole.warn('Failed to apply live settings update:', err)
+      if (result && result.status === 'applied') {
+        const mode = e.mode || modeRef.current || 'manual'
+        dispatchAiEditHighlight(name, result, mode)
+        if (result.updatedSettings) {
+          try {
+            applyLiveSettingsUpdate(name, result.updatedSettings, {
+              userSettingsContext: userSettingsContextRef.current,
+              projectContext: projectContextRef.current,
+              projectId: projectIdRef.current,
+            })
+          } catch (err) {
+            debugConsole.warn('Failed to apply live settings update:', err)
+          }
         }
       }
     }
@@ -721,9 +728,7 @@ export function useAgentRun({
     ) => {
       const assistant = AiAssistant.fromStoredSettings()
       if (systemPrompt || !assistant || !hasConsented()) return
-      const payload = transcript.filter(
-        entry => !(entry.role === 'user' && entry.pending)
-      )
+      const payload = transcript
       const runId = await startBackgroundRun({
         projectId,
         transcript: payload,

@@ -460,8 +460,14 @@ export function useEditorThemeStyles() {
         '--editor-fg': palette.fg,
         '--gutter-bg': palette.gutterBg,
         '--gutter-fg': palette.gutterFg,
+        '--gutter-border':
+          palette.gutterBorder && palette.gutterBorder !== 'transparent'
+            ? palette.gutterBorder
+            : isDark
+            ? 'rgba(255, 255, 255, 0.12)'
+            : 'rgba(0, 0, 0, 0.12)',
       } as React.CSSProperties),
-    [styles, palette]
+    [styles, palette, isDark]
   )
 
   return {

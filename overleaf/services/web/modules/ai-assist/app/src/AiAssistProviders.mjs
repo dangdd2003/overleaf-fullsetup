@@ -17,6 +17,19 @@ export class ProviderError extends Error {
   }
 }
 
+/** The ProviderError for a failed OpenAI-compatible response. */
+async function openAiError(res) {
+  let msg = `OpenAI API error (${res.status})`
+  let code =
+    res.status === 401 || res.status === 403 ? 'providerAuth' : 'providerError'
+  try {
+    const body = await res.json()
+    if (body?.error?.message) msg = body.error.message
+    if (body?.error?.code === 'invalid_api_key') code = 'providerAuth'
+  } catch {}
+  return new ProviderError(msg, { status: res.status, code })
+}
+
 const BLOCKED_INTERNAL_HOSTS = new Set([
   'mongo',
   'mongodb',
@@ -60,7 +73,7 @@ export function validateSafeProviderBaseUrl(rawUrl) {
     )
   }
 
-  const hostname = parsed.hostname.toLowerCase()
+  const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '')
   if (BLOCKED_INTERNAL_HOSTS.has(hostname) || hostname.endsWith('.internal')) {
     throw new ProviderError(
       `Access to internal service '${hostname}' is forbidden.`,
@@ -71,8 +84,13 @@ export function validateSafeProviderBaseUrl(rawUrl) {
     )
   }
 
-  // Block link-local and cloud metadata
-  if (hostname === '169.254.169.254' || hostname.startsWith('169.254.')) {
+  // Block link-local and cloud metadata (IPv4 & IPv6)
+  if (
+    hostname === '169.254.169.254' ||
+    hostname.startsWith('169.254.') ||
+    hostname === 'fd00:ec2::254' ||
+    hostname === 'fe80::1'
+  ) {
     throw new ProviderError(
       'Access to cloud metadata endpoints is forbidden.',
       {
@@ -124,12 +142,23 @@ export async function fetchWithRetry(
     if (options?.signal?.aborted) throw cancelledError()
 
     try {
-      const res = await fetchFn(url, options)
+      const { providerRequest, ...fetchOptions } = options ?? {}
+      const res = await fetchFn(url, {
+        ...fetchOptions,
+        // Provider endpoints should not redirect an approved public URL to an
+        // internal service. Other fetchWithRetry callers keep fetch defaults.
+        ...(providerRequest && options?.redirect == null
+          ? { redirect: 'error' }
+          : {}),
+      })
 
       if (
         (res.status === 429 || (res.status >= 500 && res.status < 600)) &&
         attempt < maxRetries
       ) {
+        if (typeof res.text === 'function') {
+          await res.text().catch(() => {})
+        }
         attempt++
         const retryAfter = res.headers.get('retry-after')
         let delay =
@@ -402,7 +431,13 @@ export function toOllamaMessages(system, messages) {
         }),
       })
     } else {
-      wire.push({ role: message.role, content: message.content || '' })
+      const images =
+        message.role === 'user' &&
+        Array.isArray(message.images) &&
+        message.images.length > 0
+          ? { images: message.images.map(image => image.data) }
+          : {}
+      wire.push({ role: message.role, content: message.content || '', ...images })
     }
   }
   return wire
@@ -786,18 +821,35 @@ class AnthropicServerClient {
       // A message the user sent while tools ran shares the turn of their
       // results, after them, as Claude Code sends it. The API merges
       // consecutive user turns anyway; some gateways reject them instead.
+      const imageBlocks =
+        message.role === 'user' && Array.isArray(message.images)
+          ? message.images.map(image => ({
+              type: 'image',
+              source: {
+                type: 'base64',
+                media_type: image.mediaType,
+                data: image.data,
+              },
+            }))
+          : []
       const lastTurn = wire.at(-1)
       if (message.role === 'user' && lastTurn?.role === 'user') {
         if (typeof lastTurn.content === 'string') {
           lastTurn.content = [{ type: 'text', text: lastTurn.content }]
         }
-        lastTurn.content.push({ type: 'text', text: message.content || ' ' })
+        lastTurn.content.push(...imageBlocks, {
+          type: 'text',
+          text: message.content || ' ',
+        })
         continue
       }
 
       wire.push({
         role: message.role,
-        content: message.content || ' ',
+        content:
+          imageBlocks.length > 0
+            ? [...imageBlocks, { type: 'text', text: message.content || ' ' }]
+            : message.content || ' ',
       })
     }
 
@@ -869,6 +921,7 @@ class AnthropicServerClient {
           },
           body: JSON.stringify(payload),
           signal: timeouts.signal,
+          providerRequest: true,
         },
         { fetchFn: this.fetch }
       )
@@ -1127,6 +1180,21 @@ export class OpenAiServerClient {
             }),
           }
         }
+        if (m.role === 'user' && Array.isArray(m.images) && m.images.length > 0) {
+          return {
+            role: 'user',
+            content: [
+              ...m.images.map(image => ({
+                type: 'image_url',
+                image_url: {
+                  url: `data:${image.mediaType};base64,${image.data}`,
+                  detail: 'high',
+                },
+              })),
+              { type: 'text', text: m.content || '' },
+            ],
+          }
+        }
         return { role: m.role, content: m.content || '' }
       }),
     ]
@@ -1169,6 +1237,7 @@ export class OpenAiServerClient {
           headers: this._getHeaders(),
           body: JSON.stringify(payload),
           signal: timeouts.signal,
+          providerRequest: true,
         },
         { fetchFn: this.fetch }
       )
@@ -1179,19 +1248,7 @@ export class OpenAiServerClient {
       timeouts.clearConnectTimeout()
     }
 
-    if (!res.ok) {
-      let msg = `OpenAI API error (${res.status})`
-      let code =
-        res.status === 401 || res.status === 403
-          ? 'providerAuth'
-          : 'providerError'
-      try {
-        const body = await res.json()
-        if (body?.error?.message) msg = body.error.message
-        if (body?.error?.code === 'invalid_api_key') code = 'providerAuth'
-      } catch {}
-      throw new ProviderError(msg, { status: res.status, code })
-    }
+    if (!res.ok) throw await openAiError(res)
 
     const pendingToolCalls = new Map()
     const thinkParser = new StreamingThinkParser()
@@ -1339,14 +1396,19 @@ export function toGeminiContents(messages) {
     }
 
     // role === 'user'
+    const parts = [
+      ...(Array.isArray(message.images)
+        ? message.images.map(image => ({
+            inlineData: { mimeType: image.mediaType, data: image.data },
+          }))
+        : []),
+      { text: message.content || ' ' },
+    ]
     const prev = contents.at(-1)
     if (prev && prev.role === 'user') {
-      prev.parts.push({ text: message.content || ' ' })
+      prev.parts.push(...parts)
     } else {
-      contents.push({
-        role: 'user',
-        parts: [{ text: message.content || ' ' }],
-      })
+      contents.push({ role: 'user', parts })
     }
   }
 
@@ -1502,6 +1564,7 @@ export class GoogleServerClient {
           headers,
           body: JSON.stringify(payload),
           signal: timeouts.signal,
+          providerRequest: true,
         },
         { fetchFn: this.fetch }
       )
@@ -1742,6 +1805,7 @@ export class OllamaServerClient {
             headers,
             body: JSON.stringify(body),
             signal: timeouts.signal,
+            providerRequest: true,
           },
           { fetchFn: this.fetch }
         )

@@ -8,37 +8,84 @@ import Notification from '@/shared/components/notification'
 import ProviderForm from './provider-form'
 import ProviderIcon from './provider-icon'
 import WebSearchWidget from './web-search-widget'
-import { ProviderSettings } from '../providers/types'
 import {
+  PROVIDER_TYPE_LABELS,
+  ProviderSettings,
+} from '../providers/types'
+import {
+  clearFastSettings,
   clearSettings,
   hasConsented,
   isAiAssistEnabled,
   isWebToolsAvailable,
+  readFastSettings,
   readSettings,
   setAiAssistEnabled,
+  writeFastSettings,
   writeSettings,
 } from '../provider-store'
 import '../../../../stylesheets/ai-assist.scss'
 
-const TYPE_LABELS: Record<string, string> = {
-  openai: 'OpenAI',
-  anthropic: 'Anthropic',
-  google: 'Google Gemini',
-  ollama: 'Ollama',
+/** One model slot: where it is stored and how its card reads. */
+type SlotConfig = {
+  id: 'main' | 'fast'
+  title: string
+  description: string
+  emptyText: string
+  addLabel: string
+  changeLabel: string
+  removeLabel?: string
+  testId: string
+  read: () => ProviderSettings | null
+  write: (settings: ProviderSettings) => void
+  clear: () => void
+  idPrefix: string
+  /** Whether the data-sharing consent notice is shown for this slot. */
+  needsConsent: boolean
 }
+
+const SLOTS: SlotConfig[] = [
+  {
+    id: 'main',
+    title: 'Main model',
+    description: 'Used by the AI assistant and the AI tools in the editor.',
+    emptyText: 'No provider configured. Add one to turn on the assistant.',
+    addLabel: 'Add provider',
+    changeLabel: 'Change provider',
+    testId: 'provider-current',
+    read: readSettings,
+    write: writeSettings,
+    clear: clearSettings,
+    idPrefix: 'ai-provider',
+    needsConsent: true,
+  },
+  {
+    id: 'fast',
+    title: 'Fast model',
+    description:
+      'A smaller, lower-cost model for code completion and language suggestions. Leave empty to use the main model.',
+    emptyText: 'No fast model configured.',
+    addLabel: 'Add fast model',
+    changeLabel: 'Change fast model',
+    removeLabel: 'Remove fast model',
+    testId: 'fast-provider-current',
+    read: readFastSettings,
+    write: writeFastSettings,
+    clear: clearFastSettings,
+    idPrefix: 'ai-fast-provider',
+    needsConsent: false,
+  },
+]
 
 export default function AiProvidersWidget() {
   const { t } = useTranslation()
   const enabled = Boolean(getMeta('ol-aiAssistEnabled'))
 
   const [aiEnabled, setAiEnabled] = useState(() => isAiAssistEnabled())
-  const [settings, setSettings] = useState<ProviderSettings | null>(null)
-  const [editing, setEditing] = useState(false)
   const [consented, setConsented] = useState(false)
 
   useEffect(() => {
     if (!enabled) return
-    setSettings(readSettings())
     setConsented(hasConsented())
     setAiEnabled(isAiAssistEnabled())
   }, [enabled])
@@ -59,17 +106,6 @@ export default function AiProvidersWidget() {
       // Ignore network errors in test/offline environments
     }
   }, [aiEnabled])
-
-  const save = useCallback((values: ProviderSettings) => {
-    writeSettings(values)
-    setSettings(values)
-    setEditing(false)
-  }, [])
-
-  const remove = useCallback(() => {
-    clearSettings()
-    setSettings(null)
-  }, [])
 
   if (!enabled) return null
 
@@ -104,16 +140,87 @@ export default function AiProvidersWidget() {
         </div>
       </div>
 
+      {SLOTS.map(slot => (
+        <ProviderSlot
+          key={slot.id}
+          slot={slot}
+          aiEnabled={aiEnabled}
+          consented={consented}
+        />
+      ))}
+
+      {/* Web search is the one addition to the upstream AI features
+          section, so it gets its own bordered box like the other
+          linking widgets. */}
+      {isWebToolsAvailable() ? (
+        <div className="settings-widgets-container linking-ai-assist-web-search">
+          <WebSearchWidget />
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function ProviderSlot({
+  slot,
+  aiEnabled,
+  consented,
+}: {
+  slot: SlotConfig
+  aiEnabled: boolean
+  consented: boolean
+}) {
+  const [settings, setSettings] = useState<ProviderSettings | null>(null)
+  const [editing, setEditing] = useState(false)
+
+  useEffect(() => {
+    setSettings(slot.read())
+    const eventName =
+      slot.id === 'main'
+        ? 'aiAssist:providerChanged'
+        : 'aiAssist:fastProviderChanged'
+    const handleUpdate = () => {
+      setSettings(slot.read())
+    }
+    window.addEventListener(eventName, handleUpdate)
+    return () => {
+      window.removeEventListener(eventName, handleUpdate)
+    }
+  }, [slot])
+
+  const save = useCallback(
+    (values: ProviderSettings) => {
+      slot.write(values)
+      setSettings(values)
+      setEditing(false)
+    },
+    [slot]
+  )
+
+  const remove = useCallback(() => {
+    slot.clear()
+    setSettings(null)
+  }, [slot])
+
+  return (
+    <div className="linking-ai-assist-slot">
+      <div className="linking-ai-assist-slot-header">
+        <span className="fw-bold">{slot.title}</span>
+        <span className="small linking-ai-assist-secondary-text">
+          {slot.description}
+        </span>
+      </div>
+
       {settings && !editing ? (
         <div
           className="linking-ai-assist-provider-card"
-          data-testid="provider-current"
+          data-testid={slot.testId}
         >
           <div className="d-flex align-items-center gap-3">
             <ProviderIcon type={settings.type} size={28} />
             <div className="linking-ai-assist-provider-details">
               <span className="fw-bold">
-                {TYPE_LABELS[settings.type] ?? settings.type}
+                {PROVIDER_TYPE_LABELS[settings.type] ?? settings.type}
               </span>
               <span
                 className="small linking-ai-assist-secondary-text"
@@ -130,12 +237,17 @@ export default function AiProvidersWidget() {
             <OLButton
               variant="secondary"
               type="button"
-              aria-label="Change provider"
+              aria-label={slot.changeLabel}
               onClick={() => setEditing(true)}
             >
               Edit
             </OLButton>
-            <OLButton variant="danger-ghost" type="button" onClick={remove}>
+            <OLButton
+              variant="danger-ghost"
+              type="button"
+              aria-label={slot.removeLabel}
+              onClick={remove}
+            >
               Remove
             </OLButton>
           </div>
@@ -145,7 +257,7 @@ export default function AiProvidersWidget() {
       {!settings && !editing ? (
         <div className="linking-ai-assist-empty">
           <p className="small linking-ai-assist-secondary-text mb-2">
-            No provider configured. Add one to turn on the assistant.
+            {slot.emptyText}
           </p>
           {aiEnabled && (
             <OLButton
@@ -153,13 +265,17 @@ export default function AiProvidersWidget() {
               type="button"
               onClick={() => setEditing(true)}
             >
-              Add provider
+              {slot.addLabel}
             </OLButton>
           )}
         </div>
       ) : null}
 
-      {!consented && settings && !editing && aiEnabled ? (
+      {slot.needsConsent &&
+      !consented &&
+      settings &&
+      !editing &&
+      aiEnabled ? (
         <div className="notification-list">
           <Notification
             type="info"
@@ -173,16 +289,8 @@ export default function AiProvidersWidget() {
           initial={settings ?? undefined}
           onSave={save}
           onCancel={() => setEditing(false)}
+          idPrefix={slot.idPrefix}
         />
-      ) : null}
-
-      {/* Web search is the one addition to the upstream AI features
-          section, so it gets its own bordered box like the other
-          linking widgets. */}
-      {isWebToolsAvailable() ? (
-        <div className="settings-widgets-container linking-ai-assist-web-search">
-          <WebSearchWidget />
-        </div>
       ) : null}
     </div>
   )

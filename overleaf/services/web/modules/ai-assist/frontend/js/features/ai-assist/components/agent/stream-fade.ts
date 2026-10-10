@@ -27,7 +27,8 @@ const FADE_UNIT_SELECTOR = [
   '.ai-assist-citation',
 ].join(', ')
 /** Structures whose text must not be split into spans. */
-const ATOMIC_SELECTOR = '.katex, button, svg, .ai-assist-citation'
+const ATOMIC_SELECTOR =
+  '.katex, button, svg, .ai-assist-citation, .ai-assist-code-line-num'
 
 export function createFadeState(container?: HTMLElement | null): FadeState {
   return {

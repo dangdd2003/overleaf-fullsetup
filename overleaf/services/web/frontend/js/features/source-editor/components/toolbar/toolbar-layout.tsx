@@ -87,14 +87,6 @@ function Right({
   return (
     <div className="ol-toolbar-layout-right">
       {networkIsStalled && <DownloadFileButton />}
-      {!visualPreviewEnabled && <EditorSwitch />}
-      {/* trackChangesVisible controls provider/UI availability; trackChanges
-          (checked inside the switcher) controls the actual feature entitlement.
-          Users with trackChangesVisible:true but trackChanges:false see the
-          switcher and get an upgrade modal when clicking "Reviewing". */}
-      {isToolbarMigration &&
-        canUseWritefull !== false &&
-        features.trackChangesVisible && <ReviewModeSwitcher />}
       {!isToolbarMigration && (
         <div
           style={{
@@ -109,6 +101,14 @@ function Right({
           )}
         </div>
       )}
+      {!visualPreviewEnabled && <EditorSwitch />}
+      {/* trackChangesVisible controls provider/UI availability; trackChanges
+          (checked inside the switcher) controls the actual feature entitlement.
+          Users with trackChangesVisible:true but trackChanges:false see the
+          switcher and get an upgrade modal when clicking "Reviewing". */}
+      {isToolbarMigration &&
+        canUseWritefull !== false &&
+        features.trackChangesVisible && <ReviewModeSwitcher />}
       <div
         style={{
           display: 'flex',

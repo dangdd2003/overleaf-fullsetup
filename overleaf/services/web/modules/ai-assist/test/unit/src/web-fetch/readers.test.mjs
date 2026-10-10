@@ -5,6 +5,7 @@ import {
   READERS,
   READER_ORDER,
   exaReader,
+  parallelReader,
   jinaHeaders,
   jinaReader,
   ollamaReader,
@@ -46,6 +47,7 @@ describe('page readers', function () {
       'firecrawlSelfHosted',
       'jina',
       'exa',
+      'parallel',
     ])
     expect(Object.keys(READERS)).to.have.members(READER_ORDER)
   })
@@ -119,6 +121,89 @@ describe('page readers', function () {
     }).catch(e => e)
     expect(err.message).to.include(
       'could not read https://example.com/missing: Page not found'
+    )
+  })
+
+  it('Parallel: reads page content and excerpts with configured options', async function () {
+    const fetchFn = sinon.stub().resolves(
+      jsonResponse({
+        extract_id: 'ext_1',
+        results: [
+          {
+            url: 'https://example.com/article',
+            title: 'Parallel Article',
+            full_content: ARTICLE_TEXT,
+            publish_date: '2026-03-15T08:00:00.000Z',
+          },
+        ],
+      })
+    )
+    const router = routerFor({
+      parallel: {
+        enabled: true,
+        apiKeys: ['parallel-key-1'],
+        read: {
+          fullContent: true,
+          maxCharsPerResult: 5000,
+          maxAgeSeconds: 3600,
+          timeoutSeconds: 20,
+          disableCacheFallback: true,
+        },
+      },
+    })
+    const endpoints = router.plan('read')[0].endpoints
+    const doc = await parallelReader('https://example.com/article', {
+      endpoints,
+      router,
+      fetchFn,
+    })
+    const [url, init] = fetchFn.firstCall.args
+    expect(url).to.equal('https://api.parallel.ai/v1/extract')
+    expect(init.headers['x-api-key']).to.equal('parallel-key-1')
+    const payload = JSON.parse(init.body)
+    expect(payload.urls).to.deep.equal(['https://example.com/article'])
+    expect(payload.advanced_settings.full_content).to.be.true
+    expect(payload.advanced_settings.excerpt_settings).to.deep.equal({
+      max_chars_per_result: 5000,
+    })
+    expect(payload.advanced_settings.fetch_policy).to.deep.equal({
+      max_age_seconds: 3600,
+      timeout_seconds: 20,
+      disable_cache_fallback: true,
+    })
+    expect(doc.title).to.equal('Parallel Article')
+    expect(doc.published).to.equal('2026-03-15')
+    expect(readerTimeoutMs('parallel', router)).to.equal(30_000)
+  })
+
+  it('Parallel: throws when errors array contains failure or content is missing', async function () {
+    const fetchFn = sinon.stub().resolves(
+      jsonResponse({
+        extract_id: 'ext_2',
+        results: [],
+        errors: [
+          {
+            url: 'https://example.com/missing',
+            content: 'Blocked by robots.txt',
+            error_type: 'robots_denied',
+          },
+        ],
+      })
+    )
+    const router = routerFor({
+      parallel: {
+        enabled: true,
+        apiKeys: ['parallel-key-1'],
+      },
+    })
+    const endpoints = router.plan('read')[0].endpoints
+    const err = await parallelReader('https://example.com/missing', {
+      endpoints,
+      router,
+      fetchFn,
+    }).catch(e => e)
+    expect(err.message).to.include(
+      'could not read https://example.com/missing: Blocked by robots.txt'
     )
   })
 

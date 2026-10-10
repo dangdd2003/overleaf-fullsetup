@@ -645,6 +645,17 @@ del.review-panel-content-highlight {
   opacity: 1;
 }
 
+// Module rows (reviewTooltipMenuActions) stack under the Add comment row
+.review-tooltip-menu-stacked {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.review-tooltip-menu-row {
+  display: flex;
+  gap: var(--spacing-02);
+}
+
 .review-tooltip-menu-button {
   background-color: inherit;
   color: inherit;

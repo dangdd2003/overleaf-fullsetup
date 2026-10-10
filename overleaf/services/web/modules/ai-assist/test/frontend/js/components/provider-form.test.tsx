@@ -413,4 +413,35 @@ describe('ProviderForm', function () {
     })
     expect(sentSettings(TEST).model).to.equal('custom-model (free)')
   })
+
+  it('offers only the provider types it is given, the first one by default', function () {
+    renderForm({ types: ['ollama', 'openai'] })
+    const select = screen.getByLabelText('Provider type') as HTMLSelectElement
+    expect([...select.options].map(option => option.textContent)).to.deep.equal([
+      'OpenAI',
+      'Ollama',
+    ])
+    expect(select.value).to.equal('ollama')
+  })
+
+  it('saves the given default base URL when the field is left blank', function () {
+    const onSave = sinon.spy()
+    renderForm({
+      onSave,
+      defaultBaseUrls: {
+        openai: 'https://gateway.example/v1',
+        anthropic: 'https://api.anthropic.com',
+        google: 'https://generativelanguage.googleapis.com/v1beta',
+        ollama: 'http://localhost:11434',
+      },
+    })
+    fireEvent.change(screen.getByLabelText('Model'), {
+      target: { value: 'gpt-mini' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    expect(onSave.firstCall.args[0]).to.include({
+      type: 'openai',
+      baseUrl: 'https://gateway.example/v1',
+    })
+  })
 })

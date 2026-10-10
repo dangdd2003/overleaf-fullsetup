@@ -536,12 +536,14 @@ export function readDocOverBridge(
 ): Promise<string | null> {
   return new Promise(resolve => {
     let resolved = false
+    const requestId = Math.random().toString(36).slice(2)
     const onResult = (event: Event) => {
       if (resolved) return
+      const detail = (event as CustomEvent)?.detail
+      if (detail?.requestId && detail.requestId !== requestId) return
       resolved = true
       window.removeEventListener('aiAssist:agentReadDocResult', onResult)
       clearTimeout(timer)
-      const detail = (event as CustomEvent)?.detail
       if (
         detail?.text === null ||
         detail?.error === 'pathMismatch' ||
@@ -561,7 +563,7 @@ export function readDocOverBridge(
     }, timeoutMs)
     window.dispatchEvent(
       new CustomEvent('aiAssist:agentReadDoc', {
-        detail: { path: targetPath, docId },
+        detail: { path: targetPath, docId, requestId },
       })
     )
   })
@@ -577,6 +579,7 @@ export type BridgeEditDetail = {
   oldText: string
   replacement: string
   isAppend?: boolean
+  requestId?: string
 }
 
 export function applyEditOverBridge(
@@ -594,12 +597,14 @@ export function applyEditOverBridge(
 }> {
   return new Promise(resolve => {
     let resolved = false
+    const requestId = detail.requestId || Math.random().toString(36).slice(2)
     const onResult = (event: Event) => {
       if (resolved) return
+      const result = (event as CustomEvent)?.detail
+      if (result?.requestId && result.requestId !== requestId) return
       resolved = true
       window.removeEventListener('aiAssist:agentApplyEditResult', onResult)
       clearTimeout(timer)
-      const result = (event as CustomEvent)?.detail
       if (result && typeof result.status === 'string') {
         resolve(result)
       } else {
@@ -619,7 +624,11 @@ export function applyEditOverBridge(
         message: 'Editor bridge timed out waiting for editor response.',
       })
     }, timeoutMs)
-    window.dispatchEvent(new CustomEvent('aiAssist:agentApplyEdit', { detail }))
+    window.dispatchEvent(
+      new CustomEvent('aiAssist:agentApplyEdit', {
+        detail: { ...detail, requestId },
+      })
+    )
   })
 }
 
@@ -1198,7 +1207,14 @@ export function useProjectHandle({
         // it so makes the next read refresh; refreshing here as well would
         // only duplicate that round trip.
         invalidateSnapshot()
-        return { status: 'applied', startLine }
+        return {
+          status: 'applied',
+          path: norm,
+          startLine,
+          endLine,
+          newText: edit.newText,
+          oldText: isAppend ? '' : resolvedOldText,
+        }
       }
       if (applied.status === 'timeout') {
         return {
@@ -1455,21 +1471,48 @@ export function useProjectHandle({
       // this a read taken straight afterwards would not see the new file.
       invalidateSnapshot()
 
+      const createdOutcome = {
+        status: 'applied' as const,
+        path: norm,
+        startLine: 1,
+        endLine: request.content.split('\n').length,
+        newText: request.content,
+        oldText: '',
+      }
+
       // If openDoc is available, switch to the newly created document and populate initial content
       if (openDoc) {
         try {
           await openDoc(createdDoc)
-          const applied = await applyEditOverBridge({
+
+          // Wait for CodeMirror view to mount the new document
+          const deadline = Date.now() + 3000
+          while (Date.now() < deadline) {
+            const live = await readDocOverBridge(norm, createdDoc._id, 150)
+            if (live !== null) break
+            await new Promise(r => setTimeout(r, 60))
+          }
+
+          const editArgs = {
             path: norm,
             docId: createdDoc._id,
             from: 1,
             to: 1,
             oldText: '',
             replacement: request.content,
-          })
+          }
+          let applied = await applyEditOverBridge(editArgs)
+
+          if (
+            applied.status === 'pathMismatch' ||
+            applied.status === 'docIdMismatch'
+          ) {
+            await new Promise(r => setTimeout(r, 150))
+            applied = await applyEditOverBridge(editArgs)
+          }
 
           if (applied.status === 'applied') {
-            return { status: 'applied', startLine: 1 }
+            return createdOutcome
           }
           if (applied.status === 'timeout') {
             return {
@@ -1506,7 +1549,7 @@ export function useProjectHandle({
         }
       }
 
-      return { status: 'applied', startLine: 1 }
+      return createdOutcome
     },
     [fileTreeData, project?._id, openDoc, requestApproval, invalidateSnapshot]
   )
