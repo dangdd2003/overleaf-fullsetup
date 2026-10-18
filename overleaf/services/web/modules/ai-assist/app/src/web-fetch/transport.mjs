@@ -175,6 +175,11 @@ export function parseFetchUrl(raw) {
       `Only http and https URLs can be fetched, not ${parsed.protocol}`
     )
   }
+  // user:password@host addresses are how a page hides a second host from the
+  // reader, and the credentials would travel with the request
+  if (parsed.username || parsed.password) {
+    throw webError('Web addresses with a username or password cannot be fetched.')
+  }
   const host = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase()
   if (
     (net.isIP(host) && !isPublicAddress(host)) ||

@@ -123,4 +123,33 @@ describe('AiAssistRunRouter', function () {
       '/ai-assist/projects/:Project_id/runs/:runId/message/:messageId'
     )
   })
+
+  it('registers checkpoint and rewind routes with write authorization', async function () {
+    await routerModule.apply(webRouter)
+
+    const postRoutes = webRouter.post.args.map(call => call[0])
+    expect(postRoutes).to.include(
+      '/ai-assist/projects/:Project_id/chats/:chatId/rewind/check'
+    )
+    expect(postRoutes).to.include(
+      '/ai-assist/projects/:Project_id/chats/:chatId/rewind'
+    )
+    const checkRoute = webRouter.post.args.find(
+      call =>
+        call[0] ===
+        '/ai-assist/projects/:Project_id/chats/:chatId/rewind/check'
+    )
+    expect(checkRoute).to.have.length(4)
+    const rewindRoute = webRouter.post.args.find(
+      call =>
+        call[0] === '/ai-assist/projects/:Project_id/chats/:chatId/rewind'
+    )
+    expect(rewindRoute).to.have.length(4)
+    const forkRoute = webRouter.post.args.find(
+      call =>
+        call[0] ===
+        '/ai-assist/projects/:Project_id/chats/:chatId/checkpoints/fork'
+    )
+    expect(forkRoute).to.have.length(4)
+  })
 })

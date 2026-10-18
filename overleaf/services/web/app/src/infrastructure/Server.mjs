@@ -149,6 +149,19 @@ app.use(metrics.http.monitor(logger))
 
 await Modules.applyMiddleware(app, 'appMiddleware')
 app.use(bodyParser.urlencoded({ extended: true, limit: '2mb' }))
+const MCP_MAX_BODY_BYTES = 70 * 1024 * 1024
+
+if (Settings.enableMcp) {
+  // MCP uploads carry file contents as base64 JSON, so they need a larger
+  // limit than other JSON. The limit is still finite: the body is read before
+  // the request is authenticated.
+  app.use(
+    '/api/v0/mcp',
+    bodyParser.json({
+      limit: MCP_MAX_BODY_BYTES,
+    })
+  )
+}
 app.use(bodyParser.json({ limit: Settings.max_json_request_size }))
 // add explicit name for telemetry
 app.use(bearerTokenMiddleware())

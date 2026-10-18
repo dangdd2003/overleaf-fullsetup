@@ -118,7 +118,12 @@ export function portable(schema) {
 }
 
 /** The project every tool operates on. */
-export const projectId = z.string().min(1).describe('The Overleaf project id')
+// Ids are interpolated into upstream URL paths, so reject anything that could
+// carry '/', '.', '?', '#' or '%' and climb out of /projects/<id>.
+export const projectId = z
+  .string()
+  .regex(/^[A-Za-z0-9_-]{1,64}$/, 'project id must be letters, digits, "-" or "_"')
+  .describe('The Overleaf project id')
 
 /** The `{ status: 'ok' }` acknowledgement web returns from a mutation. */
 export const okStatus = z
@@ -168,4 +173,27 @@ export const WRITES = {
   destructiveHint: true,
   idempotentHint: false,
   openWorldHint: false,
+}
+
+/**
+ * Wrap a tool's payload schema in the shared success envelope (see
+ * `okResult` in context.js). Every tool's `outputSchema` is built with this so
+ * the advertised shape and the returned shape never drift apart.
+ *
+ * @param {z.ZodType} data the tool-specific payload schema
+ */
+export function envelope(data) {
+  return looseObject({
+    ok: z.literal(true).describe('Always true on success; failures set isError'),
+    summary: z.string().describe('One-sentence outcome with the key numbers'),
+    data,
+    warnings: z
+      .array(z.string())
+      .optional()
+      .describe('Non-fatal issues worth acting on'),
+    nextSteps: z
+      .array(z.string())
+      .optional()
+      .describe('Suggested follow-up tool calls'),
+  })
 }

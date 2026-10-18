@@ -215,6 +215,24 @@ describe('BrowserRoute (HTTP client)', function () {
     expect(fetchFn.called).to.equal(false)
   })
 
+  it('raw and render check the address before asking the sidecar, as fetchPage does', async function () {
+    const fetchFn = fakeFetch()
+    const route = new BrowserRoute({ baseUrl: BASE_URL, token: TOKEN, fetchFn })
+    for (const read of [
+      route.raw('http://127.0.0.1/'),
+      route.render('http://user:pw@example.com/'),
+    ]) {
+      let error = null
+      try {
+        await read
+      } catch (err) {
+        error = err
+      }
+      expect(error?.kind).to.equal('content')
+    }
+    expect(fetchFn.called).to.equal(false)
+  })
+
   it('stays available after a page the sidecar could not load (502)', async function () {
     const route = new BrowserRoute({
       baseUrl: BASE_URL,

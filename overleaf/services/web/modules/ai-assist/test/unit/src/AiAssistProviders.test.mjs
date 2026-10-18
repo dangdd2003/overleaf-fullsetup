@@ -16,10 +16,12 @@ import {
   promptCacheKey,
   safeParseToolArgs,
   toGeminiContents,
+  toolImageTurns,
   toOllamaMessages,
   validateSafeProviderBaseUrl,
 } from '../../../app/src/AiAssistProviders.mjs'
 import Settings from '@overleaf/settings'
+import { readJsonReply } from '../../../app/src/AiAssistProviders.mjs'
 
 describe('AiAssistProviders', function () {
   describe('validateSafeProviderBaseUrl', function () {
@@ -35,11 +37,24 @@ describe('AiAssistProviders', function () {
       ).to.not.throw()
     })
 
-    it('allows Docker host gateway for local Ollama', function () {
+    it('refuses the Docker host gateway a user-typed Ollama URL is mapped to', function () {
       const gateway = process.env.DOCKER_HOST_GATEWAY || '172.20.0.1'
       expect(() =>
         validateSafeProviderBaseUrl(`http://${gateway}:11434`)
-      ).to.not.throw()
+      ).to.throw(/private network address/)
+    })
+
+    it('allows a private provider address the admin configured in an env URL', function () {
+      const saved = process.env.AI_ASSIST_SEARXNG_URLS
+      process.env.AI_ASSIST_SEARXNG_URLS = 'http://192.168.50.9:8888'
+      try {
+        expect(() =>
+          validateSafeProviderBaseUrl('http://192.168.50.9:11434')
+        ).to.not.throw()
+      } finally {
+        if (saved === undefined) delete process.env.AI_ASSIST_SEARXNG_URLS
+        else process.env.AI_ASSIST_SEARXNG_URLS = saved
+      }
     })
 
     it('blocks internal Docker container hostnames', function () {
@@ -84,6 +99,41 @@ describe('AiAssistProviders', function () {
       expect(() =>
         validateSafeProviderBaseUrl('gopher://127.0.0.1:6379')
       ).to.throw(ProviderError)
+    })
+  })
+
+  describe('provider destinations', function () {
+    it('refuses loopback and metadata addresses', function () {
+      for (const url of [
+        'http://127.0.0.1:11434',
+        'http://169.254.169.254/latest',
+        'http://[::1]:11434',
+        'http://localhost:11434',
+      ]) {
+        expect(() => validateSafeProviderBaseUrl(url)).to.throw(ProviderError)
+      }
+    })
+
+    it('accepts a LAN address, where a self-hosted provider lives', function () {
+      expect(validateSafeProviderBaseUrl('http://203.0.113.20:11434')).to.be.true
+    })
+  })
+
+  describe('readJsonReply', function () {
+    it('reads a reply within the cap', async function () {
+      const res = new Response(JSON.stringify({ ok: 1 }))
+      expect(await readJsonReply(res, 1024)).to.deep.equal({ ok: 1 })
+    })
+
+    it('refuses a reply past the cap', async function () {
+      const res = new Response('x'.repeat(4096))
+      let caught
+      try {
+        await readJsonReply(res, 1024)
+      } catch (err) {
+        caught = err
+      }
+      expect(caught).to.be.instanceOf(ProviderError)
     })
   })
 
@@ -727,7 +777,7 @@ describe('AiAssistProviders', function () {
 
       const unreachable = createProviderClient({
         type: 'ollama',
-        baseUrl: 'http://10.0.0.5:11434',
+        baseUrl: 'http://203.0.113.5:11434',
         model: 'x',
         fetchFn: sinon.stub().rejects(new TypeError('fetch failed')),
       })
@@ -772,7 +822,7 @@ describe('AiAssistProviders', function () {
 
       const client = createProviderClient({
         type: 'ollama',
-        baseUrl: 'http://localhost:11434',
+        baseUrl: 'http://203.0.113.20:11434',
         model: 'gemma4:cloud',
         fetchFn: sinon.stub().resolves(fakeResponse),
       })
@@ -1343,6 +1393,7 @@ describe('AiAssistProviders', function () {
       const client = createProviderClient({
         type: 'ollama',
         apiKey: '',
+        baseUrl: 'http://203.0.113.20:11434',
         fetchFn: sinon.stub().resolves(fakeResponse),
         streamIdleTimeoutMs: 500,
       })
@@ -1542,7 +1593,7 @@ describe('AiAssistProviders', function () {
         ].join('\n') + '\n'
       const client = createProviderClient({
         type: 'ollama',
-        baseUrl: 'http://localhost:11434',
+        baseUrl: 'http://203.0.113.20:11434',
         model: 'qwen3:8b',
         fetchFn: sinon.stub().resolves(streamOf(body)),
       })
@@ -1650,7 +1701,7 @@ describe('AiAssistProviders', function () {
       })
       const client = createProviderClient({
         type: 'ollama',
-        baseUrl: 'http://localhost:11434',
+        baseUrl: 'http://203.0.113.20:11434',
         model: 'qwen3:8b',
         fetchFn,
       })
@@ -1674,7 +1725,7 @@ describe('AiAssistProviders', function () {
       })
       const client = createProviderClient({
         type: 'ollama',
-        baseUrl: 'http://localhost:11434',
+        baseUrl: 'http://203.0.113.20:11434',
         model: 'qwen3:8b',
         fetchFn,
       })
@@ -1707,7 +1758,7 @@ describe('AiAssistProviders', function () {
       })
       const settings = {
         type: 'ollama',
-        baseUrl: 'http://localhost:11434',
+        baseUrl: 'http://203.0.113.20:11434',
         model: 'no-think-test:1b',
         fetchFn,
       }
@@ -1742,7 +1793,7 @@ describe('AiAssistProviders', function () {
       })
       const client = createProviderClient({
         type: 'ollama',
-        baseUrl: 'http://localhost:11434',
+        baseUrl: 'http://203.0.113.20:11434',
         model: 'missing:7b',
         fetchFn,
       })
@@ -1915,6 +1966,147 @@ describe('AiAssistProviders', function () {
           { type: 'text', text: 'what is this' },
         ],
       })
+    })
+  })
+
+  describe('images on tool results', function () {
+    const PAGE = { mediaType: 'image/png', data: 'iVBORw0KGgo=' }
+    // Two parallel calls; the first returned a page image
+    const messages = [
+      { role: 'user', content: 'check page 2' },
+      {
+        role: 'assistant',
+        content: '',
+        toolCalls: [
+          { id: 't1', name: 'view_compiled_pdf_page', args: { page: 2 } },
+          { id: 't2', name: 'read_file', args: { path: 'main.tex' } },
+        ],
+      },
+      {
+        role: 'tool',
+        toolCallId: 't1',
+        name: 'view_compiled_pdf_page',
+        content: 'PDF page 2 of 5.',
+        images: [PAGE],
+      },
+      {
+        role: 'tool',
+        toolCallId: 't2',
+        name: 'read_file',
+        content: 'main.tex lines 1-2 of 2',
+      },
+      { role: 'user', content: 'and?' },
+    ]
+
+    async function sentBody(type, sse) {
+      let body = null
+      const fetchFn = sinon.stub().callsFake((_url, opts) => {
+        body = JSON.parse(opts.body)
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          body: (async function* () {
+            yield new TextEncoder().encode(sse)
+          })(),
+        })
+      })
+      const client = createProviderClient({ type, apiKey: 'k', model: 'm', fetchFn })
+      for await (const _ of client.streamChat({
+        system: 'sys',
+        messages,
+        maxTokens: 100,
+      })) {
+      }
+      return body
+    }
+
+    it('Anthropic: puts the image inside its tool result', async function () {
+      const body = await sentBody(
+        'anthropic',
+        'event: message_stop\ndata: {"type":"message_stop"}\n\n'
+      )
+      expect(body.messages[2].content[0]).to.deep.equal({
+        type: 'tool_result',
+        tool_use_id: 't1',
+        content: [
+          { type: 'text', text: 'PDF page 2 of 5.' },
+          {
+            type: 'image',
+            source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0KGgo=' },
+          },
+        ],
+        is_error: false,
+      })
+      // A result without an image stays a plain string
+      expect(body.messages[2].content[1].content).to.equal('main.tex lines 1-2 of 2')
+    })
+
+    it('OpenAI: follows the step\'s tool results with a user turn holding the image', async function () {
+      const body = await sentBody(
+        'openai',
+        'data: {"choices":[{"delta":{"content":"hi"},"finish_reason":"stop"}]}\n\n'
+      )
+      expect(body.messages.map(message => message.role)).to.deep.equal([
+        'system',
+        'user',
+        'assistant',
+        'tool',
+        'tool',
+        'user',
+        'user',
+      ])
+      expect(body.messages[3].content).to.equal('PDF page 2 of 5.')
+      expect(body.messages[5].content).to.deep.equal([
+        { type: 'text', text: '[The image returned by view_compiled_pdf_page above.]' },
+        {
+          type: 'image_url',
+          image_url: { url: 'data:image/png;base64,iVBORw0KGgo=', detail: 'high' },
+        },
+      ])
+    })
+
+    it('Ollama: follows the step\'s tool results with a user turn holding the image', function () {
+      const wire = toOllamaMessages('sys', messages)
+      expect(wire.map(message => message.role)).to.deep.equal([
+        'system',
+        'user',
+        'assistant',
+        'tool',
+        'tool',
+        'user',
+        'user',
+      ])
+      expect(wire[5]).to.deep.equal({
+        role: 'user',
+        content: '[The image returned by view_compiled_pdf_page above.]',
+        images: ['iVBORw0KGgo='],
+      })
+    })
+
+    it('Gemini: puts the image after the step\'s function responses', function () {
+      const contents = toGeminiContents(messages)
+      // The user's next message shares the turn, after the image
+      expect(contents[2].parts.map(part => Object.keys(part)[0])).to.deep.equal([
+        'functionResponse',
+        'functionResponse',
+        'inlineData',
+        'text',
+      ])
+      expect(contents[2].parts[2]).to.deep.equal({
+        inlineData: { mimeType: 'image/png', data: 'iVBORw0KGgo=' },
+      })
+    })
+
+    it('sends nothing extra for tool results without images', function () {
+      const plain = messages.map(({ images, ...rest }) => rest)
+      expect(toOllamaMessages('', plain).map(m => m.role)).to.deep.equal([
+        'user',
+        'assistant',
+        'tool',
+        'tool',
+        'user',
+      ])
+      expect(toolImageTurns(plain).size).to.equal(0)
     })
   })
 })

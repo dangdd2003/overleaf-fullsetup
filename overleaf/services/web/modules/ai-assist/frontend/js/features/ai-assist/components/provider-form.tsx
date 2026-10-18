@@ -17,6 +17,7 @@ import {
   ProviderSettings,
   ProviderType,
 } from '../providers/types'
+import { TEST_RESULT_MS, useAutoDismiss } from '../hooks/use-auto-dismiss'
 
 /**
  * Parses a form field into a positive number, or `undefined` when the field
@@ -92,6 +93,14 @@ export default function ProviderForm({
   const [loadingModels, setLoadingModels] = useState(false)
   const [modelsMessage, setModelsMessage] = useState<string | null>(null)
   const [probe, setProbe] = useState<Probe>({ state: 'idle' })
+  // A failure stays up, through a retest too, until a test passes
+  const [lastFailure, setLastFailure] = useState<string | null>(null)
+  useAutoDismiss(
+    probe.state === 'ok',
+    () => setProbe({ state: 'idle' }),
+    TEST_RESULT_MS.success,
+    probe
+  )
 
   // Some endpoints report each model's own context window / output cap
   // alongside its listing. That's a better default than the hardcoded
@@ -128,7 +137,7 @@ export default function ProviderForm({
           : undefined
     const parsedContextWindow = numeric(contextWindow)
     const parsedMaxOutputTokens = numeric(maxOutputTokens)
-    return {
+    const out: ProviderSettings = {
       type,
       baseUrl: baseUrl.trim() || defaultBaseUrls[type],
       apiKey,
@@ -141,6 +150,10 @@ export default function ProviderForm({
         ? { maxOutputTokens: parsedMaxOutputTokens }
         : {}),
     }
+    if (idPrefix === 'ai-fast-provider') {
+      out.slot = 'fastProvider'
+    }
+    return out
   }
 
   const onLoadModels = useCallback(async () => {
@@ -185,13 +198,13 @@ export default function ProviderForm({
     setProbe({ state: 'busy' })
     try {
       const { latencyMs } = await new AiAssistant(current()).test()
+      setLastFailure(null)
       setProbe({ state: 'ok', message: `Connected in ${latencyMs} ms.` })
     } catch (error: any) {
       const providerError = error as ProviderError
-      setProbe({
-        state: 'failed',
-        message: providerError?.message || 'The connection test failed.',
-      })
+      const message = providerError?.message || 'The connection test failed.'
+      setLastFailure(message)
+      setProbe({ state: 'failed', message })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [type, baseUrl, apiKey, model])
@@ -203,7 +216,13 @@ export default function ProviderForm({
     setManualModel(true)
     setModelsMessage(null)
     setProbe({ state: 'idle' })
-  }, [])
+    // A different provider: the old failure is not about it
+    setLastFailure(null)
+    if (apiKey === '••••••••' || next !== initial?.type) {
+      setApiKey('')
+    }
+    setModel('')
+  }, [apiKey, initial?.type])
 
   return (
     <form
@@ -251,14 +270,22 @@ export default function ProviderForm({
           type="password"
           autoComplete="off"
           value={apiKey}
+          onFocus={() => {
+            if (apiKey === '••••••••') {
+              setApiKey('')
+            }
+          }}
           onChange={e => setApiKey(e.target.value)}
           placeholder={
-            type === 'ollama' ? 'Optional for local Ollama' : undefined
+            initial?.hasApiKey && !apiKey
+              ? '•••••••• (saved)'
+              : type === 'ollama'
+                ? 'Optional for local Ollama'
+                : undefined
           }
         />
         <OLFormText>
-          Stored in this browser, sent to Overleaf server per-request to call
-          the provider.
+          Encrypted and stored securely on the Overleaf server.
         </OLFormText>
       </OLFormGroup>
 
@@ -358,9 +385,9 @@ export default function ProviderForm({
           <Notification type="success" content={probe.message} />
         </div>
       ) : null}
-      {probe.state === 'failed' ? (
+      {lastFailure && probe.state !== 'ok' ? (
         <div className="notification-list">
-          <Notification type="error" content={probe.message} />
+          <Notification type="error" content={lastFailure} />
         </div>
       ) : null}
 

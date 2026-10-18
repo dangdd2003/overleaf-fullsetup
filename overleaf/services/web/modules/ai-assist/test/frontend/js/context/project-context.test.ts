@@ -253,6 +253,30 @@ describe('renderEnvelope', function () {
     expect(text).to.include('</selection>')
   })
 
+  it('renders multiple selection ranges when multiple disjoint parts are highlighted', function () {
+    const { text } = renderEnvelope({
+      snapshot: snapshot({
+        selection: {
+          path: 'main.tex',
+          from: 4,
+          to: 20,
+          text: '\\section{A}\n\n\\section{B}',
+          ranges: [
+            { from: 4, to: 5, text: '\\section{A}' },
+            { from: 18, to: 20, text: '\\section{B}' },
+          ],
+        },
+      }),
+      attachments: [],
+      turn: 1,
+      previous: null,
+    })
+    expect(text).to.include('<selection file="main.tex" lines="4-5">')
+    expect(text).to.include('\\section{A}')
+    expect(text).to.include('<selection file="main.tex" lines="18-20">')
+    expect(text).to.include('\\section{B}')
+  })
+
   it('renders attachments, including one whose file has gone', function () {
     const { text } = renderEnvelope({
       snapshot: snapshot(),

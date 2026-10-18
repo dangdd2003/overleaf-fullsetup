@@ -5,13 +5,18 @@ import './ModuleSettings.mjs'
 import defaultManager from './AiAssistRunManager.mjs'
 import defaultStore, { TERMINAL_STATUSES } from './AiAssistRunStore.mjs'
 import defaultSubscriber from './AiAssistRunSubscriber.mjs'
+import defaultUserSettingsStore from './AiAssistUserSettingsStore.mjs'
 import { validateSafeProviderBaseUrl } from './AiAssistProviders.mjs'
 import {
   fetchOnlyWebSettings,
   normalizeWebSearchSettings,
 } from './AiAssistWebTools.mjs'
 import { MODES } from './AiAssistModePolicy.mjs'
+import { messageImagesProblem, suggestCaptureTitle } from './AiAssistImages.mjs'
+import { normalizeCommandInvocation } from './AiAssistSlashCommands.mjs'
 import SessionManager from '../../../../app/src/Features/Authentication/SessionManager.mjs'
+import AuthorizationManager from '../../../../app/src/Features/Authorization/AuthorizationManager.mjs'
+import TokenAccessHandler from '../../../../app/src/Features/TokenAccess/TokenAccessHandler.mjs'
 
 /**
  * The web settings a run may use, from what the browser sent. Null when the
@@ -48,10 +53,34 @@ export class AiAssistRunController {
     manager = defaultManager,
     store = defaultStore,
     subscriber = defaultSubscriber,
+    authorization = AuthorizationManager.promises,
   } = {}) {
     this.manager = manager
     this.store = store
     this.subscriber = subscriber
+    this.authorization = authorization
+  }
+
+  /**
+   * The legacy run routes name no project, so the project routes' middleware
+   * has nothing to check there. The run's own project is checked here instead:
+   * a run is only streamed, stopped or approved by someone who can reach its
+   * project. Answers 403 and returns false otherwise.
+   */
+  async #canReachLegacyRun(req, res, run, { write }) {
+    const userId = SessionManager.getLoggedInUserId(req.session)
+    const token = TokenAccessHandler.getRequestToken(req, run.projectId)
+    const allowed = write
+      ? await this.authorization.canUserWriteProjectContent(
+          userId,
+          run.projectId,
+          token
+        )
+      : await this.authorization.canUserReadProject(userId, run.projectId, token)
+    if (!allowed) {
+      res.status(403).json({ error: 'Run access forbidden' })
+    }
+    return Boolean(allowed)
   }
 
   createRun = async (req, res) => {
@@ -61,15 +90,38 @@ export class AiAssistRunController {
       loggedInUserId && /^[0-9a-f]{24}$/i.test(String(loggedInUserId))
         ? String(loggedInUserId)
         : null
-    const { transcript, providerSettings, mode, chatId } = req.body || {}
+    const { transcript, mode, chatId } = req.body || {}
+    let providerSettings = req.body?.providerSettings
+    const needsStoredProviderKey =
+      !providerSettings ||
+      !providerSettings.type ||
+      !providerSettings.apiKey ||
+      providerSettings.apiKey === '••••••••'
 
-    if (!transcript || !providerSettings) {
+    if (userId && needsStoredProviderKey) {
+      try {
+        const internal = await defaultUserSettingsStore.getInternalUserSettings(userId)
+        if (internal.provider?.type) {
+          if (!providerSettings || !providerSettings.type) {
+            providerSettings = internal.provider
+          } else if (!providerSettings.apiKey || providerSettings.apiKey === '••••••••') {
+            providerSettings = { ...providerSettings, apiKey: internal.provider.apiKey }
+          }
+        }
+      } catch {}
+    }
+
+    if (
+      !transcript ||
+      !providerSettings ||
+      typeof providerSettings !== 'object'
+    ) {
       return res
         .status(400)
         .json({ error: 'Missing transcript or providerSettings' })
     }
 
-    const maxBytes = Settings.aiAssist?.maxTranscriptBytes ?? 5000000
+    const maxBytes = Settings.aiAssist?.maxTranscriptBytes ?? 32 * 1024 * 1024
     if (!Array.isArray(transcript) || transcript.length === 0) {
       return res
         .status(400)
@@ -81,6 +133,11 @@ export class AiAssistRunController {
         .status(400)
         .json({ error: 'Conversation is too large to send' })
     }
+    for (const entry of transcript) {
+      const problem =
+        entry?.role === 'user' ? messageImagesProblem(entry.images) : null
+      if (problem) return res.status(400).json({ error: problem })
+    }
 
     const baseUrl = providerSettings.baseUrl || providerSettings.baseURL
     if (baseUrl) {
@@ -91,11 +148,53 @@ export class AiAssistRunController {
       }
     }
 
+    let clientWebSearchSettings = req.body?.webSearchSettings
+    const needsStoredWebKeys =
+      clientWebSearchSettings?.sourceMode === 'custom' &&
+      (!clientWebSearchSettings.providers ||
+        Object.keys(clientWebSearchSettings.providers).length === 0 ||
+        Object.values(clientWebSearchSettings.providers).some(
+          p =>
+            (Array.isArray(p?.apiKeys) && p.apiKeys.includes('••••••••')) ||
+            p?.bearerToken === '••••••••'
+        ))
+
+    if (userId && needsStoredWebKeys) {
+      try {
+        const internal = await defaultUserSettingsStore.getInternalUserSettings(userId)
+        if (internal.webSearch) {
+          if (!clientWebSearchSettings || Object.keys(clientWebSearchSettings.providers || {}).length === 0) {
+            clientWebSearchSettings = internal.webSearch
+          } else if (internal.webSearch.providers) {
+            for (const [name, p] of Object.entries(clientWebSearchSettings.providers || {})) {
+              const storedP = internal.webSearch.providers[name]
+              if (storedP) {
+                if (Array.isArray(p.apiKeys)) {
+                  p.apiKeys = p.apiKeys.map((k, idx) => k === '••••••••' ? (storedP.apiKeys?.[idx] || k) : k)
+                  if (p.apiKeys.length === 0 && storedP.apiKeys?.length) p.apiKeys = storedP.apiKeys
+                }
+                if (p.bearerToken === '••••••••' && storedP.bearerToken) {
+                  p.bearerToken = storedP.bearerToken
+                }
+              }
+            }
+          }
+        }
+      } catch {}
+    }
+
     let webSearchSettings
     try {
-      webSearchSettings = resolveWebSearchSettings(req.body?.webSearchSettings)
+      webSearchSettings = resolveWebSearchSettings(clientWebSearchSettings)
     } catch (err) {
       return res.status(400).json({ error: err.message })
+    }
+
+    let connectorIds = null
+    if (Array.isArray(req.body?.connectorIds)) {
+      connectorIds = req.body.connectorIds
+        .filter(id => typeof id === 'string' && id.trim())
+        .slice(0, 50)
     }
 
     const runId = `run_${Date.now()}_${crypto.randomBytes(16).toString('hex')}`
@@ -111,6 +210,7 @@ export class AiAssistRunController {
         mode,
         chatId,
         webSearchSettings,
+        connectorIds,
       })
       .catch(err => {
         logger.error({ err, runId }, '[AiAssist] Run background failed')
@@ -134,6 +234,13 @@ export class AiAssistRunController {
       return res
         .status(403)
         .json({ error: 'Cross-project run access forbidden' })
+    }
+
+    if (
+      !projectId &&
+      !(await this.#canReachLegacyRun(req, res, run, { write: false }))
+    ) {
+      return
     }
 
     res.setHeader?.('Content-Type', 'text/event-stream')
@@ -279,6 +386,13 @@ export class AiAssistRunController {
         .json({ error: 'Cross-project run access forbidden' })
     }
 
+    if (
+      !projectId &&
+      !(await this.#canReachLegacyRun(req, res, run, { write: true }))
+    ) {
+      return
+    }
+
     await this.manager.stopRun(runId)
     res.json({ ok: true })
   }
@@ -295,6 +409,13 @@ export class AiAssistRunController {
       return res
         .status(403)
         .json({ error: 'Cross-project run access forbidden' })
+    }
+
+    if (
+      !projectId &&
+      !(await this.#canReachLegacyRun(req, res, run, { write: true }))
+    ) {
+      return
     }
 
     const decision = req.body || { accepted: false }
@@ -350,20 +471,53 @@ export class AiAssistRunController {
       })
     }
 
-    const { id, text, contextText } = req.body || {}
-    if (typeof text !== 'string' || !text.trim()) {
+    const { id, text, contextText, commandText, command, images } =
+      req.body || {}
+    // A command is checked and kept only with its harness block: a command
+    // turn with no words after the name is valid, so text may then be empty
+    const invocation = normalizeCommandInvocation(command)
+    const commandBlock =
+      invocation && typeof commandText === 'string' ? commandText : ''
+    const hasImages = Array.isArray(images) && images.length > 0
+    if (
+      typeof text !== 'string' ||
+      (!text.trim() && !commandBlock && !hasImages)
+    ) {
       return res.status(400).json({ error: 'text must be a non-empty string' })
     }
 
-    const maxBytes = Settings.aiAssist?.maxTranscriptBytes ?? 5000000
-    const size = Buffer.byteLength(text) + Buffer.byteLength(contextText || '')
+    const maxBytes = Settings.aiAssist?.maxTranscriptBytes ?? 32 * 1024 * 1024
+    const size =
+      Buffer.byteLength(text) +
+      Buffer.byteLength(contextText || '') +
+      Buffer.byteLength(commandBlock) +
+      (hasImages ? Buffer.byteLength(JSON.stringify(images)) : 0)
     if (size > maxBytes) {
       return res.status(413).json({ error: 'Message too large' })
     }
+    const imagesProblem = messageImagesProblem(images)
+    if (imagesProblem) return res.status(400).json({ error: imagesProblem })
 
     // The run may be past its last look at the queue while its status still
     // says running; it turns the message away rather than leave it unread.
-    if (!(await this.manager.queueMessage(runId, { id, text, contextText }))) {
+    const queued = { id, text, contextText }
+    if (commandBlock) {
+      queued.commandText = commandBlock
+      queued.command = invocation
+    }
+    if (hasImages) {
+      queued.images = images.map((img, idx) => ({
+        ...img,
+        name:
+          img.name ||
+          suggestCaptureTitle({
+            page: img.page,
+            timestamp: Date.now(),
+            mediaType: img.mediaType,
+          }),
+      }))
+    }
+    if (!(await this.manager.queueMessage(runId, queued))) {
       return res.status(409).json({
         error: 'Run is no longer accepting messages',
         status: run.status,

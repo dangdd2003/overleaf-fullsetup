@@ -201,7 +201,7 @@ describe('provider tool schemas on the wire', function () {
       const capture = {}
       const client = new OllamaServerClient({
         model: 'llama3',
-        baseURL: 'http://localhost:11434',
+        baseURL: 'http://203.0.113.20:11434',
         fetchFn: capturingFetch(capture),
       })
 

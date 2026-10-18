@@ -6,9 +6,10 @@ import getMeta from '@/utils/meta'
  * has not turned AI off.
  */
 export function isWritingToolsAvailable(): boolean {
+  // Writefull's flag does not switch these on: with AI off the editor must not
+  // run ghost text, the language suggestions scheduler or auto completion
   return (
-    (Boolean(getMeta('ol-aiAssistEnabled')) ||
-      Boolean(getMeta('ol-writefullEnabled'))) &&
+    Boolean(getMeta('ol-aiAssistEnabled')) &&
     getMeta('ol-showAiFeatures') !== false &&
     !getMeta('ol-cannot-use-ai')
   )

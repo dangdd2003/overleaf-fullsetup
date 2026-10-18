@@ -72,7 +72,7 @@ const settings = {
     process.env.OVERLEAF_ALLOW_ANONYMOUS_READ_AND_WRITE_SHARING === 'true',
 
   enableGitBridge:
-    String(process.env.GIT_BRIDGE_ENABLED || 'true').toLowerCase() === 'true',
+    String(process.env.GIT_BRIDGE_ENABLED || 'false').toLowerCase() === 'true',
 
   // Databases
   // ---------

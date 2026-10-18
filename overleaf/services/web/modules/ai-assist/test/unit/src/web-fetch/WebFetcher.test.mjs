@@ -542,6 +542,26 @@ describe('WebFetcher', function () {
     expect(fetchPage.callCount).to.be.greaterThan(callsAfterFirst)
   })
 
+  it('does not let one owner\'s cached failure block another owner', async function () {
+    const failing = sinon.stub().rejects(refused(403))
+    await new WebFetcher({ fetchPage: failing, owner: 'u1' })
+      .read(PAGE)
+      .catch(() => {})
+
+    // u2 never saw the failure, so its read goes out
+    const fetchPage = site({ page: articlePage() })
+    const doc = await new WebFetcher({ fetchPage, owner: 'u2' }).read(PAGE)
+    expect(doc.text).to.be.a('string')
+    expect(fetchPage.called).to.be.true
+
+    // u1 still gets its own remembered failure
+    const again = sinon.stub().rejects(refused(403))
+    await new WebFetcher({ fetchPage: again, owner: 'u1' })
+      .read(PAGE)
+      .catch(() => {})
+    expect(again.callCount).to.equal(0)
+  })
+
   it('skips host steps remembered in host-memory unless fresh is true', async function () {
     clearHostMemory()
     const fetchPage = sinon.stub().rejects(refused(403))

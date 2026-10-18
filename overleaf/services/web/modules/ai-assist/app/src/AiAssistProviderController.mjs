@@ -2,6 +2,8 @@ import logger from '@overleaf/logger'
 import Settings from '@overleaf/settings'
 import './ModuleSettings.mjs'
 import { createProviderClient, ProviderError } from './AiAssistProviders.mjs'
+import defaultUserSettingsStore from './AiAssistUserSettingsStore.mjs'
+import SessionManager from '../../../../app/src/Features/Authentication/SessionManager.mjs'
 import {
   normalizeWebSearchSettings,
   testWebSearch,
@@ -81,16 +83,86 @@ export class AiAssistProviderController {
   constructor({
     clientFactory = createProviderClient,
     webSearchTester = testWebSearch,
+    userSettingsStore = defaultUserSettingsStore,
   } = {}) {
     this.clientFactory = clientFactory
     this.webSearchTester = webSearchTester
+    this.userSettingsStore = userSettingsStore
+  }
+
+  async _resolveProviderSettings(req, field = 'providerSettings') {
+    let providerSettings = req.body?.[field]
+    const userId = req.session ? SessionManager.getLoggedInUserId(req.session) : null
+    const needsStored =
+      !providerSettings ||
+      !providerSettings.type ||
+      !providerSettings.apiKey ||
+      providerSettings.apiKey === '••••••••'
+    if (userId && needsStored) {
+      try {
+        const internal = await this.userSettingsStore.getInternalUserSettings(userId)
+        const slot = req.body?.slot || providerSettings?.slot || (field === 'fallbackProviderSettings' || field === 'fastProviderSettings'
+          ? 'fastProvider'
+          : 'provider')
+        const stored = internal[slot]
+        if (stored?.type) {
+          if (!providerSettings || !providerSettings.type) {
+            providerSettings = stored
+          } else if (!providerSettings.apiKey || providerSettings.apiKey === '••••••••') {
+            providerSettings = { ...providerSettings, apiKey: stored.apiKey }
+          }
+        }
+      } catch {}
+    }
+    if (
+      !providerSettings ||
+      typeof providerSettings !== 'object' ||
+      !providerSettings.type
+    ) {
+      return null
+    }
+    return providerSettings
   }
 
   /** One small search through the configured web search backend. */
   testWebSearch = async (req, res) => {
     let settings
     try {
-      const clientSettings = req.body?.webSearchSettings
+      let clientSettings = req.body?.webSearchSettings
+      const userId = req.session ? SessionManager.getLoggedInUserId(req.session) : null
+      const needsStoredWebKeys =
+        clientSettings?.sourceMode === 'custom' &&
+        (!clientSettings.providers ||
+          Object.keys(clientSettings.providers).length === 0 ||
+          Object.values(clientSettings.providers).some(
+            p =>
+              (Array.isArray(p?.apiKeys) && p.apiKeys.includes('••••••••')) ||
+              p?.bearerToken === '••••••••'
+          ))
+      if (userId && needsStoredWebKeys) {
+        try {
+          const internal = await this.userSettingsStore.getInternalUserSettings(userId)
+          if (internal.webSearch) {
+            if (!clientSettings || !clientSettings.providers || Object.keys(clientSettings.providers).length === 0) {
+              clientSettings = internal.webSearch
+            } else if (internal.webSearch.providers) {
+              for (const [name, p] of Object.entries(clientSettings.providers || {})) {
+                const storedP = internal.webSearch.providers[name]
+                if (storedP) {
+                  if (Array.isArray(p.apiKeys)) {
+                    p.apiKeys = p.apiKeys.map((k, idx) => k === '••••••••' ? (storedP.apiKeys?.[idx] || k) : k)
+                    if (p.apiKeys.length === 0 && storedP.apiKeys?.length) p.apiKeys = storedP.apiKeys
+                  }
+                  if (p.bearerToken === '••••••••' && storedP.bearerToken) {
+                    p.bearerToken = storedP.bearerToken
+                  }
+                }
+              }
+            }
+          }
+        } catch {}
+      }
+
       if (
         clientSettings?.sourceMode === 'server' &&
         Settings.aiAssist?.serverWebSearch?.enabled
@@ -136,7 +208,7 @@ export class AiAssistProviderController {
   }
 
   listModels = async (req, res) => {
-    const providerSettings = readProviderSettings(req)
+    const providerSettings = await this._resolveProviderSettings(req)
     if (!providerSettings) {
       return res.status(400).json({
         error: errorPayload(
@@ -163,7 +235,7 @@ export class AiAssistProviderController {
   }
 
   test = async (req, res) => {
-    const providerSettings = readProviderSettings(req)
+    const providerSettings = await this._resolveProviderSettings(req)
     if (!providerSettings) {
       return res.status(400).json({
         error: errorPayload(
@@ -215,8 +287,8 @@ export class AiAssistProviderController {
   editorText = (req, res) => this.relayChat(req, res, { tools: false })
 
   relayChat = async (req, res, { tools: toolsAllowed }) => {
-    let primarySettings = readProviderSettings(req, 'providerSettings')
-    let fallbackSettings = readProviderSettings(req, 'fallbackProviderSettings')
+    let primarySettings = await this._resolveProviderSettings(req, 'providerSettings')
+    let fallbackSettings = await this._resolveProviderSettings(req, 'fallbackProviderSettings')
     if (!primarySettings && !fallbackSettings) {
       return res.status(400).json({
         error: errorPayload(
@@ -241,7 +313,7 @@ export class AiAssistProviderController {
         error: { code: 'invalidRequest', message: 'Missing chat request' },
       })
     }
-    const maxBytes = Settings.aiAssist?.maxTranscriptBytes ?? 5000000
+    const maxBytes = Settings.aiAssist?.maxTranscriptBytes ?? 32 * 1024 * 1024
     if (Buffer.byteLength(JSON.stringify(request.messages)) > maxBytes) {
       return res.status(400).json({
         error: {

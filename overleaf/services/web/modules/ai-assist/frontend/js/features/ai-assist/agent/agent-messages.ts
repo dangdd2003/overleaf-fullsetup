@@ -1,5 +1,6 @@
-import { AgentMessage } from '../providers/types'
+import { AgentMessage, ChatImage } from '../providers/types'
 import { Attachment, EnvelopeState } from './context/types'
+import { SlashCommandInvocation } from './slash-commands/types'
 
 export type ToolCallRecord = {
   id: string
@@ -42,12 +43,27 @@ export type TranscriptEntry =
       id: string
       role: 'user'
       text: string
+      /** Timestamp when the entry was created. */
+      createdAt?: number
       /** The <project-context> block, rendered at send time and then frozen. */
       contextText?: string
       /** Carried forward so the next turn can delta-encode against it. */
       envelopeState?: EnvelopeState
       /** What the user pinned to this turn; the panel renders chips from it. */
       attachments?: Attachment[]
+      /**
+       * The slash command the turn was sent with: the chip, and the server's
+       * scope lookup. `text` is then only the words typed after the name.
+       */
+      command?: SlashCommandInvocation
+      /**
+       * The frozen `<command>` block, rendered at send time from the command's
+       * harness and the context it gathered. Never re-rendered, for the same
+       * reason as contextText: the cached prefix has to stay byte-identical.
+       */
+      commandText?: string
+      /** Attached images (e.g. pasted or uploaded photos). */
+      images?: ChatImage[]
       /**
        * Sent while a run was already going and not yet read by it. Cleared by
        * the run's `userMessage` event; still set when the run ends means the
@@ -64,6 +80,8 @@ export type TranscriptEntry =
       id: string
       role: 'assistant'
       text: string
+      /** Timestamp when the entry was created. */
+      createdAt?: number
       thinking?: string
       thinkingElapsedMs?: number
       toolCalls: ToolCallRecord[]
@@ -108,6 +126,25 @@ export function blocksForEntry(
 }
 
 /**
+ * The provider-facing text of a user turn: its frozen context, its frozen
+ * command block, then the user's words. Empty parts are skipped when a command
+ * is present so no blank parts trail. Without one the join is exactly what
+ * older transcripts were sent with, so their cached prefix still matches.
+ */
+function userTurnContent(
+  entry: Extract<TranscriptEntry, { role: 'user' }>
+): string {
+  if (entry.commandText === undefined) {
+    return entry.contextText
+      ? `${entry.contextText}\n\n${entry.text}`
+      : entry.text
+  }
+  return [entry.contextText, entry.commandText, entry.text]
+    .filter(part => part)
+    .join('\n\n')
+}
+
+/**
  * Rebuilds the provider-facing message array from the stored transcript.
  *
  * The transcript is what gets persisted and rendered; this is the only place
@@ -119,10 +156,11 @@ export function toAgentMessages(transcript: TranscriptEntry[]): AgentMessage[] {
 
   transcript.forEach((entry, index) => {
     if (entry.role === 'user') {
-      const content = entry.contextText
-        ? `${entry.contextText}\n\n${entry.text}`
-        : entry.text
-      messages.push({ role: 'user', content })
+      const msg: AgentMessage = { role: 'user', content: userTurnContent(entry) }
+      if (entry.images && entry.images.length > 0) {
+        msg.images = entry.images
+      }
+      messages.push(msg)
       return
     }
 

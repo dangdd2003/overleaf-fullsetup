@@ -14,8 +14,12 @@ import {
   recordContextTrim,
   extractTextToolCall,
   toAgentMessages,
+  toQueuedMessage,
   toolMessageIsError,
+  userTurnContent,
 } from '../../../app/src/AiAssistRunManager.mjs'
+import { scopeRefusal } from '../../../app/src/AiAssistSlashCommands.mjs'
+import Settings from '@overleaf/settings'
 import {
   emptyAgentState,
   reduceAgentEvent,
@@ -99,6 +103,42 @@ describe('AiAssistRunManager', function () {
     // The provider is called for the reply and for the chat's title
     expect(order[0]).to.equal('saveChat')
     expect(order).to.include('provider')
+  })
+
+  it('does not announce a title for a chat that was not saved', async function () {
+    const chatHistoryStore = {
+      saveChat: sinon.stub().resolves({}),
+      getChat: sinon.stub().resolves(null),
+      saveChatTitle: sinon.stub().resolves(null),
+    }
+    mockClient.streamChat.callsFake(async function* () {
+      yield { type: 'text', text: 'hello' }
+    })
+    manager = new AiAssistRunManager({
+      store: mockStore,
+      tools: mockTools,
+      clientFactory: () => mockClient,
+      chatHistoryStore,
+    })
+
+    await manager.startRun({
+      runId: 'run-title-gone',
+      projectId: '0123456789abcdef01234567',
+      userId: 'abcdef0123456789abcdef01',
+      transcript: [{ id: 'u0', role: 'user', text: 'first message' }],
+      providerSettings: { type: 'openai', apiKey: 'k', model: 'm' },
+      chatId: 'chat_gone',
+    })
+    const deadline = Date.now() + 1000
+    while (!chatHistoryStore.saveChatTitle.called && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 10))
+    }
+
+    expect(chatHistoryStore.saveChatTitle.called).to.be.true
+    const titleEvents = mockStore.appendEvent
+      .getCalls()
+      .filter(c => c.args[1]?.type === 'chatTitle')
+    expect(titleEvents).to.have.lengthOf(0)
   })
 
   it('still runs when the chat cannot be saved', async function () {
@@ -452,11 +492,44 @@ describe('AiAssistRunManager', function () {
                 errors: [{ file: 'main.tex', line: 2, message: 'Bad' }],
                 warnings: [],
                 rawLog: '',
+                buildId: null,
+                clsiServerId: null,
               },
             },
           })
         )
       ).to.be.true
+    })
+
+    it('keeps the build the editor compiled, so its PDF can be viewed', async function () {
+      mockStore.getWatcherCount = sinon.stub().resolves(1)
+      scriptCompile()
+
+      const runPromise = manager.startRun({
+        runId: 'run-compile-build',
+        projectId: 'p1',
+        userId: 'u1',
+        transcript: [{ role: 'user', content: 'compile' }],
+        providerSettings: { type: 'openai', apiKey: 'k', model: 'gpt-4o' },
+      })
+      await new Promise(r => setTimeout(r, 10))
+      await manager.submitCompileResult('run-compile-build', {
+        id: 'comp-1',
+        outcome: {
+          status: 'success',
+          buildId: '18f4c3a2b10-0123456789abcdef',
+          clsiServerId: 'clsi-1',
+        },
+      })
+      await runPromise
+
+      const finished = mockStore.appendEvent.args
+        .map(args => args[1])
+        .find(event => event.type === 'toolCallFinished')
+      expect(finished.result.outcome).to.include({
+        buildId: '18f4c3a2b10-0123456789abcdef',
+        clsiServerId: 'clsi-1',
+      })
     })
 
     it('leaves the compile to the server when nobody is watching', async function () {
@@ -486,6 +559,131 @@ describe('AiAssistRunManager', function () {
           })
         )
       ).to.be.true
+    })
+  })
+
+  describe('page images from view_compiled_pdf_page', function () {
+    const IMAGE = { mediaType: 'image/png', data: 'iVBORw0KGgo=', dpi: 150 }
+    const viewCall = id => ({
+      type: 'tool_call',
+      id,
+      name: 'view_compiled_pdf_page',
+      args: { page: 2 },
+    })
+    const startView = runId =>
+      manager.startRun({
+        runId,
+        projectId: 'p1',
+        userId: 'u1',
+        transcript: [{ role: 'user', content: 'check the table' }],
+        providerSettings: { type: 'anthropic', apiKey: 'k', model: 'm' },
+      })
+
+    // What each provider request was given, as it was at the time
+    let sent
+    beforeEach(function () {
+      sent = []
+      mockTools.execute.callsFake(async (name, args, context) => ({
+        status: 'ok',
+        page: 2,
+        sourceMap: [],
+        badBoxes: [],
+        ...(context.images ? { image: IMAGE } : { imageOmitted: true }),
+      }))
+    })
+
+    it('sends the image with the tool message but never emits or stores its bytes', async function () {
+      let callCount = 0
+      mockClient.streamChat.callsFake(async function* ({ messages }) {
+        sent.push(structuredClone(messages))
+        callCount++
+        if (callCount === 1) yield viewCall('v1')
+        else yield { type: 'text', text: 'The table fits.' }
+      })
+
+      await startView('run-view')
+
+      const toolMessage = sent[1].find(message => message.role === 'tool')
+      // The bytes go to the provider, and the token cost of the image rides
+      // with them for the context budget.
+      expect(toolMessage.images).to.have.length(1)
+      expect(toolMessage.images[0]).to.include({
+        mediaType: 'image/png',
+        data: 'iVBORw0KGgo=',
+      })
+      expect(toolMessage.images[0].tokens).to.be.a('number')
+      expect(toolMessage.content).to.include('PDF page 2')
+      const finished = mockStore.appendEvent.args
+        .map(args => args[1])
+        .find(event => event.type === 'toolCallFinished')
+      expect(finished.result.image).to.deep.equal({
+        mediaType: 'image/png',
+        dpi: 150,
+      })
+      expect(JSON.stringify(mockStore.appendEvent.args)).to.not.include(
+        'iVBORw0KGgo='
+      )
+      expect(mockTools.execute.firstCall.args[2].images).to.equal(true)
+    })
+
+    it('carries on text-only when the model refuses images', async function () {
+      let callCount = 0
+      mockClient.streamChat.callsFake(async function* ({ messages }) {
+        sent.push(structuredClone(messages))
+        callCount++
+        if (callCount === 1) yield viewCall('v1')
+        else if (callCount === 2) {
+          throw Object.assign(
+            new Error('This model does not support image input'),
+            { status: 400 }
+          )
+        } else if (callCount === 3) yield viewCall('v2')
+        else yield { type: 'text', text: 'Done.' }
+      })
+
+      await startView('run-view-text-only')
+
+      expect(sent[1].some(message => message.images)).to.equal(true)
+      // The same step again, without the image
+      expect(sent[2]).to.have.lengthOf(sent[1].length)
+      expect(sent[2].some(message => message.images)).to.equal(false)
+      // and the next page is not rendered at all
+      expect(mockTools.execute.secondCall.args[2].images).to.equal(false)
+      expect(sent[3].some(message => message.images)).to.equal(false)
+      expect(mockStore.updateStatus.calledWith('run-view-text-only', 'done')).to
+        .be.true
+    })
+
+    it('keeps only the newest page images in the conversation', async function () {
+      let callCount = 0
+      mockClient.streamChat.callsFake(async function* ({ messages }) {
+        sent.push(structuredClone(messages))
+        callCount++
+        if (callCount <= 9) yield viewCall(`v${callCount}`)
+        else yield { type: 'text', text: 'Done.' }
+      })
+
+      await startView('run-view-many')
+
+      // Six images fit in the slack (4 + 4), so nothing is dropped yet
+      const sixth = sent[6].filter(message => message.role === 'tool')
+      expect(sixth.every(message => Boolean(message.images))).to.equal(true)
+      // The ninth goes past it, and all but the newest four go at once
+      const last = sent.at(-1).filter(message => message.role === 'tool')
+      expect(last).to.have.lengthOf(9)
+      expect(last.map(message => Boolean(message.images))).to.deep.equal([
+        false,
+        false,
+        false,
+        false,
+        false,
+        true,
+        true,
+        true,
+        true,
+      ])
+      // Dropping an image leaves the text as the next run rebuilds it
+      expect(last[0].content).to.equal(last[8].content)
     })
   })
 
@@ -1460,6 +1658,17 @@ describe('AiAssistRunManager', function () {
       expect(extracted.prose).to.equal('I will now edit the document.')
     })
 
+    it('recognises the PDF view tools when the run passes no specs', function () {
+      for (const name of [
+        'view_compiled_pdf_overview',
+        'search_compiled_pdf',
+      ]) {
+        const text = `\`\`\`json\n{ "name": "${name}", "arguments": { "fromPage": 1 } }\n\`\`\``
+        const extracted = extractTextToolCall(text, [])
+        expect(extracted.call.name).to.equal(name)
+      }
+    })
+
     it('rescues text-based tool call when model outputs fenced tool call after thinking', async function () {
       mockTools.getToolSpecs = () => [
         {
@@ -1750,6 +1959,65 @@ describe('AiAssistRunManager', function () {
             id: 'q1',
             text: 'also check the bibliography',
             contextText: '<project-context turn="2"/>',
+          })
+        )
+      ).to.be.true
+    })
+
+    it('injects queued message with images into model request and emits userMessage with images', async function () {
+      let turn = 0
+      const sentMessages = []
+      const sampleImages = [
+        {
+          mediaType: 'image/png',
+          data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+        },
+      ]
+      mockClient.streamChat.callsFake(async function* (opts) {
+        turn++
+        sentMessages.push(opts.messages.map(m => ({ ...m })))
+        if (turn === 1) {
+          yield {
+            type: 'tool_call',
+            id: 'r1',
+            name: 'read_file',
+            args: { path: 'main.tex' },
+          }
+          await manager.queueMessage('run-queue-images', {
+            id: 'q_img',
+            text: 'check this diagram',
+            contextText: '<project-context turn="2"/>',
+            images: sampleImages,
+          })
+        } else {
+          yield { type: 'text', text: 'Diagram checked.' }
+        }
+      })
+
+      await manager.startRun({
+        runId: 'run-queue-images',
+        projectId: 'p1',
+        userId: 'u1',
+        transcript: [{ role: 'user', content: 'check main' }],
+        providerSettings: { type: 'openai', apiKey: 'k', model: 'gpt-4o' },
+      })
+
+      const injectedMessage = sentMessages[1].find(
+        m => m.content && m.content.includes('check this diagram')
+      )
+      expect(injectedMessage).to.exist
+      expect(injectedMessage.role).to.equal('user')
+      expect(injectedMessage.images).to.deep.equal(sampleImages)
+
+      expect(
+        mockStore.appendEvent.calledWith(
+          'run-queue-images',
+          sinon.match({
+            type: 'userMessage',
+            id: 'q_img',
+            text: 'check this diagram',
+            contextText: '<project-context turn="2"/>',
+            images: sampleImages,
           })
         )
       ).to.be.true
@@ -2799,6 +3067,30 @@ describe('AiAssistRunManager', function () {
       expect(live.isError).to.equal(true)
     })
 
+    it('reports a result that carries an error as a failed call, live as well as rebuilt', async function () {
+      let callCount = 0
+      mockClient.streamChat.callsFake(async function* () {
+        callCount++
+        if (callCount === 1) {
+          yield { type: 'tool_call', id: 'pdf-1', name: 'resolve_pdf_block', args: { page: 1, block: 'B9' } }
+        } else {
+          yield { type: 'text', text: 'Not found.' }
+        }
+      })
+      mockTools.execute.resolves({ error: 'No block B9 on page 1 of this build.' })
+      await manager.startRun({
+        runId: 'run-error-flag',
+        projectId: 'p1',
+        userId: 'u1',
+        transcript: [{ role: 'user', content: 'where is B9' }],
+        providerSettings: provider,
+      })
+      const event = mockStore.appendEvent.args
+        .map(([, e]) => e)
+        .find(e => e.type === 'toolCallFinished')
+      expect(event.isError).to.equal(true)
+    })
+
     it('treats noMatch and ambiguous as failed tool messages', function () {
       expect(toolMessageIsError({ status: 'noMatch' }, false)).to.equal(true)
       expect(toolMessageIsError({ status: 'ambiguous' }, false)).to.equal(true)
@@ -3349,5 +3641,908 @@ describe('AiAssistRunManager', function () {
       expect(hydrateTranscript(panel, stored)).to.deep.equal(panel)
       expect(hydrateTranscript(panel, null)).to.equal(panel)
     })
+  })
+
+  describe('checkpoint recording before file changes', function () {
+    const provider = { type: 'openai', apiKey: 'k', model: 'gpt-4o' }
+    let mockCheckpointStore
+
+    beforeEach(function () {
+      mockCheckpointStore = {
+        saveCheckpoint: sinon.stub().resolves({}),
+        getCheckpoint: sinon.stub().resolves(null),
+      }
+      manager.checkpointStore = mockCheckpointStore
+    })
+
+    it('records checkpoint before edit_file in acceptEdits mode', async function () {
+      let callCount = 0
+      mockClient.streamChat.callsFake(async function* () {
+        callCount++
+        if (callCount === 1) {
+          yield {
+            type: 'tool_call',
+            id: 'e1',
+            name: 'edit_file',
+            args: { path: 'main.tex', oldText: 'hello', newText: 'world' },
+          }
+        } else {
+          yield { type: 'text', text: 'Done.' }
+        }
+      })
+
+      mockTools._resolveDoc = sinon.stub().resolves({
+        _id: 'doc_123',
+        lines: ['hello', 'everyone'],
+      })
+      mockTools.checkEdit = sinon.stub().resolves({
+        status: 'ok',
+        path: 'main.tex',
+        oldText: 'hello',
+        newText: 'world',
+      })
+      mockTools.execute.resolves({ status: 'applied', path: 'main.tex' })
+
+      await manager.startRun({
+        runId: 'run-chk-1',
+        projectId: 'p1',
+        userId: 'u1',
+        chatId: 'chat_123',
+        mode: 'acceptEdits',
+        transcript: [{ id: 'u0', role: 'user', text: 'change hello to world' }],
+        providerSettings: provider,
+      })
+
+      expect(mockCheckpointStore.saveCheckpoint.calledOnce).to.be.true
+      const args = mockCheckpointStore.saveCheckpoint.firstCall.args
+      expect(args[0]).to.equal('p1')
+      expect(args[1]).to.equal('u1')
+      expect(args[2]).to.equal('chat_123')
+      expect(args[3]).to.equal('u0')
+      expect(args[4]).to.deep.equal({
+        files: {
+          'main.tex': {
+            originalContent: 'hello\neveryone',
+            docId: 'doc_123',
+            isNew: false,
+          },
+        },
+      })
+    })
+
+    it('records checkpoint before create_file for a new file', async function () {
+      let callCount = 0
+      mockClient.streamChat.callsFake(async function* () {
+        callCount++
+        if (callCount === 1) {
+          yield {
+            type: 'tool_call',
+            id: 'c1',
+            name: 'create_file',
+            args: { path: 'new.tex', content: '\\section{New}' },
+          }
+        } else {
+          yield { type: 'text', text: 'Created.' }
+        }
+      })
+
+      mockTools._resolveDoc = sinon.stub().resolves(null)
+      mockTools.execute.resolves({ status: 'applied', path: 'new.tex' })
+
+      await manager.startRun({
+        runId: 'run-chk-2',
+        projectId: 'p1',
+        userId: 'u1',
+        chatId: 'chat_123',
+        mode: 'acceptEdits',
+        transcript: [{ id: 'u_create', role: 'user', text: 'create new.tex' }],
+        providerSettings: provider,
+      })
+
+      expect(mockCheckpointStore.saveCheckpoint.calledOnce).to.be.true
+      const args = mockCheckpointStore.saveCheckpoint.firstCall.args
+      expect(args[0]).to.equal('p1')
+      expect(args[1]).to.equal('u1')
+      expect(args[2]).to.equal('chat_123')
+      expect(args[3]).to.equal('u_create')
+      expect(args[4]).to.deep.equal({
+        files: {
+          'new.tex': {
+            originalContent: '',
+            docId: null,
+            isNew: true,
+          },
+        },
+      })
+    })
+
+    it('does not record checkpoint if user declines edit in manual mode', async function () {
+      let callCount = 0
+      mockClient.streamChat.callsFake(async function* () {
+        callCount++
+        if (callCount === 1) {
+          yield {
+            type: 'tool_call',
+            id: 'e1',
+            name: 'edit_file',
+            args: { path: 'main.tex', oldText: 'a', newText: 'b' },
+          }
+        } else {
+          yield { type: 'text', text: 'Declined acknowledged.' }
+        }
+      })
+
+      mockTools._resolveDoc = sinon.stub().resolves({
+        _id: 'doc_123',
+        lines: ['a'],
+      })
+      mockTools.checkEdit = sinon.stub().resolves({
+        status: 'ok',
+        path: 'main.tex',
+        oldText: 'a',
+        newText: 'b',
+      })
+
+      const runPromise = manager.startRun({
+        runId: 'run-chk-decline',
+        projectId: 'p1',
+        userId: 'u1',
+        chatId: 'chat_123',
+        mode: 'manual',
+        transcript: [{ id: 'u0', role: 'user', text: 'edit please' }],
+        providerSettings: provider,
+      })
+
+      await new Promise(r => setTimeout(r, 10))
+      await manager.approveEdit('run-chk-decline', { accepted: false })
+      await runPromise
+
+      expect(mockCheckpointStore.saveCheckpoint.called).to.be.false
+      expect(mockTools.execute.calledWith('edit_file')).to.be.false
+    })
+
+    it('updates activeUserMessageId when queued message arrives', async function () {
+      let turn = 0
+      mockClient.streamChat.callsFake(async function* () {
+        turn++
+        if (turn === 1) {
+          yield { type: 'text', text: 'first response' }
+          await manager.queueMessage('run-chk-queue', {
+            id: 'u_queued_42',
+            text: 'now change foo to bar',
+          })
+        } else if (turn === 2) {
+          yield {
+            type: 'tool_call',
+            id: 'e2',
+            name: 'edit_file',
+            args: { path: 'main.tex', oldText: 'foo', newText: 'bar' },
+          }
+        } else {
+          yield { type: 'text', text: 'done second turn' }
+        }
+      })
+
+      mockTools._resolveDoc = sinon.stub().resolves({
+        _id: 'doc_1',
+        lines: ['foo'],
+      })
+      mockTools.checkEdit = sinon.stub().resolves({
+        status: 'ok',
+        path: 'main.tex',
+        oldText: 'foo',
+        newText: 'bar',
+      })
+      mockTools.execute.resolves({ status: 'applied', path: 'main.tex' })
+
+      const runPromise = manager.startRun({
+        runId: 'run-chk-queue',
+        projectId: 'p1',
+        userId: 'u1',
+        chatId: 'chat_123',
+        mode: 'acceptEdits',
+        transcript: [{ id: 'u0', role: 'user', text: 'first prompt' }],
+        providerSettings: provider,
+      })
+
+      // Queue a second message while run is active
+      await manager.queueMessage('run-chk-queue', {
+        id: 'u_queued_42',
+        text: 'now change foo to bar',
+      })
+
+      await runPromise
+
+      expect(mockCheckpointStore.saveCheckpoint.calledOnce).to.be.true
+      expect(mockCheckpointStore.saveCheckpoint.firstCall.args[3]).to.equal(
+        'u_queued_42'
+      )
+    })
+  })
+
+  describe('slash commands', function () {
+    const provider = { type: 'openai', apiKey: 'k', model: 'gpt-4o' }
+    const NOTE = SENT_DURING_RUN_NOTE
+    const commandBlock = id =>
+      `<command name="${id}">\n<instructions>Do it.</instructions>\n</command>`
+    // A user turn sent with a command, as the composer stores it
+    const commandTurn = (id, words = '') => ({
+      id: `u_${id}`,
+      role: 'user',
+      text: words,
+      contextText: '<project-context turn="1"/>',
+      command: { id, args: words },
+      commandText: commandBlock(id),
+    })
+    const toolSpec = name => ({
+      name,
+      description: name,
+      parameters: { type: 'object', properties: {} },
+    })
+    let savedAiAssist
+
+    beforeEach(function () {
+      savedAiAssist = Settings.aiAssist
+      mockTools.getToolSpecs = () => [
+        toolSpec('read_file'),
+        toolSpec('edit_file'),
+      ]
+      mockTools.execute = sinon.stub().resolves({ status: 'applied' })
+    })
+
+    afterEach(function () {
+      Settings.aiAssist = savedAiAssist
+    })
+
+    const finishedCall = (id, store = mockStore) =>
+      store.appendEvent.args
+        .map(args => args[1])
+        .find(e => e.type === 'toolCallFinished' && e.id === id)
+
+    describe('the turn content', function () {
+      it('puts the context, then the command block, then the words', function () {
+        expect(
+          userTurnContent({
+            contextText: 'C',
+            commandText: 'K',
+            text: 'words',
+          })
+        ).to.equal('C\n\nK\n\nwords')
+      })
+
+      it('keeps the command block when the words are empty', function () {
+        expect(
+          userTurnContent({ contextText: 'C', commandText: 'K', text: '' })
+        ).to.equal('C\n\nK')
+      })
+
+      it('marks a command turn sent during a run after its words', function () {
+        expect(
+          userTurnContent({
+            contextText: 'C',
+            commandText: 'K',
+            text: 'w',
+            sentDuringRun: true,
+          })
+        ).to.equal(`C\n\nK\n\nw\n\n${NOTE}`)
+      })
+
+      it('renders an entry without a command exactly as before', function () {
+        expect(userTurnContent({ contextText: 'C', text: 'words' })).to.equal(
+          'C\n\nwords'
+        )
+        expect(userTurnContent({ contextText: 'C', text: '' })).to.equal(
+          'C\n\n'
+        )
+        expect(userTurnContent({ text: 'words' })).to.equal('words')
+        expect(
+          userTurnContent({ text: 'w', sentDuringRun: true })
+        ).to.equal(`w\n\n${NOTE}`)
+      })
+
+      it('rebuilds a stored command turn as the run sent it', function () {
+        const [message] = toAgentMessages([commandTurn('fix', 'the table')])
+        expect(message).to.deep.equal({
+          role: 'user',
+          content: `<project-context turn="1"/>\n\n${commandBlock('fix')}\n\nthe table`,
+        })
+      })
+
+      it('preserves images on user transcript entries in toAgentMessages', function () {
+        const transcript = [
+          {
+            role: 'user',
+            text: 'Explain this diagram',
+            images: [{ mediaType: 'image/png', data: 'iVBORw0KGgo...' }],
+          },
+        ]
+        const messages = toAgentMessages(transcript)
+        expect(messages).to.have.lengthOf(1)
+        expect(messages[0].role).to.equal('user')
+        expect(messages[0].images).to.deep.equal([
+          { mediaType: 'image/png', data: 'iVBORw0KGgo...' },
+        ])
+      })
+
+      it('does not add images property to user message if entry has no images', function () {
+        const transcript = [
+          {
+            role: 'user',
+            text: 'Hello',
+          },
+        ]
+        const messages = toAgentMessages(transcript)
+        expect(messages).to.have.lengthOf(1)
+        expect(messages[0]).to.not.have.property('images')
+      })
+
+      it('preserves images on a queued message in toQueuedMessage', function () {
+        const queued = toQueuedMessage({
+          id: 'q1',
+          text: 'explain this screenshot',
+          contextText: 'C',
+          images: [{ mediaType: 'image/png', data: 'iVBORw0KGgo...' }],
+        })
+        expect(queued.images).to.deep.equal([
+          { mediaType: 'image/png', data: 'iVBORw0KGgo...' },
+        ])
+      })
+
+      it('keeps the command on a queued message and drops it when unknown', function () {
+        const queued = toQueuedMessage({
+          id: 'q1',
+          text: 'w',
+          contextText: 'C',
+          commandText: 'K',
+          command: { id: 'fix', args: '' },
+        })
+        expect(queued).to.deep.equal({
+          id: 'q1',
+          text: 'w',
+          contextText: 'C',
+          commandText: 'K',
+          command: { id: 'fix', args: '' },
+          content: `C\n\nK\n\nw\n\n${NOTE}`,
+        })
+
+        const plain = toQueuedMessage({
+          id: 'q2',
+          text: 'w',
+          contextText: 'C',
+          commandText: 'K',
+          command: { id: 'nope' },
+        })
+        expect(plain).to.not.have.property('command')
+        expect(plain).to.not.have.property('commandText')
+        expect(plain.content).to.equal(`C\n\nw\n\n${NOTE}`)
+      })
+
+      it('queues an old message with the same fields and bytes as before', function () {
+        expect(
+          toQueuedMessage({ id: 'q3', text: 'w', contextText: 'C' })
+        ).to.deep.equal({
+          id: 'q3',
+          text: 'w',
+          contextText: 'C',
+          content: `C\n\nw\n\n${NOTE}`,
+        })
+      })
+    })
+
+    describe('scope enforcement', function () {
+      it('refuses an edit in a read command with the scope error, and sends the same tools and prompt', async function () {
+        const sent = []
+        let turn = 0
+        mockClient.streamChat.callsFake(async function* (opts) {
+          sent.push({
+            tools: opts.tools.map(t => t.name),
+            system: opts.system,
+            // A copy: the run keeps appending to the same array
+            messages: [...opts.messages],
+          })
+          turn++
+          if (turn === 1) {
+            yield {
+              type: 'tool_call',
+              id: 'call_edit',
+              name: 'edit_file',
+              args: { path: 'main.tex', oldText: 'a', newText: 'b' },
+            }
+          } else {
+            yield { type: 'text', text: 'It would change a sentence.' }
+          }
+        })
+
+        await manager.startRun({
+          runId: 'run-scope-read',
+          projectId: 'p1',
+          userId: 'u1',
+          transcript: [commandTurn('review', 'the intro')],
+          providerSettings: provider,
+          // Accept edits would apply this; the command's scope does not
+          mode: 'acceptEdits',
+        })
+
+        expect(mockTools.execute.calledWith('edit_file')).to.be.false
+        const call = finishedCall('call_edit')
+        expect(call.isError).to.be.true
+        expect(call.result.status).to.equal('denied')
+        expect(call.result.error).to.equal(scopeRefusal('review', 'edit_file'))
+        expect(call.result.error).to.equal(
+          "`edit_file` is outside /review's scope: this command only reads. Report the change instead of making it."
+        )
+        // The refusal reaches the model as the tool's result
+        expect(JSON.stringify(sent[1].messages)).to.include(
+          "outside /review's scope"
+        )
+        // Tool specs and system prompt do not change because of the command
+        expect(sent[0].tools).to.deep.equal([
+          'read_file',
+          'edit_file',
+          'present_plan',
+        ])
+        expect(sent[1].tools).to.deep.equal(sent[0].tools)
+        expect(sent[1].system).to.equal(sent[0].system)
+      })
+
+      it('lets a read command read the project', async function () {
+        let turn = 0
+        mockClient.streamChat.callsFake(async function* () {
+          turn++
+          if (turn === 1) {
+            yield {
+              type: 'tool_call',
+              id: 'call_read',
+              name: 'read_file',
+              args: { path: 'main.tex' },
+            }
+          } else {
+            yield { type: 'text', text: 'Read it.' }
+          }
+        })
+
+        await manager.startRun({
+          runId: 'run-scope-read-ok',
+          projectId: 'p1',
+          userId: 'u1',
+          transcript: [commandTurn('explain')],
+          providerSettings: provider,
+        })
+
+        expect(mockTools.execute.calledWith('read_file')).to.be.true
+        expect(finishedCall('call_read').result.status).to.not.equal('denied')
+      })
+
+      it('ends the command when a queued plain message is drained', async function () {
+        let turn = 0
+        mockClient.streamChat.callsFake(async function* () {
+          turn++
+          if (turn === 1) {
+            yield {
+              type: 'tool_call',
+              id: 'r1',
+              name: 'read_file',
+              args: { path: 'main.tex' },
+            }
+            await manager.queueMessage('run-plain-after', {
+              id: 'q_plain',
+              text: 'now make the change',
+              contextText: '<project-context turn="2"/>',
+            })
+          } else if (turn === 2) {
+            yield {
+              type: 'tool_call',
+              id: 'call_edit',
+              name: 'edit_file',
+              args: { path: 'main.tex', oldText: 'a', newText: 'b' },
+            }
+          } else {
+            yield { type: 'text', text: 'Changed it.' }
+          }
+        })
+
+        await manager.startRun({
+          runId: 'run-plain-after',
+          projectId: 'p1',
+          userId: 'u1',
+          transcript: [commandTurn('review')],
+          providerSettings: provider,
+          mode: 'acceptEdits',
+        })
+
+        expect(mockTools.execute.calledWith('edit_file')).to.be.true
+        expect(finishedCall('call_edit').result.status).to.not.equal('denied')
+      })
+
+      it('starts the command when a queued command message is drained', async function () {
+        const sent = []
+        let turn = 0
+        mockClient.streamChat.callsFake(async function* (opts) {
+          sent.push([...opts.messages])
+          turn++
+          if (turn === 1) {
+            yield {
+              type: 'tool_call',
+              id: 'r1',
+              name: 'read_file',
+              args: { path: 'main.tex' },
+            }
+            await manager.queueMessage('run-command-after', {
+              id: 'q_cmd',
+              text: 'the abstract',
+              contextText: '<project-context turn="2"/>',
+              commandText: commandBlock('review'),
+              command: { id: 'review', args: 'the abstract' },
+            })
+          } else if (turn === 2) {
+            yield {
+              type: 'tool_call',
+              id: 'call_edit',
+              name: 'edit_file',
+              args: { path: 'main.tex', oldText: 'a', newText: 'b' },
+            }
+          } else {
+            yield { type: 'text', text: 'Only reviewed.' }
+          }
+        })
+
+        await manager.startRun({
+          runId: 'run-command-after',
+          projectId: 'p1',
+          userId: 'u1',
+          transcript: [{ id: 'u0', role: 'user', text: 'hello' }],
+          providerSettings: provider,
+          mode: 'acceptEdits',
+        })
+
+        expect(mockTools.execute.calledWith('edit_file')).to.be.false
+        expect(finishedCall('call_edit').result.status).to.equal('denied')
+        // The queued turn is stored with its command, and sent with its block
+        expect(
+          mockStore.appendEvent.calledWith(
+            'run-command-after',
+            sinon.match({
+              type: 'userMessage',
+              id: 'q_cmd',
+              command: { id: 'review', args: 'the abstract' },
+              commandText: commandBlock('review'),
+            })
+          )
+        ).to.be.true
+        expect(sent[1].at(-1).content).to.equal(
+          `<project-context turn="2"/>\n\n${commandBlock('review')}\n\nthe abstract\n\n${NOTE}`
+        )
+      })
+    })
+
+    describe('system prompt', function () {
+      it('sends the same system prompt and tools for a command turn and a plain one', async function () {
+        mockClient.streamChat.callsFake(async function* () {
+          yield { type: 'text', text: 'ok' }
+        })
+        await manager.startRun({
+          runId: 'run-plain-turn',
+          projectId: 'p1',
+          userId: 'u1',
+          transcript: [{ role: 'user', text: 'hi' }],
+          providerSettings: provider,
+        })
+        await manager.startRun({
+          runId: 'run-command-turn',
+          projectId: 'p1',
+          userId: 'u1',
+          transcript: [commandTurn('fix', 'the table')],
+          providerSettings: provider,
+        })
+        const [plain, command] = mockClient.streamChat.args.map(([a]) => a)
+        expect(command.system).to.equal(plain.system)
+        expect(command.tools).to.deep.equal(plain.tools)
+        expect(plain.system).to.include('# Slash commands')
+      })
+    })
+  })
+})
+
+describe('AiAssistRunManager connector tools', function () {
+  const provider = { type: 'anthropic', apiKey: 'k', model: 'claude-x' }
+  const spec = name => ({
+    name,
+    description: name,
+    parameters: { type: 'object', properties: {} },
+  })
+  let savedAiAssist
+
+  beforeEach(function () {
+    savedAiAssist = Settings.aiAssist
+    Settings.aiAssist = { ...(savedAiAssist || {}), enabled: true }
+  })
+
+  afterEach(function () {
+    Settings.aiAssist = savedAiAssist
+  })
+
+  function storeStub() {
+    return {
+      createRun: sinon.stub().resolves(),
+      appendEvent: sinon.stub().resolves(1),
+      updateStatus: sinon.stub().resolves(),
+      setPendingApproval: sinon.stub().resolves(),
+      clearPendingApproval: sinon.stub().resolves(),
+      getPendingApproval: sinon.stub().resolves(null),
+      getRun: sinon.stub().resolves({ status: 'running' }),
+      touchHeartbeat: sinon.stub().resolves(),
+      setMode: sinon.stub().resolves(),
+    }
+  }
+
+  const builtIns = {
+    getToolSpecs: () => [spec('read_file')],
+    execute: sinon.stub().resolves({ content: 'file' }),
+  }
+
+  // Calls the given tools in turn, then answers with text
+  function scriptedClient(calls) {
+    let turn = 0
+    return {
+      streamChat: sinon.stub().callsFake(async function* () {
+        turn++
+        const call = calls[turn - 1]
+        if (call) yield { type: 'tool_call', ...call }
+        else yield { type: 'text', text: 'Done' }
+      }),
+    }
+  }
+
+  function connectorSession(overrides = {}) {
+    return {
+      connectors: [],
+      deferred: false,
+      unavailable: [],
+      specs: () => [],
+      has: () => false,
+      describe: () => null,
+      execute: sinon.stub().resolves({ result: 'ok' }),
+      allowAlways: async () => {},
+      close: async () => {},
+      ...overrides,
+    }
+  }
+
+  const runWith = (manager, runId, extra = {}) =>
+    manager.startRun({
+      runId,
+      projectId: 'p1',
+      userId: 'u1',
+      transcript: [{ role: 'user', content: 'hi' }],
+      providerSettings: provider,
+      mode: 'manual',
+      ...extra,
+    })
+
+  it('offers a deferred connector tool from the step after search_connector_tools loaded it', async function () {
+    let loaded = false
+    const session = connectorSession({
+      deferred: true,
+      loadedTools: new Set(),
+      specs: () =>
+        loaded
+          ? [spec('search_connector_tools'), spec('mcp__docs__get')]
+          : [spec('search_connector_tools')],
+      describe: name =>
+        name === 'mcp__docs__get'
+          ? {
+              id: 'c1',
+              name: 'Docs',
+              tool: 'get',
+              title: 'Get',
+              permission: 'allow',
+              readOnly: true,
+              destructive: false,
+            }
+          : null,
+      execute: sinon.stub().callsFake(async name => {
+        if (name === 'search_connector_tools') {
+          loaded = true
+          session.loadedTools.add('mcp__docs__get')
+          return { result: 'Loaded: mcp__docs__get' }
+        }
+        return { result: 'page body' }
+      }),
+    })
+    const client = scriptedClient([
+      { id: 'a', name: 'search_connector_tools', args: { query: 'select:mcp__docs__get' } },
+      { id: 'b', name: 'mcp__docs__get', args: {} },
+    ])
+    const manager = new AiAssistRunManager({
+      store: storeStub(),
+      tools: builtIns,
+      clientFactory: () => client,
+      connectorSessionFactory: async () => session,
+    })
+
+    await runWith(manager, 'run-loaded')
+
+    const offered = client.streamChat.args.map(([a]) => a.tools.map(t => t.name))
+    expect(offered[0]).to.deep.equal(['read_file', 'search_connector_tools', 'present_plan'])
+    expect(offered[1]).to.deep.equal([
+      'read_file',
+      'search_connector_tools',
+      'mcp__docs__get',
+      'present_plan',
+    ])
+    expect(session.execute.calledWith('mcp__docs__get')).to.be.true
+  })
+
+  it('refuses a deferred connector tool that is not loaded yet, before asking the user', async function () {
+    const session = connectorSession({
+      deferred: true,
+      loadedTools: new Set(),
+      specs: () => [spec('search_connector_tools')],
+      describe: () => ({
+        id: 'c1',
+        name: 'Docs',
+        tool: 'write',
+        title: 'Write',
+        permission: undefined,
+        readOnly: false,
+        destructive: false,
+      }),
+    })
+    const client = scriptedClient([
+      { id: 'b', name: 'mcp__docs__write', args: {} },
+    ])
+    const store = storeStub()
+    const manager = new AiAssistRunManager({
+      store,
+      tools: builtIns,
+      clientFactory: () => client,
+      connectorSessionFactory: async () => session,
+    })
+
+    await runWith(manager, 'run-not-loaded')
+
+    expect(session.execute.called).to.be.false
+    const events = store.appendEvent.args.map(args => args[1].type)
+    expect(events).not.to.include('awaitingApproval')
+    const toolMessage = client.streamChat.args[1][0].messages.find(
+      m => m.role === 'tool' && m.toolCallId === 'b'
+    )
+    expect(toolMessage.content).to.include('is not loaded yet')
+    expect(toolMessage.content).to.include('select:mcp__docs__write')
+  })
+
+  it('sends a failed connector result to the provider as an error, and records it failed', async function () {
+    const session = connectorSession({
+      specs: () => [spec('mcp__docs__get')],
+      describe: () => ({
+        id: 'c1',
+        name: 'Docs',
+        tool: 'get',
+        title: 'Get',
+        permission: 'allow',
+        readOnly: true,
+        destructive: false,
+      }),
+      execute: sinon.stub().resolves({ result: 'Not found', isError: true }),
+    })
+    const client = scriptedClient([
+      { id: 'b', name: 'mcp__docs__get', args: {} },
+    ])
+    const store = storeStub()
+    const manager = new AiAssistRunManager({
+      store,
+      tools: builtIns,
+      clientFactory: () => client,
+      connectorSessionFactory: async () => session,
+    })
+
+    await runWith(manager, 'run-error')
+
+    const toolMessage = client.streamChat.args[1][0].messages.find(
+      m => m.role === 'tool' && m.toolCallId === 'b'
+    )
+    expect(toolMessage.isError).to.be.true
+    expect(toolMessage.content).to.equal('Error: Not found')
+    const finished = store.appendEvent.args
+      .map(args => args[1])
+      .find(e => e.type === 'toolCallFinished' && e.id === 'b')
+    expect(finished.isError).to.be.true
+  })
+
+  it('treats an error result from a connector as a failed call', function () {
+    expect(toolMessageIsError({ error: 'Docs is signed out', mcpError: true }, false)).to.be.true
+  })
+
+  it('refuses a connector tool no session describes, without running it', async function () {
+    const session = connectorSession({
+      specs: () => [],
+      describe: () => null,
+    })
+    const client = scriptedClient([
+      { id: 'b', name: 'mcp__docs__unknown', args: {} },
+    ])
+    const manager = new AiAssistRunManager({
+      store: storeStub(),
+      tools: builtIns,
+      clientFactory: () => client,
+      connectorSessionFactory: async () => session,
+    })
+
+    await runWith(manager, 'run-unknown')
+
+    expect(session.execute.called).to.be.false
+    const toolMessage = client.streamChat.args[1][0].messages.find(
+      m => m.role === 'tool' && m.toolCallId === 'b'
+    )
+    expect(toolMessage.content).to.include('Unknown connector tool: mcp__docs__unknown')
+  })
+
+  it('tells the model when the connector session could not be built', async function () {
+    const client = scriptedClient([])
+    const manager = new AiAssistRunManager({
+      store: storeStub(),
+      tools: builtIns,
+      clientFactory: () => client,
+      connectorSessionFactory: async () => {
+        throw new Error('database down')
+      },
+    })
+
+    await runWith(manager, 'run-failed-session')
+
+    const system = client.streamChat.args[0][0].system
+    expect(system).to.include('Connectors could not be loaded for this run')
+  })
+
+  it('leaves connectors out of the prompt when the feature is off', async function () {
+    Settings.aiAssist = { enabled: false }
+    const client = scriptedClient([])
+    const factory = sinon.stub().resolves(connectorSession())
+    const manager = new AiAssistRunManager({
+      store: storeStub(),
+      tools: builtIns,
+      clientFactory: () => client,
+      connectorSessionFactory: factory,
+    })
+
+    await runWith(manager, 'run-off')
+
+    expect(factory.called).to.be.false
+    expect(client.streamChat.args[0][0].system).not.to.include('# Connectors')
+  })
+})
+
+
+describe('AiAssistRunManager queue bounds', function () {
+  it('refuses a message once the run already holds ten unread', async function () {
+    const manager = new AiAssistRunManager({
+      store: { appendEvent: sinon.stub().resolves(0) },
+      tools: {},
+    })
+    manager.activeRuns.set('run-q', {
+      queuedMessages: [],
+      acceptsMessages: true,
+    })
+    for (let i = 0; i < 10; i++) {
+      expect(await manager.queueMessage('run-q', { id: `m${i}`, text: 'x' })).to
+        .be.true
+    }
+    expect(await manager.queueMessage('run-q', { id: 'm10', text: 'x' })).to.be
+      .false
+    expect(manager.activeRuns.get('run-q').queuedMessages).to.have.lengthOf(10)
+  })
+
+  it('normalises a mode taken from the control channel', function () {
+    const manager = new AiAssistRunManager({
+      store: {
+        setMode: sinon.stub().resolves(),
+        appendEvent: sinon.stub().resolves(0),
+      },
+      tools: {},
+    })
+    const active = { mode: 'manual', modeNotice: null }
+    manager.activeRuns.set('run-m', active)
+    manager.onCommand({ runId: 'run-m', action: 'setMode', mode: 'root' })
+    expect(active.mode).to.equal('manual')
   })
 })

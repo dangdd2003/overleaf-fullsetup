@@ -1,16 +1,16 @@
-import { Fragment, useCallback, useMemo, useState } from 'react'
-import { Plus } from '@phosphor-icons/react'
-import OLButton from '@/shared/components/ol/ol-button'
-import OLFormControl from '@/shared/components/ol/ol-form-control'
-import OLFormGroup from '@/shared/components/ol/ol-form-group'
-import OLFormLabel from '@/shared/components/ol/ol-form-label'
-import OLFormSelect from '@/shared/components/ol/ol-form-select'
-import DropdownSetting from '@/features/ide-settings/components/dropdown-setting'
-import OLRow from '@/shared/components/ol/ol-row'
-import OLCol from '@/shared/components/ol/ol-col'
-import MaterialIcon from '@/shared/components/material-icon'
-import Notification from '@/shared/components/notification'
-import { SiteIcon } from './agent/site-icon'
+import { Fragment, useCallback, useMemo, useState } from "react";
+import { Plus } from "@phosphor-icons/react";
+import OLButton from "@/shared/components/ol/ol-button";
+import OLFormControl from "@/shared/components/ol/ol-form-control";
+import OLFormGroup from "@/shared/components/ol/ol-form-group";
+import OLFormLabel from "@/shared/components/ol/ol-form-label";
+import OLFormSelect from "@/shared/components/ol/ol-form-select";
+import DropdownSetting from "@/features/ide-settings/components/dropdown-setting";
+import OLRow from "@/shared/components/ol/ol-row";
+import OLCol from "@/shared/components/ol/ol-col";
+import MaterialIcon from "@/shared/components/material-icon";
+import Notification from "@/shared/components/notification";
+import { SiteIcon } from "./agent/site-icon";
 import {
   ListSetting,
   ProviderCard,
@@ -19,38 +19,41 @@ import {
   WEB_SEARCH_LABELS,
   WEB_SEARCH_LINKS,
   WEB_SEARCH_NOTES,
-} from './web-search-settings'
+} from "./web-search-settings";
 import WebsearchapiOptions, {
   draftFromWebsearchapi,
   websearchapiOptionsFromDraft,
-} from './websearchapi-options'
+} from "./websearchapi-options";
 import TavilyOptions, {
   draftFromTavily,
   tavilyOptionsFromDraft,
-} from './tavily-options'
+} from "./tavily-options";
 import FirecrawlOptions, {
   draftFromFirecrawl,
   firecrawlOptionsFromDraft,
-} from './firecrawl-options'
+} from "./firecrawl-options";
 import JinaOptions, {
   draftFromJina,
   jinaOptionsFromDraft,
-} from './jina-options'
+} from "./jina-options";
 import LangsearchOptions, {
   draftFromLangsearch,
   langsearchOptionsFromDraft,
-} from './langsearch-options'
-import ExaOptions, { draftFromExa, exaOptionsFromDraft } from './exa-options'
+} from "./langsearch-options";
+import ExaOptions, { draftFromExa, exaOptionsFromDraft } from "./exa-options";
 import TinyfishOptions, {
   draftFromTinyfish,
   tinyfishOptionsFromDraft,
-} from './tinyfish-options'
+} from "./tinyfish-options";
 import ParallelOptions, {
   draftFromParallel,
   parallelOptionsFromDraft,
-} from './parallel-options'
-import McpOptions, { draftFromMcp, mcpOptionsFromDraft } from './mcp-options'
-import { testWebSearch, WebSearchTestOutcome } from '../providers/server-client'
+} from "./parallel-options";
+import McpOptions, { draftFromMcp, mcpOptionsFromDraft } from "./mcp-options";
+import {
+  testWebSearch,
+  WebSearchTestOutcome,
+} from "../providers/server-client";
 import {
   ExaProviderConfig,
   FirecrawlProviderConfig,
@@ -72,471 +75,492 @@ import {
   WebSearchSettings,
   WebSearchSourceMode,
   WebsearchapiProviderConfig,
-} from '../providers/types'
-import { isServerWebSearchAvailable } from '../provider-store'
+} from "../providers/types";
+import { isServerWebSearchAvailable } from "../provider-store";
+import { TEST_RESULT_MS, useAutoDismiss } from "../hooks/use-auto-dismiss";
 
-export { WEB_SEARCH_LABELS }
+export { WEB_SEARCH_LABELS };
+
+const KEY_STATUS_STYLE = {
+  works: { icon: "check_circle", bg: "success" },
+  alive: { icon: "check", bg: "info" },
+  dead: { icon: "error", bg: "danger" },
+} as const;
 
 const ALL_PROVIDERS: WebSearchProviderType[] = [
-  'searxng',
-  'ollama',
-  'websearchapi',
-  'tavily',
-  'firecrawl',
-  'firecrawlSelfHosted',
-  'jina',
-  'langsearch',
-  'exa',
-  'tinyfish',
-  'parallel',
-  'mcp',
-]
+  "searxng",
+  "ollama",
+  "websearchapi",
+  "tavily",
+  "firecrawl",
+  "firecrawlSelfHosted",
+  "jina",
+  "langsearch",
+  "exa",
+  "tinyfish",
+  "parallel",
+  "mcp",
+];
 
 function plural(count: number, noun: string, nouns = `${noun}s`) {
-  return `${count} ${count === 1 ? noun : nouns}`
+  return `${count} ${count === 1 ? noun : nouns}`;
 }
 
 type Probe =
-  | { state: 'idle' }
-  | { state: 'busy' }
-  | { state: 'tested'; outcome: WebSearchTestOutcome }
-  | { state: 'failed'; message: string }
+  | { state: "idle" }
+  | { state: "busy" }
+  | { state: "tested"; outcome: WebSearchTestOutcome }
+  | { state: "failed"; message: string };
 
 export default function WebSearchForm({
   initial,
   onSave,
   onCancel,
 }: {
-  initial?: WebSearchSettings
-  onSave: (values: MultiWebSearchSettings) => void
-  onCancel: () => void
+  initial?: WebSearchSettings;
+  onSave: (values: MultiWebSearchSettings) => void;
+  onCancel: () => void;
 }) {
-  const isMulti = initial && 'providers' in initial
+  const isMulti = initial && "providers" in initial;
   const legacyType =
-    !isMulti && initial && 'type' in initial ? initial.type : null
-  const serverAvailable = isServerWebSearchAvailable()
+    !isMulti && initial && "type" in initial ? initial.type : null;
+  const serverAvailable = isServerWebSearchAvailable();
 
   const [sourceMode, setSourceMode] = useState<WebSearchSourceMode>(() => {
     if (
       initial &&
-      'sourceMode' in initial &&
-      (initial.sourceMode === 'server' || initial.sourceMode === 'custom')
+      "sourceMode" in initial &&
+      (initial.sourceMode === "server" || initial.sourceMode === "custom")
     ) {
-      return initial.sourceMode
+      return initial.sourceMode;
     }
-    return serverAvailable && !initial ? 'server' : 'custom'
-  })
+    return serverAvailable && !initial ? "server" : "custom";
+  });
 
   const initialOllama = isMulti
     ? (initial as MultiWebSearchSettings)?.providers?.ollama
-    : legacyType === 'ollama'
+    : legacyType === "ollama"
       ? { enabled: true, apiKeys: [(initial as any).apiKey] }
-      : undefined
+      : undefined;
 
   const initialSearxng: SearxngProviderConfig | undefined = isMulti
     ? (initial as MultiWebSearchSettings)?.providers?.searxng
-    : legacyType === 'searxng'
+    : legacyType === "searxng"
       ? {
           enabled: true,
           baseUrls: [(initial as any).baseUrl],
         }
-      : undefined
+      : undefined;
 
   const initialWebsearchapi: WebsearchapiProviderConfig | undefined = isMulti
     ? (initial as MultiWebSearchSettings)?.providers?.websearchapi
-    : legacyType === 'websearchapi'
+    : legacyType === "websearchapi"
       ? { enabled: true, apiKeys: [(initial as any).apiKey] }
-      : undefined
+      : undefined;
 
   const initialTavily: TavilyProviderConfig | undefined = isMulti
     ? (initial as MultiWebSearchSettings)?.providers?.tavily
-    : legacyType === 'tavily'
+    : legacyType === "tavily"
       ? { enabled: true, apiKeys: [(initial as any).apiKey] }
-      : undefined
+      : undefined;
 
   const initialFirecrawl: FirecrawlProviderConfig | undefined = isMulti
     ? (initial as MultiWebSearchSettings)?.providers?.firecrawl
-    : legacyType === 'firecrawl'
+    : legacyType === "firecrawl"
       ? { enabled: true, apiKeys: [(initial as any).apiKey] }
-      : undefined
+      : undefined;
 
   const initialFirecrawlSelfHosted:
     | FirecrawlSelfHostedProviderConfig
     | undefined = isMulti
     ? (initial as MultiWebSearchSettings)?.providers?.firecrawlSelfHosted
-    : legacyType === 'firecrawlSelfHosted'
+    : legacyType === "firecrawlSelfHosted"
       ? { enabled: true, baseUrls: [(initial as any).baseUrl] }
-      : undefined
+      : undefined;
 
   const initialJina: JinaProviderConfig | undefined = isMulti
     ? (initial as MultiWebSearchSettings)?.providers?.jina
-    : legacyType === 'jina'
+    : legacyType === "jina"
       ? { enabled: true, apiKeys: [(initial as any).apiKey] }
-      : undefined
+      : undefined;
 
   const initialLangsearch: LangsearchProviderConfig | undefined = isMulti
     ? (initial as MultiWebSearchSettings)?.providers?.langsearch
-    : legacyType === 'langsearch'
+    : legacyType === "langsearch"
       ? { enabled: true, apiKeys: [(initial as any).apiKey] }
-      : undefined
+      : undefined;
 
   const initialExa: ExaProviderConfig | undefined = isMulti
     ? (initial as MultiWebSearchSettings)?.providers?.exa
-    : legacyType === 'exa'
+    : legacyType === "exa"
       ? { enabled: true, apiKeys: [(initial as any).apiKey] }
-      : undefined
+      : undefined;
 
   const initialTinyfish: TinyfishProviderConfig | undefined = isMulti
     ? (initial as MultiWebSearchSettings)?.providers?.tinyfish
-    : legacyType === 'tinyfish'
+    : legacyType === "tinyfish"
       ? { enabled: true, apiKeys: [(initial as any).apiKey] }
-      : undefined
+      : undefined;
 
   const initialParallel: ParallelProviderConfig | undefined = isMulti
     ? (initial as MultiWebSearchSettings)?.providers?.parallel
-    : legacyType === 'parallel'
+    : legacyType === "parallel"
       ? { enabled: true, apiKeys: [(initial as any).apiKey] }
-      : undefined
+      : undefined;
 
   const initialMcp: McpProviderConfig | undefined = isMulti
     ? (initial as MultiWebSearchSettings)?.providers?.mcp
-    : legacyType === 'mcp'
+    : legacyType === "mcp"
       ? {
           enabled: true,
           serverUrls: [(initial as any).baseUrl],
           headers: (initial as any).headers,
         }
-      : undefined
+      : undefined;
 
   const [addedProviders, setAddedProviders] = useState<WebSearchProviderType[]>(
     () => {
-      const list: WebSearchProviderType[] = []
+      const list: WebSearchProviderType[] = [];
       if (
         initialSearxng &&
         (initialSearxng.enabled ||
           (initialSearxng.baseUrls && initialSearxng.baseUrls.length > 0) ||
-          legacyType === 'searxng')
+          legacyType === "searxng")
       ) {
-        list.push('searxng')
+        list.push("searxng");
       }
       if (
         initialOllama &&
         (initialOllama.enabled ||
           (initialOllama.apiKeys && initialOllama.apiKeys.length > 0) ||
-          legacyType === 'ollama')
+          legacyType === "ollama")
       ) {
-        list.push('ollama')
+        list.push("ollama");
       }
       if (
         initialWebsearchapi &&
         (initialWebsearchapi.enabled ||
           (initialWebsearchapi.apiKeys &&
             initialWebsearchapi.apiKeys.length > 0) ||
-          legacyType === 'websearchapi')
+          legacyType === "websearchapi")
       ) {
-        list.push('websearchapi')
+        list.push("websearchapi");
       }
       if (
         initialTavily &&
         (initialTavily.enabled ||
           (initialTavily.apiKeys && initialTavily.apiKeys.length > 0) ||
-          legacyType === 'tavily')
+          legacyType === "tavily")
       ) {
-        list.push('tavily')
+        list.push("tavily");
       }
       if (
         initialFirecrawl &&
         (initialFirecrawl.enabled ||
           (initialFirecrawl.apiKeys && initialFirecrawl.apiKeys.length > 0) ||
-          legacyType === 'firecrawl')
+          legacyType === "firecrawl")
       ) {
-        list.push('firecrawl')
+        list.push("firecrawl");
       }
       if (
         initialFirecrawlSelfHosted &&
         (initialFirecrawlSelfHosted.enabled ||
           (initialFirecrawlSelfHosted.baseUrls &&
             initialFirecrawlSelfHosted.baseUrls.length > 0) ||
-          legacyType === 'firecrawlSelfHosted')
+          legacyType === "firecrawlSelfHosted")
       ) {
-        list.push('firecrawlSelfHosted')
+        list.push("firecrawlSelfHosted");
       }
       if (
         initialJina &&
         (initialJina.enabled ||
           (initialJina.apiKeys && initialJina.apiKeys.length > 0) ||
-          legacyType === 'jina')
+          legacyType === "jina")
       ) {
-        list.push('jina')
+        list.push("jina");
       }
       if (
         initialLangsearch &&
         (initialLangsearch.enabled ||
           (initialLangsearch.apiKeys && initialLangsearch.apiKeys.length > 0) ||
-          legacyType === 'langsearch')
+          legacyType === "langsearch")
       ) {
-        list.push('langsearch')
+        list.push("langsearch");
       }
       if (
         initialExa &&
         (initialExa.enabled ||
           (initialExa.apiKeys && initialExa.apiKeys.length > 0) ||
-          legacyType === 'exa')
+          legacyType === "exa")
       ) {
-        list.push('exa')
+        list.push("exa");
       }
       if (
         initialTinyfish &&
         (initialTinyfish.enabled ||
           (initialTinyfish.apiKeys && initialTinyfish.apiKeys.length > 0) ||
-          legacyType === 'tinyfish')
+          legacyType === "tinyfish")
       ) {
-        list.push('tinyfish')
+        list.push("tinyfish");
       }
       if (
         initialParallel &&
         (initialParallel.enabled ||
           (initialParallel.apiKeys && initialParallel.apiKeys.length > 0) ||
-          legacyType === 'parallel')
+          legacyType === "parallel")
       ) {
-        list.push('parallel')
+        list.push("parallel");
       }
       if (
         initialMcp &&
         (initialMcp.enabled ||
           (initialMcp.serverUrls && initialMcp.serverUrls.length > 0) ||
-          legacyType === 'mcp')
+          legacyType === "mcp")
       ) {
-        list.push('mcp')
+        list.push("mcp");
       }
-      return list
-    }
-  )
+      return list;
+    },
+  );
 
   const [expandedProviders, setExpandedProviders] = useState<
     WebSearchProviderType[]
-  >([])
+  >([]);
 
-  const [isAddingProvider, setIsAddingProvider] = useState(false)
+  const [isAddingProvider, setIsAddingProvider] = useState(false);
   const [selectedNewProvider, setSelectedNewProvider] = useState<
-    WebSearchProviderType | ''
-  >('')
+    WebSearchProviderType | ""
+  >("");
 
   const [rotationStrategy, setRotationStrategy] =
     useState<WebSearchRotationStrategy>(
       (isMulti && (initial as MultiWebSearchSettings).rotationStrategy) ||
-        'round-robin'
-    )
+        "round-robin",
+    );
   const [primaryProvider, setPrimaryProvider] =
     useState<WebSearchPrimaryProvider>(
       (isMulti && (initial as MultiWebSearchSettings).primaryProvider) ||
         (legacyType && ALL_PROVIDERS.includes(legacyType)
           ? legacyType
-          : 'searxng')
-    )
+          : "searxng"),
+    );
 
   const [searxngEnabled, setSearxngEnabled] = useState(
-    initialSearxng?.enabled ?? (legacyType === 'searxng' || false)
-  )
+    initialSearxng?.enabled ?? (legacyType === "searxng" || false),
+  );
   const [searxngUrls, setSearxngUrls] = useState<string[]>(
     initialSearxng?.baseUrls && initialSearxng.baseUrls.length > 0
       ? initialSearxng.baseUrls
-      : ['']
-  )
+      : [""],
+  );
   const [defaultCategories, setDefaultCategories] = useState(
-    initialSearxng?.defaultCategories ?? ''
-  )
+    initialSearxng?.defaultCategories ?? "",
+  );
   const [defaultLanguage, setDefaultLanguage] = useState(
-    initialSearxng?.defaultLanguage ?? ''
-  )
+    initialSearxng?.defaultLanguage ?? "",
+  );
   const [searxngTimeRange, setSearxngTimeRange] = useState<string>(
-    initialSearxng?.timeRange ?? ''
-  )
+    initialSearxng?.timeRange ?? "",
+  );
   const [searxngSafeSearch, setSearxngSafeSearch] = useState<string>(
     initialSearxng?.safeSearch === undefined
-      ? ''
-      : String(initialSearxng.safeSearch)
-  )
+      ? ""
+      : String(initialSearxng.safeSearch),
+  );
 
   const [ollamaEnabled, setOllamaEnabled] = useState(
-    initialOllama?.enabled ?? legacyType === 'ollama'
-  )
+    initialOllama?.enabled ?? legacyType === "ollama",
+  );
   const [ollamaMaxResults, setOllamaMaxResults] = useState(
-    initialOllama && 'maxResults' in initialOllama && initialOllama.maxResults
+    initialOllama && "maxResults" in initialOllama && initialOllama.maxResults
       ? String(initialOllama.maxResults)
-      : ''
-  )
+      : "",
+  );
   const [ollamaKeys, setOllamaKeys] = useState<string[]>(
     initialOllama?.apiKeys && initialOllama.apiKeys.length > 0
       ? initialOllama.apiKeys
-      : ['']
-  )
+      : [""],
+  );
 
   const [websearchapiEnabled, setWebsearchapiEnabled] = useState(
-    initialWebsearchapi?.enabled ?? legacyType === 'websearchapi'
-  )
+    initialWebsearchapi?.enabled ?? legacyType === "websearchapi",
+  );
   const [websearchapiKeys, setWebsearchapiKeys] = useState<string[]>(
     initialWebsearchapi?.apiKeys && initialWebsearchapi.apiKeys.length > 0
       ? initialWebsearchapi.apiKeys
-      : ['']
-  )
+      : [""],
+  );
 
   const [websearchapiDraft, setWebsearchapiDraft] = useState(() =>
-    draftFromWebsearchapi(initialWebsearchapi)
-  )
+    draftFromWebsearchapi(initialWebsearchapi),
+  );
 
   const [tavilyEnabled, setTavilyEnabled] = useState(
-    initialTavily?.enabled ?? legacyType === 'tavily'
-  )
+    initialTavily?.enabled ?? legacyType === "tavily",
+  );
   const [tavilyKeys, setTavilyKeys] = useState<string[]>(
     initialTavily?.apiKeys && initialTavily.apiKeys.length > 0
       ? initialTavily.apiKeys
-      : ['']
-  )
+      : [""],
+  );
   const [tavilyDraft, setTavilyDraft] = useState(() =>
-    draftFromTavily(initialTavily)
-  )
+    draftFromTavily(initialTavily),
+  );
 
   const [firecrawlEnabled, setFirecrawlEnabled] = useState(
-    initialFirecrawl?.enabled ?? legacyType === 'firecrawl'
-  )
+    initialFirecrawl?.enabled ?? legacyType === "firecrawl",
+  );
   const [firecrawlKeys, setFirecrawlKeys] = useState<string[]>(
     initialFirecrawl?.apiKeys && initialFirecrawl.apiKeys.length > 0
       ? initialFirecrawl.apiKeys
-      : ['']
-  )
+      : [""],
+  );
   const [firecrawlDraft, setFirecrawlDraft] = useState(() =>
-    draftFromFirecrawl(initialFirecrawl)
-  )
+    draftFromFirecrawl(initialFirecrawl),
+  );
 
   const [firecrawlSelfHostedEnabled, setFirecrawlSelfHostedEnabled] = useState(
-    initialFirecrawlSelfHosted?.enabled ?? legacyType === 'firecrawlSelfHosted'
-  )
+    initialFirecrawlSelfHosted?.enabled ?? legacyType === "firecrawlSelfHosted",
+  );
   const [firecrawlSelfHostedUrls, setFirecrawlSelfHostedUrls] = useState<
     string[]
   >(
     initialFirecrawlSelfHosted?.baseUrls &&
       initialFirecrawlSelfHosted.baseUrls.length > 0
       ? initialFirecrawlSelfHosted.baseUrls
-      : ['']
-  )
+      : [""],
+  );
   const [firecrawlSelfHostedDraft, setFirecrawlSelfHostedDraft] = useState(() =>
-    draftFromFirecrawl(initialFirecrawlSelfHosted)
-  )
+    draftFromFirecrawl(initialFirecrawlSelfHosted),
+  );
 
   const [jinaEnabled, setJinaEnabled] = useState(
-    initialJina?.enabled ?? legacyType === 'jina'
-  )
+    initialJina?.enabled ?? legacyType === "jina",
+  );
   const [jinaKeys, setJinaKeys] = useState<string[]>(
     initialJina?.apiKeys && initialJina.apiKeys.length > 0
       ? initialJina.apiKeys
-      : ['']
-  )
-  const [jinaDraft, setJinaDraft] = useState(() => draftFromJina(initialJina))
+      : [""],
+  );
+  const [jinaDraft, setJinaDraft] = useState(() => draftFromJina(initialJina));
 
   const [langsearchEnabled, setLangsearchEnabled] = useState(
-    initialLangsearch?.enabled ?? legacyType === 'langsearch'
-  )
+    initialLangsearch?.enabled ?? legacyType === "langsearch",
+  );
   const [langsearchKeys, setLangsearchKeys] = useState<string[]>(
     initialLangsearch?.apiKeys && initialLangsearch.apiKeys.length > 0
       ? initialLangsearch.apiKeys
-      : ['']
-  )
+      : [""],
+  );
   const [langsearchDraft, setLangsearchDraft] = useState(() =>
-    draftFromLangsearch(initialLangsearch)
-  )
+    draftFromLangsearch(initialLangsearch),
+  );
 
   const [exaEnabled, setExaEnabled] = useState(
-    initialExa?.enabled ?? legacyType === 'exa'
-  )
+    initialExa?.enabled ?? legacyType === "exa",
+  );
   const [exaKeys, setExaKeys] = useState<string[]>(
     initialExa?.apiKeys && initialExa.apiKeys.length > 0
       ? initialExa.apiKeys
-      : ['']
-  )
-  const [exaDraft, setExaDraft] = useState(() => draftFromExa(initialExa))
+      : [""],
+  );
+  const [exaDraft, setExaDraft] = useState(() => draftFromExa(initialExa));
 
   const [tinyfishEnabled, setTinyfishEnabled] = useState(
-    initialTinyfish?.enabled ?? legacyType === 'tinyfish'
-  )
+    initialTinyfish?.enabled ?? legacyType === "tinyfish",
+  );
   const [tinyfishKeys, setTinyfishKeys] = useState<string[]>(
     initialTinyfish?.apiKeys && initialTinyfish.apiKeys.length > 0
       ? initialTinyfish.apiKeys
-      : ['']
-  )
+      : [""],
+  );
   const [tinyfishDraft, setTinyfishDraft] = useState(() =>
-    draftFromTinyfish(initialTinyfish)
-  )
+    draftFromTinyfish(initialTinyfish),
+  );
 
   const [parallelEnabled, setParallelEnabled] = useState(
-    initialParallel?.enabled ?? legacyType === 'parallel'
-  )
+    initialParallel?.enabled ?? legacyType === "parallel",
+  );
   const [parallelKeys, setParallelKeys] = useState<string[]>(
     initialParallel?.apiKeys && initialParallel.apiKeys.length > 0
       ? initialParallel.apiKeys
-      : ['']
-  )
+      : [""],
+  );
   const [parallelDraft, setParallelDraft] = useState(() =>
-    draftFromParallel(initialParallel)
-  )
+    draftFromParallel(initialParallel),
+  );
 
   const [mcpEnabled, setMcpEnabled] = useState(
-    initialMcp?.enabled ?? legacyType === 'mcp'
-  )
-  const [mcpDraft, setMcpDraft] = useState(() => draftFromMcp(initialMcp))
+    initialMcp?.enabled ?? legacyType === "mcp",
+  );
+  const [mcpDraft, setMcpDraft] = useState(() => draftFromMcp(initialMcp));
 
-  const [probe, setProbe] = useState<Probe>({ state: 'idle' })
+  const [probe, setProbe] = useState<Probe>({ state: "idle" });
+  // A failed test stays up, through edits and retests, until one passes;
+  // a passing one goes away by itself
+  const [failedProbe, setFailedProbe] = useState<Probe | null>(null);
+  const probePassed = probe.state === "tested" && probe.outcome.anySuccess;
+  useAutoDismiss(
+    probePassed,
+    () => setProbe({ state: "idle" }),
+    TEST_RESULT_MS.success,
+    probe,
+  );
+  const shownProbe: Probe = probePassed ? probe : failedProbe ?? probe;
+  const [expandedLogs, setExpandedLogs] = useState<Record<string, boolean>>({});
 
-  const validSearxngUrls = searxngUrls.map(u => u.trim()).filter(Boolean)
-  const validOllamaKeys = ollamaKeys.map(k => k.trim()).filter(Boolean)
+  const validSearxngUrls = searxngUrls.map((u) => u.trim()).filter(Boolean);
+  const validOllamaKeys = ollamaKeys.map((k) => k.trim()).filter(Boolean);
   const validWebsearchapiKeys = websearchapiKeys
-    .map(k => k.trim())
-    .filter(Boolean)
+    .map((k) => k.trim())
+    .filter(Boolean);
 
-  const validTavilyKeys = tavilyKeys.map(k => k.trim()).filter(Boolean)
-  const validFirecrawlKeys = firecrawlKeys.map(k => k.trim()).filter(Boolean)
+  const validTavilyKeys = tavilyKeys.map((k) => k.trim()).filter(Boolean);
+  const validFirecrawlKeys = firecrawlKeys.map((k) => k.trim()).filter(Boolean);
   const validFirecrawlSelfHostedUrls = firecrawlSelfHostedUrls
-    .map(u => u.trim())
-    .filter(Boolean)
-  const validJinaKeys = jinaKeys.map(k => k.trim()).filter(Boolean)
-  const validLangsearchKeys = langsearchKeys.map(k => k.trim()).filter(Boolean)
-  const validExaKeys = exaKeys.map(k => k.trim()).filter(Boolean)
-  const validTinyfishKeys = tinyfishKeys.map(k => k.trim()).filter(Boolean)
-  const validParallelKeys = parallelKeys.map(k => k.trim()).filter(Boolean)
-  const validMcpUrls = mcpDraft.serverUrls.map(u => u.trim()).filter(Boolean)
+    .map((u) => u.trim())
+    .filter(Boolean);
+  const validJinaKeys = jinaKeys.map((k) => k.trim()).filter(Boolean);
+  const validLangsearchKeys = langsearchKeys
+    .map((k) => k.trim())
+    .filter(Boolean);
+  const validExaKeys = exaKeys.map((k) => k.trim()).filter(Boolean);
+  const validTinyfishKeys = tinyfishKeys.map((k) => k.trim()).filter(Boolean);
+  const validParallelKeys = parallelKeys.map((k) => k.trim()).filter(Boolean);
+  const validMcpUrls = mcpDraft.serverUrls.map((u) => u.trim()).filter(Boolean);
 
   const isProviderValid = useCallback(
     (type: WebSearchProviderType) => {
       switch (type) {
-        case 'searxng':
-          return searxngEnabled && validSearxngUrls.length > 0
-        case 'ollama':
-          return ollamaEnabled && validOllamaKeys.length > 0
-        case 'websearchapi':
-          return websearchapiEnabled && validWebsearchapiKeys.length > 0
-        case 'tavily':
-          return tavilyEnabled && validTavilyKeys.length > 0
-        case 'firecrawl':
-          return firecrawlEnabled && validFirecrawlKeys.length > 0
-        case 'firecrawlSelfHosted':
+        case "searxng":
+          return searxngEnabled && validSearxngUrls.length > 0;
+        case "ollama":
+          return ollamaEnabled && validOllamaKeys.length > 0;
+        case "websearchapi":
+          return websearchapiEnabled && validWebsearchapiKeys.length > 0;
+        case "tavily":
+          return tavilyEnabled && validTavilyKeys.length > 0;
+        case "firecrawl":
+          return firecrawlEnabled && validFirecrawlKeys.length > 0;
+        case "firecrawlSelfHosted":
           return (
             firecrawlSelfHostedEnabled &&
             validFirecrawlSelfHostedUrls.length > 0
-          )
-        case 'jina':
-          return jinaEnabled && validJinaKeys.length > 0
-        case 'langsearch':
-          return langsearchEnabled && validLangsearchKeys.length > 0
-        case 'exa':
-          return exaEnabled && validExaKeys.length > 0
-        case 'tinyfish':
-          return tinyfishEnabled && validTinyfishKeys.length > 0
-        case 'parallel':
-          return parallelEnabled && validParallelKeys.length > 0
-        case 'mcp':
-          return mcpEnabled && validMcpUrls.length > 0
+          );
+        case "jina":
+          return jinaEnabled && validJinaKeys.length > 0;
+        case "langsearch":
+          return langsearchEnabled && validLangsearchKeys.length > 0;
+        case "exa":
+          return exaEnabled && validExaKeys.length > 0;
+        case "tinyfish":
+          return tinyfishEnabled && validTinyfishKeys.length > 0;
+        case "parallel":
+          return parallelEnabled && validParallelKeys.length > 0;
+        case "mcp":
+          return mcpEnabled && validMcpUrls.length > 0;
         default:
-          return false
+          return false;
       }
     },
     [
@@ -564,38 +588,38 @@ export default function WebSearchForm({
       validParallelKeys.length,
       mcpEnabled,
       validMcpUrls.length,
-    ]
-  )
+    ],
+  );
 
   const isProviderConfigured = useCallback(
     (type: WebSearchProviderType) => {
       switch (type) {
-        case 'searxng':
-          return validSearxngUrls.length > 0
-        case 'ollama':
-          return validOllamaKeys.length > 0
-        case 'websearchapi':
-          return validWebsearchapiKeys.length > 0
-        case 'tavily':
-          return validTavilyKeys.length > 0
-        case 'firecrawl':
-          return validFirecrawlKeys.length > 0
-        case 'firecrawlSelfHosted':
-          return validFirecrawlSelfHostedUrls.length > 0
-        case 'jina':
-          return validJinaKeys.length > 0
-        case 'langsearch':
-          return validLangsearchKeys.length > 0
-        case 'exa':
-          return validExaKeys.length > 0
-        case 'tinyfish':
-          return validTinyfishKeys.length > 0
-        case 'parallel':
-          return validParallelKeys.length > 0
-        case 'mcp':
-          return validMcpUrls.length > 0
+        case "searxng":
+          return validSearxngUrls.length > 0;
+        case "ollama":
+          return validOllamaKeys.length > 0;
+        case "websearchapi":
+          return validWebsearchapiKeys.length > 0;
+        case "tavily":
+          return validTavilyKeys.length > 0;
+        case "firecrawl":
+          return validFirecrawlKeys.length > 0;
+        case "firecrawlSelfHosted":
+          return validFirecrawlSelfHostedUrls.length > 0;
+        case "jina":
+          return validJinaKeys.length > 0;
+        case "langsearch":
+          return validLangsearchKeys.length > 0;
+        case "exa":
+          return validExaKeys.length > 0;
+        case "tinyfish":
+          return validTinyfishKeys.length > 0;
+        case "parallel":
+          return validParallelKeys.length > 0;
+        case "mcp":
+          return validMcpUrls.length > 0;
         default:
-          return false
+          return false;
       }
     },
     [
@@ -611,8 +635,8 @@ export default function WebSearchForm({
       validTinyfishKeys.length,
       validParallelKeys.length,
       validMcpUrls.length,
-    ]
-  )
+    ],
+  );
 
   const effectiveProviders = useMemo(() => {
     if (
@@ -621,37 +645,37 @@ export default function WebSearchForm({
       isProviderConfigured(selectedNewProvider) &&
       !addedProviders.includes(selectedNewProvider)
     ) {
-      return [...addedProviders, selectedNewProvider]
+      return [...addedProviders, selectedNewProvider];
     }
-    return addedProviders
+    return addedProviders;
   }, [
     isAddingProvider,
     selectedNewProvider,
     isProviderConfigured,
     addedProviders,
-  ])
+  ]);
 
   const complete =
-    sourceMode === 'server' ||
-    effectiveProviders.some(type =>
+    sourceMode === "server" ||
+    effectiveProviders.some((type) =>
       addedProviders.includes(type)
         ? isProviderValid(type)
-        : isProviderConfigured(type)
-    )
+        : isProviderConfigured(type),
+    );
 
   const current = useCallback((): MultiWebSearchSettings => {
-    if (sourceMode === 'server') {
+    if (sourceMode === "server") {
       return {
-        sourceMode: 'server',
+        sourceMode: "server",
         providers: {},
-      }
+      };
     }
 
-    const providers: MultiWebSearchSettings['providers'] = {}
+    const providers: MultiWebSearchSettings["providers"] = {};
 
-    if (effectiveProviders.includes('searxng')) {
+    if (effectiveProviders.includes("searxng")) {
       providers.searxng = {
-        enabled: addedProviders.includes('searxng') ? searxngEnabled : true,
+        enabled: addedProviders.includes("searxng") ? searxngEnabled : true,
         baseUrls: validSearxngUrls,
         ...(defaultCategories.trim()
           ? { defaultCategories: defaultCategories.trim() }
@@ -661,132 +685,132 @@ export default function WebSearchForm({
           : {}),
         ...(searxngTimeRange
           ? {
-              timeRange: searxngTimeRange as SearxngProviderConfig['timeRange'],
+              timeRange: searxngTimeRange as SearxngProviderConfig["timeRange"],
             }
           : {}),
         ...(searxngSafeSearch
           ? {
               safeSearch: Number(
-                searxngSafeSearch
-              ) as SearxngProviderConfig['safeSearch'],
+                searxngSafeSearch,
+              ) as SearxngProviderConfig["safeSearch"],
             }
           : {}),
-      }
+      };
     }
 
-    if (effectiveProviders.includes('ollama')) {
+    if (effectiveProviders.includes("ollama")) {
       providers.ollama = {
-        enabled: addedProviders.includes('ollama') ? ollamaEnabled : true,
+        enabled: addedProviders.includes("ollama") ? ollamaEnabled : true,
         apiKeys: validOllamaKeys,
         ...(ollamaMaxResults.trim() &&
         Number.isFinite(Math.trunc(Number(ollamaMaxResults)))
           ? {
               maxResults: Math.min(
                 10,
-                Math.max(1, Math.trunc(Number(ollamaMaxResults)))
+                Math.max(1, Math.trunc(Number(ollamaMaxResults))),
               ),
             }
           : {}),
-      }
+      };
     }
 
-    if (effectiveProviders.includes('websearchapi')) {
+    if (effectiveProviders.includes("websearchapi")) {
       providers.websearchapi = {
-        enabled: addedProviders.includes('websearchapi')
+        enabled: addedProviders.includes("websearchapi")
           ? websearchapiEnabled
           : true,
         apiKeys: validWebsearchapiKeys,
         ...websearchapiOptionsFromDraft(websearchapiDraft),
-      }
+      };
     }
 
-    if (effectiveProviders.includes('tavily')) {
+    if (effectiveProviders.includes("tavily")) {
       providers.tavily = {
-        enabled: addedProviders.includes('tavily') ? tavilyEnabled : true,
+        enabled: addedProviders.includes("tavily") ? tavilyEnabled : true,
         apiKeys: validTavilyKeys,
         ...tavilyOptionsFromDraft(tavilyDraft),
-      }
+      };
     }
 
-    if (effectiveProviders.includes('firecrawl')) {
+    if (effectiveProviders.includes("firecrawl")) {
       providers.firecrawl = {
-        enabled: addedProviders.includes('firecrawl') ? firecrawlEnabled : true,
+        enabled: addedProviders.includes("firecrawl") ? firecrawlEnabled : true,
         apiKeys: validFirecrawlKeys,
         ...firecrawlOptionsFromDraft(firecrawlDraft, { cloud: true }),
-      }
+      };
     }
 
-    if (effectiveProviders.includes('firecrawlSelfHosted')) {
+    if (effectiveProviders.includes("firecrawlSelfHosted")) {
       providers.firecrawlSelfHosted = {
-        enabled: addedProviders.includes('firecrawlSelfHosted')
+        enabled: addedProviders.includes("firecrawlSelfHosted")
           ? firecrawlSelfHostedEnabled
           : true,
         baseUrls: validFirecrawlSelfHostedUrls,
         ...firecrawlOptionsFromDraft(firecrawlSelfHostedDraft, {
           cloud: false,
         }),
-      }
+      };
     }
 
-    if (effectiveProviders.includes('jina')) {
+    if (effectiveProviders.includes("jina")) {
       providers.jina = {
-        enabled: addedProviders.includes('jina') ? jinaEnabled : true,
+        enabled: addedProviders.includes("jina") ? jinaEnabled : true,
         apiKeys: validJinaKeys,
         ...jinaOptionsFromDraft(jinaDraft),
-      }
+      };
     }
 
-    if (effectiveProviders.includes('langsearch')) {
+    if (effectiveProviders.includes("langsearch")) {
       providers.langsearch = {
-        enabled: addedProviders.includes('langsearch')
+        enabled: addedProviders.includes("langsearch")
           ? langsearchEnabled
           : true,
         apiKeys: validLangsearchKeys,
         ...langsearchOptionsFromDraft(langsearchDraft),
-      }
+      };
     }
 
-    if (effectiveProviders.includes('exa')) {
+    if (effectiveProviders.includes("exa")) {
       providers.exa = {
-        enabled: addedProviders.includes('exa') ? exaEnabled : true,
+        enabled: addedProviders.includes("exa") ? exaEnabled : true,
         apiKeys: validExaKeys,
         ...exaOptionsFromDraft(exaDraft),
-      }
+      };
     }
 
-    if (effectiveProviders.includes('tinyfish')) {
+    if (effectiveProviders.includes("tinyfish")) {
       providers.tinyfish = {
-        enabled: addedProviders.includes('tinyfish') ? tinyfishEnabled : true,
+        enabled: addedProviders.includes("tinyfish") ? tinyfishEnabled : true,
         apiKeys: validTinyfishKeys,
         ...tinyfishOptionsFromDraft(tinyfishDraft),
-      }
+      };
     }
 
-    if (effectiveProviders.includes('parallel')) {
+    if (effectiveProviders.includes("parallel")) {
       providers.parallel = {
-        enabled: addedProviders.includes('parallel') ? parallelEnabled : true,
+        enabled: addedProviders.includes("parallel") ? parallelEnabled : true,
         apiKeys: validParallelKeys,
         ...parallelOptionsFromDraft(parallelDraft),
-      }
+      };
     }
 
-    if (effectiveProviders.includes('mcp')) {
+    if (effectiveProviders.includes("mcp")) {
       providers.mcp = {
-        enabled: addedProviders.includes('mcp') ? mcpEnabled : true,
+        enabled: addedProviders.includes("mcp") ? mcpEnabled : true,
         ...mcpOptionsFromDraft(mcpDraft),
-      }
+      };
     }
 
     const effectivePrimary = effectiveProviders.includes(primaryProvider)
       ? primaryProvider
-      : effectiveProviders[0] || 'searxng'
+      : effectiveProviders[0] || "searxng";
 
     return {
-      sourceMode: 'custom',
+      sourceMode: "custom",
       providers,
       rotationStrategy,
       primaryProvider: effectivePrimary,
-    }
+    };
   }, [
     sourceMode,
     effectiveProviders,
@@ -831,7 +855,7 @@ export default function WebSearchForm({
     mcpDraft,
     primaryProvider,
     rotationStrategy,
-  ])
+  ]);
 
   const hasAnyConfigured =
     validSearxngUrls.length > 0 ||
@@ -845,46 +869,46 @@ export default function WebSearchForm({
     validExaKeys.length > 0 ||
     validTinyfishKeys.length > 0 ||
     validParallelKeys.length > 0 ||
-    validMcpUrls.length > 0
+    validMcpUrls.length > 0;
 
   const buildTestSettings = useCallback((): MultiWebSearchSettings | null => {
-    const providers: MultiWebSearchSettings['providers'] = {}
+    const providers: MultiWebSearchSettings["providers"] = {};
 
     const isTarget = (type: WebSearchProviderType) => {
       if (addedProviders.includes(type)) {
         switch (type) {
-          case 'searxng':
-            return searxngEnabled
-          case 'ollama':
-            return ollamaEnabled
-          case 'websearchapi':
-            return websearchapiEnabled
-          case 'tavily':
-            return tavilyEnabled
-          case 'firecrawl':
-            return firecrawlEnabled
-          case 'firecrawlSelfHosted':
-            return firecrawlSelfHostedEnabled
-          case 'jina':
-            return jinaEnabled
-          case 'langsearch':
-            return langsearchEnabled
-          case 'exa':
-            return exaEnabled
-          case 'tinyfish':
-            return tinyfishEnabled
-          case 'parallel':
-            return parallelEnabled
-          case 'mcp':
-            return mcpEnabled
+          case "searxng":
+            return searxngEnabled;
+          case "ollama":
+            return ollamaEnabled;
+          case "websearchapi":
+            return websearchapiEnabled;
+          case "tavily":
+            return tavilyEnabled;
+          case "firecrawl":
+            return firecrawlEnabled;
+          case "firecrawlSelfHosted":
+            return firecrawlSelfHostedEnabled;
+          case "jina":
+            return jinaEnabled;
+          case "langsearch":
+            return langsearchEnabled;
+          case "exa":
+            return exaEnabled;
+          case "tinyfish":
+            return tinyfishEnabled;
+          case "parallel":
+            return parallelEnabled;
+          case "mcp":
+            return mcpEnabled;
           default:
-            return false
+            return false;
         }
       }
-      return isAddingProvider && selectedNewProvider === type
-    }
+      return isAddingProvider && selectedNewProvider === type;
+    };
 
-    if (isTarget('searxng') && validSearxngUrls.length > 0) {
+    if (isTarget("searxng") && validSearxngUrls.length > 0) {
       providers.searxng = {
         enabled: true,
         baseUrls: validSearxngUrls,
@@ -896,20 +920,20 @@ export default function WebSearchForm({
           : {}),
         ...(searxngTimeRange
           ? {
-              timeRange: searxngTimeRange as SearxngProviderConfig['timeRange'],
+              timeRange: searxngTimeRange as SearxngProviderConfig["timeRange"],
             }
           : {}),
         ...(searxngSafeSearch
           ? {
               safeSearch: Number(
-                searxngSafeSearch
-              ) as SearxngProviderConfig['safeSearch'],
+                searxngSafeSearch,
+              ) as SearxngProviderConfig["safeSearch"],
             }
           : {}),
-      }
+      };
     }
 
-    if (isTarget('ollama') && validOllamaKeys.length > 0) {
+    if (isTarget("ollama") && validOllamaKeys.length > 0) {
       providers.ollama = {
         enabled: true,
         apiKeys: validOllamaKeys,
@@ -918,39 +942,39 @@ export default function WebSearchForm({
           ? {
               maxResults: Math.min(
                 10,
-                Math.max(1, Math.trunc(Number(ollamaMaxResults)))
+                Math.max(1, Math.trunc(Number(ollamaMaxResults))),
               ),
             }
           : {}),
-      }
+      };
     }
 
-    if (isTarget('websearchapi') && validWebsearchapiKeys.length > 0) {
+    if (isTarget("websearchapi") && validWebsearchapiKeys.length > 0) {
       providers.websearchapi = {
         enabled: true,
         apiKeys: validWebsearchapiKeys,
         ...websearchapiOptionsFromDraft(websearchapiDraft),
-      }
+      };
     }
 
-    if (isTarget('tavily') && validTavilyKeys.length > 0) {
+    if (isTarget("tavily") && validTavilyKeys.length > 0) {
       providers.tavily = {
         enabled: true,
         apiKeys: validTavilyKeys,
         ...tavilyOptionsFromDraft(tavilyDraft),
-      }
+      };
     }
 
-    if (isTarget('firecrawl') && validFirecrawlKeys.length > 0) {
+    if (isTarget("firecrawl") && validFirecrawlKeys.length > 0) {
       providers.firecrawl = {
         enabled: true,
         apiKeys: validFirecrawlKeys,
         ...firecrawlOptionsFromDraft(firecrawlDraft, { cloud: true }),
-      }
+      };
     }
 
     if (
-      isTarget('firecrawlSelfHosted') &&
+      isTarget("firecrawlSelfHosted") &&
       validFirecrawlSelfHostedUrls.length > 0
     ) {
       providers.firecrawlSelfHosted = {
@@ -959,72 +983,72 @@ export default function WebSearchForm({
         ...firecrawlOptionsFromDraft(firecrawlSelfHostedDraft, {
           cloud: false,
         }),
-      }
+      };
     }
 
-    if (isTarget('jina') && validJinaKeys.length > 0) {
+    if (isTarget("jina") && validJinaKeys.length > 0) {
       providers.jina = {
         enabled: true,
         apiKeys: validJinaKeys,
         ...jinaOptionsFromDraft(jinaDraft),
-      }
+      };
     }
 
-    if (isTarget('langsearch') && validLangsearchKeys.length > 0) {
+    if (isTarget("langsearch") && validLangsearchKeys.length > 0) {
       providers.langsearch = {
         enabled: true,
         apiKeys: validLangsearchKeys,
         ...langsearchOptionsFromDraft(langsearchDraft),
-      }
+      };
     }
 
-    if (isTarget('exa') && validExaKeys.length > 0) {
+    if (isTarget("exa") && validExaKeys.length > 0) {
       providers.exa = {
         enabled: true,
         apiKeys: validExaKeys,
         ...exaOptionsFromDraft(exaDraft),
-      }
+      };
     }
 
-    if (isTarget('tinyfish') && validTinyfishKeys.length > 0) {
+    if (isTarget("tinyfish") && validTinyfishKeys.length > 0) {
       providers.tinyfish = {
         enabled: true,
         apiKeys: validTinyfishKeys,
         ...tinyfishOptionsFromDraft(tinyfishDraft),
-      }
+      };
     }
 
-    if (isTarget('parallel') && validParallelKeys.length > 0) {
+    if (isTarget("parallel") && validParallelKeys.length > 0) {
       providers.parallel = {
         enabled: true,
         apiKeys: validParallelKeys,
         ...parallelOptionsFromDraft(parallelDraft),
-      }
+      };
     }
 
-    if (isTarget('mcp') && validMcpUrls.length > 0) {
+    if (isTarget("mcp") && validMcpUrls.length > 0) {
       providers.mcp = {
         enabled: true,
         ...mcpOptionsFromDraft(mcpDraft),
-      }
+      };
     }
 
     if (Object.keys(providers).length === 0) {
-      return null
+      return null;
     }
 
-    const available = Object.keys(providers) as WebSearchProviderType[]
+    const available = Object.keys(providers) as WebSearchProviderType[];
     const effectivePrimary = available.includes(primaryProvider)
       ? primaryProvider
-      : available[0] || 'searxng'
+      : available[0] || "searxng";
 
     return {
-      sourceMode: 'custom',
+      sourceMode: "custom",
       providers,
       rotationStrategy,
       primaryProvider: effectivePrimary,
       forTest: true,
-    } as any
+    } as any;
   }, [
     addedProviders,
     isAddingProvider,
@@ -1070,255 +1094,261 @@ export default function WebSearchForm({
     mcpDraft,
     primaryProvider,
     rotationStrategy,
-  ])
+  ]);
 
   const onTest = useCallback(async () => {
-    setProbe({ state: 'busy' })
+    setProbe({ state: "busy" });
     try {
-      const payload = buildTestSettings()
+      const payload = buildTestSettings();
       if (!payload) {
-        setProbe({
-          state: 'failed',
-          message: 'Please enter an API key or instance URL first.',
-        })
-        return
+        const failed: Probe = {
+          state: "failed",
+          message: "Please enter an API key or instance URL first.",
+        };
+        setFailedProbe(failed);
+        setProbe(failed);
+        return;
       }
-      const outcome = await testWebSearch(payload)
-      setProbe({ state: 'tested', outcome })
+      const outcome = await testWebSearch(payload);
+      const tested: Probe = { state: "tested", outcome };
+      setFailedProbe(outcome.anySuccess ? null : tested);
+      setProbe(tested);
     } catch (error: any) {
-      setProbe({
-        state: 'failed',
-        message: (error as ProviderError)?.message || 'The search test failed.',
-      })
+      const failed: Probe = {
+        state: "failed",
+        message: (error as ProviderError)?.message || "The search test failed.",
+      };
+      setFailedProbe(failed);
+      setProbe(failed);
     }
-  }, [buildTestSettings])
+  }, [buildTestSettings]);
 
   const toggleExpand = useCallback((type: WebSearchProviderType) => {
-    setExpandedProviders(prev =>
-      prev.includes(type) ? prev.filter(p => p !== type) : [...prev, type]
-    )
-  }, [])
+    setExpandedProviders((prev) =>
+      prev.includes(type) ? prev.filter((p) => p !== type) : [...prev, type],
+    );
+  }, []);
 
   const handleToggleProvider = useCallback(
     (type: WebSearchProviderType, enabled: boolean) => {
-      setProbe({ state: 'idle' })
+      setProbe({ state: "idle" });
       switch (type) {
-        case 'searxng':
-          setSearxngEnabled(enabled)
-          break
-        case 'ollama':
-          setOllamaEnabled(enabled)
-          break
-        case 'websearchapi':
-          setWebsearchapiEnabled(enabled)
-          break
-        case 'tavily':
-          setTavilyEnabled(enabled)
-          break
-        case 'firecrawl':
-          setFirecrawlEnabled(enabled)
-          break
-        case 'firecrawlSelfHosted':
-          setFirecrawlSelfHostedEnabled(enabled)
-          break
-        case 'jina':
-          setJinaEnabled(enabled)
-          break
-        case 'langsearch':
-          setLangsearchEnabled(enabled)
-          break
-        case 'exa':
-          setExaEnabled(enabled)
-          break
-        case 'tinyfish':
-          setTinyfishEnabled(enabled)
-          break
-        case 'parallel':
-          setParallelEnabled(enabled)
-          break
-        case 'mcp':
-          setMcpEnabled(enabled)
-          break
+        case "searxng":
+          setSearxngEnabled(enabled);
+          break;
+        case "ollama":
+          setOllamaEnabled(enabled);
+          break;
+        case "websearchapi":
+          setWebsearchapiEnabled(enabled);
+          break;
+        case "tavily":
+          setTavilyEnabled(enabled);
+          break;
+        case "firecrawl":
+          setFirecrawlEnabled(enabled);
+          break;
+        case "firecrawlSelfHosted":
+          setFirecrawlSelfHostedEnabled(enabled);
+          break;
+        case "jina":
+          setJinaEnabled(enabled);
+          break;
+        case "langsearch":
+          setLangsearchEnabled(enabled);
+          break;
+        case "exa":
+          setExaEnabled(enabled);
+          break;
+        case "tinyfish":
+          setTinyfishEnabled(enabled);
+          break;
+        case "parallel":
+          setParallelEnabled(enabled);
+          break;
+        case "mcp":
+          setMcpEnabled(enabled);
+          break;
       }
     },
-    []
-  )
+    [],
+  );
 
   const handleAddProvider = useCallback((type: WebSearchProviderType) => {
-    setSourceMode('custom')
-    setAddedProviders(prev => (prev.includes(type) ? prev : [...prev, type]))
-    setExpandedProviders([])
+    setSourceMode("custom");
+    setAddedProviders((prev) => (prev.includes(type) ? prev : [...prev, type]));
+    setExpandedProviders([]);
     switch (type) {
-      case 'searxng':
-        setSearxngEnabled(true)
-        break
-      case 'ollama':
-        setOllamaEnabled(true)
-        break
-      case 'websearchapi':
-        setWebsearchapiEnabled(true)
-        break
-      case 'tavily':
-        setTavilyEnabled(true)
-        break
-      case 'firecrawl':
-        setFirecrawlEnabled(true)
-        break
-      case 'firecrawlSelfHosted':
-        setFirecrawlSelfHostedEnabled(true)
-        break
-      case 'jina':
-        setJinaEnabled(true)
-        break
-      case 'langsearch':
-        setLangsearchEnabled(true)
-        break
-      case 'exa':
-        setExaEnabled(true)
-        break
-      case 'tinyfish':
-        setTinyfishEnabled(true)
-        break
-      case 'parallel':
-        setParallelEnabled(true)
-        break
-      case 'mcp':
-        setMcpEnabled(true)
-        break
+      case "searxng":
+        setSearxngEnabled(true);
+        break;
+      case "ollama":
+        setOllamaEnabled(true);
+        break;
+      case "websearchapi":
+        setWebsearchapiEnabled(true);
+        break;
+      case "tavily":
+        setTavilyEnabled(true);
+        break;
+      case "firecrawl":
+        setFirecrawlEnabled(true);
+        break;
+      case "firecrawlSelfHosted":
+        setFirecrawlSelfHostedEnabled(true);
+        break;
+      case "jina":
+        setJinaEnabled(true);
+        break;
+      case "langsearch":
+        setLangsearchEnabled(true);
+        break;
+      case "exa":
+        setExaEnabled(true);
+        break;
+      case "tinyfish":
+        setTinyfishEnabled(true);
+        break;
+      case "parallel":
+        setParallelEnabled(true);
+        break;
+      case "mcp":
+        setMcpEnabled(true);
+        break;
     }
-    setIsAddingProvider(false)
-    setSelectedNewProvider('')
-    setProbe({ state: 'idle' })
-  }, [])
+    setIsAddingProvider(false);
+    setSelectedNewProvider("");
+    setProbe({ state: "idle" });
+  }, []);
 
   const handleRemoveProvider = useCallback(
     (type: WebSearchProviderType) => {
-      setAddedProviders(prev => {
-        const next = prev.filter(p => p !== type)
+      setAddedProviders((prev) => {
+        const next = prev.filter((p) => p !== type);
         if (primaryProvider === type) {
-          setPrimaryProvider(next[0] || 'searxng')
+          setPrimaryProvider(next[0] || "searxng");
         }
-        return next
-      })
-      setExpandedProviders(prev => prev.filter(p => p !== type))
-      setProbe({ state: 'idle' })
+        return next;
+      });
+      setExpandedProviders((prev) => prev.filter((p) => p !== type));
+      setProbe({ state: "idle" });
       switch (type) {
-        case 'searxng':
-          setSearxngEnabled(false)
-          setSearxngUrls([''])
-          setDefaultCategories('')
-          setDefaultLanguage('')
-          break
-        case 'ollama':
-          setOllamaEnabled(false)
-          setOllamaKeys([''])
-          setOllamaMaxResults('')
-          break
-        case 'websearchapi':
-          setWebsearchapiEnabled(false)
-          setWebsearchapiKeys([''])
-          setWebsearchapiDraft(draftFromWebsearchapi(undefined))
-          break
-        case 'tavily':
-          setTavilyEnabled(false)
-          setTavilyKeys([''])
-          setTavilyDraft(draftFromTavily(undefined))
-          break
-        case 'firecrawl':
-          setFirecrawlEnabled(false)
-          setFirecrawlKeys([''])
-          setFirecrawlDraft(draftFromFirecrawl(undefined))
-          break
-        case 'firecrawlSelfHosted':
-          setFirecrawlSelfHostedEnabled(false)
-          setFirecrawlSelfHostedUrls([''])
-          setFirecrawlSelfHostedDraft(draftFromFirecrawl(undefined))
-          break
-        case 'jina':
-          setJinaEnabled(false)
-          setJinaKeys([''])
-          setJinaDraft(draftFromJina(undefined))
-          break
-        case 'langsearch':
-          setLangsearchEnabled(false)
-          setLangsearchKeys([''])
-          setLangsearchDraft(draftFromLangsearch(undefined))
-          break
-        case 'exa':
-          setExaEnabled(false)
-          setExaKeys([''])
-          setExaDraft(draftFromExa(undefined))
-          break
-        case 'tinyfish':
-          setTinyfishEnabled(false)
-          setTinyfishKeys([''])
-          setTinyfishDraft(draftFromTinyfish(undefined))
-          break
-        case 'parallel':
-          setParallelEnabled(false)
-          setParallelKeys([''])
-          setParallelDraft(draftFromParallel(undefined))
-          break
-        case 'mcp':
-          setMcpEnabled(false)
-          setMcpDraft(draftFromMcp(undefined))
-          break
+        case "searxng":
+          setSearxngEnabled(false);
+          setSearxngUrls([""]);
+          setDefaultCategories("");
+          setDefaultLanguage("");
+          break;
+        case "ollama":
+          setOllamaEnabled(false);
+          setOllamaKeys([""]);
+          setOllamaMaxResults("");
+          break;
+        case "websearchapi":
+          setWebsearchapiEnabled(false);
+          setWebsearchapiKeys([""]);
+          setWebsearchapiDraft(draftFromWebsearchapi(undefined));
+          break;
+        case "tavily":
+          setTavilyEnabled(false);
+          setTavilyKeys([""]);
+          setTavilyDraft(draftFromTavily(undefined));
+          break;
+        case "firecrawl":
+          setFirecrawlEnabled(false);
+          setFirecrawlKeys([""]);
+          setFirecrawlDraft(draftFromFirecrawl(undefined));
+          break;
+        case "firecrawlSelfHosted":
+          setFirecrawlSelfHostedEnabled(false);
+          setFirecrawlSelfHostedUrls([""]);
+          setFirecrawlSelfHostedDraft(draftFromFirecrawl(undefined));
+          break;
+        case "jina":
+          setJinaEnabled(false);
+          setJinaKeys([""]);
+          setJinaDraft(draftFromJina(undefined));
+          break;
+        case "langsearch":
+          setLangsearchEnabled(false);
+          setLangsearchKeys([""]);
+          setLangsearchDraft(draftFromLangsearch(undefined));
+          break;
+        case "exa":
+          setExaEnabled(false);
+          setExaKeys([""]);
+          setExaDraft(draftFromExa(undefined));
+          break;
+        case "tinyfish":
+          setTinyfishEnabled(false);
+          setTinyfishKeys([""]);
+          setTinyfishDraft(draftFromTinyfish(undefined));
+          break;
+        case "parallel":
+          setParallelEnabled(false);
+          setParallelKeys([""]);
+          setParallelDraft(draftFromParallel(undefined));
+          break;
+        case "mcp":
+          setMcpEnabled(false);
+          setMcpDraft(draftFromMcp(undefined));
+          break;
       }
     },
-    [primaryProvider]
-  )
+    [primaryProvider],
+  );
 
   const getProviderSummary = useCallback(
     (type: WebSearchProviderType): string => {
       switch (type) {
-        case 'searxng':
+        case "searxng":
           return validSearxngUrls.length > 0
-            ? plural(validSearxngUrls.length, 'instance')
-            : 'No instances'
-        case 'ollama':
+            ? plural(validSearxngUrls.length, "instance")
+            : "No instances";
+        case "ollama":
           return validOllamaKeys.length > 0
-            ? plural(validOllamaKeys.length, 'API key')
-            : 'No API keys'
-        case 'websearchapi':
+            ? plural(validOllamaKeys.length, "API key")
+            : "No API keys";
+        case "websearchapi":
           return validWebsearchapiKeys.length > 0
-            ? plural(validWebsearchapiKeys.length, 'API key')
-            : 'No API keys'
-        case 'tavily':
+            ? plural(validWebsearchapiKeys.length, "API key")
+            : "No API keys";
+        case "tavily":
           return validTavilyKeys.length > 0
-            ? plural(validTavilyKeys.length, 'API key')
-            : 'No API keys'
-        case 'firecrawl':
+            ? plural(validTavilyKeys.length, "API key")
+            : "No API keys";
+        case "firecrawl":
           return validFirecrawlKeys.length > 0
-            ? plural(validFirecrawlKeys.length, 'API key')
-            : 'No API keys'
-        case 'firecrawlSelfHosted':
+            ? plural(validFirecrawlKeys.length, "API key")
+            : "No API keys";
+        case "firecrawlSelfHosted":
           return validFirecrawlSelfHostedUrls.length > 0
-            ? plural(validFirecrawlSelfHostedUrls.length, 'instance')
-            : 'No instances'
-        case 'jina':
+            ? plural(validFirecrawlSelfHostedUrls.length, "instance")
+            : "No instances";
+        case "jina":
           return validJinaKeys.length > 0
-            ? plural(validJinaKeys.length, 'API key')
-            : 'No API keys'
-        case 'langsearch':
+            ? plural(validJinaKeys.length, "API key")
+            : "No API keys";
+        case "langsearch":
           return validLangsearchKeys.length > 0
-            ? plural(validLangsearchKeys.length, 'API key')
-            : 'No API keys'
-        case 'exa':
+            ? plural(validLangsearchKeys.length, "API key")
+            : "No API keys";
+        case "exa":
           return validExaKeys.length > 0
-            ? plural(validExaKeys.length, 'API key')
-            : 'No API keys'
-        case 'tinyfish':
+            ? plural(validExaKeys.length, "API key")
+            : "No API keys";
+        case "tinyfish":
           return validTinyfishKeys.length > 0
-            ? plural(validTinyfishKeys.length, 'API key')
-            : 'No API keys'
-        case 'parallel':
+            ? plural(validTinyfishKeys.length, "API key")
+            : "No API keys";
+        case "parallel":
           return validParallelKeys.length > 0
-            ? plural(validParallelKeys.length, 'API key')
-            : 'No API keys'
-        case 'mcp':
+            ? plural(validParallelKeys.length, "API key")
+            : "No API keys";
+        case "mcp":
           return validMcpUrls.length > 0
-            ? plural(validMcpUrls.length, 'custom endpoint')
-            : 'No custom endpoints'
+            ? plural(validMcpUrls.length, "endpoint")
+            : "No endpoints";
       }
     },
     [
@@ -1334,36 +1364,36 @@ export default function WebSearchForm({
       validTinyfishKeys.length,
       validParallelKeys.length,
       validMcpUrls.length,
-    ]
-  )
+    ],
+  );
 
   const getProviderEnabled = useCallback(
     (type: WebSearchProviderType): boolean => {
       switch (type) {
-        case 'searxng':
-          return searxngEnabled
-        case 'ollama':
-          return ollamaEnabled
-        case 'websearchapi':
-          return websearchapiEnabled
-        case 'tavily':
-          return tavilyEnabled
-        case 'firecrawl':
-          return firecrawlEnabled
-        case 'firecrawlSelfHosted':
-          return firecrawlSelfHostedEnabled
-        case 'jina':
-          return jinaEnabled
-        case 'langsearch':
-          return langsearchEnabled
-        case 'exa':
-          return exaEnabled
-        case 'tinyfish':
-          return tinyfishEnabled
-        case 'parallel':
-          return parallelEnabled
-        case 'mcp':
-          return mcpEnabled
+        case "searxng":
+          return searxngEnabled;
+        case "ollama":
+          return ollamaEnabled;
+        case "websearchapi":
+          return websearchapiEnabled;
+        case "tavily":
+          return tavilyEnabled;
+        case "firecrawl":
+          return firecrawlEnabled;
+        case "firecrawlSelfHosted":
+          return firecrawlSelfHostedEnabled;
+        case "jina":
+          return jinaEnabled;
+        case "langsearch":
+          return langsearchEnabled;
+        case "exa":
+          return exaEnabled;
+        case "tinyfish":
+          return tinyfishEnabled;
+        case "parallel":
+          return parallelEnabled;
+        case "mcp":
+          return mcpEnabled;
       }
     },
     [
@@ -1379,16 +1409,16 @@ export default function WebSearchForm({
       tinyfishEnabled,
       parallelEnabled,
       mcpEnabled,
-    ]
-  )
+    ],
+  );
 
   const useServerDefault = useCallback(() => {
-    onSave({ sourceMode: 'server', providers: {} })
-  }, [onSave])
+    onSave({ sourceMode: "server", providers: {} });
+  }, [onSave]);
 
   const renderProviderFields = (type: WebSearchProviderType) => {
     switch (type) {
-      case 'searxng':
+      case "searxng":
         return (
           <>
             <SettingsGroup title="Instances">
@@ -1399,9 +1429,9 @@ export default function WebSearchForm({
                 itemLabel="URL"
                 values={searxngUrls}
                 placeholder="http://searxng:8080"
-                onChange={next => {
-                  setSearxngUrls(next)
-                  setProbe({ state: 'idle' })
+                onChange={(next) => {
+                  setSearxngUrls(next);
+                  setProbe({ state: "idle" });
                 }}
               />
             </SettingsGroup>
@@ -1429,11 +1459,11 @@ export default function WebSearchForm({
                 description="Only results from this window, on engines that support it."
                 width="wide"
                 options={[
-                  { value: '', label: 'Any time (default)' },
-                  { value: 'day', label: 'Past day' },
-                  { value: 'week', label: 'Past week' },
-                  { value: 'month', label: 'Past month' },
-                  { value: 'year', label: 'Past year' },
+                  { value: "", label: "Any time (default)" },
+                  { value: "day", label: "Past day" },
+                  { value: "week", label: "Past week" },
+                  { value: "month", label: "Past month" },
+                  { value: "year", label: "Past year" },
                 ]}
                 value={searxngTimeRange}
                 onChange={setSearxngTimeRange}
@@ -1444,18 +1474,18 @@ export default function WebSearchForm({
                 description="Filter explicit results, on engines that support it."
                 width="wide"
                 options={[
-                  { value: '', label: 'Instance default' },
-                  { value: '0', label: 'Off' },
-                  { value: '1', label: 'Moderate' },
-                  { value: '2', label: 'Strict' },
+                  { value: "", label: "Instance default" },
+                  { value: "0", label: "Off" },
+                  { value: "1", label: "Moderate" },
+                  { value: "2", label: "Strict" },
                 ]}
                 value={searxngSafeSearch}
                 onChange={setSearxngSafeSearch}
               />
             </SettingsGroup>
           </>
-        )
-      case 'ollama':
+        );
+      case "ollama":
         return (
           <>
             <SettingsGroup title="Authentication">
@@ -1467,9 +1497,9 @@ export default function WebSearchForm({
                 values={ollamaKeys}
                 placeholder="Ollama API key"
                 secret
-                onChange={next => {
-                  setOllamaKeys(next)
-                  setProbe({ state: 'idle' })
+                onChange={(next) => {
+                  setOllamaKeys(next);
+                  setProbe({ state: "idle" });
                 }}
               />
             </SettingsGroup>
@@ -1483,15 +1513,15 @@ export default function WebSearchForm({
                 min={1}
                 max={10}
                 value={ollamaMaxResults}
-                onChange={value => {
-                  setOllamaMaxResults(value)
-                  setProbe({ state: 'idle' })
+                onChange={(value) => {
+                  setOllamaMaxResults(value);
+                  setProbe({ state: "idle" });
                 }}
               />
             </SettingsGroup>
           </>
-        )
-      case 'websearchapi':
+        );
+      case "websearchapi":
         return (
           <>
             <SettingsGroup title="Authentication">
@@ -1503,22 +1533,22 @@ export default function WebSearchForm({
                 values={websearchapiKeys}
                 placeholder="WebSearchAPI.ai API key"
                 secret
-                onChange={next => {
-                  setWebsearchapiKeys(next)
-                  setProbe({ state: 'idle' })
+                onChange={(next) => {
+                  setWebsearchapiKeys(next);
+                  setProbe({ state: "idle" });
                 }}
               />
             </SettingsGroup>
             <WebsearchapiOptions
               draft={websearchapiDraft}
-              onChange={next => {
-                setWebsearchapiDraft(next)
-                setProbe({ state: 'idle' })
+              onChange={(next) => {
+                setWebsearchapiDraft(next);
+                setProbe({ state: "idle" });
               }}
             />
           </>
-        )
-      case 'tavily':
+        );
+      case "tavily":
         return (
           <>
             <SettingsGroup title="Authentication">
@@ -1530,9 +1560,9 @@ export default function WebSearchForm({
                 values={tavilyKeys}
                 placeholder="tvly-..."
                 secret
-                onChange={next => {
-                  setTavilyKeys(next)
-                  setProbe({ state: 'idle' })
+                onChange={(next) => {
+                  setTavilyKeys(next);
+                  setProbe({ state: "idle" });
                 }}
               />
               <TextSetting
@@ -1541,22 +1571,22 @@ export default function WebSearchForm({
                 description="Files usage under this Tavily project."
                 placeholder="Optional"
                 value={tavilyDraft.projectId}
-                onChange={projectId => {
-                  setTavilyDraft({ ...tavilyDraft, projectId })
-                  setProbe({ state: 'idle' })
+                onChange={(projectId) => {
+                  setTavilyDraft({ ...tavilyDraft, projectId });
+                  setProbe({ state: "idle" });
                 }}
               />
             </SettingsGroup>
             <TavilyOptions
               draft={tavilyDraft}
-              onChange={next => {
-                setTavilyDraft(next)
-                setProbe({ state: 'idle' })
+              onChange={(next) => {
+                setTavilyDraft(next);
+                setProbe({ state: "idle" });
               }}
             />
           </>
-        )
-      case 'firecrawl':
+        );
+      case "firecrawl":
         return (
           <>
             <SettingsGroup title="Authentication">
@@ -1568,9 +1598,9 @@ export default function WebSearchForm({
                 values={firecrawlKeys}
                 placeholder="fc-..."
                 secret
-                onChange={next => {
-                  setFirecrawlKeys(next)
-                  setProbe({ state: 'idle' })
+                onChange={(next) => {
+                  setFirecrawlKeys(next);
+                  setProbe({ state: "idle" });
                 }}
               />
             </SettingsGroup>
@@ -1578,14 +1608,14 @@ export default function WebSearchForm({
               idPrefix="ai-web-search-firecrawl"
               cloud
               draft={firecrawlDraft}
-              onChange={next => {
-                setFirecrawlDraft(next)
-                setProbe({ state: 'idle' })
+              onChange={(next) => {
+                setFirecrawlDraft(next);
+                setProbe({ state: "idle" });
               }}
             />
           </>
-        )
-      case 'firecrawlSelfHosted':
+        );
+      case "firecrawlSelfHosted":
         return (
           <>
             <SettingsGroup title="Instances">
@@ -1596,9 +1626,9 @@ export default function WebSearchForm({
                 itemLabel="URL"
                 values={firecrawlSelfHostedUrls}
                 placeholder="http://firecrawl:3002"
-                onChange={next => {
-                  setFirecrawlSelfHostedUrls(next)
-                  setProbe({ state: 'idle' })
+                onChange={(next) => {
+                  setFirecrawlSelfHostedUrls(next);
+                  setProbe({ state: "idle" });
                 }}
               />
             </SettingsGroup>
@@ -1606,14 +1636,14 @@ export default function WebSearchForm({
               idPrefix="ai-web-search-firecrawlSelfHosted"
               cloud={false}
               draft={firecrawlSelfHostedDraft}
-              onChange={next => {
-                setFirecrawlSelfHostedDraft(next)
-                setProbe({ state: 'idle' })
+              onChange={(next) => {
+                setFirecrawlSelfHostedDraft(next);
+                setProbe({ state: "idle" });
               }}
             />
           </>
-        )
-      case 'jina':
+        );
+      case "jina":
         return (
           <>
             <SettingsGroup title="Authentication">
@@ -1625,22 +1655,22 @@ export default function WebSearchForm({
                 values={jinaKeys}
                 placeholder="jina_..."
                 secret
-                onChange={next => {
-                  setJinaKeys(next)
-                  setProbe({ state: 'idle' })
+                onChange={(next) => {
+                  setJinaKeys(next);
+                  setProbe({ state: "idle" });
                 }}
               />
             </SettingsGroup>
             <JinaOptions
               draft={jinaDraft}
-              onChange={next => {
-                setJinaDraft(next)
-                setProbe({ state: 'idle' })
+              onChange={(next) => {
+                setJinaDraft(next);
+                setProbe({ state: "idle" });
               }}
             />
           </>
-        )
-      case 'langsearch':
+        );
+      case "langsearch":
         return (
           <>
             <SettingsGroup title="Authentication">
@@ -1652,22 +1682,22 @@ export default function WebSearchForm({
                 values={langsearchKeys}
                 placeholder="ls-..."
                 secret
-                onChange={next => {
-                  setLangsearchKeys(next)
-                  setProbe({ state: 'idle' })
+                onChange={(next) => {
+                  setLangsearchKeys(next);
+                  setProbe({ state: "idle" });
                 }}
               />
             </SettingsGroup>
             <LangsearchOptions
               draft={langsearchDraft}
-              onChange={next => {
-                setLangsearchDraft(next)
-                setProbe({ state: 'idle' })
+              onChange={(next) => {
+                setLangsearchDraft(next);
+                setProbe({ state: "idle" });
               }}
             />
           </>
-        )
-      case 'exa':
+        );
+      case "exa":
         return (
           <>
             <SettingsGroup title="Authentication">
@@ -1679,22 +1709,22 @@ export default function WebSearchForm({
                 values={exaKeys}
                 placeholder="Exa API key"
                 secret
-                onChange={next => {
-                  setExaKeys(next)
-                  setProbe({ state: 'idle' })
+                onChange={(next) => {
+                  setExaKeys(next);
+                  setProbe({ state: "idle" });
                 }}
               />
             </SettingsGroup>
             <ExaOptions
               draft={exaDraft}
-              onChange={next => {
-                setExaDraft(next)
-                setProbe({ state: 'idle' })
+              onChange={(next) => {
+                setExaDraft(next);
+                setProbe({ state: "idle" });
               }}
             />
           </>
-        )
-      case 'tinyfish':
+        );
+      case "tinyfish":
         return (
           <>
             <SettingsGroup title="Authentication">
@@ -1706,22 +1736,22 @@ export default function WebSearchForm({
                 values={tinyfishKeys}
                 placeholder="sk-tinyfish-..."
                 secret
-                onChange={next => {
-                  setTinyfishKeys(next)
-                  setProbe({ state: 'idle' })
+                onChange={(next) => {
+                  setTinyfishKeys(next);
+                  setProbe({ state: "idle" });
                 }}
               />
             </SettingsGroup>
             <TinyfishOptions
               draft={tinyfishDraft}
-              onChange={next => {
-                setTinyfishDraft(next)
-                setProbe({ state: 'idle' })
+              onChange={(next) => {
+                setTinyfishDraft(next);
+                setProbe({ state: "idle" });
               }}
             />
           </>
-        )
-      case 'parallel':
+        );
+      case "parallel":
         return (
           <>
             <SettingsGroup title="Authentication">
@@ -1733,37 +1763,37 @@ export default function WebSearchForm({
                 values={parallelKeys}
                 placeholder="Parallel API key"
                 secret
-                onChange={next => {
-                  setParallelKeys(next)
-                  setProbe({ state: 'idle' })
+                onChange={(next) => {
+                  setParallelKeys(next);
+                  setProbe({ state: "idle" });
                 }}
               />
             </SettingsGroup>
             <ParallelOptions
               draft={parallelDraft}
-              onChange={next => {
-                setParallelDraft(next)
-                setProbe({ state: 'idle' })
+              onChange={(next) => {
+                setParallelDraft(next);
+                setProbe({ state: "idle" });
               }}
             />
           </>
-        )
-      case 'mcp':
+        );
+      case "mcp":
         return (
           <McpOptions
             value={mcpDraft}
-            onChange={next => {
-              setMcpDraft(next)
-              setProbe({ state: 'idle' })
+            onChange={(next) => {
+              setMcpDraft(next);
+              setProbe({ state: "idle" });
             }}
           />
-        )
+        );
     }
-  }
+  };
 
   const availableProviders = ALL_PROVIDERS.filter(
-    p => !addedProviders.includes(p)
-  )
+    (p) => !addedProviders.includes(p),
+  );
 
   const renderAddProviderBox = () => {
     if (!isAddingProvider) {
@@ -1773,14 +1803,14 @@ export default function WebSearchForm({
           role="button"
           tabIndex={0}
           onClick={() => {
-            setIsAddingProvider(true)
-            setSelectedNewProvider('')
+            setIsAddingProvider(true);
+            setSelectedNewProvider("");
           }}
-          onKeyDown={e => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault()
-              setIsAddingProvider(true)
-              setSelectedNewProvider('')
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              setIsAddingProvider(true);
+              setSelectedNewProvider("");
             }
           }}
         >
@@ -1789,7 +1819,7 @@ export default function WebSearchForm({
             <span>Add search provider</span>
           </div>
         </div>
-      )
+      );
     }
 
     return (
@@ -1807,8 +1837,8 @@ export default function WebSearchForm({
               size="sm"
               type="button"
               onClick={() => {
-                setIsAddingProvider(false)
-                setSelectedNewProvider('')
+                setIsAddingProvider(false);
+                setSelectedNewProvider("");
               }}
             >
               Cancel
@@ -1817,11 +1847,11 @@ export default function WebSearchForm({
           <OLFormSelect
             size="sm"
             value={selectedNewProvider}
-            onChange={e => {
+            onChange={(e) => {
               setSelectedNewProvider(
-                e.target.value as WebSearchProviderType | ''
-              )
-              setProbe({ state: 'idle' })
+                e.target.value as WebSearchProviderType | "",
+              );
+              setProbe({ state: "idle" });
             }}
           >
             <option value="">Choose a provider to configure...</option>
@@ -1847,12 +1877,12 @@ export default function WebSearchForm({
                 {WEB_SEARCH_LINKS[selectedNewProvider].links.map(
                   ({ label, href }, index) => (
                     <Fragment key={href}>
-                      {index > 0 ? ' · ' : null}
+                      {index > 0 ? " · " : null}
                       <a href={href} target="_blank" rel="noopener noreferrer">
                         {label}
                       </a>
                     </Fragment>
-                  )
+                  ),
                 )}
               </p>
             </div>
@@ -1865,8 +1895,8 @@ export default function WebSearchForm({
                 size="sm"
                 type="button"
                 onClick={() => {
-                  setIsAddingProvider(false)
-                  setSelectedNewProvider('')
+                  setIsAddingProvider(false);
+                  setSelectedNewProvider("");
                 }}
               >
                 Cancel
@@ -1884,15 +1914,15 @@ export default function WebSearchForm({
           </div>
         )}
       </div>
-    )
-  }
+    );
+  };
 
   return (
     <form
       className="linking-ai-assist-form"
-      onSubmit={event => {
-        event.preventDefault()
-        onSave(current())
+      onSubmit={(event) => {
+        event.preventDefault();
+        onSave(current());
       }}
     >
       {serverAvailable && (
@@ -1903,10 +1933,10 @@ export default function WebSearchForm({
               type="radio"
               name="webSearchSourceMode"
               id="source-mode-server"
-              checked={sourceMode === 'server'}
+              checked={sourceMode === "server"}
               onChange={() => {
-                setSourceMode('server')
-                setProbe({ state: 'idle' })
+                setSourceMode("server");
+                setProbe({ state: "idle" });
               }}
             />
             <label className="form-check-label" htmlFor="source-mode-server">
@@ -1922,10 +1952,10 @@ export default function WebSearchForm({
               type="radio"
               name="webSearchSourceMode"
               id="source-mode-custom"
-              checked={sourceMode === 'custom'}
+              checked={sourceMode === "custom"}
               onChange={() => {
-                setSourceMode('custom')
-                setProbe({ state: 'idle' })
+                setSourceMode("custom");
+                setProbe({ state: "idle" });
               }}
             />
             <label className="form-check-label" htmlFor="source-mode-custom">
@@ -1938,8 +1968,8 @@ export default function WebSearchForm({
         </div>
       )}
 
-      {sourceMode === 'custom' && (
-        <div className={serverAvailable ? 'border-top pt-3 mt-3' : ''}>
+      {sourceMode === "custom" && (
+        <div className={serverAvailable ? "border-top pt-3 mt-3" : ""}>
           <div className="mb-3">
             <div className="d-flex align-items-center justify-content-between mb-2">
               <span className="small fw-bold">
@@ -1959,7 +1989,7 @@ export default function WebSearchForm({
                     key={type}
                     type={type}
                     enabled={getProviderEnabled(type)}
-                    onToggle={enabled => handleToggleProvider(type, enabled)}
+                    onToggle={(enabled) => handleToggleProvider(type, enabled)}
                     summary={getProviderSummary(type)}
                     isExpanded={expandedProviders.includes(type)}
                     onToggleExpand={() => toggleExpand(type)}
@@ -1989,11 +2019,11 @@ export default function WebSearchForm({
                 <OLFormSelect
                   size="sm"
                   value={rotationStrategy}
-                  onChange={e => {
+                  onChange={(e) => {
                     setRotationStrategy(
-                      e.target.value as WebSearchRotationStrategy
-                    )
-                    setProbe({ state: 'idle' })
+                      e.target.value as WebSearchRotationStrategy,
+                    );
+                    setProbe({ state: "idle" });
                   }}
                 >
                   <option value="round-robin">
@@ -2008,7 +2038,7 @@ export default function WebSearchForm({
                 </OLFormSelect>
               </OLFormGroup>
 
-              {rotationStrategy === 'provider-priority' && (
+              {rotationStrategy === "provider-priority" && (
                 <OLFormGroup controlId="ai-web-search-primary" className="mb-2">
                   <OLFormLabel className="small fw-semibold">
                     Primary provider
@@ -2016,11 +2046,11 @@ export default function WebSearchForm({
                   <OLFormSelect
                     size="sm"
                     value={primaryProvider}
-                    onChange={e => {
+                    onChange={(e) => {
                       setPrimaryProvider(
-                        e.target.value as WebSearchPrimaryProvider
-                      )
-                      setProbe({ state: 'idle' })
+                        e.target.value as WebSearchPrimaryProvider,
+                      );
+                      setProbe({ state: "idle" });
                     }}
                   >
                     {addedProviders.map((p: WebSearchProviderType) => (
@@ -2033,54 +2063,146 @@ export default function WebSearchForm({
               )}
             </div>
           )}
-
         </div>
       )}
 
-      {probe.state === 'tested' ? (
+      {shownProbe.state === "tested" ? (
         <div className="notification-list mt-3">
           <Notification
-            type={probe.outcome.anySuccess ? 'success' : 'error'}
+            type={shownProbe.outcome.anySuccess ? "success" : "error"}
             content={
               <div>
-                <div className="fw-semibold mb-2">
-                  {probe.outcome.anySuccess
-                    ? `Search health check: ${
-                        (probe.outcome.results || []).filter(r => r.ok).length
-                      } of ${(probe.outcome.results || []).length} operational (${
-                        probe.outcome.latencyMs
-                      } ms)`
-                    : `All search providers failed connection check (${probe.outcome.latencyMs} ms)`}
-                </div>
-                {Array.isArray(probe.outcome.results) &&
-                probe.outcome.results.length > 0 ? (
-                  <div className="d-flex flex-column gap-1 small">
-                    {probe.outcome.results.map(r => (
-                      <div
-                        key={r.provider}
-                        className="d-flex align-items-center gap-2"
-                      >
-                        <MaterialIcon
-                          type={r.ok ? 'check_circle' : 'cancel'}
-                          className={r.ok ? 'text-success' : 'text-danger'}
-                        />
-                        <span className="fw-medium">
-                          {WEB_SEARCH_LABELS[r.provider] || r.provider}:
-                        </span>
-                        <span>
-                          {r.ok
-                            ? `OK (${r.latencyMs ?? 0} ms)`
-                            : `Failed: ${r.error || 'Connection error'}`}
-                        </span>
-                      </div>
-                    ))}
+                {Array.isArray(shownProbe.outcome.providers) &&
+                shownProbe.outcome.providers.length > 0 ? (
+                  <div>
+                    <div className="d-flex align-items-center justify-content-between mb-2">
+                      <span className="fw-semibold">
+                        {shownProbe.outcome.anySuccess
+                          ? `Web search health check: Operational (${shownProbe.outcome.latencyMs} ms)`
+                          : `Web search health check: Failed (${shownProbe.outcome.latencyMs} ms)`}
+                      </span>
+                      <span className="text-muted small">
+                        {plural(
+                          shownProbe.outcome.providers.filter((p) => p.searchable)
+                            .length,
+                          "provider",
+                        )}{" "}
+                        searchable
+                      </span>
+                    </div>
+
+                    <div className="d-flex flex-column gap-2 mt-2">
+                      {shownProbe.outcome.providers.map((p) => (
+                        <div key={p.provider} className="web-search-probe-card">
+                          <div className="web-search-probe-header">
+                            <div className="web-search-probe-title">
+                              <MaterialIcon
+                                type={p.searchable ? "check_circle" : "cancel"}
+                                className={
+                                  p.searchable ? "text-success" : "text-danger"
+                                }
+                              />
+                              <span className="fw-semibold">
+                                {WEB_SEARCH_LABELS[p.provider] || p.provider}
+                              </span>
+                            </div>
+                          </div>
+
+                          {Array.isArray(p.keys) && p.keys.length > 0 && (
+                            <div className="web-search-probe-keys">
+                              {p.keys.map((k) => {
+                                const isLong =
+                                  k.message.length > 60 ||
+                                  k.message.includes("\n");
+                                const logKey = `${p.provider}-${k.index}`;
+                                const isExpanded = Boolean(
+                                  expandedLogs[logKey],
+                                );
+                                const previewText = isLong
+                                  ? k.message.slice(0, 55).trim() + "…"
+                                  : k.message;
+
+                                return (
+                                  <div
+                                    key={k.index}
+                                    className="web-search-probe-item"
+                                  >
+                                    <div className="web-search-probe-row">
+                                      <div className="web-search-probe-endpoint">
+                                        <MaterialIcon
+                                          type={KEY_STATUS_STYLE[k.status].icon}
+                                          className={`text-${KEY_STATUS_STYLE[k.status].bg}`}
+                                        />
+                                        <span className="web-search-probe-label">
+                                          {k.label || `Key ${k.index}`}:
+                                        </span>
+                                        <span className="web-search-probe-target">
+                                          {k.target}
+                                        </span>
+                                      </div>
+                                      <div className="web-search-probe-result">
+                                        <span
+                                          className="web-search-probe-message"
+                                          title={k.message}
+                                        >
+                                          {previewText}
+                                        </span>
+                                        {isLong && (
+                                          <button
+                                            type="button"
+                                            className="web-search-log-btn"
+                                            onClick={() =>
+                                              setExpandedLogs((prev) => ({
+                                                ...prev,
+                                                [logKey]: !prev[logKey],
+                                              }))
+                                            }
+                                            aria-label={
+                                              isExpanded
+                                                ? "Hide full error log"
+                                                : "Show full error log"
+                                            }
+                                            title={
+                                              isExpanded
+                                                ? "Hide full error log"
+                                                : "Show full error log"
+                                            }
+                                          >
+                                            <MaterialIcon
+                                              type={
+                                                isExpanded
+                                                  ? "arrow_drop_up"
+                                                  : "arrow_drop_down"
+                                              }
+                                              style={{
+                                                fontSize: "18px",
+                                                lineHeight: 1,
+                                              }}
+                                            />
+                                          </button>
+                                        )}
+                                      </div>
+                                    </div>
+                                    {isLong && isExpanded && (
+                                      <div className="web-search-log-details">
+                                        {k.message}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 ) : (
                   <div className="small">
-                    {`Search answered in ${probe.outcome.latencyMs} ms`}{' '}
-                    {probe.outcome.provider
-                      ? `via ${probe.outcome.provider}`
-                      : ''}
+                    {`Search answered in ${shownProbe.outcome.latencyMs} ms`}{" "}
+                    {shownProbe.outcome.provider
+                      ? `via ${shownProbe.outcome.provider}`
+                      : ""}
                   </div>
                 )}
               </div>
@@ -2088,9 +2210,9 @@ export default function WebSearchForm({
           />
         </div>
       ) : null}
-      {probe.state === 'failed' ? (
+      {shownProbe.state === "failed" ? (
         <div className="notification-list mt-3">
-          <Notification type="error" content={probe.message} />
+          <Notification type="error" content={shownProbe.message} />
         </div>
       ) : null}
 
@@ -2098,15 +2220,15 @@ export default function WebSearchForm({
         <OLButton variant="primary" type="submit" disabled={!complete}>
           Save
         </OLButton>
-        {sourceMode === 'custom' && (
+        {sourceMode === "custom" && (
           <OLButton
             variant="secondary"
             type="button"
             onClick={onTest}
-            isLoading={probe.state === 'busy'}
+            isLoading={probe.state === "busy"}
             loadingLabel="Testing search…"
             disabled={
-              probe.state === 'busy' || (!complete && !hasAnyConfigured)
+              probe.state === "busy" || (!complete && !hasAnyConfigured)
             }
           >
             Test search
@@ -2117,5 +2239,5 @@ export default function WebSearchForm({
         </OLButton>
       </div>
     </form>
-  )
+  );
 }

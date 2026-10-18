@@ -1,10 +1,12 @@
 import http from 'node:http'
+import { Readable } from 'node:stream'
 import { expect } from 'chai'
 import sinon from 'sinon'
 import {
   createBearerAuthMiddleware,
   createHttpApp,
   expandHosts,
+  originHostnames,
   requireBearerToken,
   proxyToInternalUrl,
 } from '../../../src/http.js'
@@ -20,20 +22,32 @@ function mockRes() {
 
 describe('requireBearerToken', function () {
   it('accepts a bearer header and attaches the token to req.auth', async function () {
+    const client = { get: sinon.stub().resolves([]) }
     const req = { get: () => 'Bearer olp_0123456789abcdef' }
     const res = mockRes()
     const next = sinon.stub()
-    await requireBearerToken(req, res, next)
+    await createBearerAuthMiddleware(client)(req, res, next)
     expect(next.calledOnce).to.be.true
     expect(req.auth.token).to.equal('olp_0123456789abcdef')
     expect(req.auth.scopes).to.deep.equal(['mcp'])
   })
 
   it('is case-insensitive on the scheme', async function () {
+    const client = { get: sinon.stub().resolves([]) }
     const req = { get: () => 'bearer olp_0123456789abcdef' }
     const next = sinon.stub()
-    await requireBearerToken(req, mockRes(), next)
+    await createBearerAuthMiddleware(client)(req, mockRes(), next)
     expect(next.calledOnce).to.be.true
+  })
+
+  it('rejects an opaque token when there is no client to validate it', async function () {
+    const req = { get: () => 'Bearer olp_0123456789abcdef' }
+    const res = mockRes()
+    const next = sinon.stub()
+    await requireBearerToken(req, res, next)
+    expect(next.called).to.be.false
+    expect(res.status.calledWith(401)).to.be.true
+    expect(res.json.firstCall.args[0].code).to.equal('unauthorized')
   })
 
   it('rejects a missing header with the unauthorized envelope', async function () {
@@ -80,6 +94,8 @@ describe('requireBearerToken', function () {
 
       await middleware(req, res, next)
       expect(client.get.calledOnceWith('olp_validtoken', '/projects')).to.be.true
+      // Validation needs one row, not a full project listing.
+      expect(client.get.firstCall.args[2]).to.deep.equal({ limit: 1 })
       expect(next.calledOnce).to.be.true
 
       // Second request with same token should hit cache and NOT call client.get again
@@ -87,6 +103,16 @@ describe('requireBearerToken', function () {
       await middleware(req, mockRes(), next2)
       expect(client.get.calledOnce).to.be.true
       expect(next2.calledOnce).to.be.true
+    })
+
+    it('does not echo the text of an unexpected validation failure to the caller', async function () {
+      const client = { get: sinon.stub().rejects(new Error('ECONNRESET at web.internal:3000')) }
+      const middleware = createBearerAuthMiddleware(client)
+      const req = { get: () => 'Bearer olp_unexpected' }
+      const res = mockRes()
+      await middleware(req, res, sinon.stub())
+      expect(res.status.calledWith(401)).to.be.true
+      expect(res.json.firstCall.args[0].message).to.equal('valid authentication required')
     })
 
     it('rejects an invalid token with 401', async function () {
@@ -181,6 +207,32 @@ describe('requireBearerToken', function () {
       expect(next2.calledOnce).to.be.true
     })
 
+    it('answers 503 when the signing keys cannot be fetched, instead of rejecting the token', async function () {
+      const client = {
+        get: sinon.stub(),
+        fetchImpl: async () => {
+          throw new TypeError('fetch failed')
+        },
+      }
+      const config = {
+        resourceUri: 'https://overleaf.example.com/mcp',
+        authServerUrl: 'https://overleaf.example.com',
+      }
+      const middleware = createBearerAuthMiddleware(client, { config })
+      // A well-formed RS256 header is needed so verification reaches the key fetch.
+      const header = Buffer.from(JSON.stringify({ alg: 'RS256', kid: 'k1' })).toString('base64url')
+      const body = Buffer.from(JSON.stringify({ sub: 'u1' })).toString('base64url')
+      const req = { get: () => `Bearer ${header}.${body}.c2ln` }
+      const res = mockRes()
+      const next = sinon.stub()
+
+      await middleware(req, res, next)
+      expect(next.called).to.be.false
+      expect(res.status.calledWith(503)).to.be.true
+      expect(res.json.firstCall.args[0].code).to.equal('temporarily_unavailable')
+      expect(res.setHeader.calledWith('Retry-After', '30')).to.be.true
+    })
+
     it('rejects invalid JWT with 401 and challenge header', async function () {
       const client = { get: sinon.stub().resolves({ projects: [] }) }
       const jwtVerifier = {
@@ -197,6 +249,80 @@ describe('requireBearerToken', function () {
       expect(res.json.firstCall.args[0].code).to.equal('invalid_token')
       expect(res.setHeader.calledWith('WWW-Authenticate')).to.be.true
       expect(res.setHeader.firstCall.args[1]).to.include('error="invalid_token"')
+    })
+  })
+
+  describe('JWT without the mcp scope', function () {
+    it('answers 403 insufficient_scope with a matching challenge and attaches no auth', async function () {
+      const scopeError = new Error('JWT missing required "mcp" scope')
+      scopeError.code = 'insufficient_scope'
+      const jwtVerifier = { verifyToken: sinon.stub().rejects(scopeError) }
+      const middleware = createBearerAuthMiddleware(null, { jwtVerifier })
+      const req = { get: () => 'Bearer aaaaa.bbbbb.ccccc' }
+      const res = mockRes()
+      const next = sinon.stub()
+
+      await middleware(req, res, next)
+      expect(next.called).to.be.false
+      expect(res.status.calledWith(403)).to.be.true
+      expect(res.json.firstCall.args[0].code).to.equal('insufficient_scope')
+      expect(res.setHeader.firstCall.args[0]).to.equal('WWW-Authenticate')
+      expect(res.setHeader.firstCall.args[1]).to.include('error="insufficient_scope"')
+    })
+  })
+
+  describe('originHostnames', function () {
+    it('reduces configured origin URLs to the hostnames the SDK compares', function () {
+      expect(originHostnames(['https://chat.example.com', 'gemini.example.com:8443'])).to.deep.equal([
+        'chat.example.com',
+        'gemini.example.com',
+      ])
+    })
+
+    it('keeps a bracketed IPv6 host intact', function () {
+      expect(originHostnames(['http://[::1]:3000'])).to.deep.equal(['[::1]'])
+    })
+  })
+
+  describe('MCP_ALLOWED_ORIGINS in the running app', function () {
+    // The SDK checks Origin by hostname, so a configured full URL must still admit
+    // the browser origin it names, and nothing else.
+    const config = {
+      host: '127.0.0.1',
+      port: 0,
+      endpointPath: '/mcp',
+      internalUrl: '',
+      resourceUri: 'https://overleaf.example.com/mcp',
+      authServerUrl: 'https://overleaf.example.com',
+      allowedHosts: [],
+      allowedOrigins: ['https://chat.example.com'],
+    }
+    let server
+    let baseUrl
+
+    before(async function () {
+      const { app } = createHttpApp({ config, client: null })
+      server = http.createServer(app)
+      await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+      baseUrl = `http://127.0.0.1:${server.address().port}`
+    })
+
+    after(async function () {
+      if (server) await new Promise(resolve => server.close(resolve))
+    })
+
+    it('admits a listed origin given as a full URL', async function () {
+      const res = await fetch(`${baseUrl}/tools/metadata`, {
+        headers: { origin: 'https://chat.example.com' },
+      })
+      expect(res.status).to.equal(200)
+    })
+
+    it('refuses an origin that is not listed', async function () {
+      const res = await fetch(`${baseUrl}/tools/metadata`, {
+        headers: { origin: 'https://evil.example.com' },
+      })
+      expect(res.status).to.equal(403)
     })
   })
 
@@ -265,6 +391,64 @@ describe('requireBearerToken', function () {
       expect(res.send.calledOnce).to.be.true
     })
 
+    it('streams a form body that express left unparsed, such as a login post', async function () {
+      globalThis.fetch = sinon.stub().resolves({
+        status: 302,
+        headers: new Headers({ location: 'http://web:3000/oauth/authorize' }),
+        arrayBuffer: async () => Buffer.alloc(0),
+      })
+      const req = Readable.from([Buffer.from('email=a%40b.c&password=x')])
+      req.method = 'POST'
+      req.url = '/login'
+      req.headers = { 'content-type': 'application/x-www-form-urlencoded' }
+      req.body = {}
+      const res = {
+        status: sinon.stub().returnsThis(),
+        setHeader: sinon.stub().returnsThis(),
+        send: sinon.stub(),
+        json: sinon.stub(),
+      }
+
+      await proxyToInternalUrl(req, res, 'http://web:3000')
+
+      const [, calledOpts] = globalThis.fetch.firstCall.args
+      expect(calledOpts.duplex).to.equal('half')
+      expect(await new Response(calledOpts.body).text()).to.equal('email=a%40b.c&password=x')
+    })
+
+    it('does not forward hop-by-hop headers and sets a deadline on the upstream request', async function () {
+      globalThis.fetch = sinon.stub().resolves({
+        status: 200,
+        headers: new Headers(),
+        arrayBuffer: async () => Buffer.alloc(0),
+      })
+      const req = {
+        method: 'GET',
+        url: '/js/app.js',
+        headers: {
+          connection: 'keep-alive',
+          'transfer-encoding': 'chunked',
+          'keep-alive': 'timeout=5',
+          'accept-language': 'en',
+        },
+      }
+      const res = {
+        status: sinon.stub().returnsThis(),
+        setHeader: sinon.stub().returnsThis(),
+        send: sinon.stub(),
+        json: sinon.stub(),
+      }
+
+      await proxyToInternalUrl(req, res, 'http://web:3000')
+
+      const [, calledOpts] = globalThis.fetch.firstCall.args
+      expect(calledOpts.headers.has('connection')).to.be.false
+      expect(calledOpts.headers.has('transfer-encoding')).to.be.false
+      expect(calledOpts.headers.has('keep-alive')).to.be.false
+      expect(calledOpts.headers.get('accept-language')).to.equal('en')
+      expect(calledOpts.signal).to.be.instanceOf(AbortSignal)
+    })
+
     it('forwards POST request with body to internal URL', async function () {
       globalThis.fetch = sinon.stub().resolves({
         status: 201,
@@ -292,6 +476,46 @@ describe('requireBearerToken', function () {
       expect(calledOpts.method).to.equal('POST')
       expect(calledOpts.body).to.equal(JSON.stringify({ client_name: 'test' }))
       expect(res.status.calledWith(201)).to.be.true
+    })
+
+    describe('redirect Location headers', function () {
+      async function proxyRedirect(location) {
+        globalThis.fetch = sinon.stub().resolves({
+          status: 302,
+          headers: new Headers({ location }),
+          arrayBuffer: async () => Buffer.alloc(0),
+        })
+        const req = { method: 'GET', url: '/oauth/authorize', headers: {} }
+        const res = {
+          status: sinon.stub().returnsThis(),
+          setHeader: sinon.stub().returnsThis(),
+          send: sinon.stub(),
+          json: sinon.stub(),
+        }
+        await proxyToInternalUrl(req, res, 'http://web:3000')
+        return res
+      }
+
+      it('rewrites a Location on the internal origin into a path on this origin', async function () {
+        const res = await proxyRedirect('http://web:3000/login?next=%2Foauth')
+        expect(res.setHeader.calledWith('location', '/login?next=%2Foauth')).to.be.true
+      })
+
+      it('rewrites a protocol-relative Location on the internal origin', async function () {
+        const res = await proxyRedirect('//web:3000/login')
+        expect(res.setHeader.calledWith('location', '/login')).to.be.true
+      })
+
+      it('keeps a Location that points at another origin', async function () {
+        const res = await proxyRedirect('https://accounts.example.com/sign-in')
+        expect(res.setHeader.calledWith('location', 'https://accounts.example.com/sign-in')).to.be.true
+      })
+
+      it('drops a Location that cannot be parsed rather than forwarding it', async function () {
+        const res = await proxyRedirect('http://[broken')
+        const forwarded = res.setHeader.getCalls().some(call => call.args[0] === 'location')
+        expect(forwarded).to.be.false
+      })
     })
 
     it('returns 502 bad_gateway when upstream fetch rejects', async function () {
@@ -326,7 +550,6 @@ describe('protected resource metadata routes', function () {
     internalUrl: '',
     resourceUri: 'https://overleaf.example.com/mcp',
     authServerUrl: 'https://overleaf.example.com',
-    maxUploadBytes: 1024,
     allowedHosts: [],
     allowedOrigins: [],
   }
@@ -343,6 +566,20 @@ describe('protected resource metadata routes', function () {
 
   after(async function () {
     if (server) await new Promise(resolve => server.close(resolve))
+  })
+
+  it('does not cap the request body at the SDK default size', async function () {
+    // Auth runs after the body is parsed, so a parsed body reaches the 401
+    // here; a body over the SDK's 100kb default would be refused with 413.
+    const res = await fetch(`${baseUrl}/mcp`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: 'Bearer olp_0123456789abcdef',
+      },
+      body: JSON.stringify({ data: 'A'.repeat(300 * 1024) }),
+    })
+    expect(res.status).to.equal(401)
   })
 
   it('serves metadata at the RFC 9728 path-insertion URL', async function () {
@@ -381,9 +618,11 @@ describe('protected resource metadata routes', function () {
       'files',
       'compile',
       'latex',
+      'history',
+      'tags',
     ])
     const allTools = body.categories.flatMap(c => c.tools)
-    expect(allTools).to.have.length(20)
+    expect(allTools).to.have.length(40)
     for (const tool of allTools) {
       expect(tool.name).to.be.a('string').and.not.be.empty
       expect(tool.description).to.be.a('string').and.not.be.empty

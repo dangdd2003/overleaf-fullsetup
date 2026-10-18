@@ -27,6 +27,8 @@ vi.mock('../../../../../app/src/Features/Authentication/AuthenticationController
 vi.mock('../../../app/src/AdminUserSelfServiceEmailsController.mjs', () => ({
   default: {
     addSecondaryEmail: vi.fn(),
+    confirmSecondaryEmail: vi.fn(),
+    resendSecondaryEmailConfirmationCode: vi.fn(),
     setDefaultEmail: vi.fn(),
     deleteSecondaryEmail: vi.fn(),
   },
@@ -86,7 +88,7 @@ describe('AdminUserManagementRouter', () => {
     vi.clearAllMocks()
   })
 
-  it('redirects to /admin/register when feature is disabled', () => {
+  it('registers no routes when feature is disabled, so the instance matches upstream', () => {
     Features.hasFeature.mockReturnValue(false)
     const mockWebRouter = {
       get: vi.fn(),
@@ -95,16 +97,7 @@ describe('AdminUserManagementRouter', () => {
 
     AdminUserManagementRouter.apply(mockWebRouter)
 
-    expect(mockWebRouter.get).toHaveBeenCalledWith(
-      '/admin/users',
-      expect.anything(),
-      expect.anything()
-    )
-    expect(mockWebRouter.get).toHaveBeenCalledWith(
-      '/admin/user',
-      expect.anything(),
-      expect.anything()
-    )
+    expect(mockWebRouter.get).not.toHaveBeenCalled()
     expect(mockWebRouter.post).not.toHaveBeenCalled()
   })
 
@@ -171,6 +164,8 @@ describe('AdminUserManagementRouter', () => {
     const postPaths = postCalls.map(call => call[0])
 
     expect(postPaths).toContain('/user/emails/secondary')
+    expect(postPaths).toContain('/user/emails/confirm-secondary')
+    expect(postPaths).toContain('/user/emails/resend-secondary-confirmation')
     expect(postPaths).toContain('/user/emails/default')
     expect(postPaths).toContain('/user/emails/delete')
 
@@ -179,6 +174,18 @@ describe('AdminUserManagementRouter', () => {
       expect.anything(),
       expect.anything(),
       AdminUserSelfServiceEmailsController.addSecondaryEmail
+    )
+    expect(mockWebRouter.post).toHaveBeenCalledWith(
+      '/user/emails/confirm-secondary',
+      expect.anything(),
+      expect.anything(),
+      AdminUserSelfServiceEmailsController.confirmSecondaryEmail
+    )
+    expect(mockWebRouter.post).toHaveBeenCalledWith(
+      '/user/emails/resend-secondary-confirmation',
+      expect.anything(),
+      expect.anything(),
+      AdminUserSelfServiceEmailsController.resendSecondaryEmailConfirmationCode
     )
     expect(mockWebRouter.post).toHaveBeenCalledWith(
       '/user/emails/default',

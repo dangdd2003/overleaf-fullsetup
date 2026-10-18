@@ -73,6 +73,20 @@ describe('MCP OAuth Protected Resource', () => {
     expect(header).to.include('error_description="The token has expired"')
   })
 
+  it('keeps the challenge parseable when a verifier message quotes a claim', () => {
+    const header = buildWwwAuthenticateHeader(
+      config,
+      'invalid_token',
+      'JWT issuer mismatch: expected "http://a", got "http://b"'
+    )
+    // Four parameters (resource_metadata, scope, error, error_description),
+    // two quotes each: no stray quote from the message
+    expect(header).to.include(
+      `error_description="JWT issuer mismatch: expected 'http://a', got 'http://b'"`
+    )
+    expect(header.split('"').length - 1).to.equal(8)
+  })
+
   describe('createJwtVerifier kid resolution and cache refresh', () => {
     const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', {
       modulusLength: 2048,

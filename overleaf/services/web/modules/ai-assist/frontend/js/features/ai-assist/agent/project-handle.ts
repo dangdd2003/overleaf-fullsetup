@@ -1,4 +1,6 @@
 import { ProjectIndex } from './context/project-index'
+import type { PdfViewerSnapshot } from './context/types'
+import type { HighlightRequest, HighlightResult } from '../pdf/highlight'
 
 export type ProjectFile = {
   path: string
@@ -48,6 +50,18 @@ export type CompileOutcome = {
   status: string
   errors: LogEntrySummary[]
   warnings: LogEntrySummary[]
+  /**
+   * The build this compile wrote a PDF to, and the CLSI server holding it.
+   * Absent when it wrote none, so view_compiled_pdf_page never shows a PDF
+   * from an earlier compile as this one's.
+   */
+  buildId?: string | null
+  clsiServerId?: string | null
+  /**
+   * Whether this compile wrote a PDF, even one with errors in it. Present only
+   * when compile results report PDF status, so it is absent otherwise.
+   */
+  pdfProduced?: boolean
 }
 
 /**
@@ -153,6 +167,11 @@ export interface ProjectHandle {
     from: number
     to: number
     text: string
+    ranges?: Array<{
+      from: number
+      to: number
+      text: string
+    }>
   } | null
   proposeEdit(edit: EditRequest): Promise<EditOutcome>
   compile(options?: CompileOptions): Promise<CompileOutcome>
@@ -160,6 +179,13 @@ export interface ProjectHandle {
   openFile(): { path: string; cursorLine: number | null } | null
   /** The last compile result, without triggering a new one. */
   lastCompile(): LastCompile | null
+  /** What the PDF viewer shows right now, or null when no PDF is on screen. */
+  pdfViewer?(): PdfViewerSnapshot | null
+  /**
+   * Shows boxes in the PDF viewer, or the PDF location of a source line range,
+   * and scrolls to the first. Only offered when highlighting is enabled.
+   */
+  highlightPdf?(request: HighlightRequest): Promise<HighlightResult>
   /**
    * The structural index over every document file: section tree, reference
    * resolution, environment inventory. Built in the browser from the project

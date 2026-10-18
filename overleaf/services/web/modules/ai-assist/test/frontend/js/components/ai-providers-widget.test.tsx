@@ -3,6 +3,7 @@ import customLocalStorage from '@/infrastructure/local-storage'
 import { render, screen, fireEvent } from '@testing-library/react'
 import fetchMock from 'fetch-mock'
 import AiProvidersWidget from '../../../../frontend/js/features/ai-assist/components/ai-providers-widget'
+import { readWebSearchSettings } from '../../../../frontend/js/features/ai-assist/provider-store'
 
 function setMeta({ enabled = true, webTools = false } = {}) {
   window.metaAttributesCache?.clear()
@@ -32,14 +33,29 @@ const FAST = {
   modelName: 'Qwen3 4B',
 }
 
+// The connectors widget closes its BroadcastChannel on unmount. The bootstrap
+// stub has no close(), so this suite installs one with it.
+class ChannelStub {
+  onmessage: unknown = null
+  close() {}
+  postMessage() {}
+  addEventListener() {}
+  removeEventListener() {}
+}
+
 describe('AiProvidersWidget', function () {
+  let originalChannel: typeof BroadcastChannel
+
   beforeEach(function () {
+    originalChannel = globalThis.BroadcastChannel
+    globalThis.BroadcastChannel = ChannelStub as unknown as typeof BroadcastChannel
     fetchMock.removeRoutes().clearHistory()
     customLocalStorage.clear()
     setMeta()
   })
 
   afterEach(function () {
+    globalThis.BroadcastChannel = originalChannel
     fetchMock.removeRoutes().clearHistory()
     customLocalStorage.clear()
   })
@@ -114,12 +130,21 @@ describe('AiProvidersWidget', function () {
     expect(screen.getByText(/no provider configured/i)).to.exist
   })
 
-  it('makes no request to any Overleaf endpoint', function () {
-    // The whole point of this design: configuration is local, and the server is
-    // not involved in the assistant at all.
+  it('makes no request to any Overleaf endpoint for the provider', function () {
+    // The whole point of this design: provider configuration is local, and the
+    // server is not involved. The only request allowed is the connectors list,
+    // which the connectors widget loads whenever the assistant is enabled.
+    fetchMock.get('/ai-assist/connectors', {
+      connectors: [],
+      meta: {
+        redirectUri: 'https://overleaf.example.com/oauth/callback',
+        clientMetadataUrl: null,
+      },
+    })
     customLocalStorage.setItem('ai-assist:provider', STORED)
     render(<AiProvidersWidget />)
-    expect(fetchMock.callHistory.calls()).to.have.length(0)
+    const calls = fetchMock.callHistory.calls()
+    expect(calls.every(c => c.url.endsWith('/ai-assist/connectors'))).to.be.true
   })
 
   it('opens the form to change an existing provider', function () {
@@ -200,7 +225,7 @@ describe('AiProvidersWidget', function () {
       fireEvent.click(screen.getByRole('button', { name: /add searxng/i }))
       fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
-      expect(customLocalStorage.getItem('ai-assist:web-search')).to.deep.equal({
+      expect(readWebSearchSettings()).to.deep.equal({
         sourceMode: 'custom',
         providers: {
           searxng: {
@@ -255,6 +280,27 @@ describe('AiProvidersWidget', function () {
 
       expect(customLocalStorage.getItem('ai-assist:web-search')).to.equal(null)
       expect(screen.getByRole('button', { name: 'Set up web search' })).to.exist
+    })
+  })
+
+  describe('connectors', function () {
+    it('is not offered when the assistant is disabled', function () {
+      setMeta({ enabled: false })
+      render(<AiProvidersWidget />)
+      expect(screen.queryByTestId('connectors-settings')).to.equal(null)
+    })
+
+    it('renders connectors widget whenever the assistant is enabled', async function () {
+      fetchMock.get('/ai-assist/connectors', {
+        connectors: [],
+        meta: {
+          redirectUri: 'https://overleaf.example.com/oauth/callback',
+          clientMetadataUrl: null,
+        },
+      })
+      render(<AiProvidersWidget />)
+      expect(await screen.findByTestId('connectors-settings')).to.exist
+      expect(screen.getByText('Connectors')).to.exist
     })
   })
 

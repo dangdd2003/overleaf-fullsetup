@@ -149,3 +149,102 @@ export function extractFootnotes(text: string): {
   })
   return { text: notes.size ? lines.join('\n') : text, notes }
 }
+
+const FENCE_CLOSE = /^ {0,3}(`{3,}|~{3,})[ \t]*$/
+const DISPLAY_MATH_OPEN =
+  /\$\$|\\\[|\\begin\{((?:equation|align|alignat|gather|multline|matrix|pmatrix|bmatrix|vmatrix|Vmatrix|cases|aligned|gathered)\*?)\}/g
+// Markup marked reads across blank lines, or a definition that other blocks
+// may refer to. A reply holding any of these is kept as one block.
+const WHOLE_DOCUMENT =
+  /<[?!]|<(?:pre|script|style|textarea)\b|^ {0,3}\[[^\]\n]+\]:/im
+// A line that carries on the block above it rather than starting a new one
+const CONTINUES_BLOCK = /^(?:[ \t>|]|[*+-](?:\s|$)|\d{1,9}[.)](?:\s|$))/
+// Raw HTML may run on past a blank line and nest what follows it, so a block
+// that opens with markup is never closed early
+const OPENS_HTML = /^ {0,3}</
+
+/**
+ * Where display math stays open after `line`, given where it was open before,
+ * or null when it is closed.
+ */
+function mathOpenAfter(line: string, open: string | null): string | null {
+  let pos = 0
+  let closer = open
+  for (;;) {
+    if (closer !== null) {
+      const at = line.indexOf(closer, pos)
+      if (at === -1) return closer
+      pos = at + closer.length
+      closer = null
+      continue
+    }
+    DISPLAY_MATH_OPEN.lastIndex = pos
+    const m = DISPLAY_MATH_OPEN.exec(line)
+    if (!m) return null
+    closer = m[0] === '$$' ? '$$' : m[0] === '\\[' ? '\\]' : `\\end{${m[1]}}`
+    pos = m.index + m[0].length
+  }
+}
+
+/**
+ * Cuts a reply into the top-level blocks it can be rendered as, one at a time.
+ * A cut is made at a blank line outside fenced code and display math, and only
+ * where the next line starts a block of its own: not a list item, quote,
+ * indented line or table row, and not a line right after a table row. Those
+ * are the places marked reads the same way whether or not the text before
+ * them is there. Each block keeps the blank lines after it, so the blocks
+ * joined with '\n' give the reply back. The last block is the one still being
+ * written; `stable` holds the blocks before it, which will not change as more
+ * text arrives.
+ */
+export function splitMarkdownBlocks(text: string): {
+  stable: string[]
+  tail: string
+} {
+  if (WHOLE_DOCUMENT.test(text)) return { stable: [], tail: text }
+
+  const lines = text.split('\n')
+  const stable: string[] = []
+  let blockStart = 0
+  let last = -1 // the last line with content
+  let fence: string | null = null
+  let math: string | null = null
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    const inside = fence !== null || math !== null
+    if (!inside && line.trim() === '') continue
+
+    const prev = lines[last]
+    if (
+      !inside &&
+      last !== -1 &&
+      last < i - 1 &&
+      !prev.includes('|') &&
+      !CONTINUES_BLOCK.test(line) &&
+      !OPENS_HTML.test(lines[blockStart])
+    ) {
+      stable.push(lines.slice(blockStart, i).join('\n'))
+      blockStart = i
+    }
+    last = i
+
+    if (fence !== null) {
+      const close = FENCE_CLOSE.exec(line)
+      if (close && close[1][0] === fence[0] && close[1].length >= fence.length) {
+        fence = null
+      }
+      continue
+    }
+    if (math === null) {
+      const open = line.match(FENCE_OPEN)
+      if (open) {
+        fence = open[1]
+        continue
+      }
+    }
+    math = mathOpenAfter(line, math)
+  }
+
+  return { stable, tail: lines.slice(blockStart).join('\n') }
+}

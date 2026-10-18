@@ -84,4 +84,43 @@ describe('HTML extraction', function () {
       'Deep & wide nets.'
     )
   })
+
+  it('scans a page of unclosed tag openers in linear time', function () {
+    // Each opener used to rescan the rest of the page for its `>`
+    const hostile = [
+      '<main'.repeat(60_000),
+      '<article'.repeat(30_000),
+      '<meta name="description"'.repeat(30_000),
+      '<script type="application/ld+json">'.repeat(30_000),
+      '<title'.repeat(60_000),
+    ].join('')
+    const started = Date.now()
+    htmlToMarkdown(hostile, 'https://example.com/')
+    embeddedText(hostile)
+    expect(Date.now() - started).to.be.below(3000)
+  })
+
+  it('still reads the main element, the body and JSON-LD around unclosed openers', function () {
+    const page = `<html><head><title>T</title></head><body><main>${'Real article sentence about the topic. '.repeat(20)}</main></body></html>`
+    expect(htmlToMarkdown(page, 'https://example.com/').markdown).to.include(
+      'Real article sentence'
+    )
+    const ld = `<script type="application/ld+json">{"@type":"Article","articleBody":"${'Structured body text here. '.repeat(20)}"}</script>`
+    expect(embeddedText(`<script>${'<script '.repeat(5)}</script>${ld}`)).to.include(
+      'Structured body text'
+    )
+  })
+
+  it('shows a table too wide to read as a Markdown table as paragraphs', function () {
+    const wide = `<table><tr>${'<td>cell</td>'.repeat(60)}</tr><tr><td>after</td></tr></table>`
+    const markdown = htmlToMarkdown(`<body><p>${wide}</p></body>`, 'https://example.com/')
+      .markdown
+    expect(markdown).to.not.include('| --- |')
+    expect(markdown).to.include('cell')
+    const narrow = htmlToMarkdown(
+      '<body><table><tr><td>a</td><td>b</td></tr><tr><td>c</td><td>d</td></tr></table></body>',
+      'https://example.com/'
+    ).markdown
+    expect(narrow).to.include('| a | b |')
+  })
 })

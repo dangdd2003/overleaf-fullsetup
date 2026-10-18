@@ -4,6 +4,8 @@ import {
   Attachment,
   ContextSnapshot,
   EnvelopeState,
+  PdfAreaContext,
+  PdfViewerSnapshot,
   fingerprintFiles,
 } from './types'
 
@@ -119,8 +121,77 @@ function renderCompile(snapshot: ContextSnapshot) {
   if (!snapshot.compile) return '<compile>not compiled yet</compile>'
   const { status, errorCount, warningCount } = snapshot.compile
   const counts = `${plural(errorCount, 'error')}, ${plural(warningCount, 'warning')}`
-  const pointer = errorCount > 0 ? ' (call get_compile_result for detail)' : ''
-  return `<compile>${status} - ${counts}${pointer}</compile>`
+  const detail = errorCount > 0 ? ' (call get_compile_result for detail)' : ''
+  return `<compile>${status} - ${counts}${detail}</compile>`
+}
+
+/** "3", or "3-4" for a run of consecutive pages, "" when there are none. */
+export function formatPageRanges(pages: number[]): string {
+  const sorted = [...new Set(pages)].sort((a, b) => a - b)
+  if (sorted.length === 0) return ''
+  const ranges: string[] = []
+  let start = sorted[0]
+  let end = sorted[0]
+  for (const page of sorted.slice(1)) {
+    if (page === end + 1) {
+      end = page
+      continue
+    }
+    ranges.push(start === end ? `${start}` : `${start}-${end}`)
+    start = end = page
+  }
+  ranges.push(start === end ? `${start}` : `${start}-${end}`)
+  return ranges.join(',')
+}
+
+function pdfViewerFingerprint(view: PdfViewerSnapshot): string {
+  return [view.buildId ?? '', view.pages.join(','), view.zoom, view.darkMode ? 'dark' : 'light'].join('|')
+}
+
+/**
+ * The viewer line. Delta-encoded like the file listing: the same viewer as the
+ * turn before is one short line, so an unchanged view costs no tokens and the
+ * model still knows which turn it last saw in full.
+ */
+function renderPdfViewer(
+  view: PdfViewerSnapshot | null | undefined,
+  previous: EnvelopeState | null
+): { text: string; fingerprint: string } | null {
+  if (!view) return null
+  const fingerprint = pdfViewerFingerprint(view)
+  if (previous?.pdfViewerFingerprint === fingerprint) {
+    return {
+      text: `<pdf-viewer>unchanged since turn ${previous.turn}</pdf-viewer>`,
+      fingerprint,
+    }
+  }
+  const attributes = [
+    view.buildId ? `build="${escapeAttribute(view.buildId)}"` : null,
+    `pages="${formatPageRanges(view.pages)}"`,
+    `zoom="${escapeAttribute(view.zoom)}"`,
+    `dark-mode="${view.darkMode ? 'on' : 'off'}"`,
+  ].filter(Boolean)
+  return { text: `<pdf-viewer ${attributes.join(' ')} />`, fingerprint }
+}
+
+/**
+ * A box the user drew. Its crop travels as an image on the message, never
+ * in this text: `image` names which image on the message it is (1-based), or
+ * says it is unavailable, and `path` and `line` appear only when synctex
+ * resolved the box to source.
+ */
+function renderPdfArea(area: PdfAreaContext): string {
+  const { rect, source } = area
+  const box = `x="${rect.x.toFixed(2)}" y="${rect.y.toFixed(2)}" w="${rect.w.toFixed(2)}" h="${rect.h.toFixed(2)}"`
+  const image = !area.image
+    ? 'unavailable'
+    : area.imageIndex
+      ? String(area.imageIndex)
+      : 'attached'
+  const location = source
+    ? ` path="${escapeAttribute(source.path)}" line="${source.line}" endLine="${source.endLine}"`
+    : ''
+  return `<pdf-area page="${area.page}" ${box} image="${image}"${location} />`
 }
 
 /**
@@ -152,6 +223,8 @@ export function renderEnvelope({
   sections.push(files.text)
   if (outline) sections.push(outline.text)
   sections.push(renderCompile(snapshot))
+  const pdfViewer = renderPdfViewer(snapshot.pdfViewer, previous)
+  if (pdfViewer) sections.push(pdfViewer.text)
 
   if (snapshot.openFile) {
     const { path, cursorLine } = snapshot.openFile
@@ -164,12 +237,34 @@ export function renderEnvelope({
   }
 
   if (snapshot.selection) {
-    const { path, from, to, text } = snapshot.selection
+    const { path, from, to, text, ranges } = snapshot.selection
+    if (ranges && ranges.length > 1) {
+      for (const r of ranges) {
+        sections.push(
+          `<selection file="${escapeAttribute(path)}" lines="${r.from}-${r.to}">`,
+          neutraliseClosingTags(r.text),
+          '</selection>'
+        )
+      }
+    } else {
+      sections.push(
+        `<selection file="${escapeAttribute(path)}" lines="${from}-${to}">`,
+        neutraliseClosingTags(text),
+        '</selection>'
+      )
+    }
+  }
+
+  for (const selection of snapshot.pdfSelections ?? []) {
+    if (!selection.text) continue
     sections.push(
-      `<selection file="${escapeAttribute(path)}" lines="${from}-${to}">`,
-      neutraliseClosingTags(text),
-      '</selection>'
+      `<pdf-selection page="${selection.page}">`,
+      neutraliseClosingTags(selection.text),
+      '</pdf-selection>'
     )
+  }
+  for (const area of snapshot.pdfAreas ?? []) {
+    sections.push(renderPdfArea(area))
   }
 
   const rendered = renderAttachments(attachments)
@@ -185,6 +280,7 @@ export function renderEnvelope({
       turn,
       filesFingerprint: files.fingerprint,
       ...(outline ? { outlineFingerprint: outline.fingerprint } : {}),
+      ...(pdfViewer ? { pdfViewerFingerprint: pdfViewer.fingerprint } : {}),
     },
   }
 }

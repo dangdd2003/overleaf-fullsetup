@@ -1,5 +1,10 @@
 import crypto from 'node:crypto'
 
+const JWKS_TIMEOUT_MS = 10000
+// Forced JWKS refreshes (an unknown kid) run at most once per window, so an
+// unauthenticated token with a made-up kid cannot make every request fetch.
+const MIN_FORCED_REFRESH_MS = 30000
+
 /**
  * Build RFC 9728 Protected Resource Metadata for the MCP endpoint.
  *
@@ -54,12 +59,30 @@ export function buildWwwAuthenticateHeader(config, error, description) {
   const metaUrl = buildProtectedResourceMetadataUrl(resourceUri)
   let header = `Bearer resource_metadata="${metaUrl}", scope="mcp"`
   if (error) {
-    header += `, error="${error}"`
+    // error is an RFC 6750 token; anything else could break the quoted header.
+    header += `, error="${String(error).replace(/[^A-Za-z0-9_.-]/g, '')}"`
   }
   if (description) {
-    header += `, error_description="${description}"`
+    // Verifier messages quote claim values, and a raw quote would end the
+    // quoted-string early and leave the challenge unparseable for the client.
+    const safe = String(description).replace(/["\\]/g, "'")
+    header += `, error_description="${safe}"`
   }
   return header
+}
+
+/**
+ * Read a JWT `scope` claim, which is either a space-separated string or an
+ * array. Anything else, including a missing claim, grants no scopes.
+ *
+ * @param {unknown} scope
+ * @returns {string[]}
+ */
+export function parseScopes(scope) {
+  if (typeof scope === 'string') {
+    return scope.split(' ').filter(Boolean)
+  }
+  return Array.isArray(scope) ? scope : []
 }
 
 function base64urlDecode(str) {
@@ -68,6 +91,32 @@ function base64urlDecode(str) {
     base64 += '='
   }
   return Buffer.from(base64, 'base64')
+}
+
+/**
+ * Pick the JWK for a token. A kid must match exactly. Without one, the first
+ * RSA key is used, as before.
+ */
+function findKey(jwks, kid) {
+  const keys = Array.isArray(jwks?.keys) ? jwks.keys : []
+  if (kid) {
+    return keys.find(k => k.kid === kid) || null
+  }
+  return (
+    keys.find(k => k.kty === 'RSA' && (k.alg === 'RS256' || !k.alg)) ||
+    keys[0] ||
+    null
+  )
+}
+
+function verifyRs256(jwk, signingInput, signature) {
+  // A kid can name a key of another type; only an RSA key may verify RS256.
+  if (jwk.kty !== 'RSA') return false
+  const publicKey = crypto.createPublicKey({ key: jwk, format: 'jwk' })
+  const verifier = crypto.createVerify('SHA256')
+  verifier.update(signingInput)
+  verifier.end()
+  return verifier.verify(publicKey, signature)
 }
 
 /**
@@ -92,30 +141,66 @@ export function createJwtVerifier({
 } = {}) {
   let cachedJwks = null
   let jwksExpiresAt = 0
+  let lastForcedRefreshAt = 0
+  let pendingLoad = null
 
-  async function getJwks() {
-    const now = Date.now()
-    if (cachedJwks && jwksExpiresAt > now) {
-      return cachedJwks
-    }
-
-    if (fetchJwks) {
-      cachedJwks = await fetchJwks()
-      jwksExpiresAt = now + jwksTtlMs
-      return cachedJwks
-    }
+  // Bounded so a stalled auth server cannot hold every request open. Any
+  // failure to load the key set (refused connection, timeout, error status,
+  // unparseable body) is the auth server being unavailable, not a bad token,
+  // so every one of them is tagged JWKS_UNAVAILABLE.
+  async function fetchKeySet() {
+    if (fetchJwks) return fetchJwks()
 
     if (!jwksUrl) {
       throw new Error('Neither jwksUrl nor fetchJwks provided to JWT verifier')
     }
 
-    const response = await fetchImpl(jwksUrl)
-    if (!response.ok) {
-      throw new Error(`Failed to fetch JWKS from ${jwksUrl}: ${response.status}`)
+    try {
+      const response = await fetchImpl(jwksUrl, { signal: AbortSignal.timeout(JWKS_TIMEOUT_MS) })
+      if (!response.ok) {
+        await response.body?.cancel().catch(() => {})
+        throw new Error(`status ${response.status}`)
+      }
+      return await response.json()
+    } catch (cause) {
+      const err = new Error(`Failed to fetch JWKS from ${jwksUrl}: ${cause?.message ?? cause}`)
+      err.code = 'JWKS_UNAVAILABLE'
+      err.cause = cause
+      throw err
     }
-    cachedJwks = await response.json()
-    jwksExpiresAt = now + jwksTtlMs
-    return cachedJwks
+  }
+
+  // One load at a time: requests that arrive while the key set is being fetched
+  // wait for that fetch rather than each starting another.
+  function loadJwks() {
+    pendingLoad ??= fetchKeySet()
+      .then(jwks => {
+        cachedJwks = jwks
+        jwksExpiresAt = Date.now() + jwksTtlMs
+        return jwks
+      })
+      .finally(() => {
+        pendingLoad = null
+      })
+    return pendingLoad
+  }
+
+  async function getJwks() {
+    if (cachedJwks && jwksExpiresAt > Date.now()) {
+      return cachedJwks
+    }
+    return loadJwks()
+  }
+
+  // The window is tracked by time, not by whether a key set is cached, so a
+  // failed fetch cannot reset it. Within the window the cached set is used.
+  async function refreshJwks() {
+    const now = Date.now()
+    if (cachedJwks && now - lastForcedRefreshAt < MIN_FORCED_REFRESH_MS) {
+      return cachedJwks
+    }
+    lastForcedRefreshAt = now
+    return loadJwks()
   }
 
   async function verifyToken(jwtString) {
@@ -141,41 +226,36 @@ export function createJwtVerifier({
       throw new Error(`Unsupported JWT algorithm: ${header?.alg || 'unknown'}, expected RS256`)
     }
 
-    const jwks = await getJwks()
+    let jwks = await getJwks()
     if (!jwks || !Array.isArray(jwks.keys) || jwks.keys.length === 0) {
       throw new Error('JWKS contains no keys')
     }
 
-    let matchingKey = null
-    if (header.kid) {
-      matchingKey = jwks.keys.find(k => k.kid === header.kid)
-      if (!matchingKey && cachedJwks) {
-        cachedJwks = null
-        const freshJwks = await getJwks()
-        matchingKey = freshJwks.keys?.find(k => k.kid === header.kid)
-      }
+    // The JWKS is cached per process. A token signed with a key that appeared
+    // after the cache was filled must not be rejected until the TTL runs out,
+    // so refetch on a kid miss and, below, on a signature failure.
+    let refreshed = false
+    let matchingKey = findKey(jwks, header.kid)
+    if (!matchingKey) {
+      jwks = await refreshJwks()
+      refreshed = true
+      matchingKey = findKey(jwks, header.kid)
       if (!matchingKey) {
         throw new Error(`No matching key found in JWKS for kid "${header.kid}"`)
       }
-    } else {
-      matchingKey =
-        jwks.keys.find(k => k.kty === 'RSA' && (k.alg === 'RS256' || !k.alg)) ||
-        jwks.keys[0]
     }
-
-    const publicKey = crypto.createPublicKey({
-      key: matchingKey,
-      format: 'jwk',
-    })
 
     const signingInput = `${encodedHeader}.${encodedPayload}`
     const signature = base64urlDecode(encodedSignature)
 
-    const verifier = crypto.createVerify('SHA256')
-    verifier.update(signingInput)
-    verifier.end()
-
-    const isValid = verifier.verify(publicKey, signature)
+    let isValid = verifyRs256(matchingKey, signingInput, signature)
+    if (!isValid && header.kid && !refreshed) {
+      // A rotation can reuse the kid of the key it replaces. Refetch once
+      // before rejecting. Only a token that names a kid triggers this, so a
+      // forged token without one cannot force a refetch on every request.
+      const freshKey = findKey(await refreshJwks(), header.kid)
+      isValid = Boolean(freshKey) && verifyRs256(freshKey, signingInput, signature)
+    }
     if (!isValid) {
       throw new Error('Invalid JWT signature')
     }
@@ -186,10 +266,18 @@ export function createJwtVerifier({
     } catch {
       throw new Error('Malformed JWT payload')
     }
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      throw new Error('Malformed JWT payload')
+    }
 
     const now = Math.floor(Date.now() / 1000)
 
-    if (payload.exp !== undefined && payload.exp < now) {
+    // Every access token expires (web sets a one-hour exp). A token without a
+    // numeric exp was not minted under that policy, so it is refused.
+    if (typeof payload.exp !== 'number') {
+      throw new Error('JWT exp claim is missing or not a number')
+    }
+    if (payload.exp < now) {
       throw new Error('JWT has expired')
     }
 
@@ -208,11 +296,12 @@ export function createJwtVerifier({
       }
     }
 
-    if (payload.scope) {
-      const scopes = typeof payload.scope === 'string' ? payload.scope.split(' ') : payload.scope
-      if (!scopes.includes('mcp')) {
-        throw new Error('JWT missing required "mcp" scope')
-      }
+    // A missing scope claim grants nothing. Web always mints one, so a token
+    // without it was not issued by web.
+    if (!parseScopes(payload.scope).includes('mcp')) {
+      const err = new Error('JWT missing required "mcp" scope')
+      err.code = 'insufficient_scope'
+      throw err
     }
 
     return payload

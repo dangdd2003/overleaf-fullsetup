@@ -137,6 +137,14 @@ export function writingToolsExtension(): Extension {
   ]
 }
 
+// Ctrl or Cmd click adds a selection range on every platform, so several
+// passages can be selected and sent to the assistant together.
+const multiSelectionClick = EditorView.clickAddsSelectionRange.of(
+  (event: MouseEvent) => event.ctrlKey || event.metaKey
+)
+
 /** Loaded by the editor through `sourceEditorExtensions`. */
 export const extension = (): Extension =>
-  isWritingToolsAvailable() ? writingToolsExtension() : []
+  isWritingToolsAvailable()
+    ? [writingToolsExtension(), multiSelectionClick]
+    : []

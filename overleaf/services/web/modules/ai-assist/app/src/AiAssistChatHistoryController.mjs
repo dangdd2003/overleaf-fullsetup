@@ -1,7 +1,12 @@
 import logger from '@overleaf/logger'
 import Settings from '@overleaf/settings'
 import './ModuleSettings.mjs'
-import defaultStore, { isValidChatId } from './AiAssistChatHistoryStore.mjs'
+import defaultStore, {
+  MAX_CHATS_PER_USER,
+  isValidChatCursor,
+  isValidChatId,
+} from './AiAssistChatHistoryStore.mjs'
+import defaultCheckpointStore from './AiAssistCheckpointStore.mjs'
 import { createProviderClient } from './AiAssistProviders.mjs'
 import { generateChatTitle } from './AiAssistChatTitler.mjs'
 import SessionManager from '../../../../app/src/Features/Authentication/SessionManager.mjs'
@@ -10,9 +15,11 @@ export class AiAssistChatHistoryController {
   constructor({
     store = defaultStore,
     clientFactory = createProviderClient,
+    checkpointStore = defaultCheckpointStore,
   } = {}) {
     this.store = store
     this.clientFactory = clientFactory
+    this.checkpointStore = checkpointStore
   }
 
   #ids(req, res) {
@@ -29,8 +36,31 @@ export class AiAssistChatHistoryController {
   list = async (req, res) => {
     const ids = this.#ids(req, res)
     if (!ids) return
+    const cursor = req.query?.cursor
+    const rawLimit = req.query?.limit
+    if (cursor !== undefined && !isValidChatCursor(cursor)) {
+      return res.status(400).json({ error: 'Invalid cursor' })
+    }
+    const limit = rawLimit === undefined ? undefined : Number(rawLimit)
+    if (
+      limit !== undefined &&
+      !(Number.isInteger(limit) && limit >= 1 && limit <= MAX_CHATS_PER_USER)
+    ) {
+      return res.status(400).json({ error: 'Invalid limit' })
+    }
     try {
-      res.json({ chats: await this.store.listChats(ids.projectId, ids.userId) })
+      // Without a cursor or limit the answer is every chat, as before; the
+      // nextCursor field is only there for a client that pages
+      const page = this.store.listChatPage
+        ? await this.store.listChatPage(ids.projectId, ids.userId, {
+            cursor,
+            limit,
+          })
+        : {
+            chats: await this.store.listChats(ids.projectId, ids.userId),
+            nextCursor: null,
+          }
+      res.json({ chats: page.chats, nextCursor: page.nextCursor ?? null })
     } catch (err) {
       logger.error(
         { err, projectId: ids.projectId },
@@ -71,7 +101,7 @@ export class AiAssistChatHistoryController {
     if (!Array.isArray(transcript)) {
       return res.status(400).json({ error: 'transcript must be an array' })
     }
-    const maxBytes = Settings.aiAssist?.maxTranscriptBytes ?? 5000000
+    const maxBytes = Settings.aiAssist?.maxTranscriptBytes ?? 32 * 1024 * 1024
     if (Buffer.byteLength(JSON.stringify(transcript)) > maxBytes) {
       return res
         .status(413)
@@ -166,6 +196,11 @@ export class AiAssistChatHistoryController {
     if (!ids) return
     try {
       await this.store.deleteChat(ids.projectId, ids.userId, ids.chatId)
+      if (this.checkpointStore?.deleteChatCheckpoints) {
+        await this.checkpointStore
+          .deleteChatCheckpoints(ids.projectId, ids.userId, ids.chatId)
+          .catch(() => {})
+      }
       res.sendStatus(204)
     } catch (err) {
       logger.error(

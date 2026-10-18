@@ -365,7 +365,24 @@ describe('WebSearchForm', function () {
     fetchMock.post('/ai-assist/web-search/test', {
       latencyMs: 102,
       anySuccess: true,
-      results: [{ provider: 'tavily', ok: true, latencyMs: 102 }],
+      providers: [
+        {
+          provider: 'tavily',
+          searchable: true,
+          latencyMs: 102,
+          keys: [
+            {
+              index: 1,
+              label: 'Key 1',
+              target: 'sk-t****on',
+              status: 'works',
+              message: 'Works (Searchable, 1 result in 102 ms)',
+              latencyMs: 102,
+              resultCount: 1,
+            },
+          ],
+        },
+      ],
       activeEndpoints: 1,
       provider: 'tavily',
     })
@@ -392,7 +409,7 @@ describe('WebSearchForm', function () {
     expect((testButton as HTMLButtonElement).disabled).to.be.false
     fireEvent.click(testButton)
 
-    expect(await screen.findByText(/Search health check: 1 of 1 operational/i)).to.exist
+    expect(await screen.findByText(/Web search health check: Operational/i)).to.exist
     const lastCall = fetchMock.callHistory.lastCall(
       '/ai-assist/web-search/test'
     )
@@ -406,9 +423,39 @@ describe('WebSearchForm', function () {
     fetchMock.post('/ai-assist/web-search/test', {
       latencyMs: 140,
       anySuccess: true,
-      results: [
-        { provider: 'tavily', ok: true, latencyMs: 95 },
-        { provider: 'exa', ok: false, error: 'Invalid API key (401)' },
+      providers: [
+        {
+          provider: 'tavily',
+          searchable: true,
+          latencyMs: 95,
+          keys: [
+            {
+              index: 1,
+              label: 'Key 1',
+              target: 'sk-t****avily',
+              status: 'works',
+              message: 'Works (Searchable, 1 result in 95 ms)',
+              latencyMs: 95,
+              resultCount: 1,
+            },
+          ],
+        },
+        {
+          provider: 'exa',
+          searchable: false,
+          latencyMs: 40,
+          keys: [
+            {
+              index: 1,
+              label: 'Key 1',
+              target: 'sk-b****-exa',
+              status: 'dead',
+              message: 'Die: Invalid API key (401)',
+              latencyMs: 40,
+            },
+          ],
+          error: 'Die: Invalid API key (401)',
+        },
       ],
       activeEndpoints: 2,
       provider: 'tavily',
@@ -429,11 +476,9 @@ describe('WebSearchForm', function () {
     const testButton = screen.getByRole('button', { name: /test search/i })
     fireEvent.click(testButton)
 
-    expect(await screen.findByText(/Search health check: 1 of 2 operational/i)).to.exist
-    expect(screen.getByText(/Tavily:/i)).to.exist
-    expect(screen.getByText(/OK \(95 ms\)/i)).to.exist
-    expect(screen.getByText(/Exa:/i)).to.exist
-    expect(screen.getByText(/Failed: Invalid API key \(401\)/i)).to.exist
+    expect(await screen.findByText(/Web search health check: Operational/i)).to.exist
+    expect(screen.getByText(/Works \(Searchable, 1 result in 95 ms\)/i)).to.exist
+    expect(screen.getByText(/Die: Invalid API key \(401\)/i)).to.exist
     expect(screen.getAllByText('check_circle')).to.have.length.at.least(1)
     expect(screen.getByText('cancel')).to.exist
     // Notification container is success type
@@ -445,9 +490,39 @@ describe('WebSearchForm', function () {
     fetchMock.post('/ai-assist/web-search/test', {
       latencyMs: 65,
       anySuccess: false,
-      results: [
-        { provider: 'tavily', ok: false, error: 'Unauthorized (401)' },
-        { provider: 'exa', ok: false, error: 'Payment required (402)' },
+      providers: [
+        {
+          provider: 'tavily',
+          searchable: false,
+          latencyMs: 0,
+          keys: [
+            {
+              index: 1,
+              label: 'Key 1',
+              target: 'sk-t****avily',
+              status: 'dead',
+              message: 'Die: Unauthorized (401)',
+              latencyMs: 30,
+            },
+          ],
+          error: 'Die: Unauthorized (401)',
+        },
+        {
+          provider: 'exa',
+          searchable: false,
+          latencyMs: 0,
+          keys: [
+            {
+              index: 1,
+              label: 'Key 1',
+              target: 'sk-e****exa1',
+              status: 'dead',
+              message: 'Die: Payment required (402)',
+              latencyMs: 35,
+            },
+          ],
+          error: 'Die: Payment required (402)',
+        },
       ],
       activeEndpoints: 2,
       provider: null,
@@ -468,13 +543,181 @@ describe('WebSearchForm', function () {
     const testButton = screen.getByRole('button', { name: /test search/i })
     fireEvent.click(testButton)
 
-    expect(await screen.findByText(/All search providers failed connection check/i)).to.exist
-    expect(screen.getByText(/Tavily:/i)).to.exist
-    expect(screen.getByText(/Failed: Unauthorized \(401\)/i)).to.exist
-    expect(screen.getByText(/Exa:/i)).to.exist
-    expect(screen.getByText(/Failed: Payment required \(402\)/i)).to.exist
+    expect(await screen.findByText(/Web search health check: Failed/i)).to.exist
+    expect(screen.getByText(/Die: Unauthorized \(401\)/i)).to.exist
+    expect(screen.getByText(/Die: Payment required \(402\)/i)).to.exist
     // Notification container is error type
     const notif = document.querySelector('.notification-type-error')
     expect(notif).to.exist
+  })
+
+  it('renders rich provider searchability status and individual 1..n key statuses (works, alive, die)', async function () {
+    fetchMock.post('/ai-assist/web-search/test', {
+      latencyMs: 180,
+      anySuccess: true,
+      providers: [
+        {
+          provider: 'tavily',
+          searchable: true,
+          latencyMs: 120,
+          keys: [
+            {
+              index: 1,
+              label: 'Key 1',
+              target: 'tvly-****3a8f',
+              status: 'works',
+              message: 'Works (Searchable, 5 results in 120 ms)',
+              latencyMs: 120,
+              resultCount: 5,
+            },
+            {
+              index: 2,
+              label: 'Key 2',
+              target: 'tvly-****99bc',
+              status: 'alive',
+              message: 'Alive (Authorized)',
+              latencyMs: 60,
+            },
+            {
+              index: 3,
+              label: 'Key 3',
+              target: 'tvly-****0001',
+              status: 'dead',
+              message: 'Die: HTTP 401: Invalid API key',
+              latencyMs: 20,
+            },
+          ],
+        },
+        {
+          provider: 'searxng',
+          searchable: false,
+          latencyMs: 50,
+          keys: [
+            {
+              index: 1,
+              label: 'Instance 1',
+              target: 'http://searxng:8080',
+              status: 'dead',
+              message: 'Die: Connection refused (50 ms)',
+              latencyMs: 50,
+            },
+          ],
+          error: 'Connection refused',
+        },
+      ],
+      activeEndpoints: 4,
+      provider: 'tavily',
+      resultCount: 5,
+    })
+
+    const initial: MultiWebSearchSettings = {
+      sourceMode: 'custom',
+      providers: {
+        tavily: {
+          enabled: true,
+          apiKeys: ['tvly-secret-1', 'tvly-secret-2', 'tvly-secret-3'],
+        },
+        searxng: {
+          enabled: true,
+          baseUrls: ['http://searxng:8080'],
+        },
+      },
+    }
+
+    render(
+      <WebSearchForm initial={initial} onSave={() => {}} onCancel={() => {}} />
+    )
+
+    const testButton = screen.getByRole('button', { name: /test search/i })
+    fireEvent.click(testButton)
+
+    expect(await screen.findByText(/Web search health check: Operational/i)).to.exist
+    expect(screen.getByText(/1 provider searchable/i)).to.exist
+
+    // Key targets and messages
+    expect(screen.getByText('tvly-****3a8f')).to.exist
+    expect(screen.getByText(/Works \(Searchable, 5 results in 120 ms\)/i)).to.exist
+    expect(screen.getByText('tvly-****99bc')).to.exist
+    expect(screen.getByText(/Alive \(Authorized\)/i)).to.exist
+    expect(screen.getByText('tvly-****0001')).to.exist
+    expect(screen.getByText(/Die: HTTP 401: Invalid API key/i)).to.exist
+    expect(screen.getByText('http://searxng:8080')).to.exist
+    expect(screen.getByText(/Die: Connection refused \(50 ms\)/i)).to.exist
+    expect(document.querySelector('.web-search-probe-badge')).to.be.null
+  })
+
+  it('truncates long error logs and toggles the full log via the triangle dropdown button', async function () {
+    const longErrorMessage =
+      'Die: Custom web search returned HTTP 400: Validation error: 11 validation errors for JSONRPCMessage JSONRPCRequest.method Field required [type=missing, input_value={\'q\': \'LaTeX\'}]'
+
+    fetchMock.post('/ai-assist/web-search/test', {
+      latencyMs: 334,
+      anySuccess: false,
+      providers: [
+        {
+          provider: 'mcp',
+          searchable: false,
+          latencyMs: 0,
+          keys: [
+            {
+              index: 1,
+              label: 'Instance 1',
+              target: 'https://search.parallel.ai/mcp',
+              status: 'dead',
+              message: longErrorMessage,
+              latencyMs: 334,
+            },
+          ],
+          error: longErrorMessage,
+        },
+      ],
+      activeEndpoints: 1,
+      provider: 'mcp',
+      resultCount: 0,
+    })
+
+    const initial: MultiWebSearchSettings = {
+      sourceMode: 'custom',
+      providers: {
+        mcp: {
+          enabled: true,
+          serverUrls: ['https://search.parallel.ai/mcp'],
+        },
+      },
+    }
+
+    render(
+      <WebSearchForm initial={initial} onSave={() => {}} onCancel={() => {}} />
+    )
+
+    const testButton = screen.getByRole('button', { name: /test search/i })
+    fireEvent.click(testButton)
+
+    expect(await screen.findByText(/Web search health check: Failed/i)).to.exist
+
+    // Full log should NOT be in the DOM initially
+    expect(document.querySelector('.web-search-log-details')).to.be.null
+
+    // Truncated preview text is visible
+    expect(screen.getByText(/Die: Custom web search returned HTTP 400/i)).to.exist
+
+    // Triangle button exists with 'Show full error log'
+    const toggleBtn = screen.getByRole('button', { name: /show full error log/i })
+    expect(toggleBtn).to.exist
+    expect(toggleBtn.textContent).to.include('arrow_drop_down')
+
+    // Click triangle button to expand
+    fireEvent.click(toggleBtn)
+
+    // Full log is now displayed in .web-search-log-details
+    const logDetails = document.querySelector('.web-search-log-details')
+    expect(logDetails).to.exist
+    expect(logDetails?.textContent).to.equal(longErrorMessage)
+    expect(toggleBtn.textContent).to.include('arrow_drop_up')
+
+    // Click again to collapse
+    fireEvent.click(toggleBtn)
+    expect(document.querySelector('.web-search-log-details')).to.be.null
+    expect(toggleBtn.textContent).to.include('arrow_drop_down')
   })
 })

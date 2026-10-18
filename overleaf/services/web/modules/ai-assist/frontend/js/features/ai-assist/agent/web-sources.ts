@@ -16,6 +16,8 @@ export type WebSources = Map<number, WebSource>
 function addSource(sources: WebSources, item: any) {
   if (!item || typeof item !== 'object') return
   if (!Number.isInteger(item.source) || typeof item.url !== 'string') return
+  // Citations are links: only a plain http(s) page may become one
+  if (!safeHttpHref(item.url)) return
   const known = sources.get(item.source)
   sources.set(item.source, {
     n: item.source,
@@ -59,6 +61,23 @@ export function hostOf(url: unknown): string {
     return new URL(url).hostname.replace(/^www\./, '')
   } catch {
     return url
+  }
+}
+
+/**
+ * Returns the URL only when it is plain http(s). Model- and web-derived URLs
+ * are rendered as links, and a `javascript:` or `data:` href must never reach
+ * the DOM.
+ */
+export function safeHttpHref(url: unknown): string | undefined {
+  if (typeof url !== 'string') return undefined
+  try {
+    const parsed = new URL(url)
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+      ? parsed.toString()
+      : undefined
+  } catch {
+    return undefined
   }
 }
 

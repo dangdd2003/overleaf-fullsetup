@@ -75,7 +75,7 @@ export function createApp({
   const fetchSlots = new Slots(fetchCapacity)
   const fetchChromeSlots = new Slots(fetchChromeCapacity)
 
-  const server = http.createServer(async (req, res) => {
+  const handle = async (req, res) => {
     const parsedUrl = new URL(req.url, 'http://127.0.0.1')
     const pathname = parsedUrl.pathname
 
@@ -146,7 +146,9 @@ export function createApp({
     }
 
     const host = parsedTarget.hostname
-    if (net.isIP(host) ? !isPublicAddress(host) : !host.includes('.')) {
+    // URL keeps the brackets of an IPv6 literal; net.isIP does not accept them
+    const bareHost = host.replace(/^\[|\]$/g, '')
+    if (net.isIP(bareHost) ? !isPublicAddress(bareHost) : !host.includes('.')) {
       sendJson(res, 403, {
         error: `${host} is not a public address`,
         kind: 'content',
@@ -236,6 +238,15 @@ export function createApp({
       releaseSlot?.()
       releasePacer?.()
     }
+  }
+
+  // An error that escapes the handler must not become an unhandled rejection,
+  // which would stop the process and every read it holds.
+  const server = http.createServer((req, res) => {
+    handle(req, res).catch(() => {
+      if (!res.headersSent) sendJson(res, 500, { error: 'Internal error', kind: 'network' })
+      else res.destroy()
+    })
   })
 
   return server

@@ -7,6 +7,33 @@ import logger from '@overleaf/logger'
 export const GIT_OP_TIMEOUT_MS = 5 * 60 * 1000
 export const RESCUE_BRANCH_PREFIX = 'overleaf-sync-'
 
+// The server's environment holds its secrets (database URLs, session and
+// OAuth secrets), so git only gets what it needs: its path, home and proxy
+// settings, and no system or user git configuration.
+const GIT_ENV_KEYS = [
+  'PATH',
+  'HOME',
+  'LANG',
+  'LC_ALL',
+  'TMPDIR',
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'NO_PROXY',
+  'ALL_PROXY',
+  'http_proxy',
+  'https_proxy',
+  'no_proxy',
+  'all_proxy',
+]
+
+function _gitEnv(extra = {}) {
+  const env = {}
+  for (const key of GIT_ENV_KEYS) {
+    if (process.env[key] !== undefined) env[key] = process.env[key]
+  }
+  return { ...env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', ...extra }
+}
+
 async function runGit(repoDir, args, opts = {}) {
   return new Promise((resolve, reject) => {
     execFile(
@@ -14,7 +41,7 @@ async function runGit(repoDir, args, opts = {}) {
       args,
       {
         cwd: repoDir,
-        env: { ...process.env, ...opts.env },
+        env: _gitEnv(opts.env),
         timeout: opts.timeoutMs || GIT_OP_TIMEOUT_MS,
         maxBuffer: 64 * 1024 * 1024,
       },
@@ -119,7 +146,12 @@ async function commitAll(repoDir, message, authorName, authorEmail) {
 
 async function mergeOrigin(repoDir, branch) {
   try {
+    // A merge commit needs an identity; the sync service signs its own merges
     await runGit(repoDir, [
+      '-c',
+      'user.name=Overleaf GitHub Sync',
+      '-c',
+      'user.email=sync@overleaf.invalid',
       '-c',
       'commit.gpgsign=false',
       'merge',

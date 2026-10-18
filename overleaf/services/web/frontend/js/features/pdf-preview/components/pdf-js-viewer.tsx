@@ -16,6 +16,8 @@ import usePresentationMode from '../hooks/use-presentation-mode'
 import useMouseWheelZoom from '../hooks/use-mouse-wheel-zoom'
 import { PDFJS } from '../util/pdf-js'
 import { PDFFile } from '@ol-types/compile'
+import { publishPdfViewer } from '../util/viewer-bridge'
+import getMeta from '@/utils/meta'
 
 type PdfJsViewerProps = {
   url: string
@@ -204,6 +206,19 @@ function PdfJsViewer({ url, pdfFile }: PdfJsViewerProps) {
       }
     }
   }, [pdfJsWrapper, url, pdfFile, setError, setStartFetch])
+
+  // publish the viewer for features that read or drive it (the AI assistant).
+  // Off unless the assistant is enabled, so stock Overleaf does not hold it.
+  const aiAssistEnabled = Boolean(getMeta('ol-aiAssistEnabled'))
+  useEffect(() => {
+    if (!aiAssistEnabled || !pdfJsWrapper) return
+    publishPdfViewer({
+      wrapper: pdfJsWrapper,
+      buildId: pdfFile.build ?? null,
+      editorId: pdfFile.editorId ?? null,
+    })
+    return () => publishPdfViewer(null)
+  }, [aiAssistEnabled, pdfJsWrapper, pdfFile])
 
   // listen for scroll events
   useEffect(() => {

@@ -7,34 +7,38 @@ import AuthenticationController from '../../../../app/src/Features/Authenticatio
 import AdminUserManagementController from './AdminUserManagementController.mjs'
 import AdminUserSelfServiceEmailsController from './AdminUserSelfServiceEmailsController.mjs'
 
-const rateLimiter = new RateLimiter('admin_user_mutations', {
-  points: 30,
-  duration: 60,
-})
+// Self-service secondary email code flow (per user, hard-coded)
+const SECONDARY_EMAIL_SEND_RATE_LIMIT = { points: 5, duration: 10 * 60 }
+const SECONDARY_EMAIL_CONFIRM_RATE_LIMIT = { points: 10, duration: 60 }
 
 export default {
   apply(webRouter) {
     logger.debug({}, 'Init AdminUserManagement router')
 
+    // Disabled: register nothing, so the instance behaves as upstream CE
     if (!Features.hasFeature('admin-user-management')) {
-      logger.info(
-        {},
-        'AdminUserManagement is disabled; registering fallback redirect to /admin/register'
-      )
-      webRouter.get(
-        '/admin/users',
-        AuthorizationMiddleware.ensureUserIsSiteAdmin,
-        (req, res) => res.redirect('/admin/register')
-      )
-      webRouter.get(
-        '/admin/user',
-        AuthorizationMiddleware.ensureUserIsSiteAdmin,
-        (req, res) => res.redirect('/admin/register')
-      )
+      logger.info({}, 'AdminUserManagement is disabled; no routes registered')
       return
     }
 
-    const rateLimit = RateLimiterMiddleware.rateLimit(rateLimiter)
+    const rateLimit = RateLimiterMiddleware.rateLimit(
+      new RateLimiter('admin_user_mutations', {
+        points: 30,
+        duration: 60,
+      })
+    )
+    const secondaryEmailSendRateLimit = RateLimiterMiddleware.rateLimit(
+      new RateLimiter(
+        'admin_user_secondary_email_send',
+        SECONDARY_EMAIL_SEND_RATE_LIMIT
+      )
+    )
+    const secondaryEmailConfirmRateLimit = RateLimiterMiddleware.rateLimit(
+      new RateLimiter(
+        'admin_user_secondary_email_confirm',
+        SECONDARY_EMAIL_CONFIRM_RATE_LIMIT
+      )
+    )
 
     // Legacy redirect /admin/user -> /admin/users
     webRouter.get(
@@ -222,9 +226,26 @@ export default {
     // Self-Service Secondary Emails for Community Edition
     webRouter.post(
       '/user/emails/secondary',
-      rateLimit,
+      secondaryEmailSendRateLimit,
       AuthenticationController.requireLogin(),
       AdminUserSelfServiceEmailsController.addSecondaryEmail
+    )
+
+    // Upstream only routes the GET pages for these paths (SaaS-gated); the
+    // POST handlers are not registered in CE, so they are served here.
+    webRouter.post(
+      '/user/emails/confirm-secondary',
+      secondaryEmailConfirmRateLimit,
+      AuthenticationController.requireLogin(),
+      AdminUserSelfServiceEmailsController.confirmSecondaryEmail
+    )
+
+    // Shares the send limiter: each code issued (send or resend) counts once
+    webRouter.post(
+      '/user/emails/resend-secondary-confirmation',
+      secondaryEmailSendRateLimit,
+      AuthenticationController.requireLogin(),
+      AdminUserSelfServiceEmailsController.resendSecondaryEmailConfirmationCode
     )
 
     if (!Features.hasFeature('affiliations')) {

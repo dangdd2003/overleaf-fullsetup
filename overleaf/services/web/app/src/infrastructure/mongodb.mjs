@@ -71,6 +71,12 @@ function libraryCollection(name) {
 }
 
 export const db = {
+  aiAssistConnectorCredentials: internalDb.collection(
+    'aiAssistConnectorCredentials'
+  ),
+  aiAssistConnectors: internalDb.collection('aiAssistConnectors'),
+  aiAssistOAuthClients: internalDb.collection('aiAssistOAuthClients'),
+  aiAssistOAuthStates: internalDb.collection('aiAssistOAuthStates'),
   contacts: internalDb.collection('contacts'),
   deletedProjects: internalDb.collection('deletedProjects'),
   deletedSubscriptions: internalDb.collection('deletedSubscriptions'),

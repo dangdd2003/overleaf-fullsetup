@@ -1,11 +1,18 @@
-import { AgentEvent, ApprovalKind, SettingsApproval } from './agent-events'
+import {
+  AgentEvent,
+  ApprovalKind,
+  SettingsApproval,
+  ConnectorApproval,
+} from './agent-events'
 import {
   TranscriptEntry,
   ToolCallRecord,
   AssistantBlock,
 } from './agent-messages'
 import { EditRequest } from './project-handle'
+import { SlashCommandInvocation } from './slash-commands/types'
 import { AgentMode } from './agent-mode'
+import { ChatImage } from '../providers/types'
 
 export type PendingApproval = {
   id: string
@@ -13,6 +20,7 @@ export type PendingApproval = {
   edit?: EditRequest
   settings?: SettingsApproval
   plan?: string
+  connector?: ConnectorApproval
 }
 
 export type AgentState = {
@@ -220,7 +228,14 @@ export function appendText(
  */
 export function deliverUserMessage(
   transcript: TranscriptEntry[],
-  message: { id: string; text: string; contextText?: string }
+  message: {
+    id: string
+    text: string
+    contextText?: string
+    commandText?: string
+    command?: SlashCommandInvocation
+    images?: ChatImage[]
+  }
 ): TranscriptEntry[] {
   const index = transcript.findIndex(entry => entry.id === message.id)
   const found = index === -1 ? null : transcript[index]
@@ -234,6 +249,14 @@ export function deliverUserMessage(
     ...entry,
     ...(message.contextText !== undefined
       ? { contextText: message.contextText }
+      : {}),
+    ...(message.commandText !== undefined
+      ? { commandText: message.commandText }
+      : {}),
+    ...(message.command ? { command: message.command } : {}),
+    // A tab that never saw the message still keeps what it showed the model
+    ...(!('images' in entry && entry.images?.length) && message.images?.length
+      ? { images: message.images }
       : {}),
     sentDuringRun: true,
   }
@@ -480,6 +503,7 @@ export function reduceAgentEvent(
           edit: event.edit,
           settings: event.settings,
           plan: event.plan,
+          connector: event.connector,
         },
       }
     case 'turnFinished': {

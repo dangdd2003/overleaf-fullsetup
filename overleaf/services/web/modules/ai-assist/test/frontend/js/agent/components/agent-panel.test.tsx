@@ -19,6 +19,8 @@ import {
 } from '../../../../../../../test/frontend/helpers/editor-providers'
 import { resetMeta } from '../../../../../../../test/frontend/helpers/reset-meta'
 import customLocalStorage from '@/infrastructure/local-storage'
+import { updatePdfTurnContext } from '../../../../../frontend/js/features/ai-assist/pdf/turn-context'
+import type { PdfAreaContext } from '../../../../../frontend/js/features/ai-assist/agent/context/types'
 
 describe('buildUserEntry', function () {
   beforeEach(function () {
@@ -143,6 +145,51 @@ describe('buildUserEntry', function () {
     })
     expect((entry as any).contextText).to.include('<selection file="main.tex"')
     expect((entry as any).contextText).to.include('<file path="refs.bib">')
+  })
+
+  it('bundles multiple attachedSelection ranges into attachments and selection context', async function () {
+    const { handle } = createFakeHandle({
+      docs: { 'main.tex': 'line 1\nline 2\nline 3\nline 4\nline 5' },
+    })
+    const entry = await buildUserEntry({
+      handle,
+      transcript: [],
+      text: 'explain both highlights',
+      attachments: [{ path: 'refs.bib', text: '@article{test}' }],
+      attachedSelection: {
+        path: 'main.tex',
+        from: 1,
+        to: 5,
+        text: 'line 1\n\nline 4\nline 5',
+        ranges: [
+          { from: 1, to: 1, text: 'line 1' },
+          { from: 4, to: 5, text: 'line 4\nline 5' },
+        ],
+      },
+    })
+
+    expect(entry.role).to.equal('user')
+    if (entry.role !== 'user') throw new Error('expected user entry')
+    expect(entry.attachments).to.have.length(3)
+    expect(entry.attachments![0]).to.deep.include({
+      path: 'main.tex',
+      from: 1,
+      to: 1,
+    })
+    expect(entry.attachments![1]).to.deep.include({
+      path: 'main.tex',
+      from: 4,
+      to: 5,
+    })
+    expect(entry.attachments![2]).to.deep.include({
+      path: 'refs.bib',
+    })
+    expect((entry as any).contextText).to.include(
+      '<selection file="main.tex" lines="1-1">'
+    )
+    expect((entry as any).contextText).to.include(
+      '<selection file="main.tex" lines="4-5">'
+    )
   })
 
   it('does not include selection in buildUserEntry when attachedSelection is explicitly null', async function () {
@@ -491,10 +538,10 @@ describe('AgentComposer', function () {
     ) as HTMLTextAreaElement
     expect(textarea.disabled).to.be.true
 
-    const attachBtn = screen.getByLabelText(
-      /attach context/i
+    const plusBtn = screen.getByLabelText(
+      /add files or actions/i
     ) as HTMLButtonElement
-    expect(attachBtn.disabled).to.be.true
+    expect(plusBtn.disabled).to.be.true
 
     const modeBtn = screen.getByLabelText(/select mode/i) as HTMLButtonElement
     expect(modeBtn.disabled).to.be.true
@@ -860,5 +907,107 @@ describe('AgentPanel', function () {
       )
     })
     expect(screen.getByText(/main\.tex: 30-40/)).to.exist
+  })
+})
+
+describe('buildUserEntry with a slash command', function () {
+  beforeEach(function () {
+    resetMeta()
+  })
+
+  it('freezes the command, its block and the words onto the entry', async function () {
+    const { handle } = createFakeHandle({
+      docs: { 'main.tex': '\\documentclass{article}\n\\begin{document}\n' },
+    })
+    const entry: any = await buildUserEntry({
+      handle,
+      transcript: [],
+      text: 'the table',
+      command: { id: 'fix', args: 'the table' },
+    })
+    expect(entry.text).to.equal('the table')
+    expect(entry.command).to.deep.equal({ id: 'fix', args: 'the table' })
+    expect(entry.commandText).to.include('<command name="fix" scope="edit">')
+    expect(entry.commandText).to.include('<params>\nscope: none')
+    expect(entry.commandText).to.include('notes: the table')
+    expect(entry.contextText).to.include('<project-context turn="1">')
+  })
+
+  it('records no command for a plain message', async function () {
+    const { handle } = createFakeHandle({ docs: { 'main.tex': 'hello' } })
+    const entry: any = await buildUserEntry({ handle, transcript: [], text: 'hi' })
+    expect(entry).not.to.have.property('command')
+    expect(entry).not.to.have.property('commandText')
+  })
+})
+
+
+describe('AgentPanel with a boxed PDF area', function () {
+  const AREA: PdfAreaContext = {
+    page: 2,
+    source: { path: 'main.tex', line: 3, endLine: 7 },
+    rect: { x: 0, y: 0, w: 10, h: 10 },
+    image: { mediaType: 'image/png', data: 'AREAPIXELS' },
+  }
+
+  beforeEach(function () {
+    resetMeta()
+    customLocalStorage.setItem('ai-assist:provider', {
+      type: 'openai',
+      baseUrl: 'https://api.openai.com/v1',
+      apiKey: 'sk-test',
+      model: 'gpt-4o-mini',
+    })
+  })
+
+  afterEach(function () {
+    clearConversation(PROJECT_ID)
+    customLocalStorage.clear()
+    updatePdfTurnContext({
+      selections: [],
+      areas: [],
+      pendingAreas: 0,
+      boxSelecting: false,
+    })
+  })
+
+  it('sends every boxed picture with the message and clears the boxes', function () {
+    updatePdfTurnContext({ areas: [AREA, { ...AREA, page: 7 }] })
+    const { container } = render(
+      <EditorProviders mockCompileOnLoad>
+        <AgentPanel />
+      </EditorProviders>
+    )
+
+    // The box is shown in the composer, not in a strip above it
+    const composer = container.querySelector('.ai-assist-composer-box')
+    expect(
+      composer?.querySelector('.ai-assist-pdf-area-chip')
+    ).to.exist
+
+    const input = screen.getByPlaceholderText(/what would you like to do/i)
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    // Every box goes, each as its own picture
+    const thumbs = container.querySelectorAll('.ai-assist-user-images-grid img')
+    expect(thumbs).to.have.length(2)
+    expect(thumbs[0].getAttribute('src')).to.equal(
+      'data:image/png;base64,AREAPIXELS'
+    )
+    expect(container.querySelector('.ai-assist-pdf-area-chip')).to.be.null
+  })
+
+  it('keeps the box in the text envelope', async function () {
+    const { handle } = createFakeHandle({ docs: { 'main.tex': 'hello' } })
+    const entry = await buildUserEntry({
+      handle,
+      transcript: [],
+      text: 'what is in the box?',
+      pdfContext: { selections: [], areas: [{ ...AREA, imageIndex: 1 }] },
+    })
+
+    expect((entry as any).contextText).to.include('<project-context')
+    expect((entry as any).contextText).not.to.include('AREAPIXELS')
+    expect((entry as any).contextText).to.include('image="1"')
   })
 })

@@ -132,6 +132,11 @@ export const compileResultTool: AgentTool = {
         compile.warnings.length > rawWarnings.length,
     }
 
+    if ('pdfProduced' in compile) {
+      result.pdfProduced = compile.pdfProduced
+      result.buildId = compile.buildId ?? null
+    }
+
     if (severity === 'all' || severity === 'errors') {
       result.errors = decoratedErrors
     }

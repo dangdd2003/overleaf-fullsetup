@@ -11,6 +11,8 @@ import {
   readWebSearchSettings,
   recordConsent,
 } from '../provider-store'
+import { isConnectorsEnabled } from '../connectors/api'
+import { getChatConnectorIds } from '../connectors/chat-selection'
 import { runAgent } from '../agent/run-agent'
 import { resolveLimits } from '../providers/types'
 import { useProjectHandle } from '../agent/use-project-handle'
@@ -43,6 +45,7 @@ import {
   setDetachedRun,
 } from '../agent/background/background-run-client'
 import { followDetachedRun } from '../agent/background/detached-run-follower'
+import { dispatchPdfResultHighlights } from '../pdf/result-highlights'
 
 const REPLAY_SETTLE_MS = 250
 // How long a message a finishing run turned away waits for that run's last
@@ -94,7 +97,9 @@ export function useAgentRun({
   chatIdRef.current = chatId
 
   const [approvalContext, setApprovalContext] = useState<{
-    startLine: number
+    startLine?: number
+    kind?: string
+    connector?: any
   } | null>(null)
 
   const userSettingsContext = useContext(UserSettingsContext)
@@ -184,6 +189,7 @@ export function useAgentRun({
       const e: any = event
       const name = e.name || e.call?.name || callMapRef.current.get(e.id) || ''
       const result = e.result
+      dispatchPdfResultHighlights(result)
       if (result && result.status === 'applied') {
         const mode = e.mode || modeRef.current || 'manual'
         dispatchAiEditHighlight(name, result, mode)
@@ -200,8 +206,11 @@ export function useAgentRun({
         }
       }
     }
-    if (event.type === 'awaitingApproval' && (event as any).edit) {
-      const edit = (event as any).edit
+    if (event.type === 'awaitingApproval') {
+      if (event.kind === 'connector' || event.kind === 'connectorAuth') {
+        setApprovalContext({ kind: event.kind, connector: event.connector })
+      } else if ((event as any).edit) {
+        const edit = (event as any).edit
       if (typeof edit?.startLine === 'number' && edit.startLine > 0) {
         setApprovalContext({ startLine: edit.startLine })
       } else if (edit?.path) {
@@ -233,6 +242,7 @@ export function useAgentRun({
           })
       }
     }
+  }
     if (event.type === 'toolCallFinished') {
       finishedCallIdsRef.current.add(event.id)
     }
@@ -320,6 +330,8 @@ export function useAgentRun({
           id: entry.id,
           text: entry.text,
           contextText: entry.contextText,
+          commandText: entry.commandText,
+          command: entry.command,
         }
       ).catch(() => false)
       return accepted
@@ -492,6 +504,7 @@ export function useAgentRun({
               const name =
                 e.name || e.call?.name || callMapRef.current.get(e.id) || ''
               const result = e.result
+              dispatchPdfResultHighlights(result)
               if (
                 result &&
                 result.status === 'applied' &&
@@ -545,6 +558,9 @@ export function useAgentRun({
       // Server-side background execution for main chat
       try {
         const mode = modeRef.current
+        const connectorIds = isConnectorsEnabled()
+          ? getChatConnectorIds(runChatId)
+          : null
         const runId = await startBackgroundRun({
           projectId,
           transcript: payload,
@@ -554,6 +570,7 @@ export function useAgentRun({
           webSearchSettings: isWebToolsAvailable()
             ? readWebSearchSettings()
             : null,
+          ...(connectorIds ? { connectorIds } : {}),
           trackActive: false,
         })
         if (leftChat()) {
@@ -729,6 +746,9 @@ export function useAgentRun({
       const assistant = AiAssistant.fromStoredSettings()
       if (systemPrompt || !assistant || !hasConsented()) return
       const payload = transcript
+      const connectorIds = isConnectorsEnabled()
+        ? getChatConnectorIds(runChatId)
+        : null
       const runId = await startBackgroundRun({
         projectId,
         transcript: payload,
@@ -738,6 +758,7 @@ export function useAgentRun({
         webSearchSettings: isWebToolsAvailable()
           ? readWebSearchSettings()
           : null,
+        ...(connectorIds ? { connectorIds } : {}),
         trackActive: false,
       })
       const startedAt = Date.now()

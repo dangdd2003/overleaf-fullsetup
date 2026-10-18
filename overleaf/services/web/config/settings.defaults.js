@@ -886,26 +886,17 @@ module.exports = {
     .split(',')
     .map(s => s.trim()),
 
+  enableGitBridge: process.env.GIT_BRIDGE_ENABLED === 'true',
+
   enableMcp: process.env.MCP_ENABLED === 'true',
 
   mcp: {
-    maxUploadBytes:
-      parseInt(process.env.MCP_MAX_UPLOAD_MB || '20', 10) * 1024 * 1024,
-    allowedUploadExtensions: [
-      'png',
-      'jpg',
-      'jpeg',
-      'pdf',
-      'eps',
-      'svg',
-      'gif',
-      'csv',
-      'bib',
-      'txt',
-    ],
     // Reached server-to-server to describe MCP tools on the OAuth consent
-    // page, never from the browser.
-    serviceUrl: process.env.MCP_SERVICE_URL || 'http://mcp:3050',
+    // page, never from the browser. The MCP service runs in the same
+    // container, on loopback (server-ce/runit/mcp-overleaf/run).
+    serviceUrl:
+      process.env.MCP_SERVICE_URL ||
+      `http://127.0.0.1:${process.env.MCP_PORT || 3050}`,
   },
 
   // module options
@@ -1221,6 +1212,10 @@ module.exports = {
         __dirname,
         '../modules/github-sync/frontend/js/features/github-sync/components/github-sync-panel.tsx'
       ),
+      Path.resolve(
+        __dirname,
+        '../modules/google-drive-sync/frontend/js/features/google-drive-sync/components/google-drive-panel.tsx'
+      ),
     ],
     referenceSearchSetting: [],
     settingsModalEditorTabSections: [
@@ -1262,6 +1257,10 @@ module.exports = {
     'admin-project-management',
     'user-activate',
     'github-sync',
+    'google-drive-sync',
+    'personal-access-token',
+    'git-bridge',
+    'mcp',
     'collaboration',
     'ai-assist',
     'api-docs',

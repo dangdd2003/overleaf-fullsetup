@@ -2,11 +2,8 @@
 // compiled standalone and does not inherit the app's Bootstrap variables.
 // Mirror the one token we use here so the file is self-contained like the other
 // CE modules; `!default` keeps it from clobbering the app value if ever bundled.
-$font-family-monospace: 'DM Mono', monospace !default;
-$code-font-family: var(
-  --ai-editor-font-family,
-  var(--source-font-family)
-);
+$font-family-monospace: "DM Mono", monospace !default;
+$code-font-family: var(--ai-editor-font-family, var(--source-font-family));
 
 // Every floating box in the panel (the mode menu, chat history, @-mentions,
 // citation cards) shares the mode menu's look. Dropdown menus pass
@@ -386,6 +383,157 @@ $code-font-family: var(
   margin-top: calc(-1 * var(--spacing-02));
 }
 
+// Health check probe results container & cards
+.web-search-probe-card {
+  padding: var(--spacing-03);
+  border-radius: var(--border-radius-base);
+  border: 1px solid var(--border-divider);
+  background-color: var(--bg-light-primary);
+  color: var(--content-primary);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-02);
+}
+
+.web-search-probe-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-02);
+
+  .web-search-probe-title {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-02);
+    font-weight: 600;
+    font-size: var(--font-size-02);
+    color: var(--content-primary);
+  }
+}
+
+.web-search-probe-keys {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-01);
+  padding-left: var(--spacing-03);
+  border-left: 2px solid var(--border-divider);
+}
+
+.web-search-probe-item {
+  padding: 4px 0;
+}
+
+.web-search-probe-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-03);
+  min-height: 28px;
+}
+
+.web-search-probe-endpoint {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-02);
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.web-search-probe-label {
+  font-weight: 600;
+  color: var(--content-primary);
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.web-search-probe-target {
+  font-family: var(--font-family-monospace);
+  font-size: 12px;
+  color: var(--content-primary) !important;
+  background-color: var(--bg-light-secondary) !important;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--border-radius-base);
+  padding: 1px 7px;
+  max-width: 340px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.web-search-probe-result {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-02);
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.web-search-probe-message {
+  font-size: 12px;
+  color: var(--content-secondary);
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.4;
+}
+
+.web-search-log-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-light-secondary);
+  border: 1px solid var(--border-divider);
+  border-radius: var(--border-radius-base);
+  padding: 2px 4px;
+  color: var(--content-secondary);
+  cursor: pointer;
+  line-height: 1;
+  transition: all 0.15s ease;
+
+  &:hover {
+    color: var(--content-primary);
+    background-color: var(--bg-light-tertiary);
+    border-color: var(--content-secondary);
+  }
+}
+
+.web-search-log-details {
+  max-height: 180px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-family-monospace);
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--content-primary);
+  background-color: var(--bg-light-secondary);
+  border: 1px solid var(--border-divider);
+  border-radius: var(--border-radius-base);
+  padding: var(--spacing-02) var(--spacing-03);
+  margin-top: var(--spacing-02);
+}
+
+@media (max-width: 768px) {
+  .web-search-probe-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--spacing-01);
+  }
+
+  .web-search-probe-result {
+    width: 100%;
+    justify-content: space-between;
+    margin-left: 0;
+  }
+
+  .web-search-probe-target {
+    max-width: 200px;
+  }
+}
+
 .linking-ai-assist-form-actions {
   display: flex;
   align-items: center;
@@ -525,7 +673,17 @@ $code-font-family: var(
   }
 }
 
+.ai-assist-user-turn-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  width: 100%;
+  margin-top: var(--spacing-02);
+  margin-bottom: var(--spacing-02);
+}
+
 .ai-assist-message-user {
+  position: relative;
   align-self: flex-end;
   transform-origin: bottom right;
   animation: ai-assist-message-in 0.24s cubic-bezier(0.22, 1, 0.36, 1) both;
@@ -539,8 +697,6 @@ $code-font-family: var(
   width: fit-content;
   word-break: break-word;
   white-space: pre-wrap;
-  margin-top: var(--spacing-02);
-  margin-bottom: var(--spacing-02);
 
   .ai-assist-selection-chip-wrapper {
     display: flex;
@@ -564,6 +720,42 @@ $code-font-family: var(
     width: fit-content;
   }
 
+  .ai-assist-user-images-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-02, 8px);
+    margin-bottom: var(--spacing-02, 8px);
+  }
+
+  .ai-assist-user-image-thumb {
+    position: relative;
+    display: block;
+    text-decoration: none;
+    border-radius: var(--border-radius-medium, 6px);
+    overflow: hidden;
+    border: 1px solid var(--border-divider-themed);
+    max-width: 180px;
+    max-height: 140px;
+    cursor: zoom-in;
+    transition:
+      transform 0.15s ease,
+      box-shadow 0.15s ease,
+      border-color 0.15s ease;
+
+    &:hover {
+      transform: scale(1.02);
+      border-color: var(--border-active-themed);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    }
+
+    img {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+  }
+
   .ai-assist-message-user-text {
     line-height: var(--line-height-03);
   }
@@ -574,7 +766,8 @@ $code-font-family: var(
     box-shadow: none;
 
     .ai-assist-message-user-text,
-    .ai-assist-selection-chip-wrapper {
+    .ai-assist-selection-chip-wrapper,
+    .ai-assist-user-images-grid {
       opacity: 0.6;
     }
   }
@@ -613,10 +806,179 @@ $code-font-family: var(
 }
 
 .ai-assist-message-assistant {
+  position: relative;
   align-self: flex-start;
   width: 100%;
   color: var(--content-primary-themed);
   padding: var(--spacing-01) 0;
+}
+
+// Message action buttons under user prompts and assistant responses (Claude.ai style)
+
+.ai-assist-msg-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0.8;
+  transition: opacity 0.15s ease;
+
+  &:focus-within {
+    opacity: 1;
+  }
+}
+
+.ai-assist-msg-actions-user {
+  justify-content: flex-end;
+}
+
+.ai-assist-msg-actions-assistant {
+  justify-content: flex-start;
+  margin-left: -4px;
+  margin-top: var(--spacing-02);
+}
+
+.ai-assist-user-turn-wrapper:hover .ai-assist-msg-actions-user,
+.ai-assist-message-assistant:hover .ai-assist-msg-actions-assistant {
+  opacity: 1;
+}
+
+.ai-assist-msg-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: var(--border-radius-base);
+  background: transparent;
+  color: var(--content-secondary-themed);
+  cursor: pointer;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease,
+    transform 0.12s ease;
+
+  &:not([aria-disabled='true']):hover {
+    background-color: var(--bg-tertiary-themed);
+    color: var(--content-primary-themed);
+  }
+
+  &:not([aria-disabled='true']):active {
+    background-color: var(--bg-tertiary-themed);
+    transform: scale(0.94);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--blue-30);
+    outline-offset: 1px;
+  }
+
+  &[aria-disabled='true'] {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  &.is-copied,
+  &.is-copied:not([aria-disabled='true']):hover {
+    color: var(--content-positive-themed);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-assist-msg-action-btn {
+    transition:
+      background-color 0.12s ease,
+      color 0.12s ease;
+
+    &:not([aria-disabled='true']):active {
+      transform: none;
+    }
+  }
+}
+
+// User message footer with timestamp, status and action buttons (Claude Code style)
+.ai-assist-user-message-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 4px;
+  padding-left: 4px;
+  font-size: 0.6875rem;
+  color: var(--content-secondary-themed, #888);
+}
+
+.ai-assist-user-message-time {
+  font-size: 0.6875rem;
+  color: var(--content-secondary-themed, #888);
+  margin-right: 2px;
+  user-select: none;
+}
+
+.ai-assist-user-message-status {
+  display: inline-flex;
+  align-items: center;
+  color: var(--content-secondary-themed, #888);
+  margin-right: 4px;
+}
+
+// Edited Code Summary Badge
+
+.ai-assist-message-edited-code {
+  margin-top: var(--spacing-03);
+}
+
+.ai-assist-edited-code-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  background: var(--bg-secondary-themed);
+  border: 1px solid var(--border-divider-themed);
+  border-radius: 6px;
+  color: var(--content-primary-themed);
+  font-size: var(--font-size-01);
+  line-height: 1.4;
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+
+  .ai-assist-edited-code-icon {
+    color: var(--content-secondary-themed);
+    flex-shrink: 0;
+  }
+
+  .ai-assist-edited-code-title {
+    font-weight: 500;
+  }
+
+  .ai-assist-edited-code-file {
+    color: var(--content-secondary-themed);
+    font-family: $font-family-monospace;
+    font-size: 0.6875rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  &:hover {
+    background-color: var(--bg-tertiary-themed);
+    border-color: var(--border-divider-themed);
+
+    .ai-assist-edited-code-icon {
+      color: var(--content-primary-themed);
+    }
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--blue-30);
+    outline-offset: 1px;
+  }
 }
 
 // Collapsible Subresult Group (continuous tools and thinking)
@@ -659,7 +1021,7 @@ $code-font-family: var(
     }
   }
 
-  &[aria-expanded='true'] {
+  &[aria-expanded="true"] {
     background: transparent;
     border: none;
   }
@@ -1017,12 +1379,12 @@ $code-font-family: var(
   @include ai-assist-activity-box;
   margin: 2px 0 6px;
   padding: 8px 12px;
-  font-family: $font-family-monospace;
-  font-size: 0.6875rem;
-  line-height: 1.5;
+  font-family: var(--font-sans);
+  font-size: var(--font-size-01);
+  line-height: 1.45;
   color: var(--content-secondary-themed);
-  white-space: pre-wrap;
-  word-break: break-all;
+  word-break: normal;
+  overflow-wrap: break-word;
 
   .ai-assist-tool-detail-text {
     margin: 0;
@@ -1034,7 +1396,8 @@ $code-font-family: var(
     line-height: inherit;
     color: inherit;
     white-space: pre-wrap;
-    word-break: break-all;
+    word-break: normal;
+    overflow-wrap: break-word;
   }
 
   .ai-assist-tool-detail-diff {
@@ -1155,6 +1518,7 @@ $code-font-family: var(
         padding: 4px 8px;
         background: var(--bg-secondary-themed);
         border-left: 2px solid var(--border-divider-themed);
+        font-family: $font-family-monospace;
         font-size: 0.6875rem;
         color: var(--content-secondary-themed);
         animation: ai-assist-dropdown-in 0.18s cubic-bezier(0.16, 1, 0.3, 1)
@@ -1173,12 +1537,26 @@ $code-font-family: var(
       gap: 8px;
 
       .ai-assist-search-loc {
-        color: var(--link-ui-themed);
+        color: var(--content-secondary-themed);
         flex-shrink: 0;
+        font-size: 0.6875rem;
+        opacity: 0.72;
+        white-space: nowrap;
       }
 
       .ai-assist-search-text {
         color: var(--content-primary-themed);
+
+        mark {
+          padding: 0 2px;
+          border-radius: 2px;
+          background: color-mix(
+            in srgb,
+            var(--content-warning-themed) 30%,
+            transparent
+          );
+          color: inherit;
+        }
       }
     }
   }
@@ -1459,7 +1837,7 @@ $code-font-family: var(
     }
 
     .ai-assist-web-fetch-note::before {
-      content: '·';
+      content: "·";
       margin: 0 5px;
     }
 
@@ -1565,15 +1943,56 @@ $code-font-family: var(
   .ai-assist-tool-detail-outline {
     display: flex;
     flex-direction: column;
-    gap: 3px;
+    gap: 4px;
+    font-size: var(--font-size-01);
 
     .ai-assist-outline-class {
       margin-bottom: 4px;
       color: var(--content-secondary-themed);
+      font-size: var(--font-size-01);
+      font-weight: 500;
+    }
+
+    .ai-assist-pdf-overview-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 8px;
+      border-radius: 4px;
+      background: var(--bg-secondary-themed);
+      border: 1px solid var(--border-divider-themed);
+      color: var(--content-primary-themed);
+      margin-bottom: 6px;
+      font-size: var(--font-size-01);
+      font-weight: 500;
+
+      .ai-assist-pdf-overview-header-title {
+        color: var(--content-primary-themed);
+      }
+    }
+
+    .ai-assist-pdf-pages-list {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .ai-assist-pdf-page {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 3px 6px;
+      border-radius: 4px;
+      transition: background-color 0.15s ease;
+
+      &:hover {
+        background-color: var(--bg-secondary-themed);
+      }
     }
 
     .ai-assist-outline-section {
       display: flex;
+      align-items: center;
       gap: 6px;
 
       .ai-assist-outline-line {
@@ -1585,9 +2004,155 @@ $code-font-family: var(
 
     .ai-assist-outline-packages {
       margin-top: 4px;
-      font-size: 0.625rem;
+      font-size: var(--font-size-01);
       color: var(--content-secondary-themed);
-      opacity: 0.7;
+      opacity: 0.8;
+    }
+
+    .ai-assist-outline-findings {
+      color: var(--content-secondary-themed);
+      opacity: 0.8;
+      font-size: var(--font-size-01);
+
+      &.is-flagged {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 1px 6px;
+        border-radius: 3px;
+        font-size: 0.6875rem;
+        font-weight: 500;
+        color: var(--content-warning-themed);
+        background: color-mix(
+          in srgb,
+          var(--content-warning-themed) 12%,
+          transparent
+        );
+        border: 1px solid
+          color-mix(
+            in srgb,
+            var(--content-warning-themed) 25%,
+            transparent
+          );
+      }
+    }
+
+    // A PDF page's number, source and findings wrap together as one row
+    .ai-assist-outline-section.ai-assist-pdf-page-row {
+      flex-wrap: wrap;
+      column-gap: 8px;
+      row-gap: 4px;
+
+      .ai-assist-pdf-page-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 24px;
+        height: 18px;
+        padding: 0 4px;
+        font-size: 0.6875rem;
+        font-weight: 600;
+        font-family: $font-family-monospace;
+        border-radius: 3px;
+        background: var(--bg-secondary-themed);
+        border: 1px solid var(--border-divider-themed);
+        color: var(--content-primary-themed);
+        opacity: 1;
+        line-height: 1;
+      }
+
+      .ai-assist-pdf-page-clean {
+        font-size: var(--font-size-01);
+        color: var(--content-secondary-themed);
+        opacity: 0.7;
+        font-style: italic;
+      }
+    }
+
+    .ai-assist-pdf-image-container {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 6px 0;
+    }
+
+    .ai-assist-pdf-image-thumb {
+      position: relative;
+      border-radius: 6px;
+      overflow: hidden;
+      border: 1px solid var(--border-divider-themed);
+      background: #ffffff;
+      max-width: 100%;
+      max-height: 240px;
+      cursor: zoom-in;
+      transition:
+        transform 0.15s ease,
+        box-shadow 0.15s ease,
+        border-color 0.15s ease;
+
+      &:hover {
+        transform: scale(1.01);
+        border-color: var(--border-active-themed);
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2);
+      }
+
+      img {
+        display: block;
+        max-width: 100%;
+        max-height: 240px;
+        object-fit: contain;
+      }
+    }
+
+    .ai-assist-pdf-sources {
+      font-size: var(--font-size-01);
+      color: var(--content-secondary-themed);
+      margin: 2px 0 4px;
+
+      .ai-assist-pdf-sources-label {
+        font-weight: 500;
+        color: var(--content-primary-themed);
+      }
+    }
+
+    .ai-assist-pdf-page-clean {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: var(--font-size-01);
+      color: var(--content-positive-themed);
+      font-weight: 500;
+      padding: 2px 0;
+
+      .ai-assist-status-icon {
+        color: var(--content-positive-themed);
+      }
+    }
+
+    .ai-assist-pdf-warning {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: var(--font-size-01);
+      color: var(--content-warning-themed);
+      background: color-mix(
+        in srgb,
+        var(--content-warning-themed) 12%,
+        transparent
+      );
+      border: 1px solid
+        color-mix(in srgb, var(--content-warning-themed) 25%, transparent);
+      margin-bottom: 4px;
+    }
+
+    // Text read from the page can be long; let it wrap at any character
+    .ai-assist-pdf-text-line {
+      min-width: 0;
+      overflow-wrap: anywhere;
+      word-break: normal;
+      font-size: var(--font-size-01);
     }
   }
 
@@ -1732,8 +2297,13 @@ $code-font-family: var(
       font-size: 0.6875rem;
       padding: 4px 8px;
       border-radius: 4px;
-      background: color-mix(in srgb, var(--content-warning-themed) 10%, transparent);
-      border: 1px solid color-mix(in srgb, var(--content-warning-themed) 20%, transparent);
+      background: color-mix(
+        in srgb,
+        var(--content-warning-themed) 10%,
+        transparent
+      );
+      border: 1px solid
+        color-mix(in srgb, var(--content-warning-themed) 20%, transparent);
     }
 
     .ai-assist-refs-section {
@@ -1790,12 +2360,20 @@ $code-font-family: var(
 
           &.resolved {
             color: var(--content-positive-themed);
-            background: color-mix(in srgb, var(--content-positive-themed) 10%, transparent);
+            background: color-mix(
+              in srgb,
+              var(--content-positive-themed) 10%,
+              transparent
+            );
           }
 
           &.unresolved {
             color: var(--content-danger-themed);
-            background: color-mix(in srgb, var(--content-danger-themed) 10%, transparent);
+            background: color-mix(
+              in srgb,
+              var(--content-danger-themed) 10%,
+              transparent
+            );
           }
         }
       }
@@ -1804,7 +2382,7 @@ $code-font-family: var(
 
   .ai-assist-tool-detail-note {
     margin-top: 4px;
-    font-size: 0.6875rem;
+    font-size: var(--font-size-01);
     font-style: italic;
     color: var(--content-secondary-themed);
     opacity: 0.8;
@@ -1813,11 +2391,31 @@ $code-font-family: var(
   .ai-assist-tool-detail-success {
     color: var(--content-positive-themed);
     font-weight: 500;
+    font-size: var(--font-size-01);
+    line-height: 1.45;
   }
 
   .ai-assist-tool-detail-error,
   .ai-assist-tool-detail-rejected {
     color: var(--content-danger-themed);
+    font-weight: 500;
+    font-size: var(--font-size-01);
+    line-height: 1.45;
+    white-space: pre-wrap;
+    word-break: normal;
+    overflow-wrap: break-word;
+
+    .visually-hidden {
+      position: absolute !important;
+      width: 1px !important;
+      height: 1px !important;
+      padding: 0 !important;
+      margin: -1px !important;
+      overflow: hidden !important;
+      clip: rect(0, 0, 0, 0) !important;
+      white-space: nowrap !important;
+      border: 0 !important;
+    }
 
     .ai-assist-tool-detail-badge {
       display: inline-block;
@@ -1826,7 +2424,11 @@ $code-font-family: var(
       font-weight: 700;
       text-transform: uppercase;
       border-radius: 3px;
-      background: color-mix(in srgb, var(--content-danger-themed) 20%, transparent);
+      background: color-mix(
+        in srgb,
+        var(--content-danger-themed) 20%,
+        transparent
+      );
       margin-bottom: 4px;
     }
   }
@@ -1838,7 +2440,11 @@ $code-font-family: var(
     font-weight: 700;
     text-transform: uppercase;
     border-radius: 3px;
-    background: color-mix(in srgb, var(--content-danger-themed) 20%, transparent);
+    background: color-mix(
+      in srgb,
+      var(--content-danger-themed) 20%,
+      transparent
+    );
     color: var(--content-danger-themed);
     margin-left: 6px;
   }
@@ -1850,7 +2456,11 @@ $code-font-family: var(
     font-weight: 700;
     text-transform: uppercase;
     border-radius: 3px;
-    background: color-mix(in srgb, var(--content-secondary-themed) 18%, transparent);
+    background: color-mix(
+      in srgb,
+      var(--content-secondary-themed) 18%,
+      transparent
+    );
     color: var(--content-secondary-themed);
     margin-left: 6px;
   }
@@ -1862,7 +2472,11 @@ $code-font-family: var(
   }
 
   .ai-assist-tool-detail-diff.is-rejected {
-    border-color: color-mix(in srgb, var(--content-danger-themed) 30%, transparent);
+    border-color: color-mix(
+      in srgb,
+      var(--content-danger-themed) 30%,
+      transparent
+    );
   }
 
   .ai-assist-tool-detail-diff.is-cancelled {
@@ -1915,7 +2529,7 @@ $code-font-family: var(
     display: none !important;
   }
 
-  &[aria-expanded='true'] {
+  &[aria-expanded="true"] {
     color: var(--content-primary-themed);
     background-color: var(--bg-tertiary-themed) !important;
   }
@@ -2191,7 +2805,7 @@ $code-font-family: var(
     }
   }
 
-  &[aria-expanded='true'] {
+  &[aria-expanded="true"] {
     background: transparent;
     border: none;
   }
@@ -2242,7 +2856,7 @@ $code-font-family: var(
 // Registered so the stall drift can transition between two colours; an
 // unregistered custom property would snap.
 @property --ai-status-accent {
-  syntax: '<color>';
+  syntax: "<color>";
   inherits: true;
   initial-value: #138a07;
 }
@@ -2257,7 +2871,11 @@ $code-font-family: var(
 // accent; the counters stay muted.
 .ai-assist-status-line {
   --ai-status-accent: var(--content-positive-themed);
-  --ai-status-highlight: color-mix(in srgb, var(--ai-status-accent) 50%, var(--bg-primary-themed));
+  --ai-status-highlight: color-mix(
+    in srgb,
+    var(--ai-status-accent) 50%,
+    var(--bg-primary-themed)
+  );
 
   display: flex;
   align-items: center;
@@ -2827,7 +3445,8 @@ $code-font-family: var(
       justify-content: space-between;
       padding: 4px 8px 4px 12px;
       background: var(--gutter-bg, var(--bg-tertiary-themed));
-      border-bottom: 1px solid var(--gutter-border, var(--border-divider-themed));
+      border-bottom: 1px solid
+        var(--gutter-border, var(--border-divider-themed));
       font-size: 0.6875rem;
       color: var(--gutter-fg, var(--content-secondary-themed));
       user-select: none;
@@ -2992,8 +3611,7 @@ $code-font-family: var(
     margin: var(--spacing-02) 0;
     padding: var(--spacing-02) var(--spacing-03);
     border-left: 3px solid var(--border-primary-themed);
-    border-radius: 0 var(--border-radius-base)
-      var(--border-radius-base) 0;
+    border-radius: 0 var(--border-radius-base) var(--border-radius-base) 0;
     background: var(--bg-secondary-themed);
     color: var(--content-secondary-themed);
 
@@ -3040,7 +3658,11 @@ $code-font-family: var(
   mark {
     padding: 0 2px;
     border-radius: 2px;
-    background: color-mix(in srgb, var(--content-warning-themed) 30%, transparent);
+    background: color-mix(
+      in srgb,
+      var(--content-warning-themed) 30%,
+      transparent
+    );
     color: inherit;
   }
 
@@ -3532,13 +4154,13 @@ $code-font-family: var(
       height: 5px;
     }
 
-    th[align='center'],
-    td[align='center'] {
+    th[align="center"],
+    td[align="center"] {
       text-align: center;
     }
 
-    th[align='right'],
-    td[align='right'] {
+    th[align="right"],
+    td[align="right"] {
       text-align: right;
     }
   }
@@ -3587,14 +4209,19 @@ $code-font-family: var(
     color: var(--content-danger-themed);
     font-family: $font-family-monospace;
     font-size: var(--font-size-01);
-    background: color-mix(in srgb, var(--content-danger-themed) 8%, transparent);
-    border: 1px solid color-mix(in srgb, var(--content-danger-themed) 20%, transparent);
+    background: color-mix(
+      in srgb,
+      var(--content-danger-themed) 8%,
+      transparent
+    );
+    border: 1px solid
+      color-mix(in srgb, var(--content-danger-themed) 20%, transparent);
     border-radius: 4px;
     padding: 2px 6px;
   }
 
   // Task lists
-  ul:has(input[type='checkbox']),
+  ul:has(input[type="checkbox"]),
   ul.contains-task-list {
     list-style: none;
     padding-left: 2px;
@@ -3605,7 +4232,7 @@ $code-font-family: var(
       gap: 6px;
       margin-bottom: var(--spacing-01);
 
-      input[type='checkbox'] {
+      input[type="checkbox"] {
         margin: 3px 0 0 0;
         accent-color: var(--bg-accent-01);
         cursor: default;
@@ -3883,6 +4510,115 @@ $code-font-family: var(
   font-weight: normal;
 }
 
+.ai-assist-selection-actions-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  font-weight: 500;
+  color: var(--content-secondary-themed);
+  margin-top: var(--spacing-03);
+  margin-bottom: var(--spacing-02);
+}
+
+.ai-assist-selection-kind-badge {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border-divider-themed);
+  border-radius: 999px;
+  padding: 0 6px;
+  font-size: 0.6875rem;
+  line-height: 1.4;
+  color: var(--content-secondary-themed);
+  background: transparent;
+  font-weight: 400;
+}
+
+.ai-assist-selection-actions-where {
+  color: var(--content-secondary-themed);
+  opacity: 0.72;
+  font-size: var(--font-size-01);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-assist-quick-chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  scroll-behavior: smooth;
+  scrollbar-width: none;
+  padding: 0 2px 4px;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+.ai-assist-quick-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  font-size: 0.75rem;
+  line-height: 1;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: transparent;
+  border: 1px solid var(--border-divider-themed);
+  color: var(--content-secondary-themed);
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
+  animation: ai-assist-suggestion-in 0.25s ease-out forwards;
+
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
+  }
+
+  svg {
+    flex-shrink: 0;
+    color: var(--content-secondary-themed);
+    opacity: 0.75;
+    transition:
+      color 0.15s ease,
+      opacity 0.15s ease;
+  }
+
+  &:hover,
+  &:focus-visible {
+    background-color: var(--bg-secondary-themed);
+    border-color: color-mix(
+      in srgb,
+      var(--border-primary-themed) 35%,
+      var(--border-divider-themed)
+    );
+    color: var(--content-primary-themed);
+    outline: none;
+
+    svg {
+      color: var(--content-primary-themed);
+      opacity: 0.95;
+    }
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    border-color: var(--border-divider-themed);
+    background-color: transparent;
+    color: var(--content-secondary-themed);
+  }
+}
+
 // Composer: box uses 8px radius with generous padding matching official Overleaf.
 
 .ai-assist-composer {
@@ -4036,31 +4772,397 @@ $code-font-family: var(
   opacity: 0.8;
 }
 
-.ai-assist-selection-chip-wrapper {
-  margin-bottom: var(--spacing-01);
+// Slash command menu: Claude AI / Claude Code style floating container with
+// categorised options, Phosphor icons, badges, and keyboard shortcuts footer.
+.ai-assist-slash-menu-container {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  border-radius: 10px;
+  border: 1px solid var(--border-divider-themed);
+  background: var(--bg-primary-themed);
+  box-shadow:
+    0 10px 28px rgba(0, 0, 0, 0.14),
+    0 2px 6px rgba(0, 0, 0, 0.06);
+  overflow: hidden;
+  max-height: 340px;
+  animation: ai-assist-slash-in 0.15s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
+@keyframes ai-assist-slash-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.ai-assist-slash-menu {
+  position: static;
+  margin: 0;
+  padding: 6px;
+  max-height: 280px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  list-style: none;
+  border: none;
+  box-shadow: none;
+  background: transparent;
+
+  li {
+    margin: 0;
+    padding: 0;
+  }
+
+  li + li {
+    margin-top: 2px;
+  }
+
+  .ai-assist-slash-option {
+    &:hover,
+    &.is-active,
+    &[aria-selected="true"] {
+      background-color: var(--bg-secondary-themed) !important;
+    }
+  }
+}
+
+.ai-assist-slash-section-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px 4px;
+  // The mode and effort menus' header size
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--content-secondary-themed);
+  opacity: 0.8;
+  user-select: none;
+}
+
+.ai-assist-slash-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 10px;
+  cursor: pointer;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease;
+  color: var(--content-primary-themed);
+  font-size: 0.8125rem;
+
+  &:hover,
+  &.is-active,
+  &[aria-selected="true"],
+  &:focus-visible {
+    background-color: var(--bg-secondary-themed) !important;
+    outline: none;
+
+    .ai-assist-slash-option-icon {
+      color: var(--content-primary-themed);
+    }
+
+    .ai-assist-slash-menu-label {
+      color: var(--content-primary-themed);
+    }
+  }
+}
+
+.ai-assist-slash-option-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: transparent;
+  color: var(--content-secondary-themed);
+  flex-shrink: 0;
+  margin-top: 1px;
+  transition: color 0.12s ease;
+}
+
+.ai-assist-slash-option-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.ai-assist-slash-option-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ai-assist-slash-badges-wrapper {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.ai-assist-slash-menu-id {
+  flex-shrink: 0;
+  // Same face and size as a mode or effort title
+  font-family: inherit;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--content-primary-themed);
+}
+
+.ai-assist-slash-menu-label {
+  flex-shrink: 0;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  line-height: 1.3;
+  color: var(--content-primary-themed);
+}
+
+.ai-assist-slash-menu-args {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: inherit;
+  font-size: 0.71875rem;
+  color: var(--content-secondary-themed);
+  opacity: 0.85;
+}
+
+.ai-assist-slash-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 0.6875rem;
+  font-weight: 500;
+  line-height: 1.25;
+  border: none;
+  white-space: nowrap;
+
+  &.ai-assist-slash-badge-readonly {
+    background: color-mix(in srgb, var(--content-info-themed) 12%, transparent);
+    color: var(--content-info-themed);
+  }
+
+  &.ai-assist-slash-badge-edit {
+    background: color-mix(in srgb, var(--content-positive-themed) 12%, transparent);
+    color: var(--content-positive-themed);
+  }
+
+  &.ai-assist-slash-badge-frequent {
+    color: var(--content-warning-themed);
+    background: color-mix(in srgb, var(--content-warning-themed) 14%, transparent);
+    padding: 2px 5px;
+  }
+
+  &.ai-assist-slash-badge-selection {
+    background: var(--bg-tertiary-themed);
+    color: var(--content-secondary-themed);
+  }
+}
+
+.ai-assist-slash-menu-desc {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  // A mode or effort description's size
+  font-size: 0.71875rem;
+  line-height: 1.35;
+  color: var(--content-secondary-themed);
+}
+
+.ai-assist-slash-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 10px;
+  min-height: 24px;
+  border-top: 1px solid var(--border-divider-themed);
+  background: var(--bg-secondary-themed);
+  font-size: 0.6875rem;
+  line-height: 1;
+  color: var(--content-secondary-themed);
+  user-select: none;
+
+  .ai-assist-slash-footer-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    line-height: 1;
+  }
+
+  kbd {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 1px;
+    padding: 1px 4px;
+    min-height: 16px;
+    border: 1px solid var(--border-divider-themed);
+    border-radius: 3px;
+    background: var(--bg-primary-themed);
+    color: var(--content-primary-themed);
+    font-family: inherit;
+    font-size: 0.625rem;
+    font-weight: 600;
+    line-height: 1;
+    box-shadow: 0 1px 1px rgba(0, 0, 0, 0.05);
+  }
+}
+
+// Compact line above the input naming the recognised command
+.ai-assist-slash-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin-bottom: var(--spacing-01);
+  font-size: 0.71875rem;
+  color: var(--content-secondary-themed);
+}
+
+.ai-assist-slash-hint-label {
+  flex-shrink: 0;
+  font-weight: 500;
+  color: var(--content-primary-themed);
+  white-space: nowrap;
+}
+
+.ai-assist-slash-hint-args {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: inherit;
+  opacity: 0.8;
+
+  // A send held because a required input, such as the language, is missing
+  &.is-missing {
+    color: var(--content-danger-themed);
+    opacity: 1;
+  }
+}
+
+.ai-assist-composer-input {
+  position: relative;
+}
+
+// Sits over the textarea, under the typed command, which is drawn transparent so
+// only the argument hint shows. Matches the textarea's font, size and padding.
+.ai-assist-slash-ghost {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  overflow: hidden;
+  pointer-events: none;
+  white-space: pre;
+  font-family: inherit;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: transparent;
+
+  .ai-assist-slash-ghost-hint {
+    color: var(--content-placeholder-themed);
+    opacity: 0.6;
+  }
+}
+
+// A recognised command in the user's message, before its arguments
+.ai-assist-slash-chip {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 6px;
+  border: 1px solid var(--border-divider-themed);
+  border-radius: var(--border-radius-base);
+  background: var(--bg-tertiary-themed);
+  font-family: $font-family-monospace;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  color: var(--content-primary-themed);
+  white-space: nowrap;
+}
+
+.ai-assist-slash-tip {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--content-secondary-themed);
+  opacity: 0.8;
+}
+
+.ai-assist-selection-chip-wrapper {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+// Every item of context in the composer (code, file, image, PDF text, PDF
+// area) is this one chip; only its leading mark and words differ
 .ai-assist-selection-chip {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 2px 8px;
+  height: 24px;
+  max-width: min(100%, 320px);
+  padding: 0 6px 0 4px;
   background: var(--bg-tertiary-themed);
   border: 1px solid var(--border-divider-themed);
   border-radius: var(--border-radius-base);
   font-size: 0.6875rem;
   font-family: $font-family-monospace;
+  line-height: 1;
   color: var(--content-secondary-themed);
-  max-width: 100%;
+  user-select: none;
 }
 
+// A 16px slot, so an icon and a thumbnail take the same room
 .ai-assist-selection-chip-icon {
-  font-weight: 700;
-  font-size: 0.6875rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
   color: var(--content-primary-themed);
 }
 
+.ai-assist-selection-chip-thumb {
+  display: block;
+  width: 16px;
+  height: 16px;
+  object-fit: cover;
+  border-radius: 2px;
+  border: 1px solid var(--border-divider-themed);
+}
+
 .ai-assist-selection-chip-label {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4085,6 +5187,94 @@ $code-font-family: var(
     color: var(--content-primary-themed);
     background: var(--bg-tertiary-themed);
   }
+}
+
+// Shown in the composer while a box is being drawn on the PDF
+.ai-assist-pdf-box-hint {
+  display: flex;
+  align-items: center;
+  padding: 0 4px 6px;
+  font-size: 0.6875rem;
+  line-height: 1.4;
+  color: var(--content-secondary-themed);
+  user-select: none;
+}
+
+// Captured but not yet resolved to a source range
+.ai-assist-pdf-pending-chip {
+  color: var(--content-secondary-themed);
+
+  .ai-assist-pdf-pending-spinner {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    border: 1.5px solid var(--border-divider-themed);
+    border-top-color: var(--content-primary-themed);
+    animation: ai-assist-pdf-spin 0.8s linear infinite;
+  }
+}
+
+@keyframes ai-assist-pdf-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-assist-pdf-pending-spinner {
+    animation-duration: 2.4s !important;
+  }
+}
+
+// The button that floats over the PDF when text is selected in it, to send
+// the selection to the AI. Portalled to body and kept above the viewer (z-index
+// 1) and its controls; the component sets the same z-index inline.
+.ai-assist-pdf-selection-action {
+  @include ai-assist-floating-box;
+  position: fixed;
+  z-index: 1040;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--content-primary-themed);
+  cursor: pointer;
+  user-select: none;
+  transform-origin: top right;
+  animation: ai-assist-pdf-selection-action-in 140ms ease-out both;
+
+  &:hover,
+  &:focus-visible {
+    @include ai-assist-floating-box-row-hover;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
+  }
+}
+
+@keyframes ai-assist-pdf-selection-action-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3px) scale(0.96);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.ai-assist-composer-box.is-drag-over {
+  border-color: var(--content-primary-themed) !important;
+  background-color: var(--bg-secondary-themed) !important;
 }
 
 .ai-assist-composer-actions {
@@ -4134,6 +5324,201 @@ $code-font-family: var(
   }
 }
 
+.ai-assist-composer-plus-btn {
+  @include ai-assist-composer-button;
+  width: 26px;
+  height: 26px;
+  font-size: 16px;
+}
+
+.ai-assist-plus-menu {
+  @include ai-assist-floating-box;
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  margin-bottom: 8px;
+  min-width: 216px;
+  padding: 4px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  border-radius: var(--border-radius-medium, 8px);
+  animation: ai-assist-menu-fade-in 0.15s ease-out;
+}
+
+@keyframes ai-assist-menu-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.ai-assist-plus-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  background: transparent;
+  border: none;
+  border-radius: var(--border-radius-base, 4px);
+  color: var(--content-primary-themed);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.1s ease, color 0.1s ease;
+
+  &:hover {
+    @include ai-assist-floating-box-row-hover;
+  }
+}
+
+.ai-assist-plus-menu-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  color: var(--content-secondary-themed);
+}
+
+.ai-assist-plus-menu-shortcut {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--content-secondary-themed);
+  opacity: 0.8;
+  font-family: inherit;
+}
+
+.ai-assist-plus-menu-chevron {
+  margin-left: auto;
+  color: var(--content-secondary-themed);
+}
+
+// The Connectors flyout, opened to the right of its item. It is a child of
+// the plus menu, so a pointer or click inside it counts as inside the menu.
+.ai-assist-plus-submenu {
+  @include ai-assist-floating-box;
+  position: absolute;
+  top: 0;
+  left: 100%;
+  margin-left: 4px;
+  min-width: 200px;
+  max-width: 260px;
+  padding: 4px;
+  z-index: 1001;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  border-radius: var(--border-radius-medium, 8px);
+  animation: ai-assist-menu-fade-in 0.15s ease-out;
+
+  // Not enough room on the right of the panel: open to the left instead
+  &--left {
+    left: auto;
+    right: 100%;
+    margin-left: 0;
+    margin-right: 4px;
+  }
+
+  // Not enough room on either side: drop below the plus menu
+  &--below {
+    left: 0;
+    top: 100%;
+    margin-left: 0;
+    margin-top: 4px;
+  }
+
+  .ai-assist-plus-menu-item.is-open {
+    @include ai-assist-floating-box-row-hover;
+  }
+}
+
+.ai-assist-plus-submenu-separator {
+  height: 1px;
+  margin: 4px 4px;
+  background-color: var(--border-divider-themed);
+}
+
+.ai-assist-plus-submenu-empty {
+  padding: 6px 8px;
+  font-size: 12px;
+  color: var(--content-secondary-themed);
+  user-select: none;
+}
+
+.ai-assist-plus-connector {
+  cursor: pointer;
+
+  &:focus-visible {
+    outline: 2px solid var(--border-active-themed);
+    outline-offset: -2px;
+  }
+}
+
+.ai-assist-plus-connector-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--content-secondary-themed);
+  background-color: var(--bg-secondary-themed);
+}
+
+.ai-assist-plus-connector-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+// Compact on/off switch, 28 x 16, for a connector's state in this chat
+.ai-assist-plus-switch {
+  position: relative;
+  flex-shrink: 0;
+  width: 28px;
+  height: 16px;
+  margin-left: auto;
+  border-radius: 999px;
+  background-color: var(--border-primary-themed);
+  transition: background-color 0.15s ease;
+
+  &.is-on {
+    background-color: var(--bg-accent-01);
+  }
+}
+
+.ai-assist-plus-switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background-color: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  transition: transform 0.15s ease;
+
+  .is-on > & {
+    transform: translateX(12px);
+  }
+}
+
 .ai-assist-send-btn {
   display: inline-flex;
   align-items: center;
@@ -4177,7 +5562,11 @@ $code-font-family: var(
   height: 28px;
   border-radius: 50% !important;
   border: none !important;
-  background-color: color-mix(in srgb, var(--content-danger-themed) 18%, transparent) !important;
+  background-color: color-mix(
+    in srgb,
+    var(--content-danger-themed) 18%,
+    transparent
+  ) !important;
   color: var(--content-danger-themed);
   cursor: pointer;
   opacity: 1;
@@ -4186,7 +5575,11 @@ $code-font-family: var(
 
   &:hover,
   &:focus-visible {
-    background-color: color-mix(in srgb, var(--content-danger-themed) 32%, transparent) !important;
+    background-color: color-mix(
+      in srgb,
+      var(--content-danger-themed) 32%,
+      transparent
+    ) !important;
     color: var(--content-danger-themed);
     transform: scale(1.05);
   }
@@ -4280,12 +5673,20 @@ $code-font-family: var(
       border-radius: 4px;
 
       &.is-accepted {
-        background: color-mix(in srgb, var(--content-positive-themed) 15%, transparent);
+        background: color-mix(
+          in srgb,
+          var(--content-positive-themed) 15%,
+          transparent
+        );
         color: var(--content-positive-themed);
       }
 
       &.is-rejected {
-        background: color-mix(in srgb, var(--content-danger-themed) 15%, transparent);
+        background: color-mix(
+          in srgb,
+          var(--content-danger-themed) 15%,
+          transparent
+        );
         color: var(--content-danger-themed);
       }
     }
@@ -4366,12 +5767,18 @@ $code-font-family: var(
   }
 
   del {
-    background: var(--diff-del-tint, color-mix(in srgb, var(--content-danger-themed) 20%, transparent));
+    background: var(
+      --diff-del-tint,
+      color-mix(in srgb, var(--content-danger-themed) 20%, transparent)
+    );
     color: var(--content-danger-themed);
   }
 
   ins {
-    background: var(--diff-ins-tint, color-mix(in srgb, var(--content-positive-themed) 20%, transparent));
+    background: var(
+      --diff-ins-tint,
+      color-mix(in srgb, var(--content-positive-themed) 20%, transparent)
+    );
     color: var(--content-positive-themed);
   }
 }
@@ -4412,7 +5819,11 @@ $code-font-family: var(
     font-family: $font-family-monospace;
     padding: 1px 6px;
     border-radius: 4px;
-    background: color-mix(in srgb, var(--content-danger-themed) 12%, transparent);
+    background: color-mix(
+      in srgb,
+      var(--content-danger-themed) 12%,
+      transparent
+    );
     color: var(--content-danger-themed);
   }
 
@@ -4719,7 +6130,9 @@ $code-font-family: var(
   background-color: var(--bg-secondary-themed);
   color: var(--content-secondary-themed);
   font-size: var(--font-size-03);
-  transition: background-color 0.15s ease, color 0.15s ease;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
 }
 
 .ai-suggest-fix-folded-text {
@@ -4765,8 +6178,16 @@ $code-font-family: var(
 
   &.is-accepted {
     color: var(--content-positive-themed);
-    background-color: color-mix(in srgb, var(--content-positive-themed) 12%, transparent);
-    border-color: color-mix(in srgb, var(--content-positive-themed) 30%, transparent);
+    background-color: color-mix(
+      in srgb,
+      var(--content-positive-themed) 12%,
+      transparent
+    );
+    border-color: color-mix(
+      in srgb,
+      var(--content-positive-themed) 30%,
+      transparent
+    );
   }
 
   &.is-rejected {
@@ -4805,7 +6226,7 @@ $code-font-family: var(
     }
   }
 
-  &[aria-expanded='true'] {
+  &[aria-expanded="true"] {
     color: var(--content-primary-themed);
 
     .ai-thinking-icon,
@@ -4858,8 +6279,7 @@ $code-font-family: var(
   padding: 0 var(--spacing-03);
   background-color: var(--bg-tertiary-themed);
   border-left: 2px solid var(--border-divider-themed);
-  border-radius: 0 var(--border-radius-base) var(--border-radius-base)
-    0;
+  border-radius: 0 var(--border-radius-base) var(--border-radius-base) 0;
   font-size: var(--font-size-01);
   line-height: 1.5;
   color: var(--content-secondary-themed);
@@ -5030,7 +6450,11 @@ $code-font-family: var(
     }
 
     &.diff-line-fold {
-      background-color: color-mix(in srgb, var(--content-secondary-themed) 5%, transparent);
+      background-color: color-mix(
+        in srgb,
+        var(--content-secondary-themed) 5%,
+        transparent
+      );
       color: var(--content-secondary-themed);
       font-style: italic;
     }
@@ -5052,8 +6476,15 @@ $code-font-family: var(
     position: sticky;
     left: 0;
     z-index: 2;
-    border-right: 1px solid var(--gutter-border, color-mix(in srgb, var(--content-secondary-themed) 15%, transparent));
-    background-color: var(--gutter-bg, color-mix(in srgb, var(--content-secondary-themed) 8%, transparent));
+    border-right: 1px solid
+      var(
+        --gutter-border,
+        color-mix(in srgb, var(--content-secondary-themed) 15%, transparent)
+      );
+    background-color: var(
+      --gutter-bg,
+      color-mix(in srgb, var(--content-secondary-themed) 8%, transparent)
+    );
     color: var(--gutter-fg);
 
     &.diff-gutter-clickable {
@@ -5087,11 +6518,27 @@ $code-font-family: var(
     background-color: var(--bg-secondary-themed);
     color: var(--content-primary-themed);
 
-    --diff-ins-tint: color-mix(in srgb, var(--content-positive-themed) 14%, transparent);
-    --diff-ins-mark: color-mix(in srgb, var(--content-positive-themed) 36%, transparent);
+    --diff-ins-tint: color-mix(
+      in srgb,
+      var(--content-positive-themed) 14%,
+      transparent
+    );
+    --diff-ins-mark: color-mix(
+      in srgb,
+      var(--content-positive-themed) 36%,
+      transparent
+    );
     --diff-ins-sign: var(--content-positive-themed);
-    --diff-del-tint: color-mix(in srgb, var(--content-danger-themed) 12%, transparent);
-    --diff-del-mark: color-mix(in srgb, var(--content-danger-themed) 32%, transparent);
+    --diff-del-tint: color-mix(
+      in srgb,
+      var(--content-danger-themed) 12%,
+      transparent
+    );
+    --diff-del-mark: color-mix(
+      in srgb,
+      var(--content-danger-themed) 32%,
+      transparent
+    );
     --diff-del-sign: var(--content-danger-themed);
 
     .cm-content {
@@ -5176,11 +6623,27 @@ $code-font-family: var(
     }
 
     &.overall-theme-dark {
-      --diff-ins-tint: color-mix(in srgb, var(--content-positive-themed) 20%, transparent);
-      --diff-ins-mark: color-mix(in srgb, var(--content-positive-themed) 45%, transparent);
+      --diff-ins-tint: color-mix(
+        in srgb,
+        var(--content-positive-themed) 20%,
+        transparent
+      );
+      --diff-ins-mark: color-mix(
+        in srgb,
+        var(--content-positive-themed) 45%,
+        transparent
+      );
       --diff-ins-sign: var(--content-positive-themed);
-      --diff-del-tint: color-mix(in srgb, var(--content-danger-themed) 16%, transparent);
-      --diff-del-mark: color-mix(in srgb, var(--content-danger-themed) 42%, transparent);
+      --diff-del-tint: color-mix(
+        in srgb,
+        var(--content-danger-themed) 16%,
+        transparent
+      );
+      --diff-del-mark: color-mix(
+        in srgb,
+        var(--content-danger-themed) 42%,
+        transparent
+      );
       --diff-del-sign: var(--content-danger-themed);
     }
   }
@@ -5320,6 +6783,8 @@ $code-font-family: var(
   width: 340px;
   max-height: 380px;
   overflow-y: auto;
+  margin: 0 !important;
+  animation: ai-assist-fade-in 0.15s ease-out both;
 }
 
 .ai-assist-history-row {
@@ -5343,11 +6808,19 @@ $code-font-family: var(
   }
 
   &.is-active {
-    background-color: color-mix(in srgb, var(--content-positive-themed) 14%, transparent);
+    background-color: color-mix(
+      in srgb,
+      var(--content-positive-themed) 14%,
+      transparent
+    );
     border-left-color: var(--content-positive-themed);
 
     &:hover {
-      background-color: color-mix(in srgb, var(--content-positive-themed) 22%, transparent);
+      background-color: color-mix(
+        in srgb,
+        var(--content-positive-themed) 22%,
+        transparent
+      );
     }
 
     .ai-assist-history-title {
@@ -5430,7 +6903,11 @@ $code-font-family: var(
   &:focus-visible {
     opacity: 1;
     color: var(--content-danger-themed);
-    background-color: color-mix(in srgb, var(--content-danger-themed) 20%, transparent);
+    background-color: color-mix(
+      in srgb,
+      var(--content-danger-themed) 20%,
+      transparent
+    );
     transform: scale(1.05);
   }
 }
@@ -5537,8 +7014,8 @@ $code-font-family: var(
   white-space: nowrap;
   mask-size: 250% 100%;
   mask-repeat: no-repeat;
-  animation: ai-assist-title-sweep var(--ai-title-animation-duration)
-    linear both;
+  animation: ai-assist-title-sweep var(--ai-title-animation-duration) linear
+    both;
 }
 
 // The three masks overlap rather than meet, so no stretch of the title is
@@ -5645,14 +7122,22 @@ $code-font-family: var(
 .ai-assist-header-edit-save {
   color: var(--content-positive-themed) !important;
   &:hover {
-    background-color: color-mix(in srgb, var(--content-positive-themed) 15%, transparent) !important;
+    background-color: color-mix(
+      in srgb,
+      var(--content-positive-themed) 15%,
+      transparent
+    ) !important;
   }
 }
 
 .ai-assist-header-edit-cancel {
   color: var(--content-secondary-themed) !important;
   &:hover {
-    background-color: color-mix(in srgb, var(--content-primary-themed) 10%, transparent) !important;
+    background-color: color-mix(
+      in srgb,
+      var(--content-primary-themed) 10%,
+      transparent
+    ) !important;
   }
 }
 
@@ -5734,14 +7219,22 @@ $code-font-family: var(
 .ai-assist-history-edit-confirm {
   color: var(--content-positive-themed);
   &:hover {
-    background-color: color-mix(in srgb, var(--content-positive-themed) 18%, transparent);
+    background-color: color-mix(
+      in srgb,
+      var(--content-positive-themed) 18%,
+      transparent
+    );
   }
 }
 
 .ai-assist-history-edit-cancel {
   color: var(--content-secondary-themed);
   &:hover {
-    background-color: color-mix(in srgb, var(--content-primary-themed) 10%, transparent);
+    background-color: color-mix(
+      in srgb,
+      var(--content-primary-themed) 10%,
+      transparent
+    );
   }
 }
 
@@ -5753,7 +7246,8 @@ $code-font-family: var(
 // system theme like every other AI popup. Upstream colours this tooltip by
 // the editor theme (review-tooltip.ts); the plain Add comment tooltip, without
 // the AI module, stays as upstream.
-.review-tooltip-menu-container .review-tooltip-menu.review-tooltip-menu-stacked {
+.review-tooltip-menu-container
+  .review-tooltip-menu.review-tooltip-menu-stacked {
   border: 1px solid var(--border-divider-themed);
   background-color: var(--bg-primary-themed);
   color: var(--content-primary-themed);
@@ -5829,7 +7323,9 @@ $ai-card-width: 600px;
   border: 1px solid var(--border-divider-themed);
   border-radius: var(--border-radius-medium);
   background-color: var(--bg-primary-themed);
-  box-shadow: 0 8px 24px 0 rgba(0, 0, 0, 0.12), 0 2px 6px 0 rgba(0, 0, 0, 0.04);
+  box-shadow:
+    0 8px 24px 0 rgba(0, 0, 0, 0.12),
+    0 2px 6px 0 rgba(0, 0, 0, 0.04);
   color: var(--content-primary-themed);
   font-family: inherit;
   font-size: var(--font-size-02);
@@ -5880,15 +7376,18 @@ $ai-card-width: 600px;
   gap: var(--spacing-03);
   z-index: 10;
   transform-origin: -8px 24px;
-  animation: ai-writing-tools-settings-zoom-in 0.2s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: ai-writing-tools-settings-zoom-in 0.2s
+    cubic-bezier(0.16, 1, 0.3, 1) both;
 
   &.ai-writing-tools-settings-card-closing {
-    animation: ai-writing-tools-settings-zoom-out 0.16s cubic-bezier(0.25, 0.1, 0.25, 1) both;
+    animation: ai-writing-tools-settings-zoom-out 0.16s
+      cubic-bezier(0.25, 0.1, 0.25, 1) both;
     pointer-events: none;
   }
 }
 
-.ai-writing-tools-popup-wrapper.ai-writing-tools-popup-wrapper-reverse .ai-writing-tools-settings-card {
+.ai-writing-tools-popup-wrapper.ai-writing-tools-popup-wrapper-reverse
+  .ai-writing-tools-settings-card {
   left: auto;
   right: calc(100% + var(--spacing-02));
   transform-origin: calc(100% + 8px) 24px;
@@ -6531,7 +8030,7 @@ $ai-card-width: 600px;
     outline-offset: 1px;
   }
 
-  &[aria-checked='true'] {
+  &[aria-checked="true"] {
     border-color: var(--border-active-themed);
     box-shadow: inset 0 0 0 1px var(--border-active-themed);
     font-weight: 600;
@@ -6861,7 +8360,7 @@ $ai-card-width: 600px;
   color: var(--content-secondary-themed);
 
   &::before {
-    content: '·';
+    content: "·";
     margin-right: var(--spacing-02);
   }
 }
@@ -7026,8 +8525,13 @@ $ai-card-width: 600px;
 
   35%,
   60% {
-    background-color: color-mix(in srgb, var(--content-positive-themed) 38%, transparent);
-    box-shadow: 0 0 10px 3px color-mix(in srgb, var(--content-positive-themed) 45%, transparent);
+    background-color: color-mix(
+      in srgb,
+      var(--content-positive-themed) 38%,
+      transparent
+    );
+    box-shadow: 0 0 10px 3px
+      color-mix(in srgb, var(--content-positive-themed) 45%, transparent);
   }
 }
 
@@ -7045,7 +8549,11 @@ $ai-card-width: 600px;
 
     10%,
     80% {
-      background-color: color-mix(in srgb, var(--content-positive-themed) 30%, transparent);
+      background-color: color-mix(
+        in srgb,
+        var(--content-positive-themed) 30%,
+        transparent
+      );
     }
   }
 }
@@ -7093,7 +8601,9 @@ $ai-card-width: 600px;
   border: 1px solid var(--border-divider-themed);
   border-radius: var(--border-radius-medium);
   background-color: var(--bg-primary-themed);
-  box-shadow: 0 8px 24px 0 rgba(0, 0, 0, 0.12), 0 2px 6px 0 rgba(0, 0, 0, 0.04);
+  box-shadow:
+    0 8px 24px 0 rgba(0, 0, 0, 0.12),
+    0 2px 6px 0 rgba(0, 0, 0, 0.04);
   color: var(--content-primary-themed);
   font-family: inherit;
   font-size: var(--font-size-02);
@@ -7123,7 +8633,11 @@ $ai-card-width: 600px;
 .ai-language-suggestion-preview-text-taken {
   padding: 0 2px;
   border-radius: var(--border-radius-base);
-  background-color: color-mix(in srgb, var(--content-warning-themed) 18%, transparent);
+  background-color: color-mix(
+    in srgb,
+    var(--content-warning-themed) 18%,
+    transparent
+  );
 }
 
 .ai-language-suggestion-change {
@@ -7133,9 +8647,11 @@ $ai-card-width: 600px;
   // Wraps with the sentence; each line keeps its own rounded highlight
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
-  transition: background-color 0.15s ease, color 0.15s ease;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
 
-  &[aria-disabled='true'] {
+  &[aria-disabled="true"] {
     cursor: default;
   }
 
@@ -7158,7 +8674,11 @@ $ai-card-width: 600px;
   }
 
   &.active {
-    background-color: color-mix(in srgb, var(--ai-language-suggestion-kind, #e8710a) 18%, transparent);
+    background-color: color-mix(
+      in srgb,
+      var(--ai-language-suggestion-kind, #e8710a) 18%,
+      transparent
+    );
   }
 
   &:focus-visible {
@@ -7181,15 +8701,28 @@ $ai-card-width: 600px;
 
 /* Writing tools: the phrase under the pointer is the one a click switches */
 .ai-writing-tools-change:hover {
-  background-color: color-mix(in srgb, var(--content-warning-themed) 18%, transparent);
+  background-color: color-mix(
+    in srgb,
+    var(--content-warning-themed) 18%,
+    transparent
+  );
 }
 
+// Reusable template for status tick (✓) and cross (✗) cursors matching design (Shutterstock 2438351743)
+$cursor-tool-success-tick: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='6 12 92 76' width='24' height='24'%3E%3Cpath d='M11,48 C6.5,43 12.5,37 17.5,41.5 L32,67 C46,52 68,31 97,14 C70,30 46,60 35.5,83 C33,87.5 28,87 25.5,82.5 L11,48 Z' fill='%2362c454'/%3E%3C/svg%3E") 12 12, pointer;
+
+$cursor-tool-failed-cross: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='13 11 76 77' width='20' height='20'%3E%3Cpath d='M21.7,21.5 A6.2 6.2 0 0 1 30.3,12.5 L88,77 Z M74.5,12.8 A6.2 6.2 0 0 1 83.5,21.2 L14,87 Z' fill='%23ea2623'/%3E%3C/svg%3E") 10 10, pointer;
+
 /* The pointer itself is the action: a red ✗ keeps your text */
-.ai-language-suggestion-change-taken:not([aria-disabled='true']) {
-  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath d='M3 3l10 10M13 3L3 13' stroke='%23d0382f' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E") 8 8, pointer;
+.ai-language-suggestion-change-taken:not([aria-disabled="true"]) {
+  cursor: $cursor-tool-failed-cross;
 
   &:hover {
-    background-color: color-mix(in srgb, var(--content-danger-themed) 18%, transparent);
+    background-color: color-mix(
+      in srgb,
+      var(--content-danger-themed) 18%,
+      transparent
+    );
     del {
       color: var(--content-danger-themed);
     }
@@ -7197,11 +8730,15 @@ $ai-card-width: 600px;
 }
 
 /* …and a green ✓ takes the suggestion */
-.ai-language-suggestion-change-kept:not([aria-disabled='true']) {
-  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath d='M3 8.5l3.5 4L13 3' stroke='%23098842' stroke-width='2.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") 8 8, pointer;
+.ai-language-suggestion-change-kept:not([aria-disabled="true"]) {
+  cursor: $cursor-tool-success-tick;
 
   &:hover {
-    background-color: color-mix(in srgb, var(--content-positive-themed) 18%, transparent);
+    background-color: color-mix(
+      in srgb,
+      var(--content-positive-themed) 18%,
+      transparent
+    );
     .ai-language-suggestion-kept {
       color: var(--content-positive-themed);
     }
@@ -7253,13 +8790,20 @@ $ai-card-width: 600px;
     &:hover:not(:disabled) {
       background-color: var(--bg-secondary-themed);
       color: var(--content-primary-themed);
-      border-color: var(--border-primary-themed, var(--content-secondary-themed));
+      border-color: var(
+        --border-primary-themed,
+        var(--content-secondary-themed)
+      );
     }
 
     &.active {
-      color: var(--content-active-themed);
+      color: var(--link-ui-themed, var(--content-primary-themed));
       border-color: var(--border-active-themed, currentColor);
-      background-color: color-mix(in srgb, var(--content-active-themed) 14%, transparent);
+      background-color: color-mix(
+        in srgb,
+        var(--link-ui-themed, var(--content-primary-themed)) 14%,
+        transparent
+      );
     }
 
     .material-symbols {
@@ -7435,15 +8979,15 @@ $ai-card-width: 600px;
     color: inherit;
     transition: background-color 0.12s ease;
 
-    &:hover:not([disabled]):not([aria-disabled='true']) {
+    &:hover:not([disabled]):not([aria-disabled="true"]) {
       background-color: var(--bg-secondary-themed);
     }
 
-    &:active:not([disabled]):not([aria-disabled='true']) {
+    &:active:not([disabled]):not([aria-disabled="true"]) {
       background-color: var(--bg-tertiary-themed);
     }
 
-    &[aria-disabled='true'] {
+    &[aria-disabled="true"] {
       cursor: default;
       opacity: 1 !important;
     }
@@ -7504,7 +9048,9 @@ $ai-card-width: 600px;
     cursor: pointer;
     background-color: transparent;
     color: inherit;
-    transition: background-color 0.12s ease, opacity 0.12s ease;
+    transition:
+      background-color 0.12s ease,
+      opacity 0.12s ease;
 
     &:hover:not([disabled]) {
       background-color: var(--bg-secondary-themed);
@@ -7528,3 +9074,451 @@ $ai-card-width: 600px;
 .ai-inline-popup {
   position: static;
 }
+
+// Rewind dialog modal
+.ai-assist-rewind-dialog {
+  .modal-dialog {
+    max-width: 520px;
+  }
+
+  .ai-assist-rewind-fork-note {
+    font-size: 0.8125rem;
+    color: var(--content-secondary-themed);
+    margin-bottom: 12px;
+  }
+
+  .ai-assist-rewind-choice-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+
+  .ai-assist-rewind-choice-option {
+    display: flex;
+    align-items: flex-start;
+    width: 100%;
+    padding: 10px 14px;
+    background: transparent;
+    border: 1px solid var(--border-divider-themed);
+    border-radius: var(--border-radius-base);
+    color: var(--content-primary-themed);
+    text-align: left;
+    cursor: pointer;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
+
+    &:hover:not(:disabled) {
+      background-color: var(--bg-secondary-themed);
+    }
+
+    &.is-selected {
+      border-color: var(--color-action, #0d6efd);
+      background-color: var(--bg-secondary-themed);
+      box-shadow: 0 0 0 1px var(--color-action, #0d6efd);
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--color-action, #0d6efd);
+      outline-offset: 1px;
+    }
+  }
+
+  .ai-assist-rewind-choice-content {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .ai-assist-rewind-choice-label {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--content-primary-themed);
+  }
+
+  .ai-assist-rewind-choice-desc {
+    font-size: 0.75rem;
+    color: var(--content-secondary-themed);
+    line-height: 1.35;
+  }
+
+  .ai-assist-rewind-loading {
+    font-size: 0.8125rem;
+    color: var(--content-secondary-themed);
+    margin: 12px 0;
+  }
+
+  .ai-assist-rewind-error {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.8125rem;
+    color: var(--text-danger, #d9534f);
+    padding: 8px 12px;
+    background-color: rgba(217, 83, 79, 0.1);
+    border-radius: var(--border-radius-base);
+    margin: 12px 0;
+  }
+
+  .ai-assist-rewind-changes-container {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border-divider-themed);
+  }
+
+  .ai-assist-rewind-summary {
+    font-size: 0.8125rem;
+    color: var(--content-primary-themed);
+    margin-bottom: 8px;
+  }
+
+  .ai-assist-rewind-deletions {
+    color: #d9534f;
+    font-weight: 600;
+  }
+
+  .ai-assist-rewind-additions {
+    color: #5cb85c;
+    font-weight: 600;
+  }
+
+  .ai-assist-rewind-file-list {
+    list-style: none;
+    padding: 6px 10px;
+    margin: 0 0 10px 0;
+    max-height: 140px;
+    overflow-y: auto;
+    font-family: $font-family-monospace;
+    font-size: 0.75rem;
+    background: var(--bg-secondary-themed);
+    border: 1px solid var(--border-divider-themed);
+    border-radius: var(--border-radius-base);
+  }
+
+  .ai-assist-rewind-file-item {
+    padding: 2px 0;
+    word-break: break-all;
+    color: var(--content-primary-themed);
+  }
+
+  .ai-assist-rewind-no-changes {
+    font-size: 0.8125rem;
+    color: var(--content-secondary-themed);
+    margin: 8px 0;
+  }
+
+  .ai-assist-rewind-warning {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.75rem;
+    color: var(--content-secondary-themed);
+    margin-top: 8px;
+    margin-bottom: 0;
+  }
+
+  .ai-assist-rewind-warning-icon {
+    flex-shrink: 0;
+    color: var(--content-secondary-themed);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Image Lightbox / Popup Modal (Claude Code / Claude Desktop style)
+// ---------------------------------------------------------------------------
+
+@keyframes aiAssistLightboxBackdropEnter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes aiAssistLightboxBackdropLeave {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes aiAssistLightboxContentEnter {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes aiAssistLightboxContentLeave {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+}
+
+.ai-assist-lightbox-overlay {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 10000;
+  overflow: hidden;
+  background-color: var(
+    --editor-lock-modal-backdrop-color,
+    color-mix(in srgb, var(--neutral-90, #000) 78%, transparent)
+  );
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  user-select: none;
+
+  &.is-entering {
+    animation: aiAssistLightboxBackdropEnter 180ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+
+  &.is-leaving {
+    animation: aiAssistLightboxBackdropLeave 150ms ease-in forwards;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    &.is-entering,
+    &.is-leaving {
+      animation: none !important;
+    }
+  }
+}
+
+// Full screen viewport stage allowing zooming in and out across the entire screen
+.ai-assist-lightbox-stage {
+  position: absolute;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  cursor: zoom-out;
+}
+
+.ai-assist-lightbox-image-anchor {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 100vw;
+  max-height: 100vh;
+  text-decoration: none;
+  outline: none;
+  cursor: default;
+}
+
+.ai-assist-lightbox-image {
+  display: block;
+  max-width: 96vw;
+  max-height: 88vh;
+  object-fit: contain;
+  border-radius: var(--border-radius-base, 6px);
+  box-shadow:
+    0 12px 40px rgba(0, 0, 0, 0.45),
+    0 2px 10px rgba(0, 0, 0, 0.25);
+  user-select: none;
+  touch-action: none;
+  transform-origin: center center;
+  transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+
+  &.is-dragging {
+    transition: none !important;
+  }
+}
+
+// Unified bottom dock styled to match Overleaf's theme
+.ai-assist-lightbox-bottom-dock {
+  position: fixed;
+  bottom: var(--spacing-05, 24px);
+  left: 50%;
+  transform: translateX(-50%) !important;
+  margin: 0 !important;
+  z-index: 10001;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border-radius: var(--border-radius-full, 9999px);
+  background-color: var(--bg-primary-themed);
+  color: var(--content-primary-themed);
+  border: 1px solid var(--border-divider-themed);
+  box-shadow:
+    0 6px 24px rgba(0, 0, 0, 0.28),
+    0 2px 6px rgba(0, 0, 0, 0.12);
+  user-select: none;
+  pointer-events: auto;
+}
+
+.ai-assist-lightbox-btn {
+  min-width: 32px;
+  height: 32px;
+  padding: 0 8px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  border-radius: var(--border-radius-full, 9999px) !important;
+  color: var(--content-secondary-themed) !important;
+  border: none !important;
+  background-color: transparent !important;
+  text-decoration: none !important;
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease,
+    transform 0.12s ease;
+
+  &:hover:not(:disabled) {
+    background-color: var(--bg-secondary-themed) !important;
+    color: var(--content-primary-themed) !important;
+    text-decoration: none !important;
+  }
+
+  &:active:not(:disabled) {
+    background-color: var(--bg-tertiary-themed) !important;
+    transform: scale(0.94);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--border-active-themed, #4d82f7);
+    outline-offset: 1px;
+  }
+
+  &:disabled {
+    opacity: 0.35 !important;
+    cursor: default;
+  }
+
+  svg {
+    flex-shrink: 0;
+  }
+}
+
+.ai-assist-lightbox-zoom-badge {
+  font-size: var(--font-size-01, 0.75rem);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  min-width: 48px;
+  padding: 0 6px !important;
+
+  &.is-active {
+    background-color: var(--bg-secondary-themed) !important;
+    color: var(--content-primary-themed) !important;
+  }
+}
+
+.ai-assist-lightbox-zoom-popover {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10002;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  width: 200px;
+  border-radius: var(--border-radius-medium, 8px);
+  background-color: var(--bg-primary-themed);
+  color: var(--content-primary-themed);
+  border: 1px solid var(--border-divider-themed);
+  box-shadow:
+    0 10px 28px rgba(0, 0, 0, 0.28),
+    0 2px 6px rgba(0, 0, 0, 0.12);
+  user-select: none;
+  animation: aiAssistLightboxContentEnter 140ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.ai-assist-lightbox-zoom-input-form {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+}
+
+.ai-assist-lightbox-zoom-input {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 2px 8px;
+  font-size: var(--font-size-01, 0.75rem);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  border-radius: 4px;
+  border: 1px solid var(--border-divider-themed);
+  background-color: var(--bg-secondary-themed);
+  color: var(--content-primary-themed);
+  text-align: center;
+  outline: none;
+
+  &:focus {
+    border-color: var(--border-active-themed, #4d82f7);
+    box-shadow: 0 0 0 1px var(--border-active-themed, #4d82f7);
+  }
+}
+
+.ai-assist-lightbox-zoom-set-btn {
+  height: 28px;
+  padding: 0 10px !important;
+  font-size: var(--font-size-01, 0.75rem) !important;
+  font-weight: 600 !important;
+  border-radius: 4px !important;
+  flex-shrink: 0;
+}
+
+.ai-assist-lightbox-zoom-presets-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  width: 100%;
+}
+
+.ai-assist-lightbox-zoom-preset-btn {
+  height: 24px;
+  padding: 0 2px !important;
+  font-size: 0.6875rem !important;
+  font-weight: 500 !important;
+  font-variant-numeric: tabular-nums;
+  border-radius: 4px !important;
+  color: var(--content-secondary-themed) !important;
+  background-color: transparent !important;
+  border: 1px solid transparent !important;
+
+  &:hover {
+    background-color: var(--bg-secondary-themed) !important;
+    color: var(--content-primary-themed) !important;
+  }
+
+  &.is-active {
+    background-color: var(--bg-tertiary-themed) !important;
+    border-color: var(--border-divider-themed) !important;
+    color: var(--content-primary-themed) !important;
+    font-weight: 700 !important;
+  }
+}
+
+.ai-assist-lightbox-dock-divider {
+  display: inline-block;
+  width: 1px;
+  height: 16px;
+  margin: 0 2px;
+  background-color: var(--border-divider-themed);
+  flex-shrink: 0;
+}
+
+@import './ai-assist-connectors.scss';
+@import './ai-assist-tool-output.scss';
+

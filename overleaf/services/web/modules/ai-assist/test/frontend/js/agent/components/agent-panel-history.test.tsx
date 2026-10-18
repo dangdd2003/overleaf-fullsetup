@@ -68,6 +68,11 @@ describe('AgentPanel chat history', function () {
       ).to.equal('chat_old')
     )
 
+    // The history menu should be closed after selecting a session
+    await waitFor(() => {
+      expect(screen.queryByRole('menu')).to.be.null
+    })
+
     // Verify title displayed in header
     expect(
       screen.getAllByText('Fix the bibliography').length

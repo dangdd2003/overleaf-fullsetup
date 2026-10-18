@@ -15,6 +15,39 @@ import ProjectDeleter from '../../../../app/src/Features/Project/ProjectDeleter.
 import { DeletedProjectReasons } from '../../../../app/src/Features/Project/DeletedProjectReasons.mjs'
 
 export const LOCK_TTL_MS = 10 * 60 * 1000
+
+// GitHub owner and repository names; values reach a git clone URL, so they are
+// checked before use rather than trusted from the request body.
+const OWNER_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/
+const REPO_NAME_RE = /^[A-Za-z0-9._-]{1,100}$/
+const BRANCH_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,249}$/
+
+function _invalid(message) {
+  const err = new Error(message)
+  err.code = 'invalidParameters'
+  err.status = 400
+  return err
+}
+
+export function validateRepoRef({ owner, name, branch }) {
+  if (owner != null && owner !== '' && !OWNER_RE.test(owner)) {
+    throw _invalid('invalid repository owner')
+  }
+  if (name != null && (!REPO_NAME_RE.test(name) || name === '.' || name === '..')) {
+    throw _invalid('invalid repository name')
+  }
+  if (
+    branch != null &&
+    branch !== '' &&
+    (!BRANCH_RE.test(branch) ||
+      branch.includes('..') ||
+      branch.includes('//') ||
+      branch.endsWith('/') ||
+      branch.endsWith('.lock'))
+  ) {
+    throw _invalid('invalid branch name')
+  }
+}
 export const STATUS_CACHE_MS = 60 * 1000
 
 const TEX_GITIGNORE =
@@ -216,6 +249,7 @@ async function continueAfterManualMerge(projectId) {
 }
 
 async function importProject(userId, { repoOwner, repoName, branch, projectName }) {
+  validateRepoRef({ owner: repoOwner, name: repoName, branch })
   const token = await GitHubCredentialsManager.promises.getAccessToken(userId)
   const repoInfo = await GitHubApiManager.promises.getRepo(token, repoOwner, repoName)
   if (repoInfo.size === 0) {
@@ -264,6 +298,7 @@ async function importProject(userId, { repoOwner, repoName, branch, projectName 
 }
 
 async function createRepoAndLink(userId, projectId, { name, owner, isPrivate }) {
+  validateRepoRef({ owner, name })
   const existing = await getState(projectId)
   if (existing) {
     const err = new Error('project is already linked to a repository')

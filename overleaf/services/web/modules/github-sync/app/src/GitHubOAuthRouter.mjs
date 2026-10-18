@@ -3,9 +3,14 @@ import logger from '@overleaf/logger'
 import AuthenticationController from '../../../../app/src/Features/Authentication/AuthenticationController.mjs'
 import { User } from '../../../../app/src/models/User.mjs'
 import UserAuditLogHandler from '../../../../app/src/Features/User/UserAuditLogHandler.mjs'
+import RateLimiterMiddleware from '../../../../app/src/Features/Security/RateLimiterMiddleware.mjs'
+import { RateLimiter } from '../../../../app/src/infrastructure/RateLimiter.mjs'
 import GitHubSyncManager from './GitHubSyncManager.mjs'
 import GitHubApiManager from './GitHubApiManager.mjs'
 import GitHubCredentialsManager from './GitHubCredentialsManager.mjs'
+
+// Per user: an import clones a whole repo and creates a project.
+export const IMPORT_RATE_LIMIT = { points: 10, duration: 60 * 60 }
 
 function link(req, res, next) {
   passport.authenticate('github-sync')(req, res, next)
@@ -105,6 +110,10 @@ async function importProject(req, res) {
 const GitHubOAuthRouter = {
   apply(webRouter) {
     const requireLogin = AuthenticationController.requireLogin()
+    // Created here, not at import, so nothing is set up unless the router is applied
+    const importRateLimit = RateLimiterMiddleware.rateLimit(
+      new RateLimiter('github-sync-import', IMPORT_RATE_LIMIT)
+    )
 
     // 1. User OAuth Initiation
     webRouter.get('/auth/github/oauth', requireLogin, link)
@@ -133,9 +142,9 @@ const GitHubOAuthRouter = {
     webRouter.post('/user/github/unlink', requireLogin, unlink)
 
     // 6. User Project Import
-    webRouter.post('/auth/github/import', requireLogin, importProject)
-    webRouter.post('/auth/github-sync/import', requireLogin, importProject)
-    webRouter.post('/user/github/import', requireLogin, importProject)
+    webRouter.post('/auth/github/import', requireLogin, importRateLimit, importProject)
+    webRouter.post('/auth/github-sync/import', requireLogin, importRateLimit, importProject)
+    webRouter.post('/user/github/import', requireLogin, importRateLimit, importProject)
   },
   applyNonCsrfRouter(webRouter) {
     const requireLogin = AuthenticationController.requireLogin()

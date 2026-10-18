@@ -9,6 +9,7 @@ describe('AiAssistRunController', function () {
   let mockManager
   let mockStore
   let fakeSubscriber
+  let mockAuthorization
 
   beforeEach(function () {
     mockManager = {
@@ -38,10 +39,17 @@ describe('AiAssistRunController', function () {
       release: sinon.stub(),
     }
 
+    // The legacy run routes name no project; access is checked on the run's own project
+    mockAuthorization = {
+      canUserReadProject: sinon.stub().resolves(true),
+      canUserWriteProjectContent: sinon.stub().resolves(true),
+    }
+
     controller = new AiAssistRunController({
       manager: mockManager,
       store: mockStore,
       subscriber: fakeSubscriber,
+      authorization: mockAuthorization,
     })
   })
 
@@ -101,6 +109,35 @@ describe('AiAssistRunController', function () {
         text: 'also check refs',
         contextText: '<ctx/>',
       })
+    })
+
+    it('hands a message with images to a run that is still going', async function () {
+      const res = reply()
+      const sampleImages = [{ mediaType: 'image/png', data: 'iVBORw0KGgo=' }]
+      await controller.queueMessage(
+        {
+          params: { Project_id: 'p1', runId: 'run-1' },
+          body: {
+            id: 'q1',
+            text: 'check this figure',
+            contextText: '<ctx/>',
+            images: sampleImages,
+          },
+        },
+        res
+      )
+
+      expect(res.statusCode).to.equal(200)
+      expect(mockManager.queueMessage.calledOnce).to.be.true
+      const queued = mockManager.queueMessage.firstCall.args[1]
+      expect(queued.id).to.equal('q1')
+      expect(queued.text).to.equal('check this figure')
+      expect(queued.contextText).to.equal('<ctx/>')
+      expect(queued.images[0].mediaType).to.equal('image/png')
+      expect(queued.images[0].data).to.equal('iVBORw0KGgo=')
+      expect(queued.images[0].name).to.match(
+        /^Overleaf_Capture_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.png$/
+      )
     })
 
     it('answers 409 for a finished run so the client can start a fresh one', async function () {
@@ -211,6 +248,42 @@ describe('AiAssistRunController', function () {
     await controller.stopRun(req, res)
     expect(mockManager.stopRun.calledWith('run-1')).to.be.true
     expect(res.json.calledWith({ ok: true })).to.be.true
+  })
+
+  it('refuses a legacy stop from someone who cannot write the run project', async function () {
+    mockAuthorization.canUserWriteProjectContent.resolves(false)
+    const req = {
+      params: { runId: 'run-1' },
+      session: { user: { _id: 'a'.repeat(24) } },
+    }
+    const res = { json: sinon.stub(), status: sinon.stub().returnsThis() }
+
+    await controller.stopRun(req, res)
+    expect(mockManager.stopRun.called).to.be.false
+    expect(res.status.calledWith(403)).to.be.true
+    expect(mockAuthorization.canUserWriteProjectContent.calledWith(
+      'a'.repeat(24), 'p1'
+    )).to.be.true
+  })
+
+  it('refuses a legacy stream from someone who cannot read the run project', async function () {
+    mockAuthorization.canUserReadProject.resolves(false)
+    const req = {
+      params: { runId: 'run-1' },
+      query: {},
+      session: { user: { _id: 'a'.repeat(24) } },
+      on: sinon.stub(),
+    }
+    const res = {
+      json: sinon.stub(),
+      status: sinon.stub().returnsThis(),
+      write: sinon.stub(),
+      end: sinon.stub(),
+    }
+
+    await controller.streamRun(req, res)
+    expect(fakeSubscriber.subscribe.called).to.be.false
+    expect(res.status.calledWith(403)).to.be.true
   })
 
   it('handles approve requests', async function () {
@@ -510,7 +583,7 @@ describe('AiAssistRunController', function () {
   })
 
   it('rejects createRun with 400 when transcript exceeds maxTranscriptBytes', async function () {
-    const hugeText = 'x'.repeat(5500000)
+    const hugeText = 'x'.repeat(33 * 1024 * 1024)
     const req = {
       params: { Project_id: 'proj-1' },
       session: { user: { _id: 'user-1' } },

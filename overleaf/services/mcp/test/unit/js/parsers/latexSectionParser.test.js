@@ -99,6 +99,25 @@ describe('latexSectionParser', function () {
       expect(only.startLine).to.equal(1)
       expect(only.endLine).to.equal(3)
     })
+
+    it('closes each section at the first later heading of its level or higher', function () {
+      const doc = [
+        '\\section{A}',
+        '\\subsection{A1}',
+        '\\subsubsection{A1a}',
+        '\\subsection{A2}',
+        '\\section{B}',
+        '\\subsection{B1}',
+      ].join('\n')
+      expect(parseSections(doc).map(s => [s.title, s.endLine])).to.deep.equal([
+        ['A', 4],
+        ['A1', 3],
+        ['A1a', 3],
+        ['A2', 4],
+        ['B', 6],
+        ['B1', 6],
+      ])
+    })
   })
 
   describe('parseIncludes', function () {

@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { isChallenge } from './quality.mjs'
+import { REFUSED_HEADER, REFUSED_TOO_LARGE } from './proxy.mjs'
 
 const MAX_READS_BEFORE_RESTART = 200
 /** Inside the web side's 25 s raw timeout, which also covers queueing here. */
@@ -15,6 +16,15 @@ export const MAX_BODY_BYTES = 128 * 1024 * 1024
 export const DISK_CACHE_BYTES = 100 * 1024 * 1024
 /** A profile still bigger than this after cleaning is wiped whole. */
 export const PROFILE_MAX_BYTES = 512 * 1024 * 1024
+
+/** The Content-Length a response declares, or 0 when it declares none. */
+function declaredLength(response) {
+  try {
+    return Number(response?.headers()['content-length']) || 0
+  } catch {
+    return 0
+  }
+}
 
 /** `body` cut to MAX_BODY_BYTES, and whether it was cut. */
 export function capBody(body, max = MAX_BODY_BYTES) {
@@ -204,15 +214,45 @@ export function routeRender(route) {
   return route.continue()
 }
 
+const SKIPPED_BLOCKS = ['script', 'style']
+
+/**
+ * The visible text of an HTML document: tags and script/style bodies removed.
+ * One forward pass with indexOf. A regex such as `<[^>]+>` backtracks
+ * quadratically on hostile markup (many `<` and no `>`), which blocked the
+ * event loop for minutes on a page of a few hundred kilobytes.
+ */
+export function visibleText(html) {
+  const lower = html.toLowerCase()
+  const parts = []
+  let i = 0
+  while (i < html.length) {
+    const lt = html.indexOf('<', i)
+    if (lt === -1) {
+      parts.push(html.slice(i))
+      break
+    }
+    parts.push(html.slice(i, lt), ' ')
+    const block = SKIPPED_BLOCKS.find(tag => lower.startsWith(`<${tag}`, lt))
+    if (block) {
+      const close = lower.indexOf(`</${block}`, lt)
+      const end = close === -1 ? -1 : lower.indexOf('>', close)
+      if (end === -1) break
+      i = end + 1
+      continue
+    }
+    const end = html.indexOf('>', lt)
+    if (end === -1) break
+    i = end + 1
+  }
+  return parts.join('')
+}
+
 /** A raw HTML answer that is a bot check rather than the page. */
 export function isChallengeBody(contentType, body) {
   if (!/html/i.test(String(contentType ?? ''))) return false
   const html = body.toString('utf8')
-  const text = html.replace(
-    /<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>|<[^>]+>/gi,
-    ' '
-  )
-  return isChallenge(html, text)
+  return isChallenge(html, visibleText(html))
 }
 
 function cancelled() {
@@ -314,7 +354,9 @@ async function launchChrome({ profileDir, proxyUrl, browserLang }) {
     viewport: null,
     // Never off: checkSandbox refuses to read pages without it
     chromiumSandbox: true,
-    proxy: { server: proxyUrl, bypass: '<-loopback>' },
+    // No bypass list: loopback and localhost targets must go through the guarded
+    // proxy as well. The proxy itself is only the server Chrome connects to.
+    proxy: { server: proxyUrl },
     args: [
       `--lang=${browserLang}`,
       '--disable-quic',
@@ -457,13 +499,33 @@ export class BrowserEngine {
         timeout: RAW_NAV_TIMEOUT_MS,
       })
 
-      let whole
-      try {
-        whole = await response.body()
-      } catch {
-        whole = Buffer.from(await page.content(), 'utf8')
+      // The egress proxy refuses a plain-HTTP body over the cap, or cuts it
+      // off as it streams; either way the answer is an empty, truncated page.
+      if (response?.headers()[REFUSED_HEADER] === REFUSED_TOO_LARGE) {
+        return {
+          status: 502,
+          finalUrl: reportedUrl(page, url, navigated),
+          contentType: 'text/plain; charset=utf-8',
+          body: Buffer.alloc(0),
+          truncated: true,
+          challenge: false,
+        }
       }
-      const { body, truncated } = capBody(whole)
+
+      // Playwright holds a whole body in memory before any cap applies, so a
+      // response declared bigger than the cap is not read at all.
+      const oversized = declaredLength(response) > MAX_BODY_BYTES
+      let whole = Buffer.alloc(0)
+      if (!oversized) {
+        try {
+          whole = await response.body()
+        } catch {
+          whole = Buffer.from(await page.content(), 'utf8')
+        }
+      }
+      const capped = capBody(whole)
+      const body = capped.body
+      const truncated = oversized || capped.truncated
       const contentType =
         response?.headers()['content-type'] || 'text/html; charset=utf-8'
 
@@ -540,7 +602,12 @@ export class BrowserEngine {
           await download.delete().catch(() => {})
           body = Buffer.concat(chunks)
         } else {
-          ;({ body, truncated } = capBody(await response.body()))
+          if (declaredLength(response) > MAX_BODY_BYTES) {
+            body = Buffer.alloc(0)
+            truncated = true
+          } else {
+            ;({ body, truncated } = capBody(await response.body()))
+          }
         }
         return {
           status,

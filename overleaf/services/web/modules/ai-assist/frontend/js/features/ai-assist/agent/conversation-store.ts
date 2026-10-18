@@ -1,4 +1,5 @@
 import customLocalStorage from '@/infrastructure/local-storage'
+import getMeta from '@/utils/meta'
 import { TranscriptEntry, ToolCallRecord } from './agent-messages'
 
 export const MAX_STORED_BYTES = 500000
@@ -252,6 +253,53 @@ export function deduplicateBlocks(blocks?: any[]): any[] | undefined {
   return result
 }
 
+/** The server's default limit on a chat sent to start a run (32 MiB). */
+const DEFAULT_RUN_TRANSCRIPT_BYTES = 32 * 1024 * 1024
+
+/**
+ * How large a chat may be when it is sent to start a run: the server's
+ * limit, less room for multi-byte characters, which `length` undercounts.
+ */
+export function runTranscriptBudget(): number {
+  const limit = getMeta('ol-aiAssistMaxTranscriptBytes')
+  const bytes =
+    typeof limit === 'number' && limit > 0 ? limit : DEFAULT_RUN_TRANSCRIPT_BYTES
+  return Math.floor(bytes * 0.9)
+}
+
+/**
+ * Drops the images of the oldest user turns, one turn at a time, until the
+ * transcript fits. The words stay; a long chat loses old pictures before it
+ * loses any turn.
+ */
+export function dropOldestImages(
+  transcript: TranscriptEntry[],
+  maxBytes: number
+): TranscriptEntry[] {
+  // Each entry is measured once and the total kept up to date as images go:
+  // stringifying the whole chat after every entry is quadratic in its turns
+  const sizes = transcript.map(entry => JSON.stringify(entry).length)
+  let total = jsonLengthOfArray(sizes)
+  let result = transcript
+  for (let i = 0; i < transcript.length && total > maxBytes; i++) {
+    const entry = transcript[i]
+    if (entry.role !== 'user' || !entry.images?.length) continue
+    const { images: _images, ...rest } = entry
+    const restSize = JSON.stringify(rest).length
+    total += restSize - sizes[i]
+    sizes[i] = restSize
+    if (result === transcript) result = [...transcript]
+    result[i] = rest
+  }
+  return result
+}
+
+/** The JSON length of an array, from the JSON length of each element. */
+function jsonLengthOfArray(sizes: number[]): number {
+  const commas = Math.max(0, sizes.length - 1)
+  return 2 + commas + sizes.reduce((sum, size) => sum + size, 0)
+}
+
 /** Tool results can be enormous; the transcript only needs enough to re-read. */
 export function shrink(entry: TranscriptEntry): TranscriptEntry {
   if (entry.role !== 'assistant') return entry
@@ -276,6 +324,12 @@ function fit(transcript: TranscriptEntry[]): TranscriptEntry[] {
     return kept
   }
 
+  // Images are the bulk of a chat, and the server's copy keeps them
+  kept = dropOldestImages(kept, MAX_STORED_BYTES)
+  if (JSON.stringify(kept).length <= MAX_STORED_BYTES) {
+    return kept
+  }
+
   // Pass 2: Deep-shrink older assistant entries (preserve last assistant entry if possible)
   const lastAssistantIdx = kept.map(e => e.role).lastIndexOf('assistant')
   kept = kept.map((entry, idx) => {
@@ -295,10 +349,14 @@ function fit(transcript: TranscriptEntry[]): TranscriptEntry[] {
   }
 
   // Pass 4: Fallback limit for extreme synthetic cases (e.g. hundreds of massive user messages)
-  while (kept.length > 1 && JSON.stringify(kept).length > MAX_STORED_BYTES) {
-    kept = kept.slice(1)
+  const sizes = kept.map(entry => JSON.stringify(entry).length)
+  let total = jsonLengthOfArray(sizes)
+  let first = 0
+  while (kept.length - first > 1 && total > MAX_STORED_BYTES) {
+    total -= sizes[first] + 1
+    first++
   }
-  return kept
+  return kept.slice(first)
 }
 
 /**
@@ -307,7 +365,7 @@ function fit(transcript: TranscriptEntry[]): TranscriptEntry[] {
  */
 export function prepareTranscriptForRun(
   transcript: TranscriptEntry[],
-  maxBytes: number = 4_500_000
+  maxBytes: number = runTranscriptBudget()
 ): TranscriptEntry[] {
   if (!Array.isArray(transcript) || transcript.length === 0) {
     return transcript
@@ -339,7 +397,14 @@ export function prepareTranscriptForRun(
     return result
   }
 
-  // Third pass: if still exceeds budget, drop oldest entries (preserving at least the last turn)
+  // Third pass: old images, before any turn
+  result = dropOldestImages(result, maxBytes)
+
+  if (JSON.stringify(result).length <= maxBytes) {
+    return result
+  }
+
+  // Fourth pass: if still exceeds budget, drop oldest entries (preserving at least the last turn)
   while (result.length > 1 && JSON.stringify(result).length > maxBytes) {
     result = result.slice(1)
   }

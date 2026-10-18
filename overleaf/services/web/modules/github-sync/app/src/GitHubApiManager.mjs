@@ -1,6 +1,8 @@
 import Settings from '@overleaf/settings'
 
 const USER_AGENT = 'overleaf-github-sync'
+// A hung GitHub call must not hold a request or a sync lock indefinitely
+const REQUEST_TIMEOUT_MS = 20 * 1000
 
 async function _request(token, method, apiPath, body) {
   const url = `${Settings.githubSync.apiBase}${apiPath}`
@@ -13,6 +15,7 @@ async function _request(token, method, apiPath, body) {
       ...(body != null ? { 'Content-Type': 'application/json' } : {}),
     },
     body: body != null ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   })
   if (res.status === 401 || res.status === 403) {
     const err = new Error('GitHub authorization failed')

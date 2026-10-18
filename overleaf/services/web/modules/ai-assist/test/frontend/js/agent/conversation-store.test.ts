@@ -2,10 +2,12 @@ import { expect } from 'chai'
 import customLocalStorage from '@/infrastructure/local-storage'
 import {
   clearConversation,
+  dropOldestImages,
   dropRepeatedEntries,
   loadConversation,
   mergeStoredTranscript,
   prepareTranscriptForRun,
+  runTranscriptBudget,
   saveConversation,
 } from '../../../../frontend/js/features/ai-assist/agent/conversation-store'
 import { TranscriptEntry } from '../../../../frontend/js/features/ai-assist/agent/agent-messages'
@@ -454,5 +456,69 @@ describe('conversation-store', function () {
       { id: 'u2', role: 'user', text: 'again' },
     ]
     expect(dropRepeatedEntries(transcript)).to.deep.equal(transcript)
+  })
+})
+
+describe('old images in a large chat', function () {
+  const picture = (size: number) => ({
+    mediaType: 'image/png' as const,
+    data: 'A'.repeat(size),
+  })
+
+  afterEach(function () {
+    window.metaAttributesCache.delete('ol-aiAssistMaxTranscriptBytes')
+  })
+
+  it('drops the images of the oldest turns first and keeps every turn', function () {
+    const transcript: TranscriptEntry[] = [
+      { id: 'u1', role: 'user', text: 'first', images: [picture(4000)] },
+      { id: 'a1', role: 'assistant', text: 'ok', toolCalls: [] },
+      { id: 'u2', role: 'user', text: 'second', images: [picture(4000)] },
+    ]
+    const out = dropOldestImages(transcript, 6000)
+    expect(out).to.have.length(3)
+    expect(out[0]).not.to.have.property('images')
+    expect(out[0]).to.include({ id: 'u1', text: 'first' })
+    expect(out[2]).to.equal(transcript[2])
+  })
+
+  it('returns the same chat when it already fits, and keeps every image', function () {
+    const transcript: TranscriptEntry[] = [
+      { id: 'u1', role: 'user', text: 'first', images: [picture(100)] },
+    ]
+    expect(dropOldestImages(transcript, 1_000_000)).to.equal(transcript)
+  })
+
+  it('stops dropping images as soon as the chat fits', function () {
+    const transcript: TranscriptEntry[] = [
+      { id: 'u1', role: 'user', text: 'first', images: [picture(4000)] },
+      { id: 'u2', role: 'user', text: 'second', images: [picture(4000)] },
+      { id: 'u3', role: 'user', text: 'third', images: [picture(4000)] },
+    ]
+    const maxBytes = JSON.stringify(transcript).length - 4000
+    const out = dropOldestImages(transcript, maxBytes)
+    expect(JSON.stringify(out).length).to.be.at.most(maxBytes)
+    expect(out[0]).not.to.have.property('images')
+    expect(out[1]).to.equal(transcript[1])
+    expect(out[2]).to.equal(transcript[2])
+  })
+
+  it('drops old images before any turn when preparing a run', function () {
+    const transcript: TranscriptEntry[] = [
+      { id: 'u1', role: 'user', text: 'first', images: [picture(9000)] },
+      { id: 'a1', role: 'assistant', text: 'ok', toolCalls: [] },
+      { id: 'u2', role: 'user', text: 'second', images: [picture(2000)] },
+    ]
+    const out = prepareTranscriptForRun(transcript, 5000)
+    expect(out.map(entry => entry.id)).to.deep.equal(['u1', 'a1', 'u2'])
+    expect(out[0]).not.to.have.property('images')
+    expect((out[2] as any).images).to.have.length(1)
+  })
+
+  it("budgets runs from the server's limit", function () {
+    window.metaAttributesCache.set('ol-aiAssistMaxTranscriptBytes', 1000)
+    expect(runTranscriptBudget()).to.equal(900)
+    window.metaAttributesCache.delete('ol-aiAssistMaxTranscriptBytes')
+    expect(runTranscriptBudget()).to.equal(Math.floor(32 * 1024 * 1024 * 0.9))
   })
 })

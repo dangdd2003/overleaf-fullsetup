@@ -1,6 +1,20 @@
 import Settings from '@overleaf/settings'
 
 export default {
+  applyNonCsrfRouter(webRouter) {
+    if (!Settings.aiAssist?.enabled) {
+      return
+    }
+    // Loaded on the first callback, so a disabled instance loads no connector code
+    webRouter.get('/ai-assist/connectors/oauth/callback', (req, res, next) =>
+      import('./connectors/ConnectorController.mjs')
+        .then(({ default: ConnectorController }) =>
+          ConnectorController.oauthCallback(req, res, next)
+        )
+        .catch(next)
+    )
+  },
+
   async apply(webRouter) {
     if (!Settings.aiAssist?.enabled) return
 
@@ -11,6 +25,23 @@ export default {
     const { default: AuthorizationMiddleware } =
       await import('../../../../app/src/Features/Authorization/AuthorizationMiddleware.mjs')
 
+    // Limits per user. Loaded here, not at import: the limiters connect to Redis.
+    // A run is a long, paid model conversation; each provider call is one model
+    // step of it, and a chat turn is a few of them, so those allow far more.
+    const { default: RateLimiterMiddleware } =
+      await import('../../../../app/src/Features/Security/RateLimiterMiddleware.mjs')
+    const { RateLimiter } =
+      await import('../../../../app/src/infrastructure/RateLimiter.mjs')
+    const runLimit = RateLimiterMiddleware.rateLimit(
+      new RateLimiter('ai-assist-runs', { points: 20, duration: 60 })
+    )
+    const providerLimit = RateLimiterMiddleware.rateLimit(
+      new RateLimiter('ai-assist-providers', { points: 300, duration: 60 })
+    )
+    const faviconLimit = RateLimiterMiddleware.rateLimit(
+      new RateLimiter('ai-assist-favicon', { points: 240, duration: 60 })
+    )
+
     // 0. Provider requests (model list, connection test, in-page agent turns)
     // are made from the server so internal providers work behind a public domain.
     const { default: AiAssistProviderController } =
@@ -19,18 +50,21 @@ export default {
     webRouter.post(
       '/ai-assist/providers/models',
       AuthenticationController.requireLogin(),
+      providerLimit,
       AiAssistProviderController.listModels
     )
 
     webRouter.post(
       '/ai-assist/providers/test',
       AuthenticationController.requireLogin(),
+      providerLimit,
       AiAssistProviderController.test
     )
 
     webRouter.post(
       '/ai-assist/providers/chat',
       AuthenticationController.requireLogin(),
+      providerLimit,
       AiAssistProviderController.chat
     )
 
@@ -38,6 +72,7 @@ export default {
     webRouter.post(
       '/ai-assist/providers/editor',
       AuthenticationController.requireLogin(),
+      providerLimit,
       AiAssistProviderController.editorText
     )
 
@@ -45,6 +80,7 @@ export default {
       webRouter.post(
         '/ai-assist/web-search/test',
         AuthenticationController.requireLogin(),
+        providerLimit,
         AiAssistProviderController.testWebSearch
       )
 
@@ -54,6 +90,7 @@ export default {
       webRouter.get(
         '/ai-assist/favicon',
         AuthenticationController.requireLogin(),
+        faviconLimit,
         AiAssistFavicon.serve
       )
 
@@ -79,6 +116,7 @@ export default {
       '/ai-assist/projects/:Project_id/runs',
       AuthenticationController.requireLogin(),
       AuthorizationMiddleware.ensureUserCanWriteProjectContent,
+      runLimit,
       AiAssistRunController.createRun
     )
 
@@ -181,6 +219,32 @@ export default {
       AiAssistChatHistoryController.generateTitle
     )
 
+    // Checkpoint & rewind endpoints
+    const { default: AiAssistCheckpointController } =
+      await import('./AiAssistCheckpointController.mjs')
+
+    webRouter.post(
+      '/ai-assist/projects/:Project_id/chats/:chatId/rewind/check',
+      AuthenticationController.requireLogin(),
+      AuthorizationMiddleware.ensureUserCanWriteProjectContent,
+      AiAssistCheckpointController.check
+    )
+
+    webRouter.post(
+      '/ai-assist/projects/:Project_id/chats/:chatId/rewind',
+      AuthenticationController.requireLogin(),
+      AuthorizationMiddleware.ensureUserCanWriteProjectContent,
+      AiAssistCheckpointController.rewind
+    )
+
+    // Copies a chat's checkpoints to a forked chat so its code can be rewound
+    webRouter.post(
+      '/ai-assist/projects/:Project_id/chats/:chatId/checkpoints/fork',
+      AuthenticationController.requireLogin(),
+      AuthorizationMiddleware.ensureUserCanWriteProjectContent,
+      AiAssistCheckpointController.fork
+    )
+
     // Language suggestions' results, shared by a project's collaborators
     const { default: AiAssistLanguageCheckController } =
       await import('./AiAssistLanguageCheckController.mjs')
@@ -214,6 +278,91 @@ export default {
       AuthenticationController.requireLogin(),
       AiAssistPreferencesController.save
     )
+
+    // User AI provider and web search settings (encrypted at rest on server)
+    const { default: AiAssistUserSettingsController } =
+      await import('./AiAssistUserSettingsController.mjs')
+
+    const settingsLimit = RateLimiterMiddleware.rateLimit(
+      new RateLimiter('ai-assist-user-settings', { points: 60, duration: 60 })
+    )
+
+    webRouter.get(
+      '/ai-assist/settings',
+      AuthenticationController.requireLogin(),
+      AiAssistUserSettingsController.get
+    )
+
+    webRouter.put(
+      '/ai-assist/settings',
+      AuthenticationController.requireLogin(),
+      settingsLimit,
+      AiAssistUserSettingsController.save
+    )
+
+    if (Settings.aiAssist?.enabled) {
+      const { default: ConnectorController } =
+        await import('./connectors/ConnectorController.mjs')
+
+      webRouter.get(
+        '/ai-assist/connectors',
+        AuthenticationController.requireLogin(),
+        ConnectorController.list
+      )
+
+      webRouter.post(
+        '/ai-assist/connectors/probe',
+        AuthenticationController.requireLogin(),
+        ConnectorController.probe
+      )
+
+      webRouter.post(
+        '/ai-assist/connectors',
+        AuthenticationController.requireLogin(),
+        ConnectorController.create
+      )
+
+      webRouter.post(
+        '/ai-assist/connectors/import',
+        AuthenticationController.requireLogin(),
+        ConnectorController.import
+      )
+
+      webRouter.patch(
+        '/ai-assist/connectors/:id',
+        AuthenticationController.requireLogin(),
+        ConnectorController.update
+      )
+
+      webRouter.delete(
+        '/ai-assist/connectors/:id',
+        AuthenticationController.requireLogin(),
+        ConnectorController.remove
+      )
+
+      webRouter.post(
+        '/ai-assist/connectors/:id/authorize',
+        AuthenticationController.requireLogin(),
+        ConnectorController.authorize
+      )
+
+      webRouter.post(
+        '/ai-assist/connectors/:id/refresh',
+        AuthenticationController.requireLogin(),
+        ConnectorController.refresh
+      )
+
+      webRouter.post(
+        '/ai-assist/connectors/:id/disconnect',
+        AuthenticationController.requireLogin(),
+        ConnectorController.disconnect
+      )
+
+      webRouter.get(
+        '/ai-assist/connectors/oauth/client-metadata.json',
+        ConnectorController.clientMetadata
+      )
+    }
 
     // 2. Legacy fallback routes (controller performs inline authorization check)
     webRouter.get(

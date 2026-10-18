@@ -1,4 +1,5 @@
 import { ProviderError } from '../AiAssistProviders.mjs'
+import { connectorFetch } from '../connectors/ConnectorFetch.mjs'
 import { adapterContext } from './adapters/common.mjs'
 import { ADAPTERS, matchAdapter } from './adapters/index.mjs'
 import { documentFromResponse, makeDocument } from './document.mjs'
@@ -55,7 +56,9 @@ const ARCHIVES = [
 ]
 const FAILURE_TTL_MS = 10 * 60 * 1000 // 10 minutes
 const MAX_FAILURE_CACHE_ENTRIES = 1000
-const failureCache = new Map() // cacheKey -> { at: number, error: Error }
+// owner + cacheKey -> { at, error }. Per owner, so one user's failure never
+// blocks another user; the cap below bounds the whole process.
+const failureCache = new Map()
 /**
  * How long a reader has before the next one is started alongside it. Most
  * readers answer well inside this; a slow one no longer holds up the read.
@@ -88,7 +91,7 @@ function reasonOf(err) {
 export class WebFetcher {
   constructor({
     fetchPage,
-    fetchFn = fetch,
+    fetchFn = connectorFetch,
     rotator = null,
     browser = null,
     cache = null,
@@ -148,11 +151,12 @@ export class WebFetcher {
         return searched
       }
 
-      const failed = failureCache.get(key)
+      const failureKey = this._failureKey(key)
+      const failed = failureCache.get(failureKey)
       if (failed && this.now() - failed.at < FAILURE_TTL_MS) {
         throw failed.error
       }
-      if (failed) failureCache.delete(key)
+      if (failed) failureCache.delete(failureKey)
     }
 
     // Calls for one page at the same time (page 1 and a find, a prefetch and
@@ -220,9 +224,18 @@ export class WebFetcher {
     }
   }
 
+  /**
+   * The failure cache's key: a page one user could not read is not a failure
+   * for another user, so failures are kept per owner.
+   */
+  _failureKey(key) {
+    return `${this.owner}\n${key}`
+  }
+
   /** Reads `url` by the ladder, then caches the document or remembers the failure. */
   async _readAndStore(url, key, { signal, fresh, useCache }) {
     let doc
+    const failureKey = this._failureKey(key)
     try {
       doc = await this._ladder(url, {
         signal,
@@ -230,7 +243,7 @@ export class WebFetcher {
         deadline: this.now() + this.budgetMs,
         useAdapters: true,
       })
-      failureCache.delete(key)
+      failureCache.delete(failureKey)
     } catch (err) {
       if (
         !signal?.aborted &&
@@ -238,7 +251,7 @@ export class WebFetcher {
         err?.status !== 429 &&
         !(err?.status >= 500)
       ) {
-        rememberFailure(key, { at: this.now(), error: err })
+        rememberFailure(failureKey, { at: this.now(), error: err })
       }
       throw err
     }
@@ -337,7 +350,7 @@ export class WebFetcher {
 
     /** Runs one route; its document if it passes the quality check, else null. */
     const attempt = async (name, timeoutMs, run, { lenient = false } = {}) => {
-      if (!fresh && isStepSkipped(host, name, this.now())) {
+      if (!fresh && isStepSkipped(this.owner, host, name, this.now())) {
         tried.push(`${name}: skipped (recently blocked)`)
         return null
       }
@@ -358,7 +371,7 @@ export class WebFetcher {
         // reports either abort as a cancellation.
         if (signal?.aborted) throw cancelled()
         if (stepSignal.aborted) {
-          recordHostFailure(host, name, 'timed out')
+          recordHostFailure(this.owner, host, name, 'timed out')
           tried.push(`${name}: timed out`)
           return null
         }
@@ -379,7 +392,7 @@ export class WebFetcher {
             err.status === 429 ||
             err.status === 451
           ) {
-            recordHostFailure(host, name, `HTTP ${err.status}`)
+            recordHostFailure(this.owner, host, name, `HTTP ${err.status}`)
           }
         }
         tried.push(`${name}: ${reasonOf(err)}`)
@@ -396,12 +409,12 @@ export class WebFetcher {
       }
       const verdict = outcome.quality ?? assessContent({ text: outcome.text })
       if (verdict === 'ok') {
-        recordHostSuccess(host, name)
+        recordHostSuccess(this.owner, host, name)
         return { ...outcome, via: outcome.via ?? name }
       }
       if (verdict === 'challenge') {
         sawBrowserChallenge = true
-        recordHostFailure(host, name, 'bot check')
+        recordHostFailure(this.owner, host, name, 'bot check')
       } else if (verdict === 'thin') {
         sawBrowserChallenge = true
         keep(name, outcome)

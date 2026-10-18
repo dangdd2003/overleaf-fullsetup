@@ -125,6 +125,40 @@ describe('OverleafClient', function () {
     expect(Buffer.from(result.base64, 'base64').toString()).to.equal('%PDF-1.7')
   })
 
+  it('returns a binary download of any size intact', async function () {
+    const zip = Buffer.alloc(40 * 1024 * 1024, 7)
+    fetchImpl.resolves(
+      new Response(zip, { headers: { 'content-type': 'application/zip' } })
+    )
+    const result = await client.requestBinary(TOKEN, '/projects/p1/download/zip')
+    expect(Buffer.from(result.base64, 'base64').equals(zip)).to.be.true
+  })
+
+  it('lets one call set a longer deadline than the default', async function () {
+    const clock = sinon.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      let signal
+      fetchImpl.callsFake((url, init) => {
+        signal = init.signal
+        return new Promise((resolve, reject) => {
+          signal.addEventListener('abort', () => reject(new Error('aborted')))
+        })
+      })
+      const pending = client
+        .post(TOKEN, '/projects/p1/compile', {}, { timeoutMs: 120000 })
+        .catch(err => err)
+
+      clock.tick(60000)
+      expect(signal.aborted).to.be.false
+      clock.tick(60000)
+      const err = await pending
+      expect(err).to.be.instanceOf(OverleafApiError)
+      expect(err.message).to.match(/did not respond in time/)
+    } finally {
+      clock.restore()
+    }
+  })
+
   it('rejects a missing token before making a request', async function () {
     try {
       await client.get('', '/projects')

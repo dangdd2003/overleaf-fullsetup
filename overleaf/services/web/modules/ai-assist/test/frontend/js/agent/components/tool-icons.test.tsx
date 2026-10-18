@@ -123,6 +123,18 @@ describe('tool-icons and getToolIcon', function () {
     const wrenchContainer = renderIcon('some_nonexistent_tool')
     expect(wrenchContainer.innerHTML).to.equal(unknownContainer.innerHTML)
   })
+
+  it('renders FilePdf, SquaresFour, and FileMagnifyingGlass icons for PDF tools', function () {
+    for (const tool of [
+      'view_compiled_pdf_page',
+      'view_compiled_pdf_overview',
+      'search_compiled_pdf',
+    ]) {
+      const container = renderIcon(tool)
+      const svg = container.querySelector('svg')
+      expect(svg).to.exist
+    }
+  })
 })
 
 describe('summarise with settings tools', function () {
@@ -187,5 +199,72 @@ describe('summarise with settings tools', function () {
       fakeT
     )
     expect(summary.action).to.equal('Configured project settings (failed)')
+  })
+})
+
+describe('summarise with PDF tools', function () {
+  const fakeT = (_key: string, opts?: any) =>
+    typeof opts === 'string' ? opts : opts?.defaultValue || _key
+
+  describe('view_compiled_pdf_page', function () {
+    it('summarises viewed page with focus', function () {
+      const summary = summarise(
+        {
+          id: '1',
+          name: 'view_compiled_pdf_page',
+          args: { page: 3 },
+          result: {
+            page: 3,
+            pageCount: 6,
+            focus: { path: 'main.tex', line: 40, endLine: 52 },
+          },
+        },
+        fakeT
+      )
+      expect(summary.action).to.equal('Viewed PDF page')
+      expect(summary.target).to.equal('3 / 6 · main.tex:40-52')
+    })
+  })
+
+  describe('view_compiled_pdf_overview', function () {
+    it('summarises overview target with range and page count', function () {
+      const summary = summarise(
+        {
+          id: '2',
+          name: 'view_compiled_pdf_overview',
+          args: { fromPage: 1, toPage: 6 },
+          result: {
+            fromPage: 1,
+            toPage: 6,
+            pageCount: 6,
+            pages: [],
+          },
+        },
+        fakeT
+      )
+      expect(summary.action).to.equal('Viewed PDF overview')
+      expect(summary.target).to.equal('pages 1–6 / 6')
+    })
+  })
+
+  describe('search_compiled_pdf', function () {
+    it('summarises search with matches', function () {
+      const summary = summarise(
+        {
+          id: '3',
+          name: 'search_compiled_pdf',
+          args: { query: 'Figure' },
+          result: {
+            query: 'Figure',
+            matchCount: 2,
+            matches: [{}, {}],
+          },
+        },
+        fakeT
+      )
+      expect(summary.action).to.equal('Searched PDF')
+      expect(summary.target).to.equal('"Figure"')
+      expect(summary.meta).to.equal('2 matches')
+    })
   })
 })

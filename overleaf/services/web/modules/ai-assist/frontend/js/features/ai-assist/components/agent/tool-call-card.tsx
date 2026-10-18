@@ -17,14 +17,38 @@ import {
   Wrench,
   Globe,
   Article,
+  FilePdf,
+  SquaresFour,
+  FileMagnifyingGlass,
+  PlugsConnected,
+  Crosshair,
+  GitDiff,
+  Highlighter,
+  TextAa,
 } from '@phosphor-icons/react'
 import { ToolCallRecord } from '../../agent/agent-messages'
 import { wantsCleanCompile } from '../../agent/tools/compile-args'
 import { diffStatsForCall } from './diff-stats'
 import { DiffStatBadge } from './diff-stat-badge'
 import { useOpenFileInEditor } from '../../hooks/use-open-file'
-import { SiteIcon, ToolCallDetailView, WEB_TOOLS } from './tool-call-detail'
+import {
+  SiteIcon,
+  ToolCallDetailView,
+  WEB_TOOLS,
+  badBoxesLabel,
+  overviewFindings,
+} from './tool-call-detail'
 import { hostOf } from '../../agent/web-sources'
+import {
+  humanizeServer,
+  isConnectorToolName,
+  isMcpToolName,
+  mcpArgSummary,
+  mcpServerSegment,
+  READ_CONNECTOR_RESULT,
+  SEARCH_CONNECTOR_TOOLS,
+} from '../../agent/mcp-tool-output'
+import { useMcpConnectorName } from '../../agent/mcp-connector-names'
 import { subresultExpansionStore } from './subresult-expansion-store'
 
 export function getToolIcon(name: string, size = 13) {
@@ -53,6 +77,20 @@ export function getToolIcon(name: string, size = 13) {
     case 'get_compile_result':
     case 'get_compile_log':
       return <TerminalWindow size={size} />
+    case 'view_compiled_pdf_page':
+      return <FilePdf size={size} />
+    case 'view_compiled_pdf_overview':
+      return <SquaresFour size={size} />
+    case 'search_compiled_pdf':
+      return <FileMagnifyingGlass size={size} />
+    case 'resolve_pdf_block':
+      return <Crosshair size={size} />
+    case 'diff_compiled_pdf':
+      return <GitDiff size={size} />
+    case 'inspect_compiled_style':
+      return <TextAa size={size} />
+    case 'highlight_in_pdf':
+      return <Highlighter size={size} />
     case 'get_project_settings':
     case 'configure_project_settings':
     case 'configure_compiler_settings':
@@ -67,8 +105,14 @@ export function getToolIcon(name: string, size = 13) {
     case 'web_search':
       return <Globe size={size} />
     case 'web_fetch':
+    case 'read_connector_result':
       return <Article size={size} />
+    case 'search_connector_tools':
+      return <PlugsConnected size={size} />
     default:
+      if (name.startsWith('mcp__')) {
+        return <PlugsConnected size={size} />
+      }
       return <Wrench size={size} />
   }
 }
@@ -118,7 +162,149 @@ export function formatLineRanges(args: any, result: any): string | null {
   return null
 }
 
+type TranslateFn = (key: string, opts?: any) => string
+
+const PDF_TOOLS = new Set([
+  'view_compiled_pdf_page',
+  'view_compiled_pdf_overview',
+  'search_compiled_pdf',
+])
+
+const firstNumber = (...values: unknown[]) =>
+  values.find((value): value is number => typeof value === 'number')
+
+/** `main.tex:40-52`, or `main.tex:40` for a single line */
+function pdfSourceSpan(path: unknown, from: unknown, to: unknown) {
+  if (typeof path !== 'string' || typeof from !== 'number') return undefined
+  return typeof to === 'number' && to > from
+    ? `${path}:${from}-${to}`
+    : `${path}:${from}`
+}
+
+/** `3 / 6 (top) · main.tex:40-52`: the page and its zoomed source */
+function pdfPageTarget(args: any, result: any) {
+  const page = typeof result?.page === 'number' ? result.page : args?.page
+  if (page == null) return undefined
+  const source = result?.focus
+    ? pdfSourceSpan(result.focus.path, result.focus.line, result.focus.endLine)
+    : args?.endLine != null
+      ? pdfSourceSpan(args.path, args.line, args.endLine)
+      : undefined
+  // A zoom's region is the focus itself, which the source already says
+  const regionName = result?.region ?? args?.region
+  const region =
+    !source && regionName && regionName !== 'full' && regionName !== 'focus'
+      ? ` (${regionName})`
+      : ''
+  return [
+    `${page}${result?.pageCount ? ` / ${result.pageCount}` : ''}${region}`,
+    source,
+  ]
+    .filter(Boolean)
+    .join(' · ')
+}
+
+/** `pages 1–12 / 34`, from the result when it has the range */
+function pdfOverviewTarget(args: any, result: any, t: TranslateFn) {
+  const from = firstNumber(result?.fromPage, args.fromPage)
+  if (from == null) return undefined
+  const to = firstNumber(result?.toPage, args.toPage) ?? from
+  const range = t('ai_assist_tool_pdf_pages', {
+    count: to - from + 1,
+    defaultValue: from === to ? `page ${from}` : `pages ${from}–${to}`,
+  })
+  return result?.pageCount ? `${range} / ${result.pageCount}` : range
+}
+
+/** The query in quotes */
+function pdfQueryTarget(args: any, result: any) {
+  const query = typeof result?.query === 'string' ? result.query : args.query
+  return typeof query === 'string' && query ? `"${query}"` : undefined
+}
+
+/** How many pages the overview flags, when any do */
+function pdfOverviewMeta(result: any, t: TranslateFn) {
+  const pages: any[] = Array.isArray(result?.pages) ? result.pages : []
+  const flagged = pages.filter(
+    page => overviewFindings(page, t).length > 0
+  ).length
+  return flagged > 0
+    ? t('ai_assist_tool_pdf_pages_flagged', {
+        count: flagged,
+        defaultValue: `${flagged} page${flagged === 1 ? '' : 's'} flagged`,
+      })
+    : undefined
+}
+
+function pdfSearchMeta(result: any, t: TranslateFn) {
+  const count =
+    typeof result?.matchCount === 'number'
+      ? result.matchCount
+      : Array.isArray(result?.matches)
+        ? result.matches.length
+        : undefined
+  if (count == null) return undefined
+  return count > 0
+    ? t('ai_assist_tool_pdf_matches', {
+        count,
+        defaultValue: `${count} match${count === 1 ? '' : 'es'}`,
+      })
+    : t('ai_assist_tool_pdf_no_matches', 'no matches')
+}
+
+/** While a PDF tool runs, its target is whatever its arguments ask for */
+function pdfPendingTarget(name: string, args: any, t: TranslateFn) {
+  switch (name) {
+    case 'view_compiled_pdf_page':
+      return pdfPageTarget(args, undefined)
+    case 'view_compiled_pdf_overview':
+      return pdfOverviewTarget(args, undefined, t)
+    case 'search_compiled_pdf':
+      return pdfQueryTarget(args, undefined)
+    default:
+      return undefined
+  }
+}
+
 export function summarise(
+  call: ToolCallRecord,
+  t: (key: string, opts?: any) => string
+): ToolSummary {
+  const summary = summariseCall(call, t)
+  if (!call || typeof call !== 'object') return summary
+
+  // A connector's call names its server, and says what it was about
+  if (isMcpToolName(call.name)) {
+    return {
+      ...summary,
+      target: humanizeServer(mcpServerSegment(call.name)) || undefined,
+      meta: summary.meta ?? mcpArgSummary(call.args),
+    }
+  }
+  if (call.name === READ_CONNECTOR_RESULT) {
+    const args = (call.args ?? {}) as any
+    return {
+      ...summary,
+      target:
+        args.id != null
+          ? `${args.id}${args.page != null ? ` · page ${args.page}` : ''}`
+          : undefined,
+    }
+  }
+  if (call.name === SEARCH_CONNECTOR_TOOLS) {
+    const query = (call.args as any)?.query
+    return {
+      ...summary,
+      target:
+        typeof query === 'string' && query.trim()
+          ? query.replace(/^select:/, '').trim()
+          : undefined,
+    }
+  }
+  return summary
+}
+
+function summariseCall(
   call: ToolCallRecord,
   t: (key: string, opts?: any) => string
 ): ToolSummary {
@@ -155,6 +341,20 @@ export function summarise(
       case 'get_compile_result':
       case 'get_compile_log':
         return t('ai_assist_tool_get_compile_log', 'Read compile log')
+      case 'view_compiled_pdf_page':
+        return t('ai_assist_tool_view_pdf_page', 'Viewed PDF page')
+      case 'view_compiled_pdf_overview':
+        return t('ai_assist_tool_view_pdf_overview', 'Viewed PDF overview')
+      case 'search_compiled_pdf':
+        return t('ai_assist_tool_search_pdf', 'Searched PDF')
+      case 'resolve_pdf_block':
+        return t('ai_assist_tool_resolve_pdf_block', 'Found PDF block')
+      case 'diff_compiled_pdf':
+        return t('ai_assist_tool_diff_pdf', 'Compared PDF builds')
+      case 'inspect_compiled_style':
+        return t('ai_assist_tool_inspect_pdf_style', 'Checked PDF style')
+      case 'highlight_in_pdf':
+        return t('ai_assist_tool_highlight_pdf', 'Highlighted in PDF')
       case 'get_project_settings':
         return t(
           'ai_assist_tool_get_project_settings',
@@ -188,7 +388,19 @@ export function summarise(
         return t('ai_assist_tool_web_fetch', 'Fetched')
       case 'present_plan':
         return t('ai_assist_tool_present_plan', 'Presented plan')
+      case 'read_connector_result':
+        return t(
+          'ai_assist_tool_read_connector_result',
+          'Read more of a connector result'
+        )
+      case 'search_connector_tools':
+        return t('ai_assist_tool_search_connector_tools', 'Loaded connector tools')
       default:
+        if (call.name.startsWith('mcp__')) {
+          const parts = call.name.split('__')
+          const tool = parts.slice(2).join('__') || parts[1] || call.name
+          return `Called ${tool}`
+        }
         // A call stored before a rename. Its name is the only honest thing we
         // can say about it, so say that rather than mislabelling it.
         return call.name
@@ -217,7 +429,10 @@ export function summarise(
   }
 
   if (!('result' in call)) {
-    return { action: t('ai_assist_tool_running', 'Running…') }
+    return {
+      action: t('ai_assist_tool_running', 'Running…'),
+      target: pdfPendingTarget(call.name, args, t),
+    }
   }
 
   // A web tool that failed still names what it was after
@@ -235,7 +450,8 @@ export function summarise(
     }
   }
 
-  if (call.isError) {
+  // The PDF tools can report a failure as their result, not only as an error
+  if (call.isError || (PDF_TOOLS.has(call.name) && result?.error)) {
     return {
       action: `${getToolBaseAction()} (${t('ai_assist_tool_failed', 'failed')})`,
     }
@@ -331,6 +547,61 @@ export function summarise(
                 defaultValue: `${result?.errorCount ?? 0} errors`,
               }),
       }
+    case 'view_compiled_pdf_page': {
+      const badBoxesCount = Array.isArray(result?.badBoxes)
+        ? result.badBoxes.length
+        : typeof result?.badBoxes === 'number'
+          ? result.badBoxes
+          : 0
+      return {
+        action: t('ai_assist_tool_view_pdf_page', 'Viewed PDF page'),
+        target: pdfPageTarget(args, result),
+        meta: badBoxesCount > 0 ? badBoxesLabel(badBoxesCount, t) : undefined,
+      }
+    }
+    case 'view_compiled_pdf_overview':
+      return {
+        action: t('ai_assist_tool_view_pdf_overview', 'Viewed PDF overview'),
+        target: pdfOverviewTarget(args, result, t),
+        meta: pdfOverviewMeta(result, t),
+      }
+    case 'search_compiled_pdf':
+      return {
+        action: t('ai_assist_tool_search_pdf', 'Searched PDF'),
+        target: pdfQueryTarget(args, result),
+        meta: pdfSearchMeta(result, t),
+      }
+    case 'resolve_pdf_block':
+      return {
+        action: t('ai_assist_tool_resolve_pdf_block', 'Found PDF block'),
+        target:
+          pdfSourceSpan(result?.path, result?.line, result?.endLine) ??
+          (typeof args.block === 'string' ? args.block : undefined),
+      }
+    case 'diff_compiled_pdf':
+      return {
+        action: t('ai_assist_tool_diff_pdf', 'Compared PDF builds'),
+        meta:
+          result?.changed === false
+            ? t('ai_assist_tool_diff_pdf_same', 'no visible change')
+            : undefined,
+      }
+    case 'inspect_compiled_style':
+      return {
+        action: t('ai_assist_tool_inspect_pdf_style', 'Checked PDF style'),
+      }
+    case 'highlight_in_pdf':
+      return {
+        action: t('ai_assist_tool_highlight_pdf', 'Highlighted in PDF'),
+        target: pdfSourceSpan(args.path, args.line, args.endLine),
+        meta:
+          typeof result?.count === 'number'
+            ? t('ai_assist_tool_pdf_areas', {
+                count: result.count,
+                defaultValue: `${result.count} area${result.count === 1 ? '' : 's'}`,
+              })
+            : undefined,
+      }
     case 'get_project_settings':
       return {
         action: t(
@@ -400,8 +671,15 @@ export function summarise(
 export function ToolCallSummaryLine({ call }: { call: ToolCallRecord }) {
   const { t } = useTranslation()
   const openFile = useOpenFileInEditor()
+  // The real connector name once the connectors are known, else the server
+  // name the call's tool name carries
+  const connectorName = useMcpConnectorName(call?.name)
   if (!call) return null
-  const summary = summarise(call, t)
+  const summarised = summarise(call, t)
+  const summary =
+    connectorName && isMcpToolName(call.name)
+      ? { ...summarised, target: connectorName }
+      : summarised
   const diffStats = diffStatsForCall(call)
   // A fetched page is shown with its site's icon, as Claude.ai does
   const pageUrl =
@@ -501,6 +779,7 @@ export function toolCallDetailClass(call: ToolCallRecord, extra = '') {
     extra,
     call?.name === 'web_search' ? 'is-web' : '',
     call?.name === 'web_fetch' ? 'is-web-fetch' : '',
+    isConnectorToolName(call?.name) ? 'is-mcp' : '',
   ]
     .filter(Boolean)
     .join(' ')

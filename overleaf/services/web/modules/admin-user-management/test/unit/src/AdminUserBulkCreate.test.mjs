@@ -103,9 +103,11 @@ vi.mock('../../../../../app/src/Features/User/UserCreator.mjs', () => ({
 
 vi.mock('../../../../../app/src/Features/Authentication/AuthenticationManager.mjs', () => {
   const hashPassword = vi.fn()
+  const validatePassword = vi.fn(() => null)
   return {
     default: {
       hashPassword,
+      validatePassword,
       promises: {
         hashPassword,
       },

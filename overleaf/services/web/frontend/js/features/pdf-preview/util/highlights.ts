@@ -54,7 +54,7 @@ export function buildHighlightElement(
   element.style.top = Math.floor(positions.top) + 'px'
   element.style.width = Math.floor(positions.right - positions.left) + 'px'
   element.style.height = Math.floor(positions.bottom - positions.top) + 'px'
-  element.style.backgroundColor = 'rgb(255,255,0)'
+  element.style.backgroundColor = highlight.color ?? 'rgb(255,255,0)'
   element.style.display = 'inline-block'
   element.style.scrollMargin = '72px'
   element.style.pointerEvents = 'none'

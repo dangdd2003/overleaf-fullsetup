@@ -1,0 +1,474 @@
+// Connectors section in Account Settings (AI Assist).
+//
+// The widget sits on the shared `settings-widget-container` grid
+// (icon | text | actions, see account-settings.scss). The list spans the
+// text and action columns so each row lines up with the description.
+// Colours come from the theme-aware `-themed` variables, so light and dark
+// mode need no overrides here.
+
+.linking-ai-assist-connectors {
+  margin-top: var(--spacing-06);
+}
+
+.connectors-widget {
+  > .connectors-widget-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    flex-wrap: nowrap;
+    justify-content: flex-end;
+    gap: var(--spacing-03);
+    padding-right: 0;
+
+    @media (max-width: 767.98px) {
+      flex-wrap: wrap;
+      justify-content: flex-start;
+    }
+  }
+
+  > .connectors-widget-body {
+    grid-column: 2 / -1;
+    min-width: 0;
+    padding-right: 0;
+
+    @media (max-width: 767.98px) {
+      grid-column: auto;
+    }
+  }
+
+  .connectors-status {
+    margin-bottom: var(--spacing-02);
+  }
+
+  .connectors-loading {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-02);
+    color: var(--content-secondary-themed);
+  }
+
+  .connectors-empty {
+    padding: var(--spacing-04);
+    border: 1px dashed var(--border-divider-themed);
+    border-radius: var(--border-radius-base);
+    color: var(--content-secondary-themed);
+  }
+}
+
+// List of connector rows
+
+.connectors-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-03);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+
+  > li {
+    list-style: none;
+  }
+}
+
+.connector-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-02);
+  padding: var(--spacing-03) var(--spacing-04);
+  border: 1px solid var(--border-divider-themed);
+  border-radius: var(--border-radius-base);
+  background: var(--bg-primary-themed);
+}
+
+.connector-card-main {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--spacing-03);
+
+  @media (max-width: 575.98px) {
+    grid-template-columns: 32px minmax(0, 1fr);
+  }
+}
+
+.connector-card-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--border-radius-base);
+  background: var(--bg-tertiary-themed);
+  color: var(--content-secondary-themed);
+  align-self: start;
+
+  .material-symbols {
+    font-size: 20px;
+  }
+}
+
+.connector-card-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.connector-card-name-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--spacing-03);
+  min-width: 0;
+}
+
+.connector-card-name {
+  font-weight: 600;
+  color: var(--content-primary-themed);
+  overflow-wrap: anywhere;
+}
+
+.connector-card-url {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-family-monospace, monospace);
+  font-size: 12px;
+  color: var(--content-secondary-themed);
+}
+
+.connector-card-meta {
+  color: var(--content-secondary-themed);
+}
+
+.connector-card-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--spacing-03);
+
+  .form-switch {
+    margin: 0;
+    padding-left: 0;
+    display: flex;
+    align-items: center;
+  }
+
+  .form-check-input {
+    margin: 0;
+    float: none;
+  }
+
+  @media (max-width: 575.98px) {
+    grid-column: 2 / -1;
+    justify-content: flex-start;
+  }
+}
+
+.connector-card-menu-toggle {
+  // Borderless icon button, as Overleaf's own row action menus
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--border-radius-base);
+  background: transparent;
+  color: var(--content-secondary-themed);
+  cursor: pointer;
+
+  &:hover,
+  &:focus-visible,
+  &[aria-expanded='true'] {
+    background: var(--bg-secondary-themed);
+    color: var(--content-primary-themed);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--border-active-themed, var(--bs-focus-ring-color));
+    outline-offset: 1px;
+  }
+
+  .material-symbols {
+    font-size: 20px;
+  }
+}
+
+.connector-card-testing {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-02);
+}
+
+.connector-card-error {
+  margin-left: 44px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--content-danger-themed);
+  overflow-wrap: anywhere;
+
+  @media (max-width: 575.98px) {
+    margin-left: 0;
+  }
+}
+
+// Probe results in the connector modal
+
+.connector-url-row {
+  display: flex;
+  align-items: stretch;
+  gap: var(--spacing-02);
+
+  > .form-control {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  @media (max-width: 575.98px) {
+    flex-direction: column;
+  }
+}
+
+.connector-modal-probe-results {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-02);
+  margin-top: var(--spacing-03);
+  padding: var(--spacing-03);
+  border: 1px solid var(--border-divider-themed);
+  border-radius: var(--border-radius-base);
+  background-color: var(--bg-secondary-themed);
+  color: var(--content-primary-themed);
+}
+
+.connector-probe-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-02);
+  font-size: 13px;
+}
+
+.connector-probe-meta {
+  font-size: 12px;
+  color: var(--content-secondary-themed);
+}
+
+.connector-probe-issuer {
+  max-width: 280px;
+}
+
+// Advanced settings and OAuth client
+
+.connector-advanced-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-01);
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--content-primary-themed);
+  font-size: var(--font-size-02);
+  font-weight: 600;
+  cursor: pointer;
+
+  &:hover {
+    color: var(--content-secondary-themed);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--border-active-themed);
+    outline-offset: 2px;
+    border-radius: var(--border-radius-base);
+  }
+}
+
+.connector-advanced-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-04);
+  margin-top: var(--spacing-03);
+  padding-top: var(--spacing-03);
+  border-top: 1px solid var(--border-divider-themed);
+}
+
+.connector-custom-client {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-03);
+  padding: var(--spacing-03);
+  border: 1px solid var(--border-divider-themed);
+  border-radius: var(--border-radius-base);
+  background-color: var(--bg-secondary-themed);
+}
+
+.connector-secret-row {
+  display: flex;
+  align-items: stretch;
+  gap: var(--spacing-02);
+
+  > .form-control {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+}
+
+.connector-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-02);
+  margin-bottom: var(--spacing-02);
+
+  > .form-label {
+    margin-bottom: 0;
+  }
+}
+
+// Request headers
+
+.connector-headers-table {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-02);
+}
+
+.connector-header-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacing-02);
+}
+
+.connector-header-name {
+  flex: 1 1 160px;
+  min-width: 0;
+  max-width: 220px;
+}
+
+.connector-header-value {
+  flex: 2 1 200px;
+  min-width: 0;
+}
+
+// Tool permissions modal
+
+.tool-permissions-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--spacing-03);
+  margin-bottom: var(--spacing-04);
+}
+
+.tool-permissions-search {
+  flex: 1 1 200px;
+  max-width: 320px;
+}
+
+.tool-permissions-batch-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--spacing-02);
+}
+
+.tool-permissions-group {
+  margin-bottom: var(--spacing-04);
+
+  &:last-child {
+    margin-bottom: 0;
+  }
+}
+
+.tool-permissions-group-title {
+  margin-bottom: var(--spacing-02);
+  padding-bottom: var(--spacing-01);
+  border-bottom: 1px solid var(--border-divider-themed);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--content-secondary-themed);
+}
+
+.tool-permissions-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-02);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tool-permissions-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-03);
+  padding: var(--spacing-03);
+  border: 1px solid var(--border-divider-themed);
+  border-radius: var(--border-radius-base);
+  background-color: var(--bg-secondary-themed);
+
+  @media (max-width: 575.98px) {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+.tool-permissions-details {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.tool-permissions-name-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--spacing-02);
+}
+
+.tool-permissions-name {
+  font-family: var(--font-family-monospace, monospace);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--content-primary-themed);
+  overflow-wrap: anywhere;
+}
+
+.tool-permissions-title {
+  font-size: 12px;
+  color: var(--content-secondary-themed);
+}
+
+.tool-permissions-desc {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--content-secondary-themed);
+}
+
+.tool-permissions-control {
+  flex-shrink: 0;
+  width: 170px;
+
+  @media (max-width: 575.98px) {
+    width: 100%;
+  }
+}
+
+.tool-permissions-empty {
+  padding: var(--spacing-04) 0;
+  text-align: center;
+  color: var(--content-secondary-themed);
+}

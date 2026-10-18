@@ -3,6 +3,7 @@ import { TranscriptEntry } from '../agent-messages'
 import { ProviderSettings, WebSearchSettings } from '../../providers/types'
 import { prepareTranscriptForRun } from '../conversation-store'
 import { AgentMode } from '../agent-mode'
+import { SlashCommandInvocation } from '../slash-commands/types'
 import customLocalStorage from '@/infrastructure/local-storage'
 import getMeta from '@/utils/meta'
 
@@ -111,6 +112,7 @@ export async function startBackgroundRun({
   mode = 'manual',
   chatId,
   webSearchSettings,
+  connectorIds,
   trackActive = true,
 }: {
   projectId: string
@@ -119,6 +121,7 @@ export async function startBackgroundRun({
   mode?: AgentMode
   chatId?: string
   webSearchSettings?: WebSearchSettings | null
+  connectorIds?: string[]
   /**
    * Whether this is the run of the chat on screen, which a reload reconnects
    * to. A run started for a chat already left is recorded as detached instead.
@@ -138,6 +141,7 @@ export async function startBackgroundRun({
       mode,
       ...(chatId ? { chatId } : {}),
       ...(webSearchSettings ? { webSearchSettings } : {}),
+      ...(connectorIds ? { connectorIds } : {}),
     }),
   })
   if (!res.ok) {
@@ -290,6 +294,8 @@ export async function submitBackgroundCompile(
     errors: unknown[]
     warnings: unknown[]
     rawLog?: string | null
+    buildId?: string | null
+    clsiServerId?: string | null
   }
 ): Promise<void> {
   const rawLog = outcome.rawLog
@@ -307,7 +313,12 @@ export async function submitBackgroundCompile(
 
 export async function approveBackgroundEdit(
   runId: string,
-  decision: { accepted: boolean; note?: string; nextMode?: AgentMode }
+  decision: {
+    accepted: boolean
+    always?: boolean
+    note?: string
+    nextMode?: AgentMode
+  }
 ): Promise<void> {
   await fetch(`/ai-assist/runs/${runId}/approve`, {
     method: 'POST',
@@ -350,7 +361,13 @@ export async function setBackgroundRunMode(
 export async function sendBackgroundRunMessage(
   projectId: string,
   runId: string,
-  message: { id: string; text: string; contextText?: string }
+  message: {
+    id: string
+    text: string
+    contextText?: string
+    commandText?: string
+    command?: SlashCommandInvocation
+  }
 ): Promise<boolean> {
   const res = await fetch(
     `/ai-assist/projects/${projectId}/runs/${runId}/message`,

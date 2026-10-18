@@ -1,3 +1,4 @@
+import { Project } from '../../../../../app/src/models/Project.mjs'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import OwnershipTransferHandler from '../../../../../app/src/Features/Collaborators/OwnershipTransferHandler.mjs'
 import SessionManager from '../../../../../app/src/Features/Authentication/SessionManager.mjs'
@@ -132,6 +133,7 @@ vi.mock('../../../../../app/src/models/Project.mjs', () => ({
   Project: {
     find: vi.fn(),
     countDocuments: vi.fn(),
+    exists: vi.fn().mockResolvedValue(true),
   },
 }))
 
@@ -175,6 +177,8 @@ describe('AdminUserProjectsTransfer Controller', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    // The project really belongs to the path user, as the controller now checks
+    Project.exists.mockResolvedValue(true)
 
     SessionManager.getLoggedInUserId.mockReturnValue(adminCallerId)
 
@@ -258,6 +262,7 @@ describe('AdminUserProjectsTransfer Controller', () => {
         toUserId,
         {
           fromUserId,
+          sessionUserId: '507f1f77bcf86cd799439044',
           allowTransferToNonCollaborators: true,
           ipAddress: '127.0.0.1',
         }
@@ -284,6 +289,7 @@ describe('AdminUserProjectsTransfer Controller', () => {
         toUserId,
         {
           fromUserId,
+          sessionUserId: '507f1f77bcf86cd799439044',
           allowTransferToNonCollaborators: true,
           ipAddress: '127.0.0.1',
         }

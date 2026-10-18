@@ -5,21 +5,23 @@ import { runJobInline } from './jobs.mjs'
 import { webError } from '../util.mjs'
 
 const WORKER_SCRIPT = fileURLToPath(new URL('./worker.mjs', import.meta.url))
-const DEFAULT_WORKER_COUNT = parseInt(
-  process.env.AI_ASSIST_WEB_EXTRACT_WORKERS ?? '2',
-  10
-)
+const DEFAULT_WORKER_COUNT = 2
 export const JOB_TIMEOUT_MS = 20_000
 /** Extra time per million characters or bytes, so a large document is never cut off. */
 const JOB_TIME_PER_MB_MS = 10_000
 /**
- * A worker may use half the machine's memory: enough for any document the
- * machine can hold, while a runaway job still dies alone, not with the web
- * process.
+ * Jobs waiting for a worker. Past this a read is refused rather than queued:
+ * a job whose read has already timed out would otherwise hold memory until it ran.
+ */
+export const MAX_QUEUED_JOBS = 32
+/**
+ * Each worker may use a quarter of the machine's memory, so the default two
+ * together stay within half of it, and a runaway job dies alone, not with the
+ * web process.
  */
 const WORKER_HEAP_MB = Math.max(
   512,
-  Math.floor(os.totalmem() / 2 / 1024 / 1024)
+  Math.floor(os.totalmem() / 4 / 1024 / 1024)
 )
 
 /** How long a job may run: a stall guard that grows with the job's input. */
@@ -33,14 +35,17 @@ export class ExtractWorkerPool {
     workerCount = DEFAULT_WORKER_COUNT,
     jobTimeoutMs = JOB_TIMEOUT_MS,
     workerScript = WORKER_SCRIPT,
+    maxQueued = MAX_QUEUED_JOBS,
   } = {}) {
     this.workerCount = workerCount
     this.jobTimeoutMs = jobTimeoutMs
     this.workerScript = workerScript
+    this.maxQueued = maxQueued
     this.workers = []
     this.idleWorkers = []
     this.queue = []
     this.nextJobId = 1
+    this.closed = false
     this.activeJobs = new Map() // worker -> { jobId, timeout, resolve, reject, job }
 
     if (this.workerCount > 0) {
@@ -91,11 +96,25 @@ export class ExtractWorkerPool {
         )
       }
       this._removeWorker(worker)
-      if (this.workerCount > 0) this._spawnWorker()
+      // Jobs still queued must not wait for a worker that may never come
+      this._drainQueue()
     })
 
     worker.on('exit', () => {
+      // A worker that exits mid-job answers that job now, not at its timeout
+      const active = this.activeJobs.get(worker)
+      if (active) {
+        clearTimeout(active.timeout)
+        this.activeJobs.delete(worker)
+        active.reject(
+          webError(
+            `${active.job.url || 'Page'} could not be parsed: the worker stopped.`,
+            { kind: 'content' }
+          )
+        )
+      }
       this._removeWorker(worker)
+      this._drainQueue()
     })
 
     this.workers.push(worker)
@@ -110,7 +129,13 @@ export class ExtractWorkerPool {
   }
 
   _drainQueue() {
-    if (this.idleWorkers.length === 0 || this.queue.length === 0) return
+    if (this.closed || this.queue.length === 0) return
+    if (this.idleWorkers.length === 0) {
+      // A worker is replaced only when a job needs one: a worker script that
+      // dies on start-up must not respawn in a loop
+      if (this.workers.length >= this.workerCount) return
+      this._spawnWorker()
+    }
     const worker = this.idleWorkers.pop()
     const task = this.queue.shift()
 
@@ -124,10 +149,7 @@ export class ExtractWorkerPool {
         )
         worker.terminate()
         this._removeWorker(worker)
-        if (this.workerCount > 0) {
-          this._spawnWorker()
-          this._drainQueue()
-        }
+        this._drainQueue()
       },
       jobTimeoutFor(task.job, this.jobTimeoutMs)
     )
@@ -144,7 +166,27 @@ export class ExtractWorkerPool {
   }
 
   async runJob(job) {
-    if (this.workerCount <= 0) return runJobInline(job)
+    if (this.workerCount <= 0) {
+      // PDF bytes come from the web and pdf.js parses them: never on the web
+      // process's own thread, which only a worker may do
+      if (job.kind === 'pdf') {
+        throw webError('PDFs are read in a worker thread, not in this process.', {
+          kind: 'content',
+        })
+      }
+      return runJobInline(job)
+    }
+    if (this.closed) {
+      throw webError('Worker pool stopped', { kind: 'content' })
+    }
+    // Refused as a network fault: the read moves on, and the page can be read
+    // again once the queue has drained
+    if (this.queue.length >= this.maxQueued) {
+      throw webError(
+        'Too many pages are being read at the same time. Try again in a moment.',
+        { kind: 'network' }
+      )
+    }
 
     return new Promise((resolve, reject) => {
       const jobId = this.nextJobId++
@@ -154,11 +196,16 @@ export class ExtractWorkerPool {
   }
 
   async destroy() {
+    this.closed = true
     for (const [, active] of this.activeJobs) {
       clearTimeout(active.timeout)
       active.reject(webError('Worker pool stopped', { kind: 'content' }))
     }
     this.activeJobs.clear()
+    // Queued jobs get the same answer: their callers are waiting on them
+    for (const task of this.queue) {
+      task.reject(webError('Worker pool stopped', { kind: 'content' }))
+    }
     this.queue = []
     await Promise.all(this.workers.map(w => w.terminate()))
     this.workers = []

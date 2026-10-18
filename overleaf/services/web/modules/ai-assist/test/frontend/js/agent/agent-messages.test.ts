@@ -1,4 +1,5 @@
 import { expect } from 'chai'
+import { AgentMessage } from '../../../../frontend/js/features/ai-assist/providers/types'
 import {
   TranscriptEntry,
   toAgentMessages,
@@ -93,4 +94,69 @@ describe('toAgentMessages', function () {
       { role: 'user', content: 'go' },
     ])
   })
+
+  it('preserves images on user transcript entries when calling toAgentMessages', function () {
+    const entry: TranscriptEntry = {
+      id: 'u1',
+      role: 'user',
+      text: 'Analyze this photo',
+      images: [{ mediaType: 'image/png', data: 'base64...' }],
+    }
+    const messages = toAgentMessages([entry])
+    expect((messages[0] as Extract<AgentMessage, { role: 'user' }>).images).to.deep.equal([
+      { mediaType: 'image/png', data: 'base64...' },
+    ])
+  })
+
+  it('omits images property on user message when entry has no images', function () {
+    const entry: TranscriptEntry = {
+      id: 'u1',
+      role: 'user',
+      text: 'No images here',
+    }
+    const messages = toAgentMessages([entry])
+    expect((messages[0] as Extract<AgentMessage, { role: 'user' }>).images).to.be.undefined
+  })
 })
+
+describe('toAgentMessages with a slash command', function () {
+  const frozen = {
+    id: 'u1',
+    role: 'user' as const,
+    contextText: 'CTX',
+    command: { id: 'fix' as const, args: '' },
+    commandText: '<command name="fix" scope="edit">\n</command>',
+  }
+
+  it('joins context, command block and words in that order', function () {
+    const messages = toAgentMessages([{ ...frozen, text: 'the table' }])
+    expect(messages[0].content).to.equal(
+      'CTX\n\n<command name="fix" scope="edit">\n</command>\n\nthe table'
+    )
+  })
+
+  it('leaves no blank part when the command has no words', function () {
+    const messages = toAgentMessages([{ ...frozen, text: '' }])
+    expect(messages[0].content).to.equal(
+      'CTX\n\n<command name="fix" scope="edit">\n</command>'
+    )
+  })
+
+  it('joins the command block alone when there is no context', function () {
+    const messages = toAgentMessages([
+      { ...frozen, contextText: undefined, text: 'words' },
+    ])
+    expect(messages[0].content).to.equal(
+      '<command name="fix" scope="edit">\n</command>\n\nwords'
+    )
+  })
+
+  it('keeps an older entry byte-identical to the context-and-text join', function () {
+    const messages = toAgentMessages([
+      { id: 'u1', role: 'user', contextText: 'CTX', text: '' },
+      { id: 'u2', role: 'user', text: 'plain' },
+    ])
+    expect(messages.map(m => m.content)).to.deep.equal(['CTX\n\n', 'plain'])
+  })
+})
+

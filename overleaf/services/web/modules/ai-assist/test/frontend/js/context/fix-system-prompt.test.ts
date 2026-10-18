@@ -30,6 +30,23 @@ describe('FIX_SYSTEM_PROMPT', function () {
     expect(FIX_SYSTEM_PROMPT).to.match(/before you reach\s+for a tool/)
   })
 
+  it('teaches the failures LaTeX reports away from their cause', function () {
+    expect(FIX_SYSTEM_PROMPT).to.match(/Cascades:/)
+    expect(FIX_SYSTEM_PROMPT).to.match(/Missing `\.sty` or `\.cls`/)
+    expect(FIX_SYSTEM_PROMPT).to.match(/Missing file:/)
+    expect(FIX_SYSTEM_PROMPT).to.match(/Bibliography:/)
+    expect(FIX_SYSTEM_PROMPT).to.match(/Never invent a key/)
+  })
+
+  // The run offers only edit, read, search and compile-log tools (see
+  // fix-run.ts): the prompt must not describe tools it does not have.
+  it('names no PDF or web tools in the base prompt', function () {
+    expect(FIX_SYSTEM_PROMPT).to.not.match(/compiled_pdf|highlight_in_pdf/)
+    expect(FIX_SYSTEM_PROMPT).to.not.match(/web_search|web_fetch/)
+    expect(FIX_SYSTEM_PROMPT).to.not.contain('compile_project')
+    expect(FIX_SYSTEM_PROMPT).to.not.contain('create_file')
+  })
+
   it('keeps the rules that stop a dead-end answer', function () {
     expect(FIX_SYSTEM_PROMPT).to.match(/no reply box/i)
     expect(FIX_SYSTEM_PROMPT).to.match(/Never ask a question/)
@@ -98,6 +115,12 @@ describe('fixSystemPromptFor', function () {
     expect(FIX_WEB_PROMPT).to.include('This is one fix, not research.')
     for (const text of [FIX_WEB_PROMPT, FIX_FETCH_PROMPT]) {
       expect(text).not.to.match(/ctan|stackexchange|github|https?:\/\//i)
+    }
+  })
+
+  it('tells the fix to look up a name rather than guess it', function () {
+    for (const text of [FIX_WEB_PROMPT, FIX_FETCH_PROMPT]) {
+      expect(text).to.match(/otherwise guess a package, option or command name/)
     }
   })
 })

@@ -2,7 +2,7 @@ import { expect } from 'chai'
 import sinon from 'sinon'
 import React from 'react'
 import { render, cleanup } from '@testing-library/react'
-import { EditorState } from '@codemirror/state'
+import { EditorState, EditorSelection } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { CodeMirrorViewContext } from '@/features/source-editor/components/codemirror-context'
 import { EditorOpenDocContext } from '@/features/ide-react/context/editor-open-doc-context'
@@ -27,7 +27,10 @@ describe('ApplyFixListener', function () {
     container = document.createElement('div')
     document.body.appendChild(container)
 
-    const state = EditorState.create({ doc: docText })
+    const state = EditorState.create({
+      doc: docText,
+      extensions: [EditorState.allowMultipleSelections.of(true)],
+    })
     view = new EditorView({ state, parent: container })
 
     window.metaAttributesCache.set('ol-aiAssistEnabled', true)
@@ -50,6 +53,7 @@ describe('ApplyFixListener', function () {
     )
   }
 
+  // Every edit names its document, as the agent's edits do
   function dispatchApplyEdit(detail: any): Promise<string> {
     return new Promise(resolve => {
       const onResult = (e: Event) => {
@@ -57,7 +61,11 @@ describe('ApplyFixListener', function () {
         resolve((e as CustomEvent).detail?.status)
       }
       window.addEventListener('aiAssist:agentApplyEditResult', onResult)
-      window.dispatchEvent(new CustomEvent('aiAssist:agentApplyEdit', { detail }))
+      window.dispatchEvent(
+        new CustomEvent('aiAssist:agentApplyEdit', {
+          detail: { path: 'main.tex', ...detail },
+        })
+      )
     })
   }
 
@@ -102,6 +110,19 @@ describe('ApplyFixListener', function () {
     expect(result).to.not.equal(null)
     expect(result.text).to.equal(null)
     expect(result.error).to.equal('pathMismatch')
+  })
+
+  it('refuses an edit that names no document instead of editing the open one', async function () {
+    setupEditor('line 1\nline 2\n')
+
+    const status = await dispatchApplyEdit({
+      path: '',
+      oldText: 'line 1',
+      replacement: 'changed',
+    })
+
+    expect(status).to.equal('pathMismatch')
+    expect(view.state.doc.toString()).to.equal('line 1\nline 2\n')
   })
 
   it('appends text to a document without trailing newline by prepending a newline', async function () {
@@ -1064,5 +1085,85 @@ describe('ApplyFixListener', function () {
       expect(isRangeInViewport(mockView, 20, 30)).to.equal(true)
       expect(isRangeInViewport(mockView, 60, 70)).to.equal(false)
     })
+  })
+
+  it('dispatches aiAssist:selectionChanged with classified scope when text is selected', function (done) {
+    const docText = [
+      '\\documentclass{article}',
+      '\\begin{document}',
+      '\\begin{tabular}{ll}',
+      'A & B \\\\',
+      '\\end{tabular}',
+      '\\end{document}',
+    ].join('\n')
+    setupEditor(docText)
+
+    const from = docText.indexOf('\\begin{tabular}')
+    const to = docText.indexOf('\\end{tabular}') + '\\end{tabular}'.length
+    view.dispatch({
+      selection: { anchor: from, head: to },
+    })
+
+    const listener = (event: Event) => {
+      const detail = (event as CustomEvent).detail
+      if (detail && detail.scope) {
+        window.removeEventListener('aiAssist:selectionChanged', listener)
+        try {
+          expect(detail.scope.kind).to.equal('table')
+          expect(detail.scope.env).to.equal('tabular')
+          expect(detail.text).to.include('\\begin{tabular}')
+          done()
+        } catch (err) {
+          done(err)
+        }
+      }
+    }
+    window.addEventListener('aiAssist:selectionChanged', listener)
+
+    window.dispatchEvent(new CustomEvent('aiAssist:announceSelection'))
+  })
+
+  it('dispatches aiAssist:selectionChanged with multiple ranges when multiple code parts are highlighted', function (done) {
+    const docText = [
+      'line 1: preamble',
+      'line 2: first highlight',
+      'line 3: middle content',
+      'line 4: second highlight',
+      'line 5: end',
+    ].join('\n')
+    setupEditor(docText)
+
+    const from1 = docText.indexOf('first highlight')
+    const to1 = from1 + 'first highlight'.length
+    const from2 = docText.indexOf('second highlight')
+    const to2 = from2 + 'second highlight'.length
+
+    view.dispatch({
+      selection: EditorSelection.create([
+        EditorSelection.range(from1, to1),
+        EditorSelection.range(from2, to2),
+      ]),
+    })
+
+    const listener = (event: Event) => {
+      const detail = (event as CustomEvent).detail
+      if (detail && detail.ranges && detail.ranges.length === 2) {
+        window.removeEventListener('aiAssist:selectionChanged', listener)
+        try {
+          expect(detail.ranges[0].text).to.equal('first highlight')
+          expect(detail.ranges[0].from).to.equal(2)
+          expect(detail.ranges[0].to).to.equal(2)
+          expect(detail.ranges[1].text).to.equal('second highlight')
+          expect(detail.ranges[1].from).to.equal(4)
+          expect(detail.ranges[1].to).to.equal(4)
+          expect(detail.text).to.equal('first highlight\n\nsecond highlight')
+          done()
+        } catch (err) {
+          done(err)
+        }
+      }
+    }
+    window.addEventListener('aiAssist:selectionChanged', listener)
+    window.dispatchEvent(new CustomEvent('aiAssist:announceSelection'))
   })
 })

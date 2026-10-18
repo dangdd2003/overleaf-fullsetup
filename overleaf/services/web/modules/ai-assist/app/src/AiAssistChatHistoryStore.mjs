@@ -4,6 +4,9 @@ import crypto from 'node:crypto'
 import Settings from '@overleaf/settings'
 import './ModuleSettings.mjs'
 import { normalizeMode } from './AiAssistModePolicy.mjs'
+import { deleteChatCheckpoints } from './AiAssistCheckpointStore.mjs'
+import { withAiAssistFileLock } from './AiAssistFileLock.mjs'
+import logger from '@overleaf/logger'
 
 // One JSON file per conversation, grouped like clsi's compiles/output dirs:
 //   <chatHistoryDir>/<projectId>-<userId>/<chatId>.json
@@ -350,27 +353,46 @@ export function dropRepeatedEntries(transcript) {
 
 // Every write to a chat's file reads it, merges and renames over it. Two of
 // them interleaving (the panel's save, the run's own save, a generated title)
-// would let the later rename drop what the earlier one wrote, so writes to
-// one file wait their turn (within this process). Different chats still write in parallel.
-const fileLocks = new Map()
-
-function withFileLock(file, task) {
-  const previous = fileLocks.get(file) || Promise.resolve()
-  const next = previous.catch(() => {}).then(task)
-  const tail = next.catch(() => {})
-  fileLocks.set(file, tail)
-  tail.then(() => {
-    if (fileLocks.get(file) === tail) fileLocks.delete(file)
-  })
-  return next
+// Mutations of a project's chats (and its index file) queue per directory, here
+// and across web processes, so the index never misses an update.
+function withDirLock(dir, task) {
+  return withAiAssistFileLock(dir, task)
 }
 
-async function writeChat(file, chat) {
+const INDEX_FILE = '_index.json'
+
+/**
+ * The most chats a user keeps across all their projects. Past it, the least
+ * recently updated are removed when a new chat is saved.
+ */
+export const MAX_CHATS_PER_USER = 200
+
+/** The lightweight entry a chat keeps in its project's index, and listChats returns. */
+function summaryOf(chat) {
+  const transcript = Array.isArray(chat.transcript) ? chat.transcript : []
+  return {
+    id: chat.id,
+    title: chat.title,
+    titleGenerated: Boolean(chat.titleGenerated),
+    mode: normalizeMode(chat.mode),
+    createdAt: chat.createdAt,
+    updatedAt: chat.updatedAt,
+    messageCount: transcript.length,
+    totalSteps: chat.stats?.totalSteps ?? countSteps(transcript),
+    durationMs: chat.stats?.durationMs ?? totalDuration(transcript),
+  }
+}
+
+async function writeJsonAtomic(file, data) {
   await fs.mkdir(Path.dirname(file), { recursive: true })
   // Write-then-rename so a crash mid-write never leaves a truncated file.
   const tmp = `${file}.${crypto.randomBytes(6).toString('hex')}.tmp`
-  await fs.writeFile(tmp, JSON.stringify(chat, null, 2))
+  await fs.writeFile(tmp, JSON.stringify(data, null, 2))
   await fs.rename(tmp, file)
+}
+
+async function writeChat(file, chat) {
+  await writeJsonAtomic(file, chat)
 }
 
 async function readChat(file) {
@@ -382,40 +404,169 @@ async function readChat(file) {
   }
 }
 
-async function listChats(projectId, userId) {
-  const dir = dirFor(projectId, userId)
-  let names
+/** The chat files of a directory (not its index), by name. */
+async function chatFileNames(dir) {
   try {
-    names = await fs.readdir(dir)
+    const names = await fs.readdir(dir)
+    return names.filter(name => name.endsWith('.json') && name !== INDEX_FILE)
   } catch (err) {
     if (err.code === 'ENOENT') return []
     throw err
   }
-  // Read in parallel: a project with many chats opens its history in the
-  // time of the slowest file, not the sum of them all
-  const loaded = await Promise.all(
-    names
-      .filter(name => name.endsWith('.json'))
-      // a corrupt file must not hide the rest of the history
-      .map(name => readChat(Path.join(dir, name)).catch(() => null))
-  )
-  const chats = []
-  for (const chat of loaded) {
-    if (!chat?.id) continue
-    const transcript = Array.isArray(chat.transcript) ? chat.transcript : []
-    chats.push({
-      id: chat.id,
-      title: chat.title,
-      titleGenerated: Boolean(chat.titleGenerated),
-      mode: normalizeMode(chat.mode),
-      createdAt: chat.createdAt,
-      updatedAt: chat.updatedAt,
-      messageCount: transcript.length,
-      totalSteps: chat.stats?.totalSteps ?? countSteps(transcript),
-      durationMs: chat.stats?.durationMs ?? totalDuration(transcript),
-    })
+}
+
+/** The index as stored, or null when it is missing or unreadable. */
+async function readIndexFile(dir) {
+  try {
+    const index = JSON.parse(
+      await fs.readFile(Path.join(dir, INDEX_FILE), 'utf8')
+    )
+    return index && typeof index.chats === 'object' && index.chats ? index : null
+  } catch {
+    return null
   }
-  return chats.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+}
+
+/** Builds the index from the chat files: the only time a transcript is read. */
+async function rebuildIndex(dir) {
+  // Read a few at a time: a project with many chats must not open them all at once
+  const names = await chatFileNames(dir)
+  const chats = {}
+  for (let i = 0; i < names.length; i += INDEX_READ_CONCURRENCY) {
+    const batch = await Promise.all(
+      names
+        .slice(i, i + INDEX_READ_CONCURRENCY)
+        .map(name => readChat(Path.join(dir, name)).catch(() => null))
+    )
+    for (const chat of batch) {
+      if (chat?.id) chats[chat.id] = summaryOf(chat)
+    }
+  }
+  return { version: 1, chats }
+}
+
+const INDEX_READ_CONCURRENCY = 8
+
+/**
+ * The index of a project directory. Read without a lock when it exists; when
+ * it is missing it is rebuilt under the directory's lock and kept.
+ */
+async function indexFor(dir) {
+  const existing = await readIndexFile(dir)
+  if (existing) return existing
+  return withDirLock(dir, async () => {
+    const again = await readIndexFile(dir)
+    if (again) return again
+    const rebuilt = await rebuildIndex(dir)
+    if (Object.keys(rebuilt.chats).length > 0) {
+      await writeJsonAtomic(Path.join(dir, INDEX_FILE), rebuilt)
+    }
+    return rebuilt
+  })
+}
+
+/** Sets (or, with a null summary, removes) one chat's entry. Call under the directory's lock. */
+async function setIndexEntry(dir, id, summary) {
+  const index = (await readIndexFile(dir)) ?? (await rebuildIndex(dir))
+  if (summary) index.chats[id] = summary
+  else delete index.chats[id]
+  await writeJsonAtomic(Path.join(dir, INDEX_FILE), index)
+}
+
+function newestFirst(a, b) {
+  const byTime = (b.updatedAt || 0) - (a.updatedAt || 0)
+  if (byTime !== 0) return byTime
+  return a.id < b.id ? 1 : a.id > b.id ? -1 : 0
+}
+
+/** A page cursor names the last chat returned: `updatedAt|id`. */
+const CURSOR = /^(\d{1,16})\|([A-Za-z0-9_-]{1,64})$/
+
+export function isValidChatCursor(cursor) {
+  return typeof cursor === 'string' && CURSOR.test(cursor)
+}
+
+/**
+ * One page of a project's chats, newest first, from the index: no transcript
+ * is read. `nextCursor` is null when this page is the last.
+ */
+async function listChatPage(
+  projectId,
+  userId,
+  { cursor = null, limit = MAX_CHATS_PER_USER } = {}
+) {
+  const dir = dirFor(projectId, userId)
+  const index = await indexFor(dir)
+  const sorted = Object.values(index.chats).sort(newestFirst)
+  let start = 0
+  const match = cursor ? CURSOR.exec(cursor) : null
+  if (match) {
+    const after = { updatedAt: Number(match[1]), id: match[2] }
+    // Everything sorting after the cursor's chat
+    start = sorted.findIndex(
+      chat =>
+        (chat.updatedAt || 0) < after.updatedAt ||
+        ((chat.updatedAt || 0) === after.updatedAt && chat.id < after.id)
+    )
+    if (start === -1) start = sorted.length
+  }
+  const size = Math.max(1, Math.min(Number(limit) || MAX_CHATS_PER_USER, MAX_CHATS_PER_USER))
+  const chats = sorted.slice(start, start + size)
+  const more = start + size < sorted.length
+  const last = chats[chats.length - 1]
+  return {
+    chats,
+    nextCursor:
+      more && last ? `${last.updatedAt || 0}|${last.id}` : null,
+  }
+}
+
+/** Every chat of the user, not only the one project's: for the per-user cap. */
+async function userChatDirs(userId) {
+  let names
+  try {
+    names = await fs.readdir(baseDir())
+  } catch (err) {
+    if (err.code === 'ENOENT') return []
+    throw err
+  }
+  const ownDir = new RegExp(`^([0-9a-f]{24})-${userId}$`, 'i')
+  return names
+    .map(name => ({ name, match: ownDir.exec(name) }))
+    .filter(({ match }) => match)
+    .map(({ name, match }) => ({
+      dir: Path.join(baseDir(), name),
+      projectId: match[1],
+    }))
+}
+
+/**
+ * Keeps the user to MAX_CHATS_PER_USER chats: the least recently updated are
+ * removed (with their checkpoints). Runs after the save that made the excess,
+ * outside its lock, since it touches other projects' directories too.
+ */
+async function enforceChatCap(userId, keep) {
+  const entries = []
+  for (const { dir, projectId } of await userChatDirs(userId)) {
+    const index = await indexFor(dir)
+    for (const chat of Object.values(index.chats)) {
+      entries.push({ projectId, chatId: chat.id, updatedAt: chat.updatedAt || 0 })
+    }
+  }
+  const excess = entries.length - MAX_CHATS_PER_USER
+  if (excess <= 0) return
+  const victims = entries
+    .filter(
+      entry =>
+        !(entry.projectId === keep.projectId && entry.chatId === keep.chatId)
+    )
+    .sort((a, b) => a.updatedAt - b.updatedAt)
+    .slice(0, excess)
+  for (const victim of victims) {
+    await deleteChat(victim.projectId, userId, victim.chatId).catch(err =>
+      logger.warn({ err }, '[AiAssist] could not evict an old chat')
+    )
+  }
 }
 
 async function getChat(projectId, userId, chatId) {
@@ -446,7 +597,8 @@ async function saveChat(
   stats = null
 ) {
   const file = fileFor(projectId, userId, chatId)
-  return withFileLock(file, async () => {
+  const dir = dirFor(projectId, userId)
+  const { output, created } = await withDirLock(dir, async () => {
     const existing = await readChat(file).catch(() => null)
     const now = Date.now()
 
@@ -472,13 +624,13 @@ async function saveChat(
       hydrateTranscript(transcript, dropRepeatedEntries(existing?.transcript))
     )
 
-    // Counted from the transcript being written: the stored counts are of
-    // an older copy of it and would never move on
+    // The counts come from the transcript being written, last, so the
+    // client's stats cannot override them
     const finalStats = {
       ...(existing?.stats || {}),
+      ...(stats || {}),
       totalSteps: countSteps(transcript),
       durationMs: totalDuration(transcript),
-      ...(stats || {}),
     }
 
     const chat = {
@@ -495,14 +647,25 @@ async function saveChat(
       transcript,
     }
     await writeChat(file, chat)
-    const { transcript: _omit, ...summary } = chat
+    const summary = summaryOf(chat)
+    await setIndexEntry(dir, chatId, summary)
+    const { transcript: _omit, ...rest } = chat
     return {
-      ...summary,
-      messageCount: transcript.length,
-      totalSteps: finalStats.totalSteps,
-      durationMs: finalStats.durationMs,
+      output: {
+        ...rest,
+        messageCount: transcript.length,
+        totalSteps: finalStats.totalSteps,
+        durationMs: finalStats.durationMs,
+      },
+      created: !existing,
     }
   })
+  if (created) {
+    await enforceChatCap(userId, { projectId: String(projectId), chatId }).catch(
+      err => logger.warn({ err }, '[AiAssist] chat cap not enforced')
+    )
+  }
+  return output
 }
 
 /**
@@ -519,7 +682,8 @@ async function saveChatTitle(
 ) {
   const cleanTitle = sanitizeChatTitle(title) || 'New chat'
   const file = fileFor(projectId, userId, chatId)
-  return withFileLock(file, async () => {
+  const dir = dirFor(projectId, userId)
+  return withDirLock(dir, async () => {
     const existing = await readChat(file).catch(() => null)
     if (!existing) return null
     existing.title = cleanTitle
@@ -527,6 +691,7 @@ async function saveChatTitle(
       Boolean(isGenerated) || Boolean(existing.titleGenerated)
     existing.updatedAt = Date.now()
     await writeChat(file, existing)
+    await setIndexEntry(dir, chatId, summaryOf(existing))
     const { transcript: _omit, ...summary } = existing
     const transcript = Array.isArray(existing.transcript)
       ? existing.transcript
@@ -540,16 +705,70 @@ async function saveChatTitle(
   })
 }
 
+export async function truncateChat(
+  projectId,
+  userId,
+  chatId,
+  userMessageId,
+  { inclusive = true } = {}
+) {
+  const file = fileFor(projectId, userId, chatId)
+  const dir = dirFor(projectId, userId)
+  return withDirLock(dir, async () => {
+    const chat = await readChat(file)
+    if (!chat || !Array.isArray(chat.transcript)) return null
+
+    const index = chat.transcript.findIndex(entry => entry?.id === userMessageId)
+    if (index === -1) {
+      return null
+    }
+
+    const endIndex = inclusive ? index + 1 : index
+    chat.transcript = chat.transcript.slice(0, endIndex)
+    const now = Date.now()
+    chat.updatedAt = now
+    chat.stats = {
+      ...(chat.stats || {}),
+      totalSteps: countSteps(chat.transcript),
+      durationMs: totalDuration(chat.transcript),
+    }
+
+    await writeChat(file, chat)
+    await setIndexEntry(dir, chatId, summaryOf(chat))
+    return {
+      version: chat.version || 2,
+      ...chat,
+      titleGenerated: Boolean(chat.titleGenerated),
+      mode: normalizeMode(chat.mode),
+    }
+  })
+}
+
 async function deleteChat(projectId, userId, chatId) {
   const file = fileFor(projectId, userId, chatId)
-  await withFileLock(file, () => fs.rm(file, { force: true }))
+  const dir = dirFor(projectId, userId)
+  await withDirLock(dir, async () => {
+    await fs.rm(file, { force: true })
+    await setIndexEntry(dir, chatId, null)
+  })
+  try {
+    await deleteChatCheckpoints(projectId, userId, chatId)
+  } catch {
+    // cleanup shouldn't fail chat deletion
+  }
+}
+
+async function listChats(projectId, userId) {
+  return (await listChatPage(projectId, userId)).chats
 }
 
 export default {
   listChats,
+  listChatPage,
   getChat,
   saveChat,
   saveChatTitle,
+  truncateChat,
   deleteChat,
   sanitizeChatTitle,
   reorganizePromptToTitle,

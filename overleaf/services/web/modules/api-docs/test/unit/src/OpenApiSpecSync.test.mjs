@@ -4,7 +4,7 @@ import path from 'node:path'
 import openApiSpec from '../../../app/src/openapi.json' with { type: 'json' }
 
 const WEB_ROOT = path.resolve(import.meta.dirname, '../../../../..')
-const FEATURES = path.join(WEB_ROOT, 'app/src/Features')
+const MODULES = path.join(WEB_ROOT, 'modules')
 
 function extractRoutes(filePath, callPrefix) {
   const source = fs.readFileSync(filePath, 'utf8')
@@ -24,23 +24,60 @@ function extractRoutes(filePath, callPrefix) {
 
 // The consent form submit is posted by the browser page served from
 // GET /oauth/authorize, so it is documented as part of that endpoint.
-const NOT_DOCUMENTED = new Set(['post /oauth/authorize'])
+// Extended MCP routes (diagnostics, visual PDF diff, tags, history) and
+// token revocation are documented by MCP's own openapi.json.
+const NOT_DOCUMENTED = new Set([
+  'post /oauth/authorize',
+  'post /oauth/revoke',
+  'post /api/v0/mcp/projects/{projectId}/status',
+  'post /api/v0/mcp/projects/{projectId}/copy',
+  'delete /api/v0/mcp/projects/{projectId}',
+  'delete /api/v0/mcp/projects/{projectId}/file',
+  'get /api/v0/mcp/projects/{projectId}/compile/diagnostics',
+  'get /api/v0/mcp/projects/{projectId}/compile/pdf-page',
+  'get /api/v0/mcp/projects/{projectId}/compile/pdf-overview',
+  'get /api/v0/mcp/projects/{projectId}/compile/pdf-search',
+  'post /api/v0/mcp/projects/{projectId}/compile/clean',
+  'get /api/v0/mcp/projects/{projectId}/compile/pdf-diff',
+  'get /api/v0/mcp/projects/{projectId}/compile/pdf-block',
+  'get /api/v0/mcp/projects/{projectId}/history',
+  'get /api/v0/mcp/projects/{projectId}/history/diff',
+  'post /api/v0/mcp/projects/{projectId}/history/restore',
+  'get /api/v0/mcp/tags',
+  'post /api/v0/mcp/tags',
+  'patch /api/v0/mcp/tags/{tagId}',
+  'delete /api/v0/mcp/tags/{tagId}',
+  'post /api/v0/mcp/tags/{tagId}/projects',
+  'post /api/v0/mcp/tags/{tagId}/projects/remove',
+])
 
 describe('openapi.json stays in sync with the real routers', function () {
   const allRoutes = [
-    ...extractRoutes(path.join(FEATURES, 'GitBridge/GitBridgeRouter.mjs'), 'r'),
     ...extractRoutes(
-      path.join(FEATURES, 'PersonalAccessToken/PersonalAccessTokenRouter.mjs'),
+      path.join(MODULES, 'git-bridge/app/src/GitBridgeRouter.mjs'),
+      'r'
+    ),
+    ...extractRoutes(
+      path.join(
+        MODULES,
+        'personal-access-token/app/src/PersonalAccessTokenRouter.mjs'
+      ),
       'webRouter'
     ),
-    ...extractRoutes(path.join(FEATURES, 'Mcp/McpRouter.mjs'), 'router'),
-    ...extractRoutes(path.join(FEATURES, 'OAuth2/OAuth2Router.mjs'), 'r'),
     ...extractRoutes(
-      path.join(FEATURES, 'OAuth2/OAuth2Router.mjs'),
+      path.join(MODULES, 'mcp/app/src/McpRouter.mjs'),
+      'router'
+    ),
+    ...extractRoutes(
+      path.join(MODULES, 'mcp/app/src/OAuth2/OAuth2Router.mjs'),
+      'r'
+    ),
+    ...extractRoutes(
+      path.join(MODULES, 'mcp/app/src/OAuth2/OAuth2Router.mjs'),
       'publicApiRouter'
     ),
     ...extractRoutes(
-      path.join(FEATURES, 'OAuth2/OAuth2Router.mjs'),
+      path.join(MODULES, 'mcp/app/src/OAuth2/OAuth2Router.mjs'),
       'webRouter'
     ),
   ].filter(({ method, path: p }) => !NOT_DOCUMENTED.has(`${method} ${p}`))

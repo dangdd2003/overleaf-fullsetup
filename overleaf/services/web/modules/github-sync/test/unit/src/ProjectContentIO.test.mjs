@@ -4,6 +4,27 @@ import path from 'node:path'
 import os from 'node:os'
 import { Readable } from 'node:stream'
 
+describe('resolveSafeWritePath', function () {
+  it('refuses a write that would go through a symlink in the working tree', async function () {
+    const { resolveSafeWritePath } = await import('../../../app/src/ProjectContentIO.mjs')
+    const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'ghsync-repo-'))
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'ghsync-outside-'))
+    try {
+      await fs.symlink(outside, path.join(repo, 'docs'))
+      await fs.symlink(path.join(outside, 'target.tex'), path.join(repo, 'main.tex'))
+      expect(await resolveSafeWritePath(repo, 'docs/chapter.tex')).toBeNull()
+      expect(await resolveSafeWritePath(repo, 'main.tex')).toBeNull()
+      expect(await resolveSafeWritePath(repo, 'new/dir/file.tex')).toBe(
+        path.join(repo, 'new/dir/file.tex')
+      )
+      expect(await resolveSafeWritePath(repo, '../escape.tex')).toBeNull()
+    } finally {
+      await fs.rm(repo, { recursive: true, force: true })
+      await fs.rm(outside, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('ProjectContentIO', function () {
   let ProjectContentIO
   let workDir
@@ -206,6 +227,45 @@ describe('ProjectContentIO', function () {
     await ProjectContentIO.promises.materializeProject('proj1', workDir)
 
     expect(await fs.stat(bigPath).catch(() => null)).to.not.be.null
+  })
+
+  it('refuses a project over the entry cap before writing anything', async function () {
+    mockEntities = {
+      docs: [],
+      files: Array.from({ length: 5001 }, (_, i) => ({
+        path: `f${i}.png`,
+        file: { _id: `id${i}`, hash: 'h1' },
+      })),
+      folders: [],
+    }
+    const err = await ProjectContentIO.promises
+      .materializeProject('proj1', workDir)
+      .catch(e => e)
+    expect(err.code).to.equal('project_too_large')
+    expect(err.status).to.equal(413)
+    expect(await fs.readdir(workDir)).to.deep.equal([])
+  })
+
+  it('refuses a repo tree over the byte cap', async function () {
+    // A sparse file: the size counts against the cap without using disk
+    const bigPath = path.join(workDir, 'huge.bin')
+    await fs.writeFile(bigPath, '')
+    await fs.truncate(bigPath, 501 * 1024 * 1024)
+    const err = await ProjectContentIO.promises
+      .readProjectTree(workDir)
+      .catch(e => e)
+    expect(err.code).to.equal('project_too_large')
+    expect(err.status).to.equal(413)
+  })
+
+  it('refuses a repo tree over the entry cap', async function () {
+    for (let i = 0; i < 5001; i++) {
+      await fs.writeFile(path.join(workDir, `f${i}.txt`), '')
+    }
+    const err = await ProjectContentIO.promises
+      .readProjectTree(workDir)
+      .catch(e => e)
+    expect(err.code).to.equal('project_too_large')
   })
 
   it('handles empty doc lines or missing docs gracefully', async function () {

@@ -274,12 +274,15 @@ export class BrowserRoute {
     }
   }
 
+  /** Like fetchPage: the address is checked here before the sidecar is asked. */
   async raw(url, { signal } = {}) {
-    return this._request('/v1/raw', url, { timeoutMs: RAW_TIMEOUT_MS, signal })
+    const target = parseFetchUrl(url).toString()
+    return this._request('/v1/raw', target, { timeoutMs: RAW_TIMEOUT_MS, signal })
   }
 
   async render(url, { signal } = {}) {
-    return this._request('/v1/render', url, {
+    const target = parseFetchUrl(url).toString()
+    return this._request('/v1/render', target, {
       timeoutMs: RENDER_TIMEOUT_MS,
       signal,
     })

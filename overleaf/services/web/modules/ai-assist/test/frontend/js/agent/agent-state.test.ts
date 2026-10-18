@@ -233,6 +233,7 @@ describe('reduceAgentEvent', function () {
       edit: undefined,
       settings: undefined,
       plan: '# The Plan',
+      connector: undefined,
     })
 
     const stateCleared = reduceAgentEvent(stateWithPlan, {

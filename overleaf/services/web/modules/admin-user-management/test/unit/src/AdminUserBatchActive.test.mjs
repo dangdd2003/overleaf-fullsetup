@@ -332,14 +332,14 @@ describe('AdminUserBatchActive', () => {
         UserSessionsManager.promises.removeSessionsFromRedis
       ).toHaveBeenCalledWith(
         expect.objectContaining({ _id: expect.objectContaining({ id: user1Id }) }),
-        {}
+        undefined
       )
 
       expect(
         UserSessionsManager.promises.removeSessionsFromRedis
       ).toHaveBeenCalledWith(
         expect.objectContaining({ _id: expect.objectContaining({ id: callerId }) }),
-        { retainSessionID: 'sess-12345' }
+        'sess-12345'
       )
 
       expect(res.json).toHaveBeenCalledWith({

@@ -1,10 +1,184 @@
 import { describe, it, expect } from 'vitest'
 import {
+  flattenJsonSchema,
   sanitizeToolSchema,
   coerceToolArgs,
 } from '../../../app/src/AiAssistToolSchema.mjs'
 
 describe('AiAssistToolSchema', () => {
+  describe('flattenJsonSchema', () => {
+    it('inlines a $ref into $defs and drops the $defs block', () => {
+      const result = flattenJsonSchema({
+        type: 'object',
+        properties: { edit: { $ref: '#/$defs/Edit' } },
+        $defs: {
+          Edit: {
+            type: 'object',
+            properties: { oldText: { type: 'string' } },
+          },
+        },
+      })
+
+      expect(result).to.not.have.property('$defs')
+      expect(result.properties.edit).to.deep.equal({
+        type: 'object',
+        properties: { oldText: { type: 'string' } },
+      })
+    })
+
+    it('resolves draft-07 definitions references too', () => {
+      const result = flattenJsonSchema({
+        type: 'object',
+        properties: { color: { $ref: '#/definitions/Color' } },
+        definitions: { Color: { type: 'string', enum: ['red', 'blue'] } },
+      })
+
+      expect(result.properties.color).to.deep.equal({
+        type: 'string',
+        enum: ['red', 'blue'],
+      })
+    })
+
+    it('stops expanding a self-referencing schema, so a recursive tool does not loop', () => {
+      const result = flattenJsonSchema({
+        type: 'object',
+        properties: { node: { $ref: '#/$defs/Node' } },
+        $defs: {
+          Node: {
+            type: 'object',
+            properties: { child: { $ref: '#/$defs/Node' } },
+          },
+        },
+      })
+
+      let node = result.properties.node
+      let depth = 0
+      while (node.properties) {
+        node = node.properties.child
+        depth++
+      }
+      expect(depth).to.be.greaterThan(1)
+      expect(node).to.deep.equal({ type: 'object' })
+    })
+
+    it('gives a missing reference a plain object type, keeping its description', () => {
+      const result = flattenJsonSchema({
+        type: 'object',
+        properties: {
+          gone: { $ref: '#/$defs/Missing', description: 'Removed upstream' },
+        },
+      })
+
+      expect(result.properties.gone).to.deep.equal({
+        type: 'object',
+        description: 'Removed upstream',
+      })
+    })
+
+    it('collapses an optional value (anyOf with null) into a nullable concrete type', () => {
+      const result = flattenJsonSchema({
+        type: 'object',
+        properties: {
+          imageName: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+        },
+      })
+
+      expect(result.properties.imageName).to.deep.equal({
+        type: 'string',
+        nullable: true,
+      })
+    })
+
+    it('merges same-typed string enum variants from oneOf into one enum', () => {
+      const result = flattenJsonSchema({
+        type: 'object',
+        properties: {
+          mode: {
+            oneOf: [
+              { type: 'string', const: 'fast' },
+              { type: 'string', const: 'thorough' },
+            ],
+          },
+        },
+      })
+
+      expect(result.properties.mode).to.deep.equal({
+        type: 'string',
+        enum: ['fast', 'thorough'],
+      })
+    })
+
+    it('merges allOf parts into one object with their properties and required names', () => {
+      const result = flattenJsonSchema({
+        allOf: [
+          {
+            type: 'object',
+            properties: { path: { type: 'string' } },
+            required: ['path'],
+          },
+          {
+            properties: { line: { type: 'integer' } },
+            required: ['line'],
+          },
+        ],
+      })
+
+      expect(result.type).to.equal('object')
+      expect(result.properties).to.deep.equal({
+        path: { type: 'string' },
+        line: { type: 'integer' },
+      })
+      expect(result.required).to.deep.equal(['path', 'line'])
+    })
+
+    it('turns const into a one-value enum of the same type', () => {
+      const result = flattenJsonSchema({
+        type: 'object',
+        properties: { path: { const: 'main.tex' } },
+      })
+
+      expect(result.properties.path).to.deep.equal({
+        type: 'string',
+        enum: ['main.tex'],
+      })
+    })
+
+    it('returns an empty object for a missing schema, and leaves a plain one unchanged', () => {
+      expect(flattenJsonSchema(undefined)).to.deep.equal({})
+
+      const plain = {
+        type: 'object',
+        properties: { limit: { type: 'number', minimum: 0 } },
+        required: ['limit'],
+      }
+      expect(flattenJsonSchema(plain)).to.deep.equal(plain)
+    })
+  })
+
+  describe('sanitizeToolSchema with references and unions', () => {
+    it('inlines references before narrowing them to the provider subset', () => {
+      const result = sanitizeToolSchema({
+        type: 'object',
+        properties: { page: { $ref: '#/$defs/Page' } },
+        $defs: { Page: { type: 'integer', minimum: 1, examples: [1] } },
+      })
+
+      expect(result.properties.page).to.deep.equal({ type: 'integer', minimum: 1 })
+    })
+
+    it('forces a string type onto an enum declared with a non-string type', () => {
+      const result = sanitizeToolSchema({
+        type: 'object',
+        properties: { mode: { type: 'integer', enum: [1, 2] } },
+      })
+
+      expect(result.properties.mode).to.deep.equal({
+        type: 'string',
+        enum: ['1', '2'],
+      })
+    })
+  })
+
   describe('sanitizeToolSchema', () => {
     it('drops an empty required array', () => {
       const result = sanitizeToolSchema({
@@ -51,7 +225,7 @@ describe('AiAssistToolSchema', () => {
       )
     })
 
-    it('strips keywords outside the OpenAPI subset', () => {
+    it('strips keywords outside the OpenAPI subset, and turns const into a one-value enum', () => {
       const result = sanitizeToolSchema({
         $schema: 'https://json-schema.org/draft/2020-12/schema',
         type: 'object',
@@ -71,6 +245,7 @@ describe('AiAssistToolSchema', () => {
       expect(result.properties.path).to.deep.equal({
         type: 'string',
         description: 'Path to read',
+        enum: ['main.tex'],
       })
     })
 
@@ -128,7 +303,10 @@ describe('AiAssistToolSchema', () => {
       const item = result.properties.edits.items
       expect(item).to.not.have.property('additionalProperties')
       expect(item).to.not.have.property('required')
-      expect(item.properties.oldText).to.deep.equal({ type: 'string' })
+      expect(item.properties.oldText).to.deep.equal({
+        type: 'string',
+        enum: ['x'],
+      })
     })
 
     it('stringifies enum members so the values stay comparable', () => {
@@ -285,6 +463,32 @@ describe('AiAssistToolSchema', () => {
       coerceToolArgs(args, compileResultSchema)
 
       expect(args.includeRaw).to.equal('True')
+    })
+
+    it('parses a JSON-encoded array into a list parameter', () => {
+      const schema = {
+        type: 'object',
+        properties: { paths: { type: 'array', items: { type: 'string' } } },
+      }
+
+      expect(coerceToolArgs({ paths: '["a.tex","b.tex"]' }, schema).paths).to.deep.equal([
+        'a.tex',
+        'b.tex',
+      ])
+    })
+  })
+
+  describe('sanitizeToolSchema untyped enum', () => {
+    it('gives an untyped enum the string type it needs', () => {
+      const result = sanitizeToolSchema({
+        type: 'object',
+        properties: { mode: { enum: [1, 2] } },
+      })
+
+      expect(result.properties.mode).to.deep.equal({
+        type: 'string',
+        enum: ['1', '2'],
+      })
     })
   })
 })

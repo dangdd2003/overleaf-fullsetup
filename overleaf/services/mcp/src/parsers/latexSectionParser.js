@@ -1,3 +1,5 @@
+import { lineLookup } from './textEdit.js'
+
 const SECTION_LEVELS = new Map([
   ['part', 0],
   ['chapter', 1],
@@ -40,15 +42,6 @@ const DEFINE_COMMANDS = [
 ]
 
 const TODO_COMMENT = /(?:^|\s)(TODO|FIXME|XXX|HACK|NOTE)\b[:\s-]*(.*)$/
-
-/** 1-indexed line number of a character offset. */
-function lineAt(text, index) {
-  let line = 1
-  for (let i = 0; i < index && i < text.length; i++) {
-    if (text[i] === '\n') line++
-  }
-  return line
-}
 
 /**
  * Read a balanced {...} group starting at openIndex.
@@ -134,6 +127,7 @@ export function stripComments(text) {
  */
 export function parseSections(text) {
   const source = stripComments(text)
+  const lineOf = lineLookup(source)
   const pattern = new RegExp(`\\\\(${[...SECTION_LEVELS.keys()].join('|')})(\\*)?`, 'g')
   const sections = []
   for (const match of source.matchAll(pattern)) {
@@ -144,17 +138,23 @@ export function parseSections(text) {
       level: SECTION_LEVELS.get(match[1]),
       name: match[1],
       title: group.content.trim(),
-      startLine: lineAt(source, match.index),
+      startLine: lineOf(match.index),
       starred: Boolean(match[2]),
     })
   }
 
   // stripComments preserves line breaks, so line numbers agree with the source.
+  // One pass with a stack of open sections: a heading closes every open section
+  // at its own level or deeper, which is the next section that ends each one.
   const totalLines = source.split('\n').length
-  for (const [index, section] of sections.entries()) {
-    const next = sections.slice(index + 1).find(later => later.level <= section.level)
-    section.endLine = next ? next.startLine - 1 : totalLines
+  const open = []
+  for (const section of sections) {
+    while (open.length && open[open.length - 1].level >= section.level) {
+      open.pop().endLine = section.startLine - 1
+    }
+    open.push(section)
   }
+  for (const section of open) section.endLine = totalLines
   return sections
 }
 
@@ -166,6 +166,7 @@ export function parseSections(text) {
  */
 export function parseIncludes(text) {
   const source = stripComments(text)
+  const lineOf = lineLookup(source)
   const pattern = new RegExp(`\\\\(${INCLUDE_COMMANDS.join('|')})\\s*\\{`, 'g')
   const includes = []
   for (const match of source.matchAll(pattern)) {
@@ -177,7 +178,7 @@ export function parseIncludes(text) {
         includes.push({
           command: match[1],
           path: trimmed,
-          line: lineAt(source, match.index),
+          line: lineOf(match.index),
         })
       }
     }
@@ -193,6 +194,7 @@ export function parseIncludes(text) {
  */
 export function parseCitations(text) {
   const source = stripComments(text)
+  const lineOf = lineLookup(source)
   const pattern = new RegExp(`\\\\(${CITE_COMMANDS.join('|')})\\s*(?:\\[[^\\]]*\\])*\\s*\\{`, 'g')
   const citations = []
   for (const match of source.matchAll(pattern)) {
@@ -204,7 +206,7 @@ export function parseCitations(text) {
         citations.push({
           key: trimmed,
           command: match[1],
-          line: lineAt(source, match.index),
+          line: lineOf(match.index),
         })
       }
     }
@@ -220,13 +222,14 @@ export function parseCitations(text) {
  */
 export function parseLabelsAndRefs(text) {
   const source = stripComments(text)
+  const lineOf = lineLookup(source)
   const labels = []
   const refs = []
 
   for (const match of source.matchAll(/\\label\s*\{/g)) {
     const group = readBraceGroup(source, match.index + match[0].length - 1)
     if (group) {
-      labels.push({ name: group.content.trim(), line: lineAt(source, match.index) })
+      labels.push({ name: group.content.trim(), line: lineOf(match.index) })
     }
   }
 
@@ -237,7 +240,7 @@ export function parseLabelsAndRefs(text) {
     for (const name of group.content.split(',')) {
       const trimmed = name.trim()
       if (trimmed) {
-        refs.push({ name: trimmed, command: match[1], line: lineAt(source, match.index) })
+        refs.push({ name: trimmed, command: match[1], line: lineOf(match.index) })
       }
     }
   }
@@ -254,6 +257,7 @@ export function parseLabelsAndRefs(text) {
  */
 export function parseEnvironments(text, names) {
   const source = stripComments(text)
+  const lineOf = lineLookup(source)
   const found = []
 
   for (const name of names) {
@@ -295,8 +299,8 @@ export function parseEnvironments(text, names) {
       }
       found.push({
         name,
-        line: lineAt(source, start.index),
-        endLine: lineAt(source, close.after - 1),
+        line: lineOf(start.index),
+        endLine: lineOf(close.after - 1),
         body,
         label: labelMatch ? labelMatch[1].trim() : null,
         caption,
@@ -315,6 +319,7 @@ export function parseEnvironments(text, names) {
  */
 export function parseCustomCommands(text) {
   const source = stripComments(text)
+  const lineOf = lineLookup(source)
   const pattern = new RegExp(`\\\\(${DEFINE_COMMANDS.join('|')})\\s*`, 'g')
   const commands = []
 
@@ -328,7 +333,10 @@ export function parseCustomCommands(text) {
       name = group.content.trim()
       i = group.endIndex + 1
     } else {
-      const nameMatch = /^\\[A-Za-z@]+\*?/.exec(source.slice(i))
+      // Sticky, so the match is anchored at i without copying the rest of the source.
+      const commandName = /\\[A-Za-z@]+\*?/y
+      commandName.lastIndex = i
+      const nameMatch = commandName.exec(source)
       if (!nameMatch) continue
       name = nameMatch[0]
       i += nameMatch[0].length
@@ -352,7 +360,7 @@ export function parseCustomCommands(text) {
       name,
       arity,
       definition: definition ? definition.content : '',
-      line: lineAt(source, match.index),
+      line: lineOf(match.index),
     })
   }
 
@@ -369,6 +377,7 @@ export function parseCustomCommands(text) {
  */
 export function parseTodoNotes(text) {
   const raw = String(text ?? '')
+  const lineOf = lineLookup(raw)
   const notes = []
 
   raw.split('\n').forEach((line, index) => {
@@ -397,7 +406,7 @@ export function parseTodoNotes(text) {
       notes.push({
         kind: match[1],
         text: group.content.trim(),
-        line: lineAt(raw, match.index),
+        line: lineOf(match.index),
       })
     }
   }

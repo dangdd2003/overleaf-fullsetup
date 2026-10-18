@@ -198,7 +198,40 @@ const syncManagerMock = () => ({
   __esModule: true,
 })
 
+// Stands in for the Redis-backed limiter; a rejected consume is a 429.
+const rateLimitState = { reject: false, created: [] }
+const rateLimiterMock = () => ({
+  RateLimiter: class {
+    constructor(name, opts) {
+      this.name = name
+      this.opts = opts
+      rateLimitState.created.push(this)
+    }
+    async consume() {
+      if (rateLimitState.reject) throw { msBeforeNext: 1000 }
+    }
+  },
+  __esModule: true,
+})
+
+// Runs the middleware in front of a route, then the route handler.
+async function runChain(handlers, req, res) {
+  for (const handler of handlers.slice(0, -1)) {
+    let advanced = false
+    await new Promise(resolve => {
+      handler(req, res, () => {
+        advanced = true
+        resolve()
+      })
+      setTimeout(resolve, 10)
+    })
+    if (!advanced) return
+  }
+  return handlers[handlers.length - 1](req, res)
+}
+
 function mockAll(customSettings = settingsMock) {
+  vi.doMock('../../../../../app/src/infrastructure/RateLimiter.mjs', rateLimiterMock)
   vi.doMock('passport', passportMock)
   vi.doMock('passport-oauth2', passportOAuth2Mock)
   vi.doMock('@overleaf/logger', loggerMock)
@@ -422,8 +455,8 @@ describe('GitHubOAuthRouter routes', function () {
   it('importProject validates repoOwner/repoName and imports', async function () {
     const routes = {}
     const webRouter = {
-      get: (path, auth, handler) => { routes[path] = handler },
-      post: (path, auth, handler) => { routes[path] = handler },
+      get: (path, ...handlers) => { routes[path] = handlers },
+      post: (path, ...handlers) => { routes[path] = handlers },
     }
     router.apply(webRouter)
 
@@ -434,7 +467,7 @@ describe('GitHubOAuthRouter routes', function () {
     let jsonResult
     const res = { json: data => { jsonResult = data }, status: () => res }
 
-    await routes['/user/github/import'](req, res)
+    await runChain(routes['/user/github/import'], req, res)
     expect(jsonResult).to.deep.equal({ projectId: 'imported-proj-1' })
     expect(db.importedProjects[0].opts).to.deep.equal({
       repoOwner: 'octo',
@@ -447,8 +480,8 @@ describe('GitHubOAuthRouter routes', function () {
   it('importProject returns 400 when parameters missing', async function () {
     const routes = {}
     const webRouter = {
-      get: (path, auth, handler) => { routes[path] = handler },
-      post: (path, auth, handler) => { routes[path] = handler },
+      get: (path, ...handlers) => { routes[path] = handlers },
+      post: (path, ...handlers) => { routes[path] = handlers },
     }
     router.apply(webRouter)
 
@@ -461,9 +494,36 @@ describe('GitHubOAuthRouter routes', function () {
       },
     }
 
-    await routes['/user/github/import'](req, res)
+    await runChain(routes['/user/github/import'], req, res)
     expect(statusSet).to.equal(400)
     expect(jsonResult.code).to.equal('invalidParameters')
+  })
+
+  it('rate limits project import per user with a 429 before importing', async function () {
+    const routes = {}
+    const webRouter = {
+      get: (path, ...handlers) => { routes[path] = handlers },
+      post: (path, ...handlers) => { routes[path] = handlers },
+    }
+    router.apply(webRouter)
+    expect(rateLimitState.created.map(l => l.name)).to.include('github-sync-import')
+
+    rateLimitState.reject = true
+    try {
+      const req = { user: { _id: 'user-1' }, body: { repoOwner: 'octo', repoName: 'test' } }
+      const res = {
+        statusCode: 200,
+        status(code) { this.statusCode = code; return this },
+        write() {},
+        end() {},
+        json() {},
+      }
+      await runChain(routes['/user/github/import'], req, res)
+      expect(res.statusCode).to.equal(429)
+      expect(db.importedProjects).to.have.lengthOf(0)
+    } finally {
+      rateLimitState.reject = false
+    }
   })
 
   it('callback handles auth failure by setting error flag in session', async function () {
@@ -501,8 +561,8 @@ describe('GitHubSyncRouter routes', function () {
   it('status returns project sync status if user can read project', async function () {
     const routes = {}
     const webRouter = {
-      get: (path, auth, handler) => { routes[path] = handler },
-      post: (path, auth, handler) => { routes[path] = handler },
+      get: (path, ...handlers) => { routes[path] = handlers[handlers.length - 1] },
+      post: (path, ...handlers) => { routes[path] = handlers[handlers.length - 1] },
     }
     router.apply(webRouter)
 
@@ -518,8 +578,8 @@ describe('GitHubSyncRouter routes', function () {
     db.canReadProject = false
     const routes = {}
     const webRouter = {
-      get: (path, auth, handler) => { routes[path] = handler },
-      post: (path, auth, handler) => { routes[path] = handler },
+      get: (path, ...handlers) => { routes[path] = handlers[handlers.length - 1] },
+      post: (path, ...handlers) => { routes[path] = handlers[handlers.length - 1] },
     }
     router.apply(webRouter)
 
@@ -540,8 +600,8 @@ describe('GitHubSyncRouter routes', function () {
   it('pull returns 404 notLinked when project is not linked', async function () {
     const routes = {}
     const webRouter = {
-      get: (path, auth, handler) => { routes[path] = handler },
-      post: (path, auth, handler) => { routes[path] = handler },
+      get: (path, ...handlers) => { routes[path] = handlers[handlers.length - 1] },
+      post: (path, ...handlers) => { routes[path] = handlers[handlers.length - 1] },
     }
     router.apply(webRouter)
 
@@ -563,8 +623,8 @@ describe('GitHubSyncRouter routes', function () {
     db.projectStates.set('proj-1', { user_id: 'other-user' })
     const routes = {}
     const webRouter = {
-      get: (path, auth, handler) => { routes[path] = handler },
-      post: (path, auth, handler) => { routes[path] = handler },
+      get: (path, ...handlers) => { routes[path] = handlers[handlers.length - 1] },
+      post: (path, ...handlers) => { routes[path] = handlers[handlers.length - 1] },
     }
     router.apply(webRouter)
 
@@ -587,8 +647,8 @@ describe('GitHubSyncRouter routes', function () {
     db.syncBusy = true
     const routes = {}
     const webRouter = {
-      get: (path, auth, handler) => { routes[path] = handler },
-      post: (path, auth, handler) => { routes[path] = handler },
+      get: (path, ...handlers) => { routes[path] = handlers[handlers.length - 1] },
+      post: (path, ...handlers) => { routes[path] = handlers[handlers.length - 1] },
     }
     router.apply(webRouter)
 
@@ -610,8 +670,8 @@ describe('GitHubSyncRouter routes', function () {
     db.projectStates.set('proj-1', { user_id: 'user-1' })
     const routes = {}
     const webRouter = {
-      get: (path, auth, handler) => { routes[path] = handler },
-      post: (path, auth, handler) => { routes[path] = handler },
+      get: (path, ...handlers) => { routes[path] = handlers[handlers.length - 1] },
+      post: (path, ...handlers) => { routes[path] = handlers[handlers.length - 1] },
     }
     router.apply(webRouter)
 
@@ -635,8 +695,8 @@ describe('GitHubSyncRouter routes', function () {
     db.projectStates.set('proj-1', { user_id: 'user-1' })
     const routes = {}
     const webRouter = {
-      get: (path, auth, handler) => { routes[path] = handler },
-      post: (path, auth, handler) => { routes[path] = handler },
+      get: (path, ...handlers) => { routes[path] = handlers[handlers.length - 1] },
+      post: (path, ...handlers) => { routes[path] = handlers[handlers.length - 1] },
     }
     router.apply(webRouter)
 
@@ -652,8 +712,8 @@ describe('GitHubSyncRouter routes', function () {
   it('createRepo validates name and checks alreadyLinked', async function () {
     const routes = {}
     const webRouter = {
-      get: (path, auth, handler) => { routes[path] = handler },
-      post: (path, auth, handler) => { routes[path] = handler },
+      get: (path, ...handlers) => { routes[path] = handlers[handlers.length - 1] },
+      post: (path, ...handlers) => { routes[path] = handlers[handlers.length - 1] },
     }
     router.apply(webRouter)
 

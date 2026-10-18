@@ -3,6 +3,12 @@ import fs from 'node:fs'
 import Settings from '@overleaf/settings'
 import './ModuleSettings.mjs'
 import { sanitizeToolSchema } from './AiAssistToolSchema.mjs'
+// The connectors' guard against this server, its metadata and its internal
+// services, shared with the MCP connectors rather than copied
+import {
+  providerFetch,
+  validateConnectorUrl,
+} from './connectors/ConnectorFetch.mjs'
 
 export class ProviderError extends Error {
   constructor(
@@ -17,13 +23,40 @@ export class ProviderError extends Error {
   }
 }
 
+/** The most a provider's reply (or error reply) may be read to: far above any real one. */
+const MAX_JSON_REPLY_BYTES = 4 * 1024 * 1024
+
+/**
+ * res.json() with a cap: a URL the user chose must not fill the server's memory
+ * with one reply.
+ */
+export async function readJsonReply(res, maxBytes = MAX_JSON_REPLY_BYTES) {
+  if (typeof res.body?.getReader !== 'function') return res.json()
+  const reader = res.body.getReader()
+  const chunks = []
+  let total = 0
+  for (;;) {
+    const { value, done } = await reader.read()
+    if (done) break
+    total += value.byteLength
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => {})
+      throw new ProviderError('The provider sent more data than expected.', {
+        code: 'providerError',
+      })
+    }
+    chunks.push(value)
+  }
+  return JSON.parse(Buffer.concat(chunks).toString('utf8'))
+}
+
 /** The ProviderError for a failed OpenAI-compatible response. */
 async function openAiError(res) {
   let msg = `OpenAI API error (${res.status})`
   let code =
     res.status === 401 || res.status === 403 ? 'providerAuth' : 'providerError'
   try {
-    const body = await res.json()
+    const body = await readJsonReply(res)
     if (body?.error?.message) msg = body.error.message
     if (body?.error?.code === 'invalid_api_key') code = 'providerAuth'
   } catch {}
@@ -53,9 +86,12 @@ export function validateSafeProviderBaseUrl(rawUrl) {
     return true
   }
 
+  // Checked as it will be dialled: in a container localhost is the host's
+  // Ollama, reached at the gateway (see resolveDockerHostUrl)
+  const target = resolveDockerHostUrl(rawUrl.trim())
   let parsed
   try {
-    parsed = new URL(rawUrl.trim())
+    parsed = new URL(target)
   } catch {
     throw new ProviderError('Invalid provider URL format', {
       code: 'invalidProviderUrl',
@@ -84,23 +120,33 @@ export function validateSafeProviderBaseUrl(rawUrl) {
     )
   }
 
-  // Block link-local and cloud metadata (IPv4 & IPv6)
-  if (
-    hostname === '169.254.169.254' ||
-    hostname.startsWith('169.254.') ||
-    hostname === 'fd00:ec2::254' ||
-    hostname === 'fe80::1'
-  ) {
-    throw new ProviderError(
-      'Access to cloud metadata endpoints is forbidden.',
-      {
-        code: 'restrictedProviderUrl',
-        status: 400,
-      }
-    )
+  // Loopback and this server's own addresses, by name or IP literal, the
+  // metadata services, and Overleaf's internal services. A LAN address stays
+  // allowed: that is where a self-hosted provider lives.
+  try {
+    validateConnectorUrl(target)
+  } catch (err) {
+    throw new ProviderError(err.message, {
+      code: 'restrictedProviderUrl',
+      status: 400,
+    })
   }
 
   return true
+}
+
+/**
+ * The ProviderError for a provider address the connector lookup refused (one
+ * that resolves to this server, its metadata or its internal services), or null.
+ * The lookup is the one the connection is made with, so the answer refused is
+ * the answer that would have been dialled.
+ */
+function refusedDestination(err) {
+  if (err?.code !== 'EADDRBLOCKED') return null
+  return new ProviderError(err.message, {
+    code: 'restrictedProviderUrl',
+    status: 400,
+  })
 }
 
 function cancelledError() {
@@ -134,7 +180,7 @@ export async function fetchWithRetry(
     maxRetries = 3,
     initialDelayMs = 1000,
     maxDelayMs = 8000,
-    fetchFn = fetch,
+    fetchFn = providerFetch,
   } = {}
 ) {
   let attempt = 0
@@ -181,6 +227,8 @@ export async function fetchWithRetry(
       if (err.name === 'AbortError') {
         throw err
       }
+      const refused = refusedDestination(err)
+      if (refused) throw refused
       const isTransientNetwork =
         err.code === 'ECONNRESET' ||
         err.code === 'ETIMEDOUT' ||
@@ -207,7 +255,7 @@ export function withRequestTimeouts(callerSignal, { connectMs, idleMs } = {}) {
   const resolvedConnectMs =
     connectMs ?? (Settings.aiAssist?.requestTimeoutSeconds ?? 180) * 1000
   const resolvedIdleMs =
-    idleMs ?? (Settings.aiAssist?.streamIdleSeconds ?? 120) * 1000
+    idleMs ?? (Settings.aiAssist?.streamIdleSeconds ?? 0) * 1000
 
   const connectController = new AbortController()
   const idleController = new AbortController()
@@ -366,28 +414,92 @@ export class StreamingThinkParser {
   }
 }
 
-export async function* parseNdjsonLines(stream, onActivity) {
+/** The longest line a provider stream may send; a longer one is refused. */
+const MAX_STREAM_LINE_CHARS = 16 * 1024 * 1024
+
+/**
+ * The lines of a provider's byte stream, as they arrive. A chunk is searched
+ * only for its own line breaks, so a long line costs its length once rather
+ * than once per chunk that extends it.
+ */
+async function* streamLines(stream, onActivity) {
   const reader = stream[Symbol.asyncIterator]()
   const decoder = new TextDecoder()
   let buffer = ''
+  const unfinished = () => {
+    if (buffer.length > MAX_STREAM_LINE_CHARS) {
+      throw new ProviderError('The provider sent a line that is too long.', {
+        code: 'providerError',
+      })
+    }
+  }
+  const withoutCr = line => (line.endsWith('\r') ? line.slice(0, -1) : line)
 
   while (true) {
     const { value, done } = await reader.next()
     if (done) break
     if (onActivity) onActivity()
-    buffer += decoder.decode(value, { stream: true })
-    const lines = buffer.split('\n')
-    buffer = lines.pop() ?? ''
-
-    for (const line of lines) {
-      const trimmed = line.trim()
-      if (trimmed) yield trimmed
+    const chunk = decoder.decode(value, { stream: true })
+    if (!chunk.includes('\n')) {
+      buffer += chunk
+      unfinished()
+      continue
     }
+    const lines = (buffer + chunk).split('\n')
+    buffer = lines.pop() ?? ''
+    unfinished()
+    for (const line of lines) yield withoutCr(line)
   }
 
-  if (buffer.trim()) {
-    yield buffer.trim()
+  if (buffer) yield withoutCr(buffer)
+}
+
+export async function* parseNdjsonLines(stream, onActivity) {
+  for await (const line of streamLines(stream, onActivity)) {
+    const trimmed = line.trim()
+    if (trimmed) yield trimmed
   }
+}
+
+/** The images a tool message carries (view_compiled_pdf_page), if any. */
+export function toolImages(message) {
+  return Array.isArray(message?.images)
+    ? message.images.filter(
+        image =>
+          typeof image?.data === 'string' &&
+          image.data &&
+          typeof image.mediaType === 'string'
+      )
+    : []
+}
+
+/**
+ * Chat-completions APIs (OpenAI and compatible servers, Ollama) only take
+ * text in a tool message, so a tool's images follow its results as a user
+ * turn. It goes after the last tool message of the step: a tool result has
+ * to follow the assistant turn that asked for it directly.
+ */
+export function toolImageTurns(messages) {
+  const turns = new Map()
+  let pending = []
+  messages.forEach((message, index) => {
+    if (message.role === 'tool') {
+      for (const image of toolImages(message)) {
+        pending.push({ image, name: message.name || 'tool' })
+      }
+    }
+    const endsToolRun = messages[index + 1]?.role !== 'tool'
+    if (message.role === 'tool' && endsToolRun && pending.length > 0) {
+      turns.set(index, pending)
+      pending = []
+    }
+  })
+  return turns
+}
+
+function imageTurnLabel(entries) {
+  const names = [...new Set(entries.map(entry => entry.name))].join(', ')
+  return `[The image${entries.length > 1 ? 's' : ''} returned by ${names} above.]`
 }
 
 export function toOllamaMessages(system, messages) {
@@ -395,7 +507,8 @@ export function toOllamaMessages(system, messages) {
   if (system) {
     wire.push({ role: 'system', content: system })
   }
-  for (const message of messages) {
+  const imageTurns = toolImageTurns(messages)
+  for (const [index, message] of messages.entries()) {
     if (message.role === 'tool') {
       const safeContent =
         typeof message.content === 'string' && message.content.trim().length > 0
@@ -407,6 +520,14 @@ export function toOllamaMessages(system, messages) {
         ...(message.toolCallId ? { tool_call_id: message.toolCallId } : {}),
         ...(message.name ? { name: message.name } : {}),
       })
+      const shown = imageTurns.get(index)
+      if (shown) {
+        wire.push({
+          role: 'user',
+          content: imageTurnLabel(shown),
+          images: shown.map(entry => entry.image.data),
+        })
+      }
     } else if (message.role === 'assistant' && message.toolCalls?.length) {
       wire.push({
         role: 'assistant',
@@ -470,32 +591,11 @@ export function safeParseToolArgs(rawArgs) {
 }
 
 export async function* parseSseLines(stream, onActivity) {
-  const reader = stream[Symbol.asyncIterator]()
-  const decoder = new TextDecoder()
-  let buffer = ''
-
-  while (true) {
-    const { value, done } = await reader.next()
-    if (done) break
-    if (onActivity) onActivity()
-    buffer += decoder.decode(value, { stream: true })
-    const lines = buffer.split(/\r?\n/)
-    buffer = lines.pop() ?? ''
-
-    for (const line of lines) {
-      const trimmed = line.trim()
-      if (!trimmed || trimmed.startsWith(':')) continue
-      if (trimmed.startsWith('data:')) {
-        const rawData = line.slice(line.indexOf('data:') + 5)
-        yield rawData.startsWith(' ') ? rawData.slice(1) : rawData
-      }
-    }
-  }
-
-  if (buffer.trim()) {
-    const trimmed = buffer.trim()
-    if (trimmed.startsWith('data:') && !trimmed.startsWith(':')) {
-      const rawData = buffer.slice(buffer.indexOf('data:') + 5)
+  for await (const line of streamLines(stream, onActivity)) {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith(':')) continue
+    if (trimmed.startsWith('data:')) {
+      const rawData = line.slice(line.indexOf('data:') + 5)
       yield rawData.startsWith(' ') ? rawData.slice(1) : rawData
     }
   }
@@ -532,17 +632,25 @@ export function parseModelLimits(entry) {
 }
 
 async function fetchModelList(fetchFn, url, headers, signal) {
-  const timeoutMs = (Settings.aiAssist?.requestTimeoutSeconds ?? 60) * 1000
+  const timeoutMs = (Settings.aiAssist?.requestTimeoutSeconds ?? 180) * 1000
   const combined = AbortSignal.any(
     [signal, AbortSignal.timeout(timeoutMs)].filter(Boolean)
   )
   let res
   try {
-    res = await fetchFn(url, { method: 'GET', headers, signal: combined })
+    res = await fetchFn(url, {
+      method: 'GET',
+      headers,
+      signal: combined,
+      // A listing URL the user chose must not redirect to a server they could not name
+      redirect: 'error',
+    })
   } catch (err) {
     if (signal?.aborted) {
       throw new ProviderError('Request was cancelled', { code: 'aborted' })
     }
+    const refused = refusedDestination(err)
+    if (refused) throw refused
     const origin = new URL(url).origin
     throw new ProviderError(
       `Could not reach ${origin}: ${err.cause?.message || err.message}`,
@@ -555,7 +663,7 @@ async function fetchModelList(fetchFn, url, headers, signal) {
   if (!res.ok) {
     let msg = `Provider returned ${res.status} when listing models`
     try {
-      const body = await res.json()
+      const body = await readJsonReply(res)
       const upstream =
         body?.error?.message ||
         (typeof body?.error === 'string' ? body.error : null)
@@ -569,7 +677,7 @@ async function fetchModelList(fetchFn, url, headers, signal) {
           : 'providerError'
     throw new ProviderError(msg, { code, status: res.status })
   }
-  return await res.json().catch(() => null)
+  return await readJsonReply(res).catch(() => null)
 }
 
 export function cacheControlValue() {
@@ -695,7 +803,7 @@ class AnthropicServerClient {
     model,
     baseURL,
     baseUrl,
-    fetchFn = fetch,
+    fetchFn = providerFetch,
     connectTimeoutMs,
     streamIdleTimeoutMs,
     reasoningEffort,
@@ -711,7 +819,7 @@ class AnthropicServerClient {
       (Settings.aiAssist?.requestTimeoutSeconds ?? 180) * 1000
     this.streamIdleTimeoutMs =
       streamIdleTimeoutMs ??
-      (Settings.aiAssist?.streamIdleSeconds ?? 120) * 1000
+      (Settings.aiAssist?.streamIdleSeconds ?? 0) * 1000
     this.reasoningEffort = reasoningEffortFor('anthropic', reasoningEffort)
     this.thinking = thinkingFor(thinking)
   }
@@ -775,10 +883,25 @@ class AnthropicServerClient {
           message.content.trim().length > 0
             ? message.content
             : '(empty result)'
+        // Anthropic takes images inside the tool result itself
+        const images = toolImages(message)
         const block = {
           type: 'tool_result',
           tool_use_id: message.toolCallId,
-          content: safeContent,
+          content:
+            images.length > 0
+              ? [
+                  { type: 'text', text: safeContent },
+                  ...images.map(image => ({
+                    type: 'image',
+                    source: {
+                      type: 'base64',
+                      media_type: image.mediaType,
+                      data: image.data,
+                    },
+                  })),
+                ]
+              : safeContent,
           is_error: Boolean(message.isError),
         }
         const previous = wire.at(-1)
@@ -939,7 +1062,7 @@ class AnthropicServerClient {
           ? 'providerAuth'
           : 'providerError'
       try {
-        const body = await res.json()
+        const body = await readJsonReply(res)
         if (body?.error?.message) msg = body.error.message
         if (body?.error?.type === 'authentication_error') code = 'providerAuth'
       } catch {}
@@ -1065,7 +1188,7 @@ export class OpenAiServerClient {
     model,
     baseURL,
     baseUrl,
-    fetchFn = fetch,
+    fetchFn = providerFetch,
     connectTimeoutMs,
     streamIdleTimeoutMs,
     reasoningEffort,
@@ -1080,7 +1203,7 @@ export class OpenAiServerClient {
       (Settings.aiAssist?.requestTimeoutSeconds ?? 180) * 1000
     this.streamIdleTimeoutMs =
       streamIdleTimeoutMs ??
-      (Settings.aiAssist?.streamIdleSeconds ?? 120) * 1000
+      (Settings.aiAssist?.streamIdleSeconds ?? 0) * 1000
     this.reasoningEffort = reasoningEffortFor('openai', reasoningEffort)
   }
 
@@ -1142,19 +1265,38 @@ export class OpenAiServerClient {
       connectMs: this.connectTimeoutMs,
       idleMs: this.streamIdleTimeoutMs,
     })
+    const imageTurns = toolImageTurns(messages)
     const formattedMessages = [
       ...(system ? [{ role: 'system', content: system }] : []),
-      ...messages.map(m => {
+      ...messages.flatMap((m, index) => {
         if (m.role === 'tool') {
           const safeContent =
             typeof m.content === 'string'
               ? m.content
               : JSON.stringify(m.content ?? {})
-          return {
+          const toolMessage = {
             role: 'tool',
             tool_call_id: m.toolCallId || 'call_0',
             content: safeContent.trim() ? safeContent : '(empty result)',
           }
+          const shown = imageTurns.get(index)
+          if (!shown) return [toolMessage]
+          return [
+            toolMessage,
+            {
+              role: 'user',
+              content: [
+                { type: 'text', text: imageTurnLabel(shown) },
+                ...shown.map(({ image }) => ({
+                  type: 'image_url',
+                  image_url: {
+                    url: `data:${image.mediaType};base64,${image.data}`,
+                    detail: image.detail ?? 'high',
+                  },
+                })),
+              ],
+            },
+          ]
         }
         if (m.toolCalls?.length) {
           return {
@@ -1188,7 +1330,7 @@ export class OpenAiServerClient {
                 type: 'image_url',
                 image_url: {
                   url: `data:${image.mediaType};base64,${image.data}`,
-                  detail: 'high',
+                  detail: image.detail ?? 'high',
                 },
               })),
               { type: 'text', text: m.content || '' },
@@ -1333,10 +1475,24 @@ export class OpenAiServerClient {
   }
 }
 
+/**
+ * A picture for a Gemini request. Gemini 3 and later take a per-part media
+ * resolution; the field name follows the generateContent REST shape and is not
+ * yet confirmed against the live API (see AiAssistImagePolicy.mjs).
+ */
+export function geminiImagePart(image) {
+  const part = { inlineData: { mimeType: image.mediaType, data: image.data } }
+  if (image.mediaResolution) {
+    part.mediaResolution = { level: 'MEDIA_RESOLUTION_HIGH' }
+  }
+  return part
+}
+
 export function toGeminiContents(messages) {
   const contents = []
+  let pendingImageParts = []
 
-  for (const message of messages) {
+  for (const [index, message] of messages.entries()) {
     if (message.role === 'tool') {
       let responseObj
       if (typeof message.content === 'string') {
@@ -1362,6 +1518,15 @@ export function toGeminiContents(messages) {
         prev.parts.push(part)
       } else {
         contents.push({ role: 'user', parts: [part] })
+      }
+      // Images go after the step's last function response, in the same turn,
+      // so parallel responses stay together in the order of their calls.
+      for (const image of toolImages(message)) {
+        pendingImageParts.push(geminiImagePart(image))
+      }
+      if (messages[index + 1]?.role !== 'tool' && pendingImageParts.length) {
+        contents.at(-1).parts.push(...pendingImageParts)
+        pendingImageParts = []
       }
       continue
     }
@@ -1398,9 +1563,7 @@ export function toGeminiContents(messages) {
     // role === 'user'
     const parts = [
       ...(Array.isArray(message.images)
-        ? message.images.map(image => ({
-            inlineData: { mimeType: image.mediaType, data: image.data },
-          }))
+        ? message.images.map(geminiImagePart)
         : []),
       { text: message.content || ' ' },
     ]
@@ -1426,7 +1589,7 @@ export class GoogleServerClient {
     model,
     baseURL,
     baseUrl,
-    fetchFn = fetch,
+    fetchFn = providerFetch,
     connectTimeoutMs,
     streamIdleTimeoutMs,
     reasoningEffort,
@@ -1448,7 +1611,7 @@ export class GoogleServerClient {
       (Settings.aiAssist?.requestTimeoutSeconds ?? 180) * 1000
     this.streamIdleTimeoutMs =
       streamIdleTimeoutMs ??
-      (Settings.aiAssist?.streamIdleSeconds ?? 120) * 1000
+      (Settings.aiAssist?.streamIdleSeconds ?? 0) * 1000
     this.reasoningEffort = reasoningEffortFor('google', reasoningEffort)
     this.thinking = thinkingFor(thinking)
   }
@@ -1582,7 +1745,7 @@ export class GoogleServerClient {
           ? 'providerAuth'
           : 'providerError'
       try {
-        const body = await res.json()
+        const body = await readJsonReply(res)
         if (body?.error?.message) msg = body.error.message
         if (
           body?.error?.status === 'UNAUTHENTICATED' ||
@@ -1679,7 +1842,7 @@ const ollamaThinkUnsupported = new Set()
 async function ollamaErrorMessage(res) {
   let msg = `Ollama error (${res.status})`
   try {
-    const json = await res.json()
+    const json = await readJsonReply(res)
     if (json?.error)
       msg =
         typeof json.error === 'string' ? json.error : json.error.message || msg
@@ -1693,7 +1856,7 @@ export class OllamaServerClient {
     model,
     baseURL,
     baseUrl,
-    fetchFn = fetch,
+    fetchFn = providerFetch,
     connectTimeoutMs,
     streamIdleTimeoutMs,
     reasoningEffort,
@@ -1714,7 +1877,7 @@ export class OllamaServerClient {
       (Settings.aiAssist?.requestTimeoutSeconds ?? 180) * 1000
     this.streamIdleTimeoutMs =
       streamIdleTimeoutMs ??
-      (Settings.aiAssist?.streamIdleSeconds ?? 120) * 1000
+      (Settings.aiAssist?.streamIdleSeconds ?? 0) * 1000
     this.reasoningEffort = reasoningEffortFor('ollama', reasoningEffort)
     this.thinking = thinkingFor(thinking)
   }

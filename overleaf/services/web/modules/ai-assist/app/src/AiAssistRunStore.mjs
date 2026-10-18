@@ -181,8 +181,12 @@ export class AiAssistRunStore {
       // Nothing has emitted for a very long time: the process driving this run
       // is gone. Mark it so a reconnecting client stops showing "thinking"
       // forever. This never aborts a live loop — see the heartbeat trap.
+      const events = await this.getEvents(runId)
+      const alreadyFinished = events.some(e => e?.event?.type === 'turnFinished')
       await this.updateStatus(runId, 'interrupted')
-      await this.appendEvent(runId, { type: 'turnFinished', reason: 'interrupted' })
+      if (!alreadyFinished) {
+        await this.appendEvent(runId, { type: 'turnFinished', reason: 'interrupted' })
+      }
       await rclient.srem(ACTIVE_RUNS_KEY, runId)
       acted.push(runId)
     }

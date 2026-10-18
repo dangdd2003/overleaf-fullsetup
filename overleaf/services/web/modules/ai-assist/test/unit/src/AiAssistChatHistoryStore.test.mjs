@@ -116,6 +116,22 @@ describe('AiAssistChatHistoryStore', function () {
     expect(await store.getChat(PROJECT, USER, 'gone')).to.equal(null)
   })
 
+  it('counts steps from the transcript, not stale stored stats', async function () {
+    await store.saveChat(PROJECT, USER, 'stale', [
+      { id: 'u0', role: 'user', text: 'a' },
+    ])
+    const file = Path.join(dir, `${PROJECT}-${USER}`, 'stale.json')
+    const stored = JSON.parse(await fs.readFile(file, 'utf8'))
+    stored.stats = { totalSteps: 99, durationMs: 0 }
+    await fs.writeFile(file, JSON.stringify(stored))
+
+    const summary = await store.saveChat(PROJECT, USER, 'stale', [
+      { id: 'u0', role: 'user', text: 'a' },
+      { id: 'a1', role: 'assistant', text: 'b', toolCalls: [] },
+    ])
+    expect(summary.totalSteps).to.equal(2)
+  })
+
   it('counts steps from the transcript as it grows', async function () {
     await store.saveChat(PROJECT, USER, 'steps', [
       { id: 'u0', role: 'user', text: 'a' },
@@ -348,6 +364,62 @@ describe('AiAssistChatHistoryStore', function () {
     expect(reloaded.transcript[1].blocks[0].call.result).to.deep.equal({
       path: 'main.tex',
       content: 'FULL UN-TRUNCATED CONTENT',
+    })
+  })
+
+  describe('truncateChat', function () {
+    it('truncates chat transcript inclusive of target user message', async function () {
+      const transcript = [
+        { id: 'u0', role: 'user', text: 'question 1' },
+        { id: 'a0', role: 'assistant', text: 'answer 1' },
+        { id: 'u1', role: 'user', text: 'question 2' },
+        { id: 'a1', role: 'assistant', text: 'answer 2' },
+      ]
+      await store.saveChat(PROJECT, USER, 'trunc-chat', transcript)
+
+      const truncated = await store.truncateChat(
+        PROJECT,
+        USER,
+        'trunc-chat',
+        'u1',
+        { inclusive: true }
+      )
+      expect(truncated).to.not.be.null
+      expect(truncated.transcript.map(e => e.id)).to.deep.equal(['u0', 'a0', 'u1'])
+
+      const reloaded = await store.getChat(PROJECT, USER, 'trunc-chat')
+      expect(reloaded.transcript.map(e => e.id)).to.deep.equal(['u0', 'a0', 'u1'])
+    })
+
+    it('truncates chat transcript exclusive of target user message when inclusive is false', async function () {
+      const transcript = [
+        { id: 'u0', role: 'user', text: 'question 1' },
+        { id: 'a0', role: 'assistant', text: 'answer 1' },
+        { id: 'u1', role: 'user', text: 'question 2' },
+        { id: 'a1', role: 'assistant', text: 'answer 2' },
+      ]
+      await store.saveChat(PROJECT, USER, 'trunc-excl', transcript)
+
+      const truncated = await store.truncateChat(
+        PROJECT,
+        USER,
+        'trunc-excl',
+        'u1',
+        { inclusive: false }
+      )
+      expect(truncated).to.not.be.null
+      expect(truncated.transcript.map(e => e.id)).to.deep.equal(['u0', 'a0'])
+    })
+
+    it('returns null when chat or message does not exist', async function () {
+      const res1 = await store.truncateChat(PROJECT, USER, 'non-existent', 'u1')
+      expect(res1).to.be.null
+
+      await store.saveChat(PROJECT, USER, 'trunc-miss', [
+        { id: 'u0', role: 'user', text: 'hello' },
+      ])
+      const res2 = await store.truncateChat(PROJECT, USER, 'trunc-miss', 'u999')
+      expect(res2).to.be.null
     })
   })
 })

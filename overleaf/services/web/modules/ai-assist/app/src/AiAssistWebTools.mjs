@@ -1,9 +1,9 @@
-import Settings from '@overleaf/settings'
+import Settings from "@overleaf/settings";
 import {
   ProviderError,
   resolveDockerHostUrl,
   validateSafeProviderBaseUrl,
-} from './AiAssistProviders.mjs'
+} from "./AiAssistProviders.mjs";
 import {
   HOUR_MS,
   clampInt,
@@ -11,14 +11,15 @@ import {
   collapse,
   isoDay,
   webError,
-} from './web-fetch/util.mjs'
-import { apiRequest } from './web-fetch/api.mjs'
-import { pageCharsFor, pageText } from './web-fetch/document.mjs'
-import { documentIndex } from './web-fetch/doc-index.mjs'
-import { findPassages } from './web-fetch/find.mjs'
-import { REQUEST_TIMEOUT_MS, fetchPublicUrl } from './web-fetch/transport.mjs'
-import { WebFetcher } from './web-fetch/WebFetcher.mjs'
-import { sharedBrowserRoute } from './web-fetch/routes/browser.mjs'
+} from "./web-fetch/util.mjs";
+import { apiRequest } from "./web-fetch/api.mjs";
+import { connectorFetch } from "./connectors/ConnectorFetch.mjs";
+import { pageCharsFor, pageText } from "./web-fetch/document.mjs";
+import { documentIndex } from "./web-fetch/doc-index.mjs";
+import { findPassages } from "./web-fetch/find.mjs";
+import { REQUEST_TIMEOUT_MS, fetchPublicUrl } from "./web-fetch/transport.mjs";
+import { WebFetcher } from "./web-fetch/WebFetcher.mjs";
+import { sharedBrowserRoute } from "./web-fetch/routes/browser.mjs";
 import {
   JINA_SEARCH_BASE,
   OLLAMA_API_BASE,
@@ -30,32 +31,39 @@ import {
   firecrawlTimeoutMs,
   jinaTimeoutMs,
   tavilyHeaders,
-} from './web-fetch/routes/readers.mjs'
-import { WebRouter, clearEndpointHealth } from './web-fetch/routing.mjs'
-import { clearWebCacheStore, ownerWebCaches } from './web-fetch/cache-store.mjs'
-import { JINA_COUNTRIES, JINA_LANGUAGES } from './web-fetch/jina-codes.mjs'
-import { cacheKeyFor } from './web-fetch/urls.mjs'
-import { clearWorkingSet, keepSearchPage } from './web-fetch/working-set.mjs'
+} from "./web-fetch/routes/readers.mjs";
+import { WebRouter, clearEndpointHealth } from "./web-fetch/routing.mjs";
+import {
+  clearWebCacheStore,
+  ownerWebCaches,
+} from "./web-fetch/cache-store.mjs";
+import { JINA_COUNTRIES, JINA_LANGUAGES } from "./web-fetch/jina-codes.mjs";
+import { cacheKeyFor } from "./web-fetch/urls.mjs";
+import { clearWorkingSet, keepSearchPage } from "./web-fetch/working-set.mjs";
 
-export { openWebCache } from './web-fetch/cache-store.mjs'
+export { openWebCache } from "./web-fetch/cache-store.mjs";
 export {
   WebRouter,
   WebRouter as EndpointRotator,
   clearEndpointHealth,
-} from './web-fetch/routing.mjs'
+} from "./web-fetch/routing.mjs";
 export {
   PAGE_CHARS,
   documentFromResponse,
   splitPages,
-} from './web-fetch/document.mjs'
-export { findPassages } from './web-fetch/find.mjs'
-export { extractPageDates, htmlToMarkdown } from './web-fetch/extract/html.mjs'
+} from "./web-fetch/document.mjs";
+export { findPassages } from "./web-fetch/find.mjs";
+export { extractPageDates, htmlToMarkdown } from "./web-fetch/extract/html.mjs";
 export {
   fetchPublicUrl,
   guardedLookup,
   isPublicAddress,
-} from './web-fetch/transport.mjs'
-export { isoDay, safeDecodeURI, safeDecodeURIComponent } from './web-fetch/util.mjs'
+} from "./web-fetch/transport.mjs";
+export {
+  isoDay,
+  safeDecodeURI,
+  safeDecodeURIComponent,
+} from "./web-fetch/util.mjs";
 
 /**
  * Web research for the agent: `web_search` and `web_fetch`.
@@ -74,154 +82,184 @@ export { isoDay, safeDecodeURI, safeDecodeURIComponent } from './web-fetch/util.
  */
 
 export const WEB_SEARCH_PROVIDERS = [
-  'searxng',
-  'ollama',
-  'websearchapi',
-  'tavily',
-  'firecrawl',
-  'firecrawlSelfHosted',
-  'jina',
-  'langsearch',
-  'exa',
-  'tinyfish',
-  'parallel',
-  'mcp',
-]
-export const WEB_TOOL_NAMES = new Set(['web_search', 'web_fetch'])
+  "searxng",
+  "ollama",
+  "websearchapi",
+  "tavily",
+  "firecrawl",
+  "firecrawlSelfHosted",
+  "jina",
+  "langsearch",
+  "exa",
+  "tinyfish",
+  "parallel",
+  "mcp",
+];
+export const WEB_TOOL_NAMES = new Set(["web_search", "web_fetch"]);
 export const WEB_SEARCH_ROTATION_STRATEGIES = [
-  'round-robin',
-  'provider-priority',
-  'sticky',
-]
+  "round-robin",
+  "provider-priority",
+  "sticky",
+];
 export const WEB_SEARCH_PRIMARY_PROVIDERS = [
-  'searxng',
-  'ollama',
-  'websearchapi',
-  'tavily',
-  'firecrawl',
-  'firecrawlSelfHosted',
-  'jina',
-  'langsearch',
-  'exa',
-  'tinyfish',
-  'parallel',
-  'mcp',
-]
+  "searxng",
+  "ollama",
+  "websearchapi",
+  "tavily",
+  "firecrawl",
+  "firecrawlSelfHosted",
+  "jina",
+  "langsearch",
+  "exa",
+  "tinyfish",
+  "parallel",
+  "mcp",
+];
 /** Providers that answer web_search. */
 export const SEARCH_PROVIDERS = new Set([
-  'searxng',
-  'ollama',
-  'websearchapi',
-  'tavily',
-  'firecrawl',
-  'firecrawlSelfHosted',
-  'jina',
-  'langsearch',
-  'exa',
-  'tinyfish',
-  'parallel',
-  'mcp',
-])
+  "searxng",
+  "ollama",
+  "websearchapi",
+  "tavily",
+  "firecrawl",
+  "firecrawlSelfHosted",
+  "jina",
+  "langsearch",
+  "exa",
+  "tinyfish",
+  "parallel",
+  "mcp",
+]);
 
 export const WEB_SEARCH_DEFAULTS = {
   cacheHours: 24,
   maxCachedSearches: 256,
   maxCachedPages: 64,
-}
+};
 
-export const LANGSEARCH_API_BASE = 'https://api.langsearch.com'
-export const EXA_API_BASE = 'https://api.exa.ai'
-export const TINYFISH_API_BASE = 'https://api.search.tinyfish.ai'
-export const PARALLEL_API_BASE = 'https://api.parallel.ai'
-export const PARALLEL_MAX_RESULTS = 20
-export const PARALLEL_MODES = ['turbo', 'fast', 'basic', 'advanced']
+export const LANGSEARCH_API_BASE = "https://api.langsearch.com";
+export const EXA_API_BASE = "https://api.exa.ai";
+export const TINYFISH_API_BASE = "https://api.search.tinyfish.ai";
+export const PARALLEL_API_BASE = "https://api.parallel.ai";
+export const PARALLEL_MAX_RESULTS = 20;
+export const PARALLEL_MODES = ["turbo", "fast", "basic", "advanced"];
 
 /** Settings for a run with no search backend: web_fetch only, default caching. */
 export function fetchOnlyWebSettings() {
-  const { cacheHours, maxCachedSearches, maxCachedPages } = Settings.aiAssist || {}
+  const { cacheHours, maxCachedSearches, maxCachedPages } =
+    Settings.aiAssist || {};
   return {
     providers: {},
     cacheHours: cacheHours ?? WEB_SEARCH_DEFAULTS.cacheHours,
-    maxCachedSearches: maxCachedSearches ?? WEB_SEARCH_DEFAULTS.maxCachedSearches,
+    maxCachedSearches:
+      maxCachedSearches ?? WEB_SEARCH_DEFAULTS.maxCachedSearches,
     maxCachedPages: maxCachedPages ?? WEB_SEARCH_DEFAULTS.maxCachedPages,
-  }
+  };
 }
 
 /** Ollama's web search returns at most 10 results. */
-const OLLAMA_MAX_RESULTS = 10
+const OLLAMA_MAX_RESULTS = 10;
 /**
  * How many results a provider that takes a count is asked for when the user
  * has not set one. SearXNG takes no count and keeps all it finds.
  */
-const DEFAULT_RESULTS = 10
+const DEFAULT_RESULTS = 10;
 /** The Search API answers 1 to 20 results per request. */
-const WEBSEARCHAPI_MAX_RESULTS = 20
-const WEBSEARCHAPI_LENGTHS = ['short', 'medium', 'long']
-const WEBSEARCHAPI_ENGINES = ['direct', 'browser', 'cf-browser-rendering']
+const WEBSEARCHAPI_MAX_RESULTS = 20;
+/**
+ * Custom search endpoints follow Claude Desktop's 3P custom web search
+ * contract: answered within 15 seconds, at most 10 results used.
+ */
+const MCP_SEARCH_TIMEOUT_MS = 15_000;
+const MCP_MAX_RESULTS = 10;
+// Endpoints saved when SSE and JSON-RPC MCP servers were accepted fail the
+// contract, so its errors say what changed
+const MCP_CONTRACT_HINT =
+  " MCP JSON-RPC and SSE servers are no longer called directly; put an HTTP endpoint that follows this contract in front of them.";
+
+/** Whether a custom search response body follows the 3P contract. */
+function isMcpSearchBody(body) {
+  return Array.isArray(body?.results);
+}
+const WEBSEARCHAPI_LENGTHS = ["short", "medium", "long"];
+const WEBSEARCHAPI_ENGINES = ["direct", "browser", "cf-browser-rendering"];
 /** Tavily's Search API answers 0 to 20 results per request. */
-const TAVILY_MAX_RESULTS = 20
-const TAVILY_DEPTHS = ['basic', 'advanced', 'fast', 'ultra-fast']
-const TAVILY_TOPICS = ['general', 'news', 'finance']
+const TAVILY_MAX_RESULTS = 20;
+const TAVILY_DEPTHS = ["basic", "advanced", "fast", "ultra-fast"];
+const TAVILY_TOPICS = ["general", "news", "finance"];
 /** Firecrawl's Search API answers 1 to 100 results per request. */
-const FIRECRAWL_MAX_RESULTS = 100
+const FIRECRAWL_MAX_RESULTS = 100;
 // Not research: from 2026-11-16 it answers paper records outside data.web
-const FIRECRAWL_CATEGORIES = ['developer', 'pdf']
+const FIRECRAWL_CATEGORIES = ["developer", "pdf"];
 /** Each one's initial is its `qdr:` code in Firecrawl's tbs parameter. */
-const FIRECRAWL_TIME_RANGES = ['hour', 'day', 'week', 'month', 'year']
-const FIRECRAWL_PROXIES = ['basic', 'enhanced', 'auto']
-const FIRECRAWL_SOURCES = ['web', 'news']
-const FIRECRAWL_PDF_MODES = ['fast', 'auto', 'ocr']
+const FIRECRAWL_TIME_RANGES = ["hour", "day", "week", "month", "year"];
+const FIRECRAWL_PROXIES = ["basic", "enhanced", "auto"];
+const FIRECRAWL_SOURCES = ["web", "news"];
+const FIRECRAWL_PDF_MODES = ["fast", "auto", "ocr"];
 /** Jina's Search API answers 0 to 20 results per request. */
-const JINA_MAX_RESULTS = 20
-const JINA_ENGINES = ['browser', 'direct', 'cf-browser-rendering']
+const JINA_MAX_RESULTS = 20;
+const JINA_ENGINES = ["browser", "direct", "cf-browser-rendering"];
 /** LangSearch's Search API answers 1 to 50 results per request. */
-const LANGSEARCH_MAX_RESULTS = 50
+const LANGSEARCH_MAX_RESULTS = 50;
 const LANGSEARCH_FRESHNESS = [
-  'noLimit',
-  'oneDay',
-  'oneWeek',
-  'oneMonth',
-  'oneYear',
-]
+  "noLimit",
+  "oneDay",
+  "oneWeek",
+  "oneMonth",
+  "oneYear",
+];
 /** Exa's Search API answers 1 to 100 results per request. */
-const EXA_MAX_RESULTS = 100
-const EXA_SEARCH_TYPES = ['auto', 'neural', 'keyword', 'fast', 'deep']
+const EXA_MAX_RESULTS = 100;
+const EXA_SEARCH_TYPES = ["auto", "neural", "keyword", "fast", "deep"];
 const EXA_SEARCH_CATEGORIES = [
-  'company',
-  'research paper',
-  'news',
-  'pdf',
-  'github',
-  'tweet',
-  'personal site',
-  'linkedin profile',
-  'financial report',
-]
-const EXA_LIVECRAWL_MODES = ['always', 'fallback', 'never', 'auto']
+  "company",
+  "research paper",
+  "news",
+  "pdf",
+  "github",
+  "tweet",
+  "personal site",
+  "linkedin profile",
+  "financial report",
+];
+const EXA_LIVECRAWL_MODES = ["always", "fallback", "never", "auto"];
 /** TinyFish Search answers one GET on its root; limit is applied client-side. */
-const TINYFISH_MAX_RESULTS = 20
-const TINYFISH_DOMAIN_TYPES = ['web', 'news', 'research_paper']
-const MAX_SNIPPET_CHARS = 600
+const TINYFISH_MAX_RESULTS = 20;
+const TINYFISH_DOMAIN_TYPES = ["web", "news", "research_paper"];
+const MAX_SNIPPET_CHARS = 600;
 /** Unread page ranges a web_fetch result lists; the count covers the rest. */
-const MAX_UNREAD_RANGES = 8
-const RECENCY_VALUES = ['day', 'week', 'month', 'year']
+const MAX_UNREAD_RANGES = 8;
+const RECENCY_VALUES = ["day", "week", "month", "year"];
+
+/**
+ * The default for every request a search provider makes. A SearXNG, custom
+ * search or self-hosted Firecrawl address is typed in by the user, so it is
+ * dialled like a connector: pinned to the address it was checked at, and
+ * refused when that address is this server, its metadata service or one of
+ * Overleaf's own services. The body is capped too. Hosted providers pass as
+ * the public addresses they are.
+ */
+export const endpointFetch = (url, init = {}) => connectorFetch(url, init);
+
+/** The most results a SearXNG instance's answer keeps. */
+const SEARXNG_MAX_RESULTS = 100;
 
 function settingsError(message) {
   return new ProviderError(message, {
-    code: 'invalidWebSearchSettings',
+    code: "invalidWebSearchSettings",
     status: 400,
-  })
+  });
 }
 
 /** The same page under the spellings search engines and links give it. */
 function sourceKey(url) {
   try {
-    const parsed = new URL(url)
-    parsed.hash = ''
-    parsed.hostname = parsed.hostname.replace(/^www\./, '')
-    return `${parsed.hostname}${parsed.pathname.replace(/\/+$/, '')}${parsed.search}`
+    const parsed = new URL(url);
+    parsed.hash = "";
+    parsed.hostname = parsed.hostname.replace(/^www\./, "");
+    return `${parsed.hostname}${parsed.pathname.replace(/\/+$/, "")}${parsed.search}`;
   } catch {
-    return String(url)
+    return String(url);
   }
 }
 
@@ -233,30 +271,30 @@ function sourceKey(url) {
  */
 export function searchCacheText(query) {
   return collapse(
-    String(query ?? '')
+    String(query ?? "")
       .toLowerCase()
-      .replace(/(?<=[\p{L}\p{N}])[-_]+(?=[\p{L}\p{N}])/gu, ' ')
-      .replace(/[,;!?]+|\.+(?=\s|$)/gu, ' ')
-  )
+      .replace(/(?<=[\p{L}\p{N}])[-_]+(?=[\p{L}\p{N}])/gu, " ")
+      .replace(/[,;!?]+|\.+(?=\s|$)/gu, " "),
+  );
 }
 
 const SNIPPET_STOPWORDS = new Set([
-  'the',
-  'and',
-  'for',
-  'with',
-  'from',
-  'that',
-  'this',
-  'what',
-  'about',
-  'how',
-  'news',
-  'latest',
-  'today',
-  'current',
-  'recent',
-])
+  "the",
+  "and",
+  "for",
+  "with",
+  "from",
+  "that",
+  "this",
+  "what",
+  "about",
+  "how",
+  "news",
+  "latest",
+  "today",
+  "current",
+  "recent",
+]);
 
 /**
  * A search backend that returns the whole page as the "snippet" (Ollama does)
@@ -265,32 +303,32 @@ const SNIPPET_STOPWORDS = new Set([
  */
 export function bestSnippet(text, query, max = MAX_SNIPPET_CHARS) {
   const plain = collapse(
-    String(text ?? '')
-      .replace(/\{%[^%]*%\}/g, ' ')
-      .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
-      .replace(/^#{1,6}\s+/gm, '')
-  )
-  if (plain.length <= max) return plain
+    String(text ?? "")
+      .replace(/\{%[^%]*%\}/g, " ")
+      .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+      .replace(/^#{1,6}\s+/gm, ""),
+  );
+  if (plain.length <= max) return plain;
   const terms = [
     ...new Set(
       collapse(query)
         .toLowerCase()
         .split(/[^\p{L}\p{N}\\]+/u)
-        .filter(term => term.length >= 3 && !SNIPPET_STOPWORDS.has(term))
+        .filter((term) => term.length >= 3 && !SNIPPET_STOPWORDS.has(term)),
     ),
-  ]
-  const sentences = plain.split(/(?<=[.!?])\s+/)
-  let best = 0
-  let bestScore = 0
+  ];
+  const sentences = plain.split(/(?<=[.!?])\s+/);
+  let best = 0;
+  let bestScore = 0;
   sentences.forEach((sentence, index) => {
-    const lower = sentence.toLowerCase()
-    const score = terms.filter(term => lower.includes(term)).length
+    const lower = sentence.toLowerCase();
+    const score = terms.filter((term) => lower.includes(term)).length;
     if (score > bestScore) {
-      best = index
-      bestScore = score
+      best = index;
+      bestScore = score;
     }
-  })
-  return clip(sentences.slice(best).join(' '), max)
+  });
+  return clip(sentences.slice(best).join(" "), max);
 }
 
 // ---------------------------------------------------------------------------
@@ -302,21 +340,21 @@ export function bestSnippet(text, query, max = MAX_SNIPPET_CHARS) {
  * results page as often as the instance root, so both are accepted.
  */
 export function normalizeSearxngBaseUrl(raw) {
-  if (typeof raw !== 'string' || !raw.trim()) return ''
-  let value = raw.trim()
-  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) value = `http://${value}`
-  let parsed
+  if (typeof raw !== "string" || !raw.trim()) return "";
+  let value = raw.trim();
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) value = `http://${value}`;
+  let parsed;
   try {
-    parsed = new URL(value)
+    parsed = new URL(value);
   } catch {
-    throw settingsError('The SearXNG URL is not a valid URL.')
+    throw settingsError("The SearXNG URL is not a valid URL.");
   }
-  parsed.search = ''
-  parsed.hash = ''
+  parsed.search = "";
+  parsed.hash = "";
   parsed.pathname = parsed.pathname
-    .replace(/\/search\/?$/, '')
-    .replace(/\/+$/, '')
-  return parsed.toString().replace(/\/+$/, '')
+    .replace(/\/search\/?$/, "")
+    .replace(/\/+$/, "");
+  return parsed.toString().replace(/\/+$/, "");
 }
 
 /**
@@ -324,52 +362,49 @@ export function normalizeSearxngBaseUrl(raw) {
  * accepted with or without the version path.
  */
 export function normalizeFirecrawlBaseUrl(raw) {
-  if (typeof raw !== 'string' || !raw.trim()) return ''
-  let value = raw.trim()
-  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) value = `http://${value}`
-  let parsed
+  if (typeof raw !== "string" || !raw.trim()) return "";
+  let value = raw.trim();
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) value = `http://${value}`;
+  let parsed;
   try {
-    parsed = new URL(value)
+    parsed = new URL(value);
   } catch {
-    throw settingsError('The Firecrawl URL is not a valid URL.')
+    throw settingsError("The Firecrawl URL is not a valid URL.");
   }
-  parsed.search = ''
-  parsed.hash = ''
+  parsed.search = "";
+  parsed.hash = "";
   parsed.pathname = parsed.pathname
-    .replace(/\/v[12](\/.*)?$/, '')
-    .replace(/\/+$/, '')
-  return parsed.toString().replace(/\/+$/, '')
+    .replace(/\/v[12](\/.*)?$/, "")
+    .replace(/\/+$/, "");
+  return parsed.toString().replace(/\/+$/, "");
 }
 
 export function normalizeMcpOptions(raw = {}) {
-  const rawHeaders = Array.isArray(raw?.headers) ? raw.headers : []
+  const rawHeaders = Array.isArray(raw?.headers) ? raw.headers : [];
   const headers = rawHeaders
     .filter(
-      h =>
+      (h) =>
         h &&
-        typeof h === 'object' &&
-        typeof h.key === 'string' &&
+        typeof h === "object" &&
+        typeof h.key === "string" &&
         h.key.trim() &&
-        typeof h.value === 'string'
+        typeof h.value === "string",
     )
-    .map(h => ({
-      key: h.key.trim().replace(/[\r\n]+/g, ''),
-      value: h.value.trim().replace(/[\r\n]+/g, ''),
+    .map((h) => ({
+      key: h.key.trim().replace(/[\r\n]+/g, ""),
+      value: h.value.trim().replace(/[\r\n]+/g, ""),
     }))
-    .filter(h => h.key.length > 0)
-  const toolName =
-    typeof raw?.toolName === 'string' && raw.toolName.trim()
-      ? raw.toolName.trim()
-      : undefined
-  const queryParam =
-    typeof raw?.queryParam === 'string' && raw.queryParam.trim()
-      ? raw.queryParam.trim()
-      : undefined
+    .filter((h) => h.key.length > 0);
+  const bearerToken =
+    typeof raw?.bearerToken === "string" && raw.bearerToken.trim()
+      ? raw.bearerToken.trim()
+      : typeof raw?.apiKey === "string" && raw.apiKey.trim()
+        ? raw.apiKey.trim()
+        : undefined;
   return withoutUndefined({
+    bearerToken,
     headers: headers.length > 0 ? headers : undefined,
-    toolName,
-    queryParam,
-  })
+  });
 }
 
 /**
@@ -378,53 +413,53 @@ export function normalizeMcpOptions(raw = {}) {
  */
 function clampCacheParam(value, min, defaultValue) {
   const num =
-    typeof value === 'string'
+    typeof value === "string"
       ? parseInt(value, 10)
-      : typeof value === 'number'
+      : typeof value === "number"
         ? value
-        : null
-  if (num === null || Number.isNaN(num)) return defaultValue
-  return Math.max(min, num)
+        : null;
+  if (num === null || Number.isNaN(num)) return defaultValue;
+  return Math.max(min, num);
 }
 
 function optionalChoice(value, choices) {
-  return choices.includes(value) ? value : undefined
+  return choices.includes(value) ? value : undefined;
 }
 
 function optionalFlag(value) {
-  return typeof value === 'boolean' ? value : undefined
+  return typeof value === "boolean" ? value : undefined;
 }
 
 function optionalText(value, pattern, max = 200) {
-  const text = typeof value === 'string' ? value.trim() : ''
+  const text = typeof value === "string" ? value.trim() : "";
   return text && text.length <= max && (!pattern || pattern.test(text))
     ? text
-    : undefined
+    : undefined;
 }
 
 /** "https://www.arxiv.org/abs" and "arxiv.org" both name the domain arxiv.org. */
 function domainList(value, max = 50) {
-  if (!Array.isArray(value)) return undefined
-  const domains = new Set()
+  if (!Array.isArray(value)) return undefined;
+  const domains = new Set();
   for (const entry of value) {
-    if (typeof entry !== 'string') continue
+    if (typeof entry !== "string") continue;
     const domain = entry
       .trim()
       .toLowerCase()
-      .replace(/^[a-z][a-z0-9+.-]*:\/\//, '')
-      .replace(/[/?#].*$/, '')
+      .replace(/^[a-z][a-z0-9+.-]*:\/\//, "")
+      .replace(/[/?#].*$/, "");
     if (/^(?=.{1,253}$)([a-z0-9-]+\.)+[a-z]{2,}$/.test(domain)) {
-      domains.add(domain)
+      domains.add(domain);
     }
-    if (domains.size >= max) break
+    if (domains.size >= max) break;
   }
-  return domains.size > 0 ? [...domains] : undefined
+  return domains.size > 0 ? [...domains] : undefined;
 }
 
 function withoutUndefined(object) {
   return Object.fromEntries(
-    Object.entries(object).filter(([, value]) => value !== undefined)
-  )
+    Object.entries(object).filter(([, value]) => value !== undefined),
+  );
 }
 
 /**
@@ -433,26 +468,26 @@ function withoutUndefined(object) {
  */
 export function normalizeWebsearchapiOptions(raw = {}) {
   const rawSearch =
-    raw?.search && typeof raw.search === 'object' ? raw.search : {}
+    raw?.search && typeof raw.search === "object" ? raw.search : {};
   const rawScrape =
-    raw?.scrape && typeof raw.scrape === 'object' ? raw.scrape : {}
+    raw?.scrape && typeof raw.scrape === "object" ? raw.scrape : {};
   const timeout = Number.isInteger(rawScrape.timeout)
     ? Math.min(120, Math.max(1, rawScrape.timeout))
-    : undefined
+    : undefined;
   const search = withoutUndefined({
     maxResults: Number.isInteger(rawSearch.maxResults)
       ? Math.min(WEBSEARCHAPI_MAX_RESULTS, Math.max(1, rawSearch.maxResults))
       : undefined,
     country: optionalText(rawSearch.country, /^[a-z]{2}$/i)?.toLowerCase(),
     language: optionalText(rawSearch.language, /^[a-z]{2}$/i)?.toLowerCase(),
-    sortBy: optionalChoice(rawSearch.sortBy, ['relevance', 'date']),
+    sortBy: optionalChoice(rawSearch.sortBy, ["relevance", "date"]),
     safeSearch: optionalFlag(rawSearch.safeSearch),
     includeDomains: domainList(rawSearch.includeDomains),
     excludeDomains: domainList(rawSearch.excludeDomains),
     includeContent: optionalFlag(rawSearch.includeContent),
     contentLength: optionalChoice(
       rawSearch.contentLength,
-      WEBSEARCHAPI_LENGTHS
+      WEBSEARCHAPI_LENGTHS,
     ),
     includeAnswer: optionalFlag(rawSearch.includeAnswer),
     answerLength: optionalChoice(rawSearch.answerLength, WEBSEARCHAPI_LENGTHS),
@@ -462,25 +497,25 @@ export function normalizeWebsearchapiOptions(raw = {}) {
     excludeTerms: optionalText(rawSearch.excludeTerms),
     fileType: optionalText(
       rawSearch.fileType,
-      /^[a-z0-9]{1,10}$/i
+      /^[a-z0-9]{1,10}$/i,
     )?.toLowerCase(),
-  })
+  });
   const scrape = withoutUndefined({
     engine: optionalChoice(rawScrape.engine, WEBSEARCHAPI_ENGINES),
     timeout,
     tokenBudget: Number.isInteger(rawScrape.tokenBudget)
       ? Math.min(1_000_000, Math.max(100, rawScrape.tokenBudget))
       : undefined,
-    retainImages: optionalChoice(rawScrape.retainImages, ['all', 'none']),
+    retainImages: optionalChoice(rawScrape.retainImages, ["all", "none"]),
     targetSelector: optionalText(rawScrape.targetSelector, null, 500),
     removeSelector: optionalText(rawScrape.removeSelector, null, 500),
     respondWith: optionalChoice(rawScrape.respondWith, [
-      'default',
-      'readerlm-v2',
+      "default",
+      "readerlm-v2",
     ]),
     proxy: optionalText(
       rawScrape.proxy,
-      /^(auto|none|[a-z]{2})$/i
+      /^(auto|none|[a-z]{2})$/i,
     )?.toLowerCase(),
     locale: optionalText(rawScrape.locale, /^[a-z]{2,3}(-[a-z0-9]{2,8})*$/i),
     withGeneratedAlt: optionalFlag(rawScrape.withGeneratedAlt),
@@ -488,11 +523,11 @@ export function normalizeWebsearchapiOptions(raw = {}) {
     withShadowDom: optionalFlag(rawScrape.withShadowDom),
     noCache: optionalFlag(rawScrape.noCache),
     dnt: optionalFlag(rawScrape.dnt),
-  })
+  });
   return {
     ...(Object.keys(search).length > 0 ? { search } : {}),
     ...(Object.keys(scrape).length > 0 ? { scrape } : {}),
-  }
+  };
 }
 
 /**
@@ -502,18 +537,18 @@ export function normalizeWebsearchapiOptions(raw = {}) {
  */
 export function normalizeTavilyOptions(raw = {}) {
   const rawSearch =
-    raw?.search && typeof raw.search === 'object' ? raw.search : {}
+    raw?.search && typeof raw.search === "object" ? raw.search : {};
   const rawExtract =
-    raw?.extract && typeof raw.extract === 'object' ? raw.extract : {}
-  const depth = optionalChoice(rawSearch.searchDepth, TAVILY_DEPTHS)
-  const quick = depth === 'fast' || depth === 'ultra-fast'
-  const topic = optionalChoice(rawSearch.topic, TAVILY_TOPICS)
-  const includeDomains = domainList(rawSearch.includeDomains, 300)
+    raw?.extract && typeof raw.extract === "object" ? raw.extract : {};
+  const depth = optionalChoice(rawSearch.searchDepth, TAVILY_DEPTHS);
+  const quick = depth === "fast" || depth === "ultra-fast";
+  const topic = optionalChoice(rawSearch.topic, TAVILY_TOPICS);
+  const includeDomains = domainList(rawSearch.includeDomains, 300);
   const language = optionalText(
     rawSearch.language,
-    /^[a-z][a-z -]{1,30}$/i
-  )?.toLowerCase()
-  const day = value => optionalText(value, /^\d{4}-\d{2}-\d{2}$/)
+    /^[a-z][a-z -]{1,30}$/i,
+  )?.toLowerCase();
+  const day = (value) => optionalText(value, /^\d{4}-\d{2}-\d{2}$/);
   const search = withoutUndefined({
     maxResults: Number.isInteger(rawSearch.maxResults)
       ? Math.min(TAVILY_MAX_RESULTS, Math.max(1, rawSearch.maxResults))
@@ -521,7 +556,7 @@ export function normalizeTavilyOptions(raw = {}) {
     searchDepth: depth,
     // Snippets come as one summary per page at ultra-fast
     chunksPerSource:
-      Number.isInteger(rawSearch.chunksPerSource) && depth !== 'ultra-fast'
+      Number.isInteger(rawSearch.chunksPerSource) && depth !== "ultra-fast"
         ? Math.min(3, Math.max(1, rawSearch.chunksPerSource))
         : undefined,
     topic,
@@ -531,21 +566,21 @@ export function normalizeTavilyOptions(raw = {}) {
     includePublishedDate: optionalFlag(rawSearch.includePublishedDate),
     filterByPublishedDate: optionalFlag(rawSearch.filterByPublishedDate),
     includeAnswer: optionalChoice(rawSearch.includeAnswer, [
-      'basic',
-      'advanced',
+      "basic",
+      "advanced",
     ]),
     includeRawContent: optionalChoice(rawSearch.includeRawContent, [
-      'markdown',
-      'text',
+      "markdown",
+      "text",
     ]),
     includeDomains,
     excludeDomains: domainList(rawSearch.excludeDomains, 150),
     includeDomainsMode: includeDomains
-      ? optionalChoice(rawSearch.includeDomainsMode, ['restrict', 'prefer'])
+      ? optionalChoice(rawSearch.includeDomainsMode, ["restrict", "prefer"])
       : undefined,
     // Tavily boosts a country only for general searches
     country:
-      !topic || topic === 'general'
+      !topic || topic === "general"
         ? optionalText(rawSearch.country, /^[a-z][a-z ]{1,40}$/i)?.toLowerCase()
         : undefined,
     language,
@@ -555,38 +590,38 @@ export function normalizeTavilyOptions(raw = {}) {
     autoParameters: optionalFlag(rawSearch.autoParameters),
     exactMatch: optionalFlag(rawSearch.exactMatch),
     safeSearch: quick ? undefined : optionalFlag(rawSearch.safeSearch),
-  })
+  });
   const extract = withoutUndefined({
     extractDepth: optionalChoice(rawExtract.extractDepth, [
-      'basic',
-      'advanced',
+      "basic",
+      "advanced",
     ]),
-    format: optionalChoice(rawExtract.format, ['markdown', 'text']),
+    format: optionalChoice(rawExtract.format, ["markdown", "text"]),
     timeout:
-      typeof rawExtract.timeout === 'number' &&
+      typeof rawExtract.timeout === "number" &&
       Number.isFinite(rawExtract.timeout)
         ? Math.min(60, Math.max(1, rawExtract.timeout))
         : undefined,
-  })
-  const projectId = optionalText(raw?.projectId, /^[\x21-\x7e]+$/)
+  });
+  const projectId = optionalText(raw?.projectId, /^[\x21-\x7e]+$/);
   return {
     ...(projectId ? { projectId } : {}),
     ...(Object.keys(search).length > 0 ? { search } : {}),
     ...(Object.keys(extract).length > 0 ? { extract } : {}),
-  }
+  };
 }
 
 /** HTML tags or selectors, such as "article" or ".sidebar". */
 function selectorList(value, max = 50) {
-  if (!Array.isArray(value)) return undefined
+  if (!Array.isArray(value)) return undefined;
   const selectors = [
     ...new Set(
       value
-        .map(entry => (typeof entry === 'string' ? entry.trim() : ''))
-        .filter(entry => entry && entry.length <= 200)
+        .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+        .filter((entry) => entry && entry.length <= 200),
     ),
-  ].slice(0, max)
-  return selectors.length > 0 ? selectors : undefined
+  ].slice(0, max);
+  return selectors.length > 0 ? selectors : undefined;
 }
 
 /**
@@ -597,24 +632,24 @@ function selectorList(value, max = 50) {
  */
 export function normalizeFirecrawlOptions(raw = {}, { cloud = true } = {}) {
   const rawSearch =
-    raw?.search && typeof raw.search === 'object' ? raw.search : {}
+    raw?.search && typeof raw.search === "object" ? raw.search : {};
   const rawScrape =
-    raw?.scrape && typeof raw.scrape === 'object' ? raw.scrape : {}
-  const timeout = value =>
+    raw?.scrape && typeof raw.scrape === "object" ? raw.scrape : {};
+  const timeout = (value) =>
     Number.isInteger(value)
       ? Math.min(300_000, Math.max(1000, value))
-      : undefined
+      : undefined;
   const categories = Array.isArray(rawSearch.categories)
-    ? [...new Set(rawSearch.categories)].filter(category =>
-        FIRECRAWL_CATEGORIES.includes(category)
+    ? [...new Set(rawSearch.categories)].filter((category) =>
+        FIRECRAWL_CATEGORIES.includes(category),
       )
-    : []
-  const includeDomains = domainList(rawSearch.includeDomains)
+    : [];
+  const includeDomains = domainList(rawSearch.includeDomains);
   const sources = Array.isArray(rawSearch.sources)
-    ? [...new Set(rawSearch.sources)].filter(source =>
-        FIRECRAWL_SOURCES.includes(source)
+    ? [...new Set(rawSearch.sources)].filter((source) =>
+        FIRECRAWL_SOURCES.includes(source),
       )
-    : []
+    : [];
   const search = withoutUndefined({
     maxResults: Number.isInteger(rawSearch.maxResults)
       ? Math.min(FIRECRAWL_MAX_RESULTS, Math.max(1, rawSearch.maxResults))
@@ -634,18 +669,18 @@ export function normalizeFirecrawlOptions(raw = {}, { cloud = true } = {}) {
     timeout: timeout(rawSearch.timeout),
     sources: sources.length > 0 ? sources : undefined,
     highlights: optionalFlag(rawSearch.highlights),
-  })
+  });
   const languages = Array.isArray(rawScrape.languages)
     ? [
         ...new Set(
           rawScrape.languages
-            .map(language =>
-              optionalText(language, /^[a-z]{2,3}(-[a-z0-9]{2,8})*$/i)
+            .map((language) =>
+              optionalText(language, /^[a-z]{2,3}(-[a-z0-9]{2,8})*$/i),
             )
-            .filter(Boolean)
+            .filter(Boolean),
         ),
       ].slice(0, 10)
-    : []
+    : [];
   const scrape = withoutUndefined({
     onlyMainContent: optionalFlag(rawScrape.onlyMainContent),
     onlyCleanContent: optionalFlag(rawScrape.onlyCleanContent),
@@ -669,11 +704,11 @@ export function normalizeFirecrawlOptions(raw = {}, { cloud = true } = {}) {
     zeroDataRetention: cloud
       ? optionalFlag(rawScrape.zeroDataRetention)
       : undefined,
-  })
+  });
   return {
     ...(Object.keys(search).length > 0 ? { search } : {}),
     ...(Object.keys(scrape).length > 0 ? { scrape } : {}),
-  }
+  };
 }
 
 /**
@@ -683,23 +718,23 @@ export function normalizeFirecrawlOptions(raw = {}, { cloud = true } = {}) {
  */
 export function normalizeJinaOptions(raw = {}) {
   const rawSearch =
-    raw?.search && typeof raw.search === 'object' ? raw.search : {}
-  const rawRead = raw?.read && typeof raw.read === 'object' ? raw.read : {}
-  const headerText = value => optionalText(value, /^[\x20-\x7e]+$/, 500)
-  const country = optionalText(rawSearch.country)?.toLowerCase()
-  const language = optionalText(rawSearch.language)?.toLowerCase()
-  const respondWith = optionalChoice(rawRead.respondWith, ['readerlm-v2'])
+    raw?.search && typeof raw.search === "object" ? raw.search : {};
+  const rawRead = raw?.read && typeof raw.read === "object" ? raw.read : {};
+  const headerText = (value) => optionalText(value, /^[\x20-\x7e]+$/, 500);
+  const country = optionalText(rawSearch.country)?.toLowerCase();
+  const language = optionalText(rawSearch.language)?.toLowerCase();
+  const respondWith = optionalChoice(rawRead.respondWith, ["readerlm-v2"]);
   const search = withoutUndefined({
     maxResults: Number.isInteger(rawSearch.maxResults)
       ? Math.min(JINA_MAX_RESULTS, Math.max(1, rawSearch.maxResults))
       : undefined,
     includeContent: optionalFlag(rawSearch.includeContent),
-    type: optionalChoice(rawSearch.type, ['news']),
+    type: optionalChoice(rawSearch.type, ["news"]),
     country: JINA_COUNTRIES.has(country) ? country : undefined,
     language: JINA_LANGUAGES.get(language),
     location: optionalText(rawSearch.location),
     includeDomains: domainList(rawSearch.includeDomains),
-  })
+  });
   const read = withoutUndefined({
     engine: optionalChoice(rawRead.engine, JINA_ENGINES),
     timeout: Number.isInteger(rawRead.timeout)
@@ -707,7 +742,7 @@ export function normalizeJinaOptions(raw = {}) {
       : undefined,
     targetSelector: headerText(rawRead.targetSelector),
     removeSelector: headerText(rawRead.removeSelector),
-    retainImages: optionalChoice(rawRead.retainImages, ['none', 'alt']),
+    retainImages: optionalChoice(rawRead.retainImages, ["none", "alt"]),
     // Jina ignores it once X-Respond-With is set
     withGeneratedAlt: respondWith
       ? undefined
@@ -717,7 +752,7 @@ export function normalizeJinaOptions(raw = {}) {
     respondWith,
     proxy: optionalText(
       rawRead.proxy,
-      /^(auto|none|[a-z]{2})$/i
+      /^(auto|none|[a-z]{2})$/i,
     )?.toLowerCase(),
     locale: optionalText(rawRead.locale, /^[a-z]{2,3}(-[a-z0-9]{2,8})*$/i),
     noCache: optionalFlag(rawRead.noCache),
@@ -729,11 +764,11 @@ export function normalizeJinaOptions(raw = {}) {
     cacheTolerance: Number.isInteger(rawRead.cacheTolerance)
       ? Math.max(0, rawRead.cacheTolerance)
       : undefined,
-  })
+  });
   return {
     ...(Object.keys(search).length > 0 ? { search } : {}),
     ...(Object.keys(read).length > 0 ? { read } : {}),
-  }
+  };
 }
 
 /**
@@ -742,9 +777,9 @@ export function normalizeJinaOptions(raw = {}) {
  */
 export function normalizeLangsearchOptions(raw = {}) {
   const rawSearch =
-    raw?.search && typeof raw.search === 'object' ? raw.search : raw
-  const includeDomains = domainList(rawSearch.includeDomains)
-  const excludeDomains = domainList(rawSearch.excludeDomains)
+    raw?.search && typeof raw.search === "object" ? raw.search : raw;
+  const includeDomains = domainList(rawSearch.includeDomains);
+  const excludeDomains = domainList(rawSearch.excludeDomains);
   const search = withoutUndefined({
     maxResults: Number.isInteger(rawSearch.maxResults)
       ? Math.min(LANGSEARCH_MAX_RESULTS, Math.max(1, rawSearch.maxResults))
@@ -756,8 +791,8 @@ export function normalizeLangsearchOptions(raw = {}) {
     maxCharacters: Number.isInteger(rawSearch.maxCharacters)
       ? Math.min(100_000, Math.max(100, rawSearch.maxCharacters))
       : undefined,
-  })
-  return Object.keys(search).length > 0 ? { search } : {}
+  });
+  return Object.keys(search).length > 0 ? { search } : {};
 }
 
 /**
@@ -766,30 +801,30 @@ export function normalizeLangsearchOptions(raw = {}) {
  */
 export function normalizeExaOptions(raw = {}) {
   const rawSearch =
-    raw?.search && typeof raw.search === 'object' ? raw.search : {}
+    raw?.search && typeof raw.search === "object" ? raw.search : {};
   const rawRead =
-    raw?.read && typeof raw.read === 'object'
+    raw?.read && typeof raw.read === "object"
       ? raw.read
-      : raw?.contents && typeof raw.contents === 'object'
+      : raw?.contents && typeof raw.contents === "object"
         ? raw.contents
-        : {}
+        : {};
 
-  const stringArray = val => {
+  const stringArray = (val) => {
     if (Array.isArray(val)) {
       const filtered = val
-        .map(t => (typeof t === 'string' ? t.trim() : ''))
-        .filter(Boolean)
-      return filtered.length > 0 ? filtered : undefined
+        .map((t) => (typeof t === "string" ? t.trim() : ""))
+        .filter(Boolean);
+      return filtered.length > 0 ? filtered : undefined;
     }
-    if (typeof val === 'string' && val.trim()) {
+    if (typeof val === "string" && val.trim()) {
       const filtered = val
         .split(/[\n,]+/)
-        .map(t => t.trim())
-        .filter(Boolean)
-      return filtered.length > 0 ? filtered : undefined
+        .map((t) => t.trim())
+        .filter(Boolean);
+      return filtered.length > 0 ? filtered : undefined;
     }
-    return undefined
-  }
+    return undefined;
+  };
 
   const search = withoutUndefined({
     maxResults: Number.isInteger(rawSearch.maxResults)
@@ -827,7 +862,7 @@ export function normalizeExaOptions(raw = {}) {
       ? Math.min(10, Math.max(1, rawSearch.subpages))
       : undefined,
     subpageTarget: optionalText(rawSearch.subpageTarget),
-  })
+  });
 
   const read = withoutUndefined({
     maxCharacters: Number.isInteger(rawRead.maxCharacters)
@@ -852,12 +887,12 @@ export function normalizeExaOptions(raw = {}) {
       ? Math.min(10, Math.max(1, rawRead.subpages))
       : undefined,
     subpageTarget: optionalText(rawRead.subpageTarget),
-  })
+  });
 
   return {
     ...(Object.keys(search).length > 0 ? { search } : {}),
     ...(Object.keys(read).length > 0 ? { read } : {}),
-  }
+  };
 }
 
 /**
@@ -868,29 +903,33 @@ export function normalizeExaOptions(raw = {}) {
  */
 export function normalizeTinyfishOptions(raw = {}) {
   const rawSearch =
-    raw?.search && typeof raw.search === 'object' ? raw.search : {}
+    raw?.search && typeof raw.search === "object" ? raw.search : {};
   const domainType = optionalChoice(
     rawSearch.domainType ?? rawSearch.domain_type,
-    TINYFISH_DOMAIN_TYPES
-  )
-  const isPaper = domainType === 'research_paper'
+    TINYFISH_DOMAIN_TYPES,
+  );
+  const isPaper = domainType === "research_paper";
   const recencyMinutes = Number.isInteger(rawSearch.recencyMinutes)
     ? Math.min(5256000, Math.max(1, rawSearch.recencyMinutes))
-    : undefined
+    : undefined;
   const afterDate =
     !isPaper && recencyMinutes === undefined
       ? optionalText(rawSearch.afterDate, /^\d{4}-\d{2}-\d{2}$/, 10)
-      : undefined
+      : undefined;
   const beforeDate =
     !isPaper && recencyMinutes === undefined
       ? optionalText(rawSearch.beforeDate, /^\d{4}-\d{2}-\d{2}$/, 10)
-      : undefined
+      : undefined;
   const search = withoutUndefined({
     maxResults: Number.isInteger(rawSearch.maxResults)
       ? Math.min(TINYFISH_MAX_RESULTS, Math.max(1, rawSearch.maxResults))
       : undefined,
     domainType,
-    location: optionalText(rawSearch.location ?? rawSearch.country, /^[A-Za-z]{2}$/, 2),
+    location: optionalText(
+      rawSearch.location ?? rawSearch.country,
+      /^[A-Za-z]{2}$/,
+      2,
+    ),
     language: optionalText(rawSearch.language, /^[A-Za-z]{2,5}$/, 5),
     includeDomains: domainList(rawSearch.includeDomains),
     excludeDomains: domainList(rawSearch.excludeDomains),
@@ -908,17 +947,10 @@ export function normalizeTinyfishOptions(raw = {}) {
           afterDate,
           beforeDate,
         }),
-  })
-  const baseUrl =
-    typeof raw?.baseUrl === 'string' && raw.baseUrl.trim()
-      ? raw.baseUrl.trim()
-      : typeof rawSearch.baseUrl === 'string' && rawSearch.baseUrl.trim()
-        ? rawSearch.baseUrl.trim()
-        : undefined
+  });
   return {
     ...(Object.keys(search).length > 0 ? { search } : {}),
-    ...(baseUrl ? { baseUrl } : {}),
-  }
+  };
 }
 
 /**
@@ -927,13 +959,13 @@ export function normalizeTinyfishOptions(raw = {}) {
  */
 export function normalizeParallelOptions(raw = {}) {
   const rawSearch =
-    raw?.search && typeof raw.search === 'object' ? raw.search : {}
+    raw?.search && typeof raw.search === "object" ? raw.search : {};
   const rawRead =
-    raw?.read && typeof raw.read === 'object'
+    raw?.read && typeof raw.read === "object"
       ? raw.read
-      : raw?.extract && typeof raw.extract === 'object'
+      : raw?.extract && typeof raw.extract === "object"
         ? raw.extract
-        : {}
+        : {};
 
   const search = withoutUndefined({
     maxResults: Number.isInteger(rawSearch.maxResults)
@@ -957,7 +989,7 @@ export function normalizeParallelOptions(raw = {}) {
       ? Math.min(120, Math.max(1, rawSearch.timeoutSeconds))
       : undefined,
     disableCacheFallback: optionalFlag(rawSearch.disableCacheFallback),
-  })
+  });
 
   const read = withoutUndefined({
     fullContent: optionalFlag(rawRead.fullContent),
@@ -971,307 +1003,269 @@ export function normalizeParallelOptions(raw = {}) {
       ? Math.min(120, Math.max(1, rawRead.timeoutSeconds))
       : undefined,
     disableCacheFallback: optionalFlag(rawRead.disableCacheFallback),
-  })
-
-  const baseUrl =
-    typeof raw?.baseUrl === 'string' && raw.baseUrl.trim()
-      ? raw.baseUrl.trim()
-      : typeof rawSearch.baseUrl === 'string' && rawSearch.baseUrl.trim()
-        ? rawSearch.baseUrl.trim()
-        : undefined
+  });
 
   return {
     ...(Object.keys(search).length > 0 ? { search } : {}),
     ...(Object.keys(read).length > 0 ? { read } : {}),
-    ...(baseUrl ? { baseUrl } : {}),
-  }
+  };
 }
 
 export function normalizeWebSearchSettings(
   raw,
-  { allowConfiguredOnly = false } = {}
+  { allowConfiguredOnly = false } = {},
 ) {
-  if (raw === null || raw === undefined) return null
-  if (typeof raw !== 'object')
-    throw settingsError('Invalid web search settings.')
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw !== "object")
+    throw settingsError("Invalid web search settings.");
 
   // Always enforce server cache configuration (no upper caps for server owner)
-  const serverCfg = Settings.aiAssist || {}
+  const serverCfg = Settings.aiAssist || {};
   const preferences = {
-    cacheHours: clampCacheParam(serverCfg.cacheHours, 0, WEB_SEARCH_DEFAULTS.cacheHours),
-    maxCachedSearches: clampCacheParam(serverCfg.maxCachedSearches, 0, WEB_SEARCH_DEFAULTS.maxCachedSearches),
-    maxCachedPages: clampCacheParam(serverCfg.maxCachedPages, 0, WEB_SEARCH_DEFAULTS.maxCachedPages),
-  }
+    cacheHours: clampCacheParam(
+      serverCfg.cacheHours,
+      0,
+      WEB_SEARCH_DEFAULTS.cacheHours,
+    ),
+    maxCachedSearches: clampCacheParam(
+      serverCfg.maxCachedSearches,
+      0,
+      WEB_SEARCH_DEFAULTS.maxCachedSearches,
+    ),
+    maxCachedPages: clampCacheParam(
+      serverCfg.maxCachedPages,
+      0,
+      WEB_SEARCH_DEFAULTS.maxCachedPages,
+    ),
+  };
 
   // Legacy single-provider format
-  if (typeof raw.type === 'string') {
-    const type = raw.type.trim()
+  if (typeof raw.type === "string") {
+    const type = raw.type.trim();
     if (!WEB_SEARCH_PROVIDERS.includes(type)) {
-      throw settingsError(`Unknown web search provider '${type}'.`)
+      throw settingsError(`Unknown web search provider '${type}'.`);
     }
 
-    if (type === 'searxng') {
-      const baseUrl = normalizeSearxngBaseUrl(raw.baseUrl)
+    if (type === "searxng") {
+      const baseUrl = normalizeSearxngBaseUrl(raw.baseUrl);
       if (!baseUrl)
         throw settingsError(
-          'SearXNG web search needs the URL of your instance.'
-        )
-      validateSafeProviderBaseUrl(baseUrl)
+          "SearXNG web search needs the URL of your instance.",
+        );
+      validateSafeProviderBaseUrl(baseUrl);
       return {
-        type: 'searxng',
+        type: "searxng",
         baseUrl,
         ...preferences,
-      }
+      };
     }
 
-    if (type === 'firecrawlSelfHosted') {
-      const baseUrl = normalizeFirecrawlBaseUrl(raw.baseUrl)
+    if (type === "firecrawlSelfHosted") {
+      const baseUrl = normalizeFirecrawlBaseUrl(raw.baseUrl);
       if (!baseUrl)
         throw settingsError(
-          'Firecrawl web search needs the URL of your instance.'
-        )
-      validateSafeProviderBaseUrl(baseUrl)
+          "Firecrawl web search needs the URL of your instance.",
+        );
+      validateSafeProviderBaseUrl(baseUrl);
       return {
-        type: 'firecrawlSelfHosted',
+        type: "firecrawlSelfHosted",
         baseUrl,
         ...preferences,
-      }
+      };
     }
 
-    if (type === 'mcp') {
+    if (type === "mcp") {
       const rawUrls = Array.isArray(raw.serverUrls)
         ? raw.serverUrls
-        : raw.baseUrl ? [raw.baseUrl] : []
+        : raw.baseUrl
+          ? [raw.baseUrl]
+          : [];
       const serverUrls = rawUrls
-        .map(u => (typeof u === 'string' ? u.trim() : ''))
-        .filter(Boolean)
+        .map((u) => (typeof u === "string" ? u.trim() : ""))
+        .filter(Boolean);
       if (serverUrls.length === 0) {
-        throw settingsError('MCP web search needs the URL of your endpoint.')
+        throw settingsError("MCP web search needs the URL of your endpoint.");
       }
       for (const url of serverUrls) {
-        validateSafeProviderBaseUrl(url)
+        validateSafeProviderBaseUrl(url);
       }
       return {
-        type: 'mcp',
+        type: "mcp",
         serverUrls,
         ...normalizeMcpOptions(raw),
         ...preferences,
-      }
+      };
     }
 
-    const apiKey = typeof raw.apiKey === 'string' ? raw.apiKey.trim() : ''
+    const apiKey = typeof raw.apiKey === "string" ? raw.apiKey.trim() : "";
     if (!apiKey) {
       const label =
-        type === 'ollama'
-          ? 'Ollama'
-          : type === 'websearchapi'
-            ? 'WebSearchAPI.ai'
-            : type === 'tavily'
-              ? 'Tavily'
-              : type === 'firecrawl'
-                ? 'Firecrawl'
-                : type === 'jina'
-                  ? 'Jina AI'
-                  : type === 'langsearch'
-                    ? 'LangSearch'
-                    : type === 'exa'
-                      ? 'Exa'
-                      : type === 'tinyfish'
-                        ? 'TinyFish'
-                        : type === 'parallel'
-                          ? 'Parallel'
-                          : type
+        type === "ollama"
+          ? "Ollama"
+          : type === "websearchapi"
+            ? "WebSearchAPI.ai"
+            : type === "tavily"
+              ? "Tavily"
+              : type === "firecrawl"
+                ? "Firecrawl"
+                : type === "jina"
+                  ? "Jina AI"
+                  : type === "langsearch"
+                    ? "LangSearch"
+                    : type === "exa"
+                      ? "Exa"
+                      : type === "tinyfish"
+                        ? "TinyFish"
+                        : type === "parallel"
+                          ? "Parallel"
+                          : type;
       const help =
-        type === 'ollama'
-          ? ' from https://ollama.com/settings/keys.'
-          : type === 'parallel'
-            ? ' from https://parallel.ai.'
-            : '.'
-      throw settingsError(`${label} web search needs an API key${help}`)
+        type === "ollama"
+          ? " from https://ollama.com/settings/keys."
+          : type === "parallel"
+            ? " from https://parallel.ai."
+            : ".";
+      throw settingsError(`${label} web search needs an API key${help}`);
     }
-    if (type === 'parallel') {
-      const rawBaseUrl =
-        typeof raw.baseUrl === 'string'
-          ? raw.baseUrl.trim()
-          : typeof raw.search?.baseUrl === 'string'
-            ? raw.search.baseUrl.trim()
-            : ''
-      if (rawBaseUrl) {
-        validateSafeProviderBaseUrl(rawBaseUrl)
-      }
+    if (type === "parallel") {
       return {
-        type: 'parallel',
+        type: "parallel",
         apiKey,
-        ...(rawBaseUrl ? { baseUrl: rawBaseUrl } : {}),
         ...normalizeParallelOptions(raw),
         ...preferences,
-      }
+      };
     }
-    if (type === 'tinyfish') {
-      const rawBaseUrl =
-        typeof raw.baseUrl === 'string'
-          ? raw.baseUrl.trim()
-          : typeof raw.search?.baseUrl === 'string'
-            ? raw.search.baseUrl.trim()
-            : ''
-      if (rawBaseUrl) {
-        validateSafeProviderBaseUrl(rawBaseUrl)
-      }
+    if (type === "tinyfish") {
       return {
-        type: 'tinyfish',
+        type: "tinyfish",
         apiKey,
-        ...(rawBaseUrl ? { baseUrl: rawBaseUrl } : {}),
         ...normalizeTinyfishOptions(raw),
         ...preferences,
-      }
+      };
     }
     return {
       type,
       apiKey,
       ...preferences,
-    }
+    };
   }
 
   // Multi-provider format
-  if (raw.providers && typeof raw.providers === 'object') {
-    const rawOllama = raw.providers.ollama
-    const rawSearxng = raw.providers.searxng
-    const rawWebsearchapi = raw.providers.websearchapi
-    const rawTavily = raw.providers.tavily
-    const rawJina = raw.providers.jina
-    const rawFirecrawl = raw.providers.firecrawl
-    const rawFirecrawlSelfHosted = raw.providers.firecrawlSelfHosted
-    const rawLangsearch = raw.providers.langsearch
-    const rawExa = raw.providers.exa
-    const rawTinyfish = raw.providers.tinyfish
-    const rawParallel = raw.providers.parallel
-    const rawMcp = raw.providers.mcp
-    const readerKeys = raw =>
+  if (raw.providers && typeof raw.providers === "object") {
+    const rawOllama = raw.providers.ollama;
+    const rawSearxng = raw.providers.searxng;
+    const rawWebsearchapi = raw.providers.websearchapi;
+    const rawTavily = raw.providers.tavily;
+    const rawJina = raw.providers.jina;
+    const rawFirecrawl = raw.providers.firecrawl;
+    const rawFirecrawlSelfHosted = raw.providers.firecrawlSelfHosted;
+    const rawLangsearch = raw.providers.langsearch;
+    const rawExa = raw.providers.exa;
+    const rawTinyfish = raw.providers.tinyfish;
+    const rawParallel = raw.providers.parallel;
+    const rawMcp = raw.providers.mcp;
+    const readerKeys = (raw) =>
       Array.isArray(raw?.apiKeys)
         ? raw.apiKeys
-            .map(k => (typeof k === 'string' ? k.trim() : ''))
+            .map((k) => (typeof k === "string" ? k.trim() : ""))
             .filter(Boolean)
-        : typeof raw?.apiKey === 'string' && raw.apiKey.trim()
+        : typeof raw?.apiKey === "string" && raw.apiKey.trim()
           ? [raw.apiKey.trim()]
-          : []
-    const jinaKeys = readerKeys(rawJina)
-    const firecrawlKeys = readerKeys(rawFirecrawl)
-    const langsearchKeys = readerKeys(rawLangsearch)
-    const exaKeys = readerKeys(rawExa)
-    const tinyfishKeys = readerKeys(rawTinyfish)
-    const parallelKeys = readerKeys(rawParallel)
+          : [];
+    const jinaKeys = readerKeys(rawJina);
+    const firecrawlKeys = readerKeys(rawFirecrawl);
+    const langsearchKeys = readerKeys(rawLangsearch);
+    const exaKeys = readerKeys(rawExa);
+    const tinyfishKeys = readerKeys(rawTinyfish);
+    const parallelKeys = readerKeys(rawParallel);
 
     const ollamaKeys = Array.isArray(rawOllama?.apiKeys)
       ? rawOllama.apiKeys
-          .map(k => (typeof k === 'string' ? k.trim() : ''))
+          .map((k) => (typeof k === "string" ? k.trim() : ""))
           .filter(Boolean)
-      : typeof rawOllama?.apiKey === 'string' && rawOllama.apiKey.trim()
+      : typeof rawOllama?.apiKey === "string" && rawOllama.apiKey.trim()
         ? [rawOllama.apiKey.trim()]
-        : []
+        : [];
     const websearchapiKeys = Array.isArray(rawWebsearchapi?.apiKeys)
       ? rawWebsearchapi.apiKeys
-          .map(k => (typeof k === 'string' ? k.trim() : ''))
+          .map((k) => (typeof k === "string" ? k.trim() : ""))
           .filter(Boolean)
-      : typeof rawWebsearchapi?.apiKey === 'string' &&
+      : typeof rawWebsearchapi?.apiKey === "string" &&
           rawWebsearchapi.apiKey.trim()
         ? [rawWebsearchapi.apiKey.trim()]
-        : []
+        : [];
 
-    const tavilyKeys = readerKeys(rawTavily)
+    const tavilyKeys = readerKeys(rawTavily);
 
     const rawUrls = Array.isArray(rawSearxng?.baseUrls)
       ? rawSearxng.baseUrls
-      : typeof rawSearxng?.baseUrl === 'string' && rawSearxng.baseUrl.trim()
+      : typeof rawSearxng?.baseUrl === "string" && rawSearxng.baseUrl.trim()
         ? [rawSearxng.baseUrl.trim()]
-        : []
+        : [];
 
     const searxngUrls = rawUrls
-      .map(u => normalizeSearxngBaseUrl(u))
-      .filter(Boolean)
+      .map((u) => normalizeSearxngBaseUrl(u))
+      .filter(Boolean);
 
     // Validate safe URL for every SearXNG baseUrl
     for (const url of searxngUrls) {
-      validateSafeProviderBaseUrl(url)
+      validateSafeProviderBaseUrl(url);
     }
 
     const firecrawlSelfHostedUrls = (
       Array.isArray(rawFirecrawlSelfHosted?.baseUrls)
         ? rawFirecrawlSelfHosted.baseUrls
-        : typeof rawFirecrawlSelfHosted?.baseUrl === 'string' &&
+        : typeof rawFirecrawlSelfHosted?.baseUrl === "string" &&
             rawFirecrawlSelfHosted.baseUrl.trim()
           ? [rawFirecrawlSelfHosted.baseUrl.trim()]
           : []
     )
-      .map(u => normalizeFirecrawlBaseUrl(u))
-      .filter(Boolean)
+      .map((u) => normalizeFirecrawlBaseUrl(u))
+      .filter(Boolean);
     for (const url of firecrawlSelfHostedUrls) {
-      validateSafeProviderBaseUrl(url)
+      validateSafeProviderBaseUrl(url);
     }
 
     const rawMcpServerUrls = Array.isArray(rawMcp?.serverUrls)
       ? rawMcp.serverUrls
-      : typeof rawMcp?.baseUrl === 'string' && rawMcp.baseUrl.trim()
+      : typeof rawMcp?.baseUrl === "string" && rawMcp.baseUrl.trim()
         ? [rawMcp.baseUrl.trim()]
-        : []
+        : [];
     const mcpServerUrls = rawMcpServerUrls
-      .map(u => (typeof u === 'string' ? u.trim() : ''))
-      .filter(Boolean)
+      .map((u) => (typeof u === "string" ? u.trim() : ""))
+      .filter(Boolean);
     for (const url of mcpServerUrls) {
-      validateSafeProviderBaseUrl(url)
+      validateSafeProviderBaseUrl(url);
     }
 
-    // Validate optional TinyFish base URL override (proxy/mock)
-    const rawTinyfishBaseUrl =
-      typeof rawTinyfish?.baseUrl === 'string'
-        ? rawTinyfish.baseUrl.trim()
-        : typeof rawTinyfish?.search?.baseUrl === 'string'
-          ? rawTinyfish.search.baseUrl.trim()
-          : ''
-    if (rawTinyfishBaseUrl) {
-      validateSafeProviderBaseUrl(rawTinyfishBaseUrl)
-    }
-
-    // Validate optional Parallel base URL override (proxy/mock)
-    const rawParallelBaseUrl =
-      typeof rawParallel?.baseUrl === 'string'
-        ? rawParallel.baseUrl.trim()
-        : typeof rawParallel?.search?.baseUrl === 'string'
-          ? rawParallel.search.baseUrl.trim()
-          : ''
-    if (rawParallelBaseUrl) {
-      validateSafeProviderBaseUrl(rawParallelBaseUrl)
-    }
-
-    let ollamaEnabled = Boolean(rawOllama?.enabled && ollamaKeys.length > 0)
+    let ollamaEnabled = Boolean(rawOllama?.enabled && ollamaKeys.length > 0);
     const ollamaMaxResults = Number.isInteger(rawOllama?.maxResults)
       ? Math.min(OLLAMA_MAX_RESULTS, Math.max(1, rawOllama.maxResults))
-      : undefined
-    let searxngEnabled = Boolean(
-      rawSearxng?.enabled && searxngUrls.length > 0
-    )
+      : undefined;
+    let searxngEnabled = Boolean(rawSearxng?.enabled && searxngUrls.length > 0);
     let websearchapiEnabled = Boolean(
-      rawWebsearchapi?.enabled && websearchapiKeys.length > 0
-    )
+      rawWebsearchapi?.enabled && websearchapiKeys.length > 0,
+    );
 
-    let tavilyEnabled = Boolean(rawTavily?.enabled && tavilyKeys.length > 0)
+    let tavilyEnabled = Boolean(rawTavily?.enabled && tavilyKeys.length > 0);
     let firecrawlEnabled = Boolean(
-      rawFirecrawl?.enabled && firecrawlKeys.length > 0
-    )
+      rawFirecrawl?.enabled && firecrawlKeys.length > 0,
+    );
     let firecrawlSelfHostedEnabled = Boolean(
-      rawFirecrawlSelfHosted?.enabled && firecrawlSelfHostedUrls.length > 0
-    )
-    let jinaEnabled = Boolean(rawJina?.enabled && jinaKeys.length > 0)
+      rawFirecrawlSelfHosted?.enabled && firecrawlSelfHostedUrls.length > 0,
+    );
+    let jinaEnabled = Boolean(rawJina?.enabled && jinaKeys.length > 0);
     let langsearchEnabled = Boolean(
-      rawLangsearch?.enabled && langsearchKeys.length > 0
-    )
-    let exaEnabled = Boolean(rawExa?.enabled && exaKeys.length > 0)
+      rawLangsearch?.enabled && langsearchKeys.length > 0,
+    );
+    let exaEnabled = Boolean(rawExa?.enabled && exaKeys.length > 0);
     let tinyfishEnabled = Boolean(
-      rawTinyfish?.enabled && tinyfishKeys.length > 0
-    )
+      rawTinyfish?.enabled && tinyfishKeys.length > 0,
+    );
     let parallelEnabled = Boolean(
-      rawParallel?.enabled && parallelKeys.length > 0
-    )
-    let mcpEnabled = Boolean(rawMcp?.enabled && mcpServerUrls.length > 0)
+      rawParallel?.enabled && parallelKeys.length > 0,
+    );
+    let mcpEnabled = Boolean(rawMcp?.enabled && mcpServerUrls.length > 0);
 
     if (
       !ollamaEnabled &&
@@ -1288,18 +1282,18 @@ export function normalizeWebSearchSettings(
       !mcpEnabled
     ) {
       if (allowConfiguredOnly || raw.forTest) {
-        ollamaEnabled = ollamaKeys.length > 0
-        searxngEnabled = searxngUrls.length > 0
-        websearchapiEnabled = websearchapiKeys.length > 0
-        tavilyEnabled = tavilyKeys.length > 0
-        firecrawlEnabled = firecrawlKeys.length > 0
-        firecrawlSelfHostedEnabled = firecrawlSelfHostedUrls.length > 0
-        jinaEnabled = jinaKeys.length > 0
-        langsearchEnabled = langsearchKeys.length > 0
-        exaEnabled = exaKeys.length > 0
-        tinyfishEnabled = tinyfishKeys.length > 0
-        parallelEnabled = parallelKeys.length > 0
-        mcpEnabled = mcpServerUrls.length > 0
+        ollamaEnabled = ollamaKeys.length > 0;
+        searxngEnabled = searxngUrls.length > 0;
+        websearchapiEnabled = websearchapiKeys.length > 0;
+        tavilyEnabled = tavilyKeys.length > 0;
+        firecrawlEnabled = firecrawlKeys.length > 0;
+        firecrawlSelfHostedEnabled = firecrawlSelfHostedUrls.length > 0;
+        jinaEnabled = jinaKeys.length > 0;
+        langsearchEnabled = langsearchKeys.length > 0;
+        exaEnabled = exaKeys.length > 0;
+        tinyfishEnabled = tinyfishKeys.length > 0;
+        parallelEnabled = parallelKeys.length > 0;
+        mcpEnabled = mcpServerUrls.length > 0;
       }
     }
 
@@ -1317,45 +1311,45 @@ export function normalizeWebSearchSettings(
       !parallelEnabled &&
       !mcpEnabled
     ) {
-      return null
+      return null;
     }
 
     const rotationStrategy = WEB_SEARCH_ROTATION_STRATEGIES.includes(
-      raw.rotationStrategy
+      raw.rotationStrategy,
     )
       ? raw.rotationStrategy
-      : 'round-robin'
+      : "round-robin";
 
     const primaryProvider = WEB_SEARCH_PRIMARY_PROVIDERS.includes(
-      raw.primaryProvider
+      raw.primaryProvider,
     )
       ? raw.primaryProvider
-      : 'searxng'
+      : "searxng";
 
     return {
       type: searxngEnabled
-        ? 'searxng'
+        ? "searxng"
         : ollamaEnabled
-          ? 'ollama'
+          ? "ollama"
           : websearchapiEnabled
-            ? 'websearchapi'
+            ? "websearchapi"
             : tavilyEnabled
-              ? 'tavily'
+              ? "tavily"
               : firecrawlEnabled
-                ? 'firecrawl'
+                ? "firecrawl"
                 : firecrawlSelfHostedEnabled
-                  ? 'firecrawlSelfHosted'
+                  ? "firecrawlSelfHosted"
                   : jinaEnabled
-                    ? 'jina'
+                    ? "jina"
                     : langsearchEnabled
-                      ? 'langsearch'
+                      ? "langsearch"
                       : exaEnabled
-                        ? 'exa'
+                        ? "exa"
                         : tinyfishEnabled
-                          ? 'tinyfish'
+                          ? "tinyfish"
                           : parallelEnabled
-                            ? 'parallel'
-                            : 'mcp',
+                            ? "parallel"
+                            : "mcp",
       providers: {
         ollama: {
           enabled: ollamaEnabled,
@@ -1407,7 +1401,6 @@ export function normalizeWebSearchSettings(
         parallel: {
           enabled: parallelEnabled,
           apiKeys: parallelKeys,
-          ...(rawParallelBaseUrl ? { baseUrl: rawParallelBaseUrl } : {}),
           ...normalizeParallelOptions(rawParallel),
         },
         mcp: {
@@ -1418,11 +1411,11 @@ export function normalizeWebSearchSettings(
         searxng: {
           enabled: searxngEnabled,
           baseUrls: searxngUrls,
-          ...(typeof rawSearxng?.defaultCategories === 'string' &&
+          ...(typeof rawSearxng?.defaultCategories === "string" &&
           rawSearxng.defaultCategories.trim()
             ? { defaultCategories: rawSearxng.defaultCategories.trim() }
             : {}),
-          ...(typeof rawSearxng?.defaultLanguage === 'string' &&
+          ...(typeof rawSearxng?.defaultLanguage === "string" &&
           rawSearxng.defaultLanguage.trim()
             ? { defaultLanguage: rawSearxng.defaultLanguage.trim() }
             : {}),
@@ -1435,50 +1428,50 @@ export function normalizeWebSearchSettings(
       rotationStrategy,
       primaryProvider,
       ...preferences,
-    }
+    };
   }
 
-  throw settingsError('Invalid web search settings.')
+  throw settingsError("Invalid web search settings.");
 }
 
 export function buildEndpointPool(settings) {
-  const pool = []
+  const pool = [];
   if (settings?.providers?.searxng?.enabled) {
-    const urls = settings.providers.searxng.baseUrls || []
+    const urls = settings.providers.searxng.baseUrls || [];
     urls.forEach((baseUrl, index) => {
       pool.push({
         id: `searxng:${index}`,
-        provider: 'searxng',
+        provider: "searxng",
         baseUrl,
         defaultCategories: settings.providers.searxng.defaultCategories,
         defaultLanguage: settings.providers.searxng.defaultLanguage,
         timeRange: settings.providers.searxng.timeRange,
         safeSearch: settings.providers.searxng.safeSearch,
-      })
-    })
+      });
+    });
   }
   if (settings?.providers?.ollama?.enabled) {
-    const keys = settings.providers.ollama.apiKeys || []
+    const keys = settings.providers.ollama.apiKeys || [];
     keys.forEach((apiKey, index) => {
       pool.push({
         id: `ollama:${index}`,
-        provider: 'ollama',
+        provider: "ollama",
         apiKey,
         maxResults: settings.providers.ollama.maxResults,
-      })
-    })
+      });
+    });
   }
   if (settings?.providers?.websearchapi?.enabled) {
-    const keys = settings.providers.websearchapi.apiKeys || []
+    const keys = settings.providers.websearchapi.apiKeys || [];
     keys.forEach((apiKey, index) => {
       pool.push({
         id: `websearchapi:${index}`,
-        provider: 'websearchapi',
+        provider: "websearchapi",
         apiKey,
         search: settings.providers.websearchapi.search,
         scrape: settings.providers.websearchapi.scrape,
-      })
-    })
+      });
+    });
   }
   if (settings?.providers?.tavily?.enabled) {
     const {
@@ -1486,142 +1479,146 @@ export function buildEndpointPool(settings) {
       projectId,
       search,
       extract,
-    } = settings.providers.tavily
+    } = settings.providers.tavily;
     apiKeys.forEach((apiKey, index) => {
       pool.push({
         id: `tavily:${index}`,
-        provider: 'tavily',
+        provider: "tavily",
         apiKey,
         projectId,
         search,
         extract,
-      })
-    })
+      });
+    });
   }
   if (settings?.providers?.firecrawl?.enabled) {
-    const { apiKeys = [], search, scrape } = settings.providers.firecrawl
+    const { apiKeys = [], search, scrape } = settings.providers.firecrawl;
     apiKeys.forEach((apiKey, index) => {
       pool.push({
         id: `firecrawl:${index}`,
-        provider: 'firecrawl',
+        provider: "firecrawl",
         apiKey,
         search,
         scrape,
-      })
-    })
+      });
+    });
   }
   if (settings?.providers?.firecrawlSelfHosted?.enabled) {
     const {
       baseUrls = [],
       search,
       scrape,
-    } = settings.providers.firecrawlSelfHosted
+    } = settings.providers.firecrawlSelfHosted;
     baseUrls.forEach((baseUrl, index) => {
       pool.push({
         id: `firecrawlSelfHosted:${index}`,
-        provider: 'firecrawlSelfHosted',
+        provider: "firecrawlSelfHosted",
         baseUrl,
         search,
         scrape,
-      })
-    })
+      });
+    });
   }
   if (settings?.providers?.jina?.enabled) {
-    const { apiKeys = [], search, read } = settings.providers.jina
+    const { apiKeys = [], search, read } = settings.providers.jina;
     apiKeys.forEach((apiKey, index) => {
-      pool.push({ id: `jina:${index}`, provider: 'jina', apiKey, search, read })
-    })
+      pool.push({
+        id: `jina:${index}`,
+        provider: "jina",
+        apiKey,
+        search,
+        read,
+      });
+    });
   }
   if (settings?.providers?.langsearch?.enabled) {
-    const { apiKeys = [], search } = settings.providers.langsearch
+    const { apiKeys = [], search } = settings.providers.langsearch;
     apiKeys.forEach((apiKey, index) => {
       pool.push({
         id: `langsearch:${index}`,
-        provider: 'langsearch',
+        provider: "langsearch",
         apiKey,
         search,
-      })
-    })
+      });
+    });
   }
   if (settings?.providers?.exa?.enabled) {
-    const { apiKeys = [], search, read } = settings.providers.exa
+    const { apiKeys = [], search, read } = settings.providers.exa;
     apiKeys.forEach((apiKey, index) => {
       pool.push({
         id: `exa:${index}`,
-        provider: 'exa',
+        provider: "exa",
         apiKey,
         search,
         read,
-      })
-    })
+      });
+    });
   }
   if (settings?.providers?.tinyfish?.enabled) {
-    const { apiKeys = [], baseUrl, search } = settings.providers.tinyfish
+    const { apiKeys = [], search } = settings.providers.tinyfish;
     apiKeys.forEach((apiKey, index) => {
       pool.push({
         id: `tinyfish:${index}`,
-        provider: 'tinyfish',
+        provider: "tinyfish",
         apiKey,
-        ...(baseUrl ? { baseUrl } : {}),
         search,
-      })
-    })
+      });
+    });
   }
   if (settings?.providers?.parallel?.enabled) {
-    const { apiKeys = [], baseUrl, search, read } = settings.providers.parallel
+    const { apiKeys = [], search, read } = settings.providers.parallel;
     apiKeys.forEach((apiKey, index) => {
       pool.push({
         id: `parallel:${index}`,
-        provider: 'parallel',
+        provider: "parallel",
         apiKey,
-        ...(baseUrl ? { baseUrl } : {}),
         search,
         read,
-      })
-    })
+      });
+    });
   }
   if (settings?.providers?.mcp?.enabled) {
-    const { serverUrls = [], headers, toolName, queryParam } = settings.providers.mcp
+    const { serverUrls = [], bearerToken, headers } = settings.providers.mcp;
     serverUrls.forEach((baseUrl, index) => {
       pool.push({
         id: `mcp:${index}`,
-        provider: 'mcp',
+        provider: "mcp",
         baseUrl,
+        ...(bearerToken ? { bearerToken } : {}),
         ...(headers ? { headers } : {}),
-        ...(toolName ? { toolName } : {}),
-        ...(queryParam ? { queryParam } : {}),
-      })
-    })
+      });
+    });
   }
   if (pool.length === 0) {
-    if (settings?.type === 'searxng' && settings.baseUrl) {
+    if (settings?.type === "searxng" && settings.baseUrl) {
       pool.push({
-        id: 'searxng:0',
-        provider: 'searxng',
+        id: "searxng:0",
+        provider: "searxng",
         baseUrl: settings.baseUrl,
-      })
-    } else if (settings?.type === 'firecrawlSelfHosted' && settings.baseUrl) {
+      });
+    } else if (settings?.type === "firecrawlSelfHosted" && settings.baseUrl) {
       pool.push({
-        id: 'firecrawlSelfHosted:0',
-        provider: 'firecrawlSelfHosted',
+        id: "firecrawlSelfHosted:0",
+        provider: "firecrawlSelfHosted",
         baseUrl: settings.baseUrl,
-      })
+      });
     } else if (
-      settings?.type === 'mcp' &&
+      settings?.type === "mcp" &&
       (settings.baseUrl ||
         (Array.isArray(settings.serverUrls) && settings.serverUrls.length > 0))
     ) {
-      const urls = settings.baseUrl ? [settings.baseUrl] : settings.serverUrls
+      const urls = settings.baseUrl ? [settings.baseUrl] : settings.serverUrls;
       urls.forEach((baseUrl, index) => {
         pool.push({
           id: `mcp:${index}`,
-          provider: 'mcp',
+          provider: "mcp",
           baseUrl,
+          ...(settings.bearerToken
+            ? { bearerToken: settings.bearerToken }
+            : {}),
           ...(settings.headers ? { headers: settings.headers } : {}),
-          ...(settings.toolName ? { toolName: settings.toolName } : {}),
-          ...(settings.queryParam ? { queryParam: settings.queryParam } : {}),
-        })
-      })
+        });
+      });
     } else if (
       settings?.type &&
       settings.apiKey &&
@@ -1636,10 +1633,10 @@ export function buildEndpointPool(settings) {
         ...(settings.read ? { read: settings.read } : {}),
         ...(settings.scrape ? { scrape: settings.scrape } : {}),
         ...(settings.extract ? { extract: settings.extract } : {}),
-      })
+      });
     }
   }
-  return pool
+  return pool;
 }
 
 // ---------------------------------------------------------------------------
@@ -1652,21 +1649,21 @@ export function buildEndpointPool(settings) {
  * settings, so every provider is offered the same small schema.
  */
 const WEB_SEARCH_SPEC = {
-  name: 'web_search',
+  name: "web_search",
   description:
-    'Search the web for current information, including LaTeX packages, syntax and changes. Call it first whenever you are unsure a fact is correct or current, before relying on memory. Returns the top results, each numbered as a source [n] that you cite by that number, with title, URL, publication date when known and a snippet. Snippets are pointers: read the page with web_fetch before relying on a detail.',
+    "Search the web for current information, including LaTeX packages, syntax and changes. Call it first whenever you are unsure a fact is correct or current, before relying on memory. Returns the top results, each numbered as a source [n] that you cite by that number, with title, URL, publication date when known and a snippet. Snippets are pointers: read the page with web_fetch before relying on a detail.",
   parameters: {
-    type: 'object',
+    type: "object",
     properties: {
       query: {
-        type: 'string',
+        type: "string",
         description:
           'What to search for, in the words a page answering it would use. One topic per query, a few words long. Include the year for time-sensitive questions, e.g. "Vietnam president 2026" or "siunitx range-phrase option".',
       },
     },
-    required: ['query'],
+    required: ["query"],
   },
-}
+};
 
 /**
  * A model reads on only when the result makes reading on look necessary and
@@ -1674,259 +1671,82 @@ const WEB_SEARCH_SPEC = {
  * and how page and find get to the rest.
  */
 const WEB_FETCH_SPEC = {
-  name: 'web_fetch',
+  name: "web_fetch",
   description: [
-    'Read a web page, PDF or text file as Markdown.',
+    "Read a web page, PDF or text file as Markdown.",
     'Long documents are split into pages of a few thousand tokens and you get ONE page per call. Each result starts with a status line: "Page 1 of 4", how many tokens the other pages hold, and which pages are still unread. Page 1 of a long document also lists its sections with the page each starts on.',
-    'One page is not the whole document. If the answer is not on the page you got, never conclude the document lacks it while pages are unread: fetch the page the section list points to (page), search the whole document (find), or read the next page.',
-    'Use find to jump straight to a command, option, error message or phrase anywhere in the document; it returns the most relevant passages with their page and section, and how many passages match in total. Use page to read a section in full.',
-    'Further calls on a URL you already read are usually served from cache, so they are cheap: call several pages or finds of one document in parallel when you need them.',
-    'A page that blocks automated readers is retried through other routes automatically. The result keeps its source number [n] for citing.',
-  ].join(' '),
+    "One page is not the whole document. If the answer is not on the page you got, never conclude the document lacks it while pages are unread: fetch the page the section list points to (page), search the whole document (find), or read the next page.",
+    "Use find to jump straight to a command, option, error message or phrase anywhere in the document; it returns the most relevant passages with their page and section, and how many passages match in total. Use page to read a section in full.",
+    "Further calls on a URL you already read are usually served from cache, so they are cheap: call several pages or finds of one document in parallel when you need them.",
+    "A page that blocks automated readers is retried through other routes automatically. The result keeps its source number [n] for citing.",
+  ].join(" "),
   parameters: {
-    type: 'object',
+    type: "object",
     properties: {
       url: {
-        type: 'string',
+        type: "string",
         description:
-          'The http or https URL to read: one from a search result, the user or the project. Use the same URL to read further pages of a document.',
+          "The http or https URL to read: one from a search result, the user or the project. Use the same URL to read further pages of a document.",
       },
       page: {
-        type: 'integer',
+        type: "integer",
         minimum: 1,
         description:
-          'Which page to return, from 1 (the default) to the page count the status line gives. Pages need not be read in order: jump to the page the section list or a find match points to. Ignored when find is given.',
+          "Which page to return, from 1 (the default) to the page count the status line gives. Pages need not be read in order: jump to the page the section list or a find match points to. Ignored when find is given.",
       },
       find: {
-        type: 'string',
+        type: "string",
         description:
           'Search the whole document instead of returning one page: a command, option, error text, or a few distinctive words, e.g. "\\qty" or "range-phrase". Case, Markdown formatting and hyphens versus spaces do not matter. When no passage has the exact phrase, passages with all or most of its words come back, marked as such. Separate alternatives or synonyms with " | ", e.g. "range-phrase | range-units". No match does not prove absence: try other words or read the pages.',
       },
     },
-    required: ['url'],
+    required: ["url"],
   },
-}
+};
 
-export const WEB_TOOL_SPECS = [WEB_SEARCH_SPEC, WEB_FETCH_SPEC]
+export const WEB_TOOL_SPECS = [WEB_SEARCH_SPEC, WEB_FETCH_SPEC];
 
 /** Added to a search this conversation already ran, to push a new angle. */
 export const REPEATED_SEARCH_NOTICE =
-  'You already ran this search. Use these results or try a different angle.'
+  "You already ran this search. Use these results or try a different angle.";
 
 /**
  * The most one user's cached pages take on the data volume, least recently
  * used out first. A page counts two bytes a character, so this holds sixteen
  * of the longest documents or thousands of ordinary pages.
  */
-export const MAX_DOCUMENT_CACHE_BYTES = 1024 * 1024 * 1024
+export const MAX_DOCUMENT_CACHE_BYTES = 1024 * 1024 * 1024;
 
 /**
  * A user's search and page caches, at the limits the user set. They live in
  * SQLite on the data volume (see web-fetch/cache-store.mjs).
  */
 export function getOwnerCaches(
-  owner = 'default',
+  owner = "default",
   {
     maxCachedSearches = WEB_SEARCH_DEFAULTS.maxCachedSearches,
     maxCachedPages = WEB_SEARCH_DEFAULTS.maxCachedPages,
-  } = {}
+  } = {},
 ) {
   return ownerWebCaches(owner, {
     searches: maxCachedSearches,
     pages: maxCachedPages,
     pageBytes: MAX_DOCUMENT_CACHE_BYTES,
-  })
+  });
 }
 
 export function clearWebDocumentCache() {
-  clearWebCacheStore()
-  clearWorkingSet()
-  clearEndpointHealth()
+  clearWebCacheStore();
+  clearWorkingSet();
+  clearEndpointHealth();
 }
 
 // ---------------------------------------------------------------------------
 // Search results
 // ---------------------------------------------------------------------------
 
-export function parseTextSearchResults(text, query) {
-  if (!text || typeof text !== 'string') return []
-  const raw = text.trim()
-  if (!raw) return []
-
-  const items = []
-
-  // Pattern 1: Numbered list format:
-  // 1. Title
-  //    https://example.com/link
-  //    Snippet text
-  // OR
-  // 1. https://example.com/bare-url
-  //    Snippet text
-  const numberedPattern =
-    /(?:^|\n)\s*(\d+)\.\s+(?:([^\n]+)\n\s*)?(https?:\/\/[^\s\]\)]+|\[https?:\/\/[^\]\)]+\])\n([\s\S]*?)(?=(?:\n\s*\d+\.|$))/g
-
-  let match
-  while ((match = numberedPattern.exec(raw)) !== null) {
-    const [, , rawTitle, rawUrl, snippet] = match
-    const url = rawUrl.replace(/^[\[\(]/, '').replace(/[\]\)]$/, '').trim()
-    const title = rawTitle && rawTitle.trim() ? rawTitle.trim() : url
-    items.push({
-      title,
-      url,
-      snippet: snippet.trim(),
-    })
-  }
-
-  // If numbered list matches found, normalize and return
-  if (items.length > 0) {
-    return normalizeResults(items, Number.MAX_SAFE_INTEGER, query)
-  }
-
-  // Pattern 2: Markdown links [Title](url) followed by optional snippet
-  const mdPattern =
-    /(?:^|\n)\s*(?:[-*]|\d+\.)?\s*\[([^\]]+)\]\((https?:\/\/[^)]+)\)(?:\s*[-:]\s*|\n+)?([\s\S]*?)(?=(?:\n\s*(?:[-*]|\d+\.)?\s*\[[^\]]+\]\(https?:|$))/g
-  while ((match = mdPattern.exec(raw)) !== null) {
-    const [, title, url, snippet] = match
-    items.push({
-      title: title.trim(),
-      url: url.trim(),
-      snippet: snippet.trim(),
-    })
-  }
-
-  if (items.length > 0) {
-    return normalizeResults(items, Number.MAX_SAFE_INTEGER, query)
-  }
-
-  // Pattern 3: Fallback - look for any URLs in text with preceding line as title
-  const lines = raw.split('\n')
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim()
-    const urlMatch = line.match(/^https?:\/\/[^\s]+$/)
-    if (urlMatch) {
-      const url = urlMatch[0]
-      const title = i > 0 ? lines[i - 1].replace(/^\d+\.\s*/, '').trim() : url
-      const snippet = i + 1 < lines.length ? lines[i + 1].trim() : ''
-      items.push({ title, url, snippet })
-    }
-  }
-
-  return normalizeResults(items, Number.MAX_SAFE_INTEGER, query)
-}
-
-export function extractMcpSearchResults(body, query) {
-  if (!body) return []
-
-  // If string, try JSON parse first; if not JSON or parsing fails, parse as plain text
-  if (typeof body === 'string') {
-    try {
-      const parsed = JSON.parse(body)
-      return extractMcpSearchResults(parsed, query)
-    } catch {
-      return parseTextSearchResults(body, query)
-    }
-  }
-
-  if (typeof body !== 'object') return []
-
-  // JSON-RPC explicit error or tool execution failure
-  if (body.error || body.result?.isError) {
-    return []
-  }
-
-  // Case 1: body is an array of results
-  if (Array.isArray(body)) {
-    const normalized = normalizeResults(body, Number.MAX_SAFE_INTEGER, query)
-    if (normalized.length > 0) return normalized
-  }
-
-  // Case 2: standard structured JSON keys (results, organic, items, data, webPages)
-  const candidateArrays = [
-    body.results,
-    body.result?.results,
-    body.result?.organic,
-    body.result?.items,
-    body.organic,
-    body.items,
-    body.data?.results,
-    body.data?.webPages?.value,
-    body.data,
-  ]
-
-  for (const arr of candidateArrays) {
-    if (Array.isArray(arr)) {
-      const normalized = normalizeResults(arr, Number.MAX_SAFE_INTEGER, query)
-      if (normalized.length > 0) return normalized
-    }
-  }
-
-  // Case 3: MCP content blocks: result.content or content array
-  const contentBlocks = body.result?.content || body.content
-  if (Array.isArray(contentBlocks)) {
-    const extracted = []
-    for (const block of contentBlocks) {
-      if (typeof block?.text === 'string') {
-        const parsed = extractMcpSearchResults(block.text, query)
-        extracted.push(...parsed)
-      } else if (typeof block === 'string') {
-        const parsed = extractMcpSearchResults(block, query)
-        extracted.push(...parsed)
-      }
-    }
-    if (extracted.length > 0) {
-      return normalizeResults(extracted, Number.MAX_SAFE_INTEGER, query)
-    }
-  }
-
-  // Case 4: text / message / output field on body or result
-  const textFields = [
-    body.text,
-    body.result?.text,
-    body.message,
-    body.result?.message,
-    body.output,
-    body.result?.output,
-  ]
-  for (const txt of textFields) {
-    if (typeof txt === 'string' && txt.trim()) {
-      const parsed = extractMcpSearchResults(txt, query)
-      if (parsed.length > 0) return parsed
-    }
-  }
-
-  // Case 5: recursive tree search for any array of objects with url or text fields
-  const seenObjects = new Set()
-  function traverse(obj) {
-    if (!obj || typeof obj !== 'object' || seenObjects.has(obj)) return []
-    seenObjects.add(obj)
-
-    if (Array.isArray(obj)) {
-      const direct = normalizeResults(obj, Number.MAX_SAFE_INTEGER, query)
-      if (direct.length > 0) return direct
-      for (const item of obj) {
-        const res = traverse(item)
-        if (res.length > 0) return res
-      }
-    } else {
-      for (const key of Object.keys(obj)) {
-        const val = obj[key]
-        if (typeof val === 'string' && val.length > 20) {
-          const parsed = extractMcpSearchResults(val, query)
-          if (parsed.length > 0) return parsed
-        } else if (typeof val === 'object') {
-          const res = traverse(val)
-          if (res.length > 0) return res
-        }
-      }
-    }
-    return []
-  }
-
-  return traverse(body)
-}
-
 /** Shorter page text is a summary, not the page, and is not kept. */
-const MIN_SEARCH_PAGE_CHARS = 500
+const MIN_SEARCH_PAGE_CHARS = 500;
 
 /**
  * The whole page a search result carries, for web_fetch to read it from
@@ -1934,183 +1754,51 @@ const MIN_SEARCH_PAGE_CHARS = 500
  * limit was cut there, so it is not the whole page and is left out.
  */
 function searchPage(text, format, limit) {
-  if (typeof text !== 'string' || text.length < MIN_SEARCH_PAGE_CHARS) {
-    return undefined
+  if (typeof text !== "string" || text.length < MIN_SEARCH_PAGE_CHARS) {
+    return undefined;
   }
   if (Number(limit) > 0 && text.length >= Number(limit) * 0.95) {
-    return undefined
+    return undefined;
   }
-  return { text, format }
+  return { text, format };
 }
 
 function normalizeResults(list, max, query) {
-  const seen = new Set()
-  const results = []
+  const seen = new Set();
+  const results = [];
   for (const entry of Array.isArray(list) ? list : []) {
-    const url = typeof entry?.url === 'string' ? entry.url.trim() : ''
-    if (!/^https?:\/\//i.test(url)) continue
+    const url = typeof entry?.url === "string" ? entry.url.trim() : "";
+    if (!/^https?:\/\//i.test(url)) continue;
     // Engines behind one SearXNG query list the same page with and without
     // www or a trailing slash
-    const key = sourceKey(url)
-    if (seen.has(key)) continue
-    seen.add(key)
+    const key = sourceKey(url);
+    if (seen.has(key)) continue;
+    seen.add(key);
     const published = isoDay(
-      entry.publishedDate ?? entry.published_date ?? entry.pubdate
-    )
+      entry.publishedDate ?? entry.published_date ?? entry.pubdate,
+    );
+    const rawSnippet =
+      entry.content ||
+      entry.snippet ||
+      (Array.isArray(entry.excerpts)
+        ? entry.excerpts.join("\n\n")
+        : entry.excerpts) ||
+      "";
     results.push({
       title: clip(collapse(entry.title || url), 200),
       url,
       ...(published ? { published } : {}),
-      snippet: bestSnippet(entry.content || entry.snippet || '', query),
+      snippet: bestSnippet(rawSnippet, query),
       // Taken off before the results are cached or shown (see keepPages)
       ...(entry.page ? { page: entry.page } : {}),
-    })
-    if (results.length >= max) break
+    });
+    if (results.length >= max) break;
   }
-  return results
+  return results;
 }
 
-// ---------------------------------------------------------------------------
-// The tools
-// ---------------------------------------------------------------------------
-
-export const MAX_MCP_CACHE_SIZE = 256
-export const mcpEndpointCache = new Map()
-
-export function setMcpEndpointCache(key, value) {
-  if (mcpEndpointCache.has(key)) {
-    mcpEndpointCache.delete(key)
-  } else if (mcpEndpointCache.size >= MAX_MCP_CACHE_SIZE) {
-    const oldest = mcpEndpointCache.keys().next().value
-    if (oldest !== undefined) mcpEndpointCache.delete(oldest)
-  }
-  mcpEndpointCache.set(key, value)
-}
-
-export function clearMcpEndpointCache() {
-  mcpEndpointCache.clear()
-}
-
-export function makeJsonRpcRequest(method, params, id = 1) {
-  const req = {
-    jsonrpc: '2.0',
-    id,
-    method,
-  }
-  if (params !== undefined) {
-    req.params = params
-  }
-  return req
-}
-
-export function detectSearchTool(
-  tools,
-  configuredToolName,
-  configuredQueryParam
-) {
-  let tool = null
-  if (configuredToolName && Array.isArray(tools)) {
-    tool =
-      tools.find(t => t?.name === configuredToolName) || {
-        name: configuredToolName,
-      }
-  } else if (Array.isArray(tools) && tools.length > 0) {
-    tool = tools.find(t =>
-      /search|web|brave|duckduckgo|google|tavily|bing|fetch/i.test(
-        t?.name || ''
-      )
-    )
-    if (!tool) {
-      tool = tools.find(t => /search|web/i.test(t?.description || ''))
-    }
-    if (!tool && tools.length === 1) {
-      tool = tools[0]
-    }
-  }
-
-  const toolName = configuredToolName || tool?.name || 'search'
-
-  let queryParam = configuredQueryParam
-  if (!queryParam) {
-    const props = tool?.inputSchema?.properties
-    if (props && typeof props === 'object') {
-      const candidates = [
-        'query',
-        'q',
-        'search_query',
-        'query_string',
-        'text',
-        'input',
-        'url',
-      ]
-      for (const c of candidates) {
-        if (c in props) {
-          queryParam = c
-          break
-        }
-      }
-    }
-    if (
-      !queryParam &&
-      Array.isArray(tool?.inputSchema?.required) &&
-      tool.inputSchema.required.length > 0
-    ) {
-      queryParam = tool.inputSchema.required[0]
-    }
-    if (!queryParam) {
-      queryParam = 'query'
-    }
-  }
-
-  return { toolName, queryParam }
-}
-
-function isUninitializedError(err) {
-  if (!err) return false
-  const msg = String(err.message || '')
-  return (
-    msg.includes('-32002') ||
-    /not initialized/i.test(msg) ||
-    /initialize/i.test(msg)
-  )
-}
-
-function isLegacyFallbackCandidate(err) {
-  if (!err) return false
-  const status = err.status
-  return status === 400 || status === 404 || status === 405
-}
-
-function isToolNotFoundError(body) {
-  if (!body) return false
-  if (body?.error) {
-    const msg = String(body.error.message || '').toLowerCase()
-    if (
-      body.error.code === -32601 ||
-      msg.includes('not found') ||
-      msg.includes('unknown tool') ||
-      msg.includes('no such tool')
-    ) {
-      return true
-    }
-  }
-  if (body?.result?.isError) {
-    const text = Array.isArray(body.result.content)
-      ? body.result.content
-          .map(c => (typeof c === 'string' ? c : c?.text || ''))
-          .join(' ')
-          .toLowerCase()
-      : ''
-    if (
-      text.includes('not found') ||
-      text.includes('unknown tool') ||
-      text.includes('no such tool')
-    ) {
-      return true
-    }
-  }
-  return false
-}
+/** Top search results read in the background for the next web_fetch. */
+export const PREFETCH_RESULTS = 3;
 
 export class AiAssistWebTools {
   /**
@@ -2121,36 +1809,36 @@ export class AiAssistWebTools {
   constructor(
     settings,
     {
-      fetchFn = fetch,
+      fetchFn = endpointFetch,
       fetchPage = fetchPublicUrl,
-      cacheOwner = 'default',
+      cacheOwner = "default",
       browser,
       contextWindow,
       runJob,
       prefetch = 0,
-    } = {}
+    } = {},
   ) {
-    this.settings = settings
+    this.settings = settings;
     // Top search results read in the background, while the model reads the
     // results, so its web_fetch of one is answered at once
-    this.prefetch = Math.max(0, Math.floor(Number(prefetch) || 0))
+    this.prefetch = Math.max(0, Math.floor(Number(prefetch) || 0));
     // Extraction-worker jobs, such as indexing a long document
-    this.runJob = runJob
-    this.fetchFn = fetchFn
-    this.fetchPage = fetchPage
-    this.cacheOwner = cacheOwner
+    this.runJob = runJob;
+    this.fetchFn = fetchFn;
+    this.fetchPage = fetchPage;
+    this.cacheOwner = cacheOwner;
     // Pages are cut per run, for the model it serves
-    this.pageChars = pageCharsFor(contextWindow)
-    this.rotator = new WebRouter(settings, { cacheOwner })
+    this.pageChars = pageCharsFor(contextWindow);
+    this.rotator = new WebRouter(settings, { cacheOwner });
 
-    this.caches = getOwnerCaches(cacheOwner, settings)
+    this.caches = getOwnerCaches(cacheOwner, settings);
 
     const effectiveBrowser =
       browser !== undefined
         ? browser
         : fetchPage !== fetchPublicUrl
           ? null
-          : sharedBrowserRoute()
+          : sharedBrowserRoute();
 
     this.fetcher = new WebFetcher({
       fetchPage,
@@ -2160,26 +1848,26 @@ export class AiAssistWebTools {
       cache: this.caches.documents,
       cacheHours: settings.cacheHours ?? WEB_SEARCH_DEFAULTS.cacheHours,
       owner: cacheOwner,
-    })
+    });
 
     // Every page the conversation has seen gets a number, [n], that the model
     // cites it by and the chat turns into a link. Numbers carry over from
     // earlier turns (see rememberSources), so [2] names one page throughout.
-    this.sources = new Map()
-    this.nextSource = 1
+    this.sources = new Map();
+    this.nextSource = 1;
     // searchCacheText(query) -> the search in flight for it
-    this.pending = new Map()
+    this.pending = new Map();
     // Queries this conversation already searched, as the search cache keys them
-    this.searchedQueries = new Set()
+    this.searchedQueries = new Set();
   }
 
   /** Whether a search backend is configured; page readers alone only read pages. */
   canSearch() {
-    return this.rotator.pool.some(e => SEARCH_PROVIDERS.has(e.provider))
+    return this.rotator.pool.some((e) => SEARCH_PROVIDERS.has(e.provider));
   }
 
   getToolSpecs() {
-    return this.canSearch() ? WEB_TOOL_SPECS : [WEB_FETCH_SPEC]
+    return this.canSearch() ? WEB_TOOL_SPECS : [WEB_FETCH_SPEC];
   }
 
   /** Picks up the source numbers earlier turns of the conversation handed out. */
@@ -2189,27 +1877,27 @@ export class AiAssistWebTools {
         ? entry.toolCalls
         : []) {
         if (
-          call?.name === 'web_search' &&
-          typeof call.args?.query === 'string' &&
+          call?.name === "web_search" &&
+          typeof call.args?.query === "string" &&
           call.result &&
-          typeof call.result === 'object' &&
+          typeof call.result === "object" &&
           !call.result.error
         ) {
-          const key = searchCacheText(call.args.query)
-          if (key) this.searchedQueries.add(key)
+          const key = searchCacheText(call.args.query);
+          if (key) this.searchedQueries.add(key);
         }
-        const result = call?.result
-        if (!result || typeof result !== 'object') continue
+        const result = call?.result;
+        if (!result || typeof result !== "object") continue;
         const items =
-          call.name === 'web_search' && Array.isArray(result.results)
+          call.name === "web_search" && Array.isArray(result.results)
             ? result.results
-            : call.name === 'web_fetch'
+            : call.name === "web_fetch"
               ? [result]
-              : []
+              : [];
         for (const item of items) {
-          if (Number.isInteger(item?.source) && typeof item.url === 'string') {
-            const source = this._source(item.url, item, item.source)
-            if (call.name === 'web_fetch') this._markRead(source, item)
+          if (Number.isInteger(item?.source) && typeof item.url === "string") {
+            const source = this._source(item.url, item, item.source);
+            if (call.name === "web_fetch") this._markRead(source, item);
           }
         }
       }
@@ -2217,19 +1905,19 @@ export class AiAssistWebTools {
   }
 
   _source(url, info = {}, number) {
-    const key = sourceKey(url)
-    let source = this.sources.get(key)
+    const key = sourceKey(url);
+    let source = this.sources.get(key);
     if (!source) {
       const n =
-        Number.isInteger(number) && number > 0 ? number : this.nextSource
-      source = { n, url }
-      this.sources.set(key, source)
-      this.nextSource = Math.max(this.nextSource, n + 1)
+        Number.isInteger(number) && number > 0 ? number : this.nextSource;
+      source = { n, url };
+      this.sources.set(key, source);
+      this.nextSource = Math.max(this.nextSource, n + 1);
     }
-    for (const field of ['title', 'snippet', 'published']) {
-      if (info[field] && !source[field]) source[field] = info[field]
+    for (const field of ["title", "snippet", "published"]) {
+      if (info[field] && !source[field]) source[field] = info[field];
     }
-    return source
+    return source;
   }
 
   /**
@@ -2242,15 +1930,15 @@ export class AiAssistWebTools {
       !Number.isInteger(result?.page) ||
       !Number.isInteger(result?.totalPages)
     ) {
-      return
+      return;
     }
-    source.read ??= new Map()
-    let pages = source.read.get(result.totalPages)
+    source.read ??= new Map();
+    let pages = source.read.get(result.totalPages);
     if (!pages) {
-      pages = new Set()
-      source.read.set(result.totalPages, pages)
+      pages = new Set();
+      source.read.set(result.totalPages, pages);
     }
-    pages.add(result.page)
+    pages.add(result.page);
   }
 
   /**
@@ -2258,45 +1946,47 @@ export class AiAssistWebTools {
    * yet: how many, and the first of them as [from, to] ranges.
    */
   _unreadPages(source, totalPages) {
-    const read = source.read?.get(totalPages) ?? new Set()
-    const ranges = []
+    const read = source.read?.get(totalPages) ?? new Set();
+    const ranges = [];
     for (let page = 1; page <= totalPages; page++) {
-      if (read.has(page)) continue
-      const last = ranges[ranges.length - 1]
-      if (last && last[1] === page - 1) last[1] = page
-      else if (ranges.length < MAX_UNREAD_RANGES) ranges.push([page, page])
-      else break
+      if (read.has(page)) continue;
+      const last = ranges[ranges.length - 1];
+      if (last && last[1] === page - 1) last[1] = page;
+      else if (ranges.length < MAX_UNREAD_RANGES) ranges.push([page, page]);
+      else break;
     }
-    return { count: totalPages - read.size, ranges }
+    return { count: totalPages - read.size, ranges };
   }
 
   /** Tool failures come back as `{ error }` for the model, like project tools. */
   async execute(name, args = {}, { signal } = {}) {
     try {
-      if (name === 'web_search') {
+      if (name === "web_search") {
         if (!this.canSearch()) {
           return {
             error:
-              'Web search is not set up. Read pages with web_fetch instead.',
-          }
+              "Web search is not set up. Read pages with web_fetch instead.",
+          };
         }
         const key = searchCacheText(
-          typeof args?.query === 'string' ? args.query : ''
-        )
-        const repeated = Boolean(key) && this.searchedQueries.has(key)
+          typeof args?.query === "string" ? args.query : "",
+        );
+        const repeated = Boolean(key) && this.searchedQueries.has(key);
         const result = await this._shared(key, () =>
-          this.search(args, { signal })
-        )
-        if (result?.error) return result
-        if (key) this.searchedQueries.add(key)
-        return repeated ? { ...result, notice: REPEATED_SEARCH_NOTICE } : result
+          this.search(args, { signal }),
+        );
+        if (result?.error) return result;
+        if (key) this.searchedQueries.add(key);
+        return repeated
+          ? { ...result, notice: REPEATED_SEARCH_NOTICE }
+          : result;
       }
-      if (name === 'web_fetch') return await this.fetch(args, { signal })
-      return { error: `Unknown tool: ${name}` }
+      if (name === "web_fetch") return await this.fetch(args, { signal });
+      return { error: `Unknown tool: ${name}` };
     } catch (err) {
-      const error = err?.message || 'The web request failed.'
-      if (name !== 'web_fetch' || err?.code === 'aborted') return { error }
-      return this._fetchFailure(args, error)
+      const error = err?.message || "The web request failed.";
+      if (name !== "web_fetch" || err?.code === "aborted") return { error };
+      return this._fetchFailure(args, error);
     }
   }
 
@@ -2306,21 +1996,21 @@ export class AiAssistWebTools {
    * answer from that or move on to the next result.
    */
   _fetchFailure(args, error) {
-    const url = typeof args?.url === 'string' ? args.url.trim() : ''
+    const url = typeof args?.url === "string" ? args.url.trim() : "";
     const known = url
       ? this.sources.get(
-          sourceKey(/^https?:/i.test(url) ? url : `https://${url}`)
+          sourceKey(/^https?:/i.test(url) ? url : `https://${url}`),
         )
-      : null
-    if (!known) return { error, ...(url ? { url } : {}) }
+      : null;
+    if (!known) return { error, ...(url ? { url } : {}) };
     return {
-      error: `${error} ${known.snippet ? 'Its search snippet is included; rely on it only for what it states, or read another result.' : 'Read another result instead.'}`,
+      error: `${error} ${known.snippet ? "Its search snippet is included; rely on it only for what it states, or read another result." : "Read another result instead."}`,
       source: known.n,
       url: known.url,
       ...(known.title ? { title: known.title } : {}),
       ...(known.published ? { published: known.published } : {}),
       ...(known.snippet ? { snippet: known.snippet } : {}),
-    }
+    };
   }
 
   /**
@@ -2328,22 +2018,22 @@ export class AiAssistWebTools {
    * tool calls can, share one request. Each gets its own copy of the result.
    */
   async _shared(key, run) {
-    let pending = this.pending.get(key)
+    let pending = this.pending.get(key);
     if (!pending) {
-      pending = run().finally(() => this.pending.delete(key))
-      this.pending.set(key, pending)
+      pending = run().finally(() => this.pending.delete(key));
+      this.pending.set(key, pending);
     }
-    return structuredClone(await pending)
+    return structuredClone(await pending);
   }
 
   async search(args, { signal, useCache = true } = {}) {
-    const query = collapse(typeof args?.query === 'string' ? args.query : '')
-    if (!query) return { error: 'web_search needs a query.' }
+    const query = collapse(typeof args?.query === "string" ? args.query : "");
+    if (!query) return { error: "web_search needs a query." };
 
     const cacheKey = JSON.stringify([
-      this.settings.type ?? this.settings.rotationStrategy ?? 'round-robin',
+      this.settings.type ?? this.settings.rotationStrategy ?? "round-robin",
       this.settings.primaryProvider ?? null,
-      this.settings.baseUrl ?? '',
+      this.settings.baseUrl ?? "",
       this.settings.providers?.websearchapi?.search ?? null,
       this.settings.providers?.tavily?.search ?? null,
       this.settings.providers?.firecrawl?.search ?? null,
@@ -2359,80 +2049,54 @@ export class AiAssistWebTools {
       this.settings.providers?.searxng?.defaultCategories ?? null,
       this.settings.providers?.searxng?.defaultLanguage ?? null,
       searchCacheText(query),
-    ])
+    ]);
 
     const cacheHours =
-      this.settings.cacheHours ?? WEB_SEARCH_DEFAULTS.cacheHours
-    const shouldUseCache = useCache && cacheHours > 0
+      this.settings.cacheHours ?? WEB_SEARCH_DEFAULTS.cacheHours;
+    const shouldUseCache = useCache && cacheHours > 0;
 
     let found = shouldUseCache
       ? this.caches.searches.get(cacheKey, cacheHours * HOUR_MS)
-      : null
+      : null;
     // Pages this user already read that contain every word of the query
     const readPages = shouldUseCache
       ? this.caches.documents.search(query, { maxAgeMs: cacheHours * HOUR_MS })
-      : []
+      : [];
 
-    let providerUsed = this.settings.type || 'searxng'
+    let providerUsed = this.settings.type || "searxng";
 
     if (!found) {
-      const plan = this.rotator.plan('search')
-      const errors = []
-      let zeroResultAnswer = null
+      const plan = this.rotator.plan("search");
+      const errors = [];
+      let zeroResultAnswer = null;
 
       outer: for (const { provider, endpoints } of plan) {
         for (const endpoint of endpoints) {
           try {
-            let res
-            if (provider === 'searxng') {
-              res = await this._searxngSearch(query, signal, endpoint)
-            } else if (provider === 'websearchapi') {
-              res = await this._websearchapiSearch(query, signal, endpoint)
-            } else if (provider === 'tavily') {
-              res = await this._tavilySearch(query, signal, endpoint)
-            } else if (
-              provider === 'firecrawl' ||
-              provider === 'firecrawlSelfHosted'
-            ) {
-              res = await this._firecrawlSearch(query, signal, endpoint)
-            } else if (provider === 'jina') {
-              res = await this._jinaSearch(query, signal, endpoint)
-            } else if (provider === 'langsearch') {
-              res = await this._langsearchSearch(query, signal, endpoint)
-            } else if (provider === 'exa') {
-              res = await this._exaSearch(query, signal, endpoint)
-            } else if (provider === 'tinyfish') {
-              res = await this._tinyfishSearch(query, signal, endpoint)
-            } else if (provider === 'parallel') {
-              res = await this._parallelSearch(query, signal, endpoint)
-            } else if (provider === 'mcp') {
-              res = await this._mcpSearch(query, signal, endpoint)
-            } else {
-              res = await this._ollamaSearch(query, signal, endpoint)
-            }
+            let res = await this.searchEndpoint(endpoint, query, signal);
 
             if (res && res.results && res.results.length > 0) {
-              this.rotator.success(endpoint, 'search')
-              providerUsed = provider
-              found = res
-              break outer
+              this.rotator.success(endpoint, "search");
+              providerUsed = provider;
+              found = res;
+              break outer;
             }
 
             // Provider returned zero results: record it and fall through to NEXT PROVIDER (without pausing endpoint)
-            zeroResultAnswer = res || { results: [] }
-            providerUsed = provider
-            break // move to next provider in outer loop
+            zeroResultAnswer = res || { results: [] };
+            providerUsed = provider;
+            break; // move to next provider in outer loop
           } catch (err) {
-            const failure = this.rotator.failure(endpoint, err)
+            const failure = this.rotator.failure(endpoint, err);
             errors.push({
               endpoint: endpoint.id,
               message: err?.message || String(err),
-            })
-            if (failure.class === 'aborted') throw err
+            });
+            if (failure.class === "aborted") throw err;
             if (failure.skipProvider && !endpoint.baseUrl) {
               // A hosted API's outage: skip remaining keys of this provider.
               // A self-hosted instance's leaves the user's other instances.
-              break
+              break;
             }
             // Key/rate error: try next key of this provider
           }
@@ -2441,65 +2105,72 @@ export class AiAssistWebTools {
 
       if (!found) {
         if (zeroResultAnswer) {
-          found = zeroResultAnswer
+          found = zeroResultAnswer;
         } else if (readPages.length > 0) {
           // Every endpoint failed, but pages already read still answer it
-          found = { results: [] }
+          found = { results: [] };
         } else {
           throw webError(
             errors.length > 0
-              ? `All web search endpoints failed: ${errors.map(e => `[${e.endpoint}]: ${e.message}`).join('; ')}`
-              : 'No web search endpoints available.'
-          )
+              ? `All web search endpoints failed: ${errors.map((e) => `[${e.endpoint}]: ${e.message}`).join("; ")}`
+              : "No web search endpoints available.",
+          );
         }
       }
 
-      found = { ...found, results: this._keepPages(found.results, providerUsed) }
+      found = {
+        ...found,
+        results: this._keepPages(found.results, providerUsed),
+      };
       if (found.results.length > 0 && shouldUseCache) {
-        this.caches.searches.set(cacheKey, found)
+        this.caches.searches.set(cacheKey, found);
       }
     }
 
     // Results this user already read: web_fetch returns them from the cache
     const held = shouldUseCache
       ? this.caches.documents.held(
-          found.results.map(result => cacheKeyFor(result.url)),
-          cacheHours * HOUR_MS
+          found.results.map((result) => cacheKeyFor(result.url)),
+          cacheHours * HOUR_MS,
         )
-      : new Set()
+      : new Set();
     // A page is listed once, even when the cache holds it under two addresses
-    const listed = new Set(found.results.map(result => sourceKey(result.url)))
+    const listed = new Set(
+      found.results.map((result) => sourceKey(result.url)),
+    );
     const results = [
-      ...found.results.map(result =>
-        held.has(cacheKeyFor(result.url)) ? { ...result, cached: true } : result
+      ...found.results.map((result) =>
+        held.has(cacheKeyFor(result.url))
+          ? { ...result, cached: true }
+          : result,
       ),
       ...readPages
-        .filter(page => {
-          const key = sourceKey(page.url)
-          if (listed.has(key)) return false
-          listed.add(key)
-          return true
+        .filter((page) => {
+          const key = sourceKey(page.url);
+          if (listed.has(key)) return false;
+          listed.add(key);
+          return true;
         })
-        .map(page => ({
+        .map((page) => ({
           title: clip(collapse(page.title || page.url), 200),
           url: page.url,
           ...(page.published ? { published: page.published } : {}),
           snippet: bestSnippet(page.snippet, query),
           cached: true,
         })),
-    ]
+    ];
 
-    this._prefetchResults(results, signal)
+    this._prefetchResults(results, signal);
 
     return {
       provider: providerUsed,
       query,
-      results: results.map(result => ({
+      results: results.map((result) => ({
         source: this._source(result.url, result).n,
         ...result,
       })),
       ...(found.answers?.length ? { answers: found.answers } : {}),
-    }
+    };
   }
 
   /**
@@ -2517,10 +2188,10 @@ export class AiAssistWebTools {
           format: page.format,
           via: provider,
           ...(result.published ? { published: result.published } : {}),
-        })
+        });
       }
-      return result
-    })
+      return result;
+    });
   }
 
   /**
@@ -2529,45 +2200,45 @@ export class AiAssistWebTools {
    * that web_fetch to report; the run's cancel stops them.
    */
   _prefetchResults(results, signal) {
-    if (this.prefetch <= 0 || signal?.aborted) return
+    if (this.prefetch <= 0 || signal?.aborted) return;
     for (const result of results
-      .filter(result => !result.cached)
+      .filter((result) => !result.cached)
       .slice(0, this.prefetch)) {
-      this.fetcher.read(result.url, { signal }).catch(() => {})
+      this.fetcher.read(result.url, { signal }).catch(() => {});
     }
   }
 
   async fetch(args, { signal } = {}) {
-    const rawUrl = typeof args?.url === 'string' ? args.url.trim() : ''
-    if (!rawUrl) return { error: 'web_fetch needs a url.' }
-    let url
+    const rawUrl = typeof args?.url === "string" ? args.url.trim() : "";
+    if (!rawUrl) return { error: "web_fetch needs a url." };
+    let url;
     try {
       // "ctan.org/pkg/siunitx" is a URL to anyone reading it; accept it.
       url = new URL(
-        /^[a-z][a-z0-9+.-]*:/i.test(rawUrl) ? rawUrl : `https://${rawUrl}`
-      )
+        /^[a-z][a-z0-9+.-]*:/i.test(rawUrl) ? rawUrl : `https://${rawUrl}`,
+      );
     } catch {
-      return { error: `Not a valid URL: ${rawUrl}` }
+      return { error: `Not a valid URL: ${rawUrl}` };
     }
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
       return {
         error: `Only http and https URLs can be fetched, not ${url.protocol}`,
-      }
+      };
     }
-    url.hash = ''
+    url.hash = "";
 
-    const doc = await this.fetcher.read(url.toString(), { signal })
-    const source = this._source(url.toString(), doc)
+    const doc = await this.fetcher.read(url.toString(), { signal });
+    const source = this._source(url.toString(), doc);
     // A redirect lands on another address for the same page
     if (!this.sources.has(sourceKey(doc.url)))
-      this.sources.set(sourceKey(doc.url), source)
+      this.sources.set(sourceKey(doc.url), source);
     // A cached document serves any model: its pages are cut for this one.
     // A long document is indexed once, so paging and find stay fast at any size.
     const index = await documentIndex(doc, this.pageChars, {
       runJob: this.runJob,
-    })
-    const pages = index.map.starts
-    const totalPages = pages.length
+    });
+    const pages = index.map.starts;
+    const totalPages = pages.length;
     const base = {
       source: source.n,
       url: doc.url,
@@ -2587,24 +2258,25 @@ export class AiAssistWebTools {
       ...(doc.via ? { via: doc.via } : {}),
       ...(doc.fetchedAt ? { fetchedAt: doc.fetchedAt } : {}),
       ...(doc.partial ? { partial: true } : {}),
-    }
+    };
     const outline =
       totalPages > 1 && index.map.outline.length > 0
         ? { outline: index.map.outline }
-        : {}
+        : {};
 
-    const find = typeof args?.find === 'string' ? args.find.trim() : ''
+    const find = typeof args?.find === "string" ? args.find.trim() : "";
     if (find) {
       // Passages fill at most a page, the size this model reads at once
       const found = findPassages(doc, find, {
         budget: this.pageChars,
         source: index.source,
         pages,
-      })
+      });
       // Without a passage that has the exact phrase, the contents are the
       // next best way into the document
       const weak =
-        found.matches.length === 0 || found.matches.every(match => match.match)
+        found.matches.length === 0 ||
+        found.matches.every((match) => match.match);
       return {
         ...base,
         find: found.term || collapse(find),
@@ -2613,33 +2285,33 @@ export class AiAssistWebTools {
         ...(found.pages.length > 0 ? { matchPages: found.pages } : {}),
         ...(weak ? outline : {}),
         ...this._unreadFields(source, totalPages),
-      }
+      };
     }
 
-    const page = clampInt(args?.page, 1, Number.MAX_SAFE_INTEGER, 1)
+    const page = clampInt(args?.page, 1, Number.MAX_SAFE_INTEGER, 1);
     if (page > totalPages) {
       return {
-        error: `${doc.url} has ${totalPages} page${totalPages === 1 ? '' : 's'}; there is no page ${page}. Pages run from 1 to ${totalPages}.`,
-      }
+        error: `${doc.url} has ${totalPages} page${totalPages === 1 ? "" : "s"}; there is no page ${page}. Pages run from 1 to ${totalPages}.`,
+      };
     }
     const result = {
       ...base,
       page,
       content: pageText({ text: doc.text, pages, open: index.map.open }, page),
       ...(page === 1 ? outline : {}),
-    }
-    this._markRead(source, result)
-    return { ...result, ...this._unreadFields(source, totalPages) }
+    };
+    this._markRead(source, result);
+    return { ...result, ...this._unreadFields(source, totalPages) };
   }
 
   /** What is still unread of a multi-page document, for the result. */
   _unreadFields(source, totalPages) {
-    if (totalPages <= 1) return {}
-    const unread = this._unreadPages(source, totalPages)
+    if (totalPages <= 1) return {};
+    const unread = this._unreadPages(source, totalPages);
     return {
       unreadCount: unread.count,
       ...(unread.count > 0 ? { unreadPages: unread.ranges } : {}),
-    }
+    };
   }
 
   async _request(
@@ -2648,7 +2320,7 @@ export class AiAssistWebTools {
     signal,
     label,
     providerType = this.settings.type,
-    timeoutMs = REQUEST_TIMEOUT_MS
+    timeoutMs = REQUEST_TIMEOUT_MS,
   ) {
     return apiRequest(url, init, {
       signal,
@@ -2656,42 +2328,42 @@ export class AiAssistWebTools {
       providerType,
       timeoutMs,
       fetchFn: this.fetchFn,
-    })
+    });
   }
 
   async _postOllama(endpoint, payload, signal, apiKey = null) {
-    const key = apiKey || this.settings.apiKey
+    const key = apiKey || this.settings.apiKey;
     const res = await this._request(
       `${OLLAMA_API_BASE}/${endpoint}`,
       {
-        method: 'POST',
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
           Authorization: `Bearer ${key}`,
         },
         body: JSON.stringify(payload),
       },
       signal,
-      'Ollama web search',
-      'ollama'
-    )
+      "Ollama web search",
+      "ollama",
+    );
     try {
-      return await res.json()
+      return await res.json();
     } catch {
-      throw webError('Ollama web search returned a response that is not JSON.')
+      throw webError("Ollama web search returned a response that is not JSON.");
     }
   }
 
   async _ollamaSearch(query, signal, endpoint = null) {
-    const apiKey = endpoint?.apiKey || this.settings.apiKey
-    const limit = endpoint?.maxResults ?? DEFAULT_RESULTS
+    const apiKey = endpoint?.apiKey || this.settings.apiKey;
+    const limit = endpoint?.maxResults ?? DEFAULT_RESULTS;
     const body = await this._postOllama(
-      'web_search',
+      "web_search",
       { query, max_results: limit },
       signal,
-      apiKey
-    )
-    return { results: normalizeResults(body?.results, limit, query) }
+      apiKey,
+    );
+    return { results: normalizeResults(body?.results, limit, query) };
   }
 
   async _postWebsearchapi(
@@ -2699,27 +2371,27 @@ export class AiAssistWebTools {
     payload,
     signal,
     apiKey,
-    timeoutMs = REQUEST_TIMEOUT_MS
+    timeoutMs = REQUEST_TIMEOUT_MS,
   ) {
     const res = await this._request(
       `${WEBSEARCHAPI_BASE}/${path}`,
       {
-        method: 'POST',
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
           Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify(payload),
       },
       signal,
-      'WebSearchAPI.ai',
-      'websearchapi',
-      timeoutMs
-    )
+      "WebSearchAPI.ai",
+      "websearchapi",
+      timeoutMs,
+    );
     try {
-      return await res.json()
+      return await res.json();
     } catch {
-      throw webError('WebSearchAPI.ai returned a response that is not JSON.')
+      throw webError("WebSearchAPI.ai returned a response that is not JSON.");
     }
   }
 
@@ -2729,36 +2401,36 @@ export class AiAssistWebTools {
    * are then chosen from the page text instead of the result description.
    */
   async _websearchapiSearch(query, signal, endpoint) {
-    const options = endpoint.search ?? {}
-    const limit = options.maxResults ?? DEFAULT_RESULTS
+    const options = endpoint.search ?? {};
+    const limit = options.maxResults ?? DEFAULT_RESULTS;
     const body = await this._postWebsearchapi(
-      'ai-search',
+      "ai-search",
       {
         query,
         ...options,
         maxResults: limit,
-        ...(options.includeContent ? { contentFormat: 'text' } : {}),
+        ...(options.includeContent ? { contentFormat: "text" } : {}),
       },
       signal,
-      endpoint.apiKey
-    )
+      endpoint.apiKey,
+    );
     const organic = (Array.isArray(body?.organic) ? body.organic : []).map(
-      entry => ({
+      (entry) => ({
         ...entry,
         content: entry?.content || entry?.description,
         page: options.includeContent
-          ? searchPage(entry?.content, 'text')
+          ? searchPage(entry?.content, "text")
           : undefined,
-      })
-    )
+      }),
+    );
     const answer =
-      typeof body?.answer === 'string' && body.answer.trim()
+      typeof body?.answer === "string" && body.answer.trim()
         ? [clip(collapse(body.answer), 500)]
-        : []
+        : [];
     return {
       results: normalizeResults(organic, limit, query),
       answers: answer,
-    }
+    };
   }
 
   /**
@@ -2766,12 +2438,12 @@ export class AiAssistWebTools {
    * snippets are chosen from the page text.
    */
   async _tavilySearch(query, signal, endpoint) {
-    const options = endpoint.search ?? {}
-    const limit = options.maxResults ?? DEFAULT_RESULTS
+    const options = endpoint.search ?? {};
+    const limit = options.maxResults ?? DEFAULT_RESULTS;
     const res = await this._request(
       `${TAVILY_API_BASE}/search`,
       {
-        method: 'POST',
+        method: "POST",
         headers: tavilyHeaders(endpoint),
         body: JSON.stringify(
           withoutUndefined({
@@ -2796,37 +2468,37 @@ export class AiAssistWebTools {
             auto_parameters: options.autoParameters,
             exact_match: options.exactMatch,
             safe_search: options.safeSearch,
-          })
+          }),
         ),
       },
       signal,
-      'Tavily',
-      'tavily'
-    )
-    let body
+      "Tavily",
+      "tavily",
+    );
+    let body;
     try {
-      body = await res.json()
+      body = await res.json();
     } catch {
-      throw webError('Tavily returned a response that is not JSON.')
+      throw webError("Tavily returned a response that is not JSON.");
     }
     const results = (Array.isArray(body?.results) ? body.results : []).map(
-      entry => ({
+      (entry) => ({
         ...entry,
         content: entry?.raw_content || entry?.content,
         page: searchPage(
           entry?.raw_content,
-          options.includeRawContent === 'text' ? 'text' : 'markdown'
+          options.includeRawContent === "text" ? "text" : "markdown",
         ),
-      })
-    )
+      }),
+    );
     const answer =
-      typeof body?.answer === 'string' && body.answer.trim()
+      typeof body?.answer === "string" && body.answer.trim()
         ? [clip(collapse(body.answer), 500)]
-        : []
+        : [];
     return {
       results: normalizeResults(results, limit, query),
       answers: answer,
-    }
+    };
   }
 
   /**
@@ -2835,32 +2507,32 @@ export class AiAssistWebTools {
    * each result's Markdown.
    */
   async _firecrawlSearch(query, signal, endpoint) {
-    const options = endpoint.search ?? {}
-    const limit = options.maxResults ?? DEFAULT_RESULTS
-    const selfHosted = endpoint.provider === 'firecrawlSelfHosted'
-    const label = selfHosted ? 'Firecrawl (self-hosted)' : 'Firecrawl'
+    const options = endpoint.search ?? {};
+    const limit = options.maxResults ?? DEFAULT_RESULTS;
+    const selfHosted = endpoint.provider === "firecrawlSelfHosted";
+    const label = selfHosted ? "Firecrawl (self-hosted)" : "Firecrawl";
     const tbs = [
-      options.sortByDate ? 'sbd:1' : null,
+      options.sortByDate ? "sbd:1" : null,
       options.timeRange ? `qdr:${options.timeRange[0]}` : null,
     ]
       .filter(Boolean)
-      .join(',')
+      .join(",");
     // Search refuses zeroDataRetention inside its scrape options
-    const scrape = { ...endpoint.scrape }
-    delete scrape.zeroDataRetention
-    const request = firecrawlRequest(endpoint, 'search')
-    let res
+    const scrape = { ...endpoint.scrape };
+    delete scrape.zeroDataRetention;
+    const request = firecrawlRequest(endpoint, "search");
+    let res;
     try {
       res = await this._request(
         request.url,
         {
-          method: 'POST',
+          method: "POST",
           headers: request.headers,
           body: JSON.stringify(
             withoutUndefined({
               query,
               limit,
-              categories: options.categories?.map(type => ({ type })),
+              categories: options.categories?.map((type) => ({ type })),
               tbs: tbs || undefined,
               includeDomains: options.includeDomains,
               excludeDomains: options.excludeDomains,
@@ -2873,46 +2545,46 @@ export class AiAssistWebTools {
               scrapeOptions: options.scrapeResults
                 ? firecrawlScrapeOptions(scrape)
                 : undefined,
-            })
+            }),
           ),
         },
         signal,
         label,
         endpoint.provider,
-        firecrawlTimeoutMs(options.timeout)
-      )
+        firecrawlTimeoutMs(options.timeout),
+      );
     } catch (err) {
       // A self-hosted instance with no search engine behind it fails searches
       if (selfHosted && err?.status >= 500) {
         throw webError(
           `${err.message} Search backend not configured on self-hosted instance: set SEARXNG_ENDPOINT in its .env.`,
-          { status: err.status, hint: err.hint, kind: err.kind }
-        )
+          { status: err.status, hint: err.hint, kind: err.kind },
+        );
       }
-      throw err
+      throw err;
     }
-    let body
+    let body;
     try {
-      body = await res.json()
+      body = await res.json();
     } catch {
-      throw webError(`${label} returned a response that is not JSON.`)
+      throw webError(`${label} returned a response that is not JSON.`);
     }
     // v2 answers { data: { web: [...], news: [...] } }; older instances a plain list
     const list = Array.isArray(body?.data)
       ? body.data
-      : ['web', 'news'].flatMap(source =>
-          Array.isArray(body?.data?.[source]) ? body.data[source] : []
-        )
-    const results = list.map(entry => ({
+      : ["web", "news"].flatMap((source) =>
+          Array.isArray(body?.data?.[source]) ? body.data[source] : [],
+        );
+    const results = list.map((entry) => ({
       ...entry,
       title: entry?.title || entry?.metadata?.title,
       content: entry?.markdown || entry?.description || entry?.snippet,
-      page: searchPage(entry?.markdown, 'markdown'),
+      page: searchPage(entry?.markdown, "markdown"),
       publishedDate: entry?.date,
-    }))
+    }));
     // The limit applies to each source
-    const max = limit * Math.max(1, options.sources?.length ?? 1)
-    return { results: normalizeResults(results, max, query) }
+    const max = limit * Math.max(1, options.sources?.length ?? 1);
+    return { results: normalizeResults(results, max, query) };
   }
 
   /**
@@ -2921,17 +2593,17 @@ export class AiAssistWebTools {
    * reads every result and snippets are chosen from the page text.
    */
   async _jinaSearch(query, signal, endpoint) {
-    const options = endpoint.search ?? {}
-    const limit = options.maxResults ?? DEFAULT_RESULTS
+    const options = endpoint.search ?? {};
+    const limit = options.maxResults ?? DEFAULT_RESULTS;
     const res = await this._request(
       `${JINA_SEARCH_BASE}/`,
       {
-        method: 'POST',
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
+          "Content-Type": "application/json",
+          Accept: "application/json",
           Authorization: `Bearer ${endpoint.apiKey}`,
-          ...(options.includeContent ? {} : { 'X-Respond-With': 'no-content' }),
+          ...(options.includeContent ? {} : { "X-Respond-With": "no-content" }),
         },
         body: JSON.stringify(
           withoutUndefined({
@@ -2942,30 +2614,32 @@ export class AiAssistWebTools {
             hl: options.language,
             location: options.location,
             site: options.includeDomains,
-          })
+          }),
         ),
       },
       signal,
-      'Jina Search',
-      'jina',
-      options.includeContent ? jinaTimeoutMs() : REQUEST_TIMEOUT_MS
-    )
-    let body
+      "Jina Search",
+      "jina",
+      options.includeContent ? jinaTimeoutMs() : REQUEST_TIMEOUT_MS,
+    );
+    let body;
     try {
-      body = await res.json()
+      body = await res.json();
     } catch {
-      throw webError('Jina Search returned a response that is not JSON.')
+      throw webError("Jina Search returned a response that is not JSON.");
     }
     // `date` is the search engine's; publishedTime can be a Last-Modified header
-    const results = (Array.isArray(body?.data) ? body.data : []).map(entry => ({
-      ...entry,
-      content: entry?.content || entry?.description,
-      page: options.includeContent
-        ? searchPage(entry?.content, 'markdown')
-        : undefined,
-      publishedDate: entry?.date,
-    }))
-    return { results: normalizeResults(results, limit, query) }
+    const results = (Array.isArray(body?.data) ? body.data : []).map(
+      (entry) => ({
+        ...entry,
+        content: entry?.content || entry?.description,
+        page: options.includeContent
+          ? searchPage(entry?.content, "markdown")
+          : undefined,
+        publishedDate: entry?.date,
+      }),
+    );
+    return { results: normalizeResults(results, limit, query) };
   }
 
   /**
@@ -2973,8 +2647,8 @@ export class AiAssistWebTools {
    * on, LangSearch extracts full webpage text and snippets are chosen from it.
    */
   async _langsearchSearch(query, signal, endpoint) {
-    const options = endpoint.search ?? {}
-    const limit = options.maxResults ?? DEFAULT_RESULTS
+    const options = endpoint.search ?? {};
+    const limit = options.maxResults ?? DEFAULT_RESULTS;
     const payload = withoutUndefined({
       query,
       count: limit,
@@ -2988,41 +2662,41 @@ export class AiAssistWebTools {
               : true,
           }
         : undefined,
-    })
+    });
     const res = await this._request(
       `${LANGSEARCH_API_BASE}/v1/web-search`,
       {
-        method: 'POST',
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
           Authorization: `Bearer ${endpoint.apiKey}`,
         },
         body: JSON.stringify(payload),
       },
       signal,
-      'LangSearch',
-      'langsearch'
-    )
-    let body
+      "LangSearch",
+      "langsearch",
+    );
+    let body;
     try {
-      body = await res.json()
+      body = await res.json();
     } catch {
-      throw webError('LangSearch returned a response that is not JSON.')
+      throw webError("LangSearch returned a response that is not JSON.");
     }
     const rawResults =
-      body?.data?.webPages?.value || body?.data?.results || body?.results || []
-    const results = rawResults.map(entry => ({
+      body?.data?.webPages?.value || body?.data?.results || body?.results || [];
+    const results = rawResults.map((entry) => ({
       title: entry?.name || entry?.title,
       url: entry?.url,
       content:
         entry?.text || entry?.summary || entry?.snippet || entry?.description,
       page: options.includeContent
-        ? searchPage(entry?.text, 'text', options.maxCharacters)
+        ? searchPage(entry?.text, "text", options.maxCharacters)
         : undefined,
       publishedDate:
         entry?.datePublished || entry?.dateLastCrawled || entry?.publishedDate,
-    }))
-    return { results: normalizeResults(results, limit, query) }
+    }));
+    return { results: normalizeResults(results, limit, query) };
   }
 
   /**
@@ -3032,10 +2706,10 @@ export class AiAssistWebTools {
    * (text, highlights, summary, livecrawl, subpages).
    */
   async _exaSearch(query, signal, endpoint) {
-    const options = endpoint.search ?? {}
-    const limit = options.maxResults ?? DEFAULT_RESULTS
+    const options = endpoint.search ?? {};
+    const limit = options.maxResults ?? DEFAULT_RESULTS;
 
-    let contents
+    let contents;
     if (
       options.includeContent ||
       options.highlights ||
@@ -3052,7 +2726,7 @@ export class AiAssistWebTools {
           }
         : options.includeHtmlTags
           ? { includeHtmlTags: true }
-          : true
+          : true;
 
       const highlightsOption = options.highlights
         ? options.numSentences ||
@@ -3070,13 +2744,13 @@ export class AiAssistWebTools {
                 : {}),
             }
           : true
-        : undefined
+        : undefined;
 
       const summaryOption = options.summary
         ? options.summaryQuery
           ? { query: options.summaryQuery }
           : true
-        : undefined
+        : undefined;
 
       contents = withoutUndefined({
         text: textOption,
@@ -3086,7 +2760,7 @@ export class AiAssistWebTools {
         livecrawlTimeout: options.livecrawlTimeout,
         subpages: options.subpages,
         subpageTarget: options.subpageTarget,
-      })
+      });
     }
 
     const payload = withoutUndefined({
@@ -3102,50 +2776,50 @@ export class AiAssistWebTools {
       excludeText: options.excludeText,
       moderation: options.moderation,
       contents,
-    })
+    });
 
     const res = await this._request(
       `${EXA_API_BASE}/search`,
       {
-        method: 'POST',
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': endpoint.apiKey,
+          "Content-Type": "application/json",
+          "x-api-key": endpoint.apiKey,
         },
         body: JSON.stringify(payload),
       },
       signal,
-      'Exa',
-      'exa',
-      exaTimeoutMs(options.livecrawlTimeout)
-    )
+      "Exa",
+      "exa",
+      exaTimeoutMs(options.livecrawlTimeout),
+    );
 
-    let body
+    let body;
     try {
-      body = await res.json()
+      body = await res.json();
     } catch {
-      throw webError('Exa returned a response that is not JSON.')
+      throw webError("Exa returned a response that is not JSON.");
     }
 
-    const rawResults = Array.isArray(body?.results) ? body.results : []
-    const results = rawResults.map(entry => ({
+    const rawResults = Array.isArray(body?.results) ? body.results : [];
+    const results = rawResults.map((entry) => ({
       title: entry?.title,
       url: entry?.url,
       content:
         entry?.text ||
         (Array.isArray(entry?.highlights)
-          ? entry.highlights.join('\n\n')
-          : '') ||
+          ? entry.highlights.join("\n\n")
+          : "") ||
         entry?.summary ||
         entry?.snippet ||
         entry?.description,
       // Text with HTML tags in it is not Markdown, so it is read again
       page: options.includeHtmlTags
         ? undefined
-        : searchPage(entry?.text, 'text', options.maxCharacters),
+        : searchPage(entry?.text, "text", options.maxCharacters),
       publishedDate: entry?.publishedDate,
-    }))
-    return { results: normalizeResults(results, limit, query) }
+    }));
+    return { results: normalizeResults(results, limit, query) };
   }
 
   /**
@@ -3154,70 +2828,72 @@ export class AiAssistWebTools {
    * this server via direct fetch. See https://docs.tinyfish.ai/search-api/reference
    */
   async _tinyfishSearch(query, signal, endpoint) {
-    const options = endpoint?.search ?? {}
-    const limit = options.maxResults ?? DEFAULT_RESULTS
-    const base =
-      typeof endpoint?.baseUrl === 'string' && endpoint.baseUrl.trim()
-        ? endpoint.baseUrl.trim().replace(/\/+$/, '')
-        : typeof options.baseUrl === 'string' && options.baseUrl.trim()
-          ? options.baseUrl.trim().replace(/\/+$/, '')
-          : TINYFISH_API_BASE
-    const params = new URLSearchParams()
-    params.set('query', query)
-    if (options.domainType) params.set('domain_type', options.domainType)
-    if (options.location) params.set('location', options.location)
-    if (options.language) params.set('language', options.language)
-    if (Array.isArray(options.includeDomains) && options.includeDomains.length > 0) {
-      params.set('include_domains', options.includeDomains.join(','))
+    const options = endpoint?.search ?? {};
+    const limit = options.maxResults ?? DEFAULT_RESULTS;
+    const params = new URLSearchParams();
+    params.set("query", query);
+    if (options.domainType) params.set("domain_type", options.domainType);
+    if (options.location) params.set("location", options.location);
+    if (options.language) params.set("language", options.language);
+    if (
+      Array.isArray(options.includeDomains) &&
+      options.includeDomains.length > 0
+    ) {
+      params.set("include_domains", options.includeDomains.join(","));
     }
-    if (Array.isArray(options.excludeDomains) && options.excludeDomains.length > 0) {
-      params.set('exclude_domains', options.excludeDomains.join(','))
+    if (
+      Array.isArray(options.excludeDomains) &&
+      options.excludeDomains.length > 0
+    ) {
+      params.set("exclude_domains", options.excludeDomains.join(","));
     }
-    if (options.domainType === 'research_paper') {
+    if (options.domainType === "research_paper") {
       if (Number.isInteger(options.pubYearMin)) {
-        params.set('pub_year_min', String(options.pubYearMin))
+        params.set("pub_year_min", String(options.pubYearMin));
       }
       if (Number.isInteger(options.pubYearMax)) {
-        params.set('pub_year_max', String(options.pubYearMax))
+        params.set("pub_year_max", String(options.pubYearMax));
       }
     } else {
       if (Number.isInteger(options.recencyMinutes)) {
-        params.set('recency_minutes', String(options.recencyMinutes))
+        params.set("recency_minutes", String(options.recencyMinutes));
       } else {
-        if (options.afterDate) params.set('after_date', options.afterDate)
-        if (options.beforeDate) params.set('before_date', options.beforeDate)
+        if (options.afterDate) params.set("after_date", options.afterDate);
+        if (options.beforeDate) params.set("before_date", options.beforeDate);
       }
     }
-    const url = `${resolveDockerHostUrl(base).replace(/\/+$/, '')}/?${params.toString()}`
+    const url = `${TINYFISH_API_BASE}/?${params.toString()}`;
     const res = await this._request(
       url,
       {
-        method: 'GET',
+        method: "GET",
         headers: {
-          Accept: 'application/json',
-          'X-API-Key': endpoint.apiKey,
+          Accept: "application/json",
+          "X-API-Key": endpoint.apiKey,
         },
       },
       signal,
-      'TinyFish',
-      'tinyfish'
-    )
-    let body
+      "TinyFish",
+      "tinyfish",
+    );
+    let body;
     try {
-      body = await res.json()
+      body = await res.json();
     } catch {
-      throw webError('TinyFish returned a response that is not JSON.')
+      throw webError("TinyFish returned a response that is not JSON.");
     }
-    const rawResults = Array.isArray(body?.results) ? body.results : []
-    const results = rawResults.map(entry => ({
+    const rawResults = Array.isArray(body?.results) ? body.results : [];
+    const results = rawResults.map((entry) => ({
       title: entry?.title,
       url: entry?.url,
       content: entry?.snippet || entry?.description || entry?.text,
       publishedDate:
-        entry?.date || entry?.publishedDate || entry?.published_date ||
+        entry?.date ||
+        entry?.publishedDate ||
+        entry?.published_date ||
         (Number.isInteger(entry?.year) ? String(entry.year) : undefined),
-    }))
-    return { results: normalizeResults(results, limit, query) }
+    }));
+    return { results: normalizeResults(results, limit, query) };
   }
 
   /**
@@ -3225,57 +2901,57 @@ export class AiAssistWebTools {
    * See https://parallel.ai/products/search
    */
   async _parallelSearch(query, signal, endpoint) {
-    const options = endpoint?.search ?? {}
-    const limit = options.maxResults ?? DEFAULT_RESULTS
-    const base =
-      typeof endpoint?.baseUrl === 'string' && endpoint.baseUrl.trim()
-        ? endpoint.baseUrl.trim().replace(/\/+$/, '')
-        : typeof options.baseUrl === 'string' && options.baseUrl.trim()
-          ? options.baseUrl.trim().replace(/\/+$/, '')
-          : PARALLEL_API_BASE
+    const options = endpoint?.search ?? {};
+    const limit = options.maxResults ?? DEFAULT_RESULTS;
 
     const advanced_settings = {
       max_results: Math.min(PARALLEL_MAX_RESULTS, Math.max(1, limit)),
-    }
+    };
     if (options.location) {
-      advanced_settings.location = options.location
+      advanced_settings.location = options.location;
     }
 
-    const source_policy = {}
-    if (Array.isArray(options.includeDomains) && options.includeDomains.length > 0) {
-      source_policy.include_domains = options.includeDomains
+    const source_policy = {};
+    if (
+      Array.isArray(options.includeDomains) &&
+      options.includeDomains.length > 0
+    ) {
+      source_policy.include_domains = options.includeDomains;
     }
-    if (Array.isArray(options.excludeDomains) && options.excludeDomains.length > 0) {
-      source_policy.exclude_domains = options.excludeDomains
+    if (
+      Array.isArray(options.excludeDomains) &&
+      options.excludeDomains.length > 0
+    ) {
+      source_policy.exclude_domains = options.excludeDomains;
     }
     if (options.afterDate) {
-      source_policy.after_date = options.afterDate
+      source_policy.after_date = options.afterDate;
     }
     if (Object.keys(source_policy).length > 0) {
-      advanced_settings.source_policy = source_policy
+      advanced_settings.source_policy = source_policy;
     }
 
-    const fetch_policy = {}
+    const fetch_policy = {};
     if (Number.isInteger(options.maxAgeSeconds)) {
-      fetch_policy.max_age_seconds = Math.max(600, options.maxAgeSeconds)
+      fetch_policy.max_age_seconds = Math.max(600, options.maxAgeSeconds);
     }
     if (Number.isInteger(options.timeoutSeconds)) {
-      fetch_policy.timeout_seconds = options.timeoutSeconds
+      fetch_policy.timeout_seconds = options.timeoutSeconds;
     }
-    if (typeof options.disableCacheFallback === 'boolean') {
-      fetch_policy.disable_cache_fallback = options.disableCacheFallback
+    if (typeof options.disableCacheFallback === "boolean") {
+      fetch_policy.disable_cache_fallback = options.disableCacheFallback;
     }
     if (Object.keys(fetch_policy).length > 0) {
-      advanced_settings.fetch_policy = fetch_policy
+      advanced_settings.fetch_policy = fetch_policy;
     }
 
     if (Number.isInteger(options.maxCharsPerResult)) {
       advanced_settings.excerpt_settings = {
         max_chars_per_result: options.maxCharsPerResult,
-      }
+      };
     }
 
-    const q = (typeof query === 'string' ? query.trim() : '') || 'search'
+    const q = (typeof query === "string" ? query.trim() : "") || "search";
     const payload = {
       search_queries: [q.slice(0, 200)],
       objective: q.slice(0, 5000),
@@ -3284,891 +2960,552 @@ export class AiAssistWebTools {
         ? { max_chars_total: options.maxCharsTotal }
         : {}),
       advanced_settings,
-    }
+    };
 
     const timeoutMs = Number.isInteger(options.timeoutSeconds)
       ? Math.max(REQUEST_TIMEOUT_MS, (options.timeoutSeconds + 10) * 1000)
-      : undefined
+      : undefined;
 
     const res = await this._request(
-      `${resolveDockerHostUrl(base).replace(/\/+$/, '')}/v1/search`,
+      `${PARALLEL_API_BASE}/v1/search`,
       {
-        method: 'POST',
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': endpoint.apiKey,
+          "Content-Type": "application/json",
+          "x-api-key": endpoint.apiKey,
         },
         body: JSON.stringify(payload),
       },
       signal,
-      'Parallel',
-      'parallel',
-      timeoutMs
-    )
+      "Parallel",
+      "parallel",
+      timeoutMs,
+    );
 
-    let body
+    let body;
     try {
-      body = await res.json()
+      body = await res.json();
     } catch {
-      throw webError('Parallel returned a response that is not JSON.')
+      throw webError("Parallel returned a response that is not JSON.");
     }
 
-    const rawResults = Array.isArray(body?.results) ? body.results : []
-    const results = rawResults.map(entry => ({
+    const rawResults = Array.isArray(body?.results) ? body.results : [];
+    const results = rawResults.map((entry) => ({
       title: entry?.title,
       url: entry?.url,
       content: Array.isArray(entry?.excerpts)
-        ? entry.excerpts.join('\n\n')
-        : entry?.content || entry?.snippet || '',
+        ? entry.excerpts.join("\n\n")
+        : entry?.content || entry?.snippet || "",
       publishedDate:
         entry?.publish_date || entry?.published_date || entry?.publishedDate,
-    }))
-    return { results: normalizeResults(results, limit, query) }
+    }));
+    return { results: normalizeResults(results, limit, query) };
   }
 
-  /** MCP search endpoint supporting JSON-RPC 2.0 tools/call and legacy webhooks */
-  async _resolveMcpPostUrl(url, headers, signal) {
-    if (url.endsWith('/sse')) {
-      try {
-        const sseRes = await this._request(
-          url,
-          {
-            method: 'GET',
-            headers: {
-              ...headers,
-              Accept: 'text/event-stream',
-            },
-          },
-          signal,
-          'MCP SSE handshake',
-          'mcp',
-          5000
-        )
-        let text = ''
-        const reader = sseRes.body?.getReader?.()
-        if (reader) {
-          try {
-            const decoder = new TextDecoder()
-            while (true) {
-              const { done, value } = await reader.read()
-              if (done) break
-              text += decoder.decode(value, { stream: true })
-              if (text.includes('data:') && text.includes('endpoint')) {
-                const match = text.match(/event:\s*endpoint[\r\n]+data:\s*([^\r\n]+)/)
-                if (match) {
-                  reader.cancel().catch(() => {})
-                  break
-                }
-              }
-            }
-          } catch {
-            // ignore stream read error
-          }
-        } else {
-          text = await sseRes.text()
-        }
-        const match = text.match(/event:\s*endpoint[\r\n]+data:\s*([^\r\n]+)/)
-        if (match && match[1]) {
-          const resolved = new URL(match[1].trim(), url)
-          const baseOrigin = new URL(url).origin
-          if (resolved.origin === baseOrigin) {
-            validateSafeProviderBaseUrl(resolved.toString())
-            return resolved.toString()
-          }
-        }
-      } catch {
-        // Fall back to original URL
-      }
-    }
-    return url
-  }
-
-  async _mcpInitialize(postUrl, headers, signal) {
-    const initPayload = makeJsonRpcRequest(
-      'initialize',
-      {
-        protocolVersion: '2024-11-05',
-        capabilities: {},
-        clientInfo: {
-          name: 'overleaf-ai-assist',
-          version: '1.0.0',
-        },
-      },
-      0
-    )
-    await this._request(
-      postUrl,
-      {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(initPayload),
-      },
-      signal,
-      'MCP Initialize',
-      'mcp'
-    ).catch(() => {})
-
-    const notifPayload = {
-      jsonrpc: '2.0',
-      method: 'notifications/initialized',
-    }
-    await this._request(
-      postUrl,
-      {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(notifPayload),
-      },
-      signal,
-      'MCP Initialized',
-      'mcp'
-    ).catch(() => {})
-  }
-
-  async _mcpDiscoverTool(postUrl, headers, signal, endpoint) {
-    if (endpoint?.toolName && endpoint?.queryParam) {
-      return {
-        toolName: endpoint.toolName,
-        queryParam: endpoint.queryParam,
-      }
-    }
-
-    const listPayload = makeJsonRpcRequest('tools/list', {}, 1)
-    let res
-    try {
-      res = await this._request(
-        postUrl,
-        {
-          method: 'POST',
-          headers,
-          body: JSON.stringify(listPayload),
-        },
-        signal,
-        'MCP Tool Discovery',
-        'mcp'
-      )
-    } catch (err) {
-      if (isUninitializedError(err)) {
-        await this._mcpInitialize(postUrl, headers, signal)
-        res = await this._request(
-          postUrl,
-          {
-            method: 'POST',
-            headers,
-            body: JSON.stringify(listPayload),
-          },
-          signal,
-          'MCP Tool Discovery',
-          'mcp'
-        )
-      } else {
-        throw err
-      }
-    }
-
-    let body
-    try {
-      const text = await res.text()
-      try {
-        body = JSON.parse(text)
-      } catch {
-        body = text
-      }
-    } catch {
-      return detectSearchTool([], endpoint?.toolName, endpoint?.queryParam)
-    }
-
-    if (
-      body?.error &&
-      (body.error.code === -32002 ||
-        /initialize/i.test(body.error.message || ''))
-    ) {
-      await this._mcpInitialize(postUrl, headers, signal)
-      const retryRes = await this._request(
-        postUrl,
-        {
-          method: 'POST',
-          headers,
-          body: JSON.stringify(listPayload),
-        },
-        signal,
-        'MCP Tool Discovery',
-        'mcp'
-      )
-      try {
-        body = await retryRes.json()
-      } catch {
-        // ignore
-      }
-    }
-
-    const tools = Array.isArray(body?.result?.tools) ? body.result.tools : []
-    return detectSearchTool(tools, endpoint?.toolName, endpoint?.queryParam)
-  }
-
-  async _legacyMcpSearch(url, query, headers, signal) {
+  /**
+   * Claude Desktop 3P custom web search: POST {"q": query} as JSON to the
+   * URL as written, expecting {"results": [{title, url, snippet}]} back.
+   * Results without a URL are dropped. Search only, no fetch.
+   */
+  async _mcpSearch(query, signal, endpoint) {
     const res = await this._request(
-      url,
+      resolveDockerHostUrl(endpoint?.baseUrl),
       {
-        method: 'POST',
-        headers,
+        method: "POST",
+        headers: buildMcpHeaders(endpoint),
         body: JSON.stringify({ q: query }),
       },
       signal,
-      'MCP Search',
-      'mcp'
-    )
-
-    let body
+      "Custom web search",
+      "mcp",
+      MCP_SEARCH_TIMEOUT_MS,
+    );
+    let body;
     try {
-      const text = await res.text()
-      try {
-        body = JSON.parse(text)
-      } catch {
-        body = text
-      }
+      body = await res.json();
     } catch {
-      throw webError('MCP search returned an unreadable response.')
+      throw webError(
+        `Custom web search returned a response that is not JSON.${MCP_CONTRACT_HINT}`,
+      );
     }
-
-    const results = extractMcpSearchResults(body, query)
-    return {
-      results: normalizeResults(results, Number.MAX_SAFE_INTEGER, query),
+    if (!isMcpSearchBody(body)) {
+      throw webError(
+        `Custom web search response must be {"results": [{"title", "url", "snippet"}]}.${MCP_CONTRACT_HINT}`,
+      );
     }
+    return { results: normalizeResults(body.results, MCP_MAX_RESULTS, query) };
   }
 
-  /** MCP search endpoint */
-  async _mcpSearch(query, signal, endpoint) {
-    const baseUrl = endpoint?.baseUrl
-    const rawUrl = resolveDockerHostUrl(baseUrl)
-    const cacheKey = rawUrl
-    const cached = mcpEndpointCache.get(cacheKey)
-
-    const headers = {
-      'Content-Type': 'application/json',
-      Accept: 'application/json, text/plain, */*',
-    }
-
-    if (Array.isArray(endpoint?.headers)) {
-      for (const h of endpoint.headers) {
-        if (h && typeof h.key === 'string' && typeof h.value === 'string') {
-          headers[h.key] = h.value
-        }
-      }
-    } else if (endpoint?.headers && typeof endpoint.headers === 'object') {
-      for (const [key, value] of Object.entries(endpoint.headers)) {
-        if (typeof key === 'string' && typeof value === 'string') {
-          headers[key] = value
-        }
-      }
-    }
-
-    let postUrl = cached?.postUrl || rawUrl
-    if (!cached?.postUrl && rawUrl.endsWith('/sse')) {
-      postUrl = await this._resolveMcpPostUrl(rawUrl, headers, signal)
-    }
-
-    // A tool the user named is always called as JSON-RPC; the legacy shortcut
-    // only applies to endpoints whose tool is left to be discovered.
-    if (cached?.isLegacy && !endpoint?.toolName) {
-      return this._legacyMcpSearch(postUrl, query, headers, signal)
-    }
-
-    let toolName = endpoint?.toolName || cached?.toolName || 'search'
-    let queryParam = endpoint?.queryParam || cached?.queryParam || 'query'
-
-    const callPayload = makeJsonRpcRequest(
-      'tools/call',
-      {
-        name: toolName,
-        arguments: {
-          [queryParam]: query,
-        },
-      },
-      1
-    )
-
-    let res
-    try {
-      res = await this._request(
-        postUrl,
-        {
-          method: 'POST',
-          headers,
-          body: JSON.stringify(callPayload),
-        },
-        signal,
-        'MCP Search',
-        'mcp'
-      )
-    } catch (err) {
-      if (isUninitializedError(err)) {
-        await this._mcpInitialize(postUrl, headers, signal)
-        res = await this._request(
-          postUrl,
-          {
-            method: 'POST',
-            headers,
-            body: JSON.stringify(callPayload),
-          },
-          signal,
-          'MCP Search',
-          'mcp'
-        )
-      } else if (!endpoint?.toolName && isLegacyFallbackCandidate(err)) {
-        try {
-          const legacyRes = await this._legacyMcpSearch(
-            postUrl,
-            query,
-            headers,
-            signal
-          )
-          setMcpEndpointCache(cacheKey, { postUrl, isLegacy: true })
-          return legacyRes
-        } catch {
-          throw err
-        }
-      } else {
-        throw err
-      }
-    }
-
-    let body
-    try {
-      const text = await res.text()
-      try {
-        body = JSON.parse(text)
-      } catch {
-        body = text
-      }
-    } catch {
-      throw webError('MCP search returned an unreadable response.')
-    }
-
-    if (
-      body?.error &&
-      (body.error.code === -32002 ||
-        /initialize/i.test(body.error.message || ''))
-    ) {
-      await this._mcpInitialize(postUrl, headers, signal)
-      const retryRes = await this._request(
-        postUrl,
-        {
-          method: 'POST',
-          headers,
-          body: JSON.stringify(callPayload),
-        },
-        signal,
-        'MCP Search',
-        'mcp'
-      )
-      try {
-        const retryText = await retryRes.text()
-        try {
-          body = JSON.parse(retryText)
-        } catch {
-          body = retryText
-        }
-      } catch {
-        // ignore
-      }
-    }
-
-    if (!endpoint?.toolName && isToolNotFoundError(body)) {
-      try {
-        const discovered = await this._mcpDiscoverTool(
-          postUrl,
-          headers,
-          signal,
-          endpoint
-        )
-        if (discovered.toolName && discovered.toolName !== toolName) {
-          toolName = discovered.toolName
-          queryParam = discovered.queryParam
-          setMcpEndpointCache(cacheKey, {
-            postUrl,
-            toolName,
-            queryParam,
-            isLegacy: false,
-          })
-
-          const retryPayload = makeJsonRpcRequest(
-            'tools/call',
-            {
-              name: toolName,
-              arguments: {
-                [queryParam]: query,
-              },
-            },
-            2
-          )
-          const retryRes = await this._request(
-            postUrl,
-            {
-              method: 'POST',
-              headers,
-              body: JSON.stringify(retryPayload),
-            },
-            signal,
-            'MCP Search',
-            'mcp'
-          )
-          try {
-            const retryText = await retryRes.text()
-            try {
-              body = JSON.parse(retryText)
-            } catch {
-              body = retryText
-            }
-          } catch {
-            // ignore
-          }
-        }
-      } catch {
-        // keep current body
-      }
-    }
-
-    const results = extractMcpSearchResults(body, query)
-    return {
-      results: normalizeResults(results, Number.MAX_SAFE_INTEGER, query),
-    }
-  }
-
-  /** SearXNG has no result count: every result the instance sends is kept. */
+  /** SearXNG has no result count in its request: the answer is kept up to a cap. */
   async _searxngSearch(query, signal, endpoint = null) {
-    const baseUrl = endpoint?.baseUrl || this.settings.baseUrl
-    const url = new URL(`${resolveDockerHostUrl(baseUrl)}/search`)
-    url.searchParams.set('q', query)
-    url.searchParams.set('format', 'json')
+    const baseUrl = endpoint?.baseUrl || this.settings.baseUrl;
+    const url = new URL(`${resolveDockerHostUrl(baseUrl)}/search`);
+    url.searchParams.set("q", query);
+    url.searchParams.set("format", "json");
     if (endpoint?.defaultCategories)
-      url.searchParams.set('categories', endpoint.defaultCategories)
+      url.searchParams.set("categories", endpoint.defaultCategories);
     if (endpoint?.defaultLanguage)
-      url.searchParams.set('language', endpoint.defaultLanguage)
+      url.searchParams.set("language", endpoint.defaultLanguage);
     if (endpoint?.timeRange)
-      url.searchParams.set('time_range', endpoint.timeRange)
+      url.searchParams.set("time_range", endpoint.timeRange);
     if (endpoint?.safeSearch !== undefined)
-      url.searchParams.set('safesearch', String(endpoint.safeSearch))
+      url.searchParams.set("safesearch", String(endpoint.safeSearch));
 
     const res = await this._request(
       url.toString(),
-      { headers: { Accept: 'application/json' } },
+      { headers: { Accept: "application/json" } },
       signal,
-      'SearXNG',
-      'searxng'
-    )
-    let body
+      "SearXNG",
+      "searxng",
+    );
+    let body;
     try {
-      body = await res.json()
+      body = await res.json();
     } catch {
       throw webError(
-        'SearXNG did not return JSON. Add "json" to search.formats in its settings.yml.'
-      )
+        'SearXNG did not return JSON. Add "json" to search.formats in its settings.yml.',
+      );
     }
     const results = normalizeResults(
       body?.results,
-      Number.MAX_SAFE_INTEGER,
-      query
-    )
+      SEARXNG_MAX_RESULTS,
+      query,
+    );
     const answers = (Array.isArray(body?.answers) ? body.answers : [])
-      .map(answer => (typeof answer === 'string' ? answer : answer?.answer))
-      .filter(answer => typeof answer === 'string' && answer.trim())
+      .map((answer) => (typeof answer === "string" ? answer : answer?.answer))
+      .filter((answer) => typeof answer === "string" && answer.trim())
       .slice(0, 3)
-      .map(answer => clip(collapse(answer), 500))
-    return { results, answers }
+      .map((answer) => clip(collapse(answer), 500));
+    return { results, answers };
+  }
+
+  /**
+   * Runs search query through a specific endpoint.
+   */
+  async searchEndpoint(endpoint, query = "LaTeX", signal) {
+    const provider = endpoint?.provider;
+    const method = SEARCH_METHODS[provider];
+    if (!method) throw webError(`Unsupported search provider '${provider}'`);
+    return this[method](query, signal, endpoint);
   }
 }
 
+const SEARCH_METHODS = {
+  searxng: "_searxngSearch",
+  websearchapi: "_websearchapiSearch",
+  tavily: "_tavilySearch",
+  firecrawl: "_firecrawlSearch",
+  firecrawlSelfHosted: "_firecrawlSearch",
+  jina: "_jinaSearch",
+  langsearch: "_langsearchSearch",
+  exa: "_exaSearch",
+  tinyfish: "_tinyfishSearch",
+  parallel: "_parallelSearch",
+  mcp: "_mcpSearch",
+  ollama: "_ollamaSearch",
+};
+
 /**
- * Probes the health of a single provider endpoint without burning live search quotas.
+ * Request headers for a custom search endpoint: its own custom headers (array
+ * of { key, value } or a plain object), plus its own Bearer token when none
+ * of them already sets Authorization. No server-wide secret is ever added, so
+ * a user-supplied URL only receives what that user configured.
  */
-export async function probeProviderHealth(
+function buildMcpHeaders(endpoint) {
+  // Keyed by lower-case name, so a custom header replaces a default one
+  // rather than being sent next to it
+  const headers = new Map([
+    ["content-type", ["Content-Type", "application/json"]],
+    ["accept", ["Accept", "application/json"]],
+  ]);
+  const entries = Array.isArray(endpoint?.headers)
+    ? endpoint.headers.map((h) => [h?.key, h?.value])
+    : Object.entries(endpoint?.headers || {});
+  for (const [key, value] of entries) {
+    if (typeof key === "string" && key && typeof value === "string") {
+      headers.set(key.toLowerCase(), [key, value]);
+    }
+  }
+  const token = (endpoint?.bearerToken || endpoint?.apiKey || "").trim();
+  if (token && !headers.has("authorization")) {
+    headers.set("authorization", [
+      "Authorization",
+      /^bearer\s/i.test(token) ? token : `Bearer ${token}`,
+    ]);
+  }
+  return Object.fromEntries(headers.values());
+}
+
+/** Masks an API key or instance URL for display in diagnostic reports. */
+export function maskKey(str) {
+  if (!str || typeof str !== "string") return "";
+  const trimmed = str.trim();
+  if (/^https?:\/\//i.test(trimmed)) {
+    try {
+      const u = new URL(trimmed);
+      return `${u.protocol}//${u.host}${u.pathname !== "/" ? u.pathname : ""}`;
+    } catch {
+      return trimmed;
+    }
+  }
+  if (trimmed.length <= 4) {
+    return "****";
+  }
+  if (trimmed.length <= 8) {
+    return `${trimmed.slice(0, 2)}****${trimmed.slice(-2)}`;
+  }
+  return `${trimmed.slice(0, 4)}****${trimmed.slice(-4)}`;
+}
+
+/** Maps a key-check response status to an { alive, message } verdict. */
+function classifyKeyStatus(res, { authorized = [200], limits = {} } = {}) {
+  if (authorized.includes(res.status)) {
+    return { alive: true, message: "Authorized" };
+  }
+  if ([401, 403].includes(res.status)) {
+    return { alive: false, message: `HTTP ${res.status}: Invalid API key` };
+  }
+  if (limits[res.status]) {
+    return {
+      alive: false,
+      message: `HTTP ${res.status}: ${limits[res.status]}`,
+    };
+  }
+  return {
+    alive: res.ok,
+    message: res.ok ? "Alive" : `HTTP ${res.status} response`,
+  };
+}
+
+const OUT_OF_CREDITS = { 402: "Out of credits" };
+// A malformed probe request still proves the key was accepted.
+const AUTHORIZED_OR_REJECTED_BODY = [200, 400, 422];
+
+/**
+ * Checks if an API key / endpoint is alive and authorized without burning search query quota.
+ */
+export async function checkApiKeyAlive(
   provider,
   endpoint,
-  { signal, fetchFn, tools } = {}
+  { signal, fetchFn } = {},
 ) {
-  const startedAt = Date.now()
-  const timeoutMs = 5000
-  const timeout = AbortSignal.timeout(timeoutMs)
-  const combinedSignal = AbortSignal.any([signal, timeout].filter(Boolean))
+  const timeoutMs = 5000;
+  const timeout = AbortSignal.timeout(timeoutMs);
+  const combinedSignal = AbortSignal.any([signal, timeout].filter(Boolean));
+  const instanceProvider = ["searxng", "firecrawlSelfHosted", "mcp"].includes(
+    provider,
+  );
+  if (instanceProvider && !endpoint?.baseUrl) {
+    return { alive: false, message: "Missing instance URL" };
+  }
+  if (!instanceProvider && !endpoint?.apiKey) {
+    return { alive: false, message: "Missing API key" };
+  }
+  const fetcher = fetchFn || endpointFetch;
+  // Key checks read only the status, so each body is dropped at once to
+  // release its connection.
+  const discardBody = (res) => {
+    res?.body?.cancel?.().catch(() => {});
+    // A Node stream (the guarded dialer's) is drained by resuming it
+    res?.body?.resume?.();
+    return res;
+  };
+  const get = (url, headers) =>
+    fetcher(url, { method: "GET", headers, signal: combinedSignal }).then(
+      discardBody,
+    );
+  const post = (url, headers, body) =>
+    fetcher(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...headers },
+      body: JSON.stringify(body),
+      signal: combinedSignal,
+    }).then(discardBody);
+  const bearer = { Authorization: `Bearer ${endpoint.apiKey}` };
+  const baseUrl = (fallback) =>
+    resolveDockerHostUrl(endpoint.baseUrl || fallback).replace(/\/+$/, "");
+  // Self-hosted instances: try each health path in turn, stopping at the
+  // first response that is not a 404.
+  const probeInstance = async (paths) => {
+    const base = baseUrl("");
+    let res = null;
+    for (const path of paths) {
+      res = await get(`${base}${path}`).catch(() => null);
+      if (res && res.status !== 404) break;
+    }
+    if (res?.ok) return { alive: true, message: "Instance alive" };
+    return {
+      alive: false,
+      message: res ? `HTTP ${res.status}` : "Could not connect",
+    };
+  };
 
   try {
-    if (
-      ['searxng', 'firecrawlSelfHosted', 'mcp'].includes(provider) &&
-      !endpoint?.baseUrl
-    ) {
-      return {
-        provider,
-        ok: false,
-        latencyMs: 0,
-        error: 'Missing instance URL',
-      }
-    }
-    if (
-      !['searxng', 'firecrawlSelfHosted', 'mcp'].includes(provider) &&
-      !endpoint?.apiKey
-    ) {
-      return {
-        provider,
-        ok: false,
-        latencyMs: 0,
-        error: 'Missing API key',
-      }
-    }
-
     switch (provider) {
-      case 'tavily': {
-        await apiRequest(
-          'https://api.tavily.com/usage',
+      case "tavily":
+        return classifyKeyStatus(
+          await get("https://api.tavily.com/usage", bearer),
           {
-            method: 'GET',
-            headers: { Authorization: `Bearer ${endpoint.apiKey}` },
+            limits: {
+              429: "Usage limit reached",
+              432: "Usage limit reached",
+              433: "Usage limit reached",
+            },
           },
-          {
-            signal: combinedSignal,
-            label: 'Tavily',
-            providerType: 'tavily',
-            timeoutMs,
-            fetchFn,
-          }
-        )
-        break
-      }
-      case 'exa': {
-        await apiRequest(
-          'https://api.exa.ai/monitors',
-          {
-            method: 'GET',
-            headers: { 'x-api-key': endpoint.apiKey },
-          },
-          {
-            signal: combinedSignal,
-            label: 'Exa',
-            providerType: 'exa',
-            timeoutMs,
-            fetchFn,
-          }
-        )
-        break
-      }
-      case 'firecrawl': {
-        await apiRequest(
-          'https://api.firecrawl.dev/v1/team/credit-usage',
-          {
-            method: 'GET',
-            headers: { Authorization: `Bearer ${endpoint.apiKey}` },
-          },
-          {
-            signal: combinedSignal,
-            label: 'Firecrawl',
-            providerType: 'firecrawl',
-            timeoutMs,
-            fetchFn,
-          }
-        )
-        break
-      }
-      case 'firecrawlSelfHosted': {
-        const base = (endpoint.baseUrl || '').replace(/\/+$/, '')
-        try {
-          await apiRequest(
-            `${base}/v1/health`,
-            { method: 'GET' },
-            {
-              signal: combinedSignal,
-              label: 'Firecrawl (self-hosted)',
-              providerType: 'firecrawlSelfHosted',
-              timeoutMs,
-              fetchFn,
-            }
-          )
-        } catch (err) {
-          if (err?.status === 404) {
-            await apiRequest(
-              `${base}/health`,
-              { method: 'GET' },
-              {
-                signal: combinedSignal,
-                label: 'Firecrawl (self-hosted)',
-                providerType: 'firecrawlSelfHosted',
-                timeoutMs,
-                fetchFn,
-              }
-            )
-          } else {
-            throw err
-          }
+        );
+      case "exa":
+        return classifyKeyStatus(
+          await get("https://api.exa.ai/monitors", {
+            "x-api-key": endpoint.apiKey,
+          }),
+          { limits: OUT_OF_CREDITS },
+        );
+      case "firecrawl":
+        return classifyKeyStatus(
+          await get("https://api.firecrawl.dev/v1/team/credit-usage", bearer),
+          { limits: OUT_OF_CREDITS },
+        );
+      case "firecrawlSelfHosted":
+        return probeInstance(["/v1/health", "/health"]);
+      case "searxng":
+        return probeInstance(["/healthz", "/config"]);
+      case "jina":
+        return classifyKeyStatus(
+          await post(
+            "https://s.jina.ai/",
+            { ...bearer, "X-Respond-With": "no-content" },
+            { q: "ping", num: 1 },
+          ),
+          { limits: OUT_OF_CREDITS },
+        );
+      case "websearchapi":
+        return classifyKeyStatus(
+          await post("https://api.websearchapi.ai/ai-search", bearer, {
+            query: "ping",
+            maxResults: 1,
+          }),
+          { authorized: AUTHORIZED_OR_REJECTED_BODY, limits: OUT_OF_CREDITS },
+        );
+      case "langsearch":
+        return classifyKeyStatus(
+          await post("https://api.langsearch.com/v1/web-search", bearer, {
+            count: 1,
+          }),
+          { authorized: AUTHORIZED_OR_REJECTED_BODY },
+        );
+      case "tinyfish":
+        return classifyKeyStatus(
+          await get(`${TINYFISH_API_BASE}/?query=`, {
+            "X-API-Key": endpoint.apiKey,
+          }),
+          { authorized: AUTHORIZED_OR_REJECTED_BODY },
+        );
+      case "parallel":
+        return classifyKeyStatus(
+          await post(
+            `${PARALLEL_API_BASE}/v1/search`,
+            { "x-api-key": endpoint.apiKey },
+            {},
+          ),
+          { authorized: AUTHORIZED_OR_REJECTED_BODY, limits: OUT_OF_CREDITS },
+        );
+      case "ollama":
+        return classifyKeyStatus(
+          await post("https://ollama.com/api/web_search", bearer, {}),
+          { authorized: AUTHORIZED_OR_REJECTED_BODY },
+        );
+      case "mcp": {
+        // The body is read, not dropped: a 2xx that breaks the contract would
+        // pass the check and fail every search
+        const res = await fetcher(resolveDockerHostUrl(endpoint.baseUrl), {
+          method: "POST",
+          headers: buildMcpHeaders(endpoint),
+          body: JSON.stringify({ q: "ping" }),
+          signal: combinedSignal,
+        }).catch(() => null);
+        if (res?.ok) {
+          const body = await res.json().catch(() => null);
+          return isMcpSearchBody(body)
+            ? { alive: true, message: "Instance alive" }
+            : {
+                alive: false,
+                message: 'Response is not {"results": [...]} JSON',
+              };
         }
-        break
-      }
-      case 'searxng': {
-        const base = (endpoint.baseUrl || '').replace(/\/+$/, '')
-        try {
-          await apiRequest(
-            `${base}/healthz`,
-            { method: 'GET' },
-            {
-              signal: combinedSignal,
-              label: 'SearXNG',
-              providerType: 'searxng',
-              timeoutMs,
-              fetchFn,
-            }
-          )
-        } catch (err) {
-          if (err?.status === 404) {
-            await apiRequest(
-              `${base}/config`,
-              { method: 'GET' },
-              {
-                signal: combinedSignal,
-                label: 'SearXNG',
-                providerType: 'searxng',
-                timeoutMs,
-                fetchFn,
-              }
-            )
-          } else {
-            throw err
-          }
+        discardBody(res);
+        if (res && [401, 403].includes(res.status)) {
+          return {
+            alive: false,
+            message: `HTTP ${res.status}: Unauthorized / Invalid API key`,
+          };
         }
-        break
-      }
-      case 'jina': {
-        await apiRequest(
-          'https://s.jina.ai/',
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${endpoint.apiKey}`,
-              'X-Respond-With': 'no-content',
-            },
-            body: JSON.stringify({ q: 'ping', num: 1 }),
-          },
-          {
-            signal: combinedSignal,
-            label: 'Jina AI',
-            providerType: 'jina',
-            timeoutMs,
-            fetchFn,
-          }
-        )
-        break
-      }
-      case 'websearchapi': {
-        await apiRequest(
-          'https://api.websearchapi.ai/ai-search',
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${endpoint.apiKey}`,
-            },
-            body: JSON.stringify({ query: 'ping', maxResults: 1 }),
-          },
-          {
-            signal: combinedSignal,
-            label: 'WebSearchAPI.ai',
-            providerType: 'websearchapi',
-            timeoutMs,
-            fetchFn,
-          }
-        )
-        break
-      }
-      case 'langsearch': {
-        await apiRequest(
-          'https://api.langsearch.com/v1/web-search',
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${endpoint.apiKey}`,
-            },
-            body: JSON.stringify({ query: 'ping', count: 1 }),
-          },
-          {
-            signal: combinedSignal,
-            label: 'LangSearch',
-            providerType: 'langsearch',
-            timeoutMs,
-            fetchFn,
-          }
-        )
-        break
-      }
-      case 'tinyfish': {
-        const base = (
-          endpoint.baseUrl || 'https://api.search.tinyfish.ai'
-        ).replace(/\/+$/, '')
-        await apiRequest(
-          `${base}/?query=ping`,
-          {
-            method: 'GET',
-            headers: { 'X-API-Key': endpoint.apiKey },
-          },
-          {
-            signal: combinedSignal,
-            label: 'TinyFish',
-            providerType: 'tinyfish',
-            timeoutMs,
-            fetchFn,
-          }
-        )
-        break
-      }
-      case 'parallel': {
-        const base = (
-          endpoint.baseUrl ||
-          endpoint.search?.baseUrl ||
-          PARALLEL_API_BASE
-        ).replace(/\/+$/, '')
-        await apiRequest(
-          `${base}/v1/search`,
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'x-api-key': endpoint.apiKey,
-            },
-            body: JSON.stringify({
-              search_queries: ['ping'],
-              objective: 'ping',
-              mode: endpoint.search?.mode || 'turbo',
-              advanced_settings: {
-                max_results: 1,
-              },
-            }),
-          },
-          {
-            signal: combinedSignal,
-            label: 'Parallel',
-            providerType: 'parallel',
-            timeoutMs,
-            fetchFn,
-          }
-        )
-        break
-      }
-      case 'ollama': {
-        await apiRequest(
-          'https://ollama.com/api/web_search',
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${endpoint.apiKey}`,
-            },
-            body: JSON.stringify({ query: 'ping', max_results: 1 }),
-          },
-          {
-            signal: combinedSignal,
-            label: 'Ollama web search',
-            providerType: 'ollama',
-            timeoutMs,
-            fetchFn,
-          }
-        )
-        break
-      }
-      case 'mcp': {
-        if (tools && typeof tools._mcpSearch === 'function') {
-          await tools._mcpSearch('ping', combinedSignal, endpoint)
-        } else {
-          const base = (endpoint.baseUrl || '').replace(/\/+$/, '')
-          await apiRequest(
-            base,
-            {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ q: 'ping' }),
-            },
-            {
-              signal: combinedSignal,
-              label: 'MCP WebSearch',
-              providerType: 'mcp',
-              timeoutMs,
-              fetchFn,
-            }
-          )
-        }
-        break
+        return {
+          alive: false,
+          message: res ? `HTTP ${res.status}` : "Could not connect",
+        };
       }
       default:
-        throw new Error(`Unknown provider '${provider}'`)
-    }
-
-    return {
-      provider,
-      ok: true,
-      latencyMs: Date.now() - startedAt,
+        return { alive: false, message: `Unknown provider '${provider}'` };
     }
   } catch (err) {
-    return {
-      provider,
-      ok: false,
-      latencyMs: Date.now() - startedAt,
-      error: err?.message || 'Connection failed',
-    }
+    return { alive: false, message: err?.message || "Check failed" };
   }
 }
 
+function webSearchTestCancelled() {
+  return new ProviderError("Web search test was cancelled", {
+    code: "aborted",
+    status: 499,
+  });
+}
+
 /**
- * Runs parallel zero-credit / lightweight health checks across all enabled search providers.
- * Strictly tests only the first credential (index 0) per provider to avoid token/quota waste.
+ * Runs deep health checks across all configured web search providers.
+ * Verifies that each provider is searchable, requestable, and returns real results.
+ * Tests credentials in order with a real search until one returns results;
+ * the rest then only get a concurrent API key liveness check (authorized) to
+ * save search quota.
  */
 export async function testWebSearch(settings, { signal, fetchFn } = {}) {
-  const tools = new AiAssistWebTools(settings, fetchFn ? { fetchFn } : {})
+  const tools = new AiAssistWebTools(settings, fetchFn ? { fetchFn } : {});
 
-  // Group endpoints by provider and strictly select only the first endpoint (index 0)
-  const enabledProviders = new Map()
+  // Group endpoints by provider
+  const providerEndpointsMap = new Map();
   for (const endpoint of tools.rotator.pool) {
     if (SEARCH_PROVIDERS.has(endpoint.provider)) {
-      if (!enabledProviders.has(endpoint.provider)) {
-        enabledProviders.set(endpoint.provider, endpoint)
+      if (!providerEndpointsMap.has(endpoint.provider)) {
+        providerEndpointsMap.set(endpoint.provider, []);
       }
+      providerEndpointsMap.get(endpoint.provider).push(endpoint);
     }
   }
 
-  const targetEndpoints = Array.from(enabledProviders.values())
-  if (targetEndpoints.length === 0) {
+  if (providerEndpointsMap.size === 0) {
     throw new ProviderError(
-      'No web search providers are configured or enabled.',
+      "No web search providers are configured or enabled.",
       {
-        code: 'invalidWebSearchSettings',
+        code: "invalidWebSearchSettings",
         status: 400,
-      }
-    )
+      },
+    );
   }
 
-  const probePromises = targetEndpoints.map(endpoint =>
-    probeProviderHealth(endpoint.provider, endpoint, { signal, fetchFn, tools })
-  )
+  if (signal?.aborted) throw webSearchTestCancelled();
 
-  const settled = await Promise.allSettled(probePromises)
-  const results = settled.map((outcome, idx) => {
-    if (outcome.status === 'fulfilled') {
-      return outcome.value
-    }
-    return {
-      provider: targetEndpoints[idx].provider,
-      ok: false,
-      latencyMs: 0,
-      error: outcome.reason?.message || 'Unexpected probe failure',
-    }
-  })
+  const overallStart = Date.now();
 
-  const anySuccess = results.some(r => r.ok)
-  const maxLatency = Math.max(0, ...results.map(r => r.latencyMs || 0))
-  const firstOk = results.find(r => r.ok)
+  // Runs one key check and turns a thrown error into a 'dead' report;
+  // cancellation is rethrown so the whole test stops.
+  const runCheck = async (ep, i, check) => {
+    const report = {
+      index: i + 1,
+      label: ep.apiKey ? `Key ${i + 1}` : `Instance ${i + 1}`,
+      target: maskKey(ep.apiKey || ep.baseUrl || ep.id),
+    };
+    const start = Date.now();
+    try {
+      const outcome = await check();
+      return { ...report, ...outcome(Date.now() - start) };
+    } catch (err) {
+      if (signal?.aborted || err?.code === "aborted") throw err;
+      const elapsed = Date.now() - start;
+      return {
+        ...report,
+        status: "dead",
+        message: `Die: ${err.message || "Search failed"} (${elapsed} ms)`,
+        latencyMs: elapsed,
+      };
+    }
+  };
+
+  const searchCheck = (ep) => async () => {
+    const searchRes = await tools.searchEndpoint(ep, "LaTeX", signal);
+    const count = Array.isArray(searchRes?.results)
+      ? searchRes.results.length
+      : 0;
+    return (elapsed) =>
+      count > 0
+        ? {
+            status: "works",
+            message: `Works (Searchable, ${count} result${count === 1 ? "" : "s"} in ${elapsed} ms)`,
+            latencyMs: elapsed,
+            resultCount: count,
+          }
+        : {
+            status: "dead",
+            message: `Die: Returned 0 search results (${elapsed} ms)`,
+            latencyMs: elapsed,
+            resultCount: 0,
+          };
+  };
+
+  const aliveCheck = (provider, ep) => async () => {
+    const aliveRes = await checkApiKeyAlive(provider, ep, {
+      signal,
+      fetchFn: tools.fetchFn,
+    });
+    return (elapsed) => ({
+      status: aliveRes.alive ? "alive" : "dead",
+      message: aliveRes.alive
+        ? `Alive (${aliveRes.message})`
+        : `Die: ${aliveRes.message}`,
+      latencyMs: elapsed,
+    });
+  };
+
+  // Providers are checked concurrently.
+  const providerReports = await Promise.all(
+    Array.from(providerEndpointsMap.entries()).map(
+      async ([provider, endpoints]) => {
+        const keyReports = [];
+        let works = null;
+        let i = 0;
+        // Real searches spend quota, so run them one at a time until one works.
+        for (; i < endpoints.length && !works; i++) {
+          if (signal?.aborted) throw webSearchTestCancelled();
+          const report = await runCheck(
+            endpoints[i],
+            i,
+            searchCheck(endpoints[i]),
+          );
+          keyReports.push(report);
+          if (report.status === "works") works = report;
+        }
+        // Liveness checks are free and independent: run the rest together.
+        if (signal?.aborted) throw webSearchTestCancelled();
+        const rest = endpoints.slice(i);
+        keyReports.push(
+          ...(await Promise.all(
+            rest.map((ep, j) => runCheck(ep, i + j, aliveCheck(provider, ep))),
+          )),
+        );
+
+        return {
+          provider,
+          searchable: Boolean(works),
+          latencyMs: works?.latencyMs ?? 0,
+          keys: keyReports,
+          error: works
+            ? undefined
+            : keyReports.find((k) => k.status === "dead")?.message,
+        };
+      },
+    ),
+  );
+
+  const firstSearchable = providerReports.find((p) => p.searchable);
 
   return {
-    latencyMs: maxLatency,
-    anySuccess,
-    results,
-    activeEndpoints: results.length,
-    provider: firstOk ? firstOk.provider : results[0]?.provider || null,
-    resultCount: results.filter(r => r.ok).length,
-  }
+    latencyMs: Date.now() - overallStart,
+    anySuccess: Boolean(firstSearchable),
+    providers: providerReports,
+    activeEndpoints: tools.rotator.pool.length,
+    provider: firstSearchable
+      ? firstSearchable.provider
+      : providerReports[0]?.provider || null,
+    resultCount: firstSearchable
+      ? (firstSearchable.keys.find((k) => k.status === "works")?.resultCount ??
+        0)
+      : 0,
+  };
 }

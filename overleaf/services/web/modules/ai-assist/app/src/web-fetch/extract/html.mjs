@@ -94,6 +94,8 @@ const BLOCK_TAGS = new Set([
 
 const INLINE_CODE_TAGS = new Set(['code', 'kbd', 'samp', 'tt'])
 const EMPHASIS = { strong: '**', b: '**', em: '*', i: '*', del: '~~', s: '~~' }
+/** The widest table kept as a Markdown table; wider ones read as paragraphs. */
+const MAX_TABLE_COLUMNS = 40
 /** Tags whose Markdown depends on their whole content, rendered on close. */
 const WRAPPED_TAGS = new Set([
   ...Object.keys(EMPHASIS),
@@ -117,12 +119,49 @@ function unescapeHtml(text) {
   )
 }
 
-const JSON_LD =
-  /<script\b[^>]*type\s*=\s*["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi
-const APP_DATA =
-  /<script\b[^>]*id\s*=\s*["'](?:__NEXT_DATA__|__NUXT_DATA__)["'][^>]*>([\s\S]*?)<\/script>/gi
+// Tag openers match only up to the next `<` or `>`, so scanning a page with many
+// unclosed openers stays linear: `[^>]*` would rescan the rest of the page for
+// each opener, a quadratic cost on crafted HTML.
+const JSON_LD_OPEN =
+  /<script\b[^<>]*type\s*=\s*["']application\/ld\+json["'][^<>]*>/i
+const APP_DATA_OPEN =
+  /<script\b[^<>]*id\s*=\s*["'](?:__NEXT_DATA__|__NUXT_DATA__)["'][^<>]*>/i
 const DESCRIPTION =
-  /<meta\b[^>]*(?:name|property)\s*=\s*["'](?:og:description|description)["'][^>]*content\s*=\s*["']([^"']*)["']/i
+  /<meta\b[^<>]*(?:name|property)\s*=\s*["'](?:og:description|description)["'][^<>]*content\s*=\s*["']([^"']*)["']/i
+
+/**
+ * The text of each `<script>` that `open` starts, up to its `</script>`. A
+ * script that is never closed ends the scan: nothing after it can be closed.
+ */
+function scriptBodies(html, open) {
+  const opener = new RegExp(open.source, 'gi')
+  const closer = /<\/script\s*>/gi
+  const bodies = []
+  let match
+  while ((match = opener.exec(html))) {
+    closer.lastIndex = opener.lastIndex
+    const end = closer.exec(html)
+    if (!end) break
+    bodies.push(html.slice(opener.lastIndex, end.index))
+    opener.lastIndex = closer.lastIndex
+  }
+  return bodies
+}
+
+/**
+ * The HTML inside the first `<name>` element, up to the last `</name>`, or
+ * null. Linear for the same reason as the openers above.
+ */
+function innerHtml(html, name) {
+  const open = new RegExp(`<${name}\\b[^<>]*>`, 'i').exec(html)
+  if (!open) return null
+  const start = open.index + open[0].length
+  let close = -1
+  for (const match of html.matchAll(new RegExp(`</${name}\\s*>`, 'gi'))) {
+    close = match.index
+  }
+  return close >= start ? html.slice(start, close) : null
+}
 
 function parseJson(raw) {
   try {
@@ -190,12 +229,12 @@ function longStrings(node, out, seen, depth = 0) {
  */
 export function embeddedText(html) {
   const candidates = []
-  for (const [, raw] of html.matchAll(JSON_LD)) {
+  for (const raw of scriptBodies(html, JSON_LD_OPEN)) {
     const bodies = []
     jsonLdBodies(parseJson(raw), bodies)
     candidates.push(bodies.join('\n\n'))
   }
-  for (const [, raw] of html.matchAll(APP_DATA)) {
+  for (const raw of scriptBodies(html, APP_DATA_OPEN)) {
     const strings = []
     longStrings(parseJson(raw), strings, new Set())
     candidates.push(strings.join('\n\n'))
@@ -215,11 +254,11 @@ function attribute(attrs, name) {
 
 /** The page's own <main>, or its only <article>, when it marks one. */
 function semanticMainHtml(html) {
-  const main = /<main\b[^>]*>([\s\S]*)<\/main>/i.exec(html)
-  if (main && main[1].length > 500) return main[1]
+  const main = innerHtml(html, 'main')
+  if (main && main.length > 500) return main
   if ((html.match(/<article\b/gi) || []).length === 1) {
-    const article = /<article\b[^>]*>([\s\S]*)<\/article>/i.exec(html)
-    if (article && article[1].length > 500) return article[1]
+    const article = innerHtml(html, 'article')
+    if (article && article.length > 500) return article
   }
   return null
 }
@@ -242,8 +281,7 @@ function readableHtml(html) {
 }
 
 function bodyHtml(html) {
-  const body = /<body\b[^>]*>([\s\S]*)<\/body>/i.exec(html)
-  return body ? body[1] : html
+  return innerHtml(html, 'body') ?? html
 }
 
 /**
@@ -333,10 +371,12 @@ function formatLink(inner, href, baseUrl) {
 
 /** Emphasis markers around the text, with surrounding spaces kept outside. */
 function wrapInline(inner, marker) {
-  const lead = /^\s*/.exec(inner)[0]
-  const trail = /\s*$/.exec(inner.slice(lead.length))[0]
-  const core = inner.slice(lead.length, inner.length - trail.length)
+  // trim, not a /\s*$/ match: that rescans a long run of spaces at every position
+  const start = inner.trimStart()
+  const core = start.trimEnd()
   if (!core || core.includes('\n')) return inner
+  const lead = inner.slice(0, inner.length - start.length)
+  const trail = start.slice(core.length)
   return `${lead}${marker}${core}${marker}${trail}`
 }
 
@@ -377,7 +417,9 @@ function tableMarkdown(table) {
   const rows = table.rows.filter(row => row.some(cell => cell !== ''))
   const width = rows.reduce((max, row) => Math.max(max, row.length), 0)
   if (rows.length === 0) return table.caption ? `\n\n${table.caption}\n\n` : ''
-  if (table.layout || width < 2) {
+  // Every row is padded to the widest one, so one wide row would make rows × width
+  // cells: a table that wide is shown as paragraphs instead
+  if (table.layout || width < 2 || width > MAX_TABLE_COLUMNS) {
     const paragraphs = [table.caption, ...rows.flat()].filter(Boolean)
     return `\n\n${paragraphs.join('\n\n')}\n\n`
   }
@@ -437,13 +479,16 @@ function sanitizedHtmlToMarkdown(html, baseUrl) {
   let skippingMath = false
   let table = null
   let lastDefinition = ''
+  // Open inline-code wraps, kept as a count: scanning `wraps` for each tag
+  // would make deeply nested markup quadratic
+  let codeDepth = 0
 
   const inCell = () => table !== null && table.cellAt !== null
-  const inInlineCode = () => wraps.some(wrap => INLINE_CODE_TAGS.has(wrap.name))
+  const inInlineCode = () => codeDepth > 0
   const blockBreak = () => out.push(inCell() ? ' ' : '\n\n')
 
   for (const match of html.matchAll(
-    /<(\/?)([a-z][a-z0-9]*)([^>]*)>|([^<]+)/gi
+    /<(\/?)([a-z][a-z0-9]*)([^<>]*)>|([^<]+)/gi
   )) {
     const [, closing, rawName, attrs, text] = match
 
@@ -527,12 +572,20 @@ function sanitizedHtmlToMarkdown(html, baseUrl) {
     if (WRAPPED_TAGS.has(name)) {
       if (!closing) {
         // Markup inside inline code is part of the code
-        if (!inInlineCode()) wraps.push({ name, at: out.length })
+        if (!inInlineCode()) {
+          wraps.push({ name, at: out.length })
+          if (INLINE_CODE_TAGS.has(name)) codeDepth++
+        }
         continue
       }
       const index = wraps.findLastIndex(wrap => wrap.name === name)
       if (index === -1) continue
-      const [wrap] = wraps.splice(index)
+      // The wrap closes with any wraps opened inside it, which are closed with it
+      const removed = wraps.splice(index)
+      const wrap = removed[0]
+      for (const each of removed) {
+        if (INLINE_CODE_TAGS.has(each.name)) codeDepth--
+      }
       const inner = out.splice(wrap.at).join('')
       let rendered
       if (EMPHASIS[name]) {
@@ -720,7 +773,7 @@ const MODIFIED_META = [
 
 function metaContent(html, names) {
   const found = new Map()
-  for (const [tag] of html.matchAll(/<meta\b[^>]*>/gi)) {
+  for (const [tag] of html.matchAll(/<meta\b[^<>]*>/gi)) {
     const name = /\b(?:property|name|itemprop)\s*=\s*["']([^"']+)["']/i
       .exec(tag)?.[1]
       ?.toLowerCase()
@@ -746,7 +799,7 @@ export function extractPageDates(html) {
   const published =
     metaContent(head, PUBLISHED_META) ||
     jsonLd('datePublished') ||
-    isoDay(/<time\b[^>]*\bdatetime\s*=\s*["']([^"']+)["']/i.exec(head)?.[1])
+    isoDay(/<time\b[^<>]*\bdatetime\s*=\s*["']([^"']+)["']/i.exec(head)?.[1])
   const modified = metaContent(head, MODIFIED_META) || jsonLd('dateModified')
   return {
     ...(published ? { published } : {}),
@@ -756,7 +809,7 @@ export function extractPageDates(html) {
 
 /** Title and Markdown body of an HTML page, and its dates when it has them. */
 export function htmlToMarkdown(html, baseUrl) {
-  const titleMatch = /<title\b[^>]*>([\s\S]*?)<\/title>/i.exec(html)
+  const titleMatch = /<title\b[^<>]*>([^<]*)<\/title\s*>/i.exec(html)
   const title = titleMatch
     ? collapse(
         unescapeHtml(

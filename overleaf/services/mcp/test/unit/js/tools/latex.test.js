@@ -46,8 +46,9 @@ function fakeServer() {
   }
 }
 
-function payload(result) {
-  return JSON.parse(result.content[0].text)
+/** The data half of the shared success envelope. */
+function data(result) {
+  return JSON.parse(result.content[0].text).data
 }
 
 describe('latex semantic tools', function () {
@@ -77,29 +78,86 @@ describe('latex semantic tools', function () {
     ])
   })
 
-  it('get_doc_outline lists the sections of one document', async function () {
-    const result = await server.call('get_doc_outline', {
-      projectId: 'p1',
-      path: '/main.tex',
+  it('scans a large project a few documents at a time', async function () {
+    const docs = Array.from({ length: 30 }, (_, i) => ({ path: `/s${i}.tex`, id: `d${i}` }))
+    let inFlight = 0
+    let peak = 0
+    client.get = sinon.stub().callsFake(async (token, path, query) => {
+      if (path === '/projects/p1/tree') return { docs, files: [] }
+      inFlight++
+      peak = Math.max(peak, inFlight)
+      await new Promise(resolve => setTimeout(resolve, 5))
+      inFlight--
+      return { path: query.path, content: '\\cite{k}' }
     })
-    expect(payload(result).outline.map(s => s.title)).to.deep.equal([
-      'Introduction',
-      'Results',
-    ])
+    const result = await server.call('scan_latex', { projectId: 'p1', aspect: 'citations' })
+    expect(data(result).documentsScanned).to.equal(30)
+    expect(peak).to.be.above(1).and.at.most(8)
   })
 
-  it('get_doc_outline gives every section a line range that read_file can slice', async function () {
-    const result = await server.call('get_doc_outline', {
-      projectId: 'p1',
-      path: '/main.tex',
+  describe('get_doc_outline', function () {
+    it('lists the sections of one document with its path', async function () {
+      const result = await server.call('get_doc_outline', {
+        projectId: 'p1',
+        path: '/main.tex',
+      })
+      expect(data(result).outline.map(s => s.title)).to.deep.equal([
+        'Introduction',
+        'Results',
+      ])
+      expect(data(result).outline[0].path).to.equal('/main.tex')
     })
-    const [intro, results] = payload(result).outline
-    // The range must stop before the next same-level heading, so that slicing
-    // main.tex on it yields the Introduction body and nothing after it.
-    expect(intro.endLine).to.equal(results.startLine - 1)
-    const body = MAIN.split('\n').slice(intro.startLine - 1, intro.endLine).join('\n')
-    expect(body).to.include('\\cite{knuth1984}')
-    expect(body).to.not.include('\\section{Results}')
+
+    it('gives every section a line range that read_file can slice', async function () {
+      const result = await server.call('get_doc_outline', {
+        projectId: 'p1',
+        path: '/main.tex',
+      })
+      const [intro, results] = data(result).outline
+      // The range must stop before the next same-level heading, so that slicing
+      // main.tex on it yields the Introduction body and nothing after it.
+      expect(intro.endLine).to.equal(results.startLine - 1)
+      const body = MAIN.split('\n').slice(intro.startLine - 1, intro.endLine).join('\n')
+      expect(body).to.include('\\cite{knuth1984}')
+      expect(body).to.not.include('\\section{Results}')
+    })
+
+    it('walks \\input into the chapter files when followIncludes is set', async function () {
+      const result = await server.call('get_doc_outline', {
+        projectId: 'p1',
+        path: '/main.tex',
+        followIncludes: true,
+      })
+      const payload = data(result)
+      expect(payload.documents).to.deep.equal(['/main.tex', '/chapters/method.tex'])
+      expect(payload.outline.map(s => [s.path, s.title])).to.deep.equal([
+        ['/main.tex', 'Introduction'],
+        ['/chapters/method.tex', 'Method'],
+        ['/main.tex', 'Results'],
+      ])
+    })
+
+    it('suggests followIncludes when the document has includes and it was not set', async function () {
+      const result = await server.call('get_doc_outline', {
+        projectId: 'p1',
+        path: '/main.tex',
+      })
+      expect(JSON.parse(result.content[0].text).nextSteps[0]).to.include('followIncludes: true')
+    })
+
+    it('reports an include that matches no project file', async function () {
+      client.get
+        .withArgs(TOKEN, '/projects/p1/doc', { path: '/main.tex' })
+        .resolves({ path: '/main.tex', content: '\\section{A}\n\\input{missing}' })
+      const result = await server.call('get_doc_outline', {
+        projectId: 'p1',
+        path: '/main.tex',
+        followIncludes: true,
+      })
+      expect(data(result).unresolvedIncludes).to.deep.equal([
+        { path: '/main.tex', line: 2, target: 'missing' },
+      ])
+    })
   })
 
   it('scan_latex with aspect: includes resolves an \\input to a project document', async function () {
@@ -108,9 +166,14 @@ describe('latex semantic tools', function () {
       aspect: 'includes',
       path: '/main.tex',
     })
-    const [child] = payload(result).includes
-    expect(child.path).to.equal('chapters/method')
-    expect(child.resolvedPath).to.equal('/chapters/method.tex')
+    const [child] = data(result).items
+    expect(child).to.include({
+      path: '/main.tex',
+      line: 5,
+      command: 'input',
+      target: 'chapters/method',
+      resolvedPath: '/chapters/method.tex',
+    })
   })
 
   it('scan_latex with aspect: citations scans every tex document by default', async function () {
@@ -118,10 +181,11 @@ describe('latex semantic tools', function () {
       projectId: 'p1',
       aspect: 'citations',
     })
-    expect(payload(result).citations.map(c => c.key)).to.have.members([
+    expect(data(result).items.map(c => c.key)).to.have.members([
       'knuth1984',
       'lamport1994',
     ])
+    expect(data(result).documentsScanned).to.equal(2)
   })
 
   it('scan_latex with aspect: citations can be limited to one document', async function () {
@@ -130,7 +194,7 @@ describe('latex semantic tools', function () {
       aspect: 'citations',
       path: '/main.tex',
     })
-    expect(payload(result).citations.map(c => c.key)).to.deep.equal(['knuth1984'])
+    expect(data(result).items.map(c => c.key)).to.deep.equal(['knuth1984'])
   })
 
   it('scan_latex with aspect: citations never reads a .bib file as LaTeX', async function () {
@@ -144,7 +208,12 @@ describe('latex semantic tools', function () {
       projectId: 'p1',
       path: '/refs.bib',
     })
-    expect(payload(result).entries[0].key).to.equal('knuth1984')
+    expect(data(result).entries[0]).to.include({
+      path: '/refs.bib',
+      line: 1,
+      key: 'knuth1984',
+    })
+    expect(data(result).total).to.equal(1)
   })
 
   it('search_bib filters entries when query is provided', async function () {
@@ -153,7 +222,8 @@ describe('latex semantic tools', function () {
       path: '/refs.bib',
       query: 'literate',
     })
-    expect(payload(result).entries).to.have.length(1)
+    expect(data(result).entries).to.have.length(1)
+    expect(data(result).matched).to.equal(1)
   })
 
   it('scan_latex with aspect: labels_refs flags references with no matching label', async function () {
@@ -161,7 +231,8 @@ describe('latex semantic tools', function () {
       projectId: 'p1',
       aspect: 'labels_refs',
     })
-    expect(payload(result).undefinedRefs).to.include('sec:missing')
+    const undefinedRef = data(result).issues.find(i => i.kind === 'undefined_ref')
+    expect(undefinedRef).to.include({ name: 'sec:missing', path: '/main.tex', line: 13 })
   })
 
   it('scan_latex with aspect: labels_refs flags labels nothing references', async function () {
@@ -169,7 +240,9 @@ describe('latex semantic tools', function () {
       projectId: 'p1',
       aspect: 'labels_refs',
     })
-    expect(payload(result).unusedLabels).to.include('fig:plot')
+    const unused = data(result).issues.filter(i => i.kind === 'unused_label')
+    expect(unused.map(i => i.name)).to.include('fig:plot')
+    expect(unused.find(i => i.name === 'fig:plot').path).to.equal('/main.tex')
   })
 
   it('scan_latex with aspect: equations finds equation environments with their labels', async function () {
@@ -178,7 +251,13 @@ describe('latex semantic tools', function () {
       aspect: 'equations',
       path: '/main.tex',
     })
-    expect(payload(result).equations[0].label).to.equal('eq:main')
+    expect(data(result).items[0]).to.include({
+      path: '/main.tex',
+      name: 'equation',
+      label: 'eq:main',
+      line: 6,
+      endLine: 8,
+    })
   })
 
   it('scan_latex with aspect: floats returns captions', async function () {
@@ -187,7 +266,7 @@ describe('latex semantic tools', function () {
       aspect: 'floats',
       path: '/main.tex',
     })
-    expect(payload(result).floats[0].caption).to.equal('A plot')
+    expect(data(result).items[0].caption).to.equal('A plot')
   })
 
   it('scan_latex with aspect: commands returns the definitions', async function () {
@@ -196,7 +275,7 @@ describe('latex semantic tools', function () {
       aspect: 'commands',
       path: '/main.tex',
     })
-    expect(payload(result).commands[0].name).to.equal('\\vect')
+    expect(data(result).items[0]).to.include({ name: '\\vect', arity: 1, line: 1 })
   })
 
   it('scan_latex with aspect: todos returns notes with their file and line', async function () {
@@ -204,16 +283,47 @@ describe('latex semantic tools', function () {
       projectId: 'p1',
       aspect: 'todos',
     })
-    const [note] = payload(result).notes
+    const [note] = data(result).items
     expect(note.text).to.equal('expand')
     expect(note.path).to.equal('/main.tex')
     expect(note.line).to.equal(4)
   })
 
+  it('scans every .tex document in a large project without a document cap', async function () {
+    const extra = Array.from({ length: 150 }, (_, i) => `/sections/s${i}.tex`)
+    const docs = [...(TREE.docs ?? []), ...extra.map(path => ({ path }))]
+    client.get.resetBehavior()
+    client.get.callsFake(async (token, path, query) => {
+      if (path === '/projects/p1/tree') return { ...TREE, docs }
+      return { path: query.path, content: '\\cite{key}' }
+    })
+    const expected = docs.filter(doc => /\.tex$/.test(doc.path)).length
+
+    const result = await server.call('scan_latex', { projectId: 'p1', aspect: 'citations' })
+    expect(data(result).documentsScanned).to.equal(expected)
+    expect(expected).to.be.greaterThan(100)
+  })
+
+  it('returns the same envelope for every aspect', async function () {
+    for (const aspect of ['citations', 'labels_refs', 'equations', 'floats', 'commands', 'todos', 'includes']) {
+      const payload = JSON.parse(
+        (await server.call('scan_latex', { projectId: 'p1', aspect, path: '/main.tex' })).content[0].text
+      )
+      expect(payload).to.include({ ok: true })
+      expect(payload.data).to.include({ aspect })
+      expect(payload.data).to.not.have.property('truncated')
+      expect(payload.data.items).to.be.an('array')
+      payload.data.items.forEach(item => {
+        expect(item.path, `${aspect} item path`).to.be.a('string')
+        expect(item.line, `${aspect} item line`).to.be.a('number')
+      })
+    }
+  })
+
   it('fails closed when no token is present', async function () {
     const result = await server.call('scan_latex', { projectId: 'p1', aspect: 'citations' }, {})
     expect(result.isError).to.be.true
-    expect(payload(result).code).to.equal('unauthorized')
+    expect(JSON.parse(result.content[0].text).error.code).to.equal('unauthorized')
     expect(client.get.called).to.be.false
   })
 })

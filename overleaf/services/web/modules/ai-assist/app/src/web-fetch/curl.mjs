@@ -10,8 +10,35 @@ import {
 } from './transport.mjs'
 
 export const DEFAULT_CURL_PATH =
-  process.env.AI_ASSIST_CURL_IMPERSONATE ||
   '/usr/local/lib/curl-impersonate/curl-impersonate'
+const STDERR_KEEP_CHARS = 64 * 1024
+// The response headers come first on stderr (-D), before the timing line
+const STDERR_HEAD_CHARS = 16 * 1024
+// A child that has not finished this long after its own --max-time is killed
+const KILL_GRACE_MS = 5_000
+// What the curl child is given. It inherits nothing else: the web process holds
+// session secrets and provider keys. The wrapper sets LD_PRELOAD itself, so
+// it is not passed on from here.
+const CURL_ENV_NAMES = [
+  'PATH',
+  'HOME',
+  'TMPDIR',
+  'LANG',
+  'LD_LIBRARY_PATH',
+  'SSL_CERT_FILE',
+  'SSL_CERT_DIR',
+  'CURL_CA_BUNDLE',
+]
+
+/** The environment for the curl child: an allowlist of names, LC_* included. */
+export function curlChildEnv(source = process.env) {
+  const env = {}
+  for (const [key, value] of Object.entries(source)) {
+    if (value === undefined) continue
+    if (CURL_ENV_NAMES.includes(key) || key.startsWith('LC_')) env[key] = value
+  }
+  return env
+}
 
 let curlAvailabilityCache = null
 
@@ -52,6 +79,26 @@ function resolveAddresses(hostname, lookupFn) {
 }
 
 /**
+ * The status and content type of the last response in curl's header dump. Used
+ * when the size cap killed curl before its timing line was written.
+ */
+export function parseDumpedHeaders(text) {
+  let status = 0
+  let contentType = ''
+  for (const line of String(text).split(/\r?\n/)) {
+    const statusLine = /^HTTP\/\S+\s+(\d{3})/.exec(line)
+    if (statusLine) {
+      status = Number(statusLine[1])
+      contentType = ''
+      continue
+    }
+    const header = /^content-type:\s*(.*)$/i.exec(line)
+    if (header) contentType = header[1].trim()
+  }
+  return { status, contentType }
+}
+
+/**
  * Executes a single HTTP hop via curl-impersonate matching requestOnce contract:
  * resolves { status, contentType, body, truncated } or { redirect },
  * rejects with the same webErrors.
@@ -70,10 +117,12 @@ export async function curlFetch(
 ) {
   const parsed = parseFetchUrl(rawUrl)
   const port = parsed.port || (parsed.protocol === 'https:' ? '443' : '80')
-  const host = parsed.hostname
+  // URL keeps the brackets of an IPv6 literal; the lookup and --resolve want it bare
+  const host = parsed.hostname.replace(/^\[|\]$/g, '')
 
   const addresses = await resolveAddresses(host, lookup)
-  const resolveArg = `${host}:${port}:${addresses.join(',')}`
+  const resolveHost = host.includes(':') ? `[${host}]` : host
+  const resolveArg = `${resolveHost}:${port}:${addresses.join(',')}`
 
   const timeoutSec = Math.max(1, Math.round(timeoutMs / 1000))
 
@@ -95,6 +144,10 @@ export async function curlFetch(
     resolveArg,
     '-o',
     '-',
+    // Headers go to stderr, so a child killed at the size cap still says
+    // what the page was
+    '-D',
+    '/dev/stderr',
     '-w',
     '%{stderr}%{json}\n',
     parsed.toString(),
@@ -103,7 +156,10 @@ export async function curlFetch(
   return new Promise((resolve, reject) => {
     let child
     try {
-      child = spawnFn(curlBinary, args, { stdio: ['ignore', 'pipe', 'pipe'] })
+      child = spawnFn(curlBinary, args, {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: curlChildEnv(),
+      })
     } catch (err) {
       return reject(
         webError(`Failed to spawn curl-impersonate: ${err.message}`, {
@@ -116,9 +172,28 @@ export async function curlFetch(
     let size = 0
     let truncated = false
     let stderrText = ''
+    let stderrHead = ''
     let isSettled = false
 
+    // Wall-clock backstop: curl's --max-time should end the transfer first, but
+    // a child that stops making progress must not hold the request open.
+    const deadlineTimer = setTimeout(() => {
+      if (isSettled) return
+      isSettled = true
+      cleanup()
+      try {
+        child.kill('SIGKILL')
+      } catch {}
+      reject(
+        webError(
+          `${parsed} did not answer within ${Math.round(timeoutMs / 1000)}s.`,
+          { kind: 'network' }
+        )
+      )
+    }, timeoutMs + KILL_GRACE_MS)
+
     const cleanup = () => {
+      clearTimeout(deadlineTimer)
       if (signal) signal.removeEventListener('abort', onAbort)
     }
 
@@ -164,7 +239,12 @@ export async function curlFetch(
     })
 
     child.stderr.on('data', chunk => {
-      stderrText += chunk.toString('utf8')
+      const text = chunk.toString('utf8')
+      if (stderrHead.length < STDERR_HEAD_CHARS) {
+        stderrHead += text.slice(0, STDERR_HEAD_CHARS - stderrHead.length)
+      }
+      // Only the tail is kept: the timing line curl writes last is what is read
+      stderrText = (stderrText + text).slice(-STDERR_KEEP_CHARS)
     })
 
     child.on('error', err => {
@@ -193,6 +273,31 @@ export async function curlFetch(
             break
           } catch {}
         }
+      }
+
+      if (!meta && truncated) {
+        // Killed at the size cap: no timing line, but the headers were dumped.
+        // The page is kept up to the cap and marked truncated, not failed.
+        const { status, contentType } = parseDumpedHeaders(stderrHead)
+        if (status >= 400) {
+          return reject(
+            webError(
+              `${parsed} returned HTTP ${status}${describeStatus(status) ? `: ${describeStatus(status)}` : ''}.`,
+              { status, kind: 'http' }
+            )
+          )
+        }
+        const allowed = /application\/(?:x-)?pdf/i.test(contentType)
+          ? Math.max(maxBytes, pdfMaxBytes)
+          : maxBytes
+        let body = Buffer.concat(chunks)
+        if (body.length > allowed) body = body.subarray(0, allowed)
+        return resolve({
+          status: status || 200,
+          contentType,
+          body,
+          truncated: true,
+        })
       }
 
       if (!meta) {

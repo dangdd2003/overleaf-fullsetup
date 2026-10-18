@@ -1,7 +1,10 @@
 import { expect } from 'chai'
 import { McpServer } from '@modelcontextprotocol/server'
 import { registerAllPrompts } from '../../../src/prompts.js'
-import { OVERLEAF_INSTRUCTIONS, createMcpServerFactory } from '../../../src/server.js'
+import {
+  OVERLEAF_INSTRUCTIONS,
+  createMcpServerFactory,
+} from '../../../src/server.js'
 
 describe('prompts', function () {
   let server
@@ -11,12 +14,34 @@ describe('prompts', function () {
     registerAllPrompts(server)
   })
 
-  it('registers the three standard prompts', function () {
+  it('registers the four standard prompts', function () {
     expect([...Object.keys(server._registeredPrompts)]).to.have.members([
       'review_project',
       'fix_compile_errors',
       'edit_section',
+      'review_layout',
     ])
+  })
+
+  it('review_layout walks the pages and fixes what the image shows', async function () {
+    const handler = server.server._requestHandlers.get('prompts/get')
+    const ctx = { mcpReq: { requestState: () => undefined } }
+    const result = await handler(
+      {
+        method: 'prompts/get',
+        params: {
+          name: 'review_layout',
+          arguments: { projectId: 'proj-1', pages: '3-5' },
+        },
+      },
+      ctx
+    )
+    const text = result.messages[0].content.text
+    expect(text).to.include('proj-1')
+    expect(text).to.include('pages 3-5')
+    expect(text).to.include('view_compiled_pdf_page')
+    expect(text).to.include('data.sourceMap')
+    expect(text).to.include('compile_project')
   })
 
   it('review_project generates structured review instructions', async function () {
@@ -55,7 +80,7 @@ describe('prompts', function () {
     expect(text).to.include('b-999')
     expect(text).to.include('get_compile_log')
     expect(text).to.include('edit_file')
-    expect(text).to.include('clearCache: true')
+    expect(text).to.include('clean: true')
   })
 
   it('edit_section guides section location via outline and line ranges', async function () {
@@ -79,6 +104,7 @@ describe('prompts', function () {
     expect(text).to.include('Introduction')
     expect(text).to.include('/chapters/intro.tex')
     expect(text).to.include('startLine and endLine')
+    expect(text).to.include('view_compiled_pdf_page')
   })
 })
 
@@ -86,9 +112,40 @@ describe('server instructions', function () {
   it('exposes OVERLEAF_INSTRUCTIONS string', function () {
     expect(OVERLEAF_INSTRUCTIONS).to.be.a('string')
     expect(OVERLEAF_INSTRUCTIONS).to.include('get_doc_outline')
-    expect(OVERLEAF_INSTRUCTIONS).to.include('startLine and endLine')
+    expect(OVERLEAF_INSTRUCTIONS).to.include('startLine/endLine')
+    expect(OVERLEAF_INSTRUCTIONS).to.include('success_with_errors')
+    expect(OVERLEAF_INSTRUCTIONS).to.include('edit_lines')
     expect(OVERLEAF_INSTRUCTIONS).to.include('edit_file')
-    expect(OVERLEAF_INSTRUCTIONS).to.include('clearCache: true')
+    expect(OVERLEAF_INSTRUCTIONS).to.include('clean: true')
+    expect(OVERLEAF_INSTRUCTIONS).to.include('view_compiled_pdf_page')
+  })
+
+  it('names every compiled-PDF tool in the instructions', function () {
+    for (const name of [
+      'view_compiled_pdf_page',
+      'view_compiled_pdf_overview',
+      'search_compiled_pdf',
+      'resolve_pdf_block',
+      'diff_compiled_pdf',
+    ]) {
+      expect(OVERLEAF_INSTRUCTIONS).to.include(name)
+    }
+  })
+
+  it('review_layout names the overview, search and diff tools', async function () {
+    const server = createMcpServerFactory({ client: {} })()
+    const handler = server.server._requestHandlers.get('prompts/get')
+    const result = await handler(
+      {
+        method: 'prompts/get',
+        params: { name: 'review_layout', arguments: { projectId: 'p' } },
+      },
+      { mcpReq: { requestState: () => undefined } }
+    )
+    const text = result.messages[0].content.text
+    expect(text).to.include('view_compiled_pdf_overview')
+    expect(text).to.include('search_compiled_pdf')
+    expect(text).to.include('diff_compiled_pdf')
   })
 
   it('server factory sets instructions on McpServer instance', function () {
@@ -99,6 +156,7 @@ describe('server instructions', function () {
       'review_project',
       'fix_compile_errors',
       'edit_section',
+      'review_layout',
     ])
   })
 })

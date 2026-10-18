@@ -251,13 +251,18 @@ export function hashContent(content) {
   return `${content.length}:${(h >>> 0).toString(16)}`
 }
 
+// One pattern per environment, compiled once rather than for every line
+const ENV_PATTERNS = ENV_NAMES.map(name => [
+  name,
+  new RegExp(`\\\\begin\\{${name}\\*?\\}`),
+])
+
 export function scanEnvironments(content) {
   const found = new Map()
 
   content.split('\n').forEach((rawLine, index) => {
     const line = uncomment(rawLine)
-    for (const name of ENV_NAMES) {
-      const re = new RegExp(`\\\\begin\\{${name}\\*?\\}`)
+    for (const [name, re] of ENV_PATTERNS) {
       if (re.test(line)) {
         const entry = found.get(name) ?? { count: 0, lines: [] }
         entry.count += 1

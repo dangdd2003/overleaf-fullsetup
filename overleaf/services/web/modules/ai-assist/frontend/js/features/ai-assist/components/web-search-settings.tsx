@@ -1,14 +1,14 @@
-import { Fragment, ReactNode, useEffect, useState } from 'react'
-import classNames from 'classnames'
-import OLButton from '@/shared/components/ol/ol-button'
-import OLIconButton from '@/shared/components/ol/ol-icon-button'
-import OLTooltip from '@/shared/components/ol/ol-tooltip'
-import OLFormControl from '@/shared/components/ol/ol-form-control'
-import OLFormSelect from '@/shared/components/ol/ol-form-select'
-import OLFormSwitch from '@/shared/components/ol/ol-form-switch'
-import Setting from '@/features/ide-settings/components/setting'
-import { SiteIcon } from './agent/site-icon'
-import { WebSearchProviderType } from '../providers/types'
+import { Fragment, ReactNode, useEffect, useState } from "react";
+import classNames from "classnames";
+import OLButton from "@/shared/components/ol/ol-button";
+import OLIconButton from "@/shared/components/ol/ol-icon-button";
+import OLTooltip from "@/shared/components/ol/ol-tooltip";
+import OLFormControl from "@/shared/components/ol/ol-form-control";
+import OLFormSelect from "@/shared/components/ol/ol-form-select";
+import OLFormSwitch from "@/shared/components/ol/ol-form-switch";
+import Setting from "@/features/ide-settings/components/setting";
+import { SiteIcon } from "./agent/site-icon";
+import { WebSearchProviderType } from "../providers/types";
 
 /**
  * Building blocks for the web search provider cards. Each option is one row
@@ -17,43 +17,43 @@ import { WebSearchProviderType } from '../providers/types'
  */
 
 export const WEB_SEARCH_LABELS: Record<WebSearchProviderType, string> = {
-  ollama: 'Ollama web search',
-  searxng: 'SearXNG',
-  websearchapi: 'WebSearchAPI.ai',
-  tavily: 'Tavily',
-  firecrawl: 'Firecrawl',
-  firecrawlSelfHosted: 'Firecrawl (self-hosted)',
-  jina: 'Jina AI',
-  langsearch: 'LangSearch',
-  exa: 'Exa',
-  tinyfish: 'TinyFish',
-  parallel: 'Parallel',
-  mcp: 'MCP WebSearch',
-}
+  ollama: "Ollama web search",
+  searxng: "SearXNG",
+  websearchapi: "WebSearchAPI.ai",
+  tavily: "Tavily",
+  firecrawl: "Firecrawl",
+  firecrawlSelfHosted: "Firecrawl (self-hosted)",
+  jina: "Jina AI",
+  langsearch: "LangSearch",
+  exa: "Exa",
+  tinyfish: "TinyFish",
+  parallel: "Parallel",
+  mcp: "MCP WebSearch",
+};
 
 export const WEB_SEARCH_NOTES: Record<WebSearchProviderType, string> = {
   searxng:
-    'Your own SearXNG instances, no key needed. This server searches through them and reads pages itself.',
+    "Your own SearXNG instances, no key needed. This server searches through them and reads pages itself.",
   ollama:
     "Ollama's hosted web search. Searches and page reads both go through ollama.com.",
   websearchapi:
-    'Hosted search and page reading through api.websearchapi.ai. Every search and page read uses credits.',
+    "Hosted search and page reading through api.websearchapi.ai. Every search and page read uses credits.",
   tavily:
-    'Hosted search and page reading through api.tavily.com. Every search and page read uses credits.',
+    "Hosted search and page reading through api.tavily.com. Every search and page read uses credits.",
   firecrawl:
-    'Hosted search and page reading through api.firecrawl.dev. Every search and page read uses credits.',
+    "Hosted search and page reading through api.firecrawl.dev. Every search and page read uses credits.",
   firecrawlSelfHosted:
-    'Your own Firecrawl instances for search and page reading. Search needs SEARXNG_ENDPOINT set on the instance.',
-  jina: 'Hosted search and page reading through s.jina.ai and r.jina.ai. Every search and page read uses tokens.',
+    "Your own Firecrawl instances for search and page reading. Search needs SEARXNG_ENDPOINT set on the instance.",
+  jina: "Hosted search and page reading through s.jina.ai and r.jina.ai. Every search and page read uses tokens.",
   langsearch:
-    'Hosted search through api.langsearch.com. Search uses credits; pages are read by this server.',
-  exa: 'Hosted neural and keyword search and page reading through api.exa.ai. Every search and page read uses credits.',
+    "Hosted search through api.langsearch.com. Search uses credits; pages are read by this server.",
+  exa: "Hosted neural and keyword search and page reading through api.exa.ai. Every search and page read uses credits.",
   tinyfish:
-    'Hosted search through api.search.tinyfish.ai with X-API-Key. Free up to daily allowance; pages are read by this server.',
+    "Hosted search through api.search.tinyfish.ai with X-API-Key. Free up to daily allowance; pages are read by this server.",
   parallel:
-    'Hosted search and page extraction through api.parallel.ai. Every search and page read uses credits.',
-  mcp: 'Custom POST endpoint accepting {q} JSON and returning search results, or remote MCP WebSearch server.',
-}
+    "Hosted search and page extraction through api.parallel.ai. Every search and page read uses credits.",
+  mcp: "Your own search endpoints. This server searches through them and reads pages itself.",
+};
 
 /**
  * Where to learn about each provider and get what it needs to be set up. The
@@ -65,131 +65,131 @@ export const WEB_SEARCH_LINKS: Record<
   { icon: string; links: { label: string; href: string }[] }
 > = {
   searxng: {
-    icon: 'https://searx.space',
+    icon: "https://searx.space",
     links: [
-      { label: 'Website', href: 'https://docs.searxng.org' },
+      { label: "Website", href: "https://docs.searxng.org" },
       {
-        label: 'Installation guide',
-        href: 'https://docs.searxng.org/admin/installation.html',
+        label: "Installation guide",
+        href: "https://docs.searxng.org/admin/installation.html",
       },
       {
-        label: 'Enable JSON output',
-        href: 'https://docs.searxng.org/admin/settings/settings_search.html',
+        label: "Enable JSON output",
+        href: "https://docs.searxng.org/admin/settings/settings_search.html",
       },
     ],
   },
   ollama: {
-    icon: 'https://ollama.com',
+    icon: "https://ollama.com",
     links: [
-      { label: 'Website', href: 'https://ollama.com' },
+      { label: "Website", href: "https://ollama.com" },
       {
-        label: 'Web search docs',
-        href: 'https://docs.ollama.com/capabilities/web-search',
+        label: "Web search docs",
+        href: "https://docs.ollama.com/capabilities/web-search",
       },
-      { label: 'Get API keys', href: 'https://ollama.com/settings/keys' },
+      { label: "Get API keys", href: "https://ollama.com/settings/keys" },
     ],
   },
   websearchapi: {
-    icon: 'https://websearchapi.ai',
+    icon: "https://websearchapi.ai",
     links: [
-      { label: 'Website', href: 'https://websearchapi.ai' },
-      { label: 'API docs', href: 'https://websearchapi.ai/docs' },
-      { label: 'Get API keys', href: 'https://websearchapi.ai/dashboard' },
+      { label: "Website", href: "https://websearchapi.ai" },
+      { label: "API docs", href: "https://websearchapi.ai/docs" },
+      { label: "Get API keys", href: "https://websearchapi.ai/dashboard" },
     ],
   },
   tavily: {
-    icon: 'https://tavily.com',
+    icon: "https://tavily.com",
     links: [
-      { label: 'Website', href: 'https://tavily.com' },
+      { label: "Website", href: "https://tavily.com" },
       {
-        label: 'API docs',
-        href: 'https://docs.tavily.com/documentation/api-reference/introduction',
+        label: "API docs",
+        href: "https://docs.tavily.com/documentation/api-reference/introduction",
       },
-      { label: 'Get API keys', href: 'https://app.tavily.com' },
+      { label: "Get API keys", href: "https://app.tavily.com" },
     ],
   },
   firecrawl: {
-    icon: 'https://www.firecrawl.dev',
+    icon: "https://www.firecrawl.dev",
     links: [
-      { label: 'Website', href: 'https://www.firecrawl.dev' },
+      { label: "Website", href: "https://www.firecrawl.dev" },
       {
-        label: 'API docs',
-        href: 'https://docs.firecrawl.dev/api-reference/v2-introduction',
+        label: "API docs",
+        href: "https://docs.firecrawl.dev/api-reference/v2-introduction",
       },
-      { label: 'Get API keys', href: 'https://www.firecrawl.dev/app/api-keys' },
+      { label: "Get API keys", href: "https://www.firecrawl.dev/app/api-keys" },
     ],
   },
   firecrawlSelfHosted: {
-    icon: 'https://www.firecrawl.dev',
+    icon: "https://www.firecrawl.dev",
     links: [
-      { label: 'Website', href: 'https://github.com/firecrawl/firecrawl' },
+      { label: "Website", href: "https://github.com/firecrawl/firecrawl" },
       {
-        label: 'Self-hosting guide',
-        href: 'https://docs.firecrawl.dev/contributing/self-host',
+        label: "Self-hosting guide",
+        href: "https://docs.firecrawl.dev/contributing/self-host",
       },
       {
-        label: 'API docs',
-        href: 'https://docs.firecrawl.dev/api-reference/v2-introduction',
+        label: "API docs",
+        href: "https://docs.firecrawl.dev/api-reference/v2-introduction",
       },
     ],
   },
   jina: {
-    icon: 'https://jina.ai',
+    icon: "https://jina.ai",
     links: [
-      { label: 'Website', href: 'https://jina.ai' },
-      { label: 'API docs', href: 'https://jina.ai/reader' },
+      { label: "Website", href: "https://jina.ai" },
+      { label: "API docs", href: "https://jina.ai/reader" },
       {
-        label: 'Get API keys',
-        href: 'https://jina.ai/api-dashboard/key-manager',
+        label: "Get API keys",
+        href: "https://jina.ai/api-dashboard/key-manager",
       },
     ],
   },
   langsearch: {
-    icon: 'https://langsearch.com',
+    icon: "https://langsearch.com",
     links: [
-      { label: 'Website', href: 'https://langsearch.com' },
-      { label: 'API docs', href: 'https://docs.langsearch.com' },
-      { label: 'Get API keys', href: 'https://langsearch.com' },
+      { label: "Website", href: "https://langsearch.com" },
+      { label: "API docs", href: "https://docs.langsearch.com" },
+      { label: "Get API keys", href: "https://langsearch.com" },
     ],
   },
   exa: {
-    icon: 'https://exa.ai',
+    icon: "https://exa.ai",
     links: [
-      { label: 'Website', href: 'https://exa.ai' },
-      { label: 'API docs', href: 'https://docs.exa.ai' },
-      { label: 'Get API keys', href: 'https://dashboard.exa.ai/api-keys' },
+      { label: "Website", href: "https://exa.ai" },
+      { label: "API docs", href: "https://docs.exa.ai" },
+      { label: "Get API keys", href: "https://dashboard.exa.ai/api-keys" },
     ],
   },
   tinyfish: {
-    icon: 'https://tinyfish.ai',
+    icon: "https://tinyfish.ai",
     links: [
-      { label: 'Website', href: 'https://tinyfish.ai' },
+      { label: "Website", href: "https://tinyfish.ai" },
       {
-        label: 'API docs',
-        href: 'https://docs.tinyfish.ai/search-api/reference',
+        label: "API docs",
+        href: "https://docs.tinyfish.ai/search-api/reference",
       },
-      { label: 'Get API keys', href: 'https://agent.tinyfish.ai/api-keys' },
+      { label: "Get API keys", href: "https://agent.tinyfish.ai/api-keys" },
     ],
   },
   parallel: {
-    icon: 'https://parallel.ai',
+    icon: "https://parallel.ai",
     links: [
-      { label: 'Website', href: 'https://parallel.ai' },
-      { label: 'API docs', href: 'https://docs.parallel.ai' },
-      { label: 'Get API keys', href: 'https://platform.parallel.ai' },
+      { label: "Website", href: "https://parallel.ai" },
+      { label: "API docs", href: "https://docs.parallel.ai" },
+      { label: "Get API keys", href: "https://platform.parallel.ai" },
     ],
   },
   mcp: {
-    icon: 'https://modelcontextprotocol.io',
+    icon: "https://modelcontextprotocol.io",
     links: [
-      { label: 'MCP Documentation', href: 'https://modelcontextprotocol.io' },
+      { label: "Website", href: "https://modelcontextprotocol.io" },
       {
-        label: 'Connectors Guide',
-        href: 'https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool',
+        label: "Documentation",
+        href: "https://modelcontextprotocol.io/introduction",
       },
     ],
   },
-}
+};
 
 /** A provider: its name, what it is, where to set it up, and an on switch. */
 export function ProviderCard({
@@ -202,21 +202,21 @@ export function ProviderCard({
   onRemove,
   children,
 }: {
-  type: WebSearchProviderType
-  enabled: boolean
-  onToggle: (enabled: boolean) => void
-  summary?: string
-  isExpanded?: boolean
-  onToggleExpand?: () => void
-  onRemove?: () => void
-  children: ReactNode
+  type: WebSearchProviderType;
+  enabled: boolean;
+  onToggle: (enabled: boolean) => void;
+  summary?: string;
+  isExpanded?: boolean;
+  onToggleExpand?: () => void;
+  onRemove?: () => void;
+  children: ReactNode;
 }) {
-  const id = `ai-web-search-${type}-enabled`
+  const id = `ai-web-search-${type}-enabled`;
   return (
     <div
-      className={classNames('web-search-provider-card', {
-        'is-expanded': isExpanded,
-        'is-collapsed': !isExpanded,
+      className={classNames("web-search-provider-card", {
+        "is-expanded": isExpanded,
+        "is-collapsed": !isExpanded,
       })}
     >
       <div className="web-search-provider-header">
@@ -228,7 +228,7 @@ export function ProviderCard({
           {summary && (
             <span className="web-search-provider-summary">
               · {summary}
-              {!enabled ? ' (Disabled)' : ''}
+              {!enabled ? " (Disabled)" : ""}
             </span>
           )}
         </div>
@@ -237,7 +237,7 @@ export function ProviderCard({
             id={id}
             label=""
             checked={enabled}
-            onChange={e => onToggle(e.target.checked)}
+            onChange={(e) => onToggle(e.target.checked)}
           />
           {onToggleExpand && (
             <OLButton
@@ -245,9 +245,9 @@ export function ProviderCard({
               size="sm"
               type="button"
               onClick={onToggleExpand}
-              aria-label={`${isExpanded ? 'Done configuring' : 'Configure'} ${WEB_SEARCH_LABELS[type]}`}
+              aria-label={`${isExpanded ? "Done configuring" : "Configure"} ${WEB_SEARCH_LABELS[type]}`}
             >
-              {isExpanded ? 'Done' : 'Edit'}
+              {isExpanded ? "Done" : "Edit"}
             </OLButton>
           )}
           {onRemove && (
@@ -269,7 +269,7 @@ export function ProviderCard({
           <p className="web-search-provider-links">
             {WEB_SEARCH_LINKS[type].links.map(({ label, href }, index) => (
               <Fragment key={href}>
-                {index > 0 ? ' · ' : null}
+                {index > 0 ? " · " : null}
                 <a href={href} target="_blank" rel="noopener noreferrer">
                   {label}
                 </a>
@@ -292,7 +292,7 @@ export function ProviderCard({
         </div>
       ) : null}
     </div>
-  )
+  );
 }
 
 /** A heading for one of a provider's APIs, e.g. its Search or Scraper API. */
@@ -300,15 +300,15 @@ export function ApiHeading({
   title,
   description,
 }: {
-  title: string
-  description: ReactNode
+  title: string;
+  description: ReactNode;
 }) {
   return (
     <div className="web-search-api-heading">
       <h6>{title}</h6>
       <p>{description}</p>
     </div>
-  )
+  );
 }
 
 /** A group of rows under a divider title, as in the editor's settings. */
@@ -316,15 +316,15 @@ export function SettingsGroup({
   title,
   children,
 }: {
-  title: string
-  children: ReactNode
+  title: string;
+  children: ReactNode;
 }) {
   return (
     <div className="web-search-settings-group">
       <div className="ide-settings-section-title">{title}</div>
       {children}
     </div>
-  )
+  );
 }
 
 export function TextSetting({
@@ -335,20 +335,20 @@ export function TextSetting({
   placeholder,
   onChange,
   wide = false,
-  type = 'text',
+  type = "text",
   min,
   max,
 }: {
-  id: string
-  label: string
-  description: ReactNode
-  value: string
-  placeholder: string
-  onChange: (value: string) => void
-  wide?: boolean
-  type?: 'text' | 'number'
-  min?: number
-  max?: number
+  id: string;
+  label: string;
+  description: ReactNode;
+  value: string;
+  placeholder: string;
+  onChange: (value: string) => void;
+  wide?: boolean;
+  type?: "text" | "number";
+  min?: number;
+  max?: number;
 }) {
   return (
     <Setting controlId={id} label={label} description={description}>
@@ -358,51 +358,51 @@ export function TextSetting({
         type={type}
         min={min}
         max={max}
-        className={classNames('web-search-setting-input', {
-          'is-wide': wide,
+        className={classNames("web-search-setting-input", {
+          "is-wide": wide,
         })}
         value={value}
         placeholder={placeholder}
-        onChange={e => onChange(e.target.value)}
+        onChange={(e) => onChange(e.target.value)}
       />
     </Setting>
-  )
+  );
 }
 
-type DatePart = 'day' | 'month' | 'year'
-type DateParts = Record<DatePart, string>
+type DatePart = "day" | "month" | "year";
+type DateParts = Record<DatePart, string>;
 
 /** The order this browser's locale writes a date in, such as day/month/year. */
 function localeDateOrder(): DatePart[] {
   const order = new Intl.DateTimeFormat(undefined, {
-    day: 'numeric',
-    month: 'numeric',
-    year: 'numeric',
+    day: "numeric",
+    month: "numeric",
+    year: "numeric",
   })
     .formatToParts(new Date(2000, 11, 31))
-    .map(part => part.type)
+    .map((part) => part.type)
     .filter(
       (type): type is DatePart =>
-        type === 'day' || type === 'month' || type === 'year'
-    )
-  return order.length === 3 ? order : ['year', 'month', 'day']
+        type === "day" || type === "month" || type === "year",
+    );
+  return order.length === 3 ? order : ["year", "month", "day"];
 }
 
 function dateParts(value: string): DateParts {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
   return match
     ? {
         year: match[1],
         month: String(Number(match[2])),
         day: String(Number(match[3])),
       }
-    : { year: '', month: '', day: '' }
+    : { year: "", month: "", day: "" };
 }
 
 function daysIn(parts: DateParts) {
   return parts.year && parts.month
     ? new Date(Number(parts.year), Number(parts.month), 0).getDate()
-    : 31
+    : 31;
 }
 
 /**
@@ -417,42 +417,42 @@ export function DateSetting({
   value,
   onChange,
 }: {
-  id: string
-  label: string
-  description: ReactNode
-  value: string
-  onChange: (value: string) => void
+  id: string;
+  label: string;
+  description: ReactNode;
+  value: string;
+  onChange: (value: string) => void;
 }) {
-  const [parts, setParts] = useState(() => dateParts(value))
+  const [parts, setParts] = useState(() => dateParts(value));
 
   // Follow a value set from outside, such as when the form is reset
   useEffect(() => {
-    const next = dateParts(value)
-    if (value && next.year) setParts(next)
+    const next = dateParts(value);
+    if (value && next.year) setParts(next);
     else if (!value) {
-      setParts(current =>
+      setParts((current) =>
         current.year && current.month && current.day
-          ? { year: '', month: '', day: '' }
-          : current
-      )
+          ? { year: "", month: "", day: "" }
+          : current,
+      );
     }
-  }, [value])
+  }, [value]);
 
   const choose = (part: DatePart, choice: string) => {
-    const next = { ...parts, [part]: choice }
+    const next = { ...parts, [part]: choice };
     if (next.day && Number(next.day) > daysIn(next)) {
-      next.day = String(daysIn(next))
+      next.day = String(daysIn(next));
     }
-    setParts(next)
+    setParts(next);
     onChange(
       next.year && next.month && next.day
-        ? `${next.year}-${next.month.padStart(2, '0')}-${next.day.padStart(2, '0')}`
-        : ''
-    )
-  }
+        ? `${next.year}-${next.month.padStart(2, "0")}-${next.day.padStart(2, "0")}`
+        : "",
+    );
+  };
 
-  const monthName = new Intl.DateTimeFormat(undefined, { month: 'short' })
-  const thisYear = new Date().getFullYear()
+  const monthName = new Intl.DateTimeFormat(undefined, { month: "short" });
+  const thisYear = new Date().getFullYear();
   const choices: Record<DatePart, { value: string; label: string }[]> = {
     day: Array.from({ length: daysIn(parts) }, (_, i) => ({
       value: String(i + 1),
@@ -466,12 +466,12 @@ export function DateSetting({
       value: String(thisYear - i),
       label: String(thisYear - i),
     })),
-  }
+  };
   const names: Record<DatePart, string> = {
-    day: 'Day',
-    month: 'Month',
-    year: 'Year',
-  }
+    day: "Day",
+    month: "Month",
+    year: "Year",
+  };
 
   return (
     <Setting
@@ -480,17 +480,17 @@ export function DateSetting({
       description={description}
     >
       <div className="web-search-date-setting">
-        {localeDateOrder().map(part => (
+        {localeDateOrder().map((part) => (
           <OLFormSelect
             key={part}
             id={`${id}-${part}`}
             size="sm"
             aria-label={`${label}: ${names[part].toLowerCase()}`}
             value={parts[part]}
-            onChange={e => choose(part, e.target.value)}
+            onChange={(e) => choose(part, e.target.value)}
           >
             <option value="">{names[part]}</option>
-            {choices[part].map(choice => (
+            {choices[part].map((choice) => (
               <option key={choice.value} value={choice.value}>
                 {choice.label}
               </option>
@@ -499,7 +499,7 @@ export function DateSetting({
         ))}
       </div>
     </Setting>
-  )
+  );
 }
 
 /** Several values of one kind, such as API keys or instance URLs. */
@@ -513,14 +513,14 @@ export function ListSetting({
   secret = false,
   onChange,
 }: {
-  id: string
-  label: string
-  description: ReactNode
-  itemLabel: string
-  values: string[]
-  placeholder: string
-  secret?: boolean
-  onChange: (values: string[]) => void
+  id: string;
+  label: string;
+  description: ReactNode;
+  itemLabel: string;
+  values: string[];
+  placeholder: string;
+  secret?: boolean;
+  onChange: (values: string[]) => void;
 }) {
   return (
     <>
@@ -529,7 +529,7 @@ export function ListSetting({
           variant="secondary"
           size="sm"
           type="button"
-          onClick={() => onChange([...values, ''])}
+          onClick={() => onChange([...values, ""])}
         >
           Add {itemLabel}
         </OLButton>
@@ -540,14 +540,14 @@ export function ListSetting({
             <OLFormControl
               id={`${id}-${idx}`}
               size="sm"
-              type={secret ? 'password' : 'text'}
+              type={secret ? "password" : "text"}
               autoComplete="off"
               value={value}
               placeholder={placeholder}
-              onChange={e => {
-                const next = [...values]
-                next[idx] = e.target.value
-                onChange(next)
+              onChange={(e) => {
+                const next = [...values];
+                next[idx] = e.target.value;
+                onChange(next);
               }}
             />
             {values.length > 1 && (
@@ -568,5 +568,5 @@ export function ListSetting({
         ))}
       </div>
     </>
-  )
+  );
 }

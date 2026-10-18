@@ -1,11 +1,19 @@
 import { CompileOutcome, ProjectFile } from '../project-handle'
+import type { ChatImage } from '../../providers/types'
 import { Outline } from './outline'
+
+export type SelectionRange = {
+  from: number
+  to: number
+  text: string
+}
 
 export type Selection = {
   path: string
   from: number
   to: number
   text: string
+  ranges?: SelectionRange[]
 }
 
 /** Everything the envelope can describe, captured at one instant. */
@@ -32,6 +40,44 @@ export type ContextSnapshot = {
    * model learns it.
    */
   mode?: string
+  /** What the PDF viewer shows. Absent unless the viewer context is enabled. */
+  pdfViewer?: PdfViewerSnapshot | null
+  /** Text the user selected inside the PDF, in the order added; one-shot. */
+  pdfSelections?: PdfSelectionContext[]
+  /** Boxes the user drew on PDF pages, in the order added; one-shot. */
+  pdfAreas?: PdfAreaContext[]
+}
+
+/** The viewer state the user is looking at, read at send time. */
+export type PdfViewerSnapshot = {
+  /** The build on screen; the model compares it with the build it has seen. */
+  buildId: string | null
+  /** Visible page numbers, 1-based, ascending. */
+  pages: number[]
+  /** A named fit ("page-width") or a percentage such as "125%". */
+  zoom: string
+  darkMode: boolean
+}
+
+export type PdfSelectionContext = {
+  page: number
+  text: string
+}
+
+export type PdfAreaContext = {
+  id?: string
+  page: number
+  /** Source lines under the box, from synctex; null when unresolved. */
+  source: { path: string; line: number; endLine: number } | null
+  /** The box in PDF points from the top-left of the page. */
+  rect: { x: number; y: number; w: number; h: number }
+  /** Crop of the rendered page, sent to the model as an image; null if the canvas could not be read. */
+  image: ChatImage | null
+  /**
+   * Which image on the message is this crop, 1-based. Set when the message is
+   * sent, since only then is it known what else the message carries.
+   */
+  imageIndex?: number
 }
 
 /** Carried on a user entry so the next turn can delta-encode against it. */
@@ -39,6 +85,7 @@ export type EnvelopeState = {
   turn: number
   filesFingerprint: string
   outlineFingerprint?: string
+  pdfViewerFingerprint?: string
 }
 
 /** What the composer holds before the message is sent. */

@@ -204,11 +204,55 @@ describe('SimpleAddEmailForm', function () {
           body: { email: 'new@example.com' },
         })
       ).to.be.true
+    })
+
+    // Not added yet: the code step is shown and the list is not refreshed
+    const codeInput = await screen.findByRole('textbox', {
+      name: /Enter the 6-digit confirmation code sent to/,
+    })
+    expect(getEmailsStub.called).to.be.false
+
+    fireEvent.change(codeInput, { target: { value: '123456' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }))
+
+    await waitFor(() => {
+      expect(
+        postJsonStub.calledWith('/user/emails/confirm-secondary', {
+          body: { code: '123456' },
+        })
+      ).to.be.true
       expect(getEmailsStub.calledOnce).to.be.true
     })
 
     expect(screen.getByText('Secondary email added successfully.')).to.exist
     expect(screen.queryByPlaceholderText('name@example.com')).to.not.exist
+  })
+
+  it('returns to the address form with the email kept when the code step is cancelled', async function () {
+    sinon.stub(FetchJson, 'postJSON').resolves({ success: true })
+    const getEmailsStub = sinon.stub()
+    const ctx = mockContextValue({ getEmails: getEmailsStub })
+
+    render(
+      <UserEmailsContext.Provider value={ctx as any}>
+        <SimpleAddEmailForm />
+      </UserEmailsContext.Provider>
+    )
+
+    fireEvent.click(screen.getByText('Add another email'))
+    fireEvent.change(screen.getByPlaceholderText('name@example.com'), {
+      target: { value: 'cancel@example.com' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Add email' }))
+
+    await screen.findByRole('textbox', {
+      name: /Enter the 6-digit confirmation code sent to/,
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+
+    const input = await screen.findByPlaceholderText('name@example.com')
+    expect((input as HTMLInputElement).value).to.equal('cancel@example.com')
+    expect(getEmailsStub.called).to.be.false
   })
 
   it('handles email_already_registered error', async function () {

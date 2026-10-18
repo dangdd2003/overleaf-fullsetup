@@ -13,6 +13,7 @@ import {
   navigationUrl,
   routeRaw,
   routeRender,
+  visibleText,
   waitForSettledPage,
 } from '../engine.mjs'
 
@@ -186,6 +187,26 @@ test('isChallengeBody spots a bot check in raw HTML but not in a long article or
     ),
     false
   )
+})
+
+test('visibleText drops tags and script or style bodies and keeps the text', () => {
+  assert.equal(
+    visibleText(
+      '<html><head><style>p{}</style><script>var x="<b>";</script></head>' +
+        '<body><p>Hello <b>world</b></p></body></html>'
+    ).replace(/\s+/g, ' ').trim(),
+    'Hello world'
+  )
+  assert.equal(visibleText('a <b unclosed').trim(), 'a')
+  assert.equal(visibleText('<script>never closed').trim(), '')
+})
+
+test('isChallengeBody stays linear on hostile markup', () => {
+  // Quadratic before the fix: ~2.3 s at 40 KB, hours at the 128 MB cap.
+  const hostile = Buffer.from('<'.repeat(400_000))
+  const started = Date.now()
+  assert.equal(isChallengeBody('text/html', hostile), false)
+  assert.ok(Date.now() - started < 2_000, 'challenge check took too long')
 })
 
 test('BrowserEngine launches Chrome once when reads arrive together', async () => {

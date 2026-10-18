@@ -25,6 +25,15 @@ const READ_ONLY_TOOLS = [
   'get_doc_outline',
   'scan_latex',
   'search_bib',
+  'sync_pdf_source',
+  'view_compiled_pdf_page',
+  'view_compiled_pdf_overview',
+  'search_compiled_pdf',
+  'resolve_pdf_block',
+  'diff_compiled_pdf',
+  'list_history',
+  'get_history_diff',
+  'list_tags',
   // compile_project builds the project but never changes its content: the
   // only thing it writes is Overleaf's own output directory, which clearCache
   // discards. Annotating it read-only is what stops clients that gate on
@@ -60,7 +69,6 @@ describe('tool metadata', function () {
     registerAllTools(server, {
       client,
       staticToken: TOKEN,
-      maxUploadBytes: 1024 * 1024,
     })
   })
 
@@ -128,9 +136,12 @@ describe('tool metadata', function () {
       projectId: 'p1',
       path: '/main.tex',
     })
-    expect(result.structuredContent).to.deep.equal({
+    expect(result.structuredContent).to.include({ ok: true })
+    expect(result.structuredContent.data.documents[0]).to.include({
       path: '/main.tex',
-      content: 'hello',
+      startLine: 1,
+      endLine: 1,
+      content: '1\thello',
     })
     const { config } = server.tools.get('read_file')
     const validated = await config.outputSchema['~standard'].validate(
@@ -148,8 +159,10 @@ describe('tool metadata', function () {
       projectId: 'p1',
       buildId: 'b1',
     })
-    expect(result.content[0].type).to.equal('resource')
-    expect(result.structuredContent).to.include({
+    expect(result.content[0].type).to.equal('text')
+    expect(result.content[1].type).to.equal('resource')
+    expect(result.structuredContent.ok).to.equal(true)
+    expect(result.structuredContent.data).to.include({
       projectId: 'p1',
       buildId: 'b1',
       mimeType: 'application/pdf',

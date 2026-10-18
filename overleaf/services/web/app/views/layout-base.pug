@@ -85,6 +85,12 @@ html(
 				data-type='boolean'
 				content=settings.aiAssist && settings.aiAssist.enabled
 			)
+			if settings.aiAssist && settings.aiAssist.enabled
+				meta(
+					name='ol-aiAssistMaxTranscriptBytes'
+					data-type='json'
+					content=settings.aiAssist.maxTranscriptBytes
+				)
 			meta(
 				name='ol-aiAssistWebToolsEnabled'
 				data-type='boolean'

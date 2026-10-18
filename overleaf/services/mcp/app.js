@@ -1,3 +1,4 @@
+import { pathToFileURL } from 'node:url'
 import logger from '@overleaf/logger'
 import { loadConfig } from './src/config.js'
 import { createHttpApp } from './src/http.js'
@@ -45,7 +46,9 @@ export function buildApp(config) {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Compare as URLs: a hand-built file:// string misses paths that need escaping,
+// and the service would then exit without starting.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   buildApp(loadConfig())
     .start()
     .catch(err => {

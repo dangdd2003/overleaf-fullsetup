@@ -632,3 +632,42 @@ describe('holdBackIncomplete', function () {
     expect(container.querySelector('tabular')).to.not.exist
   })
 })
+
+describe('MarkdownContent safety', function () {
+  afterEach(function () {
+    resetDocumentFocus()
+  })
+
+  it('shows raw HTML with an inline style as text, not as a styled element', function () {
+    const { container } = render(
+      <MarkdownContent content={'<span style="background-image:url(https://evil.example/x)">hi</span>'} />
+    )
+
+    // The wrapper carries its own editor style; the reply's markup must not
+    expect(container.querySelector('.ai-assist-markdown [style]')).to.equal(null)
+    expect(container.querySelector('.ai-assist-markdown')?.textContent).to.include(
+      'background-image:url(https://evil.example/x)'
+    )
+  })
+
+  it('keeps raw HTML without a style attribute when every tag is one the chat renders', function () {
+    const { container } = render(<MarkdownContent content={'Press <kbd>Ctrl</kbd> and <em>hold</em>.'} />)
+
+    expect(container.querySelector('kbd')?.textContent).to.equal('Ctrl')
+    expect(container.querySelector('em')?.textContent).to.equal('hold')
+  })
+
+  it('never renders a javascript: link, from markdown or from a citation source', function () {
+    const sources = new Map([[1, { n: 1, url: 'javascript:alert(1)', title: 'x' }]])
+    const { container } = render(
+      <MarkdownContent
+        content={'[click](javascript:alert(2)) and a claim [1].'}
+        sources={sources}
+      />
+    )
+
+    for (const link of Array.from(container.querySelectorAll('a'))) {
+      expect(link.getAttribute('href') ?? '').not.to.match(/^javascript:/i)
+    }
+  })
+})

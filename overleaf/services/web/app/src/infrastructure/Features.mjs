@@ -67,6 +67,10 @@ const Features = {
         return Boolean(Settings.enableGoogleDriveSync)
       case 'git-bridge':
         return Boolean(Settings.enableGitBridge)
+      case 'personal-access-token':
+      case 'personal-access-tokens':
+        // Tokens exist for the features that accept them
+        return Boolean(Settings.enableGitBridge || Settings.enableMcp)
       case 'mcp':
         return Boolean(Settings.enableMcp)
       case 'api-docs':

@@ -2,6 +2,85 @@ import { CODES, OverleafApiError, codeForStatus, sanitiseMessage } from './error
 
 const API_PREFIX = '/api/v0/mcp'
 const DEFAULT_TIMEOUT_MS = 30000
+/** Largest binary output (PDF, zip, download) returned to a tool, in bytes. */
+export const MAX_BINARY_BYTES = 64 * 1024 * 1024
+const MIB = 1024 * 1024
+
+function tooLarge(totalBytes, maxBytes) {
+  const maxMb = maxBytes / MIB
+  const size = totalBytes == null ? `over ${maxMb} MB` : `${Math.ceil(totalBytes / MIB)} MB > ${maxMb} MB`
+  return new OverleafApiError(
+    CODES.OUTPUT_TOO_LARGE,
+    `output too large (${size}); download it from Overleaf directly`,
+    413
+  )
+}
+
+/**
+ * Read a response body as base64, stopping once it passes maxBytes.
+ *
+ * The cap is checked as each chunk arrives, so an oversized body is never
+ * held in memory whole. A Content-Length already past the cap is refused
+ * before any of the body is read.
+ *
+ * @param {Response} response
+ * @param {number} maxBytes
+ * @returns {Promise<string>}
+ */
+async function readBase64Capped(response, maxBytes) {
+  const declared = Number(response.headers?.get?.('content-length'))
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    await response.body?.cancel?.().catch(() => {})
+    throw tooLarge(declared, maxBytes)
+  }
+  if (!response.body) {
+    if (typeof response.arrayBuffer === 'function') {
+      const buf = Buffer.from(await response.arrayBuffer())
+      if (buf.byteLength > maxBytes) throw tooLarge(buf.byteLength, maxBytes)
+      return buf.toString('base64')
+    }
+    return ''
+  }
+
+  if (typeof response.body.getReader === 'function') {
+    const reader = response.body.getReader()
+    const chunks = []
+    let total = 0
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      total += value.byteLength
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => {})
+        throw tooLarge(null, maxBytes)
+      }
+      chunks.push(value)
+    }
+    return Buffer.concat(chunks, total).toString('base64')
+  }
+
+  if (typeof response.body[Symbol.asyncIterator] === 'function') {
+    const chunks = []
+    let total = 0
+    for await (const chunk of response.body) {
+      total += chunk.byteLength || chunk.length
+      if (total > maxBytes) {
+        await response.body.destroy?.()
+        throw tooLarge(null, maxBytes)
+      }
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+    }
+    return Buffer.concat(chunks, total).toString('base64')
+  }
+
+  if (typeof response.arrayBuffer === 'function') {
+    const buf = Buffer.from(await response.arrayBuffer())
+    if (buf.byteLength > maxBytes) throw tooLarge(buf.byteLength, maxBytes)
+    return buf.toString('base64')
+  }
+
+  return ''
+}
 
 /**
  * Read the download name out of a Content-Disposition header.
@@ -34,7 +113,11 @@ function filenameFromDisposition(header) {
  * forwards it as a bearer header. All authorization happens in `web`.
  */
 export class OverleafClient {
-  constructor({ baseUrl, fetchImpl = globalThis.fetch, timeoutMs = DEFAULT_TIMEOUT_MS }) {
+  constructor({
+    baseUrl,
+    fetchImpl = globalThis.fetch,
+    timeoutMs = DEFAULT_TIMEOUT_MS,
+  }) {
     this.baseUrl = String(baseUrl || '').replace(/\/+$/, '')
     this.fetchImpl = fetchImpl
     this.timeoutMs = timeoutMs
@@ -59,23 +142,44 @@ export class OverleafClient {
     }
   }
 
-  async #send(token, url, init) {
+  /**
+   * Sends the request and hands the response to `read`, all under one
+   * deadline: a server that answers its headers and then stalls the body
+   * is cut off too.
+   */
+  async #send(token, url, init, read, timeoutMs = this.timeoutMs) {
     const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs)
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
     try {
-      return await this.fetchImpl(url, {
-        ...init,
-        signal: controller.signal,
-        headers: { ...init.headers, Authorization: `Bearer ${token}` },
-      })
-    } catch (_err) {
-      throw new OverleafApiError(
-        CODES.UPSTREAM_ERROR,
-        controller.signal.aborted
-          ? 'the Overleaf API did not respond in time'
-          : 'could not reach the Overleaf API',
-        502
-      )
+      let response
+      try {
+        response = await this.fetchImpl(url, {
+          ...init,
+          signal: controller.signal,
+          headers: { ...init.headers, Authorization: `Bearer ${token}` },
+        })
+      } catch (_err) {
+        throw new OverleafApiError(
+          CODES.UPSTREAM_ERROR,
+          controller.signal.aborted
+            ? 'the Overleaf API did not respond in time'
+            : 'could not reach the Overleaf API',
+          502
+        )
+      }
+      if (!response.ok) await this.#throwForResponse(response)
+      try {
+        return await read(response)
+      } catch (err) {
+        if (err instanceof OverleafApiError) throw err
+        throw new OverleafApiError(
+          CODES.UPSTREAM_ERROR,
+          controller.signal.aborted
+            ? 'the Overleaf API did not respond in time'
+            : 'could not read the Overleaf API response',
+          502
+        )
+      }
     } finally {
       clearTimeout(timer)
     }
@@ -84,6 +188,7 @@ export class OverleafClient {
   async #throwForResponse(response) {
     let code = codeForStatus(response.status)
     let message = `the Overleaf API returned status ${response.status}`
+    const extra = {}
     try {
       const contentType = response.headers.get('content-type') || ''
       if (contentType.includes('application/json')) {
@@ -91,31 +196,50 @@ export class OverleafClient {
         if (body && typeof body === 'object') {
           if (typeof body.code === 'string') code = body.code
           if (typeof body.message === 'string') message = body.message
+          if (typeof body.hint === 'string') {
+            extra.hint = sanitiseMessage(body.hint, this.baseUrl)
+          }
+          if (body.details && typeof body.details === 'object') {
+            extra.details = body.details
+          }
         }
       }
     } catch {
       // A malformed body must not mask the status-derived code above.
+    } finally {
+      // An unread body keeps its connection checked out until it is released.
+      if (!response.bodyUsed) await response.body?.cancel().catch(() => {})
     }
-    throw new OverleafApiError(code, sanitiseMessage(message, this.baseUrl), response.status)
+    throw new OverleafApiError(
+      code,
+      sanitiseMessage(message, this.baseUrl),
+      response.status,
+      extra
+    )
   }
 
   /**
    * @param {string} token the caller's olp_ token
    * @param {'GET'|'POST'|'PATCH'} method
    * @param {string} path path below /api/v0/mcp, e.g. '/projects'
-   * @param {{ query?: object, body?: object }} [options]
+   * @param {{ query?: object, body?: object, timeoutMs?: number }} [options]
+   *   timeoutMs overrides the client's default deadline for this call
    * @returns {Promise<object>} the parsed JSON body
    */
-  async request(token, method, path, { query, body } = {}) {
+  async request(token, method, path, { query, body, timeoutMs } = {}) {
     this.#assertToken(token)
     const init = { method, headers: { Accept: 'application/json' } }
     if (body !== undefined) {
       init.headers['Content-Type'] = 'application/json'
       init.body = JSON.stringify(body)
     }
-    const response = await this.#send(token, this.#url(path, query), init)
-    if (!response.ok) await this.#throwForResponse(response)
-    return await response.json()
+    return await this.#send(
+      token,
+      this.#url(path, query),
+      init,
+      response => response.json(),
+      timeoutMs
+    )
   }
 
   /**
@@ -126,7 +250,7 @@ export class OverleafClient {
    * @param {object} [queryOrOptions]
    * @returns {Promise<{ contentType: string, filename: string|undefined, base64: string }>}
    */
-  async requestBinary(token, path, queryOrOptions = {}) {
+  async requestBinary(token, path, queryOrOptions = {}, { maxBytes = MAX_BINARY_BYTES } = {}) {
     this.#assertToken(token)
     let query
     let method = 'GET'
@@ -159,25 +283,27 @@ export class OverleafClient {
     const init = { method, headers }
     if (body !== undefined) init.body = body
 
-    const response = await this.#send(token, this.#url(path, query), init)
-    if (!response.ok) await this.#throwForResponse(response)
-    const buffer = Buffer.from(await response.arrayBuffer())
-    return {
-      contentType:
-        response.headers.get('content-type') || 'application/octet-stream',
-      filename: filenameFromDisposition(
-        response.headers.get('content-disposition')
-      ),
-      base64: buffer.toString('base64'),
-    }
+    return await this.#send(
+      token,
+      this.#url(path, query),
+      init,
+      async response => ({
+        contentType:
+          response.headers.get('content-type') || 'application/octet-stream',
+        filename: filenameFromDisposition(
+          response.headers.get('content-disposition')
+        ),
+        base64: await readBase64Capped(response, maxBytes),
+      })
+    )
   }
 
   get(token, path, query) {
     return this.request(token, 'GET', path, { query })
   }
 
-  post(token, path, body) {
-    return this.request(token, 'POST', path, { body })
+  post(token, path, body, { timeoutMs } = {}) {
+    return this.request(token, 'POST', path, { body, timeoutMs })
   }
 
   patch(token, path, body) {

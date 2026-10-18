@@ -13,6 +13,9 @@ import {
   PROJECT_SETTINGS_TOOLS,
   ACCOUNT_SETTINGS_TOOLS,
   PLAN_TOOL,
+  CONNECTOR_SEARCH_TOOL,
+  READ_CONNECTOR_RESULT_TOOL,
+  isConnectorCallName,
   modeLabel,
 } from '../../../app/src/AiAssistModePolicy.mjs'
 
@@ -33,6 +36,20 @@ describe('AiAssistModePolicy', () => {
   })
 
   describe('decide', () => {
+    it('lets every mode, plan included, look at the compiled PDF and point the viewer at it', () => {
+      for (const tool of [
+        'view_compiled_pdf_page',
+        'view_compiled_pdf_overview',
+        'search_compiled_pdf',
+        'highlight_in_pdf',
+      ]) {
+        expect(READ_ONLY_TOOLS.has(tool)).to.equal(true)
+        for (const mode of MODES) {
+          expect(decide(mode, tool)).to.equal('allow')
+        }
+      }
+    })
+
     it('handles manual mode', () => {
       expect(decide('manual', 'read_file')).to.equal('allow')
       expect(decide('manual', 'compile_project')).to.equal('allow')
@@ -133,3 +150,67 @@ describe('AiAssistModePolicy', () => {
     })
   })
 })
+
+describe('AiAssistModePolicy connector tools', function () {
+  const MODE_NAMES = ['manual', 'acceptEdits', 'plan']
+
+  it('allows the search and paging tools in every mode, without approval', function () {
+    for (const mode of MODE_NAMES) {
+      expect(decide(mode, CONNECTOR_SEARCH_TOOL)).to.equal('allow')
+      expect(decide(mode, READ_CONNECTOR_RESULT_TOOL)).to.equal('allow')
+    }
+  })
+
+  it('asks before an ordinary connector tool in the editing modes', function () {
+    const readOnly = { readOnly: true, destructive: false }
+    expect(decide('manual', 'mcp__docs__search', readOnly)).to.equal('ask')
+    expect(decide('acceptEdits', 'mcp__docs__search', readOnly)).to.equal('ask')
+    expect(decide('manual', 'mcp__docs__write', {})).to.equal('ask')
+  })
+
+  it('denies a blocked connector tool in every mode', function () {
+    for (const mode of MODE_NAMES) {
+      expect(decide(mode, 'mcp__docs__x', { permission: 'block' })).to.equal('deny')
+    }
+  })
+
+  it('lets a standing allow run an ordinary connector tool without asking', function () {
+    expect(decide('manual', 'mcp__docs__x', { permission: 'allow', readOnly: true })).to.equal('allow')
+    expect(decide('acceptEdits', 'mcp__docs__x', { permission: 'allow' })).to.equal('allow')
+  })
+
+  it('still asks for a destructive connector tool, even with a standing allow', function () {
+    const destructive = { permission: 'allow', destructive: true, readOnly: false }
+    expect(decide('manual', 'mcp__docs__delete', destructive)).to.equal('ask')
+    expect(decide('acceptEdits', 'mcp__docs__delete', destructive)).to.equal('ask')
+  })
+
+  it('denies a connector tool the server does not declare read-only in Plan mode', function () {
+    expect(decide('plan', 'mcp__docs__write', { readOnly: false })).to.equal('deny')
+    expect(decide('plan', 'mcp__docs__search', { readOnly: true })).to.equal('ask')
+    expect(decide('plan', 'mcp__docs__write', { readOnly: false, permission: 'allow' })).to.equal('deny')
+  })
+
+  it('recognises connector calls, including the two harness tools, and nothing else', function () {
+    expect(isConnectorCallName('mcp__docs__search')).to.be.true
+    expect(isConnectorCallName(CONNECTOR_SEARCH_TOOL)).to.be.true
+    expect(isConnectorCallName(READ_CONNECTOR_RESULT_TOOL)).to.be.true
+    expect(isConnectorCallName('read_file')).to.be.false
+    expect(isConnectorCallName(undefined)).to.be.false
+  })
+
+  it('offers the connector tools after the built-in ones, with present_plan last', function () {
+    const specs = toolSpecsFor('plan', [
+      { name: 'read_file' },
+      { name: 'mcp__docs__search' },
+      { name: CONNECTOR_SEARCH_TOOL },
+    ])
+    expect(specs.map(spec => spec.name)).to.deep.equal([
+      'read_file',
+      'mcp__docs__search',
+      CONNECTOR_SEARCH_TOOL,
+      PLAN_TOOL,
+    ])
+  })
+})
+

@@ -60,6 +60,19 @@ test('HostPacer enforces 10-minute cooldown on challenge failure and respects Re
   release()
 })
 
+test('HostPacer forgets idle hosts so its state does not grow with every host read', async () => {
+  let clock = 10_000
+  const pacer = new HostPacer({ minIntervalMs: 2_000, pruneAt: 10, now: () => clock })
+  for (let i = 0; i < 50; i++) {
+    const release = await pacer.acquire(`host${i}.example`)
+    release()
+  }
+  assert.equal(pacer.lastStart.size, 50)
+  clock += 2_000
+  await (await pacer.acquire('fresh.example'))()
+  assert.equal(pacer.lastStart.size, 1)
+})
+
 test('HostPacer cancels pending acquire on AbortSignal', async () => {
   let clock = 10_000
   const pacer = new HostPacer({ minIntervalMs: 2_000, now: () => clock })

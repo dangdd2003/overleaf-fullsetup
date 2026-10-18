@@ -31,7 +31,8 @@ import {
  */
 export function ReasoningEffortPicker() {
   const { t } = useTranslation()
-  const type = readSettings()?.type
+  const [currentType, setCurrentType] = useState(() => readSettings()?.type)
+  const type = currentType
   const [effort, setEffort] = useState(() =>
     type ? readReasoningEffort(type) : undefined
   )
@@ -39,6 +40,14 @@ export function ReasoningEffortPicker() {
     type ? readThinking(type) : false
   )
   const [open, setOpen] = useState(false)
+
+  useEffect(() => {
+    const onProviderChanged = () => setCurrentType(readSettings()?.type)
+    window.addEventListener('aiAssist:providerChanged', onProviderChanged)
+    return () => {
+      window.removeEventListener('aiAssist:providerChanged', onProviderChanged)
+    }
+  }, [])
 
   // The account holds the choices; this browser only keeps a copy
   useEffect(() => {

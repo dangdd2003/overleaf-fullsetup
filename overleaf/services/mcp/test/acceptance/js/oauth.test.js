@@ -3,7 +3,6 @@ import crypto from 'node:crypto'
 import { expect } from 'chai'
 import { createHttpApp } from '../../../src/http.js'
 import { OverleafClient } from '../../../src/OverleafClient.js'
-import { createJwtVerifier } from '../../../src/oauth.js'
 
 function startServer(app) {
   return new Promise(resolve => {
@@ -36,7 +35,6 @@ describe('OAuth 2.1 Complete Handshake Acceptance Test', function () {
   let keyPair
   let mockJwks
   let authCodes
-  let accessTokens
 
   before(function () {
     // Generate RSA key pair for authorization server signing RS256 JWTs
@@ -49,7 +47,6 @@ describe('OAuth 2.1 Complete Handshake Acceptance Test', function () {
 
   beforeEach(async function () {
     authCodes = new Map()
-    accessTokens = new Map()
 
     // 1. Start a mock Overleaf Web Authorization Server simulating /oauth/authorize, /oauth/token, JWKS, etc.
     const webApp = http.createServer(async (req, res) => {
@@ -116,7 +113,7 @@ describe('OAuth 2.1 Complete Handshake Acceptance Test', function () {
         for await (const chunk of req) {
           bodyText += chunk
         }
-        let params = {}
+        let params
         if (req.headers['content-type']?.includes('application/x-www-form-urlencoded')) {
           params = Object.fromEntries(new URLSearchParams(bodyText))
         } else {
@@ -127,7 +124,7 @@ describe('OAuth 2.1 Complete Handshake Acceptance Test', function () {
           }
         }
 
-        const { grant_type, code, code_verifier, client_id, redirect_uri } = params
+        const { grant_type, code, code_verifier, client_id } = params
 
         if (grant_type !== 'authorization_code') {
           res.writeHead(400, { 'Content-Type': 'application/json' })
@@ -194,7 +191,6 @@ describe('OAuth 2.1 Complete Handshake Acceptance Test', function () {
 
       // Mock projects endpoint called when tool is executed with bearer token
       if (req.method === 'GET' && url.pathname === '/api/v0/mcp/projects') {
-        const auth = req.headers.authorization || ''
         res.writeHead(200, { 'Content-Type': 'application/json' })
         res.end(
           JSON.stringify({
@@ -375,7 +371,8 @@ describe('OAuth 2.1 Complete Handshake Acceptance Test', function () {
     expect(toolCallResult.status).to.equal(200)
     expect(toolCallResult.body.result).to.exist
     const content = JSON.parse(toolCallResult.body.result.content[0].text)
-    expect(content.projects).to.be.an('array')
-    expect(content.projects[0].name).to.equal('Thesis')
+    expect(content.ok).to.equal(true)
+    expect(content.data.projects).to.be.an('array')
+    expect(content.data.projects[0].name).to.equal('Thesis')
   })
 })

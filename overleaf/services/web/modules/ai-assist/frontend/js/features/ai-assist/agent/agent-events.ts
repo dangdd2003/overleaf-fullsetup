@@ -1,13 +1,27 @@
 import { EditRequest } from './project-handle'
-import { ProviderErrorCode } from '../providers/types'
+import { ChatImage, ProviderErrorCode } from '../providers/types'
 import { AgentMode } from './agent-mode'
 import { ContextTrim } from './agent-messages'
+import { SlashCommandInvocation } from './slash-commands/types'
 
-export type ApprovalKind = 'edit' | 'settings' | 'plan'
+export type ApprovalKind =
+  | 'edit'
+  | 'settings'
+  | 'plan'
+  | 'connector'
+  | 'connectorAuth'
 
 export type SettingsApproval = {
   toolName: string
   args: Record<string, unknown>
+}
+
+export type ConnectorApproval = {
+  connectorId: string
+  connectorName: string
+  toolName: string
+  toolTitle?: string
+  args?: Record<string, unknown>
 }
 
 export type AgentEvent =
@@ -36,6 +50,7 @@ export type AgentEvent =
       edit?: EditRequest
       settings?: SettingsApproval
       plan?: string
+      connector?: ConnectorApproval
     }
   | { type: 'modeChanged'; mode: AgentMode; source: 'user' | 'planApproval' }
   /**
@@ -45,7 +60,15 @@ export type AgentEvent =
    * the envelope the run was sent, so a tab that never saw the message still
    * stores the turn the run read.
    */
-  | { type: 'userMessage'; id: string; text: string; contextText?: string }
+  | {
+      type: 'userMessage'
+      id: string
+      text: string
+      contextText?: string
+      commandText?: string
+      command?: SlashCommandInvocation
+      images?: ChatImage[]
+    }
   | { type: 'chatTitle'; title: string; chatId?: string }
   /**
    * Replaces the text the current provider request has streamed so far: the

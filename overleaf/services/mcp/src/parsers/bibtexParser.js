@@ -1,12 +1,6 @@
-const IGNORED_TYPES = new Set(['comment', 'preamble', 'string'])
+import { lineLookup } from './textEdit.js'
 
-function lineAt(text, index) {
-  let line = 1
-  for (let i = 0; i < index && i < text.length; i++) {
-    if (text[i] === '\n') line++
-  }
-  return line
-}
+const IGNORED_TYPES = new Set(['comment', 'preamble', 'string'])
 
 /** Read a balanced {...} group, returning its inner text and the closing index. */
 function readBraces(text, openIndex) {
@@ -37,10 +31,13 @@ function parseFields(body) {
   let i = 0
 
   while (i < body.length) {
-    const nameMatch = /([A-Za-z][A-Za-z0-9_-]*)\s*=\s*/.exec(body.slice(i))
+    // Searched from i in place; slicing the body for each field copies it again.
+    const fieldName = /([A-Za-z][A-Za-z0-9_-]*)\s*=\s*/g
+    fieldName.lastIndex = i
+    const nameMatch = fieldName.exec(body)
     if (!nameMatch) break
     const name = nameMatch[1].toLowerCase()
-    i += nameMatch.index + nameMatch[0].length
+    i = nameMatch.index + nameMatch[0].length
 
     let value
     if (body[i] === '{') {
@@ -64,8 +61,9 @@ function parseFields(body) {
       value = body.slice(i + 1, close)
       i = close + 1
     } else {
-      const bare = /^[^,\n]*/.exec(body.slice(i))
-      value = bare ? bare[0] : ''
+      const bareValue = /[^,\n]*/y
+      bareValue.lastIndex = i
+      value = bareValue.exec(body)[0]
       i += value.length
     }
 
@@ -86,6 +84,7 @@ function parseFields(body) {
  */
 export function parseBibtex(text) {
   const source = String(text ?? '')
+  const lineOf = lineLookup(source)
   const entries = []
 
   for (const match of source.matchAll(/@([A-Za-z]+)\s*\{/g)) {
@@ -103,7 +102,7 @@ export function parseBibtex(text) {
       type,
       key,
       fields: comma === -1 ? {} : parseFields(group.value.slice(comma + 1)),
-      line: lineAt(source, match.index),
+      line: lineOf(match.index),
     })
   }
 

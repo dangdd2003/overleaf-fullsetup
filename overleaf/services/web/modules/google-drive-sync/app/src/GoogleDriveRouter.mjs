@@ -1,0 +1,133 @@
+import Features from '../../../../app/src/infrastructure/Features.mjs'
+import AuthenticationController from '../../../../app/src/Features/Authentication/AuthenticationController.mjs'
+import AuthorizationMiddleware from '../../../../app/src/Features/Authorization/AuthorizationMiddleware.mjs'
+import GoogleDriveController from './GoogleDriveController.mjs'
+import GoogleDriveWebhookController from './GoogleDriveWebhookController.mjs'
+
+/**
+ * Express router configuration for Google Drive Synchronization endpoints.
+ */
+const GoogleDriveRouter = {
+  /**
+   * Mounts Google Drive routes onto webRouter and publicApiRouter.
+   *
+   * @param {import('express').Router} webRouter
+   * @param {import('express').Router} [privateApiRouter]
+   * @param {import('express').Router} [publicApiRouter]
+   */
+  apply(webRouter, privateApiRouter, publicApiRouter) {
+    if (!Features.hasFeature('google-drive-sync')) {
+      return
+    }
+
+    // 1. Inbound Webhook (Google push notifications). Google can only reach the
+    // public API router, so the webhook is never mounted on the private one.
+    if (publicApiRouter) {
+      if (webRouter.csrf?.disableDefaultCsrfProtection) {
+        webRouter.csrf.disableDefaultCsrfProtection(
+          '/google-drive/webhook',
+          'POST'
+        )
+      }
+      publicApiRouter.post(
+        '/google-drive/webhook',
+        GoogleDriveWebhookController.handleWebhook
+      )
+    }
+
+    // 2. User account linking
+    webRouter.get(
+      '/auth/google-drive/oauth',
+      AuthenticationController.requireLogin(),
+      GoogleDriveController.startOAuth
+    )
+    webRouter.get(
+      '/oauth/google-drive/callback',
+      AuthenticationController.requireLogin(),
+      GoogleDriveController.oauthCallback
+    )
+    webRouter.get(
+      '/auth/google-drive/callback',
+      AuthenticationController.requireLogin(),
+      GoogleDriveController.oauthCallback
+    )
+    webRouter.post(
+      '/auth/google-drive/unlink',
+      AuthenticationController.requireLogin(),
+      GoogleDriveController.unlink
+    )
+    webRouter.get(
+      '/auth/google-drive/status',
+      AuthenticationController.requireLogin(),
+      GoogleDriveController.getUserStatus
+    )
+    webRouter.post(
+      '/auth/google-drive/scan-existing-projects',
+      AuthenticationController.requireLogin(),
+      GoogleDriveController.scanExistingProjects
+    )
+    webRouter.get(
+      '/auth/google-drive/projects',
+      AuthenticationController.requireLogin(),
+      GoogleDriveController.listSyncableProjects
+    )
+    webRouter.get(
+      '/auth/google-drive/bulk-sync',
+      AuthenticationController.requireLogin(),
+      GoogleDriveController.getBulkSync
+    )
+    webRouter.post(
+      '/auth/google-drive/bulk-sync',
+      AuthenticationController.requireLogin(),
+      GoogleDriveController.startBulkSync
+    )
+    webRouter.post(
+      '/auth/google-drive/bulk-sync/cancel',
+      AuthenticationController.requireLogin(),
+      GoogleDriveController.cancelBulkSync
+    )
+    webRouter.get(
+      '/auth/google-drive/import-folders',
+      AuthenticationController.requireLogin(),
+      GoogleDriveController.listImportableFolders
+    )
+    webRouter.get(
+      '/auth/google-drive/import-job',
+      AuthenticationController.requireLogin(),
+      GoogleDriveController.getImportJob
+    )
+    webRouter.post(
+      '/auth/google-drive/import-job',
+      AuthenticationController.requireLogin(),
+      GoogleDriveController.startImportJob
+    )
+    webRouter.post(
+      '/auth/google-drive/import-job/cancel',
+      AuthenticationController.requireLogin(),
+      GoogleDriveController.cancelImportJob
+    )
+
+    // 2. Per-project synchronization
+    webRouter.get(
+      '/project/:Project_id/google-drive/status',
+      AuthenticationController.requireLogin(),
+      AuthorizationMiddleware.ensureUserCanReadProject,
+      GoogleDriveController.getProjectStatus
+    )
+    webRouter.post(
+      '/project/:Project_id/google-drive/sync',
+      AuthenticationController.requireLogin(),
+      AuthorizationMiddleware.ensureUserCanWriteProjectContent,
+      GoogleDriveController.syncProjectNow
+    )
+    webRouter.post(
+      '/project/:Project_id/google-drive/conflicts/dismiss',
+      AuthenticationController.requireLogin(),
+      AuthorizationMiddleware.ensureUserCanWriteProjectContent,
+      GoogleDriveController.dismissConflicts
+    )
+  },
+}
+
+export default GoogleDriveRouter
+export { GoogleDriveRouter }

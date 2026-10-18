@@ -164,6 +164,23 @@ describe('Features', function () {
         expect(ctx.Features.hasFeature('mcp')).to.be.false
       })
     })
+    describe('personal-access-token', function () {
+      it('should return true when enableGitBridge is set', function (ctx) {
+        ctx.settings.enableGitBridge = true
+        expect(ctx.Features.hasFeature('personal-access-token')).to.be.true
+        expect(ctx.Features.hasFeature('personal-access-tokens')).to.be.true
+      })
+      it('should return true when enableMcp is set', function (ctx) {
+        ctx.settings.enableMcp = true
+        expect(ctx.Features.hasFeature('personal-access-token')).to.be.true
+      })
+      it('should return false when neither is set', function (ctx) {
+        ctx.settings.enableGitBridge = false
+        ctx.settings.enableMcp = false
+        expect(ctx.Features.hasFeature('personal-access-token')).to.be.false
+        expect(ctx.Features.hasFeature('personal-access-tokens')).to.be.false
+      })
+    })
     describe('api-docs', function () {
       it('should return true when enableApiDocs is set', function (ctx) {
         ctx.settings.enableApiDocs = true

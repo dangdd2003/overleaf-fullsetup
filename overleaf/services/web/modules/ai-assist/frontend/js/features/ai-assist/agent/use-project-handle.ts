@@ -11,6 +11,10 @@ import { syncCreateEntity } from '@/features/file-tree/util/sync-mutation'
 import useEventListener from '@/shared/hooks/use-event-listener'
 import { Folder } from '@ol-types/folder'
 import { errorExcerpt, excerptAround } from './tools/compile-result'
+import { withPdfStatus } from './pdf-status'
+import { readPdfViewerSnapshot } from '../pdf/viewer-state'
+import { getPdfViewer } from '@/features/pdf-preview/util/viewer-bridge'
+import { highlightInPdf, HighlightRequest, HighlightResult } from '../pdf/highlight'
 import { matchesGlob } from './tools/search-text'
 import {
   applyLiveSettingsUpdate,
@@ -697,6 +701,10 @@ export function useProjectHandle({
     error: compileError,
     logEntries,
     rawLog,
+    pdfFile,
+    clsiServerId,
+    darkModePdf,
+    setHighlights,
   } = useLocalCompileContext()
   const { openDoc, openDocWithId, getCurrentDocumentId } =
     useEditorManagerContext()
@@ -707,6 +715,16 @@ export function useProjectHandle({
   logEntriesRef.current = logEntries
   const rawLogRef = useRef(rawLog)
   rawLogRef.current = rawLog
+  // The PDF on screen. The editor replaces it only when a compile succeeds,
+  // so a new object after a compile is that compile's PDF.
+  const pdfFileRef = useRef(pdfFile)
+  pdfFileRef.current = pdfFile
+  const clsiServerIdRef = useRef(clsiServerId)
+  clsiServerIdRef.current = clsiServerId
+  const darkModePdfRef = useRef(darkModePdf)
+  darkModePdfRef.current = darkModePdf
+  // Whether the last compile wrote a PDF, for the status lastCompile reports
+  const lastPdfProducedRef = useRef<{ pdfProduced: boolean; buildId: string | null } | null>(null)
   const indexRef = useRef<ProjectIndex | null>(null)
 
   // `lastCompileOptions` is memoised on the compile response, so a new identity
@@ -737,6 +755,11 @@ export function useProjectHandle({
     from: number
     to: number
     text: string
+    ranges?: Array<{
+      from: number
+      to: number
+      text: string
+    }>
   } | null>(null)
 
   useEventListener('aiAssist:agentSelection', (event: Event) => {
@@ -1304,6 +1327,7 @@ export function useProjectHandle({
       const initialLogEntries = logEntriesRef.current
       const initialError = compileErrorRef.current
       const initialFinished = compileFinishedRef.current
+      const initialPdfFile = pdfFileRef.current
 
       // Not awaited: the response is observed through the waits below, and
       // awaiting would only delay that observation. DocumentCompiler never
@@ -1358,7 +1382,7 @@ export function useProjectHandle({
         { timeoutMs: LOG_SETTLE_TIMEOUT_MS, signal }
       )
 
-      return resolveCompileOutcome(
+      const outcome = resolveCompileOutcome(
         {
           kind: 'responded',
           settled,
@@ -1370,13 +1394,64 @@ export function useProjectHandle({
         },
         rawLogRef.current
       )
+      // Set in the same effect as the log fetch, so it has landed by now
+      const pdf = pdfFileRef.current
+      const pdfProduced = Boolean(
+        pdf && pdf !== initialPdfFile && typeof pdf.build === 'string'
+      )
+      const buildId = pdfProduced ? (pdf!.build as string) : null
+      lastPdfProducedRef.current = { pdfProduced, buildId }
+      return {
+        ...withPdfStatus(outcome, pdfProduced),
+        pdfProduced,
+        buildId,
+        clsiServerId: pdfProduced ? (clsiServerIdRef.current ?? null) : null,
+      }
     },
     [startCompile, clearCache, stopCompile]
   )
 
   const lastCompile = useCallback((): LastCompile | null => {
-    return toLastCompile(logEntriesRef.current, rawLogRef.current)
+    const last = toLastCompile(logEntriesRef.current, rawLogRef.current)
+    if (!last) return last
+    const produced = lastPdfProducedRef.current
+    return {
+      ...withPdfStatus(last, produced?.pdfProduced ?? false),
+      pdfProduced: produced?.pdfProduced ?? false,
+      buildId: produced?.buildId ?? null,
+    }
   }, [])
+
+  const pdfViewer = useCallback(() => {
+    const bridge = getPdfViewer()
+    return readPdfViewerSnapshot(
+      bridge?.wrapper,
+      bridge?.buildId ?? null,
+      darkModePdfRef.current ?? false
+    )
+  }, [])
+
+  const highlightPdf = useCallback(
+    async (request: HighlightRequest): Promise<HighlightResult> => {
+      const bridge = getPdfViewer()
+      const projectId = project?._id
+      if (!projectId) return { error: 'The project is not loaded.' }
+      if (!bridge) return { error: 'No PDF is open in the viewer.' }
+      return highlightInPdf({
+        request,
+        projectId,
+        rootDocPath: rootDocPath(),
+        context: {
+          clsiServerId: clsiServerIdRef.current ?? null,
+          editorId: bridge.editorId,
+          buildId: bridge.buildId,
+        },
+        pageCount: bridge.wrapper.viewer.pagesCount || null,
+        setHighlights,
+      })
+    },
+    [project?._id, setHighlights, rootDocPath]
+  )
 
   const index = useCallback(async (): Promise<ProjectIndex> => {
     try {
@@ -1410,6 +1485,20 @@ export function useProjectHandle({
       path: string
       content: string
     }): Promise<EditOutcome> => {
+      // Each segment must name a folder or the file itself: no empty, "." or
+      // ".." part, so the path cannot wander outside the project tree
+      const pathSegments = request.path.replace(/^\//, '').split('/')
+      if (
+        pathSegments.some(
+          segment => segment === '' || segment === '.' || segment === '..'
+        )
+      ) {
+        return {
+          status: 'error',
+          message: `Invalid file path "${request.path}".`,
+        }
+      }
+
       const approval = await requestApproval(
         {
           path: request.path,
@@ -1857,6 +1946,8 @@ export function useProjectHandle({
       compile,
       openFile,
       lastCompile,
+      pdfViewer,
+      highlightPdf,
       index,
       createFile,
       getProjectSettings,
@@ -1875,6 +1966,8 @@ export function useProjectHandle({
       compile,
       openFile,
       lastCompile,
+      pdfViewer,
+      highlightPdf,
       index,
       createFile,
       getProjectSettings,

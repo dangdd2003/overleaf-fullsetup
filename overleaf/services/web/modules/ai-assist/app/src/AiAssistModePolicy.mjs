@@ -18,6 +18,14 @@ export function normalizeMode(value) {
 
 export const FILE_EDIT_TOOLS = new Set(['edit_file', 'create_file'])
 
+/**
+ * Connector tools that are not themselves connector calls: loading a deferred
+ * tool's schema, and paging through a long connector result. Both only read
+ * the harness's own state, so every mode allows them.
+ */
+export const CONNECTOR_SEARCH_TOOL = 'search_connector_tools'
+export const READ_CONNECTOR_RESULT_TOOL = 'read_connector_result'
+
 export const READ_ONLY_TOOLS = new Set([
   'get_outline',
   'get_packages',
@@ -29,10 +37,20 @@ export const READ_ONLY_TOOLS = new Set([
   'search_project',
   'get_compile_result',
   'get_compile_log',
+  'view_compiled_pdf_page',
+  'view_compiled_pdf_overview',
+  'search_compiled_pdf',
+  'resolve_pdf_block',
+  'diff_compiled_pdf',
+  'inspect_compiled_style',
+  // Moves the user's viewer only; the project is not changed
+  'highlight_in_pdf',
   'get_project_settings',
   'list_available_settings',
   'web_search',
   'web_fetch',
+  CONNECTOR_SEARCH_TOOL,
+  READ_CONNECTOR_RESULT_TOOL,
 ])
 
 /**
@@ -59,6 +77,23 @@ export const SETTINGS_TOOLS = new Set([
 
 export const PLAN_TOOL = 'present_plan'
 
+export function isConnectorTool(name) {
+  return typeof name === 'string' && name.startsWith('mcp__')
+}
+
+/**
+ * The connector tools, and the two the harness adds beside them: a
+ * search_connector_tools call loads schemas, a read_connector_result call pages
+ * through a long result. All of them run in the connector session.
+ */
+export function isConnectorCallName(name) {
+  return (
+    isConnectorTool(name) ||
+    name === CONNECTOR_SEARCH_TOOL ||
+    name === READ_CONNECTOR_RESULT_TOOL
+  )
+}
+
 export const PRESENT_PLAN_SPEC = {
   name: 'present_plan',
   description:
@@ -75,8 +110,21 @@ export const PRESENT_PLAN_SPEC = {
   },
 }
 
-export function decide(mode, toolName) {
+export function decide(mode, toolName, options = {}) {
   const normMode = normalizeMode(mode)
+
+  if (isConnectorTool(toolName)) {
+    // The user's per-tool choice wins in every mode; plan mode additionally
+    // refuses anything the server does not declare read-only
+    if (options?.permission === 'block') return 'deny'
+    if (normMode === 'plan' && options?.readOnly !== true) return 'deny'
+    // A standing "allow" covers the tools that do not change anything. A
+    // destructive one still asks each time, whatever the user chose before.
+    if (options?.permission === 'allow' && options?.destructive !== true) {
+      return 'allow'
+    }
+    return 'ask'
+  }
 
   if (toolName === PLAN_TOOL) {
     return normMode === 'plan' ? 'ask' : 'deny'

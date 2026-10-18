@@ -11,6 +11,7 @@ import { saveChat } from '../chat-history-client'
 import { nextStatusWord } from '../../components/agent/status-words'
 import { connectRunStream, setDetachedRun } from './background-run-client'
 import { dispatchAiEditHighlight } from '../agent-events'
+import { dispatchPdfResultHighlights } from '../../pdf/result-highlights'
 
 /**
  * Runs of chats the panel is not showing keep going on the server, in
@@ -168,6 +169,7 @@ function connect(follower: Follower) {
         const e: any = event
         const name = e.name || e.call?.name || ''
         const result = e.result
+        dispatchPdfResultHighlights(result)
         if (result && result.status === 'applied') {
           dispatchAiEditHighlight(name, result, follower.state.mode, true)
         }

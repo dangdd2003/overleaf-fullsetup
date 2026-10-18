@@ -1,6 +1,11 @@
 import './app/src/ModuleSettings.mjs'
 import Settings from '@overleaf/settings'
 import AiAssistRunRouter from './app/src/AiAssistRunRouter.mjs'
+import bodyParser from '../../app/src/infrastructure/BodyParserWrapper.mjs'
+import logger from '@overleaf/logger'
+
+/** Room on top of the transcript for provider settings and the rest of a body. */
+const BODY_HEADROOM_BYTES = 2 * 1024 * 1024
 
 /**
  * @import { WebModule } from "../../types/web-module"
@@ -10,6 +15,17 @@ import AiAssistRunRouter from './app/src/AiAssistRunRouter.mjs'
 const AiAssistModule = {
   name: 'ai-assist',
   router: AiAssistRunRouter,
+  // A chat is sent whole and can outgrow the app's 12 MB JSON limit; this
+  // parser runs first for the assistant's routes, so the app's one skips them
+  appMiddleware(app) {
+    if (!Settings.aiAssist?.enabled) return
+    app.use(
+      '/ai-assist',
+      bodyParser.json({
+        limit: Settings.aiAssist.maxTranscriptBytes + BODY_HEADROOM_BYTES,
+      })
+    )
+  },
   // Invoked by app.mjs via Modules.start() at boot. Import lazily so a
   // disabled feature never touches Redis at all.
   async start() {
@@ -37,6 +53,16 @@ const AiAssistModule = {
       'ai-assist run reaper',
       () => reaper.stop()
     )
+
+    // The connector collections' indexes, created only while the feature is on
+    if (Settings.aiAssist?.enabled) {
+      const { ensureAiAssistIndexes } = await import(
+        './app/src/AiAssistIndexes.mjs'
+      )
+      await ensureAiAssistIndexes().catch(err =>
+        logger.error({ err }, '[AiAssist] connector indexes not created')
+      )
+    }
   },
 }
 

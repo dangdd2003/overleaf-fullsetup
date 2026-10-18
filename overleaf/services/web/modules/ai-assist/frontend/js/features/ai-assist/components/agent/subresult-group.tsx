@@ -11,6 +11,8 @@ import { ThinkingBlock } from './thinking-block'
 import { EditApprovalCard } from './edit-approval-card'
 import { SettingsApprovalCard } from './settings-approval-card'
 import { PlanApprovalCard } from './plan-approval-card'
+import { ConnectorApprovalCard } from './connector-approval-card'
+import { ConnectorAuthCard } from './connector-auth-card'
 import { DiffStats, sumDiffStats } from './diff-stats'
 import { DiffStatBadge } from './diff-stat-badge'
 import { subresultExpansionStore } from './subresult-expansion-store'
@@ -37,6 +39,30 @@ function renderApprovalCard(
       <SettingsApprovalCard
         key={pendingCall.id}
         toolName={pendingCall.name}
+        args={pendingCall.args || {}}
+        onDecision={onDecision}
+      />
+    )
+  }
+  if (pendingCall.name && pendingCall.name.startsWith('mcp__')) {
+    const connector = approvalContext?.connector || {}
+    if (approvalContext?.kind === 'connectorAuth') {
+      return (
+        <ConnectorAuthCard
+          key={pendingCall.id}
+          connectorId={connector.connectorId}
+          connectorName={connector.connectorName || 'MCP Connector'}
+          toolName={pendingCall.name}
+          onDecision={onDecision}
+        />
+      )
+    }
+    return (
+      <ConnectorApprovalCard
+        key={pendingCall.id}
+        connectorName={connector.connectorName || 'MCP Connector'}
+        toolName={pendingCall.name}
+        toolTitle={connector.toolTitle}
         args={pendingCall.args || {}}
         onDecision={onDecision}
       />
@@ -292,7 +318,7 @@ export const SubresultGroup: FC<{
   items: SubresultItem[]
   isLive?: boolean
   pendingApprovalId?: string | null
-  approvalContext?: { startLine: number } | null
+  approvalContext?: { startLine?: number; kind?: string; connector?: any } | null
   onDecision: (decision: { accepted: boolean; note?: string }) => void
 }> = ({
   groupId,

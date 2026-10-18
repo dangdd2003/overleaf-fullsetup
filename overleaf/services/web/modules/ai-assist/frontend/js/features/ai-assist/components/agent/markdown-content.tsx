@@ -18,6 +18,7 @@ import {
   ensureTableSeparation,
   extractFootnotes,
   normalizeMarkdown,
+  splitMarkdownBlocks,
 } from './markdown-repair'
 import {
   faviconUrl,
@@ -871,12 +872,24 @@ marked.use({
     },
     html(html: string) {
       const tags = [...html.matchAll(/<\/?([a-zA-Z][a-zA-Z0-9-]*)/g)]
-      return tags.every(([, tag]) => RAW_HTML_TAGS.has(tag.toLowerCase()))
+      // Inline style is how raw HTML could fetch a remote background image
+      // (CSS url()) or lay a page-sized box over the chat. Such markup shows as
+      // text, the way remote images do.
+      const styled = /[\s/]style\s*=/i.test(html)
+      return !styled && tags.every(([, tag]) => RAW_HTML_TAGS.has(tag.toLowerCase()))
         ? html
         : escapeHtml(html)
     },
   },
 })
+
+/** The reply as the renderer reads it: look-alike marks fixed, tables set apart. */
+function prepareMarkdown(content: string): string {
+  // A citation still streaming in shows up once it is complete
+  return ensureTableSeparation(
+    normalizeMarkdown(content.replace(/【[^】\n]*$/, ''))
+  )
+}
 
 export function renderMarkdown(
   content: string,
@@ -887,10 +900,55 @@ export function renderMarkdown(
   if (!content) {
     return ''
   }
-  // A citation still streaming in shows up once it is complete
-  const text = ensureTableSeparation(
-    normalizeMarkdown(content.replace(/【[^】\n]*$/, ''))
+  return renderPreparedMarkdown(
+    prepareMarkdown(content),
+    content,
+    sources,
+    baseUrl,
+    opts
   )
+}
+
+/**
+ * renderMarkdown for a reply that is still streaming in. The reply is cut into
+ * blocks (see splitMarkdownBlocks), and a block already drawn is taken from
+ * `cache` instead of being parsed again, so each chunk only draws the block
+ * being written. Joined together the blocks give the HTML renderMarkdown gives
+ * for the whole reply. `cache` is left holding just the blocks of this reply.
+ */
+export function renderMarkdownStreaming(
+  content: string,
+  sources: WebSources | undefined,
+  baseUrl: string | undefined,
+  cache: Map<string, string>
+): string {
+  if (!content) {
+    cache.clear()
+    return ''
+  }
+  const { stable, tail } = splitMarkdownBlocks(prepareMarkdown(content))
+  const used = new Map<string, string>()
+  let html = ''
+  for (const block of [...stable, tail]) {
+    if (!block.trim()) continue
+    const blockHtml =
+      cache.get(block) ??
+      renderPreparedMarkdown(block, block, sources, baseUrl)
+    used.set(block, blockHtml)
+    html += blockHtml
+  }
+  cache.clear()
+  used.forEach((blockHtml, block) => cache.set(block, blockHtml))
+  return html
+}
+
+function renderPreparedMarkdown(
+  text: string,
+  content: string,
+  sources: WebSources | undefined,
+  baseUrl: string | undefined,
+  opts?: { isThinking?: boolean; codeClass?: string }
+): string {
   const footnotes = extractFootnotes(text)
 
   DOMPurify.addHook('afterSanitizeAttributes', node => {
@@ -1020,10 +1078,22 @@ export const MarkdownContent: FC<{
 
   const revealLive = useRevealLive(isLive)
   const { text, animating } = useStreamReveal(content, revealLive)
-  const html = useMemo(
-    () => renderMarkdown(text, sources, baseUrl),
-    [text, sources, baseUrl]
-  )
+  // Blocks already drawn are kept across chunks; a new source list or base URL
+  // changes how citations and links draw, so they start over
+  const blockCache = useRef<{
+    sources?: WebSources
+    baseUrl?: string
+    blocks: Map<string, string>
+  }>({ blocks: new Map() })
+  const html = useMemo(() => {
+    const cache = blockCache.current
+    if (cache.sources !== sources || cache.baseUrl !== baseUrl) {
+      cache.sources = sources
+      cache.baseUrl = baseUrl
+      cache.blocks.clear()
+    }
+    return renderMarkdownStreaming(text, sources, baseUrl, cache.blocks)
+  }, [text, sources, baseUrl])
 
   const containerRef = useRef<HTMLDivElement>(null)
   const fadeState = useRef<FadeState | null>(

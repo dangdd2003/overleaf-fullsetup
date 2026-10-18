@@ -35,6 +35,14 @@ import AuthenticationManager from '../../../../app/src/Features/Authentication/A
 
 const __dirname = Path.dirname(fileURLToPath(import.meta.url))
 
+// Batch endpoints do work per item (deletes, bcrypt hashes, session sweeps),
+// so one request is bounded.
+const MAX_BATCH_SIZE = 500
+
+function batchTooLarge(items) {
+  return Array.isArray(items) && items.length > MAX_BATCH_SIZE
+}
+
 export const AdminUserManagementController = {
   renderUserListPage(req, res) {
     res.render(Path.resolve(__dirname, '../views/user_list'))
@@ -148,12 +156,12 @@ export const AdminUserManagementController = {
         return res.status(400).json({ error: 'invalid_user_id' })
       }
 
-      if (req.body?.isAdmin === undefined) {
+      // Strict: Boolean("false") is true, so a string must not grant admin
+      if (typeof req.body?.isAdmin !== 'boolean') {
         return res.status(400).json({ error: 'invalid_admin_status' })
       }
 
-      const { isAdmin } = req.body
-      const newIsAdmin = Boolean(isAdmin)
+      const newIsAdmin = req.body.isAdmin
 
       await ensureCanModifyAdmin(callerUserId, userId, newIsAdmin)
 
@@ -256,6 +264,9 @@ export const AdminUserManagementController = {
   async restoreUser(req, res) {
     try {
       const { userId } = req.params
+      if (!ObjectId.isValid(userId)) {
+        return res.status(400).json({ error: 'invalid_user_id' })
+      }
       const callerUserId = SessionManager.getLoggedInUserId(req.session)
 
       const result = await restoreUserAndProjects(
@@ -283,6 +294,9 @@ export const AdminUserManagementController = {
   async purgeDeletedUser(req, res) {
     try {
       const { userId } = req.params
+      if (!ObjectId.isValid(userId)) {
+        return res.status(400).json({ error: 'invalid_user_id' })
+      }
       const callerUserId = SessionManager.getLoggedInUserId(req.session)
 
       const result = await purgeDeletedUser(
@@ -594,7 +608,7 @@ export const AdminUserManagementController = {
 
   async searchUsers(req, res) {
     try {
-      const query = (req.query.query || '').trim()
+      const query = String(req.query.query || '').trim().slice(0, 100)
       if (!query || query.length < 1) {
         return res.json({ users: [] })
       }
@@ -645,10 +659,20 @@ export const AdminUserManagementController = {
         return res.status(404).json({ error: 'user_not_found' })
       }
 
+      // transferOwnership does not check its fromUserId, so check it here
+      const owned = await Project.exists({
+        _id: new ObjectId(projectId),
+        owner_ref: new ObjectId(userId),
+      })
+      if (!owned) {
+        return res.status(404).json({ error: 'project_not_found' })
+      }
+
       const handler =
         OwnershipTransferHandler.promises || OwnershipTransferHandler
       await handler.transferOwnership(projectId, destinationUserId, {
         fromUserId: userId,
+        sessionUserId: SessionManager.getLoggedInUserId(req.session),
         allowTransferToNonCollaborators: true,
         ipAddress: req.ip,
       })
@@ -826,6 +850,9 @@ export const AdminUserManagementController = {
       if (!Array.isArray(rawUsers) || rawUsers.length === 0) {
         return res.status(400).json({ error: 'invalid_users_array' })
       }
+      if (batchTooLarge(rawUsers)) {
+        return res.status(400).json({ error: 'too_many_users' })
+      }
 
       const callerUserId = SessionManager.getLoggedInUserId(req.session)
       const created = []
@@ -860,9 +887,26 @@ export const AdminUserManagementController = {
           typeof row.last_name === 'string'
             ? row.last_name.trim().slice(0, 100)
             : ''
-        const isAdmin = Boolean(row.isAdmin)
+        // Strict: Boolean("false") is true, so only a real true grants admin
+        const isAdmin = row.isAdmin === true
         const rawPassword =
           typeof row.password === 'string' ? row.password.trim() : ''
+
+        if (rawPassword.length > 0) {
+          // Same policy as a password the user sets (length, characters, not
+          // similar to the email); hashing alone would skip it
+          const validationError = AuthenticationManager.validatePassword(
+            rawPassword,
+            parsedEmail
+          )
+          if (validationError) {
+            failed.push({
+              email: parsedEmail,
+              reason: validationError.info?.code || 'invalid_password',
+            })
+            continue
+          }
+        }
 
         const userCreator = UserCreator.promises || UserCreator
         const newUser = await userCreator.createNewUser(
@@ -953,6 +997,9 @@ export const AdminUserManagementController = {
       if (!Array.isArray(userIds) || userIds.length === 0) {
         return res.status(400).json({ error: 'invalid_user_ids' })
       }
+      if (batchTooLarge(userIds)) {
+        return res.status(400).json({ error: 'too_many_users' })
+      }
 
       const callerUserId = SessionManager.getLoggedInUserId(req.session)
       let skippedSelf = false
@@ -1011,6 +1058,9 @@ export const AdminUserManagementController = {
       if (!Array.isArray(userIds) || userIds.length === 0) {
         return res.status(400).json({ error: 'invalid_user_ids' })
       }
+      if (batchTooLarge(userIds)) {
+        return res.status(400).json({ error: 'too_many_users' })
+      }
 
       const callerUserId = SessionManager.getLoggedInUserId(req.session)
       let totalRevoked = 0
@@ -1041,7 +1091,7 @@ export const AdminUserManagementController = {
           if (typeof userSessionsManager.removeSessionsFromRedis === 'function') {
             await userSessionsManager.removeSessionsFromRedis(
               { _id: new ObjectId(userId) },
-              options
+              options.retainSessionID
             )
           }
 
@@ -1079,6 +1129,9 @@ export const AdminUserManagementController = {
       const { userIds } = req.body || {}
       if (!Array.isArray(userIds) || userIds.length === 0) {
         return res.status(400).json({ error: 'invalid_user_ids' })
+      }
+      if (batchTooLarge(userIds)) {
+        return res.status(400).json({ error: 'too_many_users' })
       }
 
       const callerUserId = SessionManager.getLoggedInUserId(req.session)
@@ -1124,6 +1177,9 @@ export const AdminUserManagementController = {
       const { recordIds } = req.body || {}
       if (!Array.isArray(recordIds) || recordIds.length === 0) {
         return res.status(400).json({ error: 'invalid_record_ids' })
+      }
+      if (batchTooLarge(recordIds)) {
+        return res.status(400).json({ error: 'too_many_users' })
       }
 
       const callerUserId = SessionManager.getLoggedInUserId(req.session)

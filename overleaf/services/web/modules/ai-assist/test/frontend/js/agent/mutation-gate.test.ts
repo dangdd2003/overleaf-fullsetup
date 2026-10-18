@@ -106,6 +106,7 @@ describe('the runner gates mutation on the mutates flag', function () {
       'get_packages',
       'get_project_settings',
       'get_references',
+      'highlight_in_pdf',
       'list_available_settings',
       'list_files',
       'read_file',

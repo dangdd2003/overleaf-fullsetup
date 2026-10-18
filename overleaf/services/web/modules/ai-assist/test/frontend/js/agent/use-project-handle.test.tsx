@@ -51,6 +51,7 @@ describe('useProjectHandle & CodeMirror Bridge Integration', function () {
       window.dispatchEvent(
         new CustomEvent('aiAssist:agentApplyEdit', {
           detail: {
+            path: 'main.tex',
             from: 3,
             to: 3,
             oldText: 'Hello World',
@@ -86,6 +87,7 @@ describe('useProjectHandle & CodeMirror Bridge Integration', function () {
       window.dispatchEvent(
         new CustomEvent('aiAssist:agentApplyEdit', {
           detail: {
+            path: 'main.tex',
             from: 3,
             to: 3,
             oldText: 'Mismatch Text',

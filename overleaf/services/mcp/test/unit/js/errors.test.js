@@ -56,17 +56,32 @@ describe('errors', function () {
     it('preserves the upstream code in the payload', function () {
       const result = toToolError(new OverleafApiError('forbidden', 'read-only', 403))
       expect(result.isError).to.be.true
-      expect(JSON.parse(result.content[0].text)).to.deep.equal({
-        code: 'forbidden',
-        message: 'read-only',
-      })
+      const payload = JSON.parse(result.content[0].text)
+      expect(payload.ok).to.equal(false)
+      expect(payload.error.code).to.equal('forbidden')
+      expect(payload.error.message).to.equal('read-only')
+      expect(payload.error.hint).to.be.a('string').and.not.empty
+      expect(payload.error.retryable).to.equal(false)
+    })
+
+    it('carries a tool-specific hint and details through', function () {
+      const result = toToolError(
+        new OverleafApiError('not_found', 'no such file', 404, {
+          hint: 'did you mean main.tex?',
+          details: { candidates: ['main.tex'] },
+        })
+      )
+      const { error } = JSON.parse(result.content[0].text)
+      expect(error.hint).to.equal('did you mean main.tex?')
+      expect(error.details).to.deep.equal({ candidates: ['main.tex'] })
     })
 
     it('maps an unknown error to upstream_error without leaking its message', function () {
       const result = toToolError(new TypeError('fetch failed for http://web:3000'))
-      const payload = JSON.parse(result.content[0].text)
-      expect(payload.code).to.equal('upstream_error')
-      expect(payload.message).to.not.include('web:3000')
+      const { error } = JSON.parse(result.content[0].text)
+      expect(error.code).to.equal('upstream_error')
+      expect(error.message).to.not.include('web:3000')
+      expect(error.retryable).to.equal(true)
     })
   })
 })

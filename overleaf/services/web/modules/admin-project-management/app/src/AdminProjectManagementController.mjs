@@ -10,6 +10,10 @@ import SessionManager from '../../../../app/src/Features/Authentication/SessionM
 
 const __dirname = Path.dirname(fileURLToPath(import.meta.url))
 
+// The only ids this module puts into redirect paths: 24 hex characters.
+// ObjectId.isValid also accepts any 12-character string, which can carry ? or #.
+const OBJECT_ID_RE = /^[0-9a-f]{24}$/i
+
 // Accepts either a bare project id or a pasted project URL
 // (e.g. https://example.com/project/<id>) and pulls the id out of it.
 function extractProjectId(input) {
@@ -35,7 +39,7 @@ export const AdminProjectManagementController = {
 
   async renderProjectDetail(req, res) {
     const { projectId } = req.params
-    if (!ObjectId.isValid(projectId)) {
+    if (!OBJECT_ID_RE.test(projectId)) {
       return res.redirect('/admin/project?error=not_found')
     }
 
@@ -73,7 +77,7 @@ export const AdminProjectManagementController = {
       .trim()
       .toLowerCase()
 
-    if (!ObjectId.isValid(projectId)) {
+    if (!OBJECT_ID_RE.test(projectId)) {
       return res.redirect('/admin/project?error=not_found')
     }
     if (!newOwnerEmail) {

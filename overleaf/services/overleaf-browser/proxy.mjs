@@ -1,6 +1,8 @@
 import http from 'node:http'
 import net from 'node:net'
 import tls from 'node:tls'
+import { Transform } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
 import { resolvePublic } from './address.mjs'
 
 /**
@@ -14,13 +16,21 @@ import { resolvePublic } from './address.mjs'
 
 export const EGRESS_PORTS = new Set([80, 443])
 
+/** The most of one plain-HTTP response relayed; same as the web side's cap. */
+export const MAX_RESPONSE_BYTES = 128 * 1024 * 1024
+
 export const EGRESS_LIMITS = {
   maxConnections: 256,
   idleMs: 15_000,
   lifetimeMs: 10 * 60_000,
   maxUploadBytes: 16 * 1024 * 1024,
+  maxResponseBytes: MAX_RESPONSE_BYTES,
   connectTimeoutMs: 15_000,
 }
+
+/** Header the proxy sets on a response it refused for being over the cap. */
+export const REFUSED_HEADER = 'x-egress-refused'
+export const REFUSED_TOO_LARGE = 'response-too-large'
 
 /**
  * Parses a proxy URL string into structured proxy options.
@@ -57,6 +67,24 @@ export function parseProxyUrl(raw) {
 function authorityOf(value) {
   const match = /^(\[[^\]]+\]|[^:]+):(\d{1,5})$/.exec(String(value ?? ''))
   return match ? { host: match[1], port: Number(match[2]) } : null
+}
+
+/**
+ * The 16 bytes of a canonical IPv6 address as `dns.lookup` returns it. An
+ * embedded dotted IPv4 tail is never returned there, so it is refused.
+ */
+function ipv6ToBuffer(address) {
+  if (address.includes('.')) throw new Error(`unsupported IPv6 form ${address}`)
+  const [headText, tailText] = address.split('::')
+  const groups = text => (text ? text.split(':') : [])
+  const head = groups(headText)
+  const tail = tailText === undefined ? [] : groups(tailText)
+  const zeros = Array(8 - head.length - tail.length).fill('0')
+  const buffer = Buffer.alloc(16)
+  ;[...head, ...zeros, ...tail].forEach((group, index) =>
+    buffer.writeUInt16BE(parseInt(group, 16), index * 2)
+  )
+  return buffer
 }
 
 /** Connects to destination through an upstream SOCKS5 proxy (RFC 1928 / 1929). */
@@ -118,11 +146,13 @@ function connectSocks5Tunnel({ proxy, targetHost, targetPort, timeoutMs }) {
 
     function sendConnectCommand() {
       // Command 1 = CONNECT. Address type 3 = Domain Name, 1 = IPv4
-      const isIpv4 = net.isIP(targetHost) === 4
+      const family = net.isIP(targetHost)
       let addrBuf
-      if (isIpv4) {
+      if (family === 4) {
         const parts = targetHost.split('.').map(Number)
         addrBuf = Buffer.concat([Buffer.from([0x01]), Buffer.from(parts)])
+      } else if (family === 6) {
+        addrBuf = Buffer.concat([Buffer.from([0x04]), ipv6ToBuffer(targetHost)])
       } else {
         const hostBuf = Buffer.from(targetHost)
         addrBuf = Buffer.concat([Buffer.from([0x03, hostBuf.length]), hostBuf])
@@ -170,7 +200,8 @@ function connectHttpTunnel({ proxy, targetHost, targetPort, timeoutMs }) {
     socket.once('error', cleanup)
 
     socket.once('connect', () => {
-      const authority = `${targetHost}:${targetPort}`
+      const host = net.isIP(targetHost) === 6 ? `[${targetHost}]` : targetHost
+      const authority = `${host}:${targetPort}`
       let headers = `CONNECT ${authority} HTTP/1.1\r\nHost: ${authority}\r\n`
       if (proxy.username || proxy.password) {
         const creds = Buffer.from(
@@ -231,6 +262,40 @@ export function createEgressProxy({
       socket.on('error', close)
     }
     return true
+  }
+
+  /**
+   * Relays a plain-HTTP response to the client, cut off as soon as its body
+   * passes limits.maxResponseBytes. A declared length over the cap is refused
+   * before any byte is sent. Chunked and undeclared bodies are counted as they
+   * stream, so the proxy never holds more than one chunk of an oversize body.
+   */
+  function relayResponse(upstreamRes, res, label) {
+    const max = limits.maxResponseBytes
+    const declared = Number(upstreamRes.headers['content-length']) || 0
+    if (declared > max) {
+      upstreamRes.destroy()
+      log(`egress refused ${label} (response over ${max} bytes)`)
+      res
+        .writeHead(502, { 'Content-Type': 'text/plain', [REFUSED_HEADER]: REFUSED_TOO_LARGE })
+        .end('Response too large')
+      return
+    }
+    let sent = 0
+    const cap = new Transform({
+      transform(chunk, _encoding, callback) {
+        sent += chunk.length
+        if (sent > max) {
+          callback(new Error('response over cap'))
+          return
+        }
+        callback(null, chunk)
+      },
+    })
+    res.writeHead(upstreamRes.statusCode ?? 502, upstreamRes.headers)
+    pipeline(upstreamRes, cap, res).catch(() => {
+      if (sent > max) log(`egress aborted ${label} (response over ${max} bytes)`)
+    })
   }
 
   function capUpload(source, sink, alreadySent = 0) {
@@ -313,18 +378,19 @@ export function createEgressProxy({
         ).toString('base64')
         headers['Proxy-Authorization'] = `Basic ${creds}`
       }
+      // The upstream resolves names itself, so name the address checked above:
+      // a rebinding hostname could otherwise reach a private address there.
+      const pinned = new URL(target.href)
+      pinned.hostname = address.family === 6 ? `[${address.address}]` : address.address
       const upstreamReq = http.request(
         {
           host: upstream.host,
           port: upstream.port,
           method: req.method,
-          path: target.href,
+          path: pinned.href,
           headers,
         },
-        upstreamRes => {
-          res.writeHead(upstreamRes.statusCode ?? 502, upstreamRes.headers)
-          upstreamRes.pipe(res)
-        }
+        upstreamRes => relayResponse(upstreamRes, res, `${target.hostname}:${port}`)
       )
       upstreamReq.on('socket', socket => {
         if (!track([req.socket, socket])) {
@@ -344,7 +410,7 @@ export function createEgressProxy({
 
     let upstreamSocket
     try {
-      upstreamSocket = await openUpstreamSocket(target.hostname, port, address)
+      upstreamSocket = await openUpstreamSocket(address.address, port, address)
     } catch (err) {
       log(`egress failed ${target.hostname}:${port} (${err.message})`)
       if (!res.headersSent) res.writeHead(502).end('Gateway error')
@@ -365,10 +431,9 @@ export function createEgressProxy({
       }
       log(`egress http ${target.hostname}:${port} ${address.address}${upstream ? ` (via ${upstream.type})` : ''}`)
     })
-    upstreamReq.on('response', upstreamRes => {
-      res.writeHead(upstreamRes.statusCode ?? 502, upstreamRes.headers)
-      upstreamRes.pipe(res)
-    })
+    upstreamReq.on('response', upstreamRes =>
+      relayResponse(upstreamRes, res, `${target.hostname}:${port}`)
+    )
     upstreamReq.on('error', () => {
       if (!res.headersSent) res.writeHead(502)
       res.end()
@@ -400,7 +465,7 @@ export function createEgressProxy({
 
     let upstreamSocket
     try {
-      upstreamSocket = await openUpstreamSocket(authority.host, authority.port, address)
+      upstreamSocket = await openUpstreamSocket(address.address, authority.port, address)
     } catch (err) {
       log(`egress failed ${authority.host}:${authority.port} (${err.message})`)
       client.end('HTTP/1.1 502 Bad Gateway\r\n\r\n')

@@ -51,7 +51,7 @@ function createMockRes(chunks = []) {
 
 const settings = {
   type: 'ollama',
-  baseUrl: 'http://10.0.0.5:11434',
+  baseUrl: 'http://203.0.113.5:11434',
   model: 'qwen3:8b',
 }
 

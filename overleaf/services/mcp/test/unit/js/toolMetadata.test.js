@@ -11,16 +11,39 @@ describe('listToolMetadata', function () {
       'files',
       'compile',
       'latex',
+      'history',
+      'tags',
     ])
 
     const allTools = groups.flatMap(g => g.tools)
-    expect(allTools).to.have.length(20)
+    expect(allTools).to.have.length(40)
+    expect(byKey.compile.tools.map(t => t.name)).to.include(
+      'view_compiled_pdf_page'
+    )
     expect(byKey.projects.tools.map(t => t.name)).to.have.members([
       'list_projects',
       'create_project',
       'get_project',
       'update_project',
+      'set_project_status',
+      'copy_project',
+      'delete_project',
       'export_project_zip',
+    ])
+
+    expect(byKey.history.tools.map(t => t.name)).to.have.members([
+      'list_history',
+      'get_history_diff',
+      'restore_file',
+    ])
+
+    expect(byKey.tags.tools.map(t => t.name)).to.have.members([
+      'list_tags',
+      'create_tag',
+      'update_tag',
+      'delete_tag',
+      'add_projects_to_tag',
+      'remove_projects_from_tag',
     ])
 
     for (const tool of allTools) {
@@ -49,5 +72,18 @@ describe('listToolMetadata', function () {
 
   it('does not require a live client to build the metadata', function () {
     expect(() => listToolMetadata()).to.not.throw()
+  })
+
+  it('lists every compiled-PDF tool', function () {
+    const names = listToolMetadata()
+      .flatMap(g => g.tools)
+      .map(t => t.name)
+    expect(names).to.include.members([
+      'view_compiled_pdf_page',
+      'view_compiled_pdf_overview',
+      'search_compiled_pdf',
+      'resolve_pdf_block',
+      'diff_compiled_pdf',
+    ])
   })
 })

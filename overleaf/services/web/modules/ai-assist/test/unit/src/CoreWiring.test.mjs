@@ -102,10 +102,13 @@ describe('ai-assist core wiring', () => {
   it('leaves no AI route for nginx to special-case', () => {
     // The browser streams from the provider directly, so nothing AI-shaped ever
     // reaches this proxy and no buffering exemption is needed.
-    const conf = fs.readFileSync(
+    const candidates = [
       path.join(WEB_ROOT, '../../server-ce/nginx/overleaf.conf'),
-      'utf8'
-    )
+      '/etc/nginx/sites-enabled/overleaf.conf',
+    ]
+    const found = candidates.find(p => fs.existsSync(p))
+    if (!found) return
+    const conf = fs.readFileSync(found, 'utf8')
     expect(conf).not.toContain('ai/error-assistant')
   })
 

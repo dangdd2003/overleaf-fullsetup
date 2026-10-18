@@ -155,6 +155,25 @@ test('validates request url and rejects invalid target or private IP with 400 or
   }
 })
 
+test('refuses metadata and IPv4-mapped IPv6 targets, including bracketed literals', async () => {
+  const app = createApp({ token: TEST_TOKEN, engine: fakeEngine() })
+  const port = await listen(app)
+  try {
+    for (const url of [
+      'http://169.254.169.254/latest/meta-data/',
+      'http://[fd00:ec2::254]/',
+      'http://[::ffff:169.254.169.254]/',
+      'http://[::ffff:127.0.0.1]/',
+      'http://100.100.100.200/',
+    ]) {
+      const res = await post(port, '/v1/raw', url)
+      assert.equal(res.status, 403, url)
+    }
+  } finally {
+    shut(app)
+  }
+})
+
 test('a raw read that lands on a bot check cools the host down', async () => {
   const app = createApp({
     token: TEST_TOKEN,

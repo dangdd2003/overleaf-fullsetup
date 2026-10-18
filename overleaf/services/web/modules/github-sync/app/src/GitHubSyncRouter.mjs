@@ -1,6 +1,13 @@
 import AuthenticationController from '../../../../app/src/Features/Authentication/AuthenticationController.mjs'
 import AuthorizationManager from '../../../../app/src/Features/Authorization/AuthorizationManager.mjs'
+import RateLimiterMiddleware from '../../../../app/src/Features/Security/RateLimiterMiddleware.mjs'
+import { RateLimiter } from '../../../../app/src/infrastructure/RateLimiter.mjs'
 import GitHubSyncManager from './GitHubSyncManager.mjs'
+
+// Per user. Syncs are cheap to repeat but each one clones, fetches and pushes,
+// so they are capped; creating repos is rare and capped tighter.
+export const SYNC_RATE_LIMIT = { points: 10, duration: 60 }
+export const CREATE_REPO_RATE_LIMIT = { points: 10, duration: 60 * 60 }
 
 async function _requireWriteAccess(req, res) {
   const canWrite = await AuthorizationManager.promises.canUserWriteProjectContent(
@@ -94,13 +101,14 @@ async function createRepo(req, res) {
   if (!name) {
     return res.status(400).json({ code: 'invalidParameters', message: 'name is required' })
   }
+  // createRepo does not go through _requireLinkedOwner (there is no link yet),
+  // so it needs its own write-access check, which also runs before the
+  // already-linked answer so that it reveals nothing to users without access.
+  if (!(await _requireWriteAccess(req, res))) return
   const existing = await GitHubSyncManager.promises.getState(req.params.projectId)
   if (existing) {
     return res.status(409).json({ code: 'alreadyLinked', message: 'already linked' })
   }
-  // createRepo does not go through _requireLinkedOwner (there is no link yet),
-  // so it needs its own write-access check.
-  if (!(await _requireWriteAccess(req, res))) return
   try {
     const result = await GitHubSyncManager.promises.createRepoAndLink(
       req.user._id,
@@ -117,13 +125,20 @@ async function createRepo(req, res) {
 const GitHubSyncRouter = {
   apply(webRouter) {
     const requireLogin = AuthenticationController.requireLogin()
+    // Created here, not at import, so nothing is set up unless the router is applied
+    const syncRateLimit = RateLimiterMiddleware.rateLimit(
+      new RateLimiter('github-sync-sync', SYNC_RATE_LIMIT)
+    )
+    const createRepoRateLimit = RateLimiterMiddleware.rateLimit(
+      new RateLimiter('github-sync-create-repo', CREATE_REPO_RATE_LIMIT)
+    )
     const base = '/project/:projectId/github'
     webRouter.get(`${base}/status`, requireLogin, status)
-    webRouter.post(`${base}/pull`, requireLogin, pull)
-    webRouter.post(`${base}/push`, requireLogin, push)
+    webRouter.post(`${base}/pull`, requireLogin, syncRateLimit, pull)
+    webRouter.post(`${base}/push`, requireLogin, syncRateLimit, push)
     webRouter.post(`${base}/unlink`, requireLogin, unlinkProject)
     webRouter.post(`${base}/continue-merge`, requireLogin, continueMerge)
-    webRouter.post(`${base}/create-repo`, requireLogin, createRepo)
+    webRouter.post(`${base}/create-repo`, requireLogin, createRepoRateLimit, createRepo)
   },
 }
 

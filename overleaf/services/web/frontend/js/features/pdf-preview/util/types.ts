@@ -48,6 +48,8 @@ export type HighlightData = {
   v: number
   width: number
   height: number
+  /** Overrides the default highlight colour, e.g. for changes made by AI. */
+  color?: string
 }
 
 export type DeliveryLatencies = {

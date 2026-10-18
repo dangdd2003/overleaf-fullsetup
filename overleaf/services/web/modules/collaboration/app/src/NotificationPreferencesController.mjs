@@ -49,7 +49,14 @@ async function updatePreferences(req, res) {
     throw new Error('no logged-in user')
   }
   const { project_id: projectId } = req.params
-  const preferences = req.body || {}
+  // Only the known boolean switches are stored; anything else in the body is dropped
+  const preferences = Object.fromEntries(
+    Object.entries(req.body || {}).filter(
+      ([key, value]) =>
+        Object.hasOwn(DEFAULT_PROJECT_PREFERENCES, key) &&
+        typeof value === 'boolean'
+    )
+  )
 
   await db.notificationsPreferences.updateOne(
     {

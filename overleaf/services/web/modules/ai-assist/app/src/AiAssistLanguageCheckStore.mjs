@@ -147,8 +147,17 @@ export class AiAssistLanguageCheckStore {
       return cached
     }
     const { entries, mtimeMs } = await readFile(file)
+    // Another call may have loaded, or stored into, this project while the
+    // file was read. Its object is the one the timer flushes, so a store made
+    // into a replaced object would never be written.
     const existing = this.open.get(projectId)
-    if (existing && existing.dirty) {
+    if (existing) {
+      if (!existing.dirty) {
+        existing.entries = entries
+        existing.mtimeMs = mtimeMs
+      }
+      this.open.delete(projectId)
+      this.open.set(projectId, existing)
       return existing
     }
     const loaded = { entries, mtimeMs, dirty: false, timer: null }

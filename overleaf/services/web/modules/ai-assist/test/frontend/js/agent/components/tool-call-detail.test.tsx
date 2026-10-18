@@ -402,4 +402,284 @@ describe('ToolCallDetailView', function () {
     expect(screen.getByText('@einstein1905')).to.exist
     expect(container.querySelector('.ai-assist-tool-detail-refs')).to.exist
   })
+
+  it('renders view_compiled_pdf_page with zoom info, SyncTeX rows, bad boxes, and text lines', function () {
+    const call = {
+      id: '16',
+      name: 'view_compiled_pdf_page',
+      args: { page: 3 },
+      result: {
+        page: 3,
+        pageCount: 12,
+        focus: {
+          path: 'main.tex',
+          line: 40,
+          endLine: 52,
+          continuesOn: [4],
+        },
+        sourceMap: [
+          { y: 5, path: 'main.tex', line: 88 },
+          { y: 35, path: 'tables/results.tex', line: 12 },
+        ],
+        badBoxes: [
+          {
+            path: 'tables/results.tex',
+            line: 12,
+            message: 'Overfull \\hbox (48.2pt too wide)',
+          },
+        ],
+        text: {
+          lines: [
+            { y: 8, text: 'Table 2: Results' },
+            { y: 35, text: 'Sample text' },
+          ],
+          truncated: true,
+        },
+      },
+    }
+    const { container } = render(<ToolCallDetailView call={call} />)
+    expect(screen.getByText(/Zoomed on/)).to.exist
+    expect(screen.getByText('main.tex:40–52')).to.exist
+    expect(screen.getByText(/continues on page 4/)).to.exist
+    expect(screen.getByText('5% down:')).to.exist
+    expect(screen.getByText('main.tex:88')).to.exist
+    expect(screen.getAllByText('tables/results.tex:12')).to.have.length(2)
+    expect(screen.getByText(/Overfull \\hbox/)).to.exist
+    expect(screen.getByText('Text on the page')).to.exist
+    expect(screen.getByText('Table 2: Results')).to.exist
+    expect(screen.getByText('Sample text')).to.exist
+    expect(screen.getByText('Only part of the text is shown')).to.exist
+    expect(container.querySelector('.ai-assist-tool-detail-outline')).to.exist
+  })
+
+  it('renders clean view_compiled_pdf_page with page header, clean layout status, and image preview (not empty)', function () {
+    const call = {
+      id: '16b',
+      name: 'view_compiled_pdf_page',
+      args: { page: 5 },
+      result: {
+        page: 5,
+        pageCount: 6,
+        pageSize: { width: 612, height: 792 },
+        region: 'full',
+        badBoxes: [],
+        sourceRanges: [{ path: 'main.tex', startLine: 1, endLine: 45 }],
+        image: {
+          mediaType: 'image/png',
+          data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+        },
+      },
+    }
+    const { container } = render(<ToolCallDetailView call={call} />)
+    expect(screen.getByText(/Page 5 of 6/)).to.exist
+    expect(screen.getByText(/Page 5 rendered cleanly with no layout issues/)).to.exist
+    expect(screen.getByText(/main.tex:1–45/)).to.exist
+    const img = container.querySelector('.ai-assist-pdf-image-thumb img')
+    expect(img).to.exist
+    expect(img?.getAttribute('src')).to.include('data:image/png;base64,')
+  })
+
+  it('renders view_compiled_pdf_overview with header, font warnings, page labels, source links, and findings', function () {
+    const call = {
+      id: '17',
+      name: 'view_compiled_pdf_overview',
+      args: { fromPage: 1, toPage: 6 },
+      result: {
+        fromPage: 1,
+        toPage: 6,
+        pageCount: 34,
+        paper: {
+          width: 612,
+          height: 792,
+          name: 'Letter',
+          orientation: 'portrait',
+        },
+        fonts: {
+          notEmbedded: ['Arial'],
+          type3: ['T1-cmr10'],
+        },
+        pages: [
+          {
+            page: 1,
+            source: [{ path: 'main.tex', startLine: 1, endLine: 35 }],
+            blank: false,
+          },
+          {
+            page: 2,
+            source: [{ path: 'main.tex', startLine: 36, endLine: 80 }],
+            badBoxes: 2,
+            worstBadBox: {
+              path: 'main.tex',
+              line: 40,
+              message: 'Overfull \\hbox on page 2',
+            },
+          },
+          {
+            page: 3,
+            source: [{ path: 'chapters/intro.tex', startLine: 1, endLine: 40 }],
+            endsAt: 55,
+          },
+          {
+            page: 4,
+            source: [{ path: 'chapters/intro.tex', startLine: 41, endLine: 90 }],
+            overflow: [{ side: 'right', mm: 12 }],
+          },
+          {
+            page: 5,
+            source: [],
+            blank: true,
+          },
+          {
+            page: 6,
+            source: [{ path: 'chapters/methods.tex', startLine: 1, endLine: 30 }],
+            gaps: [{ top: 30, bottom: 58 }],
+            unresolved: { refs: 2, cites: 1 },
+          },
+        ],
+      },
+    }
+    const { container } = render(<ToolCallDetailView call={call} />)
+    expect(screen.getByText(/Letter · portrait · 612 × 792 mm · 34 pages/)).to.exist
+    expect(screen.getByText(/Fonts not embedded: Arial/)).to.exist
+    expect(screen.getByText(/Type 3 fonts: T1-cmr10/)).to.exist
+    expect(screen.getByText('p1')).to.exist
+    expect(screen.getByText('main.tex:1–35')).to.exist
+    expect(screen.getByText('p2')).to.exist
+    expect(screen.getByText('main.tex:36–80')).to.exist
+    expect(screen.getByText('2 bad boxes')).to.exist
+    expect(screen.getByText(/Overfull \\hbox on page 2/)).to.exist
+    expect(screen.getByText('p3')).to.exist
+    expect(screen.getByText('ends 55% down')).to.exist
+    expect(screen.getByText('p4')).to.exist
+    expect(screen.getByText('12mm past right margin')).to.exist
+    expect(screen.getByText('p5')).to.exist
+    expect(screen.getByText('blank')).to.exist
+    expect(screen.getByText('p6')).to.exist
+    expect(screen.getByText('empty 30–58% · 2× ?? · 1× [?]')).to.exist
+    expect(screen.getByText('No layout issues')).to.exist
+    expect(container.querySelectorAll('.ai-assist-pdf-page').length).to.equal(6)
+  })
+
+  it('renders clean PDF overview with page badges and clean layout status for all clean pages', function () {
+    const call = {
+      id: '17b',
+      name: 'view_compiled_pdf_overview',
+      args: { fromPage: 1, toPage: 6 },
+      result: {
+        fromPage: 1,
+        toPage: 6,
+        pageCount: 6,
+        paper: {
+          width: 612,
+          height: 792,
+          name: 'Letter',
+          orientation: 'portrait',
+        },
+        pages: [
+          { page: 1 },
+          { page: 2 },
+          { page: 3 },
+          { page: 4 },
+          { page: 5 },
+          { page: 6 },
+        ],
+      },
+    }
+    const { container } = render(<ToolCallDetailView call={call} />)
+    expect(screen.getByText(/Letter · portrait · 612 × 792 mm · 6 pages/)).to.exist
+    for (let p = 1; p <= 6; p++) {
+      expect(screen.getByText(`p${p}`)).to.exist
+    }
+    expect(screen.getAllByText('No layout issues')).to.have.length(6)
+    expect(container.querySelectorAll('.ai-assist-pdf-page.is-clean')).to.have.length(6)
+    expect(container.querySelectorAll('.ai-assist-pdf-page-badge')).to.have.length(6)
+  })
+
+  it('renders search_compiled_pdf with matches, locations, source links, highlighted text, and truncation note', function () {
+    const call = {
+      id: '18',
+      name: 'search_compiled_pdf',
+      args: { query: 'Figure 3' },
+      result: {
+        query: 'Figure 3',
+        matchCount: 10,
+        matches: [
+          {
+            page: 1,
+            y: 41,
+            context: 'see Figure 3 below',
+            path: 'main.tex',
+            line: 42,
+          },
+          {
+            page: 2,
+            y: 15,
+            context: 'as in Figure 3',
+            path: 'figs.tex',
+            line: null,
+          },
+        ],
+        truncated: true,
+      },
+    }
+    const { container } = render(<ToolCallDetailView call={call} />)
+    expect(screen.getByText('p1 · 41%')).to.exist
+    expect(screen.getByText('main.tex:42')).to.exist
+    expect(screen.getByText('p2 · 15%')).to.exist
+    expect(screen.getByText('figs.tex')).to.exist
+    expect(container.querySelector('mark')?.textContent).to.equal('Figure 3')
+    expect(screen.getByText('showing 2 of 10')).to.exist
+  })
+
+  it('renders search_compiled_pdf note when no matches found', function () {
+    const call = {
+      id: '19',
+      name: 'search_compiled_pdf',
+      args: { query: 'nonexistent' },
+      result: {
+        query: 'nonexistent',
+        matchCount: 0,
+        matches: [],
+      },
+    }
+    render(<ToolCallDetailView call={call} />)
+    expect(screen.getByText('No matches found for "nonexistent".')).to.exist
+  })
+})
+
+describe('tool output links and images', function () {
+  it('shows a web_fetch address that is not http(s) as text, not as a link', function () {
+    const url = 'javascript:alert(document.cookie)'
+    const call = {
+      id: '30',
+      name: 'web_fetch',
+      args: { url },
+      result: { url, title: 'Page', content: '# Hi', totalPages: 1, page: 1 },
+    }
+    const { container } = render(<ToolCallDetailView call={call} />)
+
+    expect(container.querySelector('a[href^="javascript"]')).to.equal(null)
+    expect(container.textContent).to.include('javascript:alert(document.cookie)')
+  })
+
+  it('does not load a remote image named by tool output', function () {
+    const call = {
+      id: '31',
+      name: 'view_compiled_pdf_page',
+      args: { page: 2 },
+      result: {
+        page: 2,
+        pageCount: 3,
+        pageSize: { width: 612, height: 792 },
+        region: 'full',
+        badBoxes: [],
+        sourceRanges: [],
+        image: { url: 'https://tracker.example/pixel.png' },
+      },
+    }
+    const { container } = render(<ToolCallDetailView call={call} />)
+
+    expect(container.querySelector('img[src^="https"]')).to.equal(null)
+    expect(container.querySelector('.ai-assist-pdf-image-thumb img')).to.equal(null)
+  })
 })

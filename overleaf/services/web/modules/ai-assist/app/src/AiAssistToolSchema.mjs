@@ -46,6 +46,97 @@ const KNOWN_TYPES = new Set([
   'null',
 ])
 
+const MAX_REF_DEPTH = 8
+
+/**
+ * Inlines `$ref`s into `$defs`/`definitions` and collapses `anyOf`/`oneOf`/
+ * `allOf`/`const`, which MCP servers (pydantic, zod) emit constantly and the
+ * OpenAPI subset cannot express. Without this a referenced or optional
+ * parameter reaches the model as an untyped `{}`.
+ */
+export function flattenJsonSchema(schema) {
+  const root = schema && typeof schema === 'object' ? schema : {}
+  const defs = { ...(root.definitions || {}), ...(root.$defs || {}) }
+
+  function resolve(node, depth) {
+    if (!node || typeof node !== 'object') return node
+    if (Array.isArray(node)) return node.map(n => resolve(n, depth))
+
+    let current = node
+    if (typeof current.$ref === 'string') {
+      const name = current.$ref.split('/').pop()
+      const target = defs[name]
+      const { $ref: _ref, ...rest } = current
+      current =
+        target && depth < MAX_REF_DEPTH
+          ? { ...resolve(target, depth + 1), ...rest }
+          : { ...rest, type: rest.type || 'object' }
+    }
+
+    const branches = current.anyOf || current.oneOf
+    if (Array.isArray(branches) && !current.type) {
+      const { anyOf: _a, oneOf: _o, ...rest } = current
+      const resolved = branches.map(b => resolve(b, depth))
+      const concrete = resolved.filter(b => b && b.type !== 'null')
+      const nullable = concrete.length < resolved.length
+      // Same-typed string branches (enum variants) merge into one enum
+      const strings = concrete.filter(b => b.type === 'string' && b.enum)
+      let picked = concrete[0] || { type: 'string' }
+      if (strings.length > 1 && strings.length === concrete.length) {
+        picked = { ...picked, enum: strings.flatMap(b => b.enum) }
+      }
+      current = {
+        ...picked,
+        ...rest,
+        ...(nullable ? { nullable: true } : {}),
+      }
+    }
+
+    if (Array.isArray(current.allOf)) {
+      const { allOf, ...rest } = current
+      current = allOf
+        .map(b => resolve(b, depth))
+        .reduce(
+          (merged, part) => ({
+            ...merged,
+            ...part,
+            properties: { ...merged.properties, ...part?.properties },
+            required: [...(merged.required || []), ...(part?.required || [])],
+          }),
+          { ...rest, properties: { ...rest.properties } }
+        )
+      if (!Object.keys(current.properties).length) delete current.properties
+      current.required = [...new Set(current.required)]
+      if (!current.required.length) delete current.required
+    }
+
+    if (current.const !== undefined && !current.enum) {
+      const { const: value, ...rest } = current
+      current =
+        value === null
+          ? { ...rest, nullable: true }
+          : { type: rest.type || typeof value, ...rest, enum: [value] }
+    }
+
+    const out = {}
+    for (const [key, value] of Object.entries(current)) {
+      if (key === '$defs' || key === 'definitions') continue
+      if (key === 'properties' && value && typeof value === 'object') {
+        out.properties = Object.fromEntries(
+          Object.entries(value).map(([k, v]) => [k, resolve(v, depth)])
+        )
+      } else if (key === 'items') {
+        out.items = resolve(Array.isArray(value) ? value[0] : value, depth)
+      } else {
+        out[key] = value
+      }
+    }
+    return out
+  }
+
+  return resolve(root, 0)
+}
+
 function sanitizeNode(node) {
   if (!node || typeof node !== 'object' || Array.isArray(node)) return {}
 
@@ -93,7 +184,8 @@ function sanitizeNode(node) {
     }
 
     if (key === 'enum') {
-      // Gemini only accepts string enums, and only alongside `type: 'string'`.
+      // Gemini only accepts string enums, and only alongside `type: 'string'`;
+      // a numeric choice is coerced back from the string the model sends.
       if (Array.isArray(value) && value.length > 0) {
         result.enum = value.map(entry => String(entry))
       }
@@ -103,6 +195,7 @@ function sanitizeNode(node) {
     result[key] = value
   }
 
+  if (result.enum && result.type !== 'string') result.type = 'string'
   return result
 }
 
@@ -119,7 +212,7 @@ function sanitizeNode(node) {
  * @returns {object|undefined}
  */
 export function sanitizeToolSchema(parameters, { emptyObject = 'keep' } = {}) {
-  const sanitized = sanitizeNode(parameters)
+  const sanitized = sanitizeNode(flattenJsonSchema(parameters))
 
   if (!sanitized.type) sanitized.type = 'object'
 
@@ -185,6 +278,12 @@ function coerceValue(value, schema) {
   const type = schema.type
 
   if (type === 'array') {
+    if (typeof value === 'string' && value.trim().startsWith('[')) {
+      try {
+        const parsed = JSON.parse(value)
+        if (Array.isArray(parsed)) value = parsed
+      } catch {}
+    }
     if (Array.isArray(value)) {
       return value.map(entry => coerceValue(entry, schema.items))
     }

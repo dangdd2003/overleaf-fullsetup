@@ -8,10 +8,12 @@ export class HostPacer {
   constructor({
     minIntervalMs = 2_000,
     maxCooldownMs = 600_000,
+    pruneAt = 1_000,
     now = () => Date.now(),
   } = {}) {
     this.minIntervalMs = minIntervalMs
     this.maxCooldownMs = maxCooldownMs
+    this.pruneAt = pruneAt
     this.now = now
     this.cooldowns = new Map() // host -> expire timestamp
     this.lastStart = new Map() // host -> start timestamp
@@ -38,7 +40,29 @@ export class HostPacer {
     this.cooldowns.set(host, this.now() + sec * 1000)
   }
 
+  /**
+   * Forgets hosts whose cooldown has ended and whose spacing has lapsed with
+   * nothing queued. Hosts come from requested URLs, so the maps would
+   * otherwise grow with every distinct host the service ever read.
+   */
+  _prune() {
+    const now = this.now()
+    for (const [host, expires] of this.cooldowns) {
+      if (expires <= now) this.cooldowns.delete(host)
+    }
+    for (const [host, last] of this.lastStart) {
+      if (
+        now - last >= this.minIntervalMs &&
+        !this.active.has(host) &&
+        !this.waiting.has(host)
+      ) {
+        this.lastStart.delete(host)
+      }
+    }
+  }
+
   async acquire(host, { signal } = {}) {
+    if (this.lastStart.size + this.cooldowns.size > this.pruneAt) this._prune()
     const retrySec = this.getCooldown(host)
     if (retrySec > 0) {
       const err = new Error(`Host ${host} is cooling down`)

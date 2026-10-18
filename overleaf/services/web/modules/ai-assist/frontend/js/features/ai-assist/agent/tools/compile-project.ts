@@ -102,6 +102,10 @@ export const compileProjectTool: AgentTool = {
       return {
         status: outcome.status,
         clean,
+        // Present only when compile results report PDF status
+        ...('pdfProduced' in outcome
+          ? { pdfProduced: outcome.pdfProduced, buildId: outcome.buildId ?? null }
+          : {}),
         errorCount: currentErrors.length,
         warningCount: currentWarnings.length,
         errorDelta: previous ? delta.countDelta : 0,

@@ -38,4 +38,13 @@ describe('server-ce MCP wiring', function () {
       .to.be.a('string')
     expect(new URL(internalUrl).port).to.equal(webPort)
   })
+
+  it('defaults OVERLEAF_SITE_URL to the siteUrl web signs tokens with', function () {
+    const settings = read('config/settings.js')
+    const webDefault = /OVERLEAF_SITE_URL \|\| '([^']+)'/.exec(settings)?.[1]
+    const mcpDefault = /OVERLEAF_SITE_URL:-([^}"]+)/.exec(mcpRun)?.[1]
+    expect(mcpDefault, 'OVERLEAF_SITE_URL default in runit/mcp-overleaf/run')
+      .to.be.a('string')
+    expect(mcpDefault).to.equal(webDefault)
+  })
 })

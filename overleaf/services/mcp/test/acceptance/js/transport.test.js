@@ -118,6 +118,7 @@ describe('MCP HTTP transport', function () {
       'review_project',
       'fix_compile_errors',
       'edit_section',
+      'review_layout',
     ])
   })
 
@@ -150,7 +151,7 @@ describe('MCP HTTP transport', function () {
       'scan_latex',
       'search_bib',
     ])
-    expect(names).to.have.length(20)
+    expect(names).to.have.length(40)
   })
 
   it('calls a tool with a valid token', async function () {
@@ -159,7 +160,7 @@ describe('MCP HTTP transport', function () {
       { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'list_projects', arguments: {} } },
       { token: 'olp_0123456789abcdef' }
     )
-    expect(JSON.parse(body.result.content[0].text).projects).to.deep.equal([])
+    expect(JSON.parse(body.result.content[0].text).data.projects).to.deep.equal([])
   })
 
   it('rejects a non-localhost Host header (DNS rebinding guard)', async function () {
@@ -188,5 +189,30 @@ describe('MCP HTTP transport', function () {
       req.end()
     })
     expect(status).to.equal(403)
+  })
+
+  it('rejects a request with body exceeding the configured limit with 413', async function () {
+    const largeClient = new OverleafClient({
+      baseUrl: 'http://web:3000',
+      fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({}) }),
+    })
+    const { app: smallLimitApp } = createHttpApp({
+      config: { ...CONFIG, maxBodyMb: 1 },
+      client: largeClient,
+    })
+    const smallServer = await startServer(smallLimitApp)
+    try {
+      // 1.5MB string in JSON
+      const largePayload = 'x'.repeat(1.5 * 1024 * 1024)
+      const { status } = await rpc(smallServer.url, {
+        jsonrpc: '2.0',
+        id: 5,
+        method: 'tools/list',
+        params: { data: largePayload },
+      }, { token: 'olp_0123456789abcdef' })
+      expect(status).to.equal(413)
+    } finally {
+      await new Promise(resolve => smallServer.server.close(resolve))
+    }
   })
 })

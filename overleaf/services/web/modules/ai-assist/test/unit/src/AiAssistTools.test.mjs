@@ -1,10 +1,15 @@
 import { describe, it, beforeEach } from 'vitest'
 import { expect } from 'chai'
 import sinon from 'sinon'
+import { parsePdfBoxes } from '../../../app/src/AiAssistTools.mjs'
 import {
   AiAssistTools,
   endDocumentLine,
 } from '../../../app/src/AiAssistTools.mjs'
+import {
+  PdfPageError,
+  PDF_PAGE_ERRORS,
+} from '../../../../../app/src/Features/PdfInspection/PdfPageInspector.mjs'
 
 describe('AiAssistTools', function () {
   let tools
@@ -119,6 +124,7 @@ describe('AiAssistTools', function () {
       projectOptionsHandler: mockProjectOptionsHandler,
       userModel: mockUserModel,
       settings: mockSettings,
+      pdfVisualDiff: { diff: async () => ({ ok: false }), remember: async () => ({ ok: true }) },
     })
   })
 
@@ -266,6 +272,7 @@ describe('AiAssistTools', function () {
       editorController: mockEditorController,
       compileManager: mockCompileManager,
       clsiManager: mockClsiManager,
+      pdfVisualDiff: { diff: async () => ({ ok: false }), remember: async () => ({ ok: true }) },
     })
 
     const validUserId = '012345678901234567890123'
@@ -453,6 +460,337 @@ describe('AiAssistTools', function () {
     expect(spec.parameters.properties.clean.type).to.equal('boolean')
     expect(spec.description).to.match(/clean/i)
     expect(spec.description).to.match(/from scratch/i)
+  })
+
+  describe('view_compiled_pdf_page', function () {
+    const USER = '012345678901234567890123'
+    const BUILD_ID = '18f4c3a2b10-0123456789abcdef'
+    const ctx = { projectId: 'p1', userId: USER }
+    let inspect
+
+    const PAGE = {
+      page: 2,
+      pageCount: 5,
+      pageSize: { width: 595, height: 842 },
+      region: 'full',
+      span: { top: 0, bottom: 100 },
+      located: null,
+      sourceMap: [{ y: 35, path: 'main.tex', line: 2 }],
+      sourceRanges: [{ path: 'main.tex', startLine: 2, endLine: 2 }],
+      badBoxes: [],
+      image: { mediaType: 'image/png', data: 'iVBORw0KGgo=', dpi: 150 },
+    }
+
+    async function compileWithPdf(extra = {}) {
+      mockCompileManager.compile.resolves({
+        status: 'success',
+        buildId: BUILD_ID,
+        clsiServerId: 'clsi-1',
+        outputFiles: [{ path: 'output.pdf' }],
+        ...extra,
+      })
+      return tools.execute('compile_project', {}, ctx)
+    }
+
+    beforeEach(function () {
+      inspect = sinon.stub().resolves(PAGE)
+      tools.pdfPageInspector = { inspect }
+    })
+
+    it('asks for a compile when this chat has none', async function () {
+      const res = await tools.execute('view_compiled_pdf_page', {}, ctx)
+      expect(res.error).to.match(/call compile_project/i)
+      expect(inspect.called).to.equal(false)
+    })
+
+    it('says the last compile wrote no PDF', async function () {
+      mockCompileManager.compile.resolves({ status: 'failure', outputFiles: [] })
+      await tools.execute('compile_project', {}, ctx)
+      const res = await tools.execute('view_compiled_pdf_page', { page: 1 }, ctx)
+      expect(res.error).to.include('produced no PDF')
+      expect(inspect.called).to.equal(false)
+    })
+
+    it('renders the requested page of the last build', async function () {
+      await compileWithPdf()
+      const res = await tools.execute(
+        'view_compiled_pdf_page',
+        { page: '2', region: 'top' },
+        ctx
+      )
+      expect(inspect.firstCall.args[0]).to.deep.include({
+        projectId: 'p1',
+        userId: USER,
+        buildId: BUILD_ID,
+        clsiServerId: 'clsi-1',
+        page: 2,
+        region: 'top',
+        rootDocPath: 'main.tex',
+        withImage: true,
+      })
+      expect(res).to.deep.include({ status: 'ok', chosenBy: 'page', page: 2 })
+      expect(res.image.data).to.equal('iVBORw0KGgo=')
+      expect(res.stale).to.equal(undefined)
+    })
+
+    it('uses the build the editor compiled', async function () {
+      await tools.execute('compile_project', {}, {
+        ...ctx,
+        compileInEditor: sinon.stub().resolves({
+          status: 'success',
+          errors: [],
+          warnings: [],
+          buildId: BUILD_ID,
+          clsiServerId: 'clsi-9',
+        }),
+      })
+      await tools.execute('view_compiled_pdf_page', { page: 1 }, ctx)
+      expect(inspect.firstCall.args[0]).to.deep.include({
+        buildId: BUILD_ID,
+        clsiServerId: 'clsi-9',
+      })
+    })
+
+    it('ignores a malformed build id from the editor', async function () {
+      await tools.execute('compile_project', {}, {
+        ...ctx,
+        compileInEditor: sinon.stub().resolves({
+          status: 'success',
+          errors: [],
+          warnings: [],
+          buildId: '../../etc',
+        }),
+      })
+      const res = await tools.execute('view_compiled_pdf_page', {}, ctx)
+      expect(res.error).to.include('produced no PDF')
+    })
+
+    it('opens the page of a source line', async function () {
+      await compileWithPdf()
+      await tools.execute(
+        'view_compiled_pdf_page',
+        { path: '/chapters/intro.tex', line: 12 },
+        ctx
+      )
+      expect(inspect.firstCall.args[0]).to.deep.include({
+        path: 'chapters/intro.tex',
+        line: 12,
+      })
+    })
+
+    it('needs line with path', async function () {
+      await compileWithPdf()
+      const res = await tools.execute(
+        'view_compiled_pdf_page',
+        { path: 'main.tex' },
+        ctx
+      )
+      expect(res.error).to.include('Pass line with path')
+      expect(inspect.called).to.equal(false)
+    })
+
+    it('opens the page of the last edit by default, and says the PDF predates it', async function () {
+      await compileWithPdf()
+      // The edit below lands in a later millisecond than the build
+      tools.lastCompileResult.get('p1').at -= 1000
+      await tools.execute(
+        'edit_file',
+        { path: 'main.tex', oldText: 'target text', newText: 'new text' },
+        ctx
+      )
+      const res = await tools.execute('view_compiled_pdf_page', {}, ctx)
+      expect(inspect.firstCall.args[0]).to.deep.include({
+        path: 'main.tex',
+        line: 2,
+      })
+      expect(res.chosenBy).to.equal('lastEdit')
+      expect(res.stale).to.equal(true)
+    })
+
+    it('falls back to page 1 when the last edit typesets nothing', async function () {
+      await tools.execute(
+        'edit_file',
+        { path: 'main.tex', oldText: 'target text', newText: 'new text' },
+        ctx
+      )
+      await compileWithPdf()
+      inspect.onFirstCall().rejects(
+        new PdfPageError(PDF_PAGE_ERRORS.LINE_NOT_IN_PDF, 'not typeset')
+      )
+      const res = await tools.execute('view_compiled_pdf_page', {}, ctx)
+      expect(inspect.secondCall.args[0]).to.deep.include({ page: 1 })
+      expect(res.chosenBy).to.equal('default')
+      expect(res.note).to.include('main.tex line 2')
+      expect(res.stale).to.equal(undefined)
+    })
+
+    it('returns the inspector error and its details to the model', async function () {
+      await compileWithPdf()
+      inspect.rejects(
+        new PdfPageError(
+          PDF_PAGE_ERRORS.PAGE_OUT_OF_RANGE,
+          'Page 9 does not exist: the PDF has 5 page(s).',
+          { pageCount: 5 }
+        )
+      )
+      const res = await tools.execute('view_compiled_pdf_page', { page: 9 }, ctx)
+      expect(res).to.deep.equal({
+        error: 'Page 9 does not exist: the PDF has 5 page(s).',
+        pageCount: 5,
+      })
+    })
+
+    it('skips the image for a model that refused images', async function () {
+      await compileWithPdf()
+      const res = await tools.execute(
+        'view_compiled_pdf_page',
+        { page: 2 },
+        { ...ctx, images: false }
+      )
+      expect(inspect.firstCall.args[0].withImage).to.equal(false)
+      expect(res.imageOmitted).to.equal(true)
+    })
+
+    it('points a clean compile with a PDF at the visual check', async function () {
+      const res = await compileWithPdf()
+      expect(res.visualCheck).to.include('view_compiled_pdf_page')
+      mockCompileManager.compile.resolves({ status: 'success', outputFiles: [] })
+      const noPdf = await tools.execute('compile_project', {}, ctx)
+      expect(noPdf.visualCheck).to.equal(undefined)
+    })
+
+    it('zooms on the block from line to endLine, and leaves region to the inspector', async function () {
+      await compileWithPdf()
+      await tools.execute(
+        'view_compiled_pdf_page',
+        { path: 'chapters/intro.tex', line: '12', endLine: '20' },
+        ctx
+      )
+      const args = inspect.firstCall.args[0]
+      expect(args).to.deep.include({
+        path: 'chapters/intro.tex',
+        line: 12,
+        endLine: 20,
+      })
+      expect(args).to.not.have.property('region')
+    })
+
+    it('keeps an explicit region when it zooms on a block', async function () {
+      await compileWithPdf()
+      await tools.execute(
+        'view_compiled_pdf_page',
+        { path: 'main.tex', line: 2, endLine: 4, region: 'middle' },
+        ctx
+      )
+      expect(inspect.firstCall.args[0]).to.deep.include({
+        endLine: 4,
+        region: 'middle',
+      })
+    })
+
+    it('leaves region out of a page request the model did not zoom', async function () {
+      await compileWithPdf()
+      await tools.execute('view_compiled_pdf_page', { page: 3 }, ctx)
+      expect(inspect.firstCall.args[0]).to.not.have.property('region')
+      expect(inspect.firstCall.args[0]).to.not.have.property('endLine')
+    })
+
+    it('checks endLine against line, path and page', async function () {
+      await compileWithPdf()
+      const backwards = await tools.execute(
+        'view_compiled_pdf_page',
+        { path: 'main.tex', line: 12, endLine: 9 },
+        ctx
+      )
+      expect(backwards.error).to.equal(
+        'endLine must be a whole number from line (12), got 9.'
+      )
+      const fractional = await tools.execute(
+        'view_compiled_pdf_page',
+        { path: 'main.tex', line: 12, endLine: 12.5 },
+        ctx
+      )
+      expect(fractional.error).to.include('endLine must be a whole number')
+      const noLine = await tools.execute(
+        'view_compiled_pdf_page',
+        { path: 'main.tex', endLine: 9 },
+        ctx
+      )
+      expect(noLine.error).to.include('Pass line with path')
+      const noPath = await tools.execute(
+        'view_compiled_pdf_page',
+        { line: 12, endLine: 15 },
+        ctx
+      )
+      expect(noPath.error).to.include('endLine needs path and line')
+      const withPage = await tools.execute(
+        'view_compiled_pdf_page',
+        { page: 2, endLine: 15 },
+        ctx
+      )
+      expect(withPage.error).to.include('goes with path and line')
+      expect(inspect.called).to.equal(false)
+    })
+
+    it('names the line range of the last edit in the visual check', async function () {
+      await tools.execute(
+        'edit_file',
+        { path: 'main.tex', oldText: 'target text', newText: 'a\nb\nc' },
+        ctx
+      )
+      const res = await compileWithPdf()
+      expect(res.visualCheck).to.include(
+        'view_compiled_pdf_page with path "main.tex", line 2, endLine 4 zooms on your last edit'
+      )
+    })
+
+    it('remembers the line range a new file was created with', async function () {
+      await tools.execute(
+        'create_file',
+        { path: 'figs/new.tex', content: 'a\nb\nc' },
+        ctx
+      )
+      const res = await compileWithPdf()
+      expect(res.visualCheck).to.include(
+        'view_compiled_pdf_page with path "figs/new.tex", line 1, endLine 3'
+      )
+    })
+
+    it('names both views in the visual check when nothing was edited', async function () {
+      const res = await compileWithPdf()
+      expect(res.visualCheck).to.include('view_compiled_pdf_page with page')
+      expect(res.visualCheck).to.include(
+        'view_compiled_pdf_overview with fromPage 1'
+      )
+    })
+
+    it('tells the model when to call it, what it returns and how to use it', function () {
+      const spec = tools
+        .getToolSpecs()
+        .find(tool => tool.name === 'view_compiled_pdf_page')
+      expect(spec.description).to.match(/after every successful compile_project/)
+      expect(spec.description).to.match(/SyncTeX map/)
+      expect(spec.description).to.match(/path and line/)
+      expect(spec.description).to.match(/endLine/)
+      expect(spec.description).to.match(/Zoom:/)
+      expect(spec.description).to.match(/read_file .* edit_file, compile_project/)
+      expect(spec.description).to.match(/search_compiled_pdf/)
+      expect(spec.description).to.match(/view_compiled_pdf_overview/)
+      expect(Object.keys(spec.parameters.properties)).to.deep.equal([
+        'page',
+        'path',
+        'line',
+        'endLine',
+        'region',
+        'labels',
+      ])
+      expect(spec.parameters.properties.region.enum).to.deep.equal([
+        'full',
+        'top',
+        'middle',
+        'bottom',
+      ])
+    })
   })
 
   it('reads project settings summary via get_project_settings', async function () {
@@ -961,7 +1299,363 @@ describe('AiAssistTools', function () {
     })
   })
 
-  it('returns all 15 tool specifications in getToolSpecs', function () {
+  describe('view_compiled_pdf_overview and search_compiled_pdf', function () {
+    const USER = '012345678901234567890123'
+    const BUILD_ID = '18f4c3a2b10-0123456789abcdef'
+    const ctx = { projectId: 'p1', userId: USER }
+    let overview
+    let search
+
+    const OVERVIEW = {
+      fromPage: 1,
+      toPage: 3,
+      pageCount: 3,
+      paper: { width: 612, height: 792, name: 'Letter', orientation: 'portrait' },
+      mixedSizes: false,
+      fonts: { total: 4, notEmbedded: ['Arial'], type3: [] },
+      columns: 4,
+      pages: [
+        {
+          page: 1,
+          source: [{ path: 'main.tex', startLine: 1, endLine: 35 }],
+          blank: false,
+          endsAt: null,
+          gaps: [],
+          overflow: [],
+          badBoxes: 0,
+          worstBadBox: null,
+          unresolved: { refs: 0, cites: 0 },
+        },
+      ],
+      image: { mediaType: 'image/png', data: 'iVBORw0KGgo=', bytes: 10 },
+    }
+
+    const MATCHES = {
+      query: 'Figure ??',
+      fromPage: 1,
+      toPage: 3,
+      pageCount: 3,
+      matchCount: 1,
+      pages: [3],
+      matches: [
+        {
+          page: 3,
+          y: 41,
+          text: 'Figure ??',
+          context: 'as shown in Figure ?? the model',
+          path: 'main.tex',
+          line: 120,
+        },
+      ],
+      truncated: false,
+    }
+
+    async function compileWithPdf(extra = {}) {
+      mockCompileManager.compile.resolves({
+        status: 'success',
+        buildId: BUILD_ID,
+        clsiServerId: 'clsi-1',
+        outputFiles: [{ path: 'output.pdf' }],
+        ...extra,
+      })
+      return tools.execute('compile_project', {}, ctx)
+    }
+
+    beforeEach(function () {
+      overview = sinon.stub().resolves(OVERVIEW)
+      search = sinon.stub().resolves(MATCHES)
+      tools.pdfPageInspector = { inspect: sinon.stub(), overview, search }
+    })
+
+    describe('view_compiled_pdf_overview', function () {
+      it('asks for a compile when this chat has none', async function () {
+        const res = await tools.execute('view_compiled_pdf_overview', {}, ctx)
+        expect(res.error).to.match(/call compile_project/i)
+        expect(overview.called).to.equal(false)
+      })
+
+      it('says the last compile wrote no PDF', async function () {
+        mockCompileManager.compile.resolves({ status: 'failure', outputFiles: [] })
+        await tools.execute('compile_project', {}, ctx)
+        const res = await tools.execute('view_compiled_pdf_overview', {}, ctx)
+        expect(res.error).to.include('produced no PDF')
+        expect(overview.called).to.equal(false)
+      })
+
+      it('renders the range of the last build, with the paths and flags the inspector needs', async function () {
+        await compileWithPdf()
+        const res = await tools.execute(
+          'view_compiled_pdf_overview',
+          { fromPage: '1', toPage: '3' },
+          ctx
+        )
+        expect(overview.firstCall.args[0]).to.deep.include({
+          projectId: 'p1',
+          userId: USER,
+          buildId: BUILD_ID,
+          clsiServerId: 'clsi-1',
+          rootDocPath: 'main.tex',
+          fromPage: 1,
+          toPage: 3,
+          withImage: true,
+        })
+        expect(res).to.deep.include({ status: 'ok', pageCount: 3, columns: 4 })
+        expect(res.image.data).to.equal('iVBORw0KGgo=')
+        expect(res.stale).to.equal(undefined)
+        expect(res.imageOmitted).to.equal(undefined)
+      })
+
+      it('starts at page 1 and leaves the end to the inspector by default', async function () {
+        await compileWithPdf()
+        await tools.execute('view_compiled_pdf_overview', {}, ctx)
+        expect(overview.firstCall.args[0].fromPage).to.equal(1)
+        expect(overview.firstCall.args[0]).to.not.have.property('toPage')
+      })
+
+      it('rejects a page range that is not whole or does not run forward', async function () {
+        await compileWithPdf()
+        const zero = await tools.execute(
+          'view_compiled_pdf_overview',
+          { fromPage: 0 },
+          ctx
+        )
+        expect(zero.error).to.equal(
+          'fromPage must be a whole number from 1, got 0.'
+        )
+        const text = await tools.execute(
+          'view_compiled_pdf_overview',
+          { fromPage: 'two' },
+          ctx
+        )
+        expect(text.error).to.include('fromPage must be a whole number')
+        const backwards = await tools.execute(
+          'view_compiled_pdf_overview',
+          { fromPage: 4, toPage: 2 },
+          ctx
+        )
+        expect(backwards.error).to.equal(
+          'toPage must be a whole number from fromPage (4), got 2.'
+        )
+        expect(overview.called).to.equal(false)
+      })
+
+      it('skips the image for a model that refused images', async function () {
+        await compileWithPdf()
+        overview.resolves({ ...OVERVIEW, image: null })
+        const res = await tools.execute(
+          'view_compiled_pdf_overview',
+          {},
+          { ...ctx, images: false }
+        )
+        expect(overview.firstCall.args[0].withImage).to.equal(false)
+        expect(res.imageOmitted).to.equal(true)
+      })
+
+      it('says the project changed after the build', async function () {
+        await compileWithPdf()
+        tools.lastCompileResult.get('p1').at -= 1000
+        await tools.execute(
+          'edit_file',
+          { path: 'main.tex', oldText: 'target text', newText: 'new text' },
+          ctx
+        )
+        const res = await tools.execute('view_compiled_pdf_overview', {}, ctx)
+        expect(res.stale).to.equal(true)
+      })
+
+      it('returns the inspector error and its details to the model', async function () {
+        await compileWithPdf()
+        overview.rejects(
+          new PdfPageError(
+            PDF_PAGE_ERRORS.PAGE_OUT_OF_RANGE,
+            'Page 9 does not exist: the PDF has 3 page(s).',
+            { pageCount: 3 }
+          )
+        )
+        const res = await tools.execute(
+          'view_compiled_pdf_overview',
+          { fromPage: 9 },
+          ctx
+        )
+        expect(res).to.deep.equal({
+          error: 'Page 9 does not exist: the PDF has 3 page(s).',
+          pageCount: 3,
+        })
+      })
+
+      it('describes the range and what it checks, and that thumbnails are small', function () {
+        const spec = tools
+          .getToolSpecs()
+          .find(tool => tool.name === 'view_compiled_pdf_overview')
+        expect(spec.description).to.match(/up to 12 pages/)
+        expect(spec.description).to.match(/Thumbnails are too small/)
+        expect(spec.description).to.match(/Returns:/)
+        expect(Object.keys(spec.parameters.properties)).to.deep.equal([
+          'fromPage',
+          'toPage',
+        ])
+        expect(spec.parameters.required).to.equal(undefined)
+      })
+    })
+
+    describe('search_compiled_pdf', function () {
+      it('asks for a compile when this chat has none', async function () {
+        const res = await tools.execute(
+          'search_compiled_pdf',
+          { query: 'Figure' },
+          ctx
+        )
+        expect(res.error).to.match(/call compile_project/i)
+        expect(search.called).to.equal(false)
+      })
+
+      it('says the last compile wrote no PDF', async function () {
+        mockCompileManager.compile.resolves({ status: 'failure', outputFiles: [] })
+        await tools.execute('compile_project', {}, ctx)
+        const res = await tools.execute(
+          'search_compiled_pdf',
+          { query: 'Figure' },
+          ctx
+        )
+        expect(res.error).to.include('produced no PDF')
+        expect(search.called).to.equal(false)
+      })
+
+      it('searches the last build for the trimmed query, with the page range', async function () {
+        await compileWithPdf()
+        const res = await tools.execute(
+          'search_compiled_pdf',
+          { query: '  Figure ??  ', fromPage: '1', toPage: '3' },
+          ctx
+        )
+        expect(search.firstCall.args[0]).to.deep.include({
+          projectId: 'p1',
+          userId: USER,
+          buildId: BUILD_ID,
+          clsiServerId: 'clsi-1',
+          rootDocPath: 'main.tex',
+          query: 'Figure ??',
+          fromPage: 1,
+          toPage: 3,
+        })
+        expect(res).to.deep.include({ status: 'ok', matchCount: 1 })
+        expect(res.matches[0].line).to.equal(120)
+      })
+
+      it('leaves the page range and the image out of a search', async function () {
+        await compileWithPdf()
+        const res = await tools.execute(
+          'search_compiled_pdf',
+          { query: 'Figure' },
+          { ...ctx, images: false }
+        )
+        expect(search.firstCall.args[0]).to.not.have.property('fromPage')
+        expect(search.firstCall.args[0]).to.not.have.property('toPage')
+        expect(search.firstCall.args[0]).to.not.have.property('withImage')
+        expect(res).to.not.have.property('imageOmitted')
+        expect(res).to.not.have.property('image')
+      })
+
+      it('takes a bare number as the text to find', async function () {
+        await compileWithPdf()
+        await tools.execute('search_compiled_pdf', { query: 2024 }, ctx)
+        expect(search.firstCall.args[0].query).to.equal('2024')
+      })
+
+      it('refuses a missing, blank or over-long query', async function () {
+        await compileWithPdf()
+        for (const args of [
+          {},
+          { query: '   ' },
+          { query: 'x'.repeat(201) },
+          { query: { text: 'Figure' } },
+        ]) {
+          const res = await tools.execute('search_compiled_pdf', args, ctx)
+          expect(res.error).to.match(/query must be the text to find/)
+        }
+        expect(search.called).to.equal(false)
+        const longest = await tools.execute(
+          'search_compiled_pdf',
+          { query: 'x'.repeat(200) },
+          ctx
+        )
+        expect(longest.error).to.equal(undefined)
+        expect(search.calledOnce).to.equal(true)
+      })
+
+      it('refuses a page range that does not run forward', async function () {
+        await compileWithPdf()
+        const res = await tools.execute(
+          'search_compiled_pdf',
+          { query: 'Figure', fromPage: 5, toPage: 2 },
+          ctx
+        )
+        expect(res.error).to.equal(
+          'toPage must be a whole number from fromPage (5), got 2.'
+        )
+        expect(search.called).to.equal(false)
+      })
+
+      it('says the project changed after the build', async function () {
+        await compileWithPdf()
+        tools.lastCompileResult.get('p1').at -= 1000
+        await tools.execute(
+          'edit_file',
+          { path: 'main.tex', oldText: 'target text', newText: 'new text' },
+          ctx
+        )
+        const res = await tools.execute(
+          'search_compiled_pdf',
+          { query: 'Figure' },
+          ctx
+        )
+        expect(res.stale).to.equal(true)
+      })
+
+      it('returns the inspector error to the model', async function () {
+        await compileWithPdf()
+        search.rejects(
+          new PdfPageError('invalid_query', 'The query is empty.')
+        )
+        const res = await tools.execute(
+          'search_compiled_pdf',
+          { query: 'Figure' },
+          ctx
+        )
+        expect(res).to.deep.equal({ error: 'The query is empty.' })
+      })
+
+      it('describes the matching rules and what comes back', function () {
+        const spec = tools
+          .getToolSpecs()
+          .find(tool => tool.name === 'search_compiled_pdf')
+        expect(spec.description).to.match(/Matching ignores case/)
+        expect(spec.description).to.match(/Returns up to 20 matches/)
+        expect(spec.description).to.match(/search_text searches the \.tex source/)
+        expect(Object.keys(spec.parameters.properties)).to.deep.equal([
+          'query',
+          'fromPage',
+          'toPage',
+        ])
+        expect(spec.parameters.required).to.deep.equal(['query'])
+      })
+    })
+  })
+
+  it('lists the PDF tools right after get_compile_result, in order', function () {
+    const names = tools.getToolSpecs().map(spec => spec.name)
+    const at = names.indexOf('get_compile_result')
+    expect(names.slice(at + 1, at + 7)).to.deep.equal([
+      'view_compiled_pdf_page',
+      'view_compiled_pdf_overview',
+      'search_compiled_pdf',
+      'resolve_pdf_block',
+      'diff_compiled_pdf',
+      'inspect_compiled_style',
+    ])
+  })
+
+  it('returns all 22 tool specifications in getToolSpecs', function () {
     const specs = tools.getToolSpecs()
     const names = specs.map(s => s.name)
     const expected = [
@@ -975,15 +1669,22 @@ describe('AiAssistTools', function () {
       'create_file',
       'compile_project',
       'get_compile_result',
+      'view_compiled_pdf_page',
+      'view_compiled_pdf_overview',
+      'search_compiled_pdf',
+      'resolve_pdf_block',
+      'diff_compiled_pdf',
+      'inspect_compiled_style',
       'get_project_settings',
       'configure_appearance_settings',
       'configure_compiler_settings',
       'configure_editor_settings',
       'list_available_settings',
+      'highlight_in_pdf',
     ]
 
     expect(names).to.deep.equal(expected)
-    expect(specs).to.have.lengthOf(15)
+    expect(specs).to.have.lengthOf(22)
 
     // Verify parameter schemas for settings specs
     const compSpec = specs.find(s => s.name === 'configure_compiler_settings')
@@ -1585,5 +2286,29 @@ describe('project instructions (AGENTS.md)', function () {
   it('returns null when the project cannot be read', async function () {
     const tools = toolsWith({}, { failDocs: true })
     expect(await tools.getProjectInstructions('p5')).to.equal(null)
+  })
+})
+
+describe('parsePdfBoxes', function () {
+  it('keeps at most 200 boxes', function () {
+    const boxes = Array.from({ length: 500 }, () => ({
+      page: 1,
+      h: 1,
+      v: 1,
+      width: 1,
+      height: 1,
+    }))
+    expect(parsePdfBoxes(boxes)).to.have.lengthOf(200)
+  })
+
+  it('drops boxes whose numbers are not bounded finite numbers', function () {
+    const boxes = parsePdfBoxes([
+      { page: 1, h: 1, v: 1, width: 1, height: 1 },
+      { page: 1, h: '1', v: 1, width: 1, height: 1 },
+      { page: 1, h: 1e9, v: 1, width: 1, height: 1 },
+      { page: 1e9, h: 1, v: 1, width: 1, height: 1 },
+      { page: 1, h: 1, v: 1, width: -1, height: 1 },
+    ])
+    expect(boxes).to.have.lengthOf(1)
   })
 })

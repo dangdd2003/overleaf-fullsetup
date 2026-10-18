@@ -149,17 +149,20 @@ function unclosedInlineStart(line: string) {
  */
 function unrenderedTableStart(head: string) {
   const complete = head.endsWith('\n')
-  const lines = head.split('\n')
-  if (complete) lines.pop()
+  // Walks back from the end: three trailing table lines settle the answer, so
+  // the head is never split whole on every reveal step
+  let end = complete ? head.length - 1 : head.length
   let count = 0
-  while (
-    count < lines.length &&
-    TABLE_LINE.test(lines[lines.length - 1 - count])
-  )
+  let start = end
+  while (count < 3 && end >= 0) {
+    const begin = head.lastIndexOf('\n', end - 1) + 1
+    if (!TABLE_LINE.test(head.slice(begin, end))) break
     count++
+    start = begin
+    end = begin - 1
+  }
   if (count === 0 || (complete ? count : count - 1) >= 2) return -1
-  const before = lines.slice(0, lines.length - count)
-  return before.length ? before.join('\n').length + 1 : 0
+  return start
 }
 
 /**

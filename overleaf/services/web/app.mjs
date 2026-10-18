@@ -13,7 +13,6 @@ import https from 'node:https'
 import Serializers from './app/src/infrastructure/LoggerSerializers.mjs'
 import Server from './app/src/infrastructure/Server.mjs'
 import QueueWorkers from './app/src/infrastructure/QueueWorkers.mjs'
-import GoogleDriveSync from './app/src/Features/GoogleDriveSync/index.mjs'
 import mongodb from './app/src/infrastructure/mongodb.mjs'
 import mongoose from './app/src/infrastructure/Mongoose.mjs'
 import { triggerGracefulShutdown } from './app/src/infrastructure/GracefulShutdown.mjs'
@@ -122,11 +121,6 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     QueueWorkers.start()
   } catch (err) {
     logger.fatal({ err }, 'failed to start queue processing')
-  }
-  try {
-    GoogleDriveSync.start()
-  } catch (err) {
-    logger.fatal({ err }, 'failed to start google drive sync background jobs')
   }
   try {
     await Modules.start()

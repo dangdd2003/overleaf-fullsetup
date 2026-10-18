@@ -15,6 +15,7 @@ import { configureAppearanceSettingsTool } from './configure-appearance-settings
 import { configureCompilerSettingsTool } from './configure-compiler-settings'
 import { configureEditorSettingsTool } from './configure-editor-settings'
 import { listAvailableSettingsTool } from './list-available-settings'
+import { highlightInPdfTool } from './highlight-in-pdf'
 
 export type AgentTool = {
   spec: ToolSpec
@@ -61,6 +62,7 @@ export const TOOLS: Record<string, AgentTool> = {
   configure_compiler_settings: configureCompilerSettingsTool,
   configure_editor_settings: configureEditorSettingsTool,
   list_available_settings: listAvailableSettingsTool,
+  highlight_in_pdf: highlightInPdfTool,
 }
 
 // Backward-compatible alias that resolves when called but does not clutter the canonical tool surface

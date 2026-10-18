@@ -13,7 +13,27 @@ function fakeRes() {
     res.body = payload
     return res
   }
+  res.write = () => res
+  res.end = () => res
   return res
+}
+
+// Stands in for the Redis-backed limiter; a rejected consume is a 429.
+const rateLimitState = { reject: false, created: [] }
+
+async function runChain(handlers, req, res) {
+  for (const handler of handlers.slice(0, -1)) {
+    let advanced = false
+    await new Promise(resolve => {
+      handler(req, res, () => {
+        advanced = true
+        resolve()
+      })
+      setTimeout(resolve, 10)
+    })
+    if (!advanced) return
+  }
+  return handlers[handlers.length - 1](req, res)
 }
 
 function fakeReq(overrides = {}) {
@@ -27,6 +47,7 @@ function fakeReq(overrides = {}) {
 
 describe('GitHubSyncRouter', function () {
   let routes
+  let chains
   let authorizationManager
   let syncManager
 
@@ -44,6 +65,23 @@ describe('GitHubSyncRouter', function () {
       __esModule: true,
     })
     const syncManagerMock = () => ({ default: syncManager, __esModule: true })
+    const rateLimiterMock = () => ({
+      RateLimiter: class {
+        constructor(name, opts) {
+          this.name = name
+          this.opts = opts
+          rateLimitState.created.push(this)
+        }
+        async consume() {
+          if (rateLimitState.reject) throw { msBeforeNext: 1000 }
+        }
+      },
+      __esModule: true,
+    })
+    vi.doMock(
+      '../../../../../app/src/infrastructure/RateLimiter.mjs',
+      rateLimiterMock
+    )
 
     vi.doMock(
       '../../../../../app/src/Features/Authentication/AuthenticationController.mjs',
@@ -60,9 +98,12 @@ describe('GitHubSyncRouter', function () {
     )
 
     routes = {}
+    chains = {}
     const record = method => (path, ...handlers) => {
       routes[`${method} ${path}`] = handlers[handlers.length - 1]
+      chains[`${method} ${path}`] = handlers
     }
+    rateLimitState.created = []
     GitHubSyncRouter.apply({ get: record('get'), post: record('post') })
   }
 
@@ -72,6 +113,34 @@ describe('GitHubSyncRouter', function () {
       throw new Error(`route not registered: ${key}. Have: ${Object.keys(routes).join(', ')}`)
     }
     return fn
+  }
+
+  it('creates its rate limiters when applied, with the documented limits', async function () {
+    await loadRouter()
+    const names = rateLimitState.created.map(l => l.name).sort()
+    expect(names).to.deep.equal(['github-sync-create-repo', 'github-sync-sync'])
+  })
+
+  for (const route of [
+    'post /project/:projectId/github/pull',
+    'post /project/:projectId/github/push',
+    'post /project/:projectId/github/create-repo',
+  ]) {
+    it(`${route} answers 429 and does no work when the user is over the limit`, async function () {
+      await loadRouter()
+      rateLimitState.reject = true
+      try {
+        const res = fakeRes()
+        await runChain(chains[route], fakeReq({ body: { name: 'repo' } }), res)
+        expect(res.statusCode).to.equal(429)
+        expect(syncManager.promises.getState).not.toHaveBeenCalled()
+        expect(syncManager.promises.pull).not.toHaveBeenCalled()
+        expect(syncManager.promises.push).not.toHaveBeenCalled()
+        expect(syncManager.promises.createRepoAndLink).not.toHaveBeenCalled()
+      } finally {
+        rateLimitState.reject = false
+      }
+    })
   }
 
   beforeEach(function () {

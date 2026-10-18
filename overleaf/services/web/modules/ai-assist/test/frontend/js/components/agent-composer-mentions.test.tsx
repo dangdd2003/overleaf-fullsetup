@@ -85,7 +85,7 @@ describe('AgentComposer attachments', function () {
   it('keeps a typed line range on the chip', function () {
     renderComposer()
     type('@sections/results.tex:40-80 ')
-    expect(screen.getByText('sections/results.tex:40-80')).to.exist
+    expect(screen.getByText('sections/results.tex: 40-80')).to.exist
   })
 
   it('sends the attachments alongside the text', function () {
@@ -119,23 +119,28 @@ describe('AgentComposer attachments', function () {
     expect(screen.queryByText('main.tex')).to.equal(null)
   })
 
-  it('opens the same menu from the paperclip button', function () {
+  it('clicking + does not open the workspace files menu', function () {
     renderComposer()
-    fireEvent.click(screen.getByRole('button', { name: /attach context/i }))
-    expect(screen.getByRole('listbox')).to.exist
+    const plusBtn = screen.getByRole('button', {
+      name: /add files or actions/i,
+    })
+    fireEvent.click(plusBtn)
+    expect(screen.queryByRole('listbox')).to.equal(null)
   })
 
-  it('toggles the menu open and closed when clicking the paperclip button', function () {
+  it('toggles the plus menu open and closed when clicking the + button', function () {
     renderComposer()
-    const attachBtn = screen.getByRole('button', { name: /attach context/i })
+    const plusBtn = screen.getByRole('button', {
+      name: /add files or actions/i,
+    })
 
-    // First click: opens menu
-    fireEvent.click(attachBtn)
-    expect(screen.getByRole('listbox')).to.exist
+    // First click: opens plus menu
+    fireEvent.click(plusBtn)
+    expect(screen.getByRole('menu')).to.exist
 
-    // Second click: closes menu
-    fireEvent.click(attachBtn)
-    expect(screen.queryByRole('listbox')).to.equal(null)
+    // Second click: closes plus menu
+    fireEvent.click(plusBtn)
+    expect(screen.queryByRole('menu')).to.equal(null)
   })
 
   it('closes the menu on Escape without sending', function () {
@@ -275,6 +280,85 @@ describe('AgentComposer attachments', function () {
         Node.DOCUMENT_POSITION_PRECEDING
       )
     ).to.be.true
+  })
+
+  it('renders both selection and file attachment chips with consistent SVG icon elements', function () {
+    renderComposer({
+      attachments: [{ path: 'main.tex' }],
+      attachedSelection: {
+        path: 'main.tex',
+        from: 52,
+        to: 57,
+        text: 'some code',
+      },
+    })
+
+    const chips = document.querySelectorAll('.ai-assist-selection-chip')
+    expect(chips.length).to.equal(2)
+
+    // Both chips carry a 12px SVG in the same icon slot
+    chips.forEach((chip) => {
+      const icon = chip.querySelector('.ai-assist-selection-chip-icon svg')
+      expect(icon).to.exist
+      expect(icon?.getAttribute('width')).to.equal('12')
+      expect(icon?.getAttribute('height')).to.equal('12')
+    })
+  })
+
+  it('renders a chip for each highlighted range when multiple parts of code are selected', function () {
+    renderComposer({
+      attachedSelection: {
+        path: 'main.tex',
+        from: 10,
+        to: 30,
+        text: 'first block\n\nsecond block',
+        ranges: [
+          { from: 10, to: 12, text: 'first block' },
+          { from: 25, to: 30, text: 'second block' },
+        ],
+      },
+    })
+
+    const chips = document.querySelectorAll('.ai-assist-selection-chip')
+    expect(chips.length).to.equal(2)
+    expect(screen.getByText('main.tex: 10-12')).to.exist
+    expect(screen.getByText('main.tex: 25-30')).to.exist
+  })
+
+  it('removes an individual range chip when its close button is clicked', function () {
+    renderComposer()
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent('aiAssist:selectionChanged', {
+          detail: {
+            path: 'main.tex',
+            from: 10,
+            to: 30,
+            text: 'first block\n\nsecond block',
+            ranges: [
+              { from: 10, to: 12, text: 'first block' },
+              { from: 25, to: 30, text: 'second block' },
+            ],
+          },
+        })
+      )
+    })
+
+    expect(screen.getByText('main.tex: 10-12')).to.exist
+    expect(screen.getByText('main.tex: 25-30')).to.exist
+
+    const removeButtons = screen.getAllByRole('button', {
+      name: /remove selection/i,
+    })
+    expect(removeButtons.length).to.equal(2)
+
+    // Click close on the first range (10-12)
+    fireEvent.click(removeButtons[0])
+
+    // Second range remains as a chip
+    expect(screen.queryByText('main.tex: 10-12')).to.equal(null)
+    expect(screen.getByText('main.tex: 25-30')).to.exist
   })
 
   describe('while running', function () {

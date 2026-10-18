@@ -192,6 +192,39 @@ test('chains outbound HTTPS through an upstream SOCKS5 proxy with auth', async (
   }
 })
 
+test('an upstream SOCKS5 proxy is asked for the address that was checked, not the name', async () => {
+  // DNS rebinding: the name passes the check here, then resolves to a private
+  // address when the upstream looks it up again. The tunnel must name the IP.
+  let requestedAddressType = null
+  let requestedAddress = null
+  const socksServer = net.createServer(socket => {
+    socket.once('data', () => {
+      socket.write(Buffer.from([5, 0]))
+      socket.once('data', req => {
+        requestedAddressType = req[3]
+        requestedAddress = [...req.subarray(4, 8)].join('.')
+        socket.end(Buffer.from([5, 1, 0, 1, 0, 0, 0, 0, 0, 0]))
+      })
+    })
+  })
+  const socksPort = await listen(socksServer)
+  const { proxy } = proxyFor(443, {
+    lookup: async () => [{ address: '203.0.113.9', family: 4 }],
+    isPublic: address => address !== '10.0.0.1',
+    upstreamProxy: `socks5://127.0.0.1:${socksPort}`,
+    ports: new Set([443]),
+  })
+  const proxyPort = await listen(proxy)
+  try {
+    await assert.rejects(openTunnel(proxyPort, 'rebind.test:443'))
+    assert.equal(requestedAddressType, 0x01)
+    assert.equal(requestedAddress, '203.0.113.9')
+  } finally {
+    proxy.close()
+    socksServer.close()
+  }
+})
+
 test('chains outbound HTTP through an upstream HTTP proxy', async () => {
   let proxyAuthHeader = null
   const upstreamHttp = http.createServer((req, res) => {
@@ -231,5 +264,96 @@ test('chains outbound HTTP through an upstream HTTP proxy', async () => {
   } finally {
     proxy.close()
     upstreamHttp.close()
+  }
+})
+
+function getThroughProxy(proxyPort, url) {
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      { host: '127.0.0.1', port: proxyPort, path: url, method: 'GET' },
+      res => {
+        const chunks = []
+        res.on('data', c => chunks.push(c))
+        res.on('end', () =>
+          resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks), ended: true })
+        )
+        res.on('error', err => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks), ended: false, err }))
+        res.on('aborted', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks), ended: false }))
+      }
+    )
+    req.on('error', reject)
+    req.end()
+  })
+}
+
+async function siteServing(handler) {
+  const site = http.createServer(handler)
+  const port = await listen(site)
+  return { site, port }
+}
+
+test('relays a chunked response under the cap intact', async () => {
+  const { site, port: sitePort } = await siteServing((req, res) => {
+    res.write('hello ')
+    res.end('world')
+  })
+  const { proxy, lines } = proxyFor(sitePort, { limits: { ...EGRESS_LIMITS, maxResponseBytes: 1024 } })
+  const port = await listen(proxy)
+  try {
+    const out = await getThroughProxy(port, `http://example.test:${sitePort}/`)
+    assert.equal(out.status, 200)
+    assert.equal(out.body.toString(), 'hello world')
+    assert.equal(out.ended, true)
+    assert.doesNotMatch(lines.join('\n'), /aborted/)
+  } finally {
+    proxy.close()
+    site.close()
+  }
+})
+
+test('cuts off a chunked response as it streams past the cap', async () => {
+  const { site, port: sitePort } = await siteServing((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain' })
+    let sent = 0
+    const timer = setInterval(() => {
+      if (res.destroyed || sent > 10_000) {
+        clearInterval(timer)
+        res.destroy()
+        return
+      }
+      sent += 100
+      res.write('x'.repeat(100))
+    }, 1)
+  })
+  const { proxy, lines } = proxyFor(sitePort, { limits: { ...EGRESS_LIMITS, maxResponseBytes: 1024 } })
+  const port = await listen(proxy)
+  try {
+    const out = await getThroughProxy(port, `http://example.test:${sitePort}/`)
+    assert.equal(out.ended, false, 'the body must not complete')
+    assert.ok(out.body.length <= 1024 + 100, `got ${out.body.length} bytes`)
+    await new Promise(r => setTimeout(r, 20))
+    assert.match(lines.join('\n'), /egress aborted example\.test:\d+ \(response over 1024 bytes\)/)
+  } finally {
+    proxy.close()
+    site.close()
+  }
+})
+
+test('refuses a response whose declared length is over the cap', async () => {
+  const { site, port: sitePort } = await siteServing((req, res) => {
+    res.writeHead(200, { 'Content-Length': '5000' })
+    res.end('x'.repeat(5000))
+  })
+  const { proxy, lines } = proxyFor(sitePort, { limits: { ...EGRESS_LIMITS, maxResponseBytes: 1024 } })
+  const port = await listen(proxy)
+  try {
+    const out = await getThroughProxy(port, `http://example.test:${sitePort}/`)
+    assert.equal(out.status, 502)
+    assert.equal(out.headers['x-egress-refused'], 'response-too-large')
+    assert.equal(out.body.toString(), 'Response too large')
+    assert.match(lines.join('\n'), /egress refused example\.test:\d+ \(response over 1024 bytes\)/)
+  } finally {
+    proxy.close()
+    site.close()
   }
 })

@@ -35,6 +35,21 @@ describe('transport', function () {
     }
   })
 
+  it('parseFetchUrl refuses a URL that carries a username or password', function () {
+    for (const url of [
+      'https://user:secret@example.com/',
+      'https://user@example.com/',
+      'https://example.com@127.0.0.1/',
+    ]) {
+      expect(() => parseFetchUrl(url), url).to.throw(
+        /username or password/
+      )
+    }
+    expect(parseFetchUrl('https://example.com/a').toString()).to.equal(
+      'https://example.com/a'
+    )
+  })
+
   it('parseFetchUrl refuses the ports browsers refuse, and keeps web ports', function () {
     for (const url of [
       'http://example.com:25/',

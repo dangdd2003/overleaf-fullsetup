@@ -40,20 +40,72 @@ export function runTool(fn) {
 }
 
 /**
- * Standard success result: one JSON text block the model can parse, plus the
- * same value as `structuredContent`.
+ * The shared success envelope every tool returns.
  *
- * Every tool advertises an `outputSchema`, and MCP requires a structured
- * payload whenever one is advertised, so object values are echoed there for
- * clients that consume the typed result instead of the rendered text.
+ * Shape (identical in the text block and `structuredContent`):
  *
- * @param {unknown} value
+ *   {
+ *     ok: true,
+ *     summary: 'One sentence saying what happened, with the key numbers.',
+ *     data: { ...tool-specific payload... },
+ *     warnings?: ['Things the model should notice but that did not fail'],
+ *     nextSteps?: ['Concrete follow-up calls, e.g. "get_compile_log(projectId, ...)"']
+ *   }
+ *
+ * Failures use `{ ok: false, error: { code, message, hint, retryable } }`
+ * from errors.js, with `isError: true` on the MCP result. Keeping both halves
+ * fixed means a model learns one shape and can branch on `ok` everywhere.
+ *
+ * @param {{ summary: string, data?: object, warnings?: string[], nextSteps?: string[] }} parts
  */
-export function textResult(value) {
-  const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2)
-  const result = { content: [{ type: 'text', text }] }
-  if (value && typeof value === 'object' && !Array.isArray(value)) {
-    result.structuredContent = value
+export function okResult({ summary, data = {}, warnings, nextSteps }) {
+  const value = { ok: true, summary, data }
+  if (warnings?.length) value.warnings = warnings
+  if (nextSteps?.length) value.nextSteps = nextSteps
+  return {
+    content: [{ type: 'text', text: JSON.stringify(value, null, 2) }],
+    structuredContent: value,
   }
-  return result
+}
+
+/**
+ * Map items through an async function with at most `limit` calls in flight,
+ * returning the results in input order. A project can hold far more documents
+ * than it is sensible to request at once, so fan-out goes through this.
+ *
+ * The first failure stops the remaining items from starting and rejects.
+ *
+ * @template T, R
+ * @param {T[]} items
+ * @param {number} limit
+ * @param {(item: T, index: number) => Promise<R>} fn
+ * @returns {Promise<R[]>}
+ */
+export async function mapLimit(items, limit, fn) {
+  const results = new Array(items.length)
+  let next = 0
+  const worker = async () => {
+    while (next < items.length) {
+      const index = next++
+      try {
+        results[index] = await fn(items[index], index)
+      } catch (err) {
+        next = items.length
+        throw err
+      }
+    }
+  }
+  const workers = Array.from({ length: Math.min(limit, items.length) }, worker)
+  await Promise.all(workers)
+  return results
+}
+
+/**
+ * Attach extra content blocks (e.g. a binary `resource`) to an envelope.
+ *
+ * @param {ReturnType<typeof okResult>} result
+ * @param {object[]} blocks
+ */
+export function withBlocks(result, blocks) {
+  return { ...result, content: [...result.content, ...blocks] }
 }

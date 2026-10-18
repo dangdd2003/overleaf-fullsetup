@@ -71,6 +71,13 @@ export function renderCompileError({
   focused: FocusedLogEntry
   others: LogIndexEntry[]
 }): string {
+  return [renderCompileEntry(focused), renderIndex(focused.level, others)].join(
+    '\n'
+  )
+}
+
+/** One log entry, without the index of the others. */
+export function renderCompileEntry(focused: FocusedLogEntry): string {
   const attributes = [
     focused.file ? ` file="${escapeAttribute(focused.file)}"` : '',
     focused.line !== null ? ` line="${focused.line}"` : '',
@@ -84,6 +91,5 @@ export function renderCompileError({
   }
 
   body.push('</compile-error>')
-
-  return [...body, renderIndex(focused.level, others)].join('\n')
+  return body.join('\n')
 }

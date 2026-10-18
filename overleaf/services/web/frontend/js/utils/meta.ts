@@ -81,6 +81,8 @@ export interface Meta {
   'ol-aiToggling': boolean
   'ol-algolia': AlgoliaConfig | undefined
   'ol-aiAssistEnabled': boolean
+  // only rendered when the assistant is enabled
+  'ol-aiAssistMaxTranscriptBytes': number | undefined
   'ol-aiAssistWebToolsEnabled': boolean
   'ol-aiAssistServerWebSearchEnabled': boolean
   'ol-aiAssistServerWebSearchSummary': string

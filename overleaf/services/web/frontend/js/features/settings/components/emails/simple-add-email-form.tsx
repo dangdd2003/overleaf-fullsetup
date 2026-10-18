@@ -12,11 +12,14 @@ import OLFormControl from '@/shared/components/ol/ol-form-control'
 import OLForm from '@/shared/components/ol/ol-form'
 import Notification from '@/shared/components/notification'
 import AddAnotherEmailBtn from './add-email/add-another-email-btn'
+import { ConfirmEmailForm } from '@/features/settings/components/emails/confirm-email-form'
 
 function SimpleAddEmailForm() {
   const { t } = useTranslation()
   const [isFormVisible, setIsFormVisible] = useState(false)
   const [newEmail, setNewEmail] = useState('')
+  // Address the code was sent to; the address is only added once it is confirmed
+  const [pendingEmail, setPendingEmail] = useState<string | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [successMessage, setSuccessMessage] = useState<string | null>(null)
   const { isLoading, runAsync } = useAsync()
@@ -53,12 +56,8 @@ function SimpleAddEmailForm() {
       })
     )
       .then(() => {
-        setSuccessMessage(
-          t('email_added_successfully', 'Secondary email added successfully.')
-        )
-        setNewEmail('')
-        setIsFormVisible(false)
-        getEmails()
+        // A code was sent: the form moves on to code entry
+        setPendingEmail(trimmed)
       })
       .catch((err: any) => {
         const errorKey = err?.data?.error
@@ -82,6 +81,36 @@ function SimpleAddEmailForm() {
           )
         }
       })
+  }
+
+  const handleConfirmed = () => {
+    setSuccessMessage(
+      t('email_added_successfully', 'Secondary email added successfully.')
+    )
+    setPendingEmail(null)
+    setNewEmail('')
+    setIsFormVisible(false)
+    getEmails()
+  }
+
+  if (pendingEmail) {
+    return (
+      <div className="affiliations-table-row-highlighted p-3 my-2">
+        <ConfirmEmailForm
+          confirmationEndpoint="/user/emails/confirm-secondary"
+          resendEndpoint="/user/emails/resend-secondary-confirmation"
+          flow="secondary"
+          email={pendingEmail}
+          onSuccessfulConfirmation={handleConfirmed}
+          interstitial={false}
+          onCancel={() => {
+            // Back to the address form with the address still filled in
+            setPendingEmail(null)
+            setNewEmail(pendingEmail)
+          }}
+        />
+      </div>
+    )
   }
 
   if (!isFormVisible) {

@@ -17,6 +17,7 @@ const ENVELOPE_CLOSING_TAGS = [
   'compile',
   'open-file',
   'selection',
+  'pdf-selection',
   'outline',
   'attachments',
   'file',
@@ -30,6 +31,21 @@ const ENVELOPE_CLOSING_TAGS = [
   'result',
   'said',
   'note',
+  // A slash command's block and the context it gathers from file text.
+  'command',
+  'instructions',
+  'params',
+  'gathered',
+  'compile-log',
+  'compile-errors',
+  'layout-warnings',
+  'macros',
+  'preamble',
+  'source',
+  'labels',
+  'bib-keys',
+  'packages',
+  'section',
 ]
 
 const CLOSING_TAG_PATTERN = new RegExp(

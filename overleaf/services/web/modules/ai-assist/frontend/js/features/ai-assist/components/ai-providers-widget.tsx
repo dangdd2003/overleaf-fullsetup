@@ -8,6 +8,8 @@ import Notification from '@/shared/components/notification'
 import ProviderForm from './provider-form'
 import ProviderIcon from './provider-icon'
 import WebSearchWidget from './web-search-widget'
+import ConnectorsWidget from './connectors/connectors-widget'
+import { isConnectorsEnabled } from '../connectors/api'
 import {
   PROVIDER_TYPE_LABELS,
   ProviderSettings,
@@ -115,8 +117,8 @@ export default function AiProvidersWidget() {
         <div className="unboxed-setting-description">
           <p>
             Our AI features explain compile errors and propose fixes directly
-            from your browser. Your API key is stored in this browser only and
-            is never sent to this Overleaf server.
+            from your browser. Your API key is encrypted and stored securely
+            on this Overleaf server.
           </p>
         </div>
         <div>
@@ -155,6 +157,12 @@ export default function AiProvidersWidget() {
       {isWebToolsAvailable() ? (
         <div className="settings-widgets-container linking-ai-assist-web-search">
           <WebSearchWidget />
+        </div>
+      ) : null}
+
+      {isConnectorsEnabled() ? (
+        <div className="settings-widgets-container linking-ai-assist-connectors">
+          <ConnectorsWidget />
         </div>
       ) : null}
     </div>

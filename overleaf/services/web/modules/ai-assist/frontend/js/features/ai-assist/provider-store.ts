@@ -1,7 +1,7 @@
-import customLocalStorage from '@/infrastructure/local-storage'
-import { getJSON, putJSON } from '@/infrastructure/fetch-json'
-import { debugConsole } from '@/utils/debugging'
-import getMeta from '@/utils/meta'
+import customLocalStorage from "@/infrastructure/local-storage";
+import { getJSON, putJSON } from "@/infrastructure/fetch-json";
+import { debugConsole } from "@/utils/debugging";
+import getMeta from "@/utils/meta";
 import {
   DEFAULT_BASE_URLS,
   MultiWebSearchSettings,
@@ -12,387 +12,501 @@ import {
   WEB_SEARCH_DEFAULTS,
   WebSearchPreferences,
   WebSearchSettings,
-} from './providers/types'
+} from "./providers/types";
 
-export const SETTINGS_KEY = 'ai-assist:provider'
-export const FAST_SETTINGS_KEY = 'ai-assist:fast-provider'
-const WEB_SEARCH_KEY = 'ai-assist:web-search'
-const CONSENT_KEY = 'ai-assist:consent'
-const AI_ENABLED_KEY = 'ai-assist:enabled'
-const REASONING_EFFORT_KEY = 'ai-assist:reasoning-effort'
-const THINKING_KEY = 'ai-assist:thinking'
+export const SETTINGS_KEY = "ai-assist:provider";
+export const FAST_SETTINGS_KEY = "ai-assist:fast-provider";
+const WEB_SEARCH_KEY = "ai-assist:web-search";
+const CONSENT_KEY = "ai-assist:consent";
+const AI_ENABLED_KEY = "ai-assist:enabled";
+const REASONING_EFFORT_KEY = "ai-assist:reasoning-effort";
+const THINKING_KEY = "ai-assist:thinking";
 /** The writing tools' remembered choices (see writing-tools/preferences.ts). */
-export const WRITING_TOOLS_KEY = 'ai-assist:writing-tools'
+export const WRITING_TOOLS_KEY = "ai-assist:writing-tools";
 /** Language suggestions' settings and blocked list (see language-suggestions/preferences.ts). */
-export const LANGUAGE_SUGGESTIONS_KEY = 'ai-assist:language-suggestions'
+export const LANGUAGE_SUGGESTIONS_KEY = "ai-assist:language-suggestions";
 /** Fired on `window` whenever those settings change in this tab. */
 export const LANGUAGE_SUGGESTIONS_CHANGED_EVENT =
-  'ai-assist:language-suggestions-changed'
+  "ai-assist:language-suggestions-changed";
 
 /** The editor's AI shortcut switches (see inline-suggestion/preferences.ts). */
-export const INLINE_SUGGESTIONS_KEY = 'ai-assist:inline-suggestions'
+export const INLINE_SUGGESTIONS_KEY = "ai-assist:inline-suggestions";
 /** Fired on `window` whenever those switches change in this tab. */
 export const INLINE_SUGGESTIONS_CHANGED_EVENT =
-  'ai-assist:inline-suggestions-changed'
+  "ai-assist:inline-suggestions-changed";
+
+// Cached server settings in memory for the current session
+let cachedProvider: ProviderSettings | null = null;
+let cachedFastProvider: ProviderSettings | null = null;
+let cachedWebSearch: MultiWebSearchSettings | null = null;
+let isInitialized = false;
+let syncPromise: Promise<void> | null = null;
+
+export function _resetCachedSettings() {
+  cachedProvider = null;
+  cachedFastProvider = null;
+  cachedWebSearch = null;
+  isInitialized = false;
+  syncPromise = null;
+}
+
+export function normalizeProviderSettings(parsed: any): ProviderSettings | null {
+  if (!parsed?.type) return null;
+
+  let type = parsed.type as ProviderType;
+  if ((type as any) === "openai-compatible") type = "openai";
+  if ((type as any) === "anthropic-compatible") type = "anthropic";
+
+  if (!Object.prototype.hasOwnProperty.call(DEFAULT_BASE_URLS, type)) {
+    return null;
+  }
+
+  const result: ProviderSettings = {
+    type,
+    baseUrl: (parsed.baseUrl || DEFAULT_BASE_URLS[type] || "").trim(),
+    apiKey: (parsed.apiKey ?? "").trim(),
+    model: (parsed.model ?? "").trim(),
+  };
+  if (parsed.modelName) {
+    result.modelName = parsed.modelName;
+  }
+  return result;
+}
+
+// Hook into customLocalStorage so tests that mock or clear localStorage synchronize the in-memory cache
+const origRemoveItem = customLocalStorage.removeItem;
+customLocalStorage.removeItem = (key: string) => {
+  if (key === SETTINGS_KEY) cachedProvider = null;
+  if (key === FAST_SETTINGS_KEY) cachedFastProvider = null;
+  if (key === WEB_SEARCH_KEY) cachedWebSearch = null;
+  return origRemoveItem(key);
+};
+
+const origClear = customLocalStorage.clear;
+customLocalStorage.clear = () => {
+  cachedProvider = null;
+  cachedFastProvider = null;
+  cachedWebSearch = null;
+  return origClear();
+};
+
+export async function initServerSettings(): Promise<void> {
+  if (syncPromise) return syncPromise;
+  syncPromise = (async () => {
+    try {
+      // 1. One-time migration: check if any legacy settings exist in customLocalStorage
+      const localProvider = customLocalStorage.getItem(SETTINGS_KEY);
+      const localFast = customLocalStorage.getItem(FAST_SETTINGS_KEY);
+      const localWeb = customLocalStorage.getItem(WEB_SEARCH_KEY);
+
+      if (localProvider || localFast || localWeb) {
+        const toSave: any = {};
+        if (localProvider) toSave.provider = normalizeProviderSettings(localProvider);
+        if (localFast) toSave.fastProvider = normalizeFastSettings(localFast);
+        if (localWeb) toSave.webSearch = migrateLegacyWebSearchSettings(localWeb);
+
+        await putJSON("/ai-assist/settings", { body: toSave }).catch(() => {});
+
+        // Delete from localStorage permanently
+        customLocalStorage.removeItem(SETTINGS_KEY);
+        customLocalStorage.removeItem(FAST_SETTINGS_KEY);
+        customLocalStorage.removeItem(WEB_SEARCH_KEY);
+      }
+
+      // 2. Fetch current settings from server
+      const res = await getJSON<{
+        provider: ProviderSettings | null;
+        fastProvider: ProviderSettings | null;
+        webSearch: MultiWebSearchSettings | null;
+      }>("/ai-assist/settings").catch(() => null);
+
+      if (res) {
+        if (res.provider) cachedProvider = normalizeProviderSettings(res.provider);
+        if (res.fastProvider) cachedFastProvider = normalizeFastSettings(res.fastProvider);
+        if (res.webSearch) cachedWebSearch = res.webSearch;
+      }
+    } catch {
+      // Ignore network errors on init
+    } finally {
+      isInitialized = true;
+      notify("aiAssist:providerChanged");
+      notify("aiAssist:fastProviderChanged");
+      notify("aiAssist:webSearchChanged");
+    }
+  })();
+  return syncPromise;
+}
+
+if (typeof window !== "undefined" && process.env.NODE_ENV !== "test") {
+  void initServerSettings();
+}
 
 /**
  * Where the provider configuration lives.
  *
- * Configuration is stored in this browser (localStorage). On each request,
- * provider settings (including API key) are sent to the Overleaf server,
- * which calls the provider and relays the response.
- *
- * Storage goes through `customLocalStorage`, which JSON-encodes on the way in,
- * JSON-decodes on the way out, and turns a denied or full store into `null`
- * instead of an exception. A private-mode browser therefore just has no
- * provider, with no try/catch needed here.
+ * Configuration is stored securely on the Overleaf server. On each request,
+ * the backend loads and decrypts keys from the database.
  */
 export function readSettings(): ProviderSettings | null {
-  const parsed = customLocalStorage.getItem(SETTINGS_KEY)
-  if (!parsed?.type) return null
-
-  let type = parsed.type as ProviderType
-  if ((type as any) === 'openai-compatible') type = 'openai'
-  if ((type as any) === 'anthropic-compatible') type = 'anthropic'
-
-  if (!Object.prototype.hasOwnProperty.call(DEFAULT_BASE_URLS, type)) {
-    return null
+  const legacy = customLocalStorage.getItem(SETTINGS_KEY);
+  if (legacy) {
+    return normalizeProviderSettings(legacy);
   }
-
-  const result: ProviderSettings = {
-    type,
-    baseUrl: (parsed.baseUrl || DEFAULT_BASE_URLS[type] || '').trim(),
-    apiKey: (parsed.apiKey ?? '').trim(),
-    model: (parsed.model ?? '').trim(),
-  }
-  if (parsed.modelName) {
-    result.modelName = parsed.modelName
-  }
-  return result
+  return cachedProvider;
 }
 
 function notify(eventName: string) {
-  if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent(eventName))
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent(eventName));
   }
 }
 
 export function writeSettings(settings: ProviderSettings) {
-  customLocalStorage.setItem(SETTINGS_KEY, settings)
-  notify('aiAssist:providerChanged')
+  cachedProvider = settings;
+  origRemoveItem(SETTINGS_KEY);
+  notify("aiAssist:providerChanged");
+  putJSON("/ai-assist/settings", { body: { provider: settings } }).catch(() => {});
 }
 
 export function clearSettings() {
-  customLocalStorage.removeItem(SETTINGS_KEY)
-  notify('aiAssist:providerChanged')
+  cachedProvider = null;
+  origRemoveItem(SETTINGS_KEY);
+  notify("aiAssist:providerChanged");
+  putJSON("/ai-assist/settings", { body: { provider: null } }).catch(() => {});
 }
 
 function positiveNumber(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0
+  return typeof value === "number" && Number.isFinite(value) && value > 0
     ? value
-    : undefined
+    : undefined;
 }
 
-/**
- * The fast model saved in this browser, stored like the main provider but on
- * its own, for any provider type. The slot used to talk OpenAI to Gemini, so
- * an old Gemini URL ending in `/openai` is read without that part.
- */
-export function readFastSettings(): ProviderSettings | null {
-  const parsed = customLocalStorage.getItem(FAST_SETTINGS_KEY)
-  if (!parsed?.type) return null
+export function normalizeFastSettings(parsed: any): ProviderSettings | null {
+  if (!parsed?.type) return null;
 
-  let type = parsed.type as ProviderType
-  if ((type as any) === 'openai-compatible') type = 'openai'
-  if ((type as any) === 'anthropic-compatible') type = 'anthropic'
+  let type = parsed.type as ProviderType;
+  if ((type as any) === "openai-compatible") type = "openai";
+  if ((type as any) === "anthropic-compatible") type = "anthropic";
 
   if (!Object.prototype.hasOwnProperty.call(DEFAULT_BASE_URLS, type)) {
-    return null
+    return null;
   }
 
-  let baseUrl = (parsed.baseUrl || DEFAULT_BASE_URLS[type]).trim()
-  if (type === 'google') baseUrl = baseUrl.replace(/\/openai\/?$/, '')
+  let baseUrl = (parsed.baseUrl || DEFAULT_BASE_URLS[type]).trim();
+  if (type === "google") baseUrl = baseUrl.replace(/\/openai\/?$/, "");
   const result: ProviderSettings = {
     type,
     baseUrl,
-    apiKey: (parsed.apiKey ?? '').trim(),
-    model: (parsed.model ?? '').trim(),
+    apiKey: (parsed.apiKey ?? "").trim(),
+    model: (parsed.model ?? "").trim(),
+  };
+  if (parsed.modelName) result.modelName = parsed.modelName;
+  const contextWindow = positiveNumber(parsed.contextWindow);
+  if (contextWindow) result.contextWindow = contextWindow;
+  const maxOutputTokens = positiveNumber(parsed.maxOutputTokens);
+  if (maxOutputTokens) result.maxOutputTokens = maxOutputTokens;
+  return result;
+}
+
+/**
+ * The fast model, stored like the main provider on the server.
+ */
+export function readFastSettings(): ProviderSettings | null {
+  const legacy = customLocalStorage.getItem(FAST_SETTINGS_KEY);
+  if (legacy) {
+    return normalizeFastSettings(legacy);
   }
-  if (parsed.modelName) result.modelName = parsed.modelName
-  const contextWindow = positiveNumber(parsed.contextWindow)
-  if (contextWindow) result.contextWindow = contextWindow
-  const maxOutputTokens = positiveNumber(parsed.maxOutputTokens)
-  if (maxOutputTokens) result.maxOutputTokens = maxOutputTokens
-  return result
+  return cachedFastProvider;
 }
 
 export function writeFastSettings(settings: ProviderSettings) {
-  customLocalStorage.setItem(FAST_SETTINGS_KEY, settings)
-  notify('aiAssist:fastProviderChanged')
+  cachedFastProvider = settings;
+  origRemoveItem(FAST_SETTINGS_KEY);
+  notify("aiAssist:fastProviderChanged");
+  putJSON("/ai-assist/settings", { body: { fastProvider: settings } }).catch(() => {});
 }
 
 export function clearFastSettings() {
-  customLocalStorage.removeItem(FAST_SETTINGS_KEY)
-  notify('aiAssist:fastProviderChanged')
+  cachedFastProvider = null;
+  origRemoveItem(FAST_SETTINGS_KEY);
+  notify("aiAssist:fastProviderChanged");
+  putJSON("/ai-assist/settings", { body: { fastProvider: null } }).catch(() => {});
 }
 
 /** Whether this instance offers web_search and web_fetch at all. */
 export function isWebToolsAvailable(): boolean {
-  return Boolean(getMeta('ol-aiAssistWebToolsEnabled'))
+  return Boolean(getMeta("ol-aiAssistWebToolsEnabled"));
 }
 
 /** Whether the server provides a pre-configured base web search service. */
 export function isServerWebSearchAvailable(): boolean {
-  return Boolean(getMeta('ol-aiAssistServerWebSearchEnabled'))
+  return Boolean(getMeta("ol-aiAssistServerWebSearchEnabled"));
 }
 
 /** Human-readable summary of what the server-configured search provides. */
 export function getServerWebSearchSummary(): string {
-  return (getMeta('ol-aiAssistServerWebSearchSummary') as string) || ''
+  return (getMeta("ol-aiAssistServerWebSearchSummary") as string) || "";
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 export function migrateLegacyWebSearchSettings(
-  parsed: any
+  parsed: any,
 ): MultiWebSearchSettings | null {
-  if (!parsed || typeof parsed !== 'object') return null
+  if (!parsed || typeof parsed !== "object") return null;
 
-  if (parsed.sourceMode === 'disabled') {
-    return { sourceMode: 'disabled', providers: {} }
+  if (parsed.sourceMode === "disabled") {
+    return { sourceMode: "disabled", providers: {} };
   }
 
-  if (parsed.sourceMode === 'server') {
-    return { sourceMode: 'server', providers: {} }
+  if (parsed.sourceMode === "server") {
+    return { sourceMode: "server", providers: {} };
   }
 
-  const preferences = readWebSearchPreferences(parsed)
+  const preferences = readWebSearchPreferences(parsed);
 
-  if (parsed.type && typeof parsed.type === 'string') {
-    const type = parsed.type.trim()
-    if (type === 'searxng') {
-      const baseUrl = String(parsed.baseUrl ?? '').trim()
-      if (!baseUrl) return null
+  if (parsed.type && typeof parsed.type === "string") {
+    const type = parsed.type.trim();
+    if (type === "searxng") {
+      const baseUrl = String(parsed.baseUrl ?? "").trim();
+      if (!baseUrl) return null;
       return {
-        sourceMode: 'custom',
+        sourceMode: "custom",
         providers: {
           searxng: { enabled: true, baseUrls: [baseUrl] },
         },
-        rotationStrategy: 'round-robin',
-        primaryProvider: 'searxng',
+        rotationStrategy: "round-robin",
+        primaryProvider: "searxng",
         ...preferences,
-      }
+      };
     }
 
-    if (type === 'firecrawlSelfHosted') {
-      const baseUrl = String(parsed.baseUrl ?? '').trim()
-      if (!baseUrl) return null
+    if (type === "firecrawlSelfHosted") {
+      const baseUrl = String(parsed.baseUrl ?? "").trim();
+      if (!baseUrl) return null;
       return {
-        sourceMode: 'custom',
+        sourceMode: "custom",
         providers: {
           firecrawlSelfHosted: { enabled: true, baseUrls: [baseUrl] },
         },
-        rotationStrategy: 'round-robin',
-        primaryProvider: 'firecrawlSelfHosted',
+        rotationStrategy: "round-robin",
+        primaryProvider: "firecrawlSelfHosted",
         ...preferences,
-      }
+      };
     }
 
-    if (type === 'mcp') {
-      const baseUrl = String(parsed.baseUrl ?? '').trim()
-      if (!baseUrl) return null
+    if (type === "mcp") {
+      const baseUrl = String(parsed.baseUrl ?? "").trim();
+      if (!baseUrl) return null;
+      const bearerToken =
+        typeof parsed.bearerToken === "string" && parsed.bearerToken.trim()
+          ? parsed.bearerToken.trim()
+          : undefined;
       const headers = Array.isArray(parsed.headers)
         ? parsed.headers
-            .filter((h: any) => h && typeof h === 'object' && typeof h.key === 'string' && typeof h.value === 'string')
-            .map((h: any) => ({ key: String(h.key).trim(), value: String(h.value).trim() }))
+            .filter(
+              (h: any) =>
+                h &&
+                typeof h === "object" &&
+                typeof h.key === "string" &&
+                typeof h.value === "string",
+            )
+            .map((h: any) => ({
+              key: String(h.key).trim(),
+              value: String(h.value).trim(),
+            }))
             .filter((h: any) => h.key && h.value)
-        : undefined
+        : undefined;
       return {
-        sourceMode: 'custom',
+        sourceMode: "custom",
         providers: {
           mcp: {
             enabled: true,
             serverUrls: [baseUrl],
+            ...(bearerToken ? { bearerToken } : {}),
             ...(headers && headers.length > 0 ? { headers } : {}),
           },
         },
-        rotationStrategy: 'round-robin',
-        primaryProvider: 'mcp',
+        rotationStrategy: "round-robin",
+        primaryProvider: "mcp",
         ...preferences,
-      }
+      };
     }
 
-    const apiKey = String(parsed.apiKey ?? '').trim()
-    if (!apiKey) return null
+    const apiKey = String(parsed.apiKey ?? "").trim();
+    if (!apiKey) return null;
     if (
       [
-        'ollama',
-        'websearchapi',
-        'tavily',
-        'firecrawl',
-        'jina',
-        'langsearch',
-        'exa',
-        'tinyfish',
-        'parallel',
+        "ollama",
+        "websearchapi",
+        "tavily",
+        "firecrawl",
+        "jina",
+        "langsearch",
+        "exa",
+        "tinyfish",
+        "parallel",
       ].includes(type)
     ) {
       return {
-        sourceMode: 'custom',
+        sourceMode: "custom",
         providers: {
           [type]: { enabled: true, apiKeys: [apiKey] },
         },
-        rotationStrategy: 'round-robin',
+        rotationStrategy: "round-robin",
         primaryProvider: type as any,
         ...preferences,
-      }
+      };
     }
   }
 
   // Already multi-provider structure
-  if (parsed.providers && typeof parsed.providers === 'object') {
+  if (parsed.providers && typeof parsed.providers === "object") {
     const ollamaKeys = Array.isArray(parsed.providers.ollama?.apiKeys)
       ? parsed.providers.ollama.apiKeys
-          .map((k: any) => String(k ?? '').trim())
+          .map((k: any) => String(k ?? "").trim())
           .filter(Boolean)
-      : []
+      : [];
     const searxngUrls = Array.isArray(parsed.providers.searxng?.baseUrls)
       ? parsed.providers.searxng.baseUrls
-          .map((u: any) => String(u ?? '').trim())
+          .map((u: any) => String(u ?? "").trim())
           .filter(Boolean)
-      : []
+      : [];
     const websearchapiKeys = Array.isArray(
-      parsed.providers.websearchapi?.apiKeys
+      parsed.providers.websearchapi?.apiKeys,
     )
       ? parsed.providers.websearchapi.apiKeys
-          .map((k: any) => String(k ?? '').trim())
+          .map((k: any) => String(k ?? "").trim())
           .filter(Boolean)
-      : []
+      : [];
 
     const tavilyKeys = Array.isArray(parsed.providers.tavily?.apiKeys)
       ? parsed.providers.tavily.apiKeys
-          .map((k: any) => String(k ?? '').trim())
+          .map((k: any) => String(k ?? "").trim())
           .filter(Boolean)
-      : []
+      : [];
 
     const firecrawlKeys = Array.isArray(parsed.providers.firecrawl?.apiKeys)
       ? parsed.providers.firecrawl.apiKeys
-          .map((k: any) => String(k ?? '').trim())
+          .map((k: any) => String(k ?? "").trim())
           .filter(Boolean)
-      : []
+      : [];
 
     const firecrawlSelfHostedUrls = Array.isArray(
-      parsed.providers.firecrawlSelfHosted?.baseUrls
+      parsed.providers.firecrawlSelfHosted?.baseUrls,
     )
       ? parsed.providers.firecrawlSelfHosted.baseUrls
-          .map((u: any) => String(u ?? '').trim())
+          .map((u: any) => String(u ?? "").trim())
           .filter(Boolean)
-      : []
+      : [];
 
     const jinaKeys = Array.isArray(parsed.providers.jina?.apiKeys)
       ? parsed.providers.jina.apiKeys
-          .map((k: any) => String(k ?? '').trim())
+          .map((k: any) => String(k ?? "").trim())
           .filter(Boolean)
-      : []
+      : [];
 
     const langsearchKeys = Array.isArray(parsed.providers.langsearch?.apiKeys)
       ? parsed.providers.langsearch.apiKeys
-          .map((k: any) => String(k ?? '').trim())
+          .map((k: any) => String(k ?? "").trim())
           .filter(Boolean)
-      : []
+      : [];
 
     const exaKeys = Array.isArray(parsed.providers.exa?.apiKeys)
       ? parsed.providers.exa.apiKeys
-          .map((k: any) => String(k ?? '').trim())
+          .map((k: any) => String(k ?? "").trim())
           .filter(Boolean)
-      : []
+      : [];
 
     const tinyfishKeys = Array.isArray(parsed.providers.tinyfish?.apiKeys)
       ? parsed.providers.tinyfish.apiKeys
-          .map((k: any) => String(k ?? '').trim())
+          .map((k: any) => String(k ?? "").trim())
           .filter(Boolean)
-      : []
+      : [];
 
     const parallelKeys = Array.isArray(parsed.providers.parallel?.apiKeys)
       ? parsed.providers.parallel.apiKeys
-          .map((k: any) => String(k ?? '').trim())
+          .map((k: any) => String(k ?? "").trim())
           .filter(Boolean)
-      : []
+      : [];
 
     const mcpUrls = Array.isArray(parsed.providers.mcp?.serverUrls)
       ? parsed.providers.mcp.serverUrls
-          .map((u: any) => String(u ?? '').trim())
+          .map((u: any) => String(u ?? "").trim())
           .filter(Boolean)
-      : []
+      : [];
+
+    const mcpBearerToken =
+      typeof parsed.providers.mcp?.bearerToken === "string" &&
+      parsed.providers.mcp.bearerToken.trim()
+        ? parsed.providers.mcp.bearerToken.trim()
+        : undefined;
 
     const mcpHeaders = Array.isArray(parsed.providers.mcp?.headers)
       ? parsed.providers.mcp.headers
-          .filter((h: any) => h && typeof h === 'object' && typeof h.key === 'string' && typeof h.value === 'string')
-          .map((h: any) => ({ key: String(h.key).trim(), value: String(h.value).trim() }))
+          .filter(
+            (h: any) =>
+              h &&
+              typeof h === "object" &&
+              typeof h.key === "string" &&
+              typeof h.value === "string",
+          )
+          .map((h: any) => ({
+            key: String(h.key).trim(),
+            value: String(h.value).trim(),
+          }))
           .filter((h: any) => h.key && h.value)
-      : undefined
-
-    const mcpToolName =
-      typeof parsed.providers.mcp?.toolName === 'string' &&
-      parsed.providers.mcp.toolName.trim()
-        ? parsed.providers.mcp.toolName.trim()
-        : undefined
-
-    const mcpQueryParam =
-      typeof parsed.providers.mcp?.queryParam === 'string' &&
-      parsed.providers.mcp.queryParam.trim()
-        ? parsed.providers.mcp.queryParam.trim()
-        : undefined
+      : undefined;
 
     const ollamaEnabled = Boolean(
-      parsed.providers.ollama?.enabled && ollamaKeys.length > 0
-    )
+      parsed.providers.ollama?.enabled && ollamaKeys.length > 0,
+    );
     const searxngEnabled = Boolean(
-      parsed.providers.searxng?.enabled && searxngUrls.length > 0
-    )
+      parsed.providers.searxng?.enabled && searxngUrls.length > 0,
+    );
 
     const websearchapiEnabled = Boolean(
-      parsed.providers.websearchapi?.enabled && websearchapiKeys.length > 0
-    )
+      parsed.providers.websearchapi?.enabled && websearchapiKeys.length > 0,
+    );
 
     const tavilyEnabled = Boolean(
-      parsed.providers.tavily?.enabled && tavilyKeys.length > 0
-    )
+      parsed.providers.tavily?.enabled && tavilyKeys.length > 0,
+    );
 
     const firecrawlEnabled = Boolean(
-      parsed.providers.firecrawl?.enabled && firecrawlKeys.length > 0
-    )
+      parsed.providers.firecrawl?.enabled && firecrawlKeys.length > 0,
+    );
 
     const firecrawlSelfHostedEnabled = Boolean(
       parsed.providers.firecrawlSelfHosted?.enabled &&
-      firecrawlSelfHostedUrls.length > 0
-    )
+      firecrawlSelfHostedUrls.length > 0,
+    );
 
     const jinaEnabled = Boolean(
-      parsed.providers.jina?.enabled && jinaKeys.length > 0
-    )
+      parsed.providers.jina?.enabled && jinaKeys.length > 0,
+    );
 
     const langsearchEnabled = Boolean(
-      parsed.providers.langsearch?.enabled && langsearchKeys.length > 0
-    )
+      parsed.providers.langsearch?.enabled && langsearchKeys.length > 0,
+    );
 
     const exaEnabled = Boolean(
-      parsed.providers.exa?.enabled && exaKeys.length > 0
-    )
+      parsed.providers.exa?.enabled && exaKeys.length > 0,
+    );
 
     const tinyfishEnabled = Boolean(
-      parsed.providers.tinyfish?.enabled && tinyfishKeys.length > 0
-    )
+      parsed.providers.tinyfish?.enabled && tinyfishKeys.length > 0,
+    );
 
     const parallelEnabled = Boolean(
-      parsed.providers.parallel?.enabled && parallelKeys.length > 0
-    )
+      parsed.providers.parallel?.enabled && parallelKeys.length > 0,
+    );
 
     const mcpEnabled = Boolean(
-      parsed.providers.mcp?.enabled && mcpUrls.length > 0
-    )
+      parsed.providers.mcp?.enabled && mcpUrls.length > 0,
+    );
 
     const hasAnyConfigured =
       ollamaKeys.length > 0 ||
@@ -406,12 +520,12 @@ export function migrateLegacyWebSearchSettings(
       exaKeys.length > 0 ||
       tinyfishKeys.length > 0 ||
       parallelKeys.length > 0 ||
-      mcpUrls.length > 0
+      mcpUrls.length > 0;
 
-    if (!hasAnyConfigured) return null
+    if (!hasAnyConfigured) return null;
 
     return {
-      sourceMode: 'custom',
+      sourceMode: "custom",
       providers: {
         ollama: {
           enabled: ollamaEnabled,
@@ -435,7 +549,7 @@ export function migrateLegacyWebSearchSettings(
           enabled: tavilyEnabled,
           apiKeys: tavilyKeys,
           // Validated by the server, which drops anything it does not accept
-          ...(typeof parsed.providers.tavily?.projectId === 'string'
+          ...(typeof parsed.providers.tavily?.projectId === "string"
             ? { projectId: parsed.providers.tavily.projectId }
             : {}),
           ...(isPlainObject(parsed.providers.tavily?.search)
@@ -499,10 +613,6 @@ export function migrateLegacyWebSearchSettings(
         tinyfish: {
           enabled: tinyfishEnabled,
           apiKeys: tinyfishKeys,
-          ...(typeof parsed.providers.tinyfish?.baseUrl === 'string' &&
-          parsed.providers.tinyfish.baseUrl.trim()
-            ? { baseUrl: parsed.providers.tinyfish.baseUrl.trim() }
-            : {}),
           // Validated by the server, which drops anything it does not accept
           ...(isPlainObject(parsed.providers.tinyfish?.search)
             ? { search: parsed.providers.tinyfish.search }
@@ -511,10 +621,6 @@ export function migrateLegacyWebSearchSettings(
         parallel: {
           enabled: parallelEnabled,
           apiKeys: parallelKeys,
-          ...(typeof parsed.providers.parallel?.baseUrl === 'string' &&
-          parsed.providers.parallel.baseUrl.trim()
-            ? { baseUrl: parsed.providers.parallel.baseUrl.trim() }
-            : {}),
           // Validated by the server, which drops anything it does not accept
           ...(isPlainObject(parsed.providers.parallel?.search)
             ? { search: parsed.providers.parallel.search }
@@ -526,21 +632,20 @@ export function migrateLegacyWebSearchSettings(
         mcp: {
           enabled: mcpEnabled,
           serverUrls: mcpUrls,
+          ...(mcpBearerToken ? { bearerToken: mcpBearerToken } : {}),
           ...(mcpHeaders && mcpHeaders.length > 0
             ? { headers: mcpHeaders }
             : {}),
-          ...(mcpToolName ? { toolName: mcpToolName } : {}),
-          ...(mcpQueryParam ? { queryParam: mcpQueryParam } : {}),
         },
         searxng: {
           enabled: searxngEnabled,
           baseUrls: searxngUrls,
           defaultCategories:
-            typeof parsed.providers.searxng?.defaultCategories === 'string'
+            typeof parsed.providers.searxng?.defaultCategories === "string"
               ? parsed.providers.searxng.defaultCategories.trim()
               : undefined,
           defaultLanguage:
-            typeof parsed.providers.searxng?.defaultLanguage === 'string'
+            typeof parsed.providers.searxng?.defaultLanguage === "string"
               ? parsed.providers.searxng.defaultLanguage.trim()
               : undefined,
           // Validated by the server, which drops anything it does not accept
@@ -549,71 +654,79 @@ export function migrateLegacyWebSearchSettings(
         },
       },
       rotationStrategy:
-        parsed.rotationStrategy === 'provider-priority' ||
-        parsed.rotationStrategy === 'sticky'
+        parsed.rotationStrategy === "provider-priority" ||
+        parsed.rotationStrategy === "sticky"
           ? parsed.rotationStrategy
-          : 'round-robin',
+          : "round-robin",
       primaryProvider:
-        parsed.primaryProvider === 'ollama' ||
-        parsed.primaryProvider === 'websearchapi' ||
-        parsed.primaryProvider === 'tavily' ||
-        parsed.primaryProvider === 'firecrawl' ||
-        parsed.primaryProvider === 'firecrawlSelfHosted' ||
-        parsed.primaryProvider === 'jina' ||
-        parsed.primaryProvider === 'langsearch' ||
-        parsed.primaryProvider === 'exa' ||
-        parsed.primaryProvider === 'tinyfish' ||
-        parsed.primaryProvider === 'parallel' ||
-        parsed.primaryProvider === 'mcp'
+        parsed.primaryProvider === "ollama" ||
+        parsed.primaryProvider === "websearchapi" ||
+        parsed.primaryProvider === "tavily" ||
+        parsed.primaryProvider === "firecrawl" ||
+        parsed.primaryProvider === "firecrawlSelfHosted" ||
+        parsed.primaryProvider === "jina" ||
+        parsed.primaryProvider === "langsearch" ||
+        parsed.primaryProvider === "exa" ||
+        parsed.primaryProvider === "tinyfish" ||
+        parsed.primaryProvider === "parallel" ||
+        parsed.primaryProvider === "mcp"
           ? parsed.primaryProvider
-          : 'searxng',
+          : "searxng",
       ...preferences,
-    }
+    };
   }
 
-  return null
+  return null;
 }
 
 /**
- * The web search backend, stored beside the provider in this browser and sent
- * with each run. A stored entry that is incomplete reads as none.
+ * The web search backend, stored securely on the server and sent with each run.
  */
 export function readWebSearchSettings(): MultiWebSearchSettings | null {
-  const parsed = customLocalStorage.getItem(WEB_SEARCH_KEY)
-  const migrated = migrateLegacyWebSearchSettings(parsed)
-  if (migrated) return migrated
-
-  if (parsed === null && isServerWebSearchAvailable()) {
-    return {
-      sourceMode: 'server',
-      providers: {},
-    }
+  const parsed = customLocalStorage.getItem(WEB_SEARCH_KEY);
+  if (parsed) {
+    return migrateLegacyWebSearchSettings(parsed);
   }
 
-  return null
+  if (cachedWebSearch) return cachedWebSearch;
+
+  if (isServerWebSearchAvailable()) {
+    return {
+      sourceMode: "server",
+      providers: {},
+    };
+  }
+
+  return null;
 }
 
 /** The stored cache and result-count choices that are whole numbers in range. */
 function readWebSearchPreferences(parsed: any): WebSearchPreferences {
-  const preferences: WebSearchPreferences = {}
+  const preferences: WebSearchPreferences = {};
   for (const key of Object.keys(WEB_SEARCH_DEFAULTS) as Array<
     keyof WebSearchPreferences
   >) {
-    const value = parsed?.[key]
-    const { min, max } = WEB_SEARCH_DEFAULTS[key]
+    const value = parsed?.[key];
+    const { min, max } = WEB_SEARCH_DEFAULTS[key];
     if (Number.isInteger(value) && value >= min && value <= max) {
-      preferences[key] = value
+      preferences[key] = value;
     }
   }
-  return preferences
+  return preferences;
 }
 
 export function writeWebSearchSettings(settings: MultiWebSearchSettings) {
-  customLocalStorage.setItem(WEB_SEARCH_KEY, settings)
+  cachedWebSearch = settings;
+  origRemoveItem(WEB_SEARCH_KEY);
+  notify("aiAssist:webSearchChanged");
+  putJSON("/ai-assist/settings", { body: { webSearch: settings } }).catch(() => {});
 }
 
 export function clearWebSearchSettings() {
-  customLocalStorage.removeItem(WEB_SEARCH_KEY)
+  cachedWebSearch = null;
+  origRemoveItem(WEB_SEARCH_KEY);
+  notify("aiAssist:webSearchChanged");
+  putJSON("/ai-assist/settings", { body: { webSearch: null } }).catch(() => {});
 }
 
 /**
@@ -622,11 +735,11 @@ export function clearWebSearchSettings() {
  * Recorded per browser, since that is where the provider is configured.
  */
 export function hasConsented(): boolean {
-  return customLocalStorage.getItem(CONSENT_KEY) === true
+  return customLocalStorage.getItem(CONSENT_KEY) === true;
 }
 
 export function recordConsent() {
-  customLocalStorage.setItem(CONSENT_KEY, true)
+  customLocalStorage.setItem(CONSENT_KEY, true);
 }
 
 /**
@@ -636,89 +749,98 @@ export function recordConsent() {
  * `ol-showAiFeatures` meta tag, which defaults to true.
  */
 export function isAiAssistEnabled(): boolean {
-  const stored = customLocalStorage.getItem(AI_ENABLED_KEY)
+  const stored = customLocalStorage.getItem(AI_ENABLED_KEY);
   if (stored !== null && stored !== undefined) {
-    return Boolean(stored)
+    return Boolean(stored);
   }
-  const meta = getMeta('ol-showAiFeatures')
+  const meta = getMeta("ol-showAiFeatures");
   if (meta !== undefined && meta !== null) {
-    return Boolean(meta)
+    return Boolean(meta);
   }
-  return true
+  return true;
 }
 
 export function setAiAssistEnabled(enabled: boolean) {
-  customLocalStorage.setItem(AI_ENABLED_KEY, enabled)
+  customLocalStorage.setItem(AI_ENABLED_KEY, enabled);
 }
 
 /** The reasoning effort picked for this provider type, if one was picked. */
 export function readReasoningEffort(
-  type: ProviderType
+  type: ProviderType,
 ): ReasoningEffort | undefined {
-  const stored = customLocalStorage.getItem(REASONING_EFFORT_KEY)
-  const effort = stored && typeof stored === 'object' ? stored[type] : undefined
-  return REASONING_EFFORTS[type]?.includes(effort) ? effort : undefined
+  const stored = customLocalStorage.getItem(REASONING_EFFORT_KEY);
+  const effort =
+    stored && typeof stored === "object" ? stored[type] : undefined;
+  return REASONING_EFFORTS[type]?.includes(effort) ? effort : undefined;
 }
 
 export function writeReasoningEffort(
   type: ProviderType,
-  effort: ReasoningEffort | undefined
+  effort: ReasoningEffort | undefined,
 ) {
-  const stored = customLocalStorage.getItem(REASONING_EFFORT_KEY)
-  const efforts = stored && typeof stored === 'object' ? { ...stored } : {}
+  const stored = customLocalStorage.getItem(REASONING_EFFORT_KEY);
+  const efforts = stored && typeof stored === "object" ? { ...stored } : {};
   if (effort) {
-    efforts[type] = effort
+    efforts[type] = effort;
   } else {
-    delete efforts[type]
+    delete efforts[type];
   }
-  customLocalStorage.setItem(REASONING_EFFORT_KEY, efforts)
-  saveComposerPreferences()
+  customLocalStorage.setItem(REASONING_EFFORT_KEY, efforts);
+  saveComposerPreferences();
 }
 
 /** Whether thinking is on for this provider type; off until switched on. */
 export function readThinking(type: ProviderType): boolean {
-  const stored = customLocalStorage.getItem(THINKING_KEY)
-  return Boolean(stored && typeof stored === 'object' && stored[type] === true)
+  const stored = customLocalStorage.getItem(THINKING_KEY);
+  return Boolean(stored && typeof stored === "object" && stored[type] === true);
 }
 
 export function writeThinking(type: ProviderType, enabled: boolean) {
-  const stored = customLocalStorage.getItem(THINKING_KEY)
-  const thinking = stored && typeof stored === 'object' ? { ...stored } : {}
-  thinking[type] = enabled
-  customLocalStorage.setItem(THINKING_KEY, thinking)
-  saveComposerPreferences()
+  const stored = customLocalStorage.getItem(THINKING_KEY);
+  const thinking = stored && typeof stored === "object" ? { ...stored } : {};
+  thinking[type] = enabled;
+  customLocalStorage.setItem(THINKING_KEY, thinking);
+  saveComposerPreferences();
 }
 
-const PREFERENCES_URL = '/ai-assist/preferences'
+const PREFERENCES_URL = "/ai-assist/preferences";
 
 type ComposerPreferences = {
-  reasoningEffort: Partial<Record<ProviderType, ReasoningEffort>>
-  thinking: Partial<Record<ProviderType, boolean>>
-  writingTools?: object
-  languageSuggestions?: object
-  inlineSuggestions?: object
-}
+  reasoningEffort: Partial<Record<ProviderType, ReasoningEffort>>;
+  thinking: Partial<Record<ProviderType, boolean>>;
+  writingTools?: object;
+  languageSuggestions?: object;
+  inlineSuggestions?: object;
+};
 
 /** Preferences kept as one object each, with the event that announces a load. */
 const OBJECT_PREFERENCES = [
-  ['writingTools', WRITING_TOOLS_KEY, null],
-  ['languageSuggestions', LANGUAGE_SUGGESTIONS_KEY, LANGUAGE_SUGGESTIONS_CHANGED_EVENT],
-  ['inlineSuggestions', INLINE_SUGGESTIONS_KEY, INLINE_SUGGESTIONS_CHANGED_EVENT],
-] as const
+  ["writingTools", WRITING_TOOLS_KEY, null],
+  [
+    "languageSuggestions",
+    LANGUAGE_SUGGESTIONS_KEY,
+    LANGUAGE_SUGGESTIONS_CHANGED_EVENT,
+  ],
+  [
+    "inlineSuggestions",
+    INLINE_SUGGESTIONS_KEY,
+    INLINE_SUGGESTIONS_CHANGED_EVENT,
+  ],
+] as const;
 
 function localComposerPreferences(): ComposerPreferences {
-  const efforts = customLocalStorage.getItem(REASONING_EFFORT_KEY)
-  const thinking = customLocalStorage.getItem(THINKING_KEY)
-  const objects: Partial<ComposerPreferences> = {}
+  const efforts = customLocalStorage.getItem(REASONING_EFFORT_KEY);
+  const thinking = customLocalStorage.getItem(THINKING_KEY);
+  const objects: Partial<ComposerPreferences> = {};
   for (const [name, key] of OBJECT_PREFERENCES) {
-    const value = customLocalStorage.getItem(key)
-    if (value && typeof value === 'object') objects[name] = value
+    const value = customLocalStorage.getItem(key);
+    if (value && typeof value === "object") objects[name] = value;
   }
   return {
-    reasoningEffort: efforts && typeof efforts === 'object' ? efforts : {},
-    thinking: thinking && typeof thinking === 'object' ? thinking : {},
+    reasoningEffort: efforts && typeof efforts === "object" ? efforts : {},
+    thinking: thinking && typeof thinking === "object" ? thinking : {},
     ...objects,
-  }
+  };
 }
 
 /**
@@ -728,7 +850,7 @@ function localComposerPreferences(): ComposerPreferences {
 export function saveComposerPreferences() {
   putJSON(PREFERENCES_URL, {
     body: { preferences: localComposerPreferences() },
-  }).catch(() => {})
+  }).catch(() => {});
 }
 
 /**
@@ -738,26 +860,26 @@ export function saveComposerPreferences() {
 export async function loadComposerPreferences() {
   try {
     const res = await getJSON<{
-      preferences: ComposerPreferences | null
-    }>(PREFERENCES_URL)
+      preferences: ComposerPreferences | null;
+    }>(PREFERENCES_URL);
     if (!res || !res.preferences) {
-      saveComposerPreferences()
-      return
+      saveComposerPreferences();
+      return;
     }
     if (res.preferences.reasoningEffort !== undefined) {
       customLocalStorage.setItem(
         REASONING_EFFORT_KEY,
-        res.preferences.reasoningEffort
-      )
+        res.preferences.reasoningEffort,
+      );
     }
     if (res.preferences.thinking !== undefined) {
-      customLocalStorage.setItem(THINKING_KEY, res.preferences.thinking)
+      customLocalStorage.setItem(THINKING_KEY, res.preferences.thinking);
     }
     for (const [name, key, event] of OBJECT_PREFERENCES) {
-      const value = res.preferences[name]
-      if (!value) continue
-      customLocalStorage.setItem(key, value)
-      if (event) window.dispatchEvent(new CustomEvent(event))
+      const value = res.preferences[name];
+      if (!value) continue;
+      customLocalStorage.setItem(key, value);
+      if (event) window.dispatchEvent(new CustomEvent(event));
     }
   } catch {
     // Silently ignore preference sync errors in environments/tests where endpoint isn't available
