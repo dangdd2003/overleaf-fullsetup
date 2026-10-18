@@ -4,7 +4,7 @@ import logger from '@overleaf/logger'
 import { GithubSyncUserCredentials } from './models/GithubSyncModels.mjs'
 
 // Same defensive pattern as CollaboratorsInviteHelper.mjs:32-42 —
-// a missing GITHUB_TOKEN_SECRET must not crash boot.
+// a missing token encryption secret must not crash boot.
 let accessTokenEncryptor
 try {
   accessTokenEncryptor = new AccessTokenEncryptor(
@@ -13,14 +13,14 @@ try {
 } catch (error) {
   logger.error(
     { err: error },
-    'Failed to initialise GitHub sync token encryption. Please ensure GITHUB_TOKEN_SECRET is set.'
+    'Failed to initialise GitHub sync token encryption. The GitHub token encryption secret is missing.'
   )
 }
 
 function _requireEncryptor() {
   if (!accessTokenEncryptor) {
     throw new Error(
-      'GitHub token encryption not configured; set GITHUB_TOKEN_SECRET'
+      'GitHub token encryption not configured; the GitHub token encryption secret is missing'
     )
   }
 }

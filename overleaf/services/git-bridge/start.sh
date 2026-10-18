@@ -5,8 +5,18 @@ unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy
 export NO_PROXY="*"
 export no_proxy="*"
 
-mkdir -p "${GIT_BRIDGE_ROOT_DIR:-/data}/.wlgb/atts" 2>/dev/null || true
-_gb_dir="${GIT_BRIDGE_ROOT_DIR:-/data}"
+# The upstream settings default to the compose layout in README.md: web is
+# overleaf:3000 and this service is git-bridge on GIT_BRIDGE_PORT (8000). With
+# other service names, set GIT_BRIDGE_API_BASE_URL and
+# GIT_BRIDGE_POSTBACK_BASE_URL. A value set explicitly always wins.
+export GIT_BRIDGE_API_BASE_URL="${GIT_BRIDGE_API_BASE_URL:-http://overleaf:3000/api/v0}"
+_gb_api="${GIT_BRIDGE_API_BASE_URL%/}"
+export GIT_BRIDGE_OAUTH2_SERVER="${GIT_BRIDGE_OAUTH2_SERVER:-${_gb_api%/api/v0}}"
+export GIT_BRIDGE_POSTBACK_BASE_URL="${GIT_BRIDGE_POSTBACK_BASE_URL:-http://git-bridge:${GIT_BRIDGE_PORT:-8000}}"
+export GIT_BRIDGE_ROOT_DIR="${GIT_BRIDGE_ROOT_DIR:-/data}"
+
+mkdir -p "${GIT_BRIDGE_ROOT_DIR}/.wlgb/atts" 2>/dev/null || true
+_gb_dir="${GIT_BRIDGE_ROOT_DIR}"
 if [ "$(stat -c %U "$_gb_dir" 2>/dev/null)" != "node" ]; then
   chown -R node:node "$_gb_dir" 2>/dev/null || true
 fi

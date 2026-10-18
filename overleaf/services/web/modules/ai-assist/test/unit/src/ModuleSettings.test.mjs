@@ -7,7 +7,11 @@ const ENV_KEYS = [
   "AI_ASSIST_MCP_HEADERS",
   "AI_ASSIST_TAVILY_API_KEYS",
   "AI_ASSIST_SEARXNG_URLS",
-  "AI_ASSIST_BROWSER_CONCURRENCY",
+  "AI_ASSIST_MCP_API_KEY",
+  "AI_ASSIST_WEB_SEARCH_CACHE_HOURS",
+  "AI_ASSIST_WEB_SEARCH_MAX_CACHED_SEARCHES",
+  "AI_ASSIST_WEB_SEARCH_MAX_CACHED_PAGES",
+  "AI_ASSIST_REQUEST_TIMEOUT_SECONDS",
 ];
 
 async function loadSettings(env) {
@@ -37,6 +41,30 @@ describe("ModuleSettings server MCP WebSearch", function () {
       else process.env[k] = saved[k];
     }
     vi.resetModules();
+  });
+
+  it("reads the cache and request timeout settings", async function () {
+    const Settings = await loadSettings({
+      AI_ASSIST_WEB_SEARCH_CACHE_HOURS: "168",
+      AI_ASSIST_WEB_SEARCH_MAX_CACHED_SEARCHES: "1000",
+      AI_ASSIST_WEB_SEARCH_MAX_CACHED_PAGES: "200",
+      AI_ASSIST_REQUEST_TIMEOUT_SECONDS: "600",
+    });
+    expect(Settings.aiAssist.cacheHours).to.equal(168);
+    expect(Settings.aiAssist.maxCachedSearches).to.equal(1000);
+    expect(Settings.aiAssist.maxCachedPages).to.equal(200);
+    expect(Settings.aiAssist.requestTimeoutSeconds).to.equal(600);
+  });
+
+  it("keeps the defaults for unset or invalid tuning values", async function () {
+    const Settings = await loadSettings({
+      AI_ASSIST_WEB_SEARCH_CACHE_HOURS: "a week",
+      AI_ASSIST_REQUEST_TIMEOUT_SECONDS: "0",
+    });
+    expect(Settings.aiAssist.cacheHours).to.equal(24);
+    expect(Settings.aiAssist.maxCachedSearches).to.equal(256);
+    expect(Settings.aiAssist.maxCachedPages).to.equal(64);
+    expect(Settings.aiAssist.requestTimeoutSeconds).to.equal(180);
   });
 
   it("reads full endpoint URLs from env", async function () {
@@ -122,37 +150,14 @@ describe("ModuleSettings server MCP WebSearch", function () {
     expect(Settings.aiAssist.webCachePath).to.equal(
       "/var/lib/overleaf/data/ai-assist/web-cache.sqlite",
     );
-    expect(Settings.aiAssist.browser.concurrency).to.equal(2);
+    expect(Settings.aiAssist.browser).to.not.have.property("concurrency");
   });
 
-  it("configures browser concurrency from AI_ASSIST_BROWSER_CONCURRENCY", async function () {
-    const Settings = await loadSettings({
-      AI_ASSIST_BROWSER_CONCURRENCY: "5",
+  it("ignores the retired AI_ASSIST_MCP_API_KEY alias", async function () {
+    const sws = await loadServerWebSearch({
+      AI_ASSIST_MCP_URLS: "https://search.example.com/v1/search",
+      AI_ASSIST_MCP_API_KEY: "old-alias-token",
     });
-    expect(Settings.aiAssist.browser.concurrency).to.equal(5);
-  });
-
-  it("falls back to default browser concurrency when invalid or empty", async function () {
-    const empty = await loadSettings({
-      AI_ASSIST_BROWSER_CONCURRENCY: "",
-    });
-    expect(empty.aiAssist.browser.concurrency).to.equal(2);
-
-    const invalid = await loadSettings({
-      AI_ASSIST_BROWSER_CONCURRENCY: "not-a-number",
-    });
-    expect(invalid.aiAssist.browser.concurrency).to.equal(2);
-  });
-
-  it("clamps browser concurrency to at least 1 when value is less than 1", async function () {
-    const zero = await loadSettings({
-      AI_ASSIST_BROWSER_CONCURRENCY: "0",
-    });
-    expect(zero.aiAssist.browser.concurrency).to.equal(1);
-
-    const negative = await loadSettings({
-      AI_ASSIST_BROWSER_CONCURRENCY: "-3",
-    });
-    expect(negative.aiAssist.browser.concurrency).to.equal(1);
+    expect(sws.providers.mcp.headers).to.be.undefined;
   });
 });

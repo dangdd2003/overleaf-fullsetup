@@ -309,7 +309,8 @@ describe('GitBridgeSnapshotManager', function () {
 
       const snapshot = await GitBridgeSnapshotManager.getSnapshotForVersion(
         projectId,
-        12
+        12,
+        'http://overleaf:3000'
       )
       expect(flushed).toBe(true)
       expect(snapshot.srcs).toEqual([
@@ -320,14 +321,27 @@ describe('GitBridgeSnapshotManager', function () {
       expect(snapshot.atts.length).toBe(1)
       expect(snapshot.atts[0][1]).toContain('figure.png')
       expect(snapshot.atts[0][0]).toContain(`/api/v0/docs/${projectId}/file/file-1`)
+      expect(snapshot.atts[0][0].startsWith('http://overleaf:3000/api/v0/docs/')).toBe(true)
       expect(snapshot.atts[0][0]).toContain('token=')
+    })
+
+    it('refuses to build file links without the base URL', async function () {
+      setMockProject(async () => ({ _id: projectId, version: 1, rootFolder: [] }))
+      let err
+      try {
+        await GitBridgeSnapshotManager.getSnapshotForVersion(projectId, 1)
+      } catch (e) {
+        err = e
+      }
+      expect(err?.message).toMatch(/base URL/)
     })
 
     it('returns null if project is not found', async function () {
       setMockProject(async () => null)
       const snapshot = await GitBridgeSnapshotManager.getSnapshotForVersion(
         projectId,
-        12
+        12,
+        'http://overleaf:3000'
       )
       expect(snapshot).toBeNull()
     })
@@ -351,7 +365,8 @@ describe('GitBridgeSnapshotManager', function () {
 
       const snapshot = await GitBridgeSnapshotManager.getSnapshotForVersion(
         projectId,
-        5
+        5,
+        'http://overleaf:3000'
       )
       expect(snapshot).toEqual({ srcs: [], atts: [] })
     })
@@ -398,7 +413,8 @@ describe('GitBridgeSnapshotManager', function () {
 
       const snapshot = await GitBridgeSnapshotManager.getSnapshotForVersion(
         batchProjectId,
-        undefined
+        undefined,
+        'http://overleaf:3000'
       )
 
       expect(getAllDocsCalled).toBe(true)
@@ -441,7 +457,8 @@ describe('GitBridgeSnapshotManager', function () {
 
       const snapshot = await GitBridgeSnapshotManager.getSnapshotForVersion(
         projectId,
-        undefined
+        undefined,
+        'http://overleaf:3000'
       )
 
       const mainDoc = snapshot.srcs.find(s => s[1] === 'main.tex')
@@ -690,6 +707,41 @@ describe('GitBridgeSnapshotManager', function () {
       expect(err.message).not.toContain('169.254.169.254')
       expect(fetched).toEqual([])
       expect(upserts).toEqual([])
+    })
+
+    it('trusts git-bridge at GIT_BRIDGE_HOST and GIT_BRIDGE_PORT', async function () {
+      delete Settings.gitBridgePublicBaseUrl
+      const saved = { ...process.env }
+      process.env.GIT_BRIDGE_HOST = 'gitbridge'
+      process.env.GIT_BRIDGE_PORT = '9000'
+      const postbacks = []
+      nock('http://gitbridge:9000')
+        .post('/postback')
+        .reply(200, function () {
+          postbacks.push('http://gitbridge:9000/postback')
+          return {}
+        })
+      setMockProject(async () => ({ _id: projectId, version: 1, rootFolder: [] }))
+      DocstoreManager.promises.getAllDocVersions = async () => []
+
+      try {
+        await GitBridgeSnapshotManager.processPush(
+          projectId,
+          userId,
+          [],
+          'http://git-bridge:8000/postback'
+        )
+        await GitBridgeSnapshotManager.processPush(
+          projectId,
+          userId,
+          [],
+          'http://gitbridge:9000/postback'
+        )
+      } finally {
+        process.env = saved
+      }
+
+      expect(postbacks).toEqual(['http://gitbridge:9000/postback'])
     })
 
     it('does not send the postback to a URL outside git-bridge', async function () {

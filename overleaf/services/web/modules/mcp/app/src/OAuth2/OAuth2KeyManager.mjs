@@ -2,19 +2,17 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
-import Settings from '@overleaf/settings'
 import logger from '@overleaf/logger'
 import { base64url, getBaseUrl, mcpAudience } from './OAuth2Utils.mjs'
 
-const DEFAULT_KEY_PATH = '/var/lib/overleaf/oauth2_key.pem'
+const KEY_PATH = '/var/lib/overleaf/oauth2_key.pem'
 const KEYRING_FILE_NAME = 'oauth2_keyring.json'
 
 /*
  * Key set
  *
- * The primary key is the one that has always existed: MCP_OAUTH2_PRIVATE_KEY
- * (or mcpOauth2PrivateKey), or the key file. Single-key deployments never
- * need anything else.
+ * The primary key is the one that has always existed: the key file. A
+ * single-key deployment never needs anything else.
  *
  * rotateSigningKey() generates another key and records it in a keyring file
  * next to the key file. The newest key signs. Every key that is not retired
@@ -28,9 +26,11 @@ let cachedPrimary = null
 // Ordered list of usable keys: primary first, then rotated keys oldest to
 // newest. The last entry signs.
 let cachedKeys = null
+// Tests point the key file at a temporary directory. Production never sets it.
+let keyPathOverride = null
 
 function keyFilePath() {
-  return process.env.MCP_OAUTH2_KEY_FILE || DEFAULT_KEY_PATH
+  return keyPathOverride || KEY_PATH
 }
 
 function keyringFilePath() {
@@ -50,7 +50,7 @@ function thumbprintKid(publicKey) {
 
 function keyFileError(keyPath, err) {
   return new Error(
-    `OAuth2 signing key file ${keyPath} cannot be used; set MCP_OAUTH2_KEY_FILE to a readable and writable path, or MCP_OAUTH2_PRIVATE_KEY`,
+    `OAuth2 signing key file ${keyPath} cannot be used; it must be readable and writable by this process`,
     { cause: err }
   )
 }
@@ -103,29 +103,8 @@ function loadOrCreateKeyFile(keyPath) {
 }
 
 function loadPrimaryKey() {
-  const envPrivateKey =
-    process.env.MCP_OAUTH2_PRIVATE_KEY || Settings.mcpOauth2PrivateKey
-
-  let keypair
-  if (envPrivateKey) {
-    try {
-      const privateKey = crypto.createPrivateKey(envPrivateKey)
-      const publicKey = Settings.mcpOauth2PublicKey
-        ? crypto.createPublicKey(Settings.mcpOauth2PublicKey)
-        : crypto.createPublicKey(privateKey)
-      keypair = { privateKey, publicKey }
-    } catch (err) {
-      throw new Error(
-        'OAuth2 keypair is misconfigured: MCP_OAUTH2_PRIVATE_KEY / mcpOauth2PublicKey must be a valid PEM-encoded key',
-        { cause: err }
-      )
-    }
-  } else {
-    keypair = loadOrCreateKeyFile(keyFilePath())
-  }
-
-  const kid = Settings.mcpOauth2KeyId || thumbprintKid(keypair.publicKey)
-  return { ...keypair, kid }
+  const keypair = loadOrCreateKeyFile(keyFilePath())
+  return { ...keypair, kid: thumbprintKid(keypair.publicKey) }
 }
 
 // A keyring that cannot be parsed is an error, never an empty keyring. Treating
@@ -272,6 +251,10 @@ const OAuth2KeyManager = {
   _clearCache() {
     cachedPrimary = null
     cachedKeys = null
+  },
+
+  _setKeyPathForTests(keyPath) {
+    keyPathOverride = keyPath
   },
 
   async getKeypair() {

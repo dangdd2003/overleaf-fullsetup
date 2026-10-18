@@ -6,6 +6,7 @@ import { pipeline } from 'node:stream'
 import dns from 'node:dns'
 import os from 'node:os'
 import Settings from '@overleaf/settings'
+import { dockerHostGateway, isRunningInDocker } from '../DockerHost.mjs'
 
 export class ConnectorHeaders {
   constructor(init) {
@@ -211,15 +212,13 @@ for (const [prefix, bits] of [
 PRIVATE_ADDRESSES.addSubnet('fc00::', 7, 'ipv6')
 PRIVATE_ADDRESSES.addSubnet('fe80::', 10, 'ipv6')
 
-/** The docker host gateway that resolveDockerHostUrl maps localhost to. */
-function dockerGatewayAddress() {
-  return normalizeAddress(process.env.DOCKER_HOST_GATEWAY || '172.20.0.1')
-}
-
 /** True for a private or LAN address, including the docker host gateway. */
 export function isPrivateAddress(address) {
   const raw = normalizeAddress(address)
-  if (raw === dockerGatewayAddress()) return true
+  // The gateway resolveDockerHostUrl maps localhost to, only inside Docker
+  if (isRunningInDocker() && raw === normalizeAddress(dockerHostGateway())) {
+    return true
+  }
   const family = net.isIP(raw)
   if (!family) return false
   return PRIVATE_ADDRESSES.check(raw, family === 4 ? 'ipv4' : 'ipv6')

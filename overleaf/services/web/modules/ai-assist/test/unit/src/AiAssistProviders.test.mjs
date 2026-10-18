@@ -21,6 +21,7 @@ import {
   validateSafeProviderBaseUrl,
 } from '../../../app/src/AiAssistProviders.mjs'
 import Settings from '@overleaf/settings'
+import { dockerHostGateway } from '../../../app/src/DockerHost.mjs'
 import { readJsonReply } from '../../../app/src/AiAssistProviders.mjs'
 
 describe('AiAssistProviders', function () {
@@ -38,7 +39,7 @@ describe('AiAssistProviders', function () {
     })
 
     it('refuses the Docker host gateway a user-typed Ollama URL is mapped to', function () {
-      const gateway = process.env.DOCKER_HOST_GATEWAY || '172.20.0.1'
+      const gateway = dockerHostGateway()
       expect(() =>
         validateSafeProviderBaseUrl(`http://${gateway}:11434`)
       ).to.throw(/private network address/)

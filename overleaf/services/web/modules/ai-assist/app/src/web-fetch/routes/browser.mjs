@@ -17,6 +17,12 @@ import { describeStatus, safeDecodeURI, webError } from '../util.mjs'
 const RAW_TIMEOUT_MS = 25_000
 const RENDER_TIMEOUT_MS = 60_000
 const UNAVAILABLE_MS = 30_000
+/** Page places until the sidecar says how many it has: its BROWSER_CAPACITY default. */
+const DEFAULT_CAPACITY = 2
+/** How long a learned capacity stands, and how soon a failed read is tried again. */
+const CAPACITY_TTL_MS = 5 * 60_000
+const CAPACITY_RETRY_MS = 30_000
+const HEALTH_TIMEOUT_MS = 2_000
 /** A small file (a site icon) by /v1/fetch, which opens no browser page. */
 const FILE_TIMEOUT_MS = 10_000
 /**
@@ -35,10 +41,18 @@ function cancelled() {
  * arrival order, instead of being refused there.
  */
 export class SidecarGate {
-  constructor(size = 2) {
+  constructor(size = DEFAULT_CAPACITY) {
     this.size = Math.max(1, Math.floor(Number(size)) || 1)
     this.busy = 0
     this.waiting = []
+  }
+
+  /** Changes the size; a larger one lets waiting requests in at once. */
+  resize(size) {
+    this.size = Math.max(1, Math.floor(Number(size)) || 1)
+    while (this.busy < this.size && this.waiting.length > 0) {
+      this.waiting[0].grant()
+    }
   }
 
   /** Resolves to the function that gives the place back. */
@@ -110,18 +124,50 @@ export class BrowserRoute {
   constructor({
     baseUrl,
     token,
-    concurrency = 2,
+    capacity = DEFAULT_CAPACITY,
     fetchFn = fetch,
     now = () => Date.now(),
   } = {}) {
     this.baseUrl = baseUrl?.replace(/\/+$/, '')
     this.token = token
-    this.concurrency = concurrency
     this.fetchFn = fetchFn
     this.now = now
     this.unavailableUntil = 0
-    this.gate = new SidecarGate(concurrency)
+    this.gate = new SidecarGate(capacity)
     this.fileGate = new SidecarGate(FILE_CONCURRENCY)
+    this.capacityUntil = 0
+    this.capacityProbe = null
+  }
+
+  /**
+   * Sizes the page places to the sidecar's own capacity, which its /v1/health
+   * reports, so the two agree whatever BROWSER_CAPACITY it runs with. Read at
+   * most every few minutes; until it answers the fallback stands.
+   */
+  _learnCapacity() {
+    if (this.now() < this.capacityUntil) return Promise.resolve()
+    this.capacityProbe ??= this._probeCapacity().finally(() => {
+      this.capacityProbe = null
+    })
+    return this.capacityProbe
+  }
+
+  async _probeCapacity() {
+    let capacity = null
+    try {
+      const res = await this.fetchFn(`${this.baseUrl}/v1/health`, {
+        signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS),
+      })
+      if (res.ok) capacity = (await res.json())?.capacity
+    } catch {
+      // The read that follows reports the sidecar as unavailable if it is down
+    }
+    if (Number.isInteger(capacity) && capacity >= 1) {
+      this.gate.resize(capacity)
+      this.capacityUntil = this.now() + CAPACITY_TTL_MS
+    } else {
+      this.capacityUntil = this.now() + CAPACITY_RETRY_MS
+    }
   }
 
   available() {
@@ -147,6 +193,7 @@ export class BrowserRoute {
 
   async _request(path, targetUrl, { timeoutMs, signal, maxBytes } = {}) {
     this._check()
+    await this._learnCapacity()
     const release = await this.gate.acquire({ signal })
     try {
       return await this._send(path, targetUrl, { timeoutMs, signal, maxBytes })
@@ -307,7 +354,6 @@ export function sharedBrowserRoute() {
     shared = new BrowserRoute({
       baseUrl: config.url,
       token: config.token,
-      concurrency: config.concurrency ?? 2,
     })
   }
   return shared

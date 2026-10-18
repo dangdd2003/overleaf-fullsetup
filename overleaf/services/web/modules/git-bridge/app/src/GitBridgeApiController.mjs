@@ -15,6 +15,31 @@ function internalError(res, err) {
     .json({ code: 'error', message: 'internal error', errorId })
 }
 
+// A Host header that names a host (and optional port), nothing else. Anything
+// with a path, userinfo or query never becomes part of a URL this service builds.
+const HOST_PATTERN = /^(\[[0-9a-f:.]+\]|[a-z0-9-]+(\.[a-z0-9-]+)*)(:\d{1,5})?$/i
+
+/**
+ * The web address git-bridge reached this request at. git-bridge calls the API
+ * at its configured base URL, so the scheme and Host of that call name an
+ * address git-bridge can use again. Snapshot file URLs are built on it.
+ * Returns null when the scheme or Host cannot be used as an origin.
+ *
+ * @param {import('express').Request} req
+ * @returns {string|null}
+ */
+export function requestOrigin(req) {
+  const protocol = req.protocol
+  const host = req.headers?.host
+  if (protocol !== 'http' && protocol !== 'https') return null
+  if (typeof host !== 'string' || !HOST_PATTERN.test(host)) return null
+  try {
+    return new URL(`${protocol}://${host}`).origin
+  } catch {
+    return null
+  }
+}
+
 function extractToken(req) {
   const authHeader = req.headers?.authorization || ''
   if (authHeader.startsWith('Bearer ')) {
@@ -259,10 +284,17 @@ const GitBridgeApiController = {
 
   async getSnapshot(req, res) {
     const { projectId, versionId } = req.params
+    const baseUrl = requestOrigin(req)
+    if (!baseUrl) {
+      return res
+        .status(400)
+        .json({ code: 'invalidHost', message: 'Host is not a valid address' })
+    }
     try {
       const snapshot = await GitBridgeSnapshotManager.getSnapshotForVersion(
         projectId,
-        parseInt(versionId, 10)
+        parseInt(versionId, 10),
+        baseUrl
       )
       if (!snapshot) {
         return res

@@ -894,9 +894,7 @@ module.exports = {
     // Reached server-to-server to describe MCP tools on the OAuth consent
     // page, never from the browser. The MCP service runs in the same
     // container, on loopback (server-ce/runit/mcp-overleaf/run).
-    serviceUrl:
-      process.env.MCP_SERVICE_URL ||
-      `http://127.0.0.1:${process.env.MCP_PORT || 3050}`,
+    serviceUrl: 'http://127.0.0.1:3050',
   },
 
   // module options
@@ -1300,37 +1298,6 @@ module.exports = {
   enablePandocConversions: process.env.ENABLE_PANDOC_CONVERSIONS === 'true',
 
   enableGoogleDriveSync: process.env.GOOGLE_DRIVE_ENABLED === 'true',
-  googleDrive: {
-    clientId: process.env.GOOGLE_DRIVE_CLIENT_ID || '',
-    tokenEncryptionSecret:
-      process.env.GOOGLE_DRIVE_TOKEN_ENCRYPTION_SECRET ||
-      process.env.GOOGLE_DRIVE_TOKEN_SECRET ||
-      '',
-    clientSecret: process.env.GOOGLE_DRIVE_CLIENT_SECRET || '',
-    // Auto-derived from siteUrl with optional environment override
-    redirectUri:
-      process.env.GOOGLE_DRIVE_REDIRECT_URI ||
-      `${siteUrl}/oauth/google-drive/callback`,
-    webhookUrl:
-      process.env.GOOGLE_DRIVE_WEBHOOK_URL !== undefined
-        ? process.env.GOOGLE_DRIVE_WEBHOOK_URL
-        : siteUrl?.startsWith('https://')
-          ? `${siteUrl}/google-drive/webhook`
-          : '',
-    // Core rate-limit and quota controls
-    maxRps: intFromEnv('GOOGLE_DRIVE_MAX_RPS', 8),
-    pollIntervalSeconds: intFromEnv('GOOGLE_DRIVE_POLL_INTERVAL_SECONDS', 300),
-    outboundFlushSeconds: intFromEnv(
-      'GOOGLE_DRIVE_OUTBOUND_FLUSH_SECONDS',
-      600
-    ),
-    // Fixed internal defaults
-    folderName: 'Overleaf',
-    outboundDebounceSeconds: 15,
-    channelRenewIntervalSeconds: 3600,
-    watchedUserPollRatio: 10,
-    manualSyncCooldownSeconds: 60,
-  },
 }
 
 module.exports.mergeWith = function (overrides) {

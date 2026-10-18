@@ -50,17 +50,12 @@ const TMP_DIR = '/var/lib/overleaf/tmp'
 const settings = {
   clsi: {
     optimiseInDocker: process.env.OPTIMISE_PDF === 'true',
-    dockerRunner:
-      (process.env.DOCKER_RUNNER || process.env.SANDBOXED_COMPILES) === 'true',
+    dockerRunner: process.env.SANDBOXED_COMPILES === 'true',
     docker: {
       image: process.env.TEX_LIVE_DOCKER_IMAGE,
       autoPullImages: process.env.TEX_LIVE_AUTO_PULL_ENABLED === 'true',
-      allowedImages: (
-        process.env.ALLOWED_IMAGES ||
-        process.env.ALL_TEX_LIVE_DOCKER_IMAGES ||
-        ''
-      )
-        .split(/[ ,]+/)
+      allowedImages: (process.env.ALL_TEX_LIVE_DOCKER_IMAGES || '')
+        .split(',')
         .map(s => s.trim())
         .filter(Boolean),
     },
@@ -234,26 +229,6 @@ const settings = {
       process.env.OVERLEAF_SESSION_SECRET || process.env.CRYPTO_RANDOM,
   },
 
-  // Google Drive sync derives its OAuth redirect and webhook URLs from the
-  // site URL. settings.defaults.js derives them from PUBLIC_URL, which
-  // server-ce never sets, so they are re-derived here from the siteUrl
-  // assigned above. Explicit environment variables still take precedence.
-  googleDrive: {
-    tokenEncryptionSecret:
-      process.env.GOOGLE_DRIVE_TOKEN_ENCRYPTION_SECRET ||
-      process.env.GOOGLE_DRIVE_TOKEN_SECRET ||
-      '',
-    redirectUri:
-      process.env.GOOGLE_DRIVE_REDIRECT_URI ||
-      `${siteUrl}/oauth/google-drive/callback`,
-    webhookUrl:
-      process.env.GOOGLE_DRIVE_WEBHOOK_URL !== undefined
-        ? process.env.GOOGLE_DRIVE_WEBHOOK_URL
-        : siteUrl.startsWith('https://')
-          ? `${siteUrl}/google-drive/webhook`
-          : '',
-  },
-
   csp: {
     enabled: process.env.OVERLEAF_CSP_ENABLED !== 'false',
   },
@@ -308,7 +283,6 @@ const settings = {
   },
 
   currentImageName: process.env.TEX_LIVE_DOCKER_IMAGE,
-  imageRoot: process.env.DOCKER_IMAGE_ROOT || '',
 
   allowedImageNames: process.env.ALL_TEX_LIVE_DOCKER_IMAGES
     ? process.env.ALL_TEX_LIVE_DOCKER_IMAGES.split(',').map((img, i) => ({

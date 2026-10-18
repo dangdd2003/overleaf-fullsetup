@@ -15,16 +15,14 @@ describe('OAuth2KeyManager', () => {
 
   beforeEach(() => {
     OAuth2KeyManager._clearCache()
-    delete process.env.MCP_OAUTH2_PRIVATE_KEY
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oauth2-key-test-'))
     keyFile = path.join(tmpDir, 'test_key.pem')
-    process.env.MCP_OAUTH2_KEY_FILE = keyFile
+    OAuth2KeyManager._setKeyPathForTests(keyFile)
   })
 
   afterEach(() => {
     fs.rmSync(tmpDir, { recursive: true, force: true })
-    delete process.env.MCP_OAUTH2_KEY_FILE
-    delete process.env.MCP_OAUTH2_PRIVATE_KEY
+    OAuth2KeyManager._setKeyPathForTests(null)
     OAuth2KeyManager._clearCache()
   })
 
@@ -51,9 +49,13 @@ describe('OAuth2KeyManager', () => {
     // RFC 7638 thumbprint: base64url SHA-256, 43 characters
     expect(first.kid).to.match(/^[A-Za-z0-9_-]{43}$/)
 
-    process.env.MCP_OAUTH2_PRIVATE_KEY = crypto
-      .generateKeyPairSync('rsa', { modulusLength: 2048 })
-      .privateKey.export({ type: 'pkcs8', format: 'pem' })
+    // A replaced key file is a replaced key.
+    fs.writeFileSync(
+      keyFile,
+      crypto
+        .generateKeyPairSync('rsa', { modulusLength: 2048 })
+        .privateKey.export({ type: 'pkcs8', format: 'pem' })
+    )
     OAuth2KeyManager._clearCache()
     const second = await OAuth2KeyManager.getKeypair()
     expect(second.kid).to.not.equal(first.kid)
@@ -71,20 +73,7 @@ describe('OAuth2KeyManager', () => {
     expect(jwks2.keys[0].n).to.equal(jwks1.keys[0].n)
   })
 
-  it('throws a clear config error instead of crashing on a malformed private key', async () => {
-    process.env.MCP_OAUTH2_PRIVATE_KEY = 'not-a-valid-pem-key'
-    let err
-    try {
-      await OAuth2KeyManager.getKeypair()
-    } catch (e) {
-      err = e
-    }
-    expect(err).to.exist
-    expect(err.message).to.match(/misconfigured/i)
-    expect(err.cause).to.exist
-  })
-
-  it('persists and loads keypair from disk when MCP_OAUTH2_KEY_FILE is specified', async () => {
+  it('persists and loads keypair from disk at the key file path', async () => {
     const keypair1 = await OAuth2KeyManager.getKeypair()
     expect(fs.existsSync(keyFile)).to.be.true
     const savedPem = fs.readFileSync(keyFile, 'utf8')
@@ -121,7 +110,7 @@ describe('OAuth2KeyManager', () => {
     // A path whose parent is a regular file cannot be created
     const blocker = path.join(tmpDir, 'blocker')
     fs.writeFileSync(blocker, 'x')
-    process.env.MCP_OAUTH2_KEY_FILE = path.join(blocker, 'key.pem')
+    OAuth2KeyManager._setKeyPathForTests(path.join(blocker, 'key.pem'))
 
     let err
     try {

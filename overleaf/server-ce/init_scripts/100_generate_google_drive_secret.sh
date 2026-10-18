@@ -24,11 +24,18 @@ generate_secret () {
 }
 
 if [ ! -s "$PERSISTENT_FILE" ]; then
-  echo "generating Google Drive token encryption secret"
   (
     umask 077
     mkdir -p "$SECRETS_DIR"
-    echo "$(generate_secret)" > "$PERSISTENT_FILE"
+    if [ -n "$GOOGLE_DRIVE_TOKEN_SECRET" ]; then
+      # one-time migration: installs that set the removed GOOGLE_DRIVE_TOKEN_SECRET
+      # keep decrypting their stored tokens with that value
+      echo "migrating Google Drive token encryption secret from GOOGLE_DRIVE_TOKEN_SECRET"
+      printf '%s' "$GOOGLE_DRIVE_TOKEN_SECRET" > "$PERSISTENT_FILE"
+    else
+      echo "generating Google Drive token encryption secret"
+      echo "$(generate_secret)" > "$PERSISTENT_FILE"
+    fi
   )
 fi
 

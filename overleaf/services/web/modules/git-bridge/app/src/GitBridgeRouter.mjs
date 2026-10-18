@@ -3,16 +3,8 @@ import Oauth2TokenInfoController from './Oauth2TokenInfoController.mjs'
 import GitBridgeApiController from './GitBridgeApiController.mjs'
 import FileStoreController from '../../../../app/src/Features/FileStore/FileStoreController.mjs'
 
-if (Settings.enableGitBridge === undefined) {
-  Settings.enableGitBridge = process.env.GIT_BRIDGE_ENABLED === 'true'
-}
-
 const GitBridgeRouter = {
   apply(webRouter, privateApiRouter, publicApiRouter) {
-    if (Settings.enableGitBridge === undefined) {
-      Settings.enableGitBridge = process.env.GIT_BRIDGE_ENABLED === 'true'
-    }
-
     if (!Settings.enableGitBridge) {
       return
     }

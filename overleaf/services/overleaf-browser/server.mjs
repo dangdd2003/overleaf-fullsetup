@@ -13,16 +13,17 @@ import { createEgressProxy } from './proxy.mjs'
  * Overleaf communicates directly with this container over HTTP with Bearer token.
  */
 
-const PORT = Number(process.env.PORT || 3000)
-const PROXY_PORT = Number(process.env.PROXY_PORT || 8080)
+// Fixed: the image's EXPOSE and healthcheck use 3000, and the egress proxy is
+// internal to the container (127.0.0.1 only), so neither is a deployment choice
+const PORT = 3000
+const PROXY_PORT = 8080
+const BROWSER_LANG = (process.env.BROWSER_LANG || '').trim() || 'en-US'
 const TOKEN = (process.env.BROWSER_TOKEN || '').trim()
-const BROWSER_LANG = process.env.BROWSER_LANG || 'en-US'
 const CAPACITY = Math.max(1, Number(process.env.BROWSER_CAPACITY) || 2)
 
-// Standard upstream proxy env vars: UPSTREAM_PROXY / BROWSER_PROXY / HTTPS_PROXY / SOCKS5
+// Upstream proxy: UPSTREAM_PROXY, then the standard HTTPS/ALL/HTTP_PROXY vars
 const UPSTREAM_PROXY = (
   process.env.UPSTREAM_PROXY ||
-  process.env.BROWSER_PROXY ||
   process.env.HTTPS_PROXY ||
   process.env.https_proxy ||
   process.env.ALL_PROXY ||

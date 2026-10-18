@@ -30,6 +30,7 @@ import {
   checkApiKeyAlive,
 } from '../../../app/src/AiAssistWebTools.mjs'
 import { renderToolResult } from '../../../app/src/AiAssistToolRender.mjs'
+import { resetDockerHostCache } from '../../../app/src/DockerHost.mjs'
 import { webError } from '../../../app/src/web-fetch/util.mjs'
 
 function jsonResponse(body, status = 200) {
@@ -4061,12 +4062,20 @@ describe('AiAssistWebTools', function () {
 
     describe('checkApiKeyAlive Docker URL resolution', function () {
       it('resolves Docker host gateway for searxng, firecrawlSelfHosted, and mcp', async function () {
-        const origDocker = process.env.DOCKER
-        const origGateway = process.env.DOCKER_HOST_GATEWAY
+        // Pretend to run in a container whose default route is 172.20.0.1
+        const realExists = fs.existsSync
+        const realRead = fs.readFileSync
+        const existsStub = sinon.stub(fs, 'existsSync').callsFake(p =>
+          p === '/.dockerenv' ? true : realExists(p)
+        )
+        const readStub = sinon.stub(fs, 'readFileSync').callsFake((p, ...rest) =>
+          p === '/proc/net/route'
+            ? 'Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n' +
+              'eth0\t00000000\t010014AC\t0003\t0\t0\t0\t00000000\t0\t0\t0\n'
+            : realRead(p, ...rest)
+        )
+        resetDockerHostCache()
         try {
-          process.env.DOCKER = 'true'
-          process.env.DOCKER_HOST_GATEWAY = '172.20.0.1'
-
           const requestedUrls = []
           const fetchFn = sinon.stub().callsFake(async url => {
             requestedUrls.push(String(url))
@@ -4093,11 +4102,9 @@ describe('AiAssistWebTools', function () {
           expect(requestedUrls[1]).to.equal('http://172.20.0.1:3002/v1/health')
           expect(requestedUrls[2]).to.equal('http://172.20.0.1:8000/search')
         } finally {
-          if (origDocker !== undefined) process.env.DOCKER = origDocker
-          else delete process.env.DOCKER
-          if (origGateway !== undefined)
-            process.env.DOCKER_HOST_GATEWAY = origGateway
-          else delete process.env.DOCKER_HOST_GATEWAY
+          existsStub.restore()
+          readStub.restore()
+          resetDockerHostCache()
         }
       })
     })

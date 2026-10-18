@@ -14,12 +14,12 @@ describe('OAuth2MetadataController', () => {
   beforeAll(() => {
     // The JWKS test reads the real key; keep it out of the default path.
     keyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oauth2-metadata-test-'))
-    process.env.MCP_OAUTH2_KEY_FILE = path.join(keyDir, 'key.pem')
+    OAuth2KeyManager._setKeyPathForTests(path.join(keyDir, 'key.pem'))
     OAuth2KeyManager._clearCache()
   })
 
   afterAll(() => {
-    delete process.env.MCP_OAUTH2_KEY_FILE
+    OAuth2KeyManager._setKeyPathForTests(null)
     OAuth2KeyManager._clearCache()
     fs.rmSync(keyDir, { recursive: true, force: true })
   })

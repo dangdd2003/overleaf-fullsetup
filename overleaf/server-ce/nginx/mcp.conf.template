@@ -1,6 +1,6 @@
 # Overleaf MCP Streamable HTTP endpoint (Dynamic Template)
 location /mcp {
-	proxy_pass http://${MCP_HOST}:${MCP_PORT};
+	proxy_pass http://127.0.0.1:3050;
 	proxy_http_version 1.1;
 
 	proxy_set_header Host $host;
@@ -22,7 +22,7 @@ location /mcp {
 
 # RFC 9728 OAuth 2.0 Protected Resource Metadata
 location /.well-known/oauth-protected-resource {
-	proxy_pass http://${MCP_HOST}:${MCP_PORT};
+	proxy_pass http://127.0.0.1:3050;
 	proxy_http_version 1.1;
 
 	proxy_set_header Host $host;

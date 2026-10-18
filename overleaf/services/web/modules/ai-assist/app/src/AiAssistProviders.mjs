@@ -1,8 +1,8 @@
 import crypto from 'node:crypto'
-import fs from 'node:fs'
 import Settings from '@overleaf/settings'
 import './ModuleSettings.mjs'
 import { sanitizeToolSchema } from './AiAssistToolSchema.mjs'
+import { dockerHostGateway, isRunningInDocker } from './DockerHost.mjs'
 // The connectors' guard against this server, its metadata and its internal
 // services, shared with the MCP connectors rather than copied
 import {
@@ -331,16 +331,10 @@ export function withRequestTimeouts(callerSignal, { connectMs, idleMs } = {}) {
   }
 }
 
-// /.dockerenv cannot appear or vanish while the process runs, so it is
-// checked once instead of with a blocking stat on every client construction
-let dockerEnvFileExists
-
 export function resolveDockerHostUrl(url) {
   if (!url) return url
-  dockerEnvFileExists ??= fs.existsSync('/.dockerenv')
-  const isDocker = Boolean(process.env.DOCKER) || dockerEnvFileExists
-  if (isDocker) {
-    const hostGateway = process.env.DOCKER_HOST_GATEWAY || '172.20.0.1'
+  if (isRunningInDocker()) {
+    const hostGateway = dockerHostGateway()
     return url.replace(
       /https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/,
       (_match, _host, port) => {

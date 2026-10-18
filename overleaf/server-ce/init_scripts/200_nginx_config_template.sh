@@ -70,20 +70,11 @@ mcp_config_file="${vhost_extras_dir}/mcp.conf"
 
 if [ -f "${mcp_template_file}" ]; then
   mkdir -p "${vhost_extras_dir}"
-  # Same reasoning as git-bridge above: the proxy names a fixed upstream that
-  # nginx resolves at config-load time, so only emit it when the feature is on.
+  # Same reasoning as git-bridge above: only emit the proxy to the MCP
+  # service (fixed at 127.0.0.1:3050 in this container) when it is on.
   if [ "$(echo "${MCP_ENABLED:-false}" | tr '[:upper:]' '[:lower:]')" = "true" ]; then
-    export MCP_HOST="${MCP_HOST:-127.0.0.1}"
-    export MCP_PORT="${MCP_PORT:-3050}"
-
-    echo "Nginx: generating mcp proxy config for http://${MCP_HOST}:${MCP_PORT}"
-
-    envsubst '
-      ${MCP_HOST}
-      ${MCP_PORT}
-    ' \
-      < "${mcp_template_file}" \
-      > "${mcp_config_file}"
+    echo "Nginx: generating mcp proxy config"
+    cp "${mcp_template_file}" "${mcp_config_file}"
   else
     echo "Nginx: MCP disabled, skipping mcp proxy config"
     rm -f "${mcp_config_file}"

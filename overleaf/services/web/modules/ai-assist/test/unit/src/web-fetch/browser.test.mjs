@@ -11,6 +11,16 @@ import {
 const TOKEN = 't'.repeat(32)
 const BASE_URL = 'http://overleaf-browser:3000'
 
+/**
+ * The calls that read a page. The capacity probe (GET /v1/health) that the
+ * route makes before its first page read is not one of them.
+ */
+function pageCalls(fetchFn) {
+  return fetchFn
+    .getCalls()
+    .filter(call => !String(call.args[0]).endsWith('/v1/health'))
+}
+
 function fakeFetch({
   status = 200,
   pageStatus = 200,
@@ -57,8 +67,8 @@ describe('BrowserRoute (HTTP client)', function () {
     expect(res.contentType).to.equal('text/html; charset=utf-8')
     expect(res.truncated).to.equal(false)
 
-    expect(fetchFn.calledOnce).to.equal(true)
-    const [callUrl, callInit] = fetchFn.firstCall.args
+    expect(pageCalls(fetchFn).length).to.equal(1)
+    const [callUrl, callInit] = pageCalls(fetchFn)[0].args
     expect(callUrl).to.equal('http://overleaf-browser:3000/v1/raw')
     expect(callInit.headers.Authorization).to.equal(`Bearer ${TOKEN}`)
     expect(JSON.parse(callInit.body)).to.deep.equal({
@@ -78,7 +88,7 @@ describe('BrowserRoute (HTTP client)', function () {
       '<html><body>Rendered Page</body></html>'
     )
 
-    const [callUrl] = fetchFn.firstCall.args
+    const [callUrl] = pageCalls(fetchFn)[0].args
     expect(callUrl).to.equal('http://overleaf-browser:3000/v1/render')
   })
 
@@ -139,13 +149,13 @@ describe('BrowserRoute (HTTP client)', function () {
     try {
       Settings.aiAssist = {
         ...original,
-        browser: { url: null, token: TOKEN, concurrency: 2 },
+        browser: { url: null, token: TOKEN },
       }
       expect(sharedBrowserRoute()).to.equal(null)
 
       Settings.aiAssist = {
         ...original,
-        browser: { url: 'http://overleaf-browser:3000', token: null, concurrency: 2 },
+        browser: { url: 'http://overleaf-browser:3000', token: null },
       }
       expect(sharedBrowserRoute()).to.be.instanceOf(BrowserRoute)
 
@@ -154,7 +164,6 @@ describe('BrowserRoute (HTTP client)', function () {
         browser: {
           url: 'http://overleaf-browser:3000',
           token: TOKEN,
-          concurrency: 3,
         },
       }
       const route = sharedBrowserRoute()
@@ -192,7 +201,7 @@ describe('BrowserRoute (HTTP client)', function () {
       truncated: true,
     })
     expect(res.body.length).to.equal(10)
-    const [callUrl, callInit] = fetchFn.firstCall.args
+    const [callUrl, callInit] = pageCalls(fetchFn)[0].args
     expect(callUrl).to.equal('http://overleaf-browser:3000/v1/raw')
     // The fragment is dropped and no caller header is forwarded
     expect(JSON.parse(callInit.body)).to.deep.equal({
@@ -249,10 +258,15 @@ describe('BrowserRoute (HTTP client)', function () {
     expect(route.available()).to.equal(true)
   })
 
-  it('sends at most `concurrency` requests to the sidecar at once', async function () {
+  it('sends at most `capacity` page reads to the sidecar at once', async function () {
     let inFlight = 0
     let most = 0
-    const fetchFn = sinon.stub().callsFake(async () => {
+    const fetchFn = sinon.stub().callsFake(async url => {
+      if (url.endsWith('/v1/health')) {
+        return new Response(JSON.stringify({ ok: true, capacity: 2 }), {
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
       inFlight++
       most = Math.max(most, inFlight)
       await new Promise(resolve => setTimeout(resolve, 5))
@@ -265,14 +279,90 @@ describe('BrowserRoute (HTTP client)', function () {
     const route = new BrowserRoute({
       baseUrl: BASE_URL,
       token: TOKEN,
-      concurrency: 2,
       fetchFn,
     })
     await Promise.all(
       [1, 2, 3, 4, 5].map(n => route.raw(`https://example.com/${n}`))
     )
-    expect(fetchFn.callCount).to.equal(5)
+    const reads = fetchFn.getCalls().filter(call => call.args[0].endsWith('/v1/raw'))
+    expect(reads.length).to.equal(5)
     expect(most).to.equal(2)
+  })
+
+  it('takes its page places from the sidecar capacity in /v1/health', async function () {
+    let inFlight = 0
+    let most = 0
+    const fetchFn = sinon.stub().callsFake(async url => {
+      if (url.endsWith('/v1/health')) {
+        return new Response(JSON.stringify({ ok: true, capacity: 4 }), {
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      inFlight++
+      most = Math.max(most, inFlight)
+      await new Promise(resolve => setTimeout(resolve, 5))
+      inFlight--
+      return new Response('<html><body>ok</body></html>', {
+        status: 200,
+        headers: { 'Content-Type': 'text/html', 'X-Page-Status': '200' },
+      })
+    })
+    const route = new BrowserRoute({ baseUrl: BASE_URL, token: TOKEN, fetchFn })
+    await Promise.all(
+      [1, 2, 3, 4, 5, 6].map(n => route.raw(`https://example.com/${n}`))
+    )
+    expect(most).to.equal(4)
+    const healthCalls = fetchFn
+      .getCalls()
+      .filter(call => call.args[0] === `${BASE_URL}/v1/health`)
+    expect(healthCalls.length).to.equal(1)
+  })
+
+  it('keeps the fallback of 2 when /v1/health cannot say, and asks again later', async function () {
+    let now = 0
+    let inFlight = 0
+    let most = 0
+    const fetchFn = sinon.stub().callsFake(async url => {
+      if (url.endsWith('/v1/health')) throw new Error('refused')
+      inFlight++
+      most = Math.max(most, inFlight)
+      await new Promise(resolve => setTimeout(resolve, 5))
+      inFlight--
+      return new Response('<html><body>ok</body></html>', {
+        status: 200,
+        headers: { 'Content-Type': 'text/html', 'X-Page-Status': '200' },
+      })
+    })
+    const route = new BrowserRoute({
+      baseUrl: BASE_URL,
+      token: TOKEN,
+      fetchFn,
+      now: () => now,
+    })
+    await Promise.all([1, 2, 3, 4].map(n => route.raw(`https://example.com/${n}`)))
+    expect(most).to.equal(2)
+    await route.raw('https://example.com/5')
+    const healthCalls = () =>
+      fetchFn.getCalls().filter(call => call.args[0] === `${BASE_URL}/v1/health`)
+    expect(healthCalls().length).to.equal(1)
+    now += 31_000
+    await route.raw('https://example.com/6')
+    expect(healthCalls().length).to.equal(2)
+  })
+
+  it('SidecarGate.resize lets waiting requests in when it grows', async function () {
+    const gate = new SidecarGate(1)
+    const first = await gate.acquire()
+    let second = false
+    const waiting = gate.acquire().then(() => {
+      second = true
+    })
+    await Promise.resolve()
+    expect(second).to.equal(false)
+    gate.resize(2)
+    await waiting
+    expect(second).to.equal(true)
+    first()
   })
 
   it('fetchFile reads a small file by /v1/fetch without waiting for page reads', async function () {
@@ -291,7 +381,7 @@ describe('BrowserRoute (HTTP client)', function () {
     const route = new BrowserRoute({
       baseUrl: BASE_URL,
       token: TOKEN,
-      concurrency: 1,
+      capacity: 1,
       fetchFn,
     })
     // The only page place is taken by a read that has not finished
@@ -325,7 +415,12 @@ describe('BrowserRoute (HTTP client)', function () {
       refused = err
     }
     expect(refused?.message).to.match(/not a public address/)
-    expect(fetchFn.callCount).to.equal(3)
+    // The raw read, then the two icon fetches; only the raw read probed capacity
+    expect(pageCalls(fetchFn).length).to.equal(3)
+    const probes = fetchFn
+      .getCalls()
+      .filter(call => call.args[0] === `${BASE_URL}/v1/health`)
+    expect(probes.length).to.equal(1)
   })
 
   it('sends at most 8 small-file fetches at once, so a burst never overruns the gateway', async function () {

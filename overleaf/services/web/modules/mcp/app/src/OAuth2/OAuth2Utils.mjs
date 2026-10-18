@@ -27,9 +27,8 @@ export function hashToken(token) {
 
 /**
  * The audience of an access token: the URL of the MCP endpoint. services/mcp
- * serves that endpoint at MCP_ENDPOINT_PATH (default /mcp), reads the same
- * variable, and rejects tokens whose audience is not its own URL. Keep the
- * default in step with services/mcp/src/config.js.
+ * serves that endpoint at /mcp and rejects tokens whose audience is not its
+ * own URL (services/mcp/src/config.js derives the same value).
  */
 export function mcpAudience(baseUrl) {
   return `${baseUrl}/mcp`

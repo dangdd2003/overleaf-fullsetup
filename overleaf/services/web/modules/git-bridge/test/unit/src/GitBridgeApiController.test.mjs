@@ -300,6 +300,13 @@ describe('GitBridgeApiController', function () {
   })
 
   describe('getSnapshot', function () {
+    beforeEach(function () {
+      // git-bridge calls the API at its own address, so that is the origin
+      // the snapshot's file links must use.
+      req.protocol = 'http'
+      req.headers = { host: 'overleaf:3000' }
+    })
+
     it('returns snapshot for version', async function () {
       req.params.versionId = '10'
       GitBridgeSnapshotManager.getSnapshotForVersion = async () => ({
@@ -313,6 +320,57 @@ describe('GitBridgeApiController', function () {
         srcs: [['\\documentclass{article}', 'main.tex']],
         atts: [['http://example.com/file/1', 'fig.png']],
       })
+    })
+
+    it('builds file links on the origin git-bridge called', async function () {
+      req.params.versionId = '10'
+      let baseUrl
+      GitBridgeSnapshotManager.getSnapshotForVersion = async (
+        pId,
+        verId,
+        origin
+      ) => {
+        baseUrl = origin
+        return { srcs: [], atts: [] }
+      }
+
+      await GitBridgeApiController.getSnapshot(req, res)
+      expect(baseUrl).toBe('http://overleaf:3000')
+    })
+
+    it('keeps the scheme of the request and drops anything past the host', async function () {
+      req.params.versionId = '10'
+      req.protocol = 'https'
+      req.headers.host = 'Overleaf.example.com:8443'
+      let baseUrl
+      GitBridgeSnapshotManager.getSnapshotForVersion = async (
+        pId,
+        verId,
+        origin
+      ) => {
+        baseUrl = origin
+        return { srcs: [], atts: [] }
+      }
+
+      await GitBridgeApiController.getSnapshot(req, res)
+      expect(baseUrl).toBe('https://overleaf.example.com:8443')
+    })
+
+    it('refuses a Host that is not a bare host and port', async function () {
+      req.params.versionId = '10'
+      let called = false
+      GitBridgeSnapshotManager.getSnapshotForVersion = async () => {
+        called = true
+        return { srcs: [], atts: [] }
+      }
+
+      for (const host of ['evil.example/x', 'user@evil.example', 'a.example:99999999', '']) {
+        req.headers.host = host
+        await GitBridgeApiController.getSnapshot(req, res)
+      }
+      expect(called).toBe(false)
+      expect(statusCalls).toEqual([400, 400, 400, 400])
+      expect(jsonCalls[0].code).toBe('invalidHost')
     })
 
     it('returns 404 if snapshot not found', async function () {

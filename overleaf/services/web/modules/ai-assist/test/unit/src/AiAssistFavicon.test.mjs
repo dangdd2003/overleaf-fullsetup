@@ -175,7 +175,7 @@ describe('AiAssistFavicon', function () {
     try {
       Settings.aiAssist = {
         ...original,
-        browser: { url: sidecar, token: 't'.repeat(32), concurrency: 2 },
+        browser: { url: sidecar, token: "t".repeat(32) },
       }
       const icon = await new FaviconResolver().get('https://news.example')
       expect(icon.type).to.equal('image/x-icon')
@@ -203,7 +203,7 @@ describe('AiAssistFavicon', function () {
     try {
       Settings.aiAssist = {
         ...original,
-        browser: { url: sidecar, token: 't'.repeat(32), concurrency: 2 },
+        browser: { url: sidecar, token: "t".repeat(32) },
       }
       const icon = await new FaviconResolver().get('https://guarded.example')
       expect(icon).to.equal(null)

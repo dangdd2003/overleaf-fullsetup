@@ -15,9 +15,9 @@ if [ "$(echo "${MCP_ENABLED:-false}" | tr '[:upper:]' '[:lower:]')" != "true" ];
     exec sleep infinity
 fi
 
-# Bind loopback only; nginx terminates external traffic for /mcp.
-export MCP_HOST="${MCP_HOST:-127.0.0.1}"
-export MCP_PORT="${MCP_PORT:-3050}"
-export MCP_INTERNAL_URL="${MCP_INTERNAL_URL:-http://127.0.0.1:4000}"
+# The service binds loopback on a fixed port and web is reached on a fixed
+# internal URL (services/mcp/src/config.js); nginx terminates external traffic.
+# Must match web's siteUrl default (config/settings.js): it is the JWT issuer.
+export OVERLEAF_SITE_URL="${OVERLEAF_SITE_URL:-http://localhost}"
 
 exec /sbin/setuser www-data /usr/bin/node $NODE_PARAMS /overleaf/services/mcp/app.js >> /var/log/overleaf/mcp.log 2>&1

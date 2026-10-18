@@ -22,11 +22,8 @@ describe('ModuleSettings', function () {
     process.env.GITHUB_SYNC_ENABLED = 'true'
     process.env.GITHUB_CLIENT_ID = 'test-client-id'
     process.env.GITHUB_CLIENT_SECRET = 'test-client-secret'
-    process.env.GITHUB_REDIRECT_URI = 'https://custom.site.com/auth/github/callback'
-    process.env.GITHUB_TOKEN_SECRET = 'test-token-secret'
-    process.env.GITHUB_SYNC_REPOS_DIR = '/custom/repos/dir'
-    process.env.GITHUB_API_BASE = 'https://custom.api.github.com'
-    process.env.GITHUB_GIT_BASE = 'https://custom.github.com'
+    process.env.GITHUB_TOKEN_ENCRYPTION_SECRET = 'test-token-secret'
+    mockSettings.siteUrl = 'https://custom.site.com'
 
     const { default: githubSync } = await import(
       '../../../app/src/ModuleSettings.mjs'
@@ -38,9 +35,9 @@ describe('ModuleSettings', function () {
       clientSecret: 'test-client-secret',
       redirectUri: 'https://custom.site.com/auth/github/callback',
       tokenSecret: 'test-token-secret',
-      reposDir: '/custom/repos/dir',
-      apiBase: 'https://custom.api.github.com',
-      gitBase: 'https://custom.github.com',
+      reposDir: '/var/lib/overleaf/data/github-sync/repos',
+      apiBase: 'https://api.github.com',
+      gitBase: 'https://github.com',
     })
     expect(mockSettings.githubSyncEncryptorOptions).to.deep.equal({
       cipherLabel: '2026.1-v3',
@@ -55,11 +52,7 @@ describe('ModuleSettings', function () {
     delete process.env.GITHUB_SYNC_ENABLED
     delete process.env.GITHUB_CLIENT_ID
     delete process.env.GITHUB_CLIENT_SECRET
-    delete process.env.GITHUB_REDIRECT_URI
-    delete process.env.GITHUB_TOKEN_SECRET
-    delete process.env.GITHUB_SYNC_REPOS_DIR
-    delete process.env.GITHUB_API_BASE
-    delete process.env.GITHUB_GIT_BASE
+    delete process.env.GITHUB_TOKEN_ENCRYPTION_SECRET
 
     await import('../../../app/src/ModuleSettings.mjs')
 
@@ -74,6 +67,37 @@ describe('ModuleSettings', function () {
       gitBase: 'https://github.com',
     })
     expect(mockSettings.githubSyncEncryptorOptions).to.be.undefined
+  })
+
+  it('ignores the removed URL, path and legacy secret environment variables', async function () {
+    process.env.GITHUB_REDIRECT_URI = 'https://elsewhere.example.com/cb'
+    process.env.GITHUB_SYNC_REPOS_DIR = '/custom/repos/dir'
+    process.env.GITHUB_TOKEN_SECRET = 'legacy-secret'
+    mockSettings.siteUrl = 'http://overleaf.local'
+
+    await import('../../../app/src/ModuleSettings.mjs')
+
+    expect(mockSettings.githubSync.redirectUri).to.equal(
+      'http://overleaf.local/auth/github/callback'
+    )
+    expect(mockSettings.githubSync.reposDir).to.equal(
+      '/var/lib/overleaf/data/github-sync/repos'
+    )
+    expect(mockSettings.githubSync.apiBase).to.equal('https://api.github.com')
+    expect(mockSettings.githubSync.gitBase).to.equal('https://github.com')
+    expect(mockSettings.githubSync.tokenSecret).to.equal('')
+  })
+
+  it('points at a GitHub Enterprise Server with GITHUB_API_BASE and GITHUB_GIT_BASE', async function () {
+    process.env.GITHUB_API_BASE = 'https://github.example.com/api/v3'
+    process.env.GITHUB_GIT_BASE = 'https://github.example.com'
+
+    await import('../../../app/src/ModuleSettings.mjs')
+
+    expect(mockSettings.githubSync.apiBase).to.equal(
+      'https://github.example.com/api/v3'
+    )
+    expect(mockSettings.githubSync.gitBase).to.equal('https://github.example.com')
   })
 
   it('preserves existing settings if already defined', async function () {

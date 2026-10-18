@@ -300,7 +300,7 @@ export function expandHosts(hosts) {
 }
 
 /**
- * Reduce MCP_ALLOWED_ORIGINS entries to the hostnames the SDK compares. The
+ * Reduce config.allowedOrigins entries to the hostnames the SDK compares. The
  * SDK matches an Origin header by hostname, so `https://chat.example` must be
  * passed as `chat.example`, or no browser origin would ever match it.
  *
@@ -325,8 +325,8 @@ export function originHostnames(origins) {
  * Build the Express app that serves the MCP endpoint.
  *
  * createMcpExpressApp applies express.json() and DNS-rebinding protection
- * (Host/Origin validation). On the default loopback bind those default to
- * localhost; binding wider requires the explicit allow-lists config validates.
+ * (Host/Origin validation). The allow-lists come from config: loopback, plus
+ * the site hostname, because nginx forwards the public Host to this service.
  *
  * @param {{ config: object, client: object }} deps
  * @returns {{ app: import('express').Express, handler: object }}

@@ -49,7 +49,10 @@ export function buildApp(config) {
 // Compare as URLs: a hand-built file:// string misses paths that need escaping,
 // and the service would then exit without starting.
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  buildApp(loadConfig())
+  // `node app.js --stdio` serves one local user over stdin/stdout (MCP_TOKEN
+  // and OVERLEAF_SITE_URL select the instance). Without it, the HTTP service.
+  const stdio = process.argv.includes('--stdio')
+  buildApp(loadConfig(process.env, { stdio }))
     .start()
     .catch(err => {
       logger.fatal({ err }, 'Overleaf MCP service failed to start')

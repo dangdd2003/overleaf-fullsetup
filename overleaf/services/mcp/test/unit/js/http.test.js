@@ -284,7 +284,7 @@ describe('requireBearerToken', function () {
     })
   })
 
-  describe('MCP_ALLOWED_ORIGINS in the running app', function () {
+  describe('allowedOrigins in the running app', function () {
     // The SDK checks Origin by hostname, so a configured full URL must still admit
     // the browser origin it names, and nothing else.
     const config = {

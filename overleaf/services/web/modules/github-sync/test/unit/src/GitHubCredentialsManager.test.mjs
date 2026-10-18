@@ -157,7 +157,7 @@ describe('GitHubCredentialsManager', function () {
     await expect(
       unconfiguredManager.promises.encryptAccessToken({ accessToken: 'test' })
     ).to.be.rejectedWith(
-      'GitHub token encryption not configured; set GITHUB_TOKEN_SECRET'
+      'GitHub token encryption not configured; the GitHub token encryption secret is missing'
     )
   })
 })

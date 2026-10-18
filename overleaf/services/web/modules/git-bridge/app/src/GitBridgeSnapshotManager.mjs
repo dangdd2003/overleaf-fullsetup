@@ -25,10 +25,10 @@ function gitBridgeOrigin() {
       return new URL(Settings.gitBridgePublicBaseUrl).origin
     } catch {}
   }
+  // Same defaults as the nginx proxy (server-ce/init_scripts/200_nginx_config_template.sh)
   const host = process.env.GIT_BRIDGE_HOST || 'git-bridge'
-  const port = process.env.GIT_BRIDGE_PORT
-  const base = port ? `http://${host}:${port}` : `http://${host}`
-  return new URL(base).origin
+  const port = process.env.GIT_BRIDGE_PORT || '8000'
+  return new URL(`http://${host}:${port}`).origin
 }
 
 function isGitBridgeUrl(url) {
@@ -279,7 +279,16 @@ const GitBridgeSnapshotManager = {
     return savedVers
   },
 
-  async getSnapshotForVersion(projectId, versionId) {
+  /**
+   * @param {string} projectId
+   * @param {number} versionId
+   * @param {string} baseUrl the web origin git-bridge can reach this process at
+   *   (see requestOrigin in GitBridgeApiController); file URLs are built on it
+   */
+  async getSnapshotForVersion(projectId, versionId, baseUrl) {
+    if (!baseUrl) {
+      throw new Error('getSnapshotForVersion needs the base URL for file links')
+    }
     const docInfo = await this.getDoc(projectId)
     if (!docInfo) return null
 
@@ -309,10 +318,6 @@ const GitBridgeSnapshotManager = {
 
     const srcs = []
     const atts = []
-    const baseUrl =
-      process.env.GIT_BRIDGE_INTERNAL_URL ||
-      Settings.apis?.web?.url ||
-      `http://${Settings.internalHost || (process.env.NODE_ENV === 'development' ? 'web' : '127.0.0.1')}:${Settings.port || 3000}`
 
     // Fetch all docs in batch to avoid N+1 queries
     let allDocsMap = {}

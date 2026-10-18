@@ -126,6 +126,7 @@ jobs:
           build-args: |
             BUILDKIT_INLINE_CACHE=1
             TEXLIVE_MIRROR=${{ vars.TEXLIVE_MIRROR || 'https://mirror.ctan.org/systems/texlive/tlnet' }}
+          no-cache: ${{ github.event_name != 'push' }}
           cache-from: type=gha,scope=sharelatex-base
           cache-to: type=gha,mode=max,scope=sharelatex-base
           tags: |
@@ -185,8 +186,15 @@ jobs:
             MONOREPO_REVISION=${{ steps.build_env.outputs.MONOREPO_REVISION }}
             TEXLIVE_MIRROR=${{ vars.TEXLIVE_MIRROR || 'https://mirror.ctan.org/systems/texlive/tlnet' }}
             NODE_VERSION=${{ vars.NODE_VERSION || 'v24.20.0' }}
-          cache-from: type=gha,scope=sharelatex-full
-          cache-to: type=gha,mode=max,scope=sharelatex-full
+          no-cache: ${{ github.event_name != 'push' }}
+          # gha is the main cache; inline cache in the pushed :latest (GHCR + Docker Hub) keeps the tlmgr layer past gha eviction
+          cache-from: |
+            type=gha,scope=sharelatex-full
+            type=registry,ref=${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.FULL_IMAGE_NAME }}:latest
+            type=registry,ref=${{ vars.DOCKER_USERNAME }}/${{ env.FULL_IMAGE_NAME }}:latest
+          cache-to: |
+            type=gha,mode=max,scope=sharelatex-full
+            type=inline
           tags: |
             ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.FULL_IMAGE_NAME }}:latest
             ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.FULL_IMAGE_NAME }}:${{ steps.build_env.outputs.date }}
@@ -243,6 +251,7 @@ jobs:
             OVERLEAF_BASE_TAG=${{ vars.DOCKER_USERNAME }}/${{ env.BASE_IMAGE_NAME }}:latest
             MONOREPO_REVISION=${{ steps.build_env.outputs.MONOREPO_REVISION }}
             NODE_VERSION=${{ vars.NODE_VERSION || 'v24.20.0' }}
+          no-cache: ${{ github.event_name != 'push' }}
           cache-from: type=gha,scope=sharelatex-slim
           cache-to: type=gha,mode=max,scope=sharelatex-slim
           tags: |
@@ -331,8 +340,6 @@ jobs:
             TEXLIVE_YEAR=${{ matrix.year }}
             TEXLIVE_MIRROR=${{ steps.build_env.outputs.mirror }}
             TEXLIVE_INSTALLER_URL=${{ steps.build_env.outputs.installer }}
-          cache-from: type=gha,scope=texlive-full-${{ matrix.year }}
-          cache-to: type=gha,mode=max,scope=texlive-full-${{ matrix.year }}
           tags: |
             ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.TEXLIVE_FULL_IMAGE_NAME }}:${{ matrix.year }}
             ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.TEXLIVE_FULL_IMAGE_NAME }}:${{ matrix.year }}_${{ steps.build_env.outputs.date }}
@@ -391,6 +398,7 @@ jobs:
         with:
           context: ./overleaf/services/git-bridge
           file: ./overleaf/services/git-bridge/Dockerfile
+          no-cache: ${{ github.event_name != 'push' }}
           cache-from: type=gha,scope=git-bridge
           cache-to: type=gha,mode=max,scope=git-bridge
           tags: |
@@ -453,6 +461,7 @@ jobs:
           build-args: |
             NODE_VERSION=${{ steps.build_env.outputs.NODE_VERSION }}
           platforms: linux/amd64
+          no-cache: ${{ github.event_name != 'push' }}
           cache-from: type=gha,scope=overleaf-browser
           cache-to: type=gha,mode=max,scope=overleaf-browser
           tags: overleaf-browser:smoke

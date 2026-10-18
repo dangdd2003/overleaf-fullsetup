@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { loadConfig, WEB_INTERNAL_URL } from '../../../src/config.js'
 
 // server-ce runs `web` twice: one process with ENABLED_SERVICES=web (which is
 // the only one that mounts `publicApiRouter`, where /api/v0/mcp/* lives) and
@@ -31,12 +32,15 @@ describe('server-ce MCP wiring', function () {
     expect(vhost).to.include(`proxy_pass http://127.0.0.1:${webPort};`)
   })
 
-  it('defaults MCP_INTERNAL_URL to the web process that mounts publicApiRouter', function () {
+  it('reaches the web process that mounts publicApiRouter at its internal URL', function () {
     const webPort = /export WEB_PORT="(\d+)"/.exec(webRun)[1]
-    const internalUrl = /MCP_INTERNAL_URL:-([^}"]+)/.exec(mcpRun)?.[1]
-    expect(internalUrl, 'MCP_INTERNAL_URL default in runit/mcp-overleaf/run')
-      .to.be.a('string')
-    expect(new URL(internalUrl).port).to.equal(webPort)
+    expect(new URL(WEB_INTERNAL_URL).port).to.equal(webPort)
+  })
+
+  it('proxies /mcp to the port the MCP service listens on', function () {
+    const { port } = loadConfig({ MCP_ENABLED: 'true', OVERLEAF_SITE_URL: 'http://localhost' })
+    const template = read('nginx/mcp.conf.template')
+    expect(template).to.include(`proxy_pass http://127.0.0.1:${port};`)
   })
 
   it('defaults OVERLEAF_SITE_URL to the siteUrl web signs tokens with', function () {

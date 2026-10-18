@@ -1,9 +1,8 @@
 import { expect } from 'chai'
-import { loadConfig } from '../../../src/config.js'
+import { loadConfig, WEB_INTERNAL_URL } from '../../../src/config.js'
 
 const BASE = {
   MCP_ENABLED: 'true',
-  MCP_INTERNAL_URL: 'http://web:3000',
   OVERLEAF_SITE_URL: 'https://overleaf.example.com',
 }
 
@@ -20,113 +19,125 @@ describe('config', function () {
       expect(loadConfig({ ...BASE, MCP_ENABLED: 'TRUE' }).enabled).to.be.true
     })
 
-    it('rejects a numeric setting with trailing characters instead of reading its digits', function () {
-      expect(() => loadConfig({ ...BASE, MCP_PORT: '3050abc' })).to.throw(/MCP_PORT must be a positive integer/)
-      expect(() => loadConfig({ ...BASE, MCP_PORT: '1e3' })).to.throw(/MCP_PORT/)
+    it('does not validate the site URL when disabled', function () {
+      expect(() => loadConfig({})).to.not.throw()
     })
 
-    it('applies the documented defaults', function () {
+    it('applies the fixed http defaults', function () {
       const config = loadConfig(BASE)
       expect(config.transport).to.equal('http')
       expect(config.host).to.equal('127.0.0.1')
       expect(config.port).to.equal(3050)
       expect(config.endpointPath).to.equal('/mcp')
       expect(config.maxBodyMb).to.equal(70)
-      expect(config).to.not.have.property('maxUploadBytes')
+      expect(config.internalUrl).to.equal(WEB_INTERNAL_URL)
       expect(config.resourceUri).to.equal('https://overleaf.example.com/mcp')
       expect(config.authServerUrl).to.equal('https://overleaf.example.com')
     })
 
-    it('customizes maxBodyMb with MCP_MAX_BODY_MB', function () {
-      const config = loadConfig({ ...BASE, MCP_MAX_BODY_MB: '100' })
-      expect(config.maxBodyMb).to.equal(100)
-    })
-
-    it('requires OVERLEAF_SITE_URL for the http transport, since it is the token issuer', function () {
-      expect(() =>
-        loadConfig({ MCP_ENABLED: 'true', MCP_INTERNAL_URL: 'http://web:3000' })
-      ).to.throw(/OVERLEAF_SITE_URL/)
-    })
-
-    it('does not require OVERLEAF_SITE_URL for the stdio transport', function () {
-      expect(() =>
-        loadConfig({
-          MCP_ENABLED: 'true',
-          MCP_INTERNAL_URL: 'http://web:3000',
-          MCP_TRANSPORT: 'stdio',
-          MCP_TOKEN: 'olp_deadbeef',
-        })
-      ).to.not.throw()
-    })
-
-    it('falls back to OVERLEAF_SITE_URL when MCP_INTERNAL_URL is absent', function () {
-      const config = loadConfig({
-        MCP_ENABLED: 'true',
-        OVERLEAF_SITE_URL: 'http://web:3000',
-      })
-      expect(config.internalUrl).to.equal('http://web:3000')
-    })
-
-    it('strips a trailing slash from the internal URL', function () {
-      const config = loadConfig({ ...BASE, MCP_INTERNAL_URL: 'http://web:3000/' })
-      expect(config.internalUrl).to.equal('http://web:3000')
-    })
-
-    it('throws when enabled without an internal URL', function () {
-      expect(() => loadConfig({ MCP_ENABLED: 'true' })).to.throw(
-        /MCP_INTERNAL_URL/
-      )
-    })
-
-    it('does not validate the internal URL when disabled', function () {
-      expect(() => loadConfig({})).to.not.throw()
-    })
-
-    it('rejects an unknown transport', function () {
-      expect(() => loadConfig({ ...BASE, MCP_TRANSPORT: 'websocket' })).to.throw(
-        /MCP_TRANSPORT/
-      )
-    })
-
-    it('does not validate transport when disabled', function () {
-      expect(() => loadConfig({ MCP_TRANSPORT: 'invalid' })).to.not.throw()
-    })
-
-    it('requires MCP_TOKEN for the stdio transport', function () {
-      expect(() => loadConfig({ ...BASE, MCP_TRANSPORT: 'stdio' })).to.throw(
-        /MCP_TOKEN/
-      )
+    it('ignores the variables that are no longer read', function () {
       const config = loadConfig({
         ...BASE,
         MCP_TRANSPORT: 'stdio',
-        MCP_TOKEN: 'olp_deadbeef',
+        MCP_HOST: '0.0.0.0',
+        MCP_PORT: '9999',
+        MCP_ENDPOINT_PATH: '/other',
+        MCP_INTERNAL_URL: 'http://elsewhere:3000',
+        MCP_RESOURCE_URI: 'https://elsewhere.example.com/mcp',
+        MCP_MAX_BODY_MB: '100',
       })
-      expect(config.stdioToken).to.equal('olp_deadbeef')
+      expect(config.transport).to.equal('http')
+      expect(config.host).to.equal('127.0.0.1')
+      expect(config.port).to.equal(3050)
+      expect(config.endpointPath).to.equal('/mcp')
+      expect(config.internalUrl).to.equal(WEB_INTERNAL_URL)
+      expect(config.resourceUri).to.equal('https://overleaf.example.com/mcp')
+      expect(config.maxBodyMb).to.equal(70)
     })
 
-    it('requires an explicit allowed-hosts list when binding to all interfaces', function () {
-      expect(() => loadConfig({ ...BASE, MCP_HOST: '0.0.0.0' })).to.throw(
-        /MCP_ALLOWED_HOSTS/
-      )
+    it('adds MCP_ALLOWED_HOSTS and MCP_ALLOWED_ORIGINS to the derived lists', function () {
       const config = loadConfig({
         ...BASE,
-        MCP_HOST: '0.0.0.0',
-        MCP_ALLOWED_HOSTS: 'overleaf.example.com, mcp.example.com',
+        MCP_ALLOWED_HOSTS: 'other.example.com, 10.0.0.5',
+        MCP_ALLOWED_ORIGINS: 'https://app.example.com',
       })
-      expect(config.allowedHosts).to.deep.equal([
+      expect(config.allowedHosts).to.include.members([
         'overleaf.example.com',
-        'mcp.example.com',
+        'other.example.com',
+        '10.0.0.5',
+      ])
+      expect(config.allowedOrigins).to.include.members([
+        'https://overleaf.example.com',
+        'https://app.example.com',
       ])
     })
 
-    it('rejects a wildcard origin', function () {
-      expect(() => loadConfig({ ...BASE, MCP_ALLOWED_ORIGINS: '*' })).to.throw(
-        /wildcard/
+    it('refuses a wildcard in MCP_ALLOWED_ORIGINS', function () {
+      expect(() =>
+        loadConfig({ ...BASE, MCP_ALLOWED_ORIGINS: '*' })
+      ).to.throw(/wildcard/)
+    })
+
+    it('requires OVERLEAF_SITE_URL when enabled, since it is the token issuer', function () {
+      expect(() => loadConfig({ MCP_ENABLED: 'true' })).to.throw(
+        /OVERLEAF_SITE_URL/
       )
+    })
+
+    it('requires an absolute OVERLEAF_SITE_URL', function () {
+      expect(() =>
+        loadConfig({ MCP_ENABLED: 'true', OVERLEAF_SITE_URL: 'overleaf' })
+      ).to.throw(/absolute URL/)
+    })
+
+    it('strips a trailing slash from the site URL', function () {
+      const config = loadConfig({
+        ...BASE,
+        OVERLEAF_SITE_URL: 'https://overleaf.example.com/',
+      })
+      expect(config.authServerUrl).to.equal('https://overleaf.example.com')
+      expect(config.resourceUri).to.equal('https://overleaf.example.com/mcp')
+    })
+
+    it('admits the public hostname nginx forwards, plus loopback', function () {
+      const config = loadConfig({
+        ...BASE,
+        OVERLEAF_SITE_URL: 'https://overleaf.example.com:8443',
+      })
+      expect(config.allowedHosts).to.deep.equal([
+        '127.0.0.1',
+        'localhost',
+        '[::1]',
+        'overleaf.example.com',
+      ])
+      expect(config.allowedOrigins).to.include('https://overleaf.example.com:8443')
     })
 
     it('returns a frozen object', function () {
       expect(Object.isFrozen(loadConfig(BASE))).to.be.true
+      expect(Object.isFrozen(loadConfig(BASE).allowedHosts)).to.be.true
+    })
+
+    describe('stdio', function () {
+      it('serves the site given by OVERLEAF_SITE_URL instead of web', function () {
+        const config = loadConfig(
+          { ...BASE, MCP_TOKEN: 'olp_deadbeef' },
+          { stdio: true }
+        )
+        expect(config.transport).to.equal('stdio')
+        expect(config.internalUrl).to.equal('https://overleaf.example.com')
+        expect(config.stdioToken).to.equal('olp_deadbeef')
+      })
+
+      it('requires MCP_TOKEN', function () {
+        expect(() => loadConfig(BASE, { stdio: true })).to.throw(/MCP_TOKEN/)
+      })
+
+      it('requires OVERLEAF_SITE_URL', function () {
+        expect(() =>
+          loadConfig({ MCP_ENABLED: 'true', MCP_TOKEN: 'olp_deadbeef' }, { stdio: true })
+        ).to.throw(/OVERLEAF_SITE_URL/)
+      })
     })
   })
 })

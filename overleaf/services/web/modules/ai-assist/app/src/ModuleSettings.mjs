@@ -37,11 +37,28 @@ function normalizeFirecrawlBaseUrl(raw) {
   return parsed.toString().replace(/\/+$/, "");
 }
 
-// Fixed operating values. These used to be AI_ASSIST_* environment variables;
-// each one is the default every instance has always run with.
-const WEB_SEARCH_CACHE_HOURS = 24;
-const WEB_SEARCH_MAX_CACHED_SEARCHES = 256;
-const WEB_SEARCH_MAX_CACHED_PAGES = 64;
+// A whole number from the environment, or the fallback when it is unset or
+// not a non-negative integer
+function intFromEnv(name, fallback) {
+  const raw = (process.env[name] || "").trim();
+  return /^\d+$/.test(raw) ? Number(raw) : fallback;
+}
+
+// Operator tuning: how long and how much of the web search cache to keep, and
+// how long to wait for a provider's first byte (slow self-hosted models need more)
+const WEB_SEARCH_CACHE_HOURS = intFromEnv("AI_ASSIST_WEB_SEARCH_CACHE_HOURS", 24);
+const WEB_SEARCH_MAX_CACHED_SEARCHES = intFromEnv(
+  "AI_ASSIST_WEB_SEARCH_MAX_CACHED_SEARCHES",
+  256,
+);
+const WEB_SEARCH_MAX_CACHED_PAGES = intFromEnv(
+  "AI_ASSIST_WEB_SEARCH_MAX_CACHED_PAGES",
+  64,
+);
+const REQUEST_TIMEOUT_SECONDS =
+  intFromEnv("AI_ASSIST_REQUEST_TIMEOUT_SECONDS", 180) || 180;
+
+// Fixed operating values
 const WEB_SEARCH_ROTATION_STRATEGY = "round-robin";
 const WEB_SEARCH_PRIMARY_PROVIDER = "searxng";
 const SEARXNG_DEFAULT_CATEGORIES = "";
@@ -49,7 +66,6 @@ const SEARXNG_DEFAULT_LANGUAGE = "";
 const ORPHAN_GRACE_SECONDS = 300;
 const APPROVAL_TIMEOUT_SECONDS = 600;
 const HEARTBEAT_STALE_SECONDS = 1800;
-const REQUEST_TIMEOUT_SECONDS = 180;
 const STREAM_IDLE_SECONDS = 0;
 const STREAM_KEEPALIVE_SECONDS = 15;
 // A whole chat, as sent to start a run and as saved. 32 MiB is Anthropic's
@@ -67,13 +83,6 @@ const WEB_CACHE_PATH = "/var/lib/overleaf/data/ai-assist/web-cache.sqlite";
 const cacheHours = WEB_SEARCH_CACHE_HOURS;
 const maxCachedSearches = WEB_SEARCH_MAX_CACHED_SEARCHES;
 const maxCachedPages = WEB_SEARCH_MAX_CACHED_PAGES;
-
-function intFromEnv(name, fallback) {
-  const val = process.env[name];
-  if (val === undefined || val === '') return fallback;
-  const parsed = parseInt(val, 10);
-  return Number.isFinite(parsed) ? parsed : fallback;
-}
 
 function parseKeyList(raw) {
   return (raw || "")
@@ -168,11 +177,7 @@ function providerConfig(enabled, extra = {}, secrets = {}) {
     }
   }
 
-  const mcpBearer = (
-    process.env.AI_ASSIST_MCP_BEARER_TOKEN ||
-    process.env.AI_ASSIST_MCP_API_KEY ||
-    ""
-  ).trim();
+  const mcpBearer = (process.env.AI_ASSIST_MCP_BEARER_TOKEN || "").trim();
   if (
     mcpBearer &&
     !mcpHeaders.some((h) => h.key.toLowerCase() === "authorization")
@@ -307,7 +312,6 @@ Settings.aiAssist = {
   browser: (() => {
     const obj = {
       url: (process.env.AI_ASSIST_BROWSER_URL || "").trim() || null,
-      concurrency: Math.max(1, intFromEnv("AI_ASSIST_BROWSER_CONCURRENCY", 2)),
     };
     Object.defineProperty(obj, "token", {
       value: (process.env.AI_ASSIST_BROWSER_TOKEN || "").trim() || null,
