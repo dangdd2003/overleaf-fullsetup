@@ -495,6 +495,7 @@ describe('OAuth2TokenController', () => {
         res.responseData.refresh_token
       )
       expect(createdTokenDoc).to.not.have.property('expiresAt')
+      expect(createdTokenDoc).to.not.have.property('accessTokenExpiresAt')
       expect(createdTokenDoc.refreshTokenExpiresAt.getTime()).to.be.above(
         Date.now() + 89 * DAY_MS
       )
@@ -746,7 +747,7 @@ describe('OAuth2TokenController', () => {
       expect(res.responseData.error).to.equal('invalid_grant')
     })
 
-    it('resets the 90-day idle window and sets a one-hour access expiry on rotation', async () => {
+    it('resets the 90-day idle window on rotation and records no access expiry', async () => {
       const grant = baseGrant()
       vi.spyOn(OauthAccessToken, 'findOne').mockResolvedValue(grant)
       const findOneAndUpdate = vi
@@ -757,15 +758,13 @@ describe('OAuth2TokenController', () => {
       const res = createMockRes()
       await OAuth2TokenController.token(refreshRequest(), res)
       expect(res.statusCode).to.equal(200)
-      const { $set } = findOneAndUpdate.mock.calls[0][1]
+      const { $set, $unset } = findOneAndUpdate.mock.calls[0][1]
       expect($set.refreshTokenExpiresAt.getTime()).to.be.within(
         before + 90 * DAY_MS,
         Date.now() + 90 * DAY_MS
       )
-      expect($set.accessTokenExpiresAt.getTime()).to.be.within(
-        before + HOUR_MS,
-        Date.now() + HOUR_MS
-      )
+      expect($set).to.not.have.property('accessTokenExpiresAt')
+      expect($unset).to.deep.equal({ accessTokenExpiresAt: '' })
       expect($set.expiresAt).to.be.null
     })
 

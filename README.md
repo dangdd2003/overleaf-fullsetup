@@ -1,20 +1,19 @@
 # Overleaf CE Extend
 
-**Overleaf CE Extend** is an enhanced, feature-rich distribution of the open-source Overleaf Community Edition (CE). It brings powerful enterprise capabilities, rich collaboration tools, developer workflows, and modern AI-driven agent integration to self-hosted Overleaf deployments—while maintaining 100% backward compatibility with upstream Overleaf CE.
+**Overleaf CE Extend** brings missing enterprise and developer features to self-hosted Overleaf Community Edition (CE)—including an integrated AI writing assistant, track changes and comments, direct Git access, cloud syncing, and sandboxed TeX Live compilation.
 
-All extension modules are completely modular, cleanly isolated, and disabled by default. When unconfigured, the system runs as a clean, native upstream Overleaf Community Edition instance.
+It remains 100% backward-compatible with upstream Overleaf CE. Every extension is modular, isolated, and disabled by default; without configuration, the instance runs as standard, untouched Overleaf CE.
 
 ### Key Features at a Glance
 
-- **AI Assist**: In-editor LLM agent for LaTeX authoring with three execution modes (Manual, Accept Edits, Plan), 18 project and web tools, structure-aware inline auto-completion, ghost-text suggestions, grammar and language suggestions, contextual writing tools (rephrase, shorten, scientific, split, join, translate, synonyms), TeXGPT natural-language generation (titles, abstracts, keywords), image-to-LaTeX equation generation, table and figure generation, empty-line prompt bar, one-click suggest-fix for compile errors, project-derived starter prompts, persistent chat history with auto-generated titles, background/detached agent runs, vision/multimodal image attachments, and user-configurable BYO model providers (OpenAI, Anthropic, Google, Ollama) with adjustable reasoning effort. Includes optional live web research (SearXNG, Tavily, Exa, Jina, Firecrawl, LangSearch, Ollama, WebSearchAPI, TinyFish, Parallel, and MCP servers) and an optional isolated, sandbox-hardened headless browser container (`overleaf-browser`) for dynamic page rendering.
-- **Full Collaboration & Review**: Upstream-grade inline commenting, comment resolution threads, user @mentions, track changes with per-user suggestions, accept/reject workflows, the dedicated Reviewer role, and batched email digest notifications.
-- **Bi-directional Google Drive Sync**: OAuth 2.0 account linking, automated project backup, real-time Google Drive push webhook integration, and background synchronization reconciliation workers.
-- **GitHub Sync**: Bi-directional project synchronization with GitHub repositories via OAuth 2.0 and local Git operations.
-- **Git Bridge & Personal Access Tokens (PAT)**: Direct Git repository access over HTTP/HTTPS using standard Git CLI and GUI tools, scoped Personal Access Tokens (`olp_...`), OAuth2 token verification, and optional S3 repository swap offloading.
-- **Overleaf Model Context Protocol (MCP) Server**: Native Model Context Protocol interface exposing Overleaf projects, documents, compilation runs, and files to external AI agents and IDEs via HTTP and stdio transports.
-- **Admin User & Project Management**: Comprehensive administrative control panel for user search and directory inspection, role management, session revocation, soft delete/restore/purge workflows, secondary email handling, audit logging, and administrative project ownership reassignment.
-- **Sandboxed TeX Live Compilation**: Secure compilation execution inside isolated sibling Docker containers with strict seccomp profiles, capability dropping (`CapDrop: ALL`), and automated background/on-demand TeX Live image pulling.
-- **Interactive Public API Documentation**: Embedded OpenAPI 3.0.3 documentation viewer and schema download (`/api-docs` and `/api/v0/openapi.json`) dynamically tailored to enabled extensions.
+- **AI Assist**: In-editor LLM assistant (OpenAI, Anthropic, Gemini, Ollama) with ghost-text inline completion, error fix suggestions, multimodal vision, 22 document & PDF tools, web research, checkpoint rewind & forking, and manual, plan, or auto-apply execution modes.
+- **Collaboration & Review**: Track changes with accept/reject workflows, inline commenting threads, user @mentions, and a dedicated Reviewer role.
+- **Git Bridge & Personal Access Tokens (PAT)**: Clone, pull, and push projects over HTTPS with standard Git CLI/GUI tools using scoped access tokens (`olp_...`).
+- **GitHub & Google Drive Sync**: Bi-directional synchronization with GitHub repositories and automated two-way backups with Google Drive.
+- **Overleaf MCP Server**: Built-in Model Context Protocol server exposing projects, documents, and compile diagnostics to external AI agents and IDEs.
+- **Sandboxed TeX Live Compilation**: Spawns compilation runs in isolated sibling Docker containers with dropped capabilities (`CapDrop: ALL`) and multi-year TeX Live image support.
+- **Admin Control Panel**: Web dashboard to manage users, reassign project ownership, revoke active sessions, and review audit logs.
+- **Interactive API Docs**: Embedded OpenAPI 3.0 documentation and viewer at `/api-docs`.
 
 ---
 
@@ -66,9 +65,9 @@ Stateful data across all services is mapped cleanly to persistent directories or
 
 ### Running the Browser Service (Optional for AI Web Fetch)
 
-The browser feature consists of two distinct Docker services communicating over the internal Docker network:
-1. **Service `sharelatex`** (Main Overleaf Server container): Runs the core application and makes outbound HTTP requests to the browser service when the AI Assist `web_fetch` tool needs to render dynamic web pages.
-2. **Service `overleaf-browser`** (Browser Renderer container): Runs isolated headless Google Chrome (Patchright) behind an internal SSRF-filtering proxy. This container is disabled by default and only starts when using the `--profile overleaf-browser` flag.
+Renders dynamic JavaScript pages for the AI Assist `web_fetch` tool using two services:
+- **`overleaf`**: Main Overleaf application container (formerly `sharelatex`) that makes outbound HTTP rendering requests.
+- **`overleaf-browser`**: Sandboxed headless Chrome (Patchright) behind an SSRF-filtering proxy. Disabled by default; only runs when passing `--profile overleaf-browser`.
 
 To start the deployment with the browser service enabled:
 
@@ -80,11 +79,10 @@ To start the deployment with the browser service enabled:
    ```env
    BROWSER_TOKEN=<your_generated_token>
    ```
-3. **Configure service `sharelatex`** in `variable.env` to connect to the browser service:
+3. **Configure service `overleaf`** in `variable.env` to connect to the browser service:
    ```env
    AI_ASSIST_BROWSER_URL=http://overleaf-browser:3000
    AI_ASSIST_BROWSER_TOKEN=<your_generated_token>
-   AI_ASSIST_BROWSER_CONCURRENCY=2
    ```
 4. **Start the containers** with the browser profile:
    ```bash
@@ -93,9 +91,9 @@ To start the deployment with the browser service enabled:
 
 ### Enabling Sandboxed Compilers (Optional Sibling Container Sandbox)
 
-By default, the standard all-in-one image (`dangdoan2003/sharelatex:latest`) includes a full TeX Live scheme and executes compilation natively inside the container (`SANDBOXED_COMPILES=false`).
+The standard image (`dangdoan2003/sharelatex:latest`) compiles LaTeX natively inside the container (`SANDBOXED_COMPILES=false`).
 
-For production environments serving thousands of users or when using the lightweight slim image (`dangdoan2003/sharelatex-slim:latest`), you can enable **Sandboxed Compilers**. In this mode, each compilation job is spawned in an ephemeral sibling Docker container with complete capability dropping (`CapDrop: ALL`), `no-new-privileges`, and restrictive seccomp security profiles.
+For production multi-tenant environments or the lightweight slim image (`dangdoan2003/sharelatex-slim:latest`), enable **Sandboxed Compilers**. Each compile job runs in an ephemeral sibling Docker container with dropped capabilities (`CapDrop: ALL`), `no-new-privileges`, and custom seccomp profiles.
 
 To enable sandboxed compilation:
 
@@ -139,91 +137,75 @@ To enable sandboxed compilation:
 
 > For base Overleaf Community Edition features, visit the [official Overleaf documentation](https://docs.overleaf.com).
 > 
-> *`*` indicates mandatory environment variables that must be defined to make the feature work.*
+> *`*` = required for the feature. `—` = unset. Keys and URLs take one value or a comma-separated list.*
 
 ---
 
 ### 1. AI Assist
 
-AI Assist integrates an intelligent LLM agent into Overleaf for LaTeX authoring, real-time compiler error diagnostics, contextual code suggestions, and web research.
+In-editor LLM agent for LaTeX authoring, compile error diagnostics, contextual writing tools, and web research.
 
-- **In-Editor Assistant**: Context-aware chat sidebar, automated code edits with user approval/diff inspection, compiler log parsing, and persistent chat transcripts.
-- **Optional Web Tools (`web_search` & `web_fetch`)**: Multi-provider live web search aggregation (SearXNG, Tavily, Exa, Jina, Firecrawl, LangSearch, Ollama, WebSearchAPI, and MCP servers) with key rotation, result caching, prefetching, and cited markdown summaries.
-- **Optional Browser Service (`overleaf-browser`)**: An isolated, sandbox-hardened headless Chrome service (Patchright) used by `web_fetch` when dynamic JavaScript rendering is needed. Features strict internal SSRF filtering (blocks RFC-1918, link-local, and loopback probes), capability dropping (`CapDrop: ALL`), custom seccomp, and upstream HTTP/SOCKS5 proxy chaining.
+- **In-Editor Assistant**: Context-aware chat sidebar with diff inspection, compiler log parsing, and persistent transcripts.
+- **Compiled PDF Tools**: The agent looks at the compiled PDF (page images, layout overview, text search, visual diff between builds, typographic style) and points the user's viewer at a place. Built into AI Assist and enabled with it; no extra environment variables.
+- **Checkpoint Rewind & Forking**: Every turn snapshots modified project files. Roll back code, conversation, or both to any previous turn, or fork a chat into an independent branch.
+- **Optional Web Tools (`web_search` & `web_fetch`)**: Live web research across 10+ providers (SearXNG, Tavily, Exa, Jina, Firecrawl, etc.) and custom MCP WebSearch endpoints, featuring result caching, key rotation, and cited markdown summaries.
+- **Optional Browser Service (`overleaf-browser`)**: Dedicated sandboxed headless Chrome for JavaScript-heavy web pages, protected by egress SSRF filtering and dropped capabilities.
 
 #### Core AI Assist Configuration
 
 | Environment Variable | Default | Description |
 | :--- | :--- | :--- |
-| `AI_ASSIST_ENABLED`* | `false` | Master toggle to enable or disable the AI Assist module and UI panel. |
-| `AI_ASSIST_CHAT_HISTORY_DIR` | `/var/lib/overleaf/data/ai-assist` | Filesystem directory for persistent chat transcripts. |
-| `AI_ASSIST_PROMPT_CACHE_TTL` | `5m` | Anthropic prompt cache TTL duration (`5m` or `1h`). |
-| `AI_ASSIST_REQUEST_TIMEOUT_SECONDS` | `180` | HTTP timeout in seconds for upstream LLM provider calls. |
-| `AI_ASSIST_APPROVAL_TIMEOUT_SECONDS` | `600` | Timeout in seconds waiting for user tool execution approval. |
-| `AI_ASSIST_ORPHAN_GRACE_SECONDS` | `300` | Grace period in seconds before removing disconnected agent runs. |
-| `AI_ASSIST_HEARTBEAT_STALE_SECONDS` | `1800` | Inactivity period in seconds before marking a run heartbeat stale. |
-| `AI_ASSIST_STREAM_KEEPALIVE_SECONDS` | `15` | Interval in seconds for SSE keepalive ping comments on active run streams. |
-| `AI_ASSIST_STREAM_IDLE_SECONDS` | `0` | Idle timeout in seconds for provider streaming responses. `0` disables it; providers fall back to a 120-second default. |
-| `AI_ASSIST_MAX_TRANSCRIPT_BYTES` | `5000000` | Maximum allowed payload size in bytes for chat run transcripts. |
+| `AI_ASSIST_ENABLED`* | `false` | Turn on AI Assist. |
+| `AI_ASSIST_REQUEST_TIMEOUT_SECONDS` | `180` | Seconds to wait for a model's first reply. Raise for slow local models. |
+| `DOCKER_HOST_GATEWAY` | auto | Docker host IP, used for `localhost` model URLs. Set for host networking or Podman. |
 
 #### Optional Web Research & Search Providers
 
 | Environment Variable | Default | Description |
 | :--- | :--- | :--- |
-| `AI_ASSIST_WEB_TOOLS_ENABLED`* | `false` | Enables web search and fetch tools for the AI assistant. |
-| `AI_ASSIST_WEB_SEARCH_SERVER_ENABLED` | `false` | Enables server-configured web search providers for users without individual API keys. |
-| `AI_ASSIST_WEB_SEARCH_PRIMARY_PROVIDER` | `searxng` | Primary search provider fallback (`searxng`, `tavily`, `exa`, `jina`, `firecrawl`, `ollama`, `langsearch`, `websearchapi`, `tinyfish`, `parallel`, `mcp`). |
-| `AI_ASSIST_WEB_SEARCH_ROTATION_STRATEGY` | `round-robin` | Provider rotation strategy (`round-robin`, `provider-priority`, or `sticky`). |
-| `AI_ASSIST_SEARXNG_URL` / `AI_ASSIST_SEARXNG_URLS` | `""` | Comma-separated base URL(s) of SearXNG instances. |
-| `AI_ASSIST_SEARXNG_DEFAULT_CATEGORIES` | `""` | Default search categories for SearXNG queries (e.g. `general,science`). |
-| `AI_ASSIST_SEARXNG_DEFAULT_LANGUAGE` | `""` | Default language code for SearXNG queries (e.g. `en-US`). |
-| `AI_ASSIST_TAVILY_API_KEY` / `_KEYS` | `""` | Comma-separated API key(s) for Tavily search provider. |
-| `AI_ASSIST_EXA_API_KEY` / `_KEYS` | `""` | Comma-separated API key(s) for Exa search provider. |
-| `AI_ASSIST_JINA_API_KEY` / `_KEYS` | `""` | Comma-separated API key(s) for Jina search provider. |
-| `AI_ASSIST_FIRECRAWL_API_KEY` / `_KEYS` | `""` | Comma-separated API key(s) for cloud Firecrawl provider. |
-| `AI_ASSIST_FIRECRAWL_SELFHOSTED_URL` / `_URLS` | `""` | Comma-separated URL(s) for self-hosted Firecrawl instances. |
-| `AI_ASSIST_LANGSEARCH_API_KEY` / `_KEYS` | `""` | Comma-separated API key(s) for LangSearch provider. |
-| `AI_ASSIST_OLLAMA_API_KEY` / `_KEYS` | `""` | Comma-separated API key(s) for Ollama web search. |
-| `AI_ASSIST_WEBSEARCHAPI_API_KEY` / `_KEYS` | `""` | Comma-separated API key(s) for WebSearchAPI provider. |
-| `AI_ASSIST_TINYFISH_API_KEY` / `_KEYS` | `""` | Comma-separated API key(s) for TinyFish search provider. |
-| `AI_ASSIST_TINYFISH_BASE_URL` | `https://api.search.tinyfish.ai` | Base URL for TinyFish search API. |
-| `AI_ASSIST_PARALLEL_API_KEY` / `_KEYS` | `""` | Comma-separated API key(s) for Parallel search & extract provider. |
-| `AI_ASSIST_PARALLEL_BASE_URL` | `https://api.parallel.ai` | Base URL for Parallel search & extract API. |
-| `AI_ASSIST_MCP_URL` / `AI_ASSIST_MCP_URLS` | `""` | Comma-separated HTTP/SSE endpoint URL(s) for MCP web search servers. |
-| `AI_ASSIST_MCP_BEARER_TOKEN` / `_API_KEY` | `""` | Bearer authorization token or API key for MCP server requests. |
-| `AI_ASSIST_MCP_HEADERS` | `""` | Custom headers for MCP server requests (JSON or `Key: Value` format). |
-| `AI_ASSIST_WEB_SEARCH_CACHE_HOURS` | `24` | Cache expiration in hours for web searches and fetched web pages. |
-| `AI_ASSIST_WEB_SEARCH_MAX_CACHED_SEARCHES` | `256` | Maximum number of queries retained in the LRU web search cache. |
-| `AI_ASSIST_WEB_SEARCH_MAX_CACHED_PAGES` | `64` | Maximum number of pages retained in the LRU web page cache. |
-| `AI_ASSIST_WEB_PREFETCH_RESULTS` | `3` | Number of top search result URLs to prefetch in background (`0` to disable). |
-| `AI_ASSIST_WEB_CACHE_PATH` | `/var/lib/overleaf/data/ai-assist/web-cache.sqlite` | SQLite database file path for cached web results (`:memory:` for RAM). |
-| `AI_ASSIST_WEB_EXTRACT_WORKERS` | `2` | Number of worker threads for HTML/PDF content extraction. |
-| `AI_ASSIST_CURL_IMPERSONATE` | `/usr/local/lib/curl-impersonate/curl-impersonate` | Binary path for curl-impersonate for browser-like HTTP fetching. |
+| `AI_ASSIST_WEB_TOOLS_ENABLED`* | `false` | Turn on web search and fetch. |
+| `AI_ASSIST_SEARXNG_URLS` | — | SearXNG URLs. |
+| `AI_ASSIST_TAVILY_API_KEYS` | — | Tavily keys. |
+| `AI_ASSIST_EXA_API_KEYS` | — | Exa keys. |
+| `AI_ASSIST_JINA_API_KEYS` | — | Jina keys. |
+| `AI_ASSIST_FIRECRAWL_API_KEYS` | — | Firecrawl cloud keys. |
+| `AI_ASSIST_FIRECRAWL_SELFHOSTED_URLS` | — | Self-hosted Firecrawl URLs. |
+| `AI_ASSIST_LANGSEARCH_API_KEYS` | — | LangSearch keys. |
+| `AI_ASSIST_OLLAMA_API_KEYS` | — | Ollama web search keys. |
+| `AI_ASSIST_WEBSEARCHAPI_API_KEYS` | — | WebSearchAPI keys. |
+| `AI_ASSIST_TINYFISH_API_KEYS` | — | TinyFish keys. |
+| `AI_ASSIST_PARALLEL_API_KEYS` | — | Parallel keys. |
+| `AI_ASSIST_MCP_HEADERS` | — | Extra headers for custom search URLs (JSON or `Key: Value` lines). |
+| `AI_ASSIST_MCP_BEARER_TOKEN` | — | Bearer token for custom search URLs. |
+| `AI_ASSIST_MCP_URLS` | — | Custom search URLs: take `POST {"q"}`, return `{"results": [...]}`. |
+| `AI_ASSIST_WEB_SEARCH_CACHE_HOURS` | `24` | Hours to reuse search results and pages. `0` = no cache. |
+| `AI_ASSIST_WEB_SEARCH_MAX_CACHED_SEARCHES` | `256` | Max cached searches. |
+| `AI_ASSIST_WEB_SEARCH_MAX_CACHED_PAGES` | `64` | Max cached pages. |
 
-#### Optional Browser Integration (Service `sharelatex` & Service `overleaf-browser`)
+Names are plural (`…_API_KEYS`, `…_URLS`). Any key or URL set turns on server web search for all users; users can also add their own in **Account Settings → AI Features → Web search**.
+
+#### Optional Browser Integration (Service `overleaf` & Service `overleaf-browser`)
 
 The browser capability is divided between two separate services running in independent containers:
 
-- **Service `sharelatex`**: The main application server. When an AI agent executes a `web_fetch` tool call on a dynamic JavaScript page, `sharelatex` dispatches an authenticated HTTP rendering request to `overleaf-browser`.
+- **Service `overleaf`**: The main application server. When an AI agent executes a `web_fetch` tool call on a dynamic JavaScript page, `overleaf` dispatches an authenticated HTTP rendering request to `overleaf-browser`.
 - **Service `overleaf-browser`**: A dedicated sandboxed container running headless Google Chrome (Patchright). To protect the host and internal network, all Chrome outbound traffic is forced through an internal guarded proxy (`127.0.0.1:8080`) that strictly blocks requests to internal/private IP ranges (RFC-1918, link-local, loopback, and cloud metadata endpoints).
 
-##### Environment Variables for Service `sharelatex` (in `variable.env`)
+##### Environment Variables for Service `overleaf` (in `variable.env`)
 
 | Environment Variable | Default | Description |
 | :--- | :--- | :--- |
-| `AI_ASSIST_BROWSER_URL`* | — | HTTP URL of the browser service (e.g., `http://overleaf-browser:3000`). |
-| `AI_ASSIST_BROWSER_TOKEN`* | — | Secret token used by `sharelatex` to authenticate against service `overleaf-browser`. Must match `BROWSER_TOKEN`. |
-| `AI_ASSIST_BROWSER_CONCURRENCY` | `2` | Maximum concurrent page-render requests that service `sharelatex` will send to the browser service. |
+| `AI_ASSIST_BROWSER_URL`* | — | Browser service URL, e.g. `http://overleaf-browser:3000`. |
+| `AI_ASSIST_BROWSER_TOKEN`* | — | Browser service token. Same as `BROWSER_TOKEN`. |
 
 ##### Environment Variables for Service `overleaf-browser` (in `docker-compose.yaml` / `.env`)
 
 | Environment Variable | Default | Description |
 | :--- | :--- | :--- |
-| `BROWSER_TOKEN`* | — | Authentication secret (minimum 32 characters) required to call the browser HTTP API. |
-| `PROXY_PORT` | `8080` | Port of the internal SSRF-prevention egress proxy running inside the browser container. |
-| `BROWSER_CAPACITY` | `2` | Maximum number of concurrent Chrome browser tabs/pages allowed in the container. |
-| `BROWSER_LANG` | `en-US` | Default `Accept-Language` and UI locale passed to the Chrome process. |
-| `UPSTREAM_PROXY` | `""` | Optional upstream proxy (`http://user:pass@host:port` or `socks5://...`) to chain all outbound browser traffic through. |
+| `BROWSER_TOKEN`* | — | API token, 32+ characters. |
+| `BROWSER_CAPACITY` | `2` | Pages rendered at once. |
+| `BROWSER_LANG` | `en-US` | Browser language, e.g. `vi-VN`. |
+| `UPSTREAM_PROXY` | — | Outbound proxy: `http://user:pass@host:port` or `socks5://...`. |
 
 #### Agent Modes
 
@@ -237,7 +219,7 @@ The AI agent operates in three execution modes that control how tool calls are h
 
 #### Agent Tools
 
-The agent has access to 18 tools. Read-only tools execute automatically in all modes; editing and settings tools are gated by the active mode.
+The agent has access to 25 tools (15 project tools, 7 PDF tools, 2 web research tools, and 1 mode tool). Read-only tools execute automatically in all modes; editing and settings tools are gated by the active mode.
 
 **Project tools** (15):
 
@@ -259,6 +241,18 @@ The agent has access to 18 tools. Read-only tools execute automatically in all m
 | `configure_editor_settings` | Set keybinding mode, auto-complete, bracket pairing, syntax validation, PDF viewer, math preview, breadcrumbs, tabs, spellcheck language (account preferences; always asks). |
 | `list_available_settings` | List allowed values for every setting (compilers, TeX Live versions, themes, fonts, sizes, viewers, languages). |
 
+**PDF tools** (7), part of AI Assist and offered whenever it is enabled; read-only, so they run automatically in every mode:
+
+| Tool | Description |
+| :--- | :--- |
+| `view_compiled_pdf_page` | See one page of the last compiled PDF as an image (150 dpi, or a third of the page zoomed in), or zoom on where a block of source lines is typeset (`path`, `line`, `endLine`: a table, figure, TikZ picture or equation). Returns a SyncTeX map from page height to source line and the page's overfull/underfull boxes; text-only models get the page's text instead of the image. Opens the page of the last edit by default. |
+| `view_compiled_pdf_overview` | Up to 12 pages as labelled thumbnails in one image, with paper size, problem fonts (not embedded, Type 3) and per-page measurements: source lines typeset on the page, blank pages, content ending early, large empty bands, ink past the margins, bad boxes and `??`/`[?]` markers. Used to judge the layout across pages and choose a page to open. |
+| `search_compiled_pdf` | Find text as the PDF shows it (after macros, numbering, references and citations resolve), ignoring case, line breaks and hyphenation. Returns each match's page, height and the source line that typeset it. |
+| `resolve_pdf_block` | Map a block label (`B3`) drawn on a page view with `labels: true` to the source file and lines that typeset it. |
+| `diff_compiled_pdf` | Compare the new build with the one before it, page by page: changed regions and one annotated image. The user's PDF viewer highlights the same regions. |
+| `inspect_compiled_style` | Text area, margins, columns, fonts and sizes per role, line spacing, rules and colours read from the PDF, each linked to the preamble setting that controls it. |
+| `highlight_in_pdf` | Scroll the user's PDF viewer to a source line or region and highlight it. |
+
 **Web tools** (2):
 
 | Tool | Description |
@@ -266,11 +260,49 @@ The agent has access to 18 tools. Read-only tools execute automatically in all m
 | `web_search` | Search the web for current information. Returns numbered cited sources with title, URL, date, and snippet. |
 | `web_fetch` | Read a web page, PDF, or text file as Markdown. Long documents are paginated; supports `find` for full-document passage search and `page` for section jumps. |
 
+**External MCP connectors**:
+
+Users can configure remote Model Context Protocol (MCP) servers in **Account Settings → AI Features → Connectors**. Connectors are part of AI Assist and need no environment variables of their own.
+
+- **Transports**: Supports Streamable HTTP and HTTP+SSE with automatic discovery.
+- **Verified on add**: Saving a connector connects to the server straight away. The dialog closes once it connects; if the server cannot be reached it stays open with the error. Imported connectors are verified the same way.
+- **Authentication**: OAuth 2.1 (PKCE, token refresh, dynamic client registration) or custom HTTP headers with sensitive key masking. The server decides: a server that needs no sign-in connects directly, and **Sign in** is only offered after the server asks for it. The sign-in window opens centred on the user's window, only when they click. A server that rejects requests but offers no OAuth sign-in (for example, one that wants an API key) is reported as an error asking for the key as a header.
+- **OAuth redirect URL**: `${OVERLEAF_SITE_URL}/ai-assist/connectors/oauth/callback`. There is no separate setting; `OVERLEAF_SITE_URL` must be the public address users open, or the authorization server redirects them to the wrong host.
+- **Changing a connector's server**: Moving a connector to another origin clears everything issued for or typed for the old server (tokens, discovered endpoints, client secret, scopes), so none of it is sent to the new host.
+- **Card actions**: Connect / Reconnect, Sign in, Configure tools, an enable switch, and a menu with Test connection, Edit, Disconnect and Remove (with confirmation). Successful test and connect results disappear after a few seconds; failures stay until a later attempt succeeds.
+- **Config Import**: Import MCP servers directly from Claude Desktop, Cursor, VS Code, or Gemini CLI configs.
+- **Permissions**: Per-tool permission controls (Always allow, Needs approval, Blocked). A destructive tool asks every time, even when set to Always allow.
+- **Per-chat selection**: In the chat composer, **+ → Connectors** lists the connected servers with a switch for each chat, and **Manage connectors** opens these settings.
+- **Tool Integration**: Tools are offered to the model as `mcp__<connector>__<tool>` with the server's own descriptions. Each server's instructions, the available tools, and any connector that needs sign-in or is unreachable are described in the system prompt. When the connector tools would take more than 10% of the model's context window, only their names and summaries are sent and the model loads full definitions with `search_connector_tools`. Long results are paged with `read_connector_result`, and a tool error is reported to the model as an error.
+- **Results in chat**: Each call shows the connector, the tool and its arguments, and the output (formatted JSON or Markdown, clipped with Show more, with a copy button).
+
 **Mode tool** (1):
 
 | Tool | Description |
 | :--- | :--- |
 | `present_plan` | Plan mode only. Present a finished plan for user approval. Call once research is complete. |
+
+#### Slash Commands
+
+Typing `/` in the chat composer opens commands tailored for LaTeX authoring. Each command freezes structured instructions (`<instructions>`), parsed parameters (`<params>`), and pre-gathered project context (`<gathered>`) into that turn without changing the system prompt or tool specs, preserving LLM prompt caching.
+
+| Command | Scope | Gathers | Description |
+| :--- | :--- | :--- | :--- |
+| `/fix [all] [file.tex:line] [notes]` | Edit | Compile errors, preamble | Fix compile errors, diagnosing root cause before editing. |
+| `/layout [page N] [boxes/floats/breaks] [notes]` | Edit | Layout warnings, packages | Fix overfull boxes, misplaced floats, and bad page breaks. |
+| `/preamble [add/remove/explain/audit] [package]` | Edit | Preamble, packages | Add, remove, explain, or audit packages without breaking the build. |
+| `/rewrite [style] [length] [notes]` | Edit | Section lines | Rewrite prose (clearer, formal, concise, active voice, flow); keeps all LaTeX intact. |
+| `/proofread [us/uk] [section/file] [focus]` | Edit | Section lines, packages | Fix spelling, grammar, and punctuation without altering style or math. |
+| `/translate <language> [notes]` | Edit | Section lines, packages | Translate text; preserves all macros, math, environments, and cite keys. |
+| `/cite [web] [claim]` | Edit | Cursor window, bib keys | Find citation for a claim in project `.bib` files (or web if requested). |
+| `/bib [duplicates/fields/casing/unused]` | Edit | Bib keys | Tidy `.bib` entries: remove duplicates, report missing fields, fix title casing. |
+| `/table [what it should show]` | Edit | Cursor window, packages, labels | Build or fix a table from values stated in the document. |
+| `/figure [image path] [what to draw]` | Edit | Cursor window, packages, labels | Insert a project graphic or draw a clean TikZ diagram. |
+| `/equation [inline/display/align] [math in words]` | Edit | Cursor window, macros, packages | Write equations reusing the document's existing math macros and notation. |
+| `/explain [what to explain]` | Read | Cursor window, macros | Explain a passage, equation, LaTeX command, package, or error. |
+| `/summarize [length] [section or file]` | Read | Document outline | Summarize selection, section, or whole paper strictly from text content. |
+| `/review [focus] [section]` | Read | Document outline | Peer-review paper or section: logic, methods, writing clarity, and structure. |
+| `/check [refs/cites/notation/terms]` | Read | Labels, bib keys, macros | Audit broken references, uncited keys, and notation/terminology drift. |
 
 #### Inline AI Editor Features
 
@@ -278,31 +310,34 @@ Beyond the chat agent, AI Assist provides editor-integrated features that run th
 
 | Feature | Description |
 | :--- | :--- |
-| **Inline Auto-Completion** | Context-aware completion at the cursor with any configured chat model (Shift+Space for manual, or Automatic after a pause in typing). Detects where a suggestion fits — blocked in comments, command names, key/path/option arguments, bibliography entries, and mid-line gaps with text after the cursor — and classifies what goes there: prose continuation, the next block (table, figure, formula, list, code), a math expression, or preamble lines. Sends the document's full context (title, abstract, section outline, packages, macros, labels, citations) as structured tags alongside an excerpt marked at the cursor, and holds the reply to the structure: rows with the correct number of cells, arguments closed exactly once, display blocks on their own lines, no root commands inside the document body. Automatic mode also stays quiet on empty lines (where Space opens the writing prompt), in the preamble, and at blank-line block boundaries where there is nothing yet to continue. |
-| **Inline Ghost-Text Suggestions** | Streaming ghost-text suggestions in the editor, triggered by an explicit prompt bar, Shift+Space, or a pause in typing (automatic). Accepted with Tab; partial acceptance by typing through. |
-| **Language & Grammar Suggestions** | Batch grammar and language checks across the open file. Masks math, keys, command names, and comments before sending prose to the model. Applied per-suggestion with a diff preview. |
-| **Writing Tools** | Contextual rewrite actions on selected text: Rephrase, Shorten, Make scientific, Split long sentences, Join short sentences, Translate, and Synonyms. Adapts available actions to the selection shape (word, phrase, sentence). Includes LaTeX-specific validation checks. |
-| **TeXGPT** | Natural-language generation of LaTeX content: Title, Abstract, and Keywords generators. Detects existing blocks (`\title`, `abstract` environment, keyword environments) and replaces or appends intelligently. Preserves separator conventions (`\sep`, `\and`, commas). |
-| **Equation Generator** | Convert an image of a math expression (or text description) to LaTeX. Sends a rendered math image to a vision-capable model. Supports clipboard paste, file upload, and automatic image resizing (max 1568px long edge, min 768px). |
-| **Table Generator** | Generate LaTeX tables from natural-language descriptions or images. Accessible from the editor's Insert Table menu ("From text or image"). Infers column structure, packages, and formatting. |
-| **Figure Generator** | Generate LaTeX figure environments with optional image attachments. Supports clipboard image paste and file upload (PNG, JPEG, WebP, GIF up to 20 MB). |
-| **Empty Line Prompt** | Pressing Space on an empty line opens an inline AI prompt bar at the cursor position, enabling quick natural-language-to-LaTeX generation without leaving the editor. |
-| **AI Edit Glow** | Visual animation in CodeMirror highlighting newly applied AI modifications and smoothly scrolling newly inserted or edited lines into view. |
+| **Inline Auto-Completion** | Context-aware LaTeX completion at the cursor (Shift+Space or automatic on typing pause). Adapts to prose, math, tables, figures, and preambles while suppressing suggestions inside comments, command names, and arguments. |
+| **Inline Ghost-Text Suggestions** | Streaming ghost-text suggestions accepted with Tab, triggered by Shift+Space, prompt bar, or typing pauses. |
+| **Language & Grammar Suggestions** | Grammar and language checks across the open document with diff preview, automatically preserving LaTeX math and macros. |
+| **Writing Tools** | Contextual rewrite actions on selected text (Rephrase, Shorten, Make scientific, Split/Join, Translate, Synonyms) with LaTeX validation. |
+| **TeXGPT** | Generates titles, abstracts, and keywords directly into document environments using natural language prompts. |
+| **Equation Generator** | Converts images of math expressions or text descriptions into LaTeX via vision models, supporting clipboard paste and upload. |
+| **Table Generator** | Generates formatted LaTeX tables from natural language prompts or images via the Insert Table menu. |
+| **Figure Generator** | Creates complete LaTeX figure environments with optional image uploads (PNG, JPEG, WebP, GIF). |
+| **Empty Line Prompt** | Pressing Space on an empty line opens an inline prompt bar for natural-language generation directly at the cursor. |
+| **AI Edit Glow** | Editor highlight animation that smoothly scrolls to and highlights newly applied AI changes. |
 
 #### Chat History & Background Runs
 
 | Feature | Description |
 | :--- | :--- |
-| **Persistent Chat History** | Chat transcripts are persisted to the filesystem (`AI_ASSIST_CHAT_HISTORY_DIR`) and restored when reopening a chat. Each chat appears in a history menu accessible from the agent panel. |
-| **Auto-Generated Chat Titles** | A background LLM call generates a concise title for each new chat, replacing the default timestamp label. Titles are visible in the chat history menu. |
-| **Background / Detached Agent Runs** | When the user switches to another chat mid-run, the previous run continues on the server. Up to 3 detached runs are followed in parallel (browser connection limits); progress is saved to chat history periodically. Reopening a chat picks up the run from where it left off. |
+| **Persistent Chat History** | Saves chat transcripts to disk (`/var/lib/overleaf/data/ai-assist`), easily reopened from the history menu. |
+| **Auto-Generated Titles** | Automatically names chats based on context instead of timestamp labels. |
+| **Background Agent Runs** | Runs continue on the server if you switch chats or close the tab, picking up where they left off when reopened. |
+| **Checkpoint Rewind & Forking** | Every turn snapshots modified project files. From the rewind dialog on any message, roll back code and conversation, reset conversation only, rewind code only, or fork the chat into an independent branch with live diff preview. |
 
 #### Suggest Fix & Project Starters
 
 | Feature | Description |
 | :--- | :--- |
-| **Suggest Fix** | A one-click "Suggest fix" action on any compile error or warning in the log panel. Launches a focused agent run that investigates the error (checking preamble, compile log, and source context), proposes the smallest fix as an `edit_file` call, and presents a diff for approval. No reply box — the run completes autonomously. |
-| **Project-Derived Starters** | The empty chat state shows up to 5 contextual starter prompts derived from the project's structure, file listing, and last compile result. Starters are deterministic and require no provider call — they appear instantly on first paint. Examples: "Fix compile errors", "Resolve broken references", "Draft a conclusion", "Add a summary table", "Generate a TikZ diagram". |
+| **Suggest Fix** | One-click compile error/warning fix in the log panel that autonomously inspects errors and proposes a diff for approval. Uses the project read tools and `edit_file` (no PDF tools); when web tools are enabled it can also look up package documentation and command syntax with `web_search` / `web_fetch`. |
+| **Project-Derived Starters** | Instant contextual prompt suggestions in empty chats derived from project structure and compile status. |
+| **Selection-Aware Quick Actions** | Selecting text in the editor shows dynamic action chips tailored to the selection type (equations, tables, TikZ, citations) for one-click prompts. |
+| **PDF Viewer Context** | Each message carries the visible PDF pages and zoom; text selected in the PDF, a double-click on the PDF, or a box dragged on it is handed to the agent as the matching source lines. |
 
 #### AGENTS.md — Per-Project Instructions
 
@@ -318,155 +353,122 @@ Place an `AGENTS.md` file in the **project root** to give the agent project-spec
 
 #### BYO Model Provider & Vision
 
-AI Assist uses a bring-your-own-model architecture: each user configures their own LLM provider and API key in the AI Assist settings panel. No model provider keys are stored in server environment variables.
+Users configure their own LLM provider and API keys directly in the user settings panel—no provider API keys are stored in server environment variables.
 
 | Feature | Description |
 | :--- | :--- |
-| **Multi-Provider Support** | Users can configure any OpenAI-compatible endpoint (OpenAI, Azure, local), Anthropic (Claude), Google (Gemini), or Ollama (self-hosted). Provider URLs are validated server-side to block internal service access (MongoDB, Redis, CLSI, cloud metadata, etc.). |
-| **Dual Model Slots (Main & Fast)** | Separate slots for the main model (used by the AI assistant panel and writing tools) and a lightweight/fast model (used for inline code completion and language suggestions) to optimize latency and token costs. |
-| **Reasoning Effort** | Adjustable reasoning effort for supported models (e.g. Claude's extended thinking). Controls how many thinking tokens the model spends before answering. Configured per-user in the agent panel. |
-| **Vision / Multimodal** | Users can attach images (PNG, JPEG, WebP, GIF; max 2 images, 4 MB each) to chat messages. The equation generator also sends rendered math images to vision-capable models. Images are validated server-side before forwarding to the provider. |
-| **Live Settings Sync** | When the agent calls `configure_compiler_settings`, `configure_appearance_settings`, or `configure_editor_settings`, the changes are applied live to the editor UI in real time, with an approval card showing the diff. |
+| **Multi-Provider Support** | Connect OpenAI-compatible endpoints, Anthropic Claude, Google Gemini, or local Ollama instances. Provider URLs include SSRF validation against internal networks. |
+| **Dual Model Slots (Main & Fast)** | Independent slots for a main reasoning model (chat assistant, writing tools) and a fast model (inline code completion) to optimize latency and cost. |
+| **Reasoning Effort** | Configurable thinking token budget for supported reasoning models (e.g., Claude thinking, OpenAI o-series). |
+| **Vision / Multimodal** | Attach images directly to chat messages (PNG, JPEG, WebP, GIF; up to 2 images, 4 MB each) for equation conversion or visual review. |
+| **Live Settings Sync** | When the agent modifies appearance, editor, or compiler settings, changes apply in real time with an approval diff. |
 
 ---
 
 ### 2. Collaboration & Review
 
-Enables comprehensive collaboration features in Overleaf Community Edition, including inline comments, thread resolutions, user @mentions, track changes with per-user suggestions and accept/reject workflows, the dedicated Reviewer role, and batched email digest notifications.
+Adds inline commenting, comment resolution threads, user @mentions, track changes with per-user suggestions and accept/reject workflows, a dedicated Reviewer role, and batched email digest notifications.
 
 | Environment Variable | Default | Description |
 | :--- | :--- | :--- |
-| `COLLABORATION_ENABLED`* | `false` | Master toggle for all collaboration features: comments, track changes, the Reviewer role, @mentions, in-app notifications, and email digests. When disabled, the instance behaves as standard upstream Community Edition. |
-| `COMMENT_MENTION_DELAY_MS` | `300000` | Debounce delay in milliseconds before delivering batched comment and @mention email digest notifications (default: 5 minutes, ceiling: 15 minutes). |
+| `COLLABORATION_ENABLED`* | `false` | Turn on comments, track changes, Reviewer role, @mentions and email digests. |
+| `COMMENT_MENTION_DELAY_MS` | `300000` | Delay before comment emails are sent (ms). |
 
 ---
 
 ### 3. Google Drive Sync
 
-Provides bi-directional synchronization between Overleaf projects and Google Drive. Supports per-user OAuth 2.0 account linking, automated project backup to Google Drive folders, real-time change detection via Google Drive push webhooks, background polling reconciliation workers, and bulk folder imports. Sensitive access tokens are encrypted at rest using AES.
+Bi-directional sync between Overleaf projects and Google Drive via OAuth 2.0, supporting automated folder backups, real-time push webhooks, fallback polling, and AES-encrypted token storage.
 
 | Environment Variable | Default | Description |
 | :--- | :--- | :--- |
-| `GOOGLE_DRIVE_ENABLED`* | `false` | Enables bi-directional synchronization between Overleaf projects and Google Drive, mounting OAuth routes, background sync workers, and frontend UI components. |
-| `GOOGLE_DRIVE_CLIENT_ID`* | — | Google OAuth 2.0 Client ID obtained from the Google Cloud Console for Google Drive API access. |
-| `GOOGLE_DRIVE_CLIENT_SECRET`* | — | Google OAuth 2.0 Client Secret paired with the Client ID for token exchange. |
-| `GOOGLE_DRIVE_TOKEN_SECRET` | `""` | Secret key used to encrypt and decrypt stored Google OAuth refresh and access tokens at rest in MongoDB (also supports `GOOGLE_DRIVE_TOKEN_ENCRYPTION_SECRET`). |
-| `GOOGLE_DRIVE_REDIRECT_URI` | `<siteUrl>/oauth/google-drive/callback` | Authorized OAuth 2.0 callback URL registered in the Google Cloud Console. Auto-derived from the site URL if omitted. |
-| `GOOGLE_DRIVE_WEBHOOK_URL` | `<siteUrl>/google-drive/webhook` | Public HTTPS endpoint URL for Google Drive push notification webhooks. Required to receive real-time remote change notifications. |
-| `GOOGLE_DRIVE_MAX_RPS` | `8` | Maximum allowed Google Drive API requests per second to avoid API rate limiting. |
-| `GOOGLE_DRIVE_POLL_INTERVAL_SECONDS` | `300` | Fallback polling interval in seconds to check for remote Google Drive changes when push webhooks are inactive or missed. |
-| `GOOGLE_DRIVE_OUTBOUND_FLUSH_SECONDS` | `600` | Maximum flush delay in seconds for batching and pushing local project changes out to Google Drive. |
+| `GOOGLE_DRIVE_ENABLED`* | `false` | Turn on Google Drive sync. |
+| `GOOGLE_DRIVE_CLIENT_ID`* | — | Google OAuth client ID. |
+| `GOOGLE_DRIVE_CLIENT_SECRET`* | — | Google OAuth client secret. |
+| `GOOGLE_DRIVE_MAX_RPS` | `8` | Drive API requests per second. Match your Google quota. |
+| `GOOGLE_DRIVE_POLL_INTERVAL_SECONDS` | `300` | Seconds between checks for Drive changes, when push is off. |
+| `GOOGLE_DRIVE_OUTBOUND_FLUSH_SECONDS` | `600` | Max seconds before local changes reach Drive. |
+
+Redirect URI to register: `<OVERLEAF_SITE_URL>/oauth/google-drive/callback`. Push updates need HTTPS; otherwise Drive is polled. The token encryption secret is generated automatically.
 
 ---
 
 ### 4. GitHub Sync
 
-Enables bi-directional project synchronization between Overleaf projects and GitHub repositories via OAuth 2.0 and Git repository cloning/pushing.
+Bi-directional sync between Overleaf projects and GitHub repositories via OAuth 2.0 and Git operations.
 
 | Environment Variable | Default | Description |
 | :--- | :--- | :--- |
-| `GITHUB_SYNC_ENABLED`* | `false` | Enables or disables GitHub synchronization functionality across the instance. |
-| `GITHUB_CLIENT_ID`* | — | OAuth 2.0 Client ID registered on GitHub for authentication and authorization. |
-| `GITHUB_CLIENT_SECRET`* | — | OAuth 2.0 Client Secret registered on GitHub for authentication and authorization. |
-| `GITHUB_TOKEN_SECRET`* | — | Secret key used to encrypt and decrypt stored GitHub user access tokens at rest. |
-| `GITHUB_REDIRECT_URI` | `${OVERLEAF_SITE_URL}/auth/github/callback` | OAuth 2.0 redirect/callback URI registered with GitHub. |
-| `GITHUB_API_BASE` | `https://api.github.com` | Base URL for GitHub REST API requests (customizable for GitHub Enterprise). |
-| `GITHUB_GIT_BASE` | `https://github.com` | Base URL for GitHub Git web/clone endpoints (customizable for GitHub Enterprise). |
-| `GITHUB_SYNC_REPOS_DIR` | `/var/lib/overleaf/data/github-sync/repos` | Local filesystem directory path used to store cached working Git clones during synchronization. |
+| `GITHUB_SYNC_ENABLED`* | `false` | Turn on GitHub sync. |
+| `GITHUB_CLIENT_ID`* | — | GitHub OAuth app client ID. |
+| `GITHUB_CLIENT_SECRET`* | — | GitHub OAuth app client secret. |
+| `GITHUB_API_BASE` | `https://api.github.com` | GitHub API URL. Change for GitHub Enterprise. |
+| `GITHUB_GIT_BASE` | `https://github.com` | GitHub URL. Change for GitHub Enterprise. |
+
+Callback URL to register: `<OVERLEAF_SITE_URL>/auth/github/callback`. The token encryption secret is generated automatically.
 
 ---
 
 ### 5. Git Bridge & Personal Access Tokens (PAT)
 
-Git Bridge enables full bidirectional Git access for Overleaf projects, allowing users to clone, commit, branch, and push LaTeX projects using standard Git CLI and GUI clients. It includes Personal Access Token (PAT) authentication (`olp_` tokens) with scope-based authorization (`git_bridge`, `mcp`), OAuth2 token verification endpoints, and optional S3 repository swap offloading for inactive projects.
+Enables standard Git operations (clone, commit, push) over HTTPS using scoped Personal Access Tokens (`olp_...`).
 
-The feature operates across two services:
-1. **Service `sharelatex`**: The main application server, which handles routing, Personal Access Tokens, and Nginx proxying to the Git Bridge container.
-2. **Service `git-bridge`**: The Java-based Git Bridge daemon container running the Git HTTP server.
+Personal Access Tokens turn on with Git Bridge or MCP.
 
-#### Environment Variables for Service `sharelatex` (in `variable.env`)
+The feature runs across two containers:
+- **`overleaf`**: Manages PAT generation, authentication, and Nginx proxying.
+- **`git-bridge`**: Java daemon running the Git HTTP server with local bare repos and optional S3 cold storage offload.
+
+#### Environment Variables for Service `overleaf` (in `variable.env`)
 
 | Environment Variable | Default | Description |
 | :--- | :--- | :--- |
-| `GIT_BRIDGE_ENABLED`* | `false` | Master toggle to enable Git Bridge routing, Personal Access Tokens, and Nginx proxying. |
-| `GIT_BRIDGE_HOST`* | `git-bridge` | Container or host name of the Git Bridge service used by Nginx to proxy Git traffic. |
-| `GIT_BRIDGE_PORT`* | `8000` | Port number that the Git Bridge service listens on (proxied by Nginx). |
-| `GIT_BRIDGE_INTERNAL_URL`* | — | Internal HTTP URL of the main web service. Must be set to `http://sharelatex:3000` (or `http://overleaf:3000`) so the `git-bridge` container can retrieve project snapshots and attachments. |
-| `PERSONAL_ACCESS_TOKEN_WARNING_WINDOW_DAYS` | `2` | Warning window in days before Personal Access Token expiration notifications are triggered. |
+| `GIT_BRIDGE_ENABLED`* | `false` | Turn on Git Bridge and access tokens. |
+| `GIT_BRIDGE_HOST` | `git-bridge` | Git Bridge service name. |
+| `GIT_BRIDGE_PORT` | `8000` | Git Bridge port. |
 
 #### Environment Variables for Service `git-bridge` (in `docker-compose.yaml`)
 
 | Environment Variable | Default | Description |
 | :--- | :--- | :--- |
-| `GIT_BRIDGE_API_BASE_URL`* | — | Base REST API URL of the web service. In Docker, must be explicitly set to `http://sharelatex:3000/api/v0` (or `http://overleaf:3000/api/v0`). |
-| `GIT_BRIDGE_OAUTH2_SERVER`* | — | Base URL of the web service for OAuth2 token validation. In Docker, must be set to `http://sharelatex:3000` (or `http://overleaf:3000`). |
-| `GIT_BRIDGE_POSTBACK_BASE_URL`* | — | Postback base URL for Git Bridge. In Docker, must be set to `http://git-bridge:8000`. |
-| `GIT_BRIDGE_ROOT_DIR` | `/data` | Root directory inside container where Git Bridge stores bare repositories (defaults to `/data`, formerly `/tmp/wlgb`). |
-| `GIT_BRIDGE_PORT` | `8000` | Port that the Git Bridge Java application listens on. |
-| `GIT_BRIDGE_BIND_IP` | `0.0.0.0` | IP address that Git Bridge binds to inside its container. |
-| `GIT_BRIDGE_IDLE_TIMEOUT` | `30000` | Idle timeout in milliseconds before closing idle Git connections. |
-| `GIT_BRIDGE_ALLOWED_CORS_ORIGINS` | `https://localhost` | Allowed CORS origins for Git Bridge HTTP requests. |
-| `GIT_BRIDGE_SERVICE_NAME` | `Overleaf` | Display service name reported by Git Bridge during authentication and git prompts. |
-| `GIT_BRIDGE_USER_PASSWORD_ENABLED` | `false` | Enables username/password basic auth fallback in addition to OAuth2 / Personal Access Tokens. |
-| `GIT_BRIDGE_REPOSTORE_MAX_FILE_NUM` | `2000` | Maximum number of files allowed in a single repository store. |
-| `GIT_BRIDGE_REPOSTORE_MAX_FILE_SIZE` | `52428800` | Maximum individual file size in bytes allowed in the repo store (default: 50MB). |
-| `GIT_BRIDGE_SWAPSTORE_TYPE` | `noop` | Swap store backend type for project offloading (e.g. `noop`, `s3`). |
-| `GIT_BRIDGE_SWAPSTORE_AWS_ACCESS_KEY` | `""` | AWS Access Key ID for S3 swap store backend. |
-| `GIT_BRIDGE_SWAPSTORE_AWS_SECRET` | `""` | AWS Secret Access Key for S3 swap store backend. |
-| `GIT_BRIDGE_SWAPSTORE_S3_BUCKET_NAME` | `""` | S3 bucket name for swapping inactive Git Bridge repositories. |
-| `GIT_BRIDGE_SWAPSTORE_AWS_REGION` | `us-east-1` | AWS Region for S3 swap store backend. |
-| `GIT_BRIDGE_SWAPSTORE_AWS_ENDPOINT` | `""` | Custom S3 endpoint URL for S3-compatible object storage (e.g. MinIO, Ceph). |
-| `GIT_BRIDGE_SWAPJOB_MIN_PROJECTS` | `50` | Minimum number of projects before swap job activates. |
-| `GIT_BRIDGE_SWAPJOB_LOW_GIB` | `128` | Low disk space threshold in GiB to trigger repo swap out. |
-| `GIT_BRIDGE_SWAPJOB_HIGH_GIB` | `256` | High disk space threshold in GiB for repo swapping. |
-| `GIT_BRIDGE_SWAPJOB_INTERVAL_MILLIS` | `3600000` | Swap job interval in milliseconds (default: 1 hour). |
-| `GIT_BRIDGE_SWAPJOB_COMPRESSION_METHOD` | `gzip` | Compression algorithm for swapped repositories (e.g. `gzip`). |
-| `GIT_BRIDGE_SQLITE_HEAP_LIMIT_BYTES` | `0` | SQLite memory/heap limit in bytes (`0` for unlimited). |
-| `GIT_BRIDGE_JVM_ARGS` | `-XX:+UseContainerSupport -XX:MaxRAMPercentage=50.0 -XX:+ExitOnOutOfMemoryError` | JVM flags and options passed to the Java runtime executing Git Bridge. |
+| `GIT_BRIDGE_API_BASE_URL` | `http://overleaf:3000/api/v0` | Overleaf API URL. Set if the service isn't named `overleaf`. |
+| `GIT_BRIDGE_POSTBACK_BASE_URL` | `http://git-bridge:8000` | This container's URL. Set if the service isn't named `git-bridge`. |
+| `GIT_BRIDGE_PORT` | `8000` | Listen port. Must match Overleaf's `GIT_BRIDGE_PORT`. |
 
 ---
 
 ### 6. Overleaf Model Context Protocol (MCP) Server
 
-Exposes a Model Context Protocol (MCP) server for Overleaf, allowing external AI agents, LLM applications, and developer tools to interact directly with projects, documents, compilation runs, and file trees via HTTP or stdio transports.
+Exposes an MCP server for Overleaf, allowing external AI agents and IDEs (Claude Desktop, Cursor, etc.) to interact directly with projects, files, and compilation runs via HTTP or stdio.
 
 | Environment Variable | Default | Description |
 | :--- | :--- | :--- |
-| `MCP_ENABLED`* | `false` | Enables or disables the Overleaf MCP server service. |
-| `MCP_TRANSPORT` | `http` | Transport protocol used by the MCP server (`http` or `stdio`). |
-| `MCP_HOST` | `127.0.0.1` | Host address for the MCP server to bind to. |
-| `MCP_PORT` | `3050` | Port number on which the MCP HTTP server listens. |
-| `MCP_ENDPOINT_PATH` | `/mcp` | HTTP endpoint path for MCP requests. |
-| `MCP_INTERNAL_URL` | `http://127.0.0.1:4000` | Internal URL of the Overleaf web service used by MCP for API calls. |
-| `MCP_MAX_UPLOAD_MB` | `20` | Maximum file upload size in megabytes for MCP file operations. |
-| `MCP_TOKEN` | `""` | Authentication token required when running MCP with stdio transport. |
-| `MCP_ALLOWED_HOSTS` | `""` | Comma-separated list of allowed hostnames when binding `MCP_HOST` beyond loopback. |
-| `MCP_ALLOWED_ORIGINS` | `""` | Comma-separated list of allowed origins for CORS and DNS-rebinding protection. |
-| `MCP_RESOURCE_URI` | `(derived)` | Explicit resource URI for the MCP server; defaults to `OVERLEAF_SITE_URL` or `host:port` with endpoint path. |
+| `MCP_ENABLED`* | `false` | Turn on the MCP server at `<OVERLEAF_SITE_URL>/mcp`. |
+| `MCP_TOKEN` | — | Access token for local stdio use (`node app.js --stdio`). |
+| `MCP_ALLOWED_HOSTS` | — | Extra hostnames for `/mcp`, e.g. a second domain. |
+| `MCP_ALLOWED_ORIGINS` | — | Extra browser origins allowed to call `/mcp`. No `*`. |
 
 ---
 
 ### 7. Admin User & Project Management
 
-Provides administrative tooling for managing users, projects, and secondary emails in Overleaf Community Edition:
+Administrative web tools for managing users and projects:
 
-- **User Directory & Search (`/admin/users`)**: Paginated, sortable, and searchable active user directory matching on names, primary/secondary emails, and MongoDB ObjectIds. Includes deleted user inspection, CSV/JSON bulk user provisioning with one-time password setup tokens, and batch actions (delete, session revocation, restore, purge).
-- **User Governance & Detail (`/admin/users/:userId`)**: Detailed metadata view, site admin privilege toggles with safety guards against self-demotion, 7-day password reset link generation, soft-deletion, and instant Redis session termination.
-- **Restoration & Purge**: Soft-deleted accounts and projects are archived with support for complete restoration or permanent purging.
-- **Audit Logs (`/admin/users/api/users/:userId/audit-logs`)**: Paginated audit trails capturing administrative mutations with initiator identities and IP addresses.
-- **Secondary Emails**: Administrative and authenticated self-service secondary email management.
-- **Project Governance & Ownership Transfer (`/admin/project`)**: Project URL/ID lookup and instant administrative ownership transfer to any registered user.
+- **User Directory (`/admin/users`)**: Search users by name, email, or ID; bulk-create accounts via CSV/JSON; and batch-manage active sessions.
+- **User Governance (`/admin/users/:userId`)**: Edit profiles, assign site admin privileges, generate password reset links, soft-delete, or purge accounts.
+- **Project Ownership Transfer (`/admin/project`)**: Look up projects by ID/URL and reassign ownership to any registered user.
+- **Audit Logs**: Track administrative mutations with initiator identities and IP addresses.
 
 | Environment Variable | Default | Description |
 | :--- | :--- | :--- |
-| `ADMIN_USER_MANAGEMENT_ENABLED`* | `false` | Enables the Admin User Management module (`/admin/users`), providing user directory listing, search, profile editing, admin role management, bulk creation, batch operations, session revocation, soft delete/restore/purge workflows, secondary email handling, and audit logging. |
-| `ADMIN_PROJECT_MANAGEMENT_ENABLED`* | `false` | Enables the Admin Project Management module (`/admin/project`), providing project URL/ID lookup, project metadata inspection, and administrative project ownership transfer. |
+| `ADMIN_USER_MANAGEMENT_ENABLED`* | `false` | Turn on user admin at `/admin/users`. |
+| `ADMIN_PROJECT_MANAGEMENT_ENABLED`* | `false` | Turn on project admin at `/admin/project`. |
 
 ---
 
 ### 8. TeX Live Compiles & Sandbox
 
-Executes LaTeX compilation jobs in isolated sibling Docker containers via the Docker socket. Security containment enforces capability dropping (`CapDrop: ALL`), `no-new-privileges`, and restrictive seccomp BPF security profiles. In production environments serving high concurrent loads, all variables marked with `*` must be configured.
+Executes LaTeX compilation jobs in isolated sibling Docker containers with dropped capabilities (`CapDrop: ALL`), `no-new-privileges`, and custom seccomp profiles for secure multi-tenant execution. In production environments, all variables marked with `*` must be configured.
 
 #### Available Pre-built TeX Live Full Sandbox Images
 
@@ -482,29 +484,20 @@ Executes LaTeX compilation jobs in isolated sibling Docker containers via the Do
 
 | Environment Variable | Default | Description |
 | :--- | :--- | :--- |
-| `SANDBOXED_COMPILES`* | `false` | Enables sandboxed LaTeX compilation in isolated sibling Docker containers. |
-| `TEX_LIVE_DOCKER_IMAGE`* | — | Default TeX Live container image used for LaTeX compilations (e.g. `dangdoan2003/texlive-full:2026`). Must be in `ALL_TEX_LIVE_DOCKER_IMAGES`. |
-| `ALL_TEX_LIVE_DOCKER_IMAGES`* | — | Comma-separated list of TeX Live container images available for project selection and automated pulling (e.g. `dangdoan2003/texlive-full:2026,...`). |
-| `ALL_TEX_LIVE_DOCKER_IMAGE_NAMES`* | — | Comma-separated display names corresponding to `ALL_TEX_LIVE_DOCKER_IMAGES` for the editor UI dropdown (e.g. `2026 (Latest),2025,...`). |
-| `SANDBOXED_COMPILES_HOST_DIR_COMPILES` | `(auto-derived)` | Optional host directory override mapped to `/compile` inside compilation containers. Automatically recognized from the data mount when omitted. |
-| `SANDBOXED_COMPILES_HOST_DIR_OUTPUT` | `(auto-derived)` | Optional host directory override mapped to `/output` inside compilation containers. Automatically recognized from the data mount when omitted. |
-| `TEX_LIVE_AUTO_PULL_ENABLED` | `false` | Enables automated background pulling of configured TeX Live Docker images at startup and on-demand pull if missing during compile. |
-| `DOCKER_RUNNER` | `false` | Alternative alias flag for `SANDBOXED_COMPILES` to activate DockerRunner in CLSI. |
-| `ALLOWED_IMAGES` | `""` | Space- or comma-separated list of allowed Docker TeX Live images permitted for compilation in CLSI. |
-| `OPTIMISE_PDF` | `true` | Enables PDF optimization (`png2pdf` conversion and caching) inside Docker containers during compilation. |
-| `SANDBOXED_COMPILES_HOST_DIR_CACHE` | `""` | Host directory path for CLSI cache, used by `png2pdf` containers to convert images in place. |
-| `SECCOMP_PROFILE` | `""` | Custom JSON string for container seccomp security profile (defaults to `services/clsi/seccomp/clsi-profile.json`). |
-| `APPARMOR_PROFILE` | `""` | AppArmor security profile name to apply to compilation containers. |
-| `DOCKER_RUNTIME` | `""` | Custom OCI container runtime for compilation containers (e.g., `runsc` / gVisor, `kata`). |
-| `TEXLIVE_IMAGE_USER` | `tex` | User/UID to execute compilation processes under inside the TeX Live container. |
-| `COMPILE_GROUP_DOCKER_CONFIGS` | `{}` | JSON map of compile groups (e.g. `synctex`, `wordcount`, `png2pdf`) to Docker HostConfig overrides. |
+| `SANDBOXED_COMPILES`* | `false` | Compile in separate Docker containers. |
+| `TEX_LIVE_DOCKER_IMAGE`* | — | Default TeX Live image. Must be in the list below. |
+| `ALL_TEX_LIVE_DOCKER_IMAGES`* | — | TeX Live images users can pick. |
+| `ALL_TEX_LIVE_DOCKER_IMAGE_NAMES`* | — | Display names for those images, same order. |
+| `TEX_LIVE_AUTO_PULL_ENABLED` | `false` | Pull missing TeX Live images automatically. |
+| `SANDBOXED_COMPILES_HOST_DIR_COMPILES` | auto | Host path of the compiles dir. Set if detection fails. |
+| `SANDBOXED_COMPILES_HOST_DIR_OUTPUT` | auto | Host path of the output dir. Set if detection fails. |
 
 ---
 
 ### 9. Public API Documentation
 
-Interactive public API documentation and OpenAPI 3.0.3 specification viewer for Overleaf CE Extend. It dynamically renders endpoints based on enabled features (including Git Bridge REST API, Personal Access Tokens, MCP REST API, and OAuth2 authorization endpoints) at `/api-docs` with OpenAPI schema download at `/api/v0/openapi.json`. Requires an authenticated user session.
+Interactive Swagger UI and OpenAPI 3.0 specification viewer at `/api-docs` (and `/api/v0/openapi.json`), dynamically tailored to enabled extensions. Requires an authenticated user session.
 
 | Environment Variable | Default | Description |
 | :--- | :--- | :--- |
-| `API_DOCS_ENABLED`* | `false` | Enables the interactive API documentation UI at `/api-docs` and OpenAPI JSON schema endpoint at `/api/v0/openapi.json`. |
+| `API_DOCS_ENABLED`* | `false` | Turn on API docs at `/api-docs`. |

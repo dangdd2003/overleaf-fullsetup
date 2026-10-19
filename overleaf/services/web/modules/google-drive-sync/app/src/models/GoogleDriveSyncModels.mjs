@@ -75,6 +75,10 @@ GoogleDriveProjectStatesSchema.index(
   { sparse: true }
 )
 
+// Finished jobs are kept this long so the UI can still show the last result,
+// then Mongo's TTL monitor removes them. Unfinished jobs have no finishedAt.
+const FINISHED_JOB_TTL_SECONDS = 30 * 24 * 60 * 60
+
 export const GoogleDriveBulkSyncJobsSchema = new Schema(
   {
     userId: { type: ObjectId, ref: 'User', required: true },
@@ -102,9 +106,18 @@ export const GoogleDriveBulkSyncJobsSchema = new Schema(
 
 GoogleDriveBulkSyncJobsSchema.index(
   { userId: 1 },
-  { unique: true, partialFilterExpression: { active: true } }
+  {
+    name: 'userId_1_active',
+    unique: true,
+    partialFilterExpression: { active: true },
+  }
 )
+GoogleDriveBulkSyncJobsSchema.index({ userId: 1, createdAt: -1 })
 GoogleDriveBulkSyncJobsSchema.index({ active: 1, leaseExpiresAt: 1 })
+GoogleDriveBulkSyncJobsSchema.index(
+  { finishedAt: 1 },
+  { expireAfterSeconds: FINISHED_JOB_TTL_SECONDS }
+)
 
 export const GoogleDriveImportJobsSchema = new Schema(
   {
@@ -134,9 +147,18 @@ export const GoogleDriveImportJobsSchema = new Schema(
 
 GoogleDriveImportJobsSchema.index(
   { userId: 1 },
-  { unique: true, partialFilterExpression: { active: true } }
+  {
+    name: 'userId_1_active',
+    unique: true,
+    partialFilterExpression: { active: true },
+  }
 )
+GoogleDriveImportJobsSchema.index({ userId: 1, createdAt: -1 })
 GoogleDriveImportJobsSchema.index({ active: 1, leaseExpiresAt: 1 })
+GoogleDriveImportJobsSchema.index(
+  { finishedAt: 1 },
+  { expireAfterSeconds: FINISHED_JOB_TTL_SECONDS }
+)
 
 export const GoogleDriveUserCredentials = mongoose.model(
   'GoogleDriveUserCredentials',
@@ -158,16 +180,40 @@ export const GoogleDriveImportJobs = mongoose.model(
   GoogleDriveImportJobsSchema
 )
 
+// The credential and project-state indexes. Several were first created by
+// migrations that are gone now, so the names and options here match those
+// exactly: on an instance that ran them, creating them again is a no-op.
+const STATE_INDEXES = {
+  googleDriveUserCredentials: [
+    { key: { user_id: 1 }, name: 'user_id_1', unique: true },
+    // The webhook resolves the user from the channel id Google sends
+    { key: { watchChannelId: 1 }, name: 'watchChannelId_1' },
+  ],
+  googleDriveProjectStates: [
+    { key: { projectId: 1 }, name: 'projectId_1', unique: true },
+    { key: { userId: 1 }, name: 'userId_1' },
+    // Unique among states that have one, so two concurrent scans cannot bind
+    // one Drive folder to two projects
+    {
+      key: { driveFolderId: 1 },
+      name: 'driveFolderId_1_unique',
+      unique: true,
+      partialFilterExpression: { driveFolderId: { $type: 'string' } },
+    },
+    // The outbound worker's query
+    {
+      key: { outboundDirtyAt: 1, syncSuspended: 1 },
+      name: 'outboundDirtyAt_1_syncSuspended_1',
+      sparse: true,
+    },
+  ],
+}
+
 /**
- * Creates the project-state indexes that the migration does not cover.
- *
- * - driveFolderId is unique among states that have one, so two concurrent
- *   scans cannot bind one Drive folder to two projects.
- * - {outboundDirtyAt, syncSuspended} matches the outbound worker's query.
- *
- * Explicit names are used because the migration already created
- * `projectId_1` and `outboundDirtyAt_1` with different options, and Mongoose
- * would collide with them. Only the module calls this, and only when enabled.
+ * Creates the credential and project-state indexes. Mongoose autoIndex is off
+ * in this app, so the schema declarations above do nothing on their own. Each
+ * index is created on its own, so one that fails does not keep the others from
+ * being created. Only the module calls this, and only when enabled.
  *
  * @returns {Promise<void>}
  */
@@ -175,23 +221,19 @@ export async function ensureProjectStateIndexes() {
   const { db } = await import(
     '../../../../../app/src/infrastructure/mongodb.mjs'
   )
-  await Promise.all([
-    db.googleDriveProjectStates.createIndex(
-      { driveFolderId: 1 },
-      {
-        name: 'driveFolderId_1_unique',
-        unique: true,
-        partialFilterExpression: { driveFolderId: { $type: 'string' } },
+  const failures = []
+  for (const [collectionName, indexes] of Object.entries(STATE_INDEXES)) {
+    for (const { key, ...options } of indexes) {
+      try {
+        await db[collectionName].createIndex(key, options)
+      } catch (err) {
+        failures.push(`${collectionName}: ${err.message}`)
       }
-    ),
-    db.googleDriveProjectStates.createIndex(
-      { outboundDirtyAt: 1, syncSuspended: 1 },
-      {
-        name: 'outboundDirtyAt_1_syncSuspended_1',
-        sparse: true,
-      }
-    ),
-  ])
+    }
+  }
+  if (failures.length) {
+    throw new Error(`state indexes not created: ${failures.join('; ')}`)
+  }
 }
 
 /**
@@ -200,11 +242,24 @@ export async function ensureProjectStateIndexes() {
  * user. Mongoose autoIndex is off in this app, so the schema declarations above
  * do nothing unless this runs. Only the module calls it, and only when enabled.
  *
+ * The names match the ones the removed migrations created, so on an instance
+ * that ran them those indexes are left as they are. Each index is created on
+ * its own, so one that fails does not keep the others from being created.
+ *
  * @returns {Promise<void>}
  */
 export async function ensureJobIndexes() {
-  await Promise.all([
-    GoogleDriveBulkSyncJobs.createIndexes(),
-    GoogleDriveImportJobs.createIndexes(),
-  ])
+  const failures = []
+  for (const model of [GoogleDriveBulkSyncJobs, GoogleDriveImportJobs]) {
+    for (const [key, options] of model.schema.indexes()) {
+      try {
+        await model.collection.createIndex(key, options)
+      } catch (err) {
+        failures.push(`${model.collection.collectionName}: ${err.message}`)
+      }
+    }
+  }
+  if (failures.length) {
+    throw new Error(`job indexes not created: ${failures.join('; ')}`)
+  }
 }

@@ -64,10 +64,8 @@ const GoogleDriveSyncModule = {
       }
     )
 
-    // The migrations create the credential and most project-state indexes, but
-    // not the partial unique indexes that enforce one active job per user, the
-    // unique Drive folder binding, or the outbound worker's compound index.
-    // Those are ensured here, only when the module is enabled.
+    // Mongoose autoIndex is off in this app, so the module creates its own
+    // collection indexes, only when enabled.
     const { ensureJobIndexes, ensureProjectStateIndexes } = await import(
       './app/src/models/GoogleDriveSyncModels.mjs'
     )
@@ -118,6 +116,24 @@ const GoogleDriveSyncModule = {
             ranges,
             lastUpdatedAt
           )
+        },
+        deleteUser: async userId => {
+          const { default: GoogleDriveCleanup } = await import(
+            './app/src/GoogleDriveCleanup.mjs'
+          )
+          await GoogleDriveCleanup.onUserDeleted(userId)
+        },
+        expireDeletedUser: async userId => {
+          const { default: GoogleDriveCleanup } = await import(
+            './app/src/GoogleDriveCleanup.mjs'
+          )
+          await GoogleDriveCleanup.onUserDeleted(userId)
+        },
+        projectExpired: async projectId => {
+          const { default: GoogleDriveCleanup } = await import(
+            './app/src/GoogleDriveCleanup.mjs'
+          )
+          await GoogleDriveCleanup.onProjectExpired(projectId)
         },
       },
     }

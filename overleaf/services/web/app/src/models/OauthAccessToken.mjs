@@ -34,9 +34,13 @@ export const OauthAccessTokenSchema = new Schema(
   }
 )
 
+// Built by the mcp module at startup (OAuth2GrantExpiry.mjs)
 OauthAccessTokenSchema.index(
   { refreshTokenExpiresAt: 1 },
-  { expireAfterSeconds: 0 }
+  {
+    expireAfterSeconds: 0,
+    partialFilterExpression: { refreshTokenExpiresAt: { $exists: true } },
+  }
 )
 
 // The refresh_token grant resolves the token with findOne({ refreshToken }).

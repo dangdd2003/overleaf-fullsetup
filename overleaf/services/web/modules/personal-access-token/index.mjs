@@ -1,4 +1,5 @@
 import Settings from '@overleaf/settings'
+import logger from '@overleaf/logger'
 import PersonalAccessTokenRouter from './app/src/PersonalAccessTokenRouter.mjs'
 
 /**
@@ -18,6 +19,19 @@ const PersonalAccessTokenModule = {
       if (!isEnabled()) return
       PersonalAccessTokenRouter.apply(webRouter)
     },
+  },
+  // Invoked by app.mjs via Modules.start() at boot
+  async start() {
+    if (!isEnabled()) return
+    // Never throws: Modules.start() skips every later module on an error
+    try {
+      const { ensurePersonalAccessTokenIndexes } = await import(
+        './app/src/PersonalAccessTokenIndexes.mjs'
+      )
+      await ensurePersonalAccessTokenIndexes()
+    } catch (err) {
+      logger.error({ err }, '[PersonalAccessToken] index setup failed')
+    }
   },
   hooks: {
     promises: {

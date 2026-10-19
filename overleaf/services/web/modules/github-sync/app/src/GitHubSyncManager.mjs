@@ -426,6 +426,12 @@ async function onProjectInactive(projectId) {
   await SyncEngine.promises.deleteRepoDir(repoDir).catch(() => {})
 }
 
+// A purged project never comes back, so its link goes with the clone
+async function onProjectExpired(projectId) {
+  await onProjectInactive(projectId)
+  await GithubSyncProjectStates.deleteOne({ project_id: projectId })
+}
+
 async function onUserRemoved(userId) {
   await unlinkAllForUser(userId)
 }
@@ -445,6 +451,7 @@ const GitHubSyncManager = {
     getStatus,
     markProjectModified,
     onProjectInactive,
+    onProjectExpired,
     onUserRemoved,
   },
 }

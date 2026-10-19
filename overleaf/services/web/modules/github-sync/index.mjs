@@ -1,5 +1,6 @@
 import './app/src/ModuleSettings.mjs'
 import Settings from '@overleaf/settings'
+import logger from '@overleaf/logger'
 import GitHubOAuthRouter from './app/src/GitHubOAuthRouter.mjs'
 import GitHubSyncRouter from './app/src/GitHubSyncRouter.mjs'
 
@@ -32,6 +33,19 @@ const GithubSyncModule = {
       if (!isEnabled()) return
       GitHubOAuthRouter.applyNonCsrfRouter(webRouter)
     },
+  },
+  // Invoked by app.mjs via Modules.start() at boot
+  async start() {
+    if (!isEnabled()) return
+    // Never throws: Modules.start() skips every later module on an error
+    try {
+      const { ensureGithubSyncIndexes } = await import(
+        './app/src/GithubSyncIndexes.mjs'
+      )
+      await ensureGithubSyncIndexes()
+    } catch (err) {
+      logger.error({ err }, '[GitHubSync] index setup failed')
+    }
   },
   hooks: {
     // passportSetup fires synchronously with (passport, callback) — Server.mjs:225.
@@ -77,7 +91,7 @@ const GithubSyncModule = {
       projectExpired: async projectId => {
         if (!isEnabled()) return
         const { default: GitHubSyncManager } = await import('./app/src/GitHubSyncManager.mjs')
-        await GitHubSyncManager.promises.onProjectInactive(projectId)
+        await GitHubSyncManager.promises.onProjectExpired(projectId)
       },
     },
   },

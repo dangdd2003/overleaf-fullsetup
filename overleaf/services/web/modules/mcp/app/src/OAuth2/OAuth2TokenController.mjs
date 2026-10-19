@@ -20,6 +20,10 @@ const PKCE_VERIFIER_PATTERN = /^[A-Za-z0-9\-._~]{43,128}$/
 // A refresh token stays valid until it has gone REFRESH_TOKEN_IDLE_MS without
 // use; each refresh resets that window. A grant that goes idle is dropped,
 // and the user must authorize again.
+//
+// The grant records no accessTokenExpiresAt: the JWT carries its own exp, and
+// upstream's TTL on that field would delete the grant, refresh token included,
+// a day after the first access token expired.
 
 // Idle expiry of a refresh token issued or rotated now.
 function refreshExpiresAt(now = Date.now()) {
@@ -99,7 +103,6 @@ function findGrantByRefreshHash(hash) {
 function rotateRefreshToken(grant, presentedHash, newHash) {
   const now = Date.now()
   const expiry = {
-    accessTokenExpiresAt: new Date(now + ACCESS_TOKEN_TTL_SECONDS * 1000),
     refreshTokenExpiresAt: refreshExpiresAt(now),
     expiresAt: null,
     lastUsedAt: new Date(now),
@@ -116,6 +119,8 @@ function rotateRefreshToken(grant, presentedHash, newHash) {
         ...expiry,
         refreshToken: newHash,
       },
+      // Grants written before accessTokenExpiresAt was dropped lose it here
+      $unset: { accessTokenExpiresAt: '' },
     },
     options
   )
@@ -284,9 +289,6 @@ const OAuth2TokenController = {
       _id: grantId,
       accessToken: jti,
       accessTokenPartial: jti.slice(0, 8),
-      accessTokenExpiresAt: new Date(
-        createdAt.getTime() + ACCESS_TOKEN_TTL_SECONDS * 1000
-      ),
       refreshToken: hashToken(refreshTokenValue),
       refreshTokenExpiresAt: refreshExpiresAt(createdAt.getTime()),
       user_id: authRecord.user_id,

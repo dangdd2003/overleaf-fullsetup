@@ -282,9 +282,10 @@ describe('GoogleDriveSyncModels', function () {
 })
 
 describe('ensureProjectStateIndexes', function () {
-  it('creates the unique driveFolderId and outbound compound indexes', async function () {
+  it('creates the credential and project-state indexes', async function () {
     vi.resetModules()
     const createIndex = vi.fn().mockResolvedValue('ok')
+    const credentialsCreateIndex = vi.fn().mockResolvedValue('ok')
     vi.doMock(
       '../../../../../app/src/infrastructure/Mongoose.mjs',
       () => ({ default: mockMongoose, __esModule: true })
@@ -292,7 +293,10 @@ describe('ensureProjectStateIndexes', function () {
     vi.doMock(
       '../../../../../app/src/infrastructure/mongodb.mjs',
       () => ({
-        db: { googleDriveProjectStates: { createIndex } },
+        db: {
+          googleDriveProjectStates: { createIndex },
+          googleDriveUserCredentials: { createIndex: credentialsCreateIndex },
+        },
       })
     )
     const { ensureProjectStateIndexes } = await import(
@@ -313,5 +317,48 @@ describe('ensureProjectStateIndexes', function () {
       { outboundDirtyAt: 1, syncSuspended: 1 },
       expect.objectContaining({ name: 'outboundDirtyAt_1_syncSuspended_1' })
     )
+    // Same names and options as the removed migrations, so existing indexes
+    // are left as they are
+    expect(createIndex).toHaveBeenCalledWith(
+      { projectId: 1 },
+      { name: 'projectId_1', unique: true }
+    )
+    expect(createIndex).toHaveBeenCalledWith({ userId: 1 }, { name: 'userId_1' })
+    expect(credentialsCreateIndex).toHaveBeenCalledWith(
+      { user_id: 1 },
+      { name: 'user_id_1', unique: true }
+    )
+    expect(credentialsCreateIndex).toHaveBeenCalledWith(
+      { watchChannelId: 1 },
+      { name: 'watchChannelId_1' }
+    )
+  })
+
+  it('creates the remaining indexes when one fails, then reports it', async function () {
+    vi.resetModules()
+    const createIndex = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('E11000 duplicate key'))
+      .mockResolvedValue('ok')
+    vi.doMock(
+      '../../../../../app/src/infrastructure/Mongoose.mjs',
+      () => ({ default: mockMongoose, __esModule: true })
+    )
+    vi.doMock(
+      '../../../../../app/src/infrastructure/mongodb.mjs',
+      () => ({
+        db: {
+          googleDriveProjectStates: { createIndex },
+          googleDriveUserCredentials: { createIndex },
+        },
+      })
+    )
+    const { ensureProjectStateIndexes } = await import(
+      '../../../app/src/models/GoogleDriveSyncModels.mjs'
+    )
+
+    const err = await ensureProjectStateIndexes().catch(error => error)
+    expect(err.message).to.match(/E11000/)
+    expect(createIndex).toHaveBeenCalledTimes(6)
   })
 })

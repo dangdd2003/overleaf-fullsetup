@@ -31,6 +31,7 @@ describe('github-sync module', function () {
         markProjectModified: vi.fn().mockResolvedValue(undefined),
         onUserRemoved: vi.fn().mockResolvedValue(undefined),
         onProjectInactive: vi.fn().mockResolvedValue(undefined),
+        onProjectExpired: vi.fn().mockResolvedValue(undefined),
       },
     }
     createStrategy = vi.fn()
@@ -120,6 +121,7 @@ describe('github-sync module', function () {
 
       expect(syncManager.promises.onUserRemoved).not.toHaveBeenCalled()
       expect(syncManager.promises.onProjectInactive).not.toHaveBeenCalled()
+      expect(syncManager.promises.onProjectExpired).not.toHaveBeenCalled()
     })
   })
 
@@ -165,10 +167,14 @@ describe('github-sync module', function () {
 
       await hooks.removeGithub('user-1')
       await hooks.deactivateProject('project-1')
+      await hooks.projectExpired('project-2')
 
       expect(syncManager.promises.onUserRemoved).toHaveBeenCalledWith('user-1')
       expect(syncManager.promises.onProjectInactive).toHaveBeenCalledWith(
         'project-1'
+      )
+      expect(syncManager.promises.onProjectExpired).toHaveBeenCalledWith(
+        'project-2'
       )
     })
   })

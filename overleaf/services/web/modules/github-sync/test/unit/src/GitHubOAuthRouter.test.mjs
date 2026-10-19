@@ -193,6 +193,9 @@ const syncManagerMock = () => ({
       onProjectInactive: async projectId => {
         db.inactiveProjects.push(String(projectId))
       },
+      onProjectExpired: async projectId => {
+        db.expiredProjects.push(String(projectId))
+      },
     },
   },
   __esModule: true,
@@ -753,6 +756,7 @@ describe('index.mjs hooks and router wiring', function () {
     db.markedModified = []
     db.removedUsers = []
     db.inactiveProjects = []
+    db.expiredProjects = []
     mockAll()
   })
 
@@ -776,6 +780,7 @@ describe('index.mjs hooks and router wiring', function () {
 
     await module.hooks.promises.deactivateProject('p2')
     await module.hooks.promises.projectExpired('p3')
-    expect(db.inactiveProjects).to.deep.equal(['p2', 'p3'])
+    expect(db.inactiveProjects).to.deep.equal(['p2'])
+    expect(db.expiredProjects).to.deep.equal(['p3'])
   })
 })

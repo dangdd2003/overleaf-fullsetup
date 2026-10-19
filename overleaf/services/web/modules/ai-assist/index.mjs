@@ -64,6 +64,26 @@ const AiAssistModule = {
       )
     }
   },
+  hooks: {
+    promises: {
+      // Fired by UserDeleter when an account is deleted and again when it
+      // expires; removing twice is a no-op
+      async deleteUser(userId) {
+        if (!Settings.aiAssist?.enabled) return
+        const { removeUserData } = await import(
+          './app/src/AiAssistUserCleanup.mjs'
+        )
+        await removeUserData(userId)
+      },
+      async expireDeletedUser(userId) {
+        if (!Settings.aiAssist?.enabled) return
+        const { removeUserData } = await import(
+          './app/src/AiAssistUserCleanup.mjs'
+        )
+        await removeUserData(userId)
+      },
+    },
+  },
 }
 
 export default AiAssistModule
