@@ -165,7 +165,12 @@ describe('<GitTokensWidget />', function () {
     await waitFor(() => {
       const tokenPrefix = screen.getByText('olp_1234************')
       const row = tokenPrefix.closest('tr')!
-      expect(within(row).getByText('AI assistant (MCP)')).to.exist
+      const badgeText = within(row).getByText('AI assistant (MCP)')
+      expect(badgeText).to.exist
+      const badge = badgeText.closest('.badge')
+      expect(badge).to.exist
+      expect(badge?.classList.contains('bg-info')).to.be.true
+      expect(badge?.classList.contains('badge-bs3')).to.be.false
     })
   })
 

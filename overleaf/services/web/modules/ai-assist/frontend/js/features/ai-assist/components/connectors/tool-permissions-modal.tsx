@@ -376,7 +376,7 @@ function ToolRow({
             </OLBadge>
           ) : null}
           {tool.openWorld ? (
-            <OLBadge bg="secondary">
+            <OLBadge bg="light" text="dark">
               {t('connector_tool_open_world', 'Open world')}
             </OLBadge>
           ) : null}

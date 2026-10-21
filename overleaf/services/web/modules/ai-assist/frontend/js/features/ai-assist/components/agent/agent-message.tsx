@@ -12,6 +12,7 @@ import {
 } from '@phosphor-icons/react'
 import { TranscriptEntry, AssistantBlock, blocksForEntry } from '../../agent/agent-messages'
 import { WebSources } from '../../agent/web-sources'
+import { ApprovalContext } from '../../agent/agent-events'
 import { MarkdownContent } from './markdown-content'
 import { CompactBoundary } from './compact-boundary'
 import { SubresultGroup, SubresultItem } from './subresult-group'
@@ -89,8 +90,12 @@ export function getAssistantResponseText(
 export type AgentMessageViewProps = {
   entry: TranscriptEntry
   pendingApprovalId: string | null
-  approvalContext?: { startLine?: number; kind?: string; connector?: any } | null
-  onDecision: (decision: { accepted: boolean; note?: string }) => void
+  approvalContext?: ApprovalContext | null
+  onDecision: (decision: {
+    accepted: boolean
+    always?: boolean
+    note?: string
+  }) => void
   isRunning?: boolean
   /** Web pages cited anywhere in the conversation, by source number. */
   webSources?: WebSources

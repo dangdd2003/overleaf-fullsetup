@@ -83,7 +83,7 @@ function StatusBadge({
       )
     case 'disconnected':
       return (
-        <OLBadge bg="secondary">
+        <OLBadge bg="light" text="dark">
           {t('connector_status_disconnected', 'Disconnected')}
         </OLBadge>
       )

@@ -1,114 +1,229 @@
-import { useState } from 'react'
+import { KeyboardEvent, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import OLButton from '@/shared/components/ol/ol-button'
-import OLFormControl from '@/shared/components/ol/ol-form-control'
-import OLBadge from '@/shared/components/ol/ol-badge'
-import { PlugsConnected } from '@phosphor-icons/react'
+import MaterialIcon from '@/shared/components/material-icon'
 
+type Decision = { accepted: boolean; always?: boolean; note?: string }
+
+const YES = 0
+const ALWAYS = 1
+const NO = 2
+
+const ARG_PREVIEW_LIMIT = 160
+
+function formatArg(value: unknown): string {
+  const text = JSON.stringify(value) ?? String(value)
+  return text.length > ARG_PREVIEW_LIMIT
+    ? `${text.slice(0, ARG_PREVIEW_LIMIT)}…`
+    : text
+}
+
+/**
+ * The permission prompt for a connector tool set to "Needs approval", as
+ * Claude Code asks it: Yes / Yes, and don't ask again / No. ↑/↓ move, Enter
+ * confirms, Tab on Yes or No adds what to tell the assistant, Esc declines
+ * and ends the turn.
+ */
 export function ConnectorApprovalCard({
   connectorName,
   toolName,
   toolTitle,
   args = {},
   onDecision,
-  decided,
 }: {
   connectorName: string
   toolName: string
   toolTitle?: string
   args?: Record<string, unknown>
-  onDecision: (decision: {
-    accepted: boolean
-    always?: boolean
-    note?: string
-  }) => void
-  decided?: 'accepted' | 'rejected'
+  onDecision: (decision: Decision) => void
 }) {
   const { t } = useTranslation()
+  const [selected, setSelected] = useState(YES)
+  const [feedbackOpen, setFeedbackOpen] = useState(false)
   const [note, setNote] = useState('')
-  const locked = Boolean(decided)
+  const [submitted, setSubmitted] = useState(false)
+  const cardRef = useRef<HTMLDivElement>(null)
+  const noteRef = useRef<HTMLInputElement>(null)
 
+  const shortName = toolName.replace(/^mcp__[a-zA-Z0-9_-]+__/, '')
+  const displayName = `${connectorName} — ${toolTitle || shortName}`
   const entries = Object.entries(args).filter(
-    ([_, v]) => v !== undefined && v !== null
+    ([, v]) => v !== undefined && v !== null
   )
+  const canAmend = selected === YES || selected === NO
+  const showFeedback = feedbackOpen && canAmend
 
-  const displayTitle = toolTitle || toolName.replace(/^mcp__[a-zA-Z0-9_-]+__/, '')
+  const options = [
+    t('ai_assist_connector_approve_yes', 'Yes'),
+    t(
+      'ai_assist_connector_approve_always',
+      'Yes, and don’t ask again for __name__ commands',
+      { name: displayName }
+    ),
+    t('ai_assist_connector_approve_no', 'No'),
+  ]
+
+  // Take focus only from the chat panel, never from the editor
+  useEffect(() => {
+    const active = document.activeElement
+    if (
+      !active ||
+      active === document.body ||
+      active.closest('.ai-assist-panel')
+    ) {
+      cardRef.current?.focus({ preventScroll: true })
+    }
+  }, [])
+
+  // The feedback box comes and goes; keep the keys working either way
+  useEffect(() => {
+    if (showFeedback) {
+      noteRef.current?.focus({ preventScroll: true })
+    } else if (document.activeElement === document.body) {
+      cardRef.current?.focus({ preventScroll: true })
+    }
+  }, [showFeedback])
+
+  const submit = (index: number, feedback?: string) => {
+    if (submitted) return
+    setSubmitted(true)
+    const text = feedback?.trim() || undefined
+    if (index === YES) onDecision({ accepted: true, always: false, note: text })
+    else if (index === ALWAYS) onDecision({ accepted: true, always: true })
+    else onDecision({ accepted: false, note: text })
+  }
+
+  const select = (index: number) => {
+    if (index === selected) return
+    setSelected(index)
+    setFeedbackOpen(false)
+    setNote('')
+  }
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    switch (event.key) {
+      case 'ArrowDown':
+        event.preventDefault()
+        select((selected + 1) % options.length)
+        break
+      case 'ArrowUp':
+        event.preventDefault()
+        select((selected + options.length - 1) % options.length)
+        break
+      case 'Tab':
+        if (!canAmend || event.shiftKey) return
+        event.preventDefault()
+        setFeedbackOpen(open => !open)
+        break
+      case 'Enter':
+        event.preventDefault()
+        submit(selected, showFeedback ? note : undefined)
+        break
+      case 'Escape':
+        event.preventDefault()
+        event.stopPropagation()
+        submit(NO)
+        break
+    }
+  }
 
   return (
-    <div className="ai-assist-edit-approval ai-assist-connector-approval">
-      <div className="ai-assist-edit-approval-header">
-        <span className="ai-assist-edit-approval-prompt">
-          <PlugsConnected size={16} className="me-1 inline-block align-middle" />
-          {t('ai_assist_confirm_connector_title', 'External tool request:')}
-        </span>
-        <OLBadge bg="primary" className="ms-2">
-          {connectorName}
-        </OLBadge>
-        {decided && (
-          <span className={`ai-assist-edit-decision-badge is-${decided}`}>
-            {decided === 'accepted' ? '✓ Allowed' : '✗ Denied'}
-          </span>
-        )}
+    <div
+      ref={cardRef}
+      className="ai-assist-connector-approval"
+      role="dialog"
+      aria-modal="false"
+      aria-label={t('ai_assist_connector_approve_label', 'Tool use')}
+      tabIndex={-1}
+      onKeyDown={handleKeyDown}
+      data-testid="connector-approval-card"
+    >
+      <div className="ai-assist-connector-approval-title">
+        <MaterialIcon type="build" />
+        {t('ai_assist_connector_approve_label', 'Tool use')}
       </div>
 
-      <div className="ai-assist-settings-list">
-        <div className="ai-assist-settings-tool-name fw-bold">{displayTitle}</div>
-        {entries.length === 0 ? (
-          <div className="text-muted small">(no parameters)</div>
-        ) : (
-          entries.map(([key, val]) => (
-            <div key={key} className="ai-assist-settings-row">
-              <span className="ai-assist-settings-key">{key}:</span>
-              <span className="ai-assist-settings-value font-monospace">
-                {typeof val === 'object' ? JSON.stringify(val) : String(val)}
+      <div className="ai-assist-connector-approval-call">
+        <div className="ai-assist-connector-approval-name">
+          <span>{displayName}</span>
+          <span className="ai-assist-connector-approval-tag">MCP</span>
+        </div>
+        {entries.length > 0 ? (
+          <dl className="ai-assist-connector-approval-args">
+            {entries.map(([key, val]) => (
+              <div key={key}>
+                <dt>{key}</dt>
+                <dd>{formatArg(val)}</dd>
+              </div>
+            ))}
+          </dl>
+        ) : null}
+      </div>
+
+      <div className="ai-assist-connector-approval-question">
+        {t('ai_assist_connector_approve_question', 'Do you want to proceed?')}
+      </div>
+
+      <ol className="ai-assist-connector-approval-options" role="listbox">
+        {options.map((label, index) => {
+          const isSelected = index === selected
+          return (
+            <li
+              key={index}
+              role="option"
+              aria-selected={isSelected}
+              className={isSelected ? 'is-selected' : undefined}
+              onMouseEnter={() => select(index)}
+              onClick={() =>
+                submit(index, isSelected && showFeedback ? note : undefined)
+              }
+            >
+              <span
+                className="ai-assist-connector-approval-cursor"
+                aria-hidden="true"
+              >
+                {isSelected ? '❯' : ''}
               </span>
-            </div>
-          ))
-        )}
-      </div>
+              <span className="ai-assist-connector-approval-index">
+                {index + 1}.
+              </span>
+              <span className="ai-assist-connector-approval-label">
+                {label}
+              </span>
+            </li>
+          )
+        })}
+      </ol>
 
-      <OLFormControl
-        type="text"
-        size="sm"
-        value={note}
-        disabled={locked}
-        placeholder={t(
-          'ai_assist_reject_note_placeholder',
-          'Reason for rejection (optional — guides assistant what to do next)'
-        )}
-        onChange={event => setNote(event.target.value)}
-      />
-
-      <div className="ai-assist-edit-approval-actions d-flex gap-2 justify-content-end mt-2">
-        <OLButton
-          type="button"
-          variant="secondary"
-          size="sm"
-          disabled={locked}
-          onClick={() =>
-            onDecision({ accepted: false, note: note || undefined })
+      {showFeedback ? (
+        <input
+          ref={noteRef}
+          type="text"
+          className="form-control form-control-sm ai-assist-connector-approval-note"
+          value={note}
+          disabled={submitted}
+          aria-label={t('ai_assist_connector_approve_feedback', 'Feedback')}
+          placeholder={
+            selected === YES
+              ? t(
+                  'ai_assist_connector_approve_next',
+                  'and tell the assistant what to do next'
+                )
+              : t(
+                  'ai_assist_connector_approve_differently',
+                  'and tell the assistant what to do differently'
+                )
           }
-        >
-          {t('deny', 'Deny')}
-        </OLButton>
-        <OLButton
-          type="button"
-          variant="secondary"
-          size="sm"
-          disabled={locked}
-          onClick={() => onDecision({ accepted: true, always: false })}
-        >
-          {t('allow_once', 'Allow once')}
-        </OLButton>
-        <OLButton
-          type="button"
-          variant="primary"
-          size="sm"
-          disabled={locked}
-          onClick={() => onDecision({ accepted: true, always: true })}
-        >
-          {t('always_allow', 'Always allow')}
-        </OLButton>
+          onChange={event => setNote(event.target.value)}
+        />
+      ) : null}
+
+      <div className="ai-assist-connector-approval-hint">
+        {canAmend
+          ? t(
+              'ai_assist_connector_approve_hint_amend',
+              'Esc to cancel · Tab to amend'
+            )
+          : t('ai_assist_connector_approve_hint', 'Esc to cancel')}
       </div>
     </div>
   )

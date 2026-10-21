@@ -4841,6 +4841,109 @@ describe('AiAssistRunManager connector tools', function () {
     expect(toolMessage.content).to.include('select:mcp__docs__write')
   })
 
+  describe('declining a connector tool that needs approval', function () {
+    const writeTool = () =>
+      connectorSession({
+        specs: () => [spec('mcp__docs__write')],
+        describe: () => ({
+          id: 'c1',
+          name: 'Docs',
+          tool: 'write',
+          title: 'Write',
+          permission: 'ask',
+          readOnly: false,
+          destructive: false,
+        }),
+      })
+
+    // Asks for the write and a read in one step, then answers with text
+    function twoCallClient() {
+      let turn = 0
+      return {
+        streamChat: sinon.stub().callsFake(async function* () {
+          turn++
+          if (turn === 1) {
+            yield { type: 'tool_call', id: 'w', name: 'mcp__docs__write', args: {} }
+            yield { type: 'tool_call', id: 'r', name: 'read_file', args: { path: 'main.tex' } }
+          } else {
+            yield { type: 'text', text: 'Done' }
+          }
+        }),
+      }
+    }
+
+    async function declineWith(decision) {
+      const session = writeTool()
+      const client = twoCallClient()
+      const store = storeStub()
+      const tools = {
+        getToolSpecs: builtIns.getToolSpecs,
+        execute: sinon.stub().resolves({ content: 'file' }),
+      }
+      const manager = new AiAssistRunManager({
+        store,
+        tools,
+        clientFactory: () => client,
+        connectorSessionFactory: async () => session,
+      })
+      const run = runWith(manager, 'run-decline')
+      while (!store.setPendingApproval.called) {
+        await new Promise(resolve => setTimeout(resolve, 1))
+      }
+      await manager.approveEdit('run-decline', decision)
+      await run
+      return { session, client, store, tools }
+    }
+
+    it('ends the turn without running the rest of the step', async function () {
+      const { session, client, store, tools } = await declineWith({
+        accepted: false,
+      })
+
+      expect(session.execute.called).to.be.false
+      expect(tools.execute.called).to.be.false
+      expect(client.streamChat.callCount).to.equal(1)
+      const events = store.appendEvent.args.map(args => args[1])
+      const skipped = events.find(
+        e => e.type === 'toolCallFinished' && e.id === 'r'
+      )
+      expect(JSON.stringify(skipped)).to.include('Not run')
+      expect(events.at(-1)).to.include({ type: 'turnFinished', reason: 'stop' })
+      expect(store.updateStatus.calledWith('run-decline', 'done')).to.be.true
+    })
+
+    it('hands what to do differently back to the model', async function () {
+      const { session, client } = await declineWith({
+        accepted: false,
+        note: 'Write to notes.tex instead',
+      })
+
+      expect(session.execute.called).to.be.false
+      expect(client.streamChat.callCount).to.equal(2)
+      const toolMessage = client.streamChat.args[1][0].messages.find(
+        m => m.role === 'tool' && m.toolCallId === 'w'
+      )
+      expect(toolMessage.content).to.include(
+        'To tell you how to proceed, the user said:\nWrite to notes.tex instead'
+      )
+    })
+
+    it('passes what to do next on to the model with the result', async function () {
+      const { session, client } = await declineWith({
+        accepted: true,
+        note: 'Then summarise it',
+      })
+
+      expect(session.execute.calledOnce).to.be.true
+      const toolMessage = client.streamChat.args[1][0].messages.find(
+        m => m.role === 'tool' && m.toolCallId === 'w'
+      )
+      expect(toolMessage.content).to.equal(
+        'ok\n\nThe user allowed this tool use and said:\nThen summarise it'
+      )
+    })
+  })
+
   it('sends a failed connector result to the provider as an error, and records it failed', async function () {
     const session = connectorSession({
       specs: () => [spec('mcp__docs__get')],

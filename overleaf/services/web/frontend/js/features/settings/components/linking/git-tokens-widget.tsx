@@ -11,6 +11,7 @@ import {
 import OLButton from '@/shared/components/ol/ol-button'
 import OLIconButton from '@/shared/components/ol/ol-icon-button'
 import OLTooltip from '@/shared/components/ol/ol-tooltip'
+import OLBadge from '@/shared/components/ol/ol-badge'
 import GitLogoOrange from '@/shared/svgs/git-logo-orange'
 import getMeta from '@/utils/meta'
 import { debugConsole } from '@/utils/debugging'
@@ -404,9 +405,10 @@ export function GitTokensWidget() {
                         ? token.scopes
                         : ['git_bridge']
                       ).map(scope => (
-                        <span
+                        <OLBadge
                           key={scope}
-                          className="badge badge-bs3 badge-info me-1"
+                          bg="info"
+                          className="me-1"
                         >
                           {scope === 'mcp'
                             ? t(
@@ -417,7 +419,7 @@ export function GitTokensWidget() {
                                 'personal_access_token_scope_git_bridge',
                                 'Git integration'
                               )}
-                        </span>
+                        </OLBadge>
                       ))}
                     </td>
                     <td className="py-3 px-3 date-text">

@@ -128,12 +128,6 @@ const DockerRunner = {
       Settings.clsi?.docker?.image || 'sharelatex/texlive-full:latest'
     let selectedImage = image || defaultImage
 
-    if (Settings.texliveImageNameOveride) {
-      const parts = selectedImage.split('/')
-      const imageNameWithTag = parts[parts.length - 1]
-      selectedImage = `${Settings.texliveImageNameOveride}/${imageNameWithTag}`
-    }
-
     if (
       Array.isArray(Settings.clsi?.docker?.allowedImages) &&
       Settings.clsi.docker.allowedImages.length > 0
@@ -142,6 +136,14 @@ const DockerRunner = {
         activeCompiles.delete(projectId)
         return callback(new Error('image not allowed'))
       }
+    }
+
+    // allowedImages lists the canonical names, so the registry override is
+    // applied after validation (as in Server Pro)
+    if (Settings.texliveImageNameOveride) {
+      const parts = selectedImage.split('/')
+      const imageNameWithTag = parts[parts.length - 1]
+      selectedImage = `${Settings.texliveImageNameOveride}/${imageNameWithTag}`
     }
 
     getDetectedMounts((_, mounts) => {

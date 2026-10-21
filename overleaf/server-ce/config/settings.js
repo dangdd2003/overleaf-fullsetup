@@ -50,12 +50,17 @@ const TMP_DIR = '/var/lib/overleaf/tmp'
 const settings = {
   clsi: {
     optimiseInDocker: process.env.OPTIMISE_PDF === 'true',
-    dockerRunner: process.env.SANDBOXED_COMPILES === 'true',
+    dockerRunner:
+      (process.env.DOCKER_RUNNER || process.env.SANDBOXED_COMPILES) === 'true',
     docker: {
       image: process.env.TEX_LIVE_DOCKER_IMAGE,
       autoPullImages: process.env.TEX_LIVE_AUTO_PULL_ENABLED === 'true',
-      allowedImages: (process.env.ALL_TEX_LIVE_DOCKER_IMAGES || '')
-        .split(',')
+      allowedImages: (
+        process.env.ALLOWED_IMAGES ||
+        process.env.ALL_TEX_LIVE_DOCKER_IMAGES ||
+        ''
+      )
+        .split(/[ ,]+/)
         .map(s => s.trim())
         .filter(Boolean),
     },
@@ -284,14 +289,23 @@ const settings = {
 
   currentImageName: process.env.TEX_LIVE_DOCKER_IMAGE,
 
+  // As in Server Pro: projects store the full image name, the editor offers
+  // bare names (texlive-full:2026) and web re-prefixes them with imageRoot.
+  imageRoot: process.env.TEX_LIVE_DOCKER_IMAGE?.includes('/')
+    ? Path.dirname(process.env.TEX_LIVE_DOCKER_IMAGE)
+    : '',
+
   allowedImageNames: process.env.ALL_TEX_LIVE_DOCKER_IMAGES
-    ? process.env.ALL_TEX_LIVE_DOCKER_IMAGES.split(',').map((img, i) => ({
-        imageName: img.trim(),
-        imageDesc:
-          (process.env.ALL_TEX_LIVE_DOCKER_IMAGE_NAMES || '')
-            .split(',')[i]
-            ?.trim() || img.trim(),
-      }))
+    ? process.env.ALL_TEX_LIVE_DOCKER_IMAGES.split(',')
+        .map(img => img.trim())
+        .filter(Boolean)
+        .map((img, i) => ({
+          imageName: Path.basename(img),
+          imageDesc:
+            (process.env.ALL_TEX_LIVE_DOCKER_IMAGE_NAMES || '')
+              .split(',')[i]
+              ?.trim() || Path.basename(img),
+        }))
     : undefined,
 
   apis: {

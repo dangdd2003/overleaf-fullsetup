@@ -371,6 +371,118 @@ describe('SubresultGroup Component', function () {
     expect(screen.getByRole('button', { name: /accept/i })).to.exist
   })
 
+  describe('connector tool approval', function () {
+    const items: any[] = [
+      {
+        type: 'tool_call',
+        call: {
+          id: 'c-mcp',
+          name: 'mcp__github__create_issue',
+          args: { title: 'Bug' },
+        },
+      },
+    ]
+    const approvalContext = {
+      kind: 'connector',
+      connector: {
+        connectorId: 'conn-1',
+        connectorName: 'GitHub',
+        toolName: 'mcp__github__create_issue',
+      },
+    }
+
+    function renderPrompt(onDecision = sinon.stub()) {
+      render(
+        <SubresultGroup
+          items={items}
+          isLive={false}
+          pendingApprovalId="c-mcp"
+          approvalContext={approvalContext as any}
+          onDecision={onDecision}
+        />
+      )
+      return {
+        onDecision,
+        card: screen.getByTestId('connector-approval-card'),
+      }
+    }
+
+    it('shows the permission prompt for a pending mcp__ call', function () {
+      renderPrompt()
+      expect(screen.getByText('Do you want to proceed?')).to.exist
+      expect(screen.getByText('GitHub — create_issue')).to.exist
+      expect(screen.getByText('"Bug"')).to.exist
+      const options = screen.getAllByRole('option')
+      expect(options.map(o => o.textContent)).to.deep.equal([
+        '❯1.Yes',
+        '2.Yes, and don’t ask again for GitHub — create_issue commands',
+        '3.No',
+      ])
+    })
+
+    it('allows once on Enter', function () {
+      const { onDecision, card } = renderPrompt()
+      fireEvent.keyDown(card, { key: 'Enter' })
+      expect(onDecision).to.have.been.calledOnceWith({
+        accepted: true,
+        always: false,
+        note: undefined,
+      })
+    })
+
+    it('allows always from the second option', function () {
+      const { onDecision, card } = renderPrompt()
+      fireEvent.keyDown(card, { key: 'ArrowDown' })
+      fireEvent.keyDown(card, { key: 'Enter' })
+      expect(onDecision).to.have.been.calledOnceWith({
+        accepted: true,
+        always: true,
+      })
+    })
+
+    it('declines without a note on Esc', function () {
+      const { onDecision, card } = renderPrompt()
+      fireEvent.keyDown(card, { key: 'Escape' })
+      expect(onDecision).to.have.been.calledOnceWith({
+        accepted: false,
+        note: undefined,
+      })
+    })
+
+    it('declines with what to do differently after Tab on No', function () {
+      const { onDecision, card } = renderPrompt()
+      fireEvent.keyDown(card, { key: 'ArrowUp' })
+      fireEvent.keyDown(card, { key: 'Tab' })
+      const note = screen.getByRole('textbox')
+      fireEvent.change(note, { target: { value: 'Use the bug label' } })
+      fireEvent.keyDown(note, { key: 'Enter' })
+      expect(onDecision).to.have.been.calledOnceWith({
+        accepted: false,
+        note: 'Use the bug label',
+      })
+    })
+
+    it('allows with what to do next after Tab on Yes', function () {
+      const { onDecision, card } = renderPrompt()
+      fireEvent.keyDown(card, { key: 'Tab' })
+      const note = screen.getByRole('textbox')
+      fireEvent.change(note, { target: { value: 'Then link it' } })
+      fireEvent.keyDown(note, { key: 'Enter' })
+      expect(onDecision).to.have.been.calledOnceWith({
+        accepted: true,
+        always: false,
+        note: 'Then link it',
+      })
+    })
+
+    it('has nothing to amend on the always option', function () {
+      const { card } = renderPrompt()
+      fireEvent.keyDown(card, { key: 'ArrowDown' })
+      fireEvent.keyDown(card, { key: 'Tab' })
+      expect(screen.queryByRole('textbox')).to.equal(null)
+    })
+  })
+
   it('leaves past tool activities folded when there is a pending approval', function () {
     const items: any[] = [
       {

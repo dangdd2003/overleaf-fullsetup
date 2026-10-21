@@ -300,6 +300,7 @@ export function useAgentRun({
   const onDecision = useCallback(
     async (decision: {
       accepted: boolean
+      always?: boolean
       note?: string
       nextMode?: AgentMode
     }) => {

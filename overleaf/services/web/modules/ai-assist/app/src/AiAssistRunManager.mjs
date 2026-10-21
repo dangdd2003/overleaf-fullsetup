@@ -2285,6 +2285,9 @@ export class AiAssistRunManager {
 
         let turnSucceeded = false;
         let turnFailed = false;
+        // A connector call declined without a note ends the turn, as Claude
+        // Code does: the rest of the step is not run and the user says next
+        let declinedWithoutNote = false;
 
         for (const call of calls) {
           if (controller.signal.aborted || shouldStop) break;
@@ -2342,7 +2345,14 @@ export class AiAssistRunManager {
           );
           const verdict = combineDecisions(modeVerdict, scopeVerdict);
 
-          if (incomplete.has(call)) {
+          if (declinedWithoutNote) {
+            result = {
+              status: "rejected",
+              error:
+                "Not run: the user declined an earlier tool call in this step.",
+            };
+            isError = true;
+          } else if (incomplete.has(call)) {
             result = {
               status: "error",
               error: incompleteCallError(call, incomplete.get(call), maxTokens),
@@ -2561,15 +2571,16 @@ export class AiAssistRunManager {
             });
 
             if (!decision?.accepted) {
-              const userNote = decision?.note
-                ? ` with note: "${decision.note}"`
-                : "";
               result = {
                 status: "rejected",
-                error: `The user declined running this connector tool${userNote}. Do not retry this tool in this turn.`,
+                // Claude Code's words, so a model tuned on them reads them alike
+                error: decision?.note
+                  ? `The user doesn't want to proceed with this tool use. The tool use was rejected. To tell you how to proceed, the user said:\n${decision.note}`
+                  : "The user doesn't want to proceed with this tool use. The tool use was rejected. STOP what you are doing and wait for the user to tell you how to proceed.",
                 note: decision?.note,
               };
               isError = true;
+              if (!decision?.note) declinedWithoutNote = true;
             } else {
               if (decision.always) {
                 await connectorSession.allowAlways(call.name).catch(() => {});
@@ -2580,6 +2591,13 @@ export class AiAssistRunManager {
               } catch (err) {
                 result = { error: err.message || "Tool execution failed" };
                 isError = true;
+              }
+              // What the user said when allowing it follows the result
+              if (decision.note && result && typeof result === "object") {
+                const said = `The user allowed this tool use and said:\n${decision.note}`;
+                result.notice = result.notice
+                  ? `${result.notice}\n\n${said}`
+                  : said;
               }
             }
           } else if (prefetched.has(call)) {
@@ -2718,6 +2736,15 @@ export class AiAssistRunManager {
           results: stepResults,
         });
         if (shouldStop || controller.signal.aborted) break;
+
+        // A message already queued is the user's next word: read it in
+        if (declinedWithoutNote && queuedMessages.length === 0) {
+          closeQueue();
+          await emitEvent({ type: "turnFinished", reason: "stop" });
+          await this.store.updateStatus(runId, "done");
+          shouldStop = true;
+          break;
+        }
 
         if (turnSucceeded) {
           failedTurns = 0;

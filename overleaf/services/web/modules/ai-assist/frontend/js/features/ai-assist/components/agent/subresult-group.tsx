@@ -37,7 +37,11 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value !== ''
 }
 
-type DecisionHandler = (decision: { accepted: boolean; note?: string }) => void
+type DecisionHandler = (decision: {
+  accepted: boolean
+  always?: boolean
+  note?: string
+}) => void
 
 function renderApprovalCard(
   pendingCall: ToolCallRecord | null | undefined,
@@ -411,6 +415,7 @@ export const SubresultGroup: FC<{
       (i.call.name === 'edit_file' ||
         i.call.name === 'create_file' ||
         i.call.name.startsWith('configure_') ||
+        i.call.name.startsWith('mcp__') ||
         i.call.name === 'present_plan')
   ) as Extract<AssistantBlock, { type: 'tool_call' }> | undefined
 
