@@ -1,7 +1,8 @@
 import * as z from 'zod/v4'
 import { CODES, OverleafApiError } from '../errors.js'
-import { mapLimit, okResult, runTool, tokenFrom } from '../context.js'
+import { okResult, runTool, tokenFrom } from '../context.js'
 import { envelope, looseObject, projectId, READ_ONLY } from '../schemas.js'
+import { clip, lines, ref } from '../format.js'
 import { normalisePath, requireFilePath } from '../parsers/paths.js'
 import { parseBibtex, searchBibtex } from '../parsers/bibtexParser.js'
 import {
@@ -24,10 +25,10 @@ const EQUATION_ENVIRONMENTS = [
   'flalign',
 ]
 const FLOAT_ENVIRONMENTS = ['figure', 'table', 'subfigure', 'wrapfigure', 'longtable']
-/** Documents read at once when a scan covers the whole project. */
-const SCAN_CONCURRENCY = 8
 /** Commands whose target is another LaTeX document, read as part of this one. */
 const DOCUMENT_INCLUDES = new Set(['input', 'include', 'subfile'])
+/** Above this many labels and refs together, the text gives counts instead of a list. */
+const LIST_LIMIT = 40
 
 const SCAN_ASPECTS = [
   'citations',
@@ -39,10 +40,13 @@ const SCAN_ASPECTS = [
   'includes',
 ]
 
+/** Bibliography fields kept by search_bib's default brief detail. */
+const BRIEF_BIB_FIELDS = ['author', 'title', 'year', 'journal', 'booktitle']
+
 const optionalPath = z
   .string()
   .optional()
-  .describe('Limit to one document, e.g. /main.tex; omit to scan every .tex document')
+  .describe('Limit to one document, e.g. /main.tex; omit for all .tex')
 
 const lineNumber = z.number().int().describe('1-based line number')
 
@@ -62,9 +66,34 @@ function byLocation(a, b) {
   return a.line - b.line
 }
 
+/** Group items by a key, keeping first-seen order within each group. */
+function groupBy(items, keyOf) {
+  const groups = new Map()
+  for (const item of items) {
+    const key = keyOf(item)
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key).push(item)
+  }
+  return groups
+}
+
 /** Flatten a per-document parse into one list carrying the source path. */
 function acrossDocs(docs, parse) {
   return docs.flatMap(doc => parse(doc.content).map(item => ({ ...item, path: doc.path })))
+}
+
+/** Collapse whitespace so a value spanning several source lines stays on one line. */
+function oneLine(text) {
+  return String(text ?? '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/** `path:line,line; other:line` for items that carry path and line. */
+function locationList(items) {
+  return [...groupBy(items, item => item.path)]
+    .map(([path, group]) => `${path}:${[...new Set(group.map(item => item.line))].join(',')}`)
+    .join('; ')
 }
 
 async function readDoc(client, token, id, path) {
@@ -73,24 +102,34 @@ async function readDoc(client, token, id, path) {
 }
 
 /**
+ * Every .tex document of the project in one batch request. Documents that
+ * could not be read come back with an error and are left out.
+ *
+ * @returns {Promise<{ path: string, content: string }[]>}
+ */
+async function readTexDocs(client, token, id) {
+  const { documents = [] } = await client.post(token, `/projects/${id}/docs/read`, {
+    ext: 'tex',
+  })
+  return documents
+    .filter(doc => doc.content !== undefined)
+    .map(doc => ({ path: normalisePath(doc.path), content: doc.content }))
+}
+
+/**
  * Read the documents a scanning tool should operate on.
  *
- * With a path, that one document. Without, every .tex document in the tree.
- * Each read is a separate authorized request to web, so a project with many
- * documents is read SCAN_CONCURRENCY at a time rather than all at once.
+ * With a path, that one document. Without, every .tex document in the project,
+ * fetched in one batch request.
  *
  * @returns {Promise<{ path: string, content: string }[]>}
  */
 async function readScope(client, token, id, path) {
-  const docPaths = path
-    ? [requireFilePath(path)]
-    : ((await client.get(token, `/projects/${id}/tree`)).docs ?? [])
-        .map(doc => normalisePath(doc.path))
-        .filter(docPath => /\.tex$/i.test(docPath))
-  return mapLimit(docPaths, SCAN_CONCURRENCY, async docPath => ({
-    path: docPath,
-    content: await readDoc(client, token, id, docPath),
-  }))
+  if (path) {
+    const docPath = requireFilePath(path)
+    return [{ path: docPath, content: await readDoc(client, token, id, docPath) }]
+  }
+  return readTexDocs(client, token, id)
 }
 
 /**
@@ -116,13 +155,24 @@ function resolveTarget(target, known) {
  * Headings of a document, optionally followed through its \input and \include
  * commands in reading order. Each heading keeps the path of its own file, and
  * line ranges stay relative to that file so read_file can fetch them.
+ *
+ * With followIncludes, every .tex document is fetched in one batch up front,
+ * so walking the includes costs no further requests.
  */
 async function collectOutline(client, token, id, rootPath, followIncludes) {
-  const tree = followIncludes ? await client.get(token, `/projects/${id}/tree`) : null
+  const [tree, batch] = followIncludes
+    ? await Promise.all([
+        client.get(token, `/projects/${id}/tree`),
+        readTexDocs(client, token, id),
+      ])
+    : [null, []]
   const known = new Set([
     ...(tree?.docs ?? []).map(doc => normalisePath(doc.path)),
     ...(tree?.files ?? []).map(file => normalisePath(file.path)),
   ])
+  const prefetched = new Map(batch.map(doc => [doc.path, doc.content]))
+  const contentOf = docPath =>
+    prefetched.has(docPath) ? prefetched.get(docPath) : readDoc(client, token, id, docPath)
   const outline = []
   const documents = []
   const unresolvedIncludes = []
@@ -132,7 +182,7 @@ async function collectOutline(client, token, id, rootPath, followIncludes) {
   const visit = async (docPath, depth) => {
     visited.add(docPath)
     documents.push(docPath)
-    const content = await readDoc(client, token, id, docPath)
+    const content = await contentOf(docPath)
     const sections = parseSections(content).map(section => ({ ...section, path: docPath }))
     const includes = parseIncludes(content).filter(include =>
       DOCUMENT_INCLUDES.has(include.command)
@@ -157,6 +207,7 @@ async function collectOutline(client, token, id, rootPath, followIncludes) {
         unresolvedIncludes.push({
           path: docPath,
           line: step.include.line,
+          command: step.include.command,
           target: step.include.path,
         })
       } else if (!visited.has(target)) {
@@ -170,10 +221,120 @@ async function collectOutline(client, token, id, rootPath, followIncludes) {
 }
 
 /**
+ * Outline text: headings indented by level relative to the shallowest one,
+ * grouped under a path line when several documents are outlined.
+ */
+function renderOutline(outline, multiDoc) {
+  if (outline.length === 0) return ''
+  const minLevel = Math.min(...outline.map(section => section.level))
+  const out = []
+  let current = null
+  for (const section of outline) {
+    if (multiDoc && section.path !== current) {
+      current = section.path
+      out.push(current)
+    }
+    const indent = '  '.repeat(section.level - minLevel)
+    out.push(
+      `${indent}L${section.startLine}-${section.endLine} \\${section.name}${
+        section.starred ? '*' : ''
+      } ${oneLine(section.title)}`
+    )
+  }
+  return out.join('\n')
+}
+
+/** One environment: location, name, [label], clipped caption, optional body. */
+function renderEnvironment(env, includeBody) {
+  const head = [
+    ref(env.path, env.line, env.endLine),
+    env.name,
+    env.label && `[${env.label}]`,
+    env.caption && clip(oneLine(env.caption), 120),
+  ]
+    .filter(Boolean)
+    .join(' ')
+  if (!includeBody) return head
+  return lines(
+    head,
+    (env.body ?? '').split('\n').map(line => `  ${line}`)
+  )
+}
+
+/** Citations grouped by key, sorted by key. */
+function renderCitations(items) {
+  return [...groupBy(items, item => item.key)]
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([key, group]) => `${key}  ${locationList(group)}`)
+    .join('\n')
+}
+
+/** Undefined refs first, then unused labels; the full list only when small. */
+function renderLabelsRefs(items, issues) {
+  const undefinedRefs = issues.filter(issue => issue.kind === 'undefined_ref')
+  const unusedLabels = issues.filter(issue => issue.kind === 'unused_label')
+  const labels = items.filter(item => item.kind === 'label')
+  const refs = items.filter(item => item.kind === 'ref')
+  return lines(
+    [...groupBy(undefinedRefs, issue => issue.name)].map(
+      ([name, group]) => `undefined ref ${name}  ${locationList(group)}`
+    ),
+    unusedLabels.map(label => `unused label ${label.name}  ${ref(label.path, label.line)}`),
+    items.length <= LIST_LIMIT
+      ? items.map(item => `${item.kind} ${item.name} ${ref(item.path, item.line)}`)
+      : `labels: ${labels.length}, refs: ${refs.length}`
+  )
+}
+
+/** Bibliography field lookup that ignores the case the source used. */
+function bibField(fields, name) {
+  const key = Object.keys(fields).find(candidate => candidate.toLowerCase() === name)
+  return key === undefined ? '' : fields[key]
+}
+
+/** The fields search_bib keeps in brief mode, lowercased keys only. */
+function briefFields(fields) {
+  const out = {}
+  for (const [name, value] of Object.entries(fields)) {
+    if (BRIEF_BIB_FIELDS.includes(name.toLowerCase())) out[name] = value
+  }
+  return out
+}
+
+/** One bibliography entry on one line; in all mode, the other fields follow. */
+function renderBibEntry(entry, detail) {
+  const { fields } = entry
+  const venue = [bibField(fields, 'journal') || bibField(fields, 'booktitle'), bibField(fields, 'year')]
+    .filter(Boolean)
+    .join(' ')
+  const summary = [
+    clip(oneLine(bibField(fields, 'author')), 60),
+    clip(oneLine(bibField(fields, 'title')), 100),
+    venue,
+  ]
+    .filter(Boolean)
+    .join('. ')
+  const rest =
+    detail === 'all'
+      ? Object.entries(fields)
+          .filter(([name]) => !BRIEF_BIB_FIELDS.includes(name.toLowerCase()))
+          .map(([name, value]) => `${name}=${clip(oneLine(value), 100)}`)
+          .join('; ')
+      : ''
+  return [
+    `@${entry.type}{${entry.key}} ${ref(entry.path, entry.line)}`,
+    summary,
+    rest,
+  ]
+    .filter(Boolean)
+    .join('  ')
+}
+
+/**
  * Register the read-only LaTeX-semantic tools.
  *
  * They add no endpoint and no privilege: every byte comes from the same
- * authorized doc and tree reads the file tools use.
+ * authorized doc, batch and tree reads the file tools use.
  *
  * @param {object} server an McpServer
  * @param {{ client: object, staticToken: string }} deps
@@ -184,7 +345,7 @@ export function registerLatexTools(server, { client, staticToken }) {
     {
       title: 'Get document outline',
       description:
-        'List the headings of a LaTeX document (part to subparagraph) with the 1-based startLine and endLine each spans, ready for read_file. Set followIncludes to walk \\input and \\include into the chapter files; each heading then carries its own path.',
+        'Outline a LaTeX document: its headings with the startLine-endLine each spans, for read_file. followIncludes also walks \\input and \\include files in reading order.',
       annotations: READ_ONLY,
       inputSchema: z.object({
         projectId,
@@ -193,7 +354,7 @@ export function registerLatexTools(server, { client, staticToken }) {
           .boolean()
           .optional()
           .default(false)
-          .describe('Also outline the files pulled in by \\input and \\include, in reading order'),
+          .describe('Also outline the \\input and \\include files'),
       }),
       outputSchema: envelope(
         looseObject({
@@ -227,6 +388,7 @@ export function registerLatexTools(server, { client, staticToken }) {
               looseObject({
                 path: z.string().describe('Document holding the include'),
                 line: lineNumber,
+                command: z.string().describe('input, include or subfile'),
                 target: z.string().describe('Path as written in the source'),
               })
             )
@@ -246,13 +408,11 @@ export function registerLatexTools(server, { client, staticToken }) {
       )
       const hint =
         !followIncludes && rootIncludes > 0
-          ? `${root} includes ${rootIncludes} other file(s); call again with followIncludes: true to outline them.`
+          ? `followIncludes=true to outline the ${rootIncludes} included file(s)`
           : undefined
       return okResult({
-        summary:
-          `${outline.length} heading(s) in ${documents.length} document(s)` +
-          (followIncludes ? '' : ` of ${root}`) +
-          '.',
+        summary: `${outline.length} headings in ${documents.length} docs`,
+        text: renderOutline(outline, documents.length > 1),
         data: {
           path: root,
           followIncludes,
@@ -260,11 +420,9 @@ export function registerLatexTools(server, { client, staticToken }) {
           outline,
           unresolvedIncludes,
         },
-        warnings: unresolvedIncludes.length
-          ? unresolvedIncludes.map(
-              inc => `${inc.path}:${inc.line} includes ${inc.target}, which matches no project file`
-            )
-          : undefined,
+        warnings: unresolvedIncludes.map(
+          inc => `${inc.path}:${inc.line} \\${inc.command}{${inc.target}} not found`
+        ),
         nextSteps: hint ? [hint] : undefined,
       })
     })
@@ -275,16 +433,18 @@ export function registerLatexTools(server, { client, staticToken }) {
     {
       title: 'Scan LaTeX elements',
       description:
-        'Extract one kind of LaTeX element across the project, each with its path and 1-based line: citation keys, labels and refs (with undefined refs and unused labels as issues), maths environments, floats, user macros, TODO notes, or \\input and \\include targets and whether they resolve. Prefer this to grepping when auditing a document.',
+        'Extract one kind of LaTeX element across the project with path:line locations. labels_refs lists issues first; citations are grouped by key.',
       annotations: READ_ONLY,
       inputSchema: z.object({
         projectId,
         aspect: z
           .enum(SCAN_ASPECTS)
-          .describe(
-            'citations, labels_refs, equations, floats, commands, todos or includes'
-          ),
+          .describe('Element kind to extract'),
         path: optionalPath,
+        includeBody: z
+          .boolean()
+          .optional()
+          .describe('Include equation and float bodies'),
       }),
       outputSchema: envelope(
         looseObject({
@@ -294,7 +454,7 @@ export function registerLatexTools(server, { client, staticToken }) {
           items: z
             .array(scanItem)
             .describe(
-              'Items with path and line. citations: key, command. labels_refs: kind (label or ref), name, command. equations and floats: name, endLine, label, caption, body. commands: command, name, arity, definition. todos: kind, text. includes: command, target, resolvedPath (null when broken).'
+              'Items with path and line. citations: key, command. labels_refs: kind (label or ref), name, command. equations and floats: name, endLine, label, caption, body (only with includeBody). commands: command, name, arity, definition. todos: kind, text. includes: command, target, resolvedPath (null when broken).'
             ),
           issues: z
             .array(
@@ -309,21 +469,22 @@ export function registerLatexTools(server, { client, staticToken }) {
         })
       ),
     },
-    runTool(async ({ projectId: id, aspect, path }, ctx) => {
+    runTool(async ({ projectId: id, aspect, path, includeBody = false }, ctx) => {
       const token = tokenFrom(ctx, staticToken)
       const docs = await readScope(client, token, id, path)
       const base = { aspect, documentsScanned: docs.length }
-      const respond = (items, extra = {}) =>
+      const respond = (items, text, extra = {}) =>
         okResult({
-          summary: `${items.length} ${aspect} item(s) in ${docs.length} document(s).`,
+          summary: `${items.length} ${aspect} in ${docs.length} docs`,
+          text,
           data: { ...base, count: items.length, items, ...extra },
         })
 
       switch (aspect) {
-        case 'citations':
-          return respond(
-            acrossDocs(docs, parseCitations).sort(byLocation)
-          )
+        case 'citations': {
+          const items = acrossDocs(docs, parseCitations).sort(byLocation)
+          return respond(items, renderCitations(items))
+        }
         case 'labels_refs': {
           const labels = acrossDocs(docs, text => parseLabelsAndRefs(text).labels).map(
             label => ({ kind: 'label', path: label.path, line: label.line, name: label.name })
@@ -345,43 +506,69 @@ export function registerLatexTools(server, { client, staticToken }) {
               .filter(label => !refNames.has(label.name))
               .map(label => ({ kind: 'unused_label', path: label.path, line: label.line, name: label.name })),
           ].sort(byLocation)
-          return respond([...labels, ...refs].sort(byLocation), { issues })
+          const items = [...labels, ...refs].sort(byLocation)
+          return respond(items, renderLabelsRefs(items, issues), { issues })
         }
         case 'equations':
         case 'floats': {
           const names = aspect === 'equations' ? EQUATION_ENVIRONMENTS : FLOAT_ENVIRONMENTS
+          const envs = acrossDocs(docs, text => parseEnvironments(text, names))
+          const items = envs.map(env => ({
+            path: env.path,
+            line: env.line,
+            endLine: env.endLine,
+            name: env.name,
+            label: env.label,
+            caption: env.caption,
+            ...(includeBody ? { body: env.body } : {}),
+          }))
           return respond(
-            acrossDocs(docs, text => parseEnvironments(text, names)).map(env => ({
-              path: env.path,
-              line: env.line,
-              endLine: env.endLine,
-              name: env.name,
-              label: env.label,
-              caption: env.caption,
-              body: env.body,
-            }))
+            items,
+            envs.map(env => renderEnvironment(env, includeBody)).join('\n')
           )
         }
-        case 'commands':
-          return respond(acrossDocs(docs, parseCustomCommands).sort(byLocation))
-        case 'todos':
-          return respond(acrossDocs(docs, parseTodoNotes).sort(byLocation))
+        case 'commands': {
+          const items = acrossDocs(docs, parseCustomCommands).sort(byLocation)
+          const text = items
+            .map(cmd => {
+              const name = cmd.name.startsWith('\\') ? cmd.name : `\\${cmd.name}`
+              const arity = cmd.arity ? `[${cmd.arity}]` : ''
+              return `${ref(cmd.path, cmd.line)} ${name}${arity} = ${clip(oneLine(cmd.definition), 100)}`
+            })
+            .join('\n')
+          return respond(items, text)
+        }
+        case 'todos': {
+          const items = acrossDocs(docs, parseTodoNotes).sort(byLocation)
+          const text = items
+            .map(note => `${ref(note.path, note.line)} ${note.kind}: ${clip(oneLine(note.text), 160)}`)
+            .join('\n')
+          return respond(items, text)
+        }
         case 'includes': {
           const tree = await client.get(token, `/projects/${id}/tree`)
           const known = new Set([
             ...(tree.docs ?? []).map(doc => normalisePath(doc.path)),
             ...(tree.files ?? []).map(file => normalisePath(file.path)),
           ])
-          const includes = docs.flatMap(doc =>
-            parseIncludes(doc.content).map(include => ({
-              path: doc.path,
-              line: include.line,
-              command: include.command,
-              target: include.path,
-              resolvedPath: resolveTarget(include.path, known),
-            }))
-          )
-          return respond(includes.sort(byLocation))
+          const items = docs
+            .flatMap(doc =>
+              parseIncludes(doc.content).map(include => ({
+                path: doc.path,
+                line: include.line,
+                command: include.command,
+                target: include.path,
+                resolvedPath: resolveTarget(include.path, known),
+              }))
+            )
+            .sort(byLocation)
+          const text = items
+            .map(
+              inc =>
+                `${ref(inc.path, inc.line)} \\${inc.command}{${inc.target}} -> ${inc.resolvedPath ?? 'NOT FOUND'}`
+            )
+            .join('\n')
+          return respond(items, text)
         }
         default:
           throw new OverleafApiError(
@@ -399,15 +586,19 @@ export function registerLatexTools(server, { client, staticToken }) {
     {
       title: 'Search bibliography',
       description:
-        'Read a .bib file as structured entries (key, type, fields and 1-based line), optionally filtered by a substring of the key or any field. Use it to check whether a reference exists or to get the exact key for \\cite.',
+        'Read a .bib file as structured entries (key, type, fields, line), optionally filtered by query. Use it to check a reference exists or get its exact \\cite key.',
       annotations: READ_ONLY,
       inputSchema: z.object({
         projectId,
-        path: z.string().min(1).describe('Path to the .bib document, e.g. /refs.bib'),
+        path: z.string().min(1).describe('Path to the .bib file, e.g. /refs.bib'),
         query: z
           .string()
           .optional()
-          .describe('Case-insensitive substring of the key or any field; omit for all entries'),
+          .describe('Case-insensitive substring of key or any field'),
+        detail: z
+          .enum(['brief', 'all'])
+          .optional()
+          .describe('brief: author, title, year, venue; all: every field'),
       }),
       outputSchema: envelope(
         looseObject({
@@ -422,29 +613,30 @@ export function registerLatexTools(server, { client, staticToken }) {
                 key: z.string().describe('The citation key used by \\cite'),
                 fields: z
                   .record(z.string(), z.string())
-                  .describe('Entry fields such as author, title and year'),
+                  .describe('Entry fields; only author, title, year, journal and booktitle when detail is brief'),
               })
             )
             .describe('The matching bibliography entries'),
         })
       ),
     },
-    runTool(async ({ projectId: id, path, query }, ctx) => {
+    runTool(async ({ projectId: id, path, query, detail = 'brief' }, ctx) => {
       const target = requireFilePath(path)
       const content = await readDoc(client, tokenFrom(ctx, staticToken), id, target)
       const parsed = parseBibtex(content).map(entry => ({ path: target, ...entry }))
-      const entries = query ? searchBibtex(parsed, query) : parsed
+      const found = query ? searchBibtex(parsed, query) : parsed
+      const entries = found.map(entry =>
+        detail === 'all' ? entry : { ...entry, fields: briefFields(entry.fields) }
+      )
       return okResult({
         summary: query
-          ? `${entries.length} of ${parsed.length} entries in ${target} match "${query}".`
-          : `${parsed.length} entries in ${target}.`,
+          ? `${target} ${entries.length}/${parsed.length} entries`
+          : `${target} ${parsed.length} entries`,
+        text: entries.map(entry => renderBibEntry(entry, detail)).join('\n'),
         data: { path: target, total: parsed.length, matched: entries.length, entries },
         warnings: /\.bib$/i.test(target)
           ? undefined
           : [`${target} does not end in .bib; it was parsed as BibTeX anyway`],
-        nextSteps: entries[0]
-          ? [`scan_latex(projectId, aspect="citations") to see where \\cite uses ${entries[0].key}`]
-          : undefined,
       })
     })
   )

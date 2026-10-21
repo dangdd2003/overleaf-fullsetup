@@ -116,6 +116,13 @@ const OPENAPI_SPEC = {
         responses: { '200': { description: 'Write result' } },
       },
     },
+    '/projects/{projectId}/docs/read': {
+      post: {
+        summary: 'Read several text documents in one request, by paths or extension',
+        operationId: 'readDocs',
+        responses: { '200': { description: 'Documents and missing paths' } },
+      },
+    },
     '/projects/{projectId}/file': {
       get: {
         summary: 'Download a binary file by path (text documents are read with readDoc)',

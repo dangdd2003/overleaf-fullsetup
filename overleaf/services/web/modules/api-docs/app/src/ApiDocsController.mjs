@@ -15,6 +15,20 @@ function isOperationVisible(operation) {
   return [feature].flat().some(name => Features.hasFeature(name))
 }
 
+// Every feature name that some operation is gated on
+const featureNames = [
+  ...new Set(
+    Object.values(openApiSpec.paths)
+      .flatMap(operations => Object.values(operations))
+      .flatMap(operation => [operation['x-feature']].flat())
+      .filter(Boolean)
+  ),
+]
+
+// Visible spec per combination of enabled features; the spec is large, so
+// rebuilding it on every request is wasteful
+const visibleSpecs = new Map()
+
 function buildVisibleSpec() {
   const paths = Object.fromEntries(
     Object.entries(openApiSpec.paths)
@@ -29,6 +43,16 @@ function buildVisibleSpec() {
       .filter(([, operations]) => Object.keys(operations).length > 0)
   )
   return { ...openApiSpec, paths }
+}
+
+function cachedVisibleSpec() {
+  const key = featureNames
+    .map(name => (Features.hasFeature(name) ? '1' : '0'))
+    .join('')
+  if (!visibleSpecs.has(key)) {
+    visibleSpecs.set(key, buildVisibleSpec())
+  }
+  return visibleSpecs.get(key)
 }
 
 const ApiDocsController = {
@@ -57,7 +81,7 @@ const ApiDocsController = {
   },
 
   serveSpec(req, res) {
-    res.json(buildVisibleSpec())
+    res.json(cachedVisibleSpec())
   },
 }
 

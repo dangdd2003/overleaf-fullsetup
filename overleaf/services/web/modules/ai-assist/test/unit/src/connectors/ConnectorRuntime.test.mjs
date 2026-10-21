@@ -438,33 +438,6 @@ describe('ConnectorRuntime', function () {
     })
   })
 
-  describe('pending specs', function () {
-    it('lists the deferred tools not loaded yet, as they would be sent once loaded', function () {
-      const session = sessionOf(
-        [connectorWith({ tools: [{ name: 'search' }, { name: 'write' }] })],
-        { toolSearch: 'always' }
-      )
-
-      expect(session.pendingSpecs().map(s => s.name)).to.deep.equal([
-        'mcp__docs__search',
-        'mcp__docs__write',
-      ])
-      session.loadedTools.add('mcp__docs__search')
-      expect(session.pendingSpecs().map(s => s.name)).to.deep.equal([
-        'mcp__docs__write',
-      ])
-    })
-
-    it('has none when nothing is deferred, since every tool is already sent', function () {
-      const session = sessionOf(
-        [connectorWith({ tools: [{ name: 'search' }] })],
-        { toolSearch: 'off' }
-      )
-
-      expect(session.pendingSpecs()).to.deep.equal([])
-    })
-  })
-
   describe('search tool', function () {
     function deferred(tools) {
       return sessionOf([connectorWith({ tools })], { toolSearch: 'always' })

@@ -114,6 +114,7 @@ export function useGeneratorRun<Facts, Extra, Result extends { raw: string }, Re
     setDialogError(null)
     setImageError(null)
     setPending(null)
+    setRetry(null)
     const prompt = optionsRef.current.initialPrompt()
     if (prompt !== null) setDraft({ prompt, image: null })
   }, [sessionId])
@@ -189,8 +190,8 @@ export function useGeneratorRun<Facts, Extra, Result extends { raw: string }, Re
           }
         },
       })
+      if (abortRef.current === controller) setRetry(null)
       if (controller.signal.aborted) return
-      setRetry(null)
 
       if (isNonResult(outcome)) {
         if (outcome.kind === 'cannot') setPhase({ name: 'cannot', reason: outcome.reason })
@@ -205,7 +206,7 @@ export function useGeneratorRun<Facts, Extra, Result extends { raw: string }, Re
       onVersion?.()
       setPhase({ name: 'ready' })
     } catch (error: any) {
-      setRetry(null)
+      if (abortRef.current === controller) setRetry(null)
       if (controller.signal.aborted) return
       if (error?.code === 'imageUnsupported') {
         setPhase({ name: 'imageUnsupported' })

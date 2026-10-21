@@ -1,3 +1,5 @@
+import { compactJson, lines } from './format.js'
+
 export const CODES = Object.freeze({
   UNAUTHORIZED: 'unauthorized',
   INSUFFICIENT_SCOPE: 'insufficient_scope',
@@ -132,12 +134,32 @@ export function errorEnvelope(code, message, extra = {}) {
 }
 
 /**
+ * The error envelope as the compact text a model reads:
+ *
+ *   error <code>: <message>
+ *   hint: <hint>
+ *   details: <single-line JSON>   (only when there are details)
+ *   retryable                      (only when retrying unchanged can work)
+ *
+ * @param {ReturnType<typeof errorEnvelope>} payload
+ */
+function errorText({ error }) {
+  return lines(
+    `error ${error.code}: ${error.message}`,
+    `hint: ${error.hint}`,
+    error.details && `details: ${compactJson(error.details)}`,
+    error.retryable && 'retryable'
+  )
+}
+
+/**
  * Convert any thrown error into an MCP tool error result. The `web` error code
  * is preserved verbatim so the model can branch on it, and a recovery hint
- * tells it which call to make next.
+ * tells it which call to make next. `structuredContent` carries the full
+ * envelope; the text block is its compact rendering.
  *
  * @param {unknown} err
- * @returns {{ isError: true, content: { type: 'text', text: string }[] }}
+ * @returns {{ isError: true, content: { type: 'text', text: string }[], structuredContent: object }}
  */
 export function toToolError(err) {
   const isApiError = err instanceof OverleafApiError
@@ -146,6 +168,7 @@ export function toToolError(err) {
     : errorEnvelope(CODES.UPSTREAM_ERROR, 'the Overleaf API request failed')
   return {
     isError: true,
-    content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
+    content: [{ type: 'text', text: errorText(payload) }],
+    structuredContent: payload,
   }
 }

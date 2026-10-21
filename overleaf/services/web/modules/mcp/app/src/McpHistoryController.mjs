@@ -122,6 +122,14 @@ async function listHistory(req, res) {
     if (!filter || entries.length >= limit || cursor == null) break
   }
 
+  // A page can overshoot the limit. Keep only the newest `limit` entries and
+  // resume just before the oldest one kept: project-history's `before` returns
+  // updates older than the version given, so the dropped entries are read again.
+  if (entries.length > limit) {
+    entries = entries.slice(0, limit)
+    cursor = entries[limit - 1].fromVersion
+  }
+
   res.json({
     entries,
     nextBefore: cursor,

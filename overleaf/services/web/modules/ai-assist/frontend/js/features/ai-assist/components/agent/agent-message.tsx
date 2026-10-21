@@ -18,6 +18,7 @@ import { SubresultGroup, SubresultItem } from './subresult-group'
 import { copyToClipboard } from '../../utils/copy-to-clipboard'
 import { EditedCodeBadge, getFileEditCalls } from './edited-code-badge'
 import { MessageActionButton, useCopyFeedback } from './message-action-button'
+import OLTooltip from '@/shared/components/ol/ol-tooltip'
 import { ImageLightbox } from './image-lightbox'
 import { suggestCaptureTitle } from '../../pdf/crop'
 
@@ -122,6 +123,11 @@ export type AgentMessageViewProps = {
    * is shown dimmed and offers only Rewind and Copy.
    */
   compacted?: boolean
+  /**
+   * A user turn the run has read: two ticks instead of one, as Claude Code
+   * marks a message sent and then read.
+   */
+  read?: boolean
 }
 
 export const AgentMessageView: FC<AgentMessageViewProps> = ({
@@ -144,6 +150,7 @@ export const AgentMessageView: FC<AgentMessageViewProps> = ({
   onDiffReview,
   onFileJump,
   compacted = false,
+  read = false,
 }) => {
   const { t } = useTranslation()
   const { copied, copy } = useCopyFeedback()
@@ -154,17 +161,18 @@ export const AgentMessageView: FC<AgentMessageViewProps> = ({
     <Copy size={14} aria-hidden="true" />
   )
 
+  const [previewImage, setPreviewImage] = useState<{
+    src: string
+    title: string
+  } | null>(null)
+  // Asked to be answered now; stays until the run reads it
+  const [sendingNow, setSendingNow] = useState(false)
+
   if (entry.role === 'compact') {
     return <CompactBoundary entry={entry} />
   }
 
   if (entry.role === 'user') {
-    const [previewImage, setPreviewImage] = useState<{
-      src: string
-      title: string
-    } | null>(null)
-    // Asked to be answered now; stays until the run reads it
-    const [sendingNow, setSendingNow] = useState(false)
     const timeText = formatMessageTime(entry.createdAt, entry.id)
 
     const handleCopyPrompt = () => {
@@ -319,12 +327,30 @@ export const AgentMessageView: FC<AgentMessageViewProps> = ({
             {timeText && (
               <span className="ai-assist-user-message-time">{timeText}</span>
             )}
-            <span
-              className="ai-assist-user-message-status"
-              title={t('ai_assist_delivered', 'Delivered')}
+            <OLTooltip
+              id={`status-prompt-${entry.id}`}
+              description={
+                read
+                  ? t('ai_assist_message_read', 'Read by the assistant')
+                  : t('ai_assist_message_sent', 'Sent')
+              }
+              overlayProps={{ placement: 'top' }}
             >
-              <Checks size={14} weight="bold" aria-hidden="true" />
-            </span>
+              <span
+                className={`ai-assist-user-message-status${read ? ' is-read' : ''}`}
+                aria-label={
+                  read
+                    ? t('ai_assist_message_read', 'Read by the assistant')
+                    : t('ai_assist_message_sent', 'Sent')
+                }
+              >
+                {read ? (
+                  <Checks size={14} weight="bold" aria-hidden="true" />
+                ) : (
+                  <Check size={14} weight="bold" aria-hidden="true" />
+                )}
+              </span>
+            </OLTooltip>
             <div className="ai-assist-msg-actions ai-assist-msg-actions-user">
               {!compacted && (
                 <MessageActionButton

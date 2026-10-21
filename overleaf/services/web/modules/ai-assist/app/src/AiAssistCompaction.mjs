@@ -782,7 +782,9 @@ function stubFor(call) {
   }
   if (name === 'read_file' && r && !r.error) {
     const lines = typeof r.content === 'string' ? r.content.split('\n').length : 0
-    return `read_file ${r.path} ${r.from}-${r.to}: ${lines} lines`
+    const hasRange = typeof r.from === 'number' && typeof r.to === 'number'
+    const range = hasRange ? ` ${r.from}-${r.to}` : ''
+    return `read_file ${r.path}${range}: ${lines} lines`
   }
   if (name === 'edit_file' || name === 'create_file') {
     const path = r?.path ?? args.path ?? ''
@@ -1718,7 +1720,10 @@ export async function compactConversation({
   const spanEntries = list
     .slice(from, end)
     .filter(e => e?.role === 'user' || e?.role === 'assistant')
-  const userTurns = list.slice(from).filter(e => e?.role === 'user').length
+  let userTurns = 0
+  for (let i = from; i < list.length; i++) {
+    if (list[i]?.role === 'user') userTurns++
+  }
   if (userTurns < 2 || spanEntries.length === 0) {
     throw new CompactError(
       'compactNothing',

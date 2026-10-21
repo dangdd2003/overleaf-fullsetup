@@ -118,7 +118,7 @@ describe('compile tools', function () {
     client.get.resolves(diagnostics())
     await server.call('compile_project', { projectId: 'p1', draft: true })
     expect(client.post.firstCall.args[1]).to.equal('/projects/p1/compile')
-    expect(client.post.firstCall.args[2]).to.deep.equal({ draft: true })
+    expect(client.post.firstCall.args[2]).to.deep.equal({ draft: true, diagnostics: true })
   })
 
   it('compile_project cleans the build first when clean is true', async function () {
@@ -174,6 +174,7 @@ describe('compile tools', function () {
     })
     expect(client.post.firstCall.args[2]).to.deep.equal({
       rootDocPath: '/thesis/main.tex',
+      diagnostics: true,
     })
   })
 
@@ -218,11 +219,16 @@ describe('compile tools', function () {
       line: 12,
     })
     expect(out.data.errors[0]).to.not.have.property('file')
-    expect(out.summary).to.match(/WITH ERRORS/)
-    expect(out.warnings.join(' ')).to.match(/Do not trust the PDF/)
-    expect(out.nextSteps[0]).to.match(
-      /read_file\(projectId="p1", path="\/chapters\/intro.tex"\) around line 12/
+    expect(out.summary).to.equal(
+      'success_with_errors: 1 errors, 0 warnings, 0 bad boxes  build b1'
     )
+    expect(out.warnings.join(' ')).to.match(/Do not trust the PDF/)
+    expect(out.nextSteps).to.be.undefined
+    const text = result.content[0].text
+    expect(text).to.include('E Undefined control sequence. — /chapters/intro.tex:12')
+    expect(text).to.include('    l.12 \\foo')
+    expect(text).to.not.include('"source"')
+    expect(text).to.not.include('projectId')
   })
 
   it('compile_project reports a failure with no PDF and its errors', async function () {
@@ -254,7 +260,7 @@ describe('compile tools', function () {
     expect(out.ok).to.equal(true)
     expect(out.data.status).to.equal('failure')
     expect(out.data.pdf).to.equal(null)
-    expect(out.summary).to.match(/FAILED/)
+    expect(out.summary).to.match(/^failure: 1 errors, 0 warnings, 0 bad boxes  build b2$/)
     expect(out.data.advice).to.have.length(1)
   })
 
@@ -311,11 +317,9 @@ describe('compile tools', function () {
     expect(out.ok).to.equal(true)
     expect(out.data.logChecked).to.equal(false)
     expect(out.data.status).to.equal('success')
-    expect(out.summary).to.match(/could not be read/)
-    expect(out.warnings.join(' ')).to.match(/errors are unknown/)
-    expect(out.nextSteps.join(' ')).to.match(
-      /get_compile_log\(projectId, buildId="b1", clsiServerId="s1", raw=true\)/
-    )
+    expect(out.warnings.join(' ')).to.match(/errors unknown/)
+    expect(out.nextSteps.join(' ')).to.match(/get_compile_log raw=true/)
+    expect(out.nextSteps.join(' ')).to.not.include('clsiServerId')
   })
 
   it('compile_project does not call a build clean when it wrote no output.log', async function () {
@@ -324,11 +328,10 @@ describe('compile tools', function () {
     const out = (await server.call('compile_project', { projectId: 'p1' }))
       .structuredContent
     expect(out.data.logChecked).to.equal(false)
-    expect(out.summary).to.match(/could not be read/)
     expect(out.warnings.join(' ')).to.match(/wrote no output.log/)
   })
 
-  it('compile_project turns on a warning for undefined references and asks for a rerun', async function () {
+  it('compile_project lists undefined references and citations by key and asks for a rerun', async function () {
     client.post.resolves(PDF_BUILD)
     client.get.resolves(
       diagnostics({
@@ -338,19 +341,32 @@ describe('compile tools', function () {
           undefinedReferences: 1,
           undefinedCitations: 1,
         },
+        warnings: [
+          {
+            source: 'latex',
+            kind: 'undefined-reference',
+            file: 'main.tex',
+            line: 5,
+            message: "LaTeX Warning: Reference `fig:x' on page 1 undefined",
+          },
+          {
+            source: 'latex',
+            kind: 'undefined-citation',
+            file: 'main.tex',
+            line: 6,
+            message: "LaTeX Warning: Citation `smith' on page 1 undefined",
+          },
+        ],
         rerunNeeded: true,
       })
     )
-    const out = (await server.call('compile_project', { projectId: 'p1' }))
-      .structuredContent
-    expect(out.warnings.join(' ')).to.match(
-      /1 undefined reference\(s\) and 1 undefined citation/
-    )
-    expect(out.warnings.join(' ')).to.match(/Compile again/)
+    const result = await server.call('compile_project', { projectId: 'p1' })
+    const out = result.structuredContent
+    expect(result.content[0].text).to.include('undefined refs: fig:x')
+    expect(result.content[0].text).to.include('undefined cites: smith')
+    expect(out.warnings.join(' ')).to.match(/compile again/)
     expect(out.data.rerunNeeded).to.equal(true)
-    expect(out.nextSteps.join(' ')).to.match(
-      /compile_project\(projectId="p1"\)/
-    )
+    expect(out.nextSteps.join(' ')).to.match(/compile_project again/)
   })
 
   it('compile_project preserves upstream_error from a failed compile', async function () {
@@ -359,7 +375,7 @@ describe('compile tools', function () {
     )
     const result = await server.call('compile_project', { projectId: 'p1' })
     expect(result.isError).to.equal(true)
-    expect(JSON.parse(result.content[0].text).error.code).to.equal(
+    expect(result.structuredContent.error.code).to.equal(
       'upstream_error'
     )
   })
@@ -391,9 +407,8 @@ describe('compile tools', function () {
     expect(out.data.raw).to.equal(false)
     expect(out.data.errors).to.have.length(1)
     expect(out.data.warnings).to.have.length(1)
-    expect(out.summary).to.equal(
-      'Build b1: 1 error(s), 1 warning(s) and 0 bad box(es).'
-    )
+    expect(out.summary).to.equal('1 errors, 1 warnings, 0 bad boxes')
+    expect(out.data.buildId).to.equal('b1')
   })
 
   it('get_compile_log level=errors leaves out warnings and bad boxes', async function () {
@@ -466,7 +481,7 @@ describe('compile tools', function () {
     })
     expect(out.data.raw).to.equal(true)
     expect(out.data.log).to.equal('line3\nline4')
-    expect(out.nextSteps.join(' ')).to.match(/raw=true, startLine=5/)
+    expect(out.nextSteps.join(' ')).to.match(/get_compile_log buildId=b1 raw=true startLine=5/)
   })
 
   it('get_compile_pdf returns a summary block followed by the PDF resource', async function () {
@@ -535,7 +550,7 @@ describe('compile tools', function () {
       { path: '/main.tex', startLine: 10, endLine: 10 },
       { path: '/chapters/intro.tex', startLine: 91, endLine: 119 },
     ])
-    expect(out.nextSteps[0]).to.include('read_file(projectId="p1", path="/main.tex"')
+    expect(out.nextSteps[0]).to.include('read_file path=/main.tex')
     const { config } = server.tools.get('sync_pdf_source')
     const validated = await config.outputSchema['~standard'].validate(out)
     expect(validated.issues).to.be.undefined
@@ -573,7 +588,7 @@ describe('compile tools', function () {
   it('sync_pdf_source rejects a call with neither page nor path and line', async function () {
     const result = await server.call('sync_pdf_source', { projectId: 'p1', path: '/main.tex' })
     expect(result.isError).to.be.true
-    expect(JSON.parse(result.content[0].text).error.code).to.equal('validation_error')
+    expect(result.structuredContent.error.code).to.equal('validation_error')
     expect(client.get.called).to.be.false
   })
 
@@ -636,7 +651,7 @@ describe('compile tools', function () {
         mimeType: 'image/png',
       })
       const out = result.structuredContent
-      expect(out.summary).to.include('Page 2 of 5')
+      expect(out.summary).to.include('Page 2/5 attached')
       expect(out.data.sourceMap[1]).to.deep.equal({
         y: 55,
         path: '/tables/results.tex',
@@ -652,9 +667,16 @@ describe('compile tools', function () {
       })
       // The base64 travels in the image block only, not twice
       expect(JSON.stringify(out)).to.not.include('iVBORw0KGgo=')
-      expect(out.warnings[0]).to.include('1 overfull/underfull box')
+      expect(result.content[0].text).to.include(
+        'source:\n5% /main.tex:40\n55% /tables/results.tex:12'
+      )
+      expect(result.content[0].text).to.include(
+        'B /tables/results.tex:12 Overfull \\hbox (48.2pt too wide) in alignment at lines 12--20'
+      )
+      expect(result.content[0].text).to.not.include('iVBORw0KGgo=')
+      expect(result.content[0].text).to.not.include('mimeType')
       expect(out.nextSteps[0]).to.include(
-        'read_file(projectId="p1", path="/main.tex", startLine=40, endLine=40)'
+        'read_file path=/main.tex startLine=40 endLine=40'
       )
       const { config } = server.tools.get('view_compiled_pdf_page')
       const validated = await config.outputSchema['~standard'].validate(out)
@@ -668,15 +690,14 @@ describe('compile tools', function () {
           located: { path: 'chapters/intro.tex', line: 7, y: 41 },
         })
       )
-      const out = (
-        await server.call('view_compiled_pdf_page', {
+      const result = await server.call('view_compiled_pdf_page', {
           projectId: 'p1',
           buildId: 'b1',
           path: '/chapters/intro.tex',
           line: 7,
           region: 'middle',
         })
-      ).structuredContent
+      const out = result.structuredContent
       expect(client.get.firstCall.args[2]).to.include({
         path: 'chapters/intro.tex',
         line: 7,
@@ -687,7 +708,26 @@ describe('compile tools', function () {
         line: 7,
         y: 41,
       })
-      expect(out.summary).to.include('/chapters/intro.tex line 7 is about 41% down')
+      expect(result.content[0].text).to.include('located /chapters/intro.tex:7 at 41%')
+      expect(out.summary).to.not.include('41%')
+    })
+
+    it('lists the source span in text when the page has no sourceMap rows', async function () {
+      client.get.resolves(
+        pdfPage({
+          page: 4,
+          sourceMap: [],
+          badBoxes: [],
+          sourceRanges: [{ path: 'main.tex', startLine: 3, endLine: 5 }],
+        })
+      )
+      const result = await server.call('view_compiled_pdf_page', {
+        projectId: 'p1',
+        buildId: 'b1',
+        page: 4,
+      })
+      expect(result.content[0].text).to.include('source:\n/main.tex:3-5')
+      expect(result.content[0].text).to.not.include('B ')
     })
 
     it('needs line with path, before calling web', async function () {
@@ -697,7 +737,7 @@ describe('compile tools', function () {
         path: '/main.tex',
       })
       expect(result.isError).to.be.true
-      expect(JSON.parse(result.content[0].text).error.code).to.equal(
+      expect(result.structuredContent.error.code).to.equal(
         'validation_error'
       )
       expect(client.get.called).to.be.false
@@ -720,7 +760,7 @@ describe('compile tools', function () {
         buildId: 'b1',
         page: 9,
       })
-      const { error } = JSON.parse(result.content[0].text)
+      const { error } = result.structuredContent
       expect(result.isError).to.be.true
       expect(error.details).to.deep.equal({ pageCount: 5 })
       expect(error.retryable).to.be.false
@@ -732,7 +772,7 @@ describe('compile tools', function () {
       const out = (await server.call('compile_project', { projectId: 'p1' }))
         .structuredContent
       expect(out.nextSteps.join(' ')).to.include(
-        'view_compiled_pdf_page(projectId, buildId="b1", clsiServerId="s1"'
+        'view_compiled_pdf_page page=<n> to check layout'
       )
     })
   })
@@ -845,7 +885,7 @@ describe('PDF tool options', function () {
       expect(schema.safeParse({ ...base, split: 'thirds' }).success).to.be.false
     })
 
-    it('defaults to a 1568 px grayscale page and sends it to web', async function () {
+    it('defaults to a 1024 px grayscale page and sends it to web', async function () {
       client.get.resolves(PAGE)
       await build().call('view_compiled_pdf_page', {
         projectId: 'p1',
@@ -853,7 +893,7 @@ describe('PDF tool options', function () {
         page: 2,
       })
       expect(client.get.firstCall.args[2]).to.include({
-        maxEdgePx: 1568,
+        maxEdgePx: 1024,
         grayscale: 'true',
         split: 'none',
       })
@@ -960,17 +1000,16 @@ describe('PDF tool options', function () {
       sourceMap: [],
       sourceRanges: [],
     })
-    const out = (
-      await build().call('view_compiled_pdf_page', {
-        projectId: 'p1',
-        buildId: 'b1',
-        page: 2,
-      })
-    ).structuredContent
-    expect(out.data.sourceStatus).to.equal('no_synctex')
-    expect(out.warnings).to.include(
-      'The build has no SyncTeX file, so lines cannot be matched to the page.'
+    const result = await build().call('view_compiled_pdf_page', {
+      projectId: 'p1',
+      buildId: 'b1',
+      page: 2,
+    })
+    expect(result.structuredContent.data.sourceStatus).to.equal('no_synctex')
+    expect(result.content[0].text).to.include(
+      'sourceStatus: no_synctex. The build has no SyncTeX file, so lines cannot be matched to the page.'
     )
+    expect(result.content[0].text).to.not.include('source:')
   })
 
   it('leaves defects and blocks out when the page has none', async function () {
@@ -1018,7 +1057,7 @@ describe('PDF tool options', function () {
           page: 1,
           source: [{ path: 'main.tex', startLine: 1, endLine: 20 }],
           blank: false,
-          endsAt: 0.9,
+          endsAt: 90,
           gaps: [],
           overflow: [],
           badBoxes: 0,
@@ -1029,7 +1068,7 @@ describe('PDF tool options', function () {
           page: 2,
           source: [{ path: 'tables/results.tex', startLine: 3, endLine: 9 }],
           blank: false,
-          endsAt: 0.5,
+          endsAt: 50,
           gaps: [],
           overflow: [{ side: 'right' }],
           badBoxes: 1,
@@ -1068,11 +1107,18 @@ describe('PDF tool options', function () {
         mimeType: 'image/png',
       })
       const out = result.structuredContent
-      expect(out.summary).to.include('Pages 1-2 of 5')
+      expect(out.summary).to.include('Pages 1-2/5 attached')
       expect(out.data.pages[1].source[0].path).to.equal('/tables/results.tex')
-      expect(out.warnings.join(' ')).to.include('Page 2: content past the margin')
-      expect(out.warnings.join(' ')).to.include('?? or [?] markers')
-      expect(out.warnings.join(' ')).to.not.include('Page 1')
+      expect(result.content[0].text).to.equal(
+        [
+          'Pages 1-2/5 attached',
+          'paper A4 portrait',
+          'p1  /main.tex:1-20  ends at 90%',
+          'p2  /tables/results.tex:3-9  overflow right, badBoxes 1, ?? 2, ends at 50%',
+          '→ view_compiled_pdf_page page=<a page above> buildId=b1 to see the problem at full size',
+        ].join('\n')
+      )
+      expect(out.warnings).to.be.undefined
       const { config } = build().tools.get(
         'view_compiled_pdf_overview'
       )
@@ -1090,6 +1136,30 @@ describe('PDF tool options', function () {
       ).structuredContent
       expect(out.summary).to.include('OUT OF DATE (root_changed)')
       expect(out.data.stale.reason).to.equal('root_changed')
+    })
+
+    it('renders the worst bad box and a non-mapped source status without JSON', async function () {
+      const page = {
+        ...OVERVIEW.pages[1],
+        worstBadBox: {
+          path: 'tables/results.tex',
+          line: 7,
+          message: 'Overfull \\hbox (6.1pt too wide)',
+        },
+        sourceStatus: 'partial',
+        sourceNote: 'Only some heights are mapped.',
+      }
+      client.get.resolves({ ...OVERVIEW, pages: [OVERVIEW.pages[0], page] })
+      const result = await build().call('view_compiled_pdf_overview', {
+        projectId: 'p1',
+        buildId: 'b1',
+      })
+      const text = result.content[0].text
+      expect(text).to.include(
+        'p2  /tables/results.tex:3-9  overflow right, badBoxes 1, ?? 2, ends at 50%, worst /tables/results.tex:7 Overfull \\hbox (6.1pt too wide), sourceStatus partial'
+      )
+      expect(text).not.to.include('sourceNote')
+      expect(text).not.to.include('{')
     })
   })
 
@@ -1123,7 +1193,7 @@ describe('PDF tool options', function () {
       expect(client.get.firstCall.args[1]).to.equal('/projects/p1/compile/pdf-search')
       expect(client.get.firstCall.args[2]).to.include({ query: 'Figure 3', toPage: 5 })
       const out = result.structuredContent
-      expect(out.summary).to.include('1 match(es) for "Figure 3"')
+      expect(out.summary).to.include('1 matches on pages 2')
       expect(out.data.matches[0].path).to.equal('/main.tex')
       expect(out.nextSteps[0]).to.include('page=2')
     })
@@ -1137,7 +1207,7 @@ describe('PDF tool options', function () {
           query: 'Nope',
         })
       ).structuredContent
-      expect(out.summary).to.include('No match for "Nope"')
+      expect(out.summary).to.include('No matches')
       expect(out.nextSteps).to.be.undefined
     })
   })
@@ -1239,5 +1309,376 @@ describe('PDF tool options', function () {
       expect(result.structuredContent.summary).to.include('No page changed')
       expect(result.structuredContent.nextSteps).to.be.undefined
     })
+  })
+})
+
+describe('compact text', function () {
+  let client, sleep, server
+
+  beforeEach(function () {
+    client = { get: sinon.stub(), post: sinon.stub(), requestBinary: sinon.stub() }
+    sleep = sinon.stub().resolves()
+    server = fakeServer()
+    registerCompileTools(server, { client, staticToken: '', sleep })
+  })
+
+  it('takes the diagnostics from the compile response, with no second read', async function () {
+    client.post.resolves({
+      ...PDF_BUILD,
+      diagnostics: diagnostics({
+        counts: { ...NO_PROBLEMS, errors: 1 },
+        errors: [{ source: 'latex', file: 'main.tex', line: 2, message: 'Oops' }],
+      }),
+    })
+    const result = await server.call('compile_project', { projectId: 'p1' })
+    expect(client.get.called).to.be.false
+    expect(result.structuredContent.data.errors[0]).to.include({ path: '/main.tex', line: 2 })
+    expect(client.post.firstCall.args[2]).to.deep.equal({ diagnostics: true })
+  })
+
+  it('reports the diagnosticsError as the log problem when the fallback read also fails', async function () {
+    client.post.resolves({ ...PDF_BUILD, diagnosticsError: 'log is too large' })
+    client.get.rejects(new OverleafApiError('upstream_error', 'gone', 502))
+    const out = (await server.call('compile_project', { projectId: 'p1' })).structuredContent
+    expect(out.data.logChecked).to.equal(false)
+    expect(out.warnings.join(' ')).to.include('log is too large')
+  })
+
+  it('groups compile errors by message with every place they occur, and excerpts the first three', async function () {
+    client.post.resolves(PDF_BUILD)
+    client.get.resolves(
+      diagnostics({
+        counts: { ...NO_PROBLEMS, errors: 3 },
+        errors: [
+          { source: 'latex', file: 'main.tex', line: 3, message: 'Undefined control sequence.', context: 'l.3 \\foo\nmore context\nthird line' },
+          { source: 'latex', file: 'chapters/a.tex', line: 7, message: 'Undefined control sequence.', context: 'l.7 \\bar' },
+          { source: 'latex', file: null, line: null, message: 'File missing.' },
+        ],
+      })
+    )
+    const result = await server.call('compile_project', { projectId: 'p1' })
+    const text = result.content[0].text
+    expect(text).to.include('E Undefined control sequence. — /main.tex:3; /chapters/a.tex:7')
+    expect(text).to.include('    l.3 \\foo\n    more context')
+    expect(text).to.not.include('third line')
+    expect(text).to.include('E File missing. — (TeX system file)')
+    expect(text).to.not.include('"message"')
+    expect(text).to.not.include('clsiServerId')
+    expect(text.split('\n')[0]).to.equal(
+      'success_with_errors: 3 errors, 0 warnings, 0 bad boxes  build b1'
+    )
+  })
+
+  it('caps error groups at 30 and says how many more there are', async function () {
+    client.post.resolves(PDF_BUILD)
+    client.get.resolves(
+      diagnostics({
+        counts: { ...NO_PROBLEMS, errors: 35 },
+        errors: Array.from({ length: 35 }, (_, i) => ({
+          source: 'latex',
+          file: 'main.tex',
+          line: i + 1,
+          message: `Error ${i}`,
+        })),
+      })
+    )
+    const text = (await server.call('compile_project', { projectId: 'p1' })).content[0].text
+    expect(text).to.include('E Error 29 — /main.tex:30')
+    expect(text).to.not.include('E Error 30')
+    expect(text).to.include('… 5 more error groups')
+  })
+
+  it('summarises log warnings: undefined keys on one line each, other kinds counted', async function () {
+    client.post.resolves(PDF_BUILD)
+    client.get.resolves(
+      diagnostics({
+        counts: { ...NO_PROBLEMS, warnings: 5, undefinedReferences: 3 },
+        warnings: [
+          { source: 'latex', kind: 'undefined-reference', file: 'main.tex', line: 1, message: "Reference `fig:a' undefined" },
+          { source: 'latex', kind: 'undefined-reference', file: 'main.tex', line: 2, message: "Reference `fig:b' undefined" },
+          { source: 'latex', kind: 'undefined-reference', file: 'main.tex', line: 3, message: "Reference `fig:a' undefined" },
+          { source: 'latex', kind: 'rerun', file: 'main.tex', line: null, message: 'Label(s) may have changed' },
+          { source: 'latex', kind: 'rerun', file: 'main.tex', line: null, message: 'Second rerun notice' },
+        ],
+      })
+    )
+    const text = (await server.call('compile_project', { projectId: 'p1' })).content[0].text
+    expect(text).to.include(
+      'undefined refs: fig:a (/main.tex:1, /main.tex:3), fig:b (/main.tex:2)'
+    )
+    expect(text).to.include('W rerun ×2: Label(s) may have changed')
+    expect(text).to.not.include('Second rerun notice')
+  })
+
+  it('drops advice the text already says, and keeps the rest with an advice prefix', async function () {
+    client.post.resolves({ ...PDF_BUILD, status: 'failure' })
+    client.get.resolves(
+      diagnostics({
+        counts: { ...NO_PROBLEMS, errors: 1, undefinedReferences: 1 },
+        errors: [{ source: 'latex', file: 'main.tex', line: 3, message: 'Missing $' }],
+        advice: [
+          'Fix the errors from the top of the list. Later errors are often caused by the first one.',
+          'Undefined references: check that each \\ref target has a matching \\label.',
+          'LaTeX stopped on a fatal error and produced no PDF. Fix the first entry in errors.',
+        ],
+      })
+    )
+    const text = (await server.call('compile_project', { projectId: 'p1' })).content[0].text
+    expect(text).to.include(
+      'advice: LaTeX stopped on a fatal error and produced no PDF. Fix the first entry in errors.'
+    )
+    expect(text).to.not.include('advice: Fix the errors from the top')
+    expect(text).to.not.include('advice: Undefined references')
+  })
+
+  it('prints the validation problems as compact JSON in the text', async function () {
+    client.post.resolves({
+      status: 'validation-problems',
+      validationProblems: { mainFile: 'no main file specified' },
+      outputFiles: [],
+    })
+    const result = await server.call('compile_project', { projectId: 'p1' })
+    expect(result.content[0].text.split('\n')[0]).to.equal(
+      'validation-problems: no build, Overleaf rejected the project'
+    )
+    expect(result.content[0].text).to.include('validation: {"mainFile":"no main file specified"}')
+  })
+
+  it('reads a window of the raw log verbatim, defaulting to the last 200 lines', async function () {
+    client.get.resolves({
+      log: 'alpha\nBeta line\ngamma',
+      startLine: 201,
+      endLine: 203,
+      totalLines: 1240,
+      truncated: true,
+    })
+    const result = await server.call('get_compile_log', { projectId: 'p1', raw: true })
+    expect(client.get.firstCall.args[2]).to.include({ maxLines: 200 })
+    expect(client.get.firstCall.args[2].buildId).to.be.undefined
+    expect(result.content[0].text).to.equal(
+      'log lines 201-203/1240\nalpha\nBeta line\ngamma\n→ get_compile_log raw=true startLine=204'
+    )
+    expect(result.structuredContent.data.log).to.equal('alpha\nBeta line\ngamma')
+  })
+
+  it('filters the raw window with grep, numbering each matching line', async function () {
+    client.get.resolves({
+      log: 'alpha\nBeta line\ngamma beta',
+      startLine: 201,
+      endLine: 203,
+      totalLines: 1240,
+    })
+    const result = await server.call('get_compile_log', {
+      projectId: 'p1',
+      raw: true,
+      grep: 'BETA',
+    })
+    expect(result.content[0].text).to.equal(
+      'log lines 201-203/1240, 2 match(es)\n202: Beta line\n203: gamma beta\n→ get_compile_log raw=true startLine=204'
+    )
+    expect(result.content[0].text).to.not.include('alpha')
+  })
+
+  it('renders the parsed log with bad boxes capped at 20 lines', async function () {
+    client.get.resolves(
+      diagnostics({
+        counts: { ...NO_PROBLEMS, badBoxes: 25 },
+        badBoxes: Array.from({ length: 25 }, (_, i) => ({
+          file: 'main.tex',
+          line: i + 1,
+          message: `Overfull ${i}`,
+        })),
+      })
+    )
+    const result = await server.call('get_compile_log', { projectId: 'p1' })
+    const lines = result.content[0].text.split('\n')
+    expect(lines[0]).to.equal('0 errors, 0 warnings, 25 bad boxes')
+    expect(lines[1]).to.equal('B /main.tex:1 Overfull 0')
+    expect(lines).to.include('… 5 more bad boxes')
+    expect(lines.filter(l => l.startsWith('B ')).length).to.equal(20)
+  })
+
+  it('reads the latest build when no buildId is given, and reports the build it used', async function () {
+    client.get.resolves(diagnostics({ buildId: 'b7' }))
+    const out = (await server.call('get_compile_log', { projectId: 'p1' })).structuredContent
+    expect(client.get.firstCall.args[2].buildId).to.be.undefined
+    expect(out.data.buildId).to.equal('b7')
+  })
+
+  it('compacts the word count into one line of body, heading and maths counts', async function () {
+    client.get.resolves({
+      wordCount: { textWords: 1200, headWords: 30, outside: 0, elements: 4, mathInline: 0, mathDisplay: 12 },
+    })
+    const result = await server.call('get_word_count', { projectId: 'p1' })
+    expect(result.content[0].text).to.equal(
+      'project: 1200 words\nbody 1200, headings 30, captions/floats 4, display math 12'
+    )
+  })
+
+  it('writes the source ranges of a page as path:start-end lines, without the raw source lines', async function () {
+    client.get.resolves({
+      synctex: {
+        code: [
+          { file: 'main.tex', line: 10 },
+          { file: 'main.tex', line: 11 },
+          { file: 'chapters/intro.tex', line: 40 },
+        ],
+      },
+    })
+    const result = await server.call('sync_pdf_source', { projectId: 'p1', page: 2 })
+    expect(result.content[0].text).to.equal(
+      'Page 2: 2 source span(s)\n/main.tex:10-11\n/chapters/intro.tex:40\n→ read_file path=/main.tex startLine=10 endLine=11'
+    )
+    expect(result.structuredContent.data.sourceLines).to.have.length(3)
+  })
+
+  it('writes the PDF positions of a source line as rounded page, x and y', async function () {
+    client.get.resolves({
+      synctex: { pdf: [{ page: 3, h: 72.4, v: 400.6 }] },
+    })
+    const result = await server.call('sync_pdf_source', {
+      projectId: 'p1',
+      path: '/chapters/intro.tex',
+      line: 7,
+    })
+    expect(result.content[0].text).to.equal(
+      '/chapters/intro.tex line 7 is on page 3\npage 3 x72 y401'
+    )
+  })
+
+  describe('view_compiled_pdf_page text', function () {
+    const PAGE = {
+      buildId: 'b1',
+      page: 2,
+      pageCount: 5,
+      pageSize: { width: 595, height: 842 },
+      region: 'full',
+      span: { top: 0, bottom: 100 },
+      located: null,
+      sourceMap: [
+        { y: 10, path: 'main.tex', line: 3 },
+        { y: 12, path: 'main.tex', line: 5 },
+        { y: 40, path: 'a.tex', line: 1 },
+      ],
+      sourceRanges: [{ path: 'main.tex', startLine: 3, endLine: 5 }],
+      badBoxes: [],
+      sourceStatus: 'mapped',
+      image: { mediaType: 'image/png', data: 'AAA=', bytes: 3, dpi: 150, width: 1240, height: 1754 },
+    }
+
+    it('collapses consecutive source rows in one file and lists blocks and defects one per line', async function () {
+      client.get.resolves({
+        ...PAGE,
+        blocks: [{ id: 'B1', page: 2, path: 'main.tex', line: 3, endLine: 9 }],
+        defects: [
+          {
+            id: 'D1',
+            category: 'overflow',
+            severity: 'error',
+            evidence: 'Table runs 12 pt past the margin',
+            path: 'tables/r.tex',
+            line: 12,
+            bannedFixes: ['\\resizebox'],
+          },
+        ],
+      })
+      const result = await server.call('view_compiled_pdf_page', {
+        projectId: 'p1',
+        buildId: 'b1',
+        page: 2,
+      })
+      const text = result.content[0].text
+      expect(text).to.include('Page 2/5 attached')
+      expect(text).to.include('source:\n10-12% /main.tex:3-5\n40% /a.tex:1')
+      expect(text).to.include('B1 /main.tex:3-9')
+      expect(text).to.include('D1 overflow error /tables/r.tex:12 Table runs 12 pt past the margin')
+      expect(text).to.include('    banned: \\resizebox')
+      expect(text).to.not.include('null')
+      expect(text).to.not.include('mimeType')
+      expect(text).to.not.include('AAA=')
+    })
+
+    it('caps the source rows at 12', async function () {
+      client.get.resolves({
+        ...PAGE,
+        sourceMap: Array.from({ length: 14 }, (_, i) => ({
+          y: i * 5,
+          path: `f${i}.tex`,
+          line: 1,
+        })),
+      })
+      const text = (
+        await server.call('view_compiled_pdf_page', { projectId: 'p1', buildId: 'b1', page: 2 })
+      ).content[0].text
+      expect(text).to.include('… 2 more')
+      expect(text.split('\n').filter(l => l.includes('.tex:1')).length).to.equal(12)
+    })
+  })
+
+  it('writes the diff summary and the unchanged pages as runs, with no image metadata', async function () {
+    client.get.resolves({
+      changed: true,
+      beforeBuildId: 'b0',
+      afterBuildId: 'b1',
+      pageCount: { before: 6, after: 6 },
+      pages: [{ page: 2, status: 'changed', regions: [], sourceRanges: [] }],
+      unchangedPages: [1, 3, 4, 5, 6],
+      summary: ['Page 2 changed: changed 40%-50% of page height.'],
+      image: { mimeType: 'image/png', data: 'DDD=', width: 800, height: 1100, dpi: 100, pages: [2] },
+    })
+    const result = await server.call('diff_compiled_pdf', { projectId: 'p1' })
+    expect(result.content[0].text).to.equal(
+      [
+        '1 of 6 page(s) changed',
+        'Page 2 changed: changed 40%-50% of page height.',
+        'unchanged: 1,3-6',
+        '→ view_compiled_pdf_page page=2 to see the change at full size',
+      ].join('\n')
+    )
+  })
+
+  it('writes one line per search match, with its page, height, source and context', async function () {
+    client.get.resolves({
+      query: 'Figure 3',
+      pageCount: 5,
+      matchCount: 2,
+      pages: [2, 4],
+      matches: [
+        { page: 2, y: 40.4, text: 'Figure 3', context: 'as shown in Figure 3 below', path: 'main.tex', line: 17 },
+        { page: 4, y: null, text: 'Figure 3', path: null, line: null },
+      ],
+      truncated: false,
+    })
+    const result = await server.call('search_compiled_pdf', {
+      projectId: 'p1',
+      buildId: 'b1',
+      query: 'Figure 3',
+    })
+    expect(result.content[0].text.split('\n')).to.deep.equal([
+      '2 matches on pages 2,4',
+      'p2 40% /main.tex:17  Figure 3 | as shown in Figure 3 below',
+      'p4  Figure 3',
+      '→ view_compiled_pdf_page page=2 buildId=b1 to see the match',
+    ])
+  })
+
+  it('keeps the PDF download to one summary line', async function () {
+    client.requestBinary.resolves({ contentType: 'application/pdf', base64: 'JVBERi0=' })
+    const result = await server.call('get_compile_pdf', { projectId: 'p1' })
+    expect(result.content[0].text).to.equal('PDF: 5 bytes')
+    expect(result.structuredContent.data.buildId).to.be.null
+  })
+
+  it('names the block location in one summary line', async function () {
+    client.get.resolves({ path: 'tables/results.tex', line: 12, endLine: 20 })
+    const result = await server.call('resolve_pdf_block', {
+      projectId: 'p1',
+      page: 2,
+      blockId: 'B3',
+    })
+    expect(result.content[0].text.split('\n')[0]).to.equal(
+      'typeset at /tables/results.tex:12-20'
+    )
+    expect(result.content[0].text).to.not.include('B3')
   })
 })

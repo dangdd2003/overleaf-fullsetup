@@ -29,7 +29,14 @@ function sealProvider(userId, slot, incoming, existing) {
 
   const type = String(incoming.type)
   const rawBaseUrl = typeof incoming.baseUrl === 'string' ? incoming.baseUrl.trim() : ''
-  const baseUrl = rawBaseUrl ? normalizeProviderBaseUrl(type, rawBaseUrl) : ''
+  let baseUrl = rawBaseUrl
+  if (rawBaseUrl) {
+    try {
+      baseUrl = normalizeProviderBaseUrl(type, rawBaseUrl)
+    } catch {
+      // Keep the raw value so a malformed URL does not fail the whole save
+    }
+  }
 
   return {
     type,

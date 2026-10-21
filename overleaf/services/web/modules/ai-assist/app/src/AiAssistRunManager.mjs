@@ -2750,7 +2750,8 @@ export class AiAssistRunManager {
         controller.signal.aborted ||
         err.name === "AbortError" ||
         err.code === "aborted" ||
-        err.code === "ERR_ABORTED"
+        err.code === "ERR_ABORTED" ||
+        err.message?.includes("aborted")
       ) {
         await emitEvent({ type: "turnFinished", reason: "aborted" });
         await this.store.updateStatus(runId, "stopped");

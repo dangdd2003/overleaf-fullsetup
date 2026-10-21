@@ -441,7 +441,8 @@ describe('ToolCallDetailView', function () {
     expect(screen.getByText(/Zoomed on/)).to.exist
     expect(screen.getByText('main.tex:40–52')).to.exist
     expect(screen.getByText(/continues on page 4/)).to.exist
-    expect(screen.getByText('5% down:')).to.exist
+    expect(screen.getByText('At 5%:')).to.exist
+    expect(screen.getByText('At 35%:')).to.exist
     expect(screen.getByText('main.tex:88')).to.exist
     expect(screen.getAllByText('tables/results.tex:12')).to.have.length(2)
     expect(screen.getByText(/Overfull \\hbox/)).to.exist
@@ -551,11 +552,13 @@ describe('ToolCallDetailView', function () {
     expect(screen.getByText('p3')).to.exist
     expect(screen.getByText('ends 55% down')).to.exist
     expect(screen.getByText('p4')).to.exist
-    expect(screen.getByText('12mm past right margin')).to.exist
+    expect(screen.getByText('12 mm past right margin')).to.exist
     expect(screen.getByText('p5')).to.exist
     expect(screen.getByText('blank')).to.exist
     expect(screen.getByText('p6')).to.exist
-    expect(screen.getByText('empty 30–58% · 2× ?? · 1× [?]')).to.exist
+    expect(
+      screen.getByText('empty 30–58% · 2 unresolved refs · 1 unresolved cite')
+    ).to.exist
     expect(screen.getByText('No layout issues')).to.exist
     expect(container.querySelectorAll('.ai-assist-pdf-page').length).to.equal(6)
   })
@@ -623,12 +626,32 @@ describe('ToolCallDetailView', function () {
       },
     }
     const { container } = render(<ToolCallDetailView call={call} />)
+    expect(screen.getByText('10 matches for "Figure 3" · pages 1–2')).to.exist
     expect(screen.getByText('p1 · 41%')).to.exist
     expect(screen.getByText('main.tex:42')).to.exist
     expect(screen.getByText('p2 · 15%')).to.exist
     expect(screen.getByText('figs.tex')).to.exist
     expect(container.querySelector('mark')?.textContent).to.equal('Figure 3')
     expect(screen.getByText('showing 2 of 10')).to.exist
+  })
+
+  it('opens search_compiled_pdf with a header naming the single match and its page', function () {
+    const call = {
+      id: '18b',
+      name: 'search_compiled_pdf',
+      args: { query: 'Table' },
+      result: {
+        query: 'Table',
+        matchCount: 1,
+        matches: [
+          { page: 4, y: 12, context: 'Table 1 lists', path: 'main.tex', line: 60 },
+        ],
+      },
+    }
+    const { container } = render(<ToolCallDetailView call={call} />)
+    expect(screen.getByText('1 match for "Table" · page 4')).to.exist
+    expect(container.querySelector('.ai-assist-pdf-overview-header')).to.exist
+    expect(container.querySelectorAll('.ai-assist-search-hit')).to.have.length(1)
   })
 
   it('renders search_compiled_pdf note when no matches found', function () {
@@ -642,8 +665,9 @@ describe('ToolCallDetailView', function () {
         matches: [],
       },
     }
-    render(<ToolCallDetailView call={call} />)
-    expect(screen.getByText('No matches found for "nonexistent".')).to.exist
+    const { container } = render(<ToolCallDetailView call={call} />)
+    expect(screen.getByText('No matches for "nonexistent"')).to.exist
+    expect(container.querySelector('.ai-assist-pdf-overview-header')).to.exist
   })
 })
 

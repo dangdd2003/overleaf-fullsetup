@@ -76,12 +76,9 @@ function _fileLink(baseUrl, projectId, fileId) {
   // unauthenticated GET, so the URL carries a short-lived token scoped to this
   // project + file. The parameter must be named `token` for git-bridge's
   // resource cache to strip it from its cache keys.
-  let url = `${baseUrl}/api/v0/docs/${projectId}/file/${fileId}`
+  const url = `${baseUrl}/api/v0/docs/${projectId}/file/${fileId}`
   const token = GitBridgeFileTokenManager.createFileToken(projectId, fileId)
-  if (token) {
-    url += `?token=${encodeURIComponent(token)}`
-  }
-  return url
+  return _appendToken(url, token)
 }
 
 /**
@@ -89,12 +86,14 @@ function _fileLink(baseUrl, projectId, fileId) {
  * an older version that have no current copy. Same token rules as _fileLink.
  */
 function _blobLink(baseUrl, projectId, hash) {
-  let url = `${baseUrl}/api/v0/docs/${projectId}/blob/${hash}`
+  const url = `${baseUrl}/api/v0/docs/${projectId}/blob/${hash}`
   const token = GitBridgeFileTokenManager.createBlobToken(projectId, hash)
-  if (token) {
-    url += `?token=${encodeURIComponent(token)}`
-  }
-  return url
+  return _appendToken(url, token)
+}
+
+/** Appends the `token` query parameter when a token was minted. */
+function _appendToken(url, token) {
+  return token ? `${url}?token=${encodeURIComponent(token)}` : url
 }
 
 /** Maps the content hash of each current binary file to its file id. */

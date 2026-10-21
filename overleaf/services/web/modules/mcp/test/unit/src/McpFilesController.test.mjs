@@ -1,12 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { EventEmitter } from 'node:events'
+import crypto from 'node:crypto'
 import { PassThrough } from 'node:stream'
 
 const ProjectEntityHandler = {
   promises: { getAllEntities: vi.fn() },
 }
 const DocstoreManager = {
-  promises: { getDoc: vi.fn() },
+  promises: { getDoc: vi.fn(), getAllDocs: vi.fn() },
 }
 const DocumentUpdaterHandler = {
   promises: { setDocument: vi.fn(), flushProjectToMongo: vi.fn().mockResolvedValue() },
@@ -439,6 +440,195 @@ describe('McpFilesController.getDoc', () => {
     )
     expect(r.statusCode).toBe(400)
     expect(r.body.hint).toMatch(/download_file/)
+  })
+})
+
+describe('McpFilesController.readDocs', () => {
+  const sha = lines =>
+    crypto.createHash('sha256').update(lines.join('\n')).digest('hex')
+
+  const project = (docs, files = []) =>
+    ProjectEntityHandler.promises.getAllEntities.mockResolvedValue({
+      docs: docs.map(([p, id]) => ({ path: p, doc: { _id: id } })),
+      files: files.map(p => ({ path: p, file: { _id: 'f-' + p } })),
+      folders: [],
+    })
+
+  const run = async b => {
+    const r = res()
+    await McpFilesController.readDocs(
+      { mcpUserId: 'u1', params: { projectId: 'p1' }, body: b },
+      r
+    )
+    return r
+  }
+
+  it('returns documents in the order of paths, with missing entries', async () => {
+    project([
+      ['/a.tex', 'ida'],
+      ['/b.tex', 'idb'],
+    ], ['/img/x.png'])
+    DocstoreManager.promises.getAllDocs.mockResolvedValue([
+      { _id: 'ida', lines: ['a1'] },
+      { _id: 'idb', lines: ['b1', 'b2'] },
+    ])
+    const r = await run({
+      paths: ['b.tex', '/nope.tex', '/img/x.png', '/a.tex'],
+    })
+    expect(r.statusCode).toBe(200)
+    expect(r.body.documents.map(d => d.path)).toEqual(['/b.tex', '/a.tex'])
+    expect(r.body.missing).toEqual([
+      { path: '/nope.tex', reason: 'not_found' },
+      { path: '/img/x.png', reason: 'binary' },
+    ])
+  })
+
+  it('applies the line range to every document and clamps endLine', async () => {
+    project([
+      ['/a.tex', 'ida'],
+      ['/b.tex', 'idb'],
+    ])
+    DocstoreManager.promises.getAllDocs.mockResolvedValue([
+      { _id: 'ida', lines: ['a', 'b', 'c', 'd'] },
+      { _id: 'idb', lines: ['x', 'y'] },
+    ])
+    const r = await run({
+      paths: ['/a.tex', '/b.tex'],
+      startLine: 2,
+      endLine: 3,
+    })
+    expect(r.body.documents[0]).toEqual({
+      path: '/a.tex',
+      content: 'b\nc',
+      totalLines: 4,
+      startLine: 2,
+      endLine: 3,
+      hash: sha(['a', 'b', 'c', 'd']),
+    })
+    expect(r.body.documents[1]).toEqual({
+      path: '/b.tex',
+      content: 'y',
+      totalLines: 2,
+      startLine: 2,
+      endLine: 2,
+      hash: sha(['x', 'y']),
+    })
+  })
+
+  it('reports an error entry for a document past the range start', async () => {
+    project([
+      ['/a.tex', 'ida'],
+      ['/b.tex', 'idb'],
+    ])
+    DocstoreManager.promises.getAllDocs.mockResolvedValue([
+      { _id: 'ida', lines: ['a', 'b'] },
+      { _id: 'idb', lines: ['x'] },
+    ])
+    const r = await run({ paths: ['/a.tex', '/b.tex'], startLine: 2 })
+    expect(r.statusCode).toBe(200)
+    expect(r.body.documents[0].content).toBe('b')
+    expect(r.body.documents[1]).toEqual({
+      path: '/b.tex',
+      totalLines: 1,
+      error: 'startLine 2 is past the end (1 lines)',
+    })
+  })
+
+  it('filters by extension case-insensitively, sorted by path', async () => {
+    project([
+      ['/z.TEX', 'idz'],
+      ['/a.tex', 'ida'],
+      ['/notes.md', 'idn'],
+    ])
+    DocstoreManager.promises.getAllDocs.mockResolvedValue([
+      { _id: 'ida', lines: ['a'] },
+      { _id: 'idz', lines: ['z'] },
+      { _id: 'idn', lines: ['n'] },
+    ])
+    const r = await run({ ext: '.tex' })
+    expect(r.body.documents.map(d => d.path)).toEqual(['/a.tex', '/z.TEX'])
+    expect(r.body.missing).toEqual([])
+  })
+
+  it('returns every document when neither paths nor ext is given', async () => {
+    project([
+      ['/b.tex', 'idb'],
+      ['/a.md', 'ida'],
+    ])
+    DocstoreManager.promises.getAllDocs.mockResolvedValue([
+      { _id: 'ida', lines: ['a'] },
+      { _id: 'idb', lines: ['b'] },
+    ])
+    const r = await run({})
+    expect(r.body.documents.map(d => d.path)).toEqual(['/a.md', '/b.tex'])
+  })
+
+  it('treats null paths and ext as absent', async () => {
+    project([
+      ['/b.tex', 'idb'],
+      ['/a.md', 'ida'],
+    ])
+    DocstoreManager.promises.getAllDocs.mockResolvedValue([
+      { _id: 'ida', lines: ['a'] },
+      { _id: 'idb', lines: ['b'] },
+    ])
+    const r = await run({ paths: null, ext: null })
+    expect(r.statusCode).toBe(200)
+    expect(r.body.documents.map(d => d.path)).toEqual(['/a.md', '/b.tex'])
+  })
+
+  it('fetches all doc lines once and falls back to getDoc for missing ids', async () => {
+    project([
+      ['/a.tex', 'ida'],
+      ['/b.tex', 'idb'],
+    ])
+    DocstoreManager.promises.getAllDocs.mockResolvedValue([
+      { _id: 'ida', lines: ['a'] },
+    ])
+    DocstoreManager.promises.getDoc.mockResolvedValue({ lines: ['b'] })
+    const r = await run({ paths: ['/a.tex', '/b.tex'] })
+    expect(DocstoreManager.promises.getAllDocs).toHaveBeenCalledTimes(1)
+    expect(DocstoreManager.promises.getAllDocs).toHaveBeenCalledWith('p1')
+    expect(DocstoreManager.promises.getDoc).toHaveBeenCalledTimes(1)
+    expect(DocstoreManager.promises.getDoc).toHaveBeenCalledWith('p1', 'idb')
+    expect(r.body.documents.map(d => d.content)).toEqual(['a', 'b'])
+  })
+
+  it('returns an empty result without reading docstore when nothing matches', async () => {
+    project([])
+    const r = await run({ paths: [] })
+    expect(r.body).toEqual({ documents: [], missing: [] })
+    expect(DocstoreManager.promises.getAllDocs).not.toHaveBeenCalled()
+  })
+
+  it('treats a document with no lines as one empty line', async () => {
+    project([['/e.tex', 'ide']])
+    DocstoreManager.promises.getAllDocs.mockResolvedValue([
+      { _id: 'ide', lines: [] },
+    ])
+    const r = await run({ paths: ['/e.tex'] })
+    expect(r.body.documents[0]).toMatchObject({ content: '', totalLines: 1 })
+  })
+
+  it.each([
+    ['paths not an array', { paths: '/a.tex' }],
+    ['a non-string path', { paths: [1] }],
+    ['an empty path', { paths: [''] }],
+    [
+      'more than 200 paths',
+      { paths: Array.from({ length: 201 }, (_, i) => `/f${i}.tex`) },
+    ],
+    ['a zero startLine', { paths: ['/a.tex'], startLine: 0 }],
+    ['a fractional endLine', { endLine: 1.5 }],
+    ['endLine before startLine', { startLine: 5, endLine: 2 }],
+    ['a .. segment', { paths: ['/a/../../b.tex'] }],
+    ['an empty ext', { ext: '  ' }],
+    ['an ext of only a dot', { ext: '.' }],
+  ])('rejects %s with a validation error', async (_name, b) => {
+    const r = await run(b)
+    expect(r.statusCode).toBe(400)
+    expect(r.body.code).toBe('validation_error')
+    expect(DocstoreManager.promises.getAllDocs).not.toHaveBeenCalled()
   })
 })
 

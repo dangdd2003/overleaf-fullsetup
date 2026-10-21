@@ -47,6 +47,58 @@ const diffChange = looseObject({
   author: z.string().nullable().describe('Who made the change, when known'),
 })
 
+/** `2026-01-01T00:01:00.000Z` -> `2026-01-01 00:01`. */
+function shortTime(iso) {
+  return String(iso ?? '')
+    .replace('T', ' ')
+    .slice(0, 16)
+}
+
+/** One history group on one line: versions, time, authors, origin, labels, paths. */
+function renderEntry(entry) {
+  const changes = (entry.changes ?? [])
+    .map(change =>
+      change.change === 'edited' ? change.path : `${change.path} ${change.change}`
+    )
+    .join('; ')
+  return [
+    `v${entry.fromVersion}→v${entry.toVersion}`,
+    shortTime(entry.endedAt),
+    (entry.authors ?? []).join(', '),
+    entry.origin && `[${entry.origin}]`,
+    entry.labels?.length && `[labels: ${entry.labels.join(', ')}]`,
+    changes,
+  ]
+    .filter(Boolean)
+    .join('  ')
+}
+
+/**
+ * Unified-diff style text: `+<line> text` for insertions and `-<line> text`
+ * for deletions. An author is printed as `(name)` on its own line when it
+ * differs from the previous change.
+ */
+function renderDiff(changes) {
+  const out = []
+  let author = null
+  for (const change of changes) {
+    const who = change.author ?? null
+    if (who !== author) {
+      author = who
+      if (who) out.push(`(${who})`)
+    }
+    const insert = change.type === 'insert'
+    String(change.text ?? '')
+      .split('\n')
+      .forEach((text, i) => {
+        const line = insert ? change.line + i : change.line
+        const sign = insert ? '+' : '-'
+        out.push(text === '' ? `${sign}${line}` : `${sign}${line} ${text}`)
+      })
+  }
+  return out.join('\n')
+}
+
 /**
  * Register the version-history tools: list, diff and restore.
  *
@@ -62,13 +114,13 @@ export function registerHistoryTools(server, { client, staticToken }) {
     {
       title: 'List project history',
       description:
-        'List the recent versions of a project, newest first: each entry is a group of changes with fromVersion/toVersion, time, authors and every path it touched. Pass path to keep only entries that touched one file. Use it to find what changed recently, then get_history_diff to see the text, or restore_file to undo. Page back with before set to data.nextBefore.',
+        'List recent project versions, newest first, each a group of changes with its paths. Page back with before.',
       annotations: READ_ONLY,
       inputSchema: z.object({
         projectId,
         path: docPath
           .optional()
-          .describe('Only entries that touched this path, e.g. /main.tex'),
+          .describe('Only entries touching this path, e.g. /main.tex'),
         limit: z
           .number()
           .int()
@@ -79,7 +131,7 @@ export function registerHistoryTools(server, { client, staticToken }) {
           .number()
           .int()
           .optional()
-          .describe('Older page: pass data.nextBefore from the previous call'),
+          .describe('Older page: nextBefore from the previous call'),
       }),
       outputSchema: envelope(
         looseObject({
@@ -99,24 +151,12 @@ export function registerHistoryTools(server, { client, staticToken }) {
         { path: path === undefined ? undefined : requireFilePath(path), limit, before }
       )
       const entries = data.entries ?? []
-      const latest = entries[0]
+      const older = data.nextBefore != null
       return okResult({
-        summary: entries.length
-          ? `${entries.length} history entr${entries.length === 1 ? 'y' : 'ies'}${
-              data.path ? ` touching ${data.path}` : ''
-            }; latest is version ${latest.toVersion} at ${latest.endedAt}.`
-          : `No history entries${data.path ? ` touching ${data.path}` : ''} in this page.`,
+        summary: `${entries.length} entries${older ? `, older: before=${data.nextBefore}` : ''}`,
+        text: entries.map(renderEntry).join('\n'),
         data: { entries, nextBefore: data.nextBefore ?? null, path: data.path ?? null },
-        nextSteps: [
-          ...(latest
-            ? [
-                `get_history_diff(projectId="${id}", path="${latest.changes?.[0]?.path ?? '/main.tex'}", fromVersion=${latest.fromVersion}, toVersion=${latest.toVersion}) to see what changed`,
-              ]
-            : []),
-          ...(data.nextBefore != null
-            ? [`list_history(projectId="${id}", before=${data.nextBefore}) for older entries`]
-            : []),
-        ],
+        nextSteps: older ? [`list_history before=${data.nextBefore}`] : undefined,
       })
     })
   )
@@ -126,7 +166,7 @@ export function registerHistoryTools(server, { client, staticToken }) {
     {
       title: 'Diff a document between versions',
       description:
-        'Show what changed in one text document between two history versions: each insertion or deletion with the 1-based line it sits on in the newer version. Versions come from list_history; to see a single entry, pass its fromVersion and toVersion.',
+        'Show the text insertions and deletions in one document between two history versions. Versions come from list_history.',
       annotations: READ_ONLY,
       inputSchema: z.object({
         projectId,
@@ -154,19 +194,15 @@ export function registerHistoryTools(server, { client, staticToken }) {
         { path: requireFilePath(path), fromVersion, toVersion }
       )
       const changes = data.changes ?? []
-      const summary = data.binary
-        ? `${data.path} is a binary file, so there is no text diff between versions ${fromVersion} and ${toVersion}.`
-        : `${data.path}: ${changes.length} change(s) between versions ${fromVersion} and ${toVersion} (+${data.insertedChars} / -${data.deletedChars} characters).`
+      const range = `${data.path} v${fromVersion}→v${toVersion}`
       return okResult({
-        summary,
+        summary: data.binary
+          ? `${range}: binary file, no text diff`
+          : `${range}: ${changes.length} changes +${data.insertedChars ?? 0}/-${data.deletedChars ?? 0} chars`,
+        text: renderDiff(changes),
         data,
         warnings: data.truncated
           ? ['Only part of the changes is listed; diff a narrower version range for the rest.']
-          : undefined,
-        nextSteps: changes.length
-          ? [
-              `restore_file(projectId="${id}", path="${data.path}", version=${fromVersion}) to undo these changes`,
-            ]
           : undefined,
       })
     })
@@ -177,12 +213,12 @@ export function registerHistoryTools(server, { client, staticToken }) {
     {
       title: 'Restore a file from history',
       description:
-        "Put one file back to its content at a history version: undo edits, or bring back a deleted file at its old path. The restore is itself recorded in history, so it can be undone too. To undo a list_history entry, restore to that entry's fromVersion.",
+        'Put one file back to its content at a history version, undoing edits or bringing back a deleted file. The restore is itself recorded in history.',
       annotations: { ...WRITES, destructiveHint: true, idempotentHint: true },
       inputSchema: z.object({
         projectId,
         path: docPath.describe('File to restore, e.g. /main.tex'),
-        version: version.describe('Version whose content to restore, from list_history'),
+        version: version.describe('Version to restore, from list_history'),
       }),
       outputSchema: envelope(
         looseObject({
@@ -200,12 +236,9 @@ export function registerHistoryTools(server, { client, staticToken }) {
         { path: requireFilePath(path), version: v }
       )
       return okResult({
-        summary: `Restored ${data.path} to its content at version ${v}.`,
+        summary: `Restored ${data.path} to v${v}`,
+        text: '',
         data,
-        nextSteps: [
-          `read_file(projectId="${id}", path="${data.path}") to check the restored content`,
-          `compile_project(projectId="${id}") to rebuild`,
-        ],
       })
     })
   )

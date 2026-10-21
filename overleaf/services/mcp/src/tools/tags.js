@@ -1,5 +1,6 @@
 import * as z from 'zod/v4'
 import { okResult, runTool, tokenFrom } from '../context.js'
+import { lines } from '../format.js'
 import { envelope, looseObject, READ_ONLY, WRITES } from '../schemas.js'
 
 const tagId = z
@@ -45,6 +46,20 @@ function count(n, noun) {
   return `${n} ${noun}`
 }
 
+/** One tag per line: id, name, colour, project count, then the project ids when asked for. */
+function tagLine(tag, includeProjects) {
+  const head = [
+    tag.id,
+    tag.name,
+    tag.color,
+    count(tag.projectCount, tag.projectCount === 1 ? 'project' : 'projects'),
+  ]
+    .filter(Boolean)
+    .join('  ')
+  const ids = includeProjects && tag.projectIds?.length ? `: ${tag.projectIds.join(', ')}` : ''
+  return `${head}${ids}`
+}
+
 /**
  * Register the tag tools: list, create, update, delete, and tagging projects.
  *
@@ -61,7 +76,7 @@ export function registerTagTools(server, { client, staticToken }) {
     {
       title: 'List tags',
       description:
-        "List the signed-in user's project tags, sorted by name. Tags are personal labels for organising the project dashboard: only you see them, a project can carry many, and they never affect access, compiling or files. Each tag has its id, name, colour and projectCount. Set includeProjects: true to also get projectIds for each tag (use it to answer 'which projects are tagged X'). Call this before any other tag tool to get the tagId they need.",
+        "List your personal project tags (dashboard labels), sorted by name. Tags never affect access, compiling or files. Set includeProjects to also get each tag's projectIds.",
       annotations: READ_ONLY,
       inputSchema: z.object({
         includeProjects: z
@@ -81,23 +96,10 @@ export function registerTagTools(server, { client, staticToken }) {
         includeProjects: includeProjects ? true : undefined,
       })
       const tags = data.tags ?? []
-      const first = tags.find(tag => tag.projectCount > 0) ?? tags[0]
       return okResult({
-        summary: tags.length
-          ? `${count(tags.length, tags.length === 1 ? 'tag' : 'tags')}: ${tags
-              .slice(0, 10)
-              .map(tag => `${tag.name} (${tag.projectCount})`)
-              .join(', ')}${tags.length > 10 ? ', ...' : ''}.`
-          : 'You have no tags yet.',
+        summary: tags.length ? `${tags.length} tag(s).` : 'No tags.',
+        text: lines(tags.map(tag => tagLine(tag, Boolean(includeProjects)))),
         data: { tags, total: data.total ?? tags.length },
-        nextSteps: tags.length
-          ? [
-              ...(!includeProjects && first
-                ? [`list_tags(includeProjects=true) to see which projects each tag holds`]
-                : []),
-              `add_projects_to_tag(tagId="${first.id}", projectIds=[...]) to tag projects`,
-            ]
-          : [`create_tag(name="...") to make the first tag`],
       })
     })
   )
@@ -107,7 +109,7 @@ export function registerTagTools(server, { client, staticToken }) {
     {
       title: 'Create tag',
       description:
-        'Create a personal tag for organising projects. Safe to repeat: if you already have a tag with this exact name, that tag is returned unchanged with created: false instead of an error. A new tag starts empty; follow with add_projects_to_tag to fill it. colour is optional (#RRGGBB).',
+        'Create a personal tag. Repeating with an existing name returns that tag with created: false, not an error. A new tag starts empty; fill it with add_projects_to_tag.',
       annotations: { ...WRITES, destructiveHint: false, idempotentHint: true },
       inputSchema: z.object({
         name: tagName,
@@ -131,15 +133,13 @@ export function registerTagTools(server, { client, staticToken }) {
       return okResult({
         summary: created
           ? `Created tag "${tag.name}" (id ${tag.id}).`
-          : `Tag "${tag.name}" already exists (id ${tag.id}, ${count(tag.projectCount, 'project(s)')}); nothing was changed.`,
+          : `Tag "${tag.name}" already exists (id ${tag.id}, ${count(tag.projectCount, 'project(s)')}); nothing changed.`,
+        text: '',
         data,
         warnings:
           !created && color && color !== tag.color
             ? [`The existing tag keeps its colour ${tag.color ?? '(none)'}; use update_tag to change it.`]
             : undefined,
-        nextSteps: [
-          `add_projects_to_tag(tagId="${tag.id}", projectIds=[...]) to tag projects`,
-        ],
       })
     })
   )
@@ -149,7 +149,7 @@ export function registerTagTools(server, { client, staticToken }) {
     {
       title: 'Update tag',
       description:
-        'Rename a tag and/or change its colour. Supply only the fields to change; the rest are kept. The tagged projects are unchanged. Fails with a conflict if another of your tags already has the new name. Returns the tag plus its before values.',
+        'Rename a tag and/or change its colour; supply only the fields to change. Tagged projects are unchanged. Conflicts if another of your tags already has the new name.',
       annotations: { ...WRITES, destructiveHint: false, idempotentHint: true },
       inputSchema: z
         .object({
@@ -188,6 +188,7 @@ export function registerTagTools(server, { client, staticToken }) {
         summary: changes.length
           ? `Updated tag ${tag.id}: ${changes.join(', ')}.`
           : `Tag "${tag.name}" already had these values; nothing changed.`,
+        text: '',
         data,
       })
     })
@@ -198,7 +199,7 @@ export function registerTagTools(server, { client, staticToken }) {
     {
       title: 'Delete tag',
       description:
-        'Delete one of your tags. Only the label is removed: the projects that carried it keep all their files, settings and collaborators, and simply lose the tag. The tag cannot be restored, but create_tag and add_projects_to_tag can rebuild it. To untag some projects while keeping the tag, use remove_projects_from_tag instead.',
+        'Delete one of your tags. Projects keep all their files and settings and lose only the tag; the tag cannot be restored. To untag some projects, use remove_projects_from_tag.',
       annotations: { ...WRITES, destructiveHint: true, idempotentHint: true },
       inputSchema: z.object({ tagId }),
       outputSchema: envelope(
@@ -220,7 +221,8 @@ export function registerTagTools(server, { client, staticToken }) {
         tagPath(id)
       )
       return okResult({
-        summary: `Deleted tag "${data.name}"; ${count(data.projectsUntagged, 'project(s)')} lost the tag and no project was changed.`,
+        summary: `Deleted tag "${data.name}"; ${count(data.projectsUntagged, 'project(s)')} lost it and no project was changed.`,
+        text: '',
         data,
       })
     })
@@ -231,7 +233,7 @@ export function registerTagTools(server, { client, staticToken }) {
     {
       title: 'Add projects to tag',
       description:
-        'Put a tag on one or more projects in one call. Works for any project you can open, including ones shared with you. Safe to repeat: projects that already carry the tag are listed in alreadyTagged and left alone. If any project id is unknown or not accessible, nothing is tagged and error.details.unknown lists the bad ids. To tag a project with several tags, call this once per tag.',
+        'Put a tag on one or more projects you can open, including shared ones. Already-tagged projects are left alone. If any id is unknown or inaccessible, nothing is tagged and error.details.unknown lists the bad ids. Call once per tag to tag with several.',
       annotations: { ...WRITES, destructiveHint: false, idempotentHint: true },
       inputSchema: z.object({ tagId, projectIds }),
       outputSchema: envelope(
@@ -255,10 +257,8 @@ export function registerTagTools(server, { client, staticToken }) {
         summary: `Tagged ${count(added.length, 'project(s)')} with "${tag.name}"${
           alreadyTagged.length ? `; ${alreadyTagged.length} already had it` : ''
         }. The tag now holds ${count(tag.projectCount, 'project(s)')}.`,
+        text: '',
         data,
-        nextSteps: [
-          `list_tags(includeProjects=true) to review every tag and its projects`,
-        ],
       })
     })
   )
@@ -268,7 +268,7 @@ export function registerTagTools(server, { client, staticToken }) {
     {
       title: 'Remove projects from tag',
       description:
-        'Take a tag off one or more projects in one call, keeping the tag itself. The projects are not changed. Safe to repeat: projects that did not carry the tag are listed in notTagged. Get the tagId and the tagged projectIds from list_tags with includeProjects: true. To delete the tag entirely, use delete_tag.',
+        'Take a tag off one or more projects, keeping the tag itself; the projects are not changed. Projects that lacked the tag are listed in notTagged. To delete the tag, use delete_tag.',
       annotations: { ...WRITES, destructiveHint: false, idempotentHint: true },
       inputSchema: z.object({ tagId, projectIds }),
       outputSchema: envelope(
@@ -292,6 +292,7 @@ export function registerTagTools(server, { client, staticToken }) {
         summary: `Removed "${tag.name}" from ${count(removed.length, 'project(s)')}${
           notTagged.length ? `; ${notTagged.length} did not carry it` : ''
         }. The tag now holds ${count(tag.projectCount, 'project(s)')}.`,
+        text: '',
         data,
       })
     })

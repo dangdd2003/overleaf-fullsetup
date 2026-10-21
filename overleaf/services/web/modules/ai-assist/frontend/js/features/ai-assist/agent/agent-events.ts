@@ -5,6 +5,9 @@ import { CompactEntry, ContextTrim } from './agent-messages'
 import { ContextUsageEvent } from './context/context-usage-types'
 import { SlashCommandInvocation } from './slash-commands/types'
 
+/** What started a `/compact` run: the user, or the context budget. */
+export type RunTrigger = 'manual' | 'auto'
+
 export type ApprovalKind =
   | 'edit'
   | 'settings'
@@ -93,7 +96,7 @@ export type AgentEvent =
   /** A server run asks the editor to compile, as its Recompile button would. */
   | { type: 'awaitingCompile'; id: string; clean: boolean }
   /** A `/compact` run started; see CompactPhase for the phases. */
-  | { type: 'compactStarted'; trigger: 'manual' | 'auto' }
+  | { type: 'compactStarted'; trigger: RunTrigger }
   | {
       type: 'compactProgress'
       phase: CompactPhase

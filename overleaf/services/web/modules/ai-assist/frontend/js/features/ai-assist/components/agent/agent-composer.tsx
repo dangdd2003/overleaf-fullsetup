@@ -1275,15 +1275,14 @@ export function AgentComposer({
                 const isFrequent = topUsedIds.includes(command.id);
                 const showFrequentHeader =
                   !slashQuery && index === 0 && isFrequent;
+                const prev = slashItems[index - 1];
                 const showAllHeader =
                   !slashQuery &&
                   topUsedIds.length > 0 &&
                   index > 0 &&
                   !isFrequent &&
-                  slashItems[index - 1].kind !== "local" &&
-                  topUsedIds.includes(
-                    slashItems[index - 1].command.id as SlashCommandId,
-                  );
+                  prev.kind !== "local" &&
+                  topUsedIds.includes(prev.command.id);
 
                 return (
                   <li key={command.id}>

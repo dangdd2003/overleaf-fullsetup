@@ -160,7 +160,7 @@ describe('MCP HTTP transport', function () {
       { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'list_projects', arguments: {} } },
       { token: 'olp_0123456789abcdef' }
     )
-    expect(JSON.parse(body.result.content[0].text).data.projects).to.deep.equal([])
+    expect(body.result.structuredContent.data.projects).to.deep.equal([])
   })
 
   it('rejects a non-localhost Host header (DNS rebinding guard)', async function () {

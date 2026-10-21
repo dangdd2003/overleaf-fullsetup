@@ -14,8 +14,8 @@ export function getMcpRateLimiters() {
 }
 
 /** Whole seconds until the limiter lets the next request through. */
-function retryAfterSeconds(rateLimiterRes, durationSeconds = 60) {
-  const ms = rateLimiterRes?.msBeforeNext ?? durationSeconds * 1000
+function retryAfterSeconds(rateLimiterRes) {
+  const ms = rateLimiterRes?.msBeforeNext ?? 60 * 1000
   return Math.max(1, Math.ceil(ms / 1000))
 }
 

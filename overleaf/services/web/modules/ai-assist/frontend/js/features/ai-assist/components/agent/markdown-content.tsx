@@ -1003,18 +1003,30 @@ function renderPreparedMarkdown(
   }
 }
 
+// Latest hover-position request per citation card, so a slow stale
+// computePosition cannot overwrite a newer one
+const latestPositionRequest = new WeakMap<HTMLElement, number>()
+
 /**
  * The HTML of an element without what a hover card sets on itself when it
  * opens (its position and side), so an open card is not mistaken for new
  * content.
  */
 function staticHtml(el: HTMLElement): string {
-  const copy = el.cloneNode(true) as HTMLElement
-  copy.querySelectorAll('.ai-assist-citation-card').forEach(card => {
-    card.removeAttribute('style')
-    card.removeAttribute('data-placement')
-  })
-  return copy.innerHTML.replace(/\b(is-inserted|is-copied)\b/g, '').trim()
+  // Only clone when there is an open card to strip; otherwise the live HTML is
+  // already the static HTML.
+  let html: string
+  if (el.querySelector('.ai-assist-citation-card')) {
+    const copy = el.cloneNode(true) as HTMLElement
+    copy.querySelectorAll('.ai-assist-citation-card').forEach(card => {
+      card.removeAttribute('style')
+      card.removeAttribute('data-placement')
+    })
+    html = copy.innerHTML
+  } else {
+    html = el.innerHTML
+  }
+  return html.replace(/\b(is-inserted|is-copied)\b/g, '').trim()
 }
 
 /**
@@ -1318,6 +1330,9 @@ export const MarkdownContent: FC<{
       '.ai-assist-citation-card'
     )
     if (!citation || !card) return
+    // Each hover starts a new computation; only the latest one may write
+    const request = (latestPositionRequest.get(card) ?? 0) + 1
+    latestPositionRequest.set(card, request)
     void computePosition(citation, card, {
       strategy: 'fixed',
       placement: 'bottom-start',
@@ -1336,6 +1351,7 @@ export const MarkdownContent: FC<{
         }),
       ],
     }).then(({ x, y, placement }) => {
+      if (latestPositionRequest.get(card) !== request) return
       card.style.left = `${x}px`
       card.style.top = `${y}px`
       card.dataset.placement = placementSide(placement)

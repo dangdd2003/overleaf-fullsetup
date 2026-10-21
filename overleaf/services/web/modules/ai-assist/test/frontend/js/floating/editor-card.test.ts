@@ -70,7 +70,7 @@ describe('floating card: laid over the text', function () {
     expect(verticalShift(50, 900, bounds)).to.equal(-42)
   })
 
-  it('leaves a card that fits where it is', function () {
+  it('leaves a card that fits vertically where it is', function () {
     expect(verticalShift(100, 300, bounds)).to.equal(0)
   })
 })

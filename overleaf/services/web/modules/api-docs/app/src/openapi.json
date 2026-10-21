@@ -5232,6 +5232,218 @@
         }
       }
     },
+    "/api/v0/mcp/projects/{projectId}/docs/read": {
+      "post": {
+        "operationId": "readMcpDocs",
+        "summary": "Read lines of many text documents",
+        "description": "Returns the text of several documents in one call. Give `paths` (answered in that order), or `ext` for every document with that extension, or neither for the whole project. `startLine` and `endLine` apply to each document. Missing or binary paths are listed in `missing`. A document whose startLine is past its end gets an `error` instead of content. Requires read access.",
+        "tags": [
+          "MCP Files"
+        ],
+        "x-feature": "mcp",
+        "security": [
+          {
+            "mcpBearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "description": "Project id (MongoDB ObjectId, 24 hex characters). A malformed or unknown id returns 404 not_found.",
+            "schema": {
+              "type": "string"
+            },
+            "example": "64f0c2a1b3d4e5f607081920"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "paths": {
+                    "type": "array",
+                    "maxItems": 200,
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Project paths of the documents, e.g. /main.tex. Up to 200.",
+                    "example": [
+                      "/main.tex",
+                      "/chapters/intro.tex"
+                    ]
+                  },
+                  "ext": {
+                    "type": "string",
+                    "description": "Extension without the dot, e.g. tex. Used only when paths is absent; matched case-insensitively.",
+                    "example": "tex"
+                  },
+                  "startLine": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "default": 1,
+                    "description": "First line to return (1-based), applied to each document."
+                  },
+                  "endLine": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Last line, inclusive, applied to each document. Defaults to the end; clamped to it. Must be at least startLine."
+                  }
+                }
+              },
+              "example": {
+                "paths": [
+                  "/main.tex",
+                  "/chapters/intro.tex"
+                ],
+                "startLine": 1,
+                "endLine": 100
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The documents in request order, and the paths that could not be read. Each document is either its content and hash, or an error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "documents",
+                    "missing"
+                  ],
+                  "properties": {
+                    "documents": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "path",
+                          "totalLines"
+                        ],
+                        "properties": {
+                          "path": {
+                            "type": "string"
+                          },
+                          "content": {
+                            "type": "string",
+                            "description": "Lines startLine to endLine joined with newlines. Absent when error is set."
+                          },
+                          "totalLines": {
+                            "type": "integer"
+                          },
+                          "startLine": {
+                            "type": "integer"
+                          },
+                          "endLine": {
+                            "type": "integer"
+                          },
+                          "hash": {
+                            "type": "string",
+                            "description": "SHA-256 of the whole document; send it as expectedHash on writeMcpDoc."
+                          },
+                          "error": {
+                            "type": "string",
+                            "description": "Set when startLine is past the end of this document."
+                          }
+                        }
+                      }
+                    },
+                    "missing": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "path",
+                          "reason"
+                        ],
+                        "properties": {
+                          "path": {
+                            "type": "string"
+                          },
+                          "reason": {
+                            "type": "string",
+                            "enum": [
+                              "not_found",
+                              "binary"
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                "example": {
+                  "documents": [
+                    {
+                      "path": "/main.tex",
+                      "content": "\\documentclass{article}\n\\begin{document}\nHello",
+                      "totalLines": 3,
+                      "startLine": 1,
+                      "endLine": 3,
+                      "hash": "9b71d224bd62f3785d96d46ad3ea3d73319bfbc2890caadae2dff72519673ca72"
+                    }
+                  ],
+                  "missing": [
+                    {
+                      "path": "/figures/plot.png",
+                      "reason": "binary"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "validation_error: paths is not an array of non-empty strings, has more than 200 entries, or contains a .. segment; ext is empty; startLine or endLine is not a positive integer; or endLine is before startLine.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                },
+                "example": {
+                  "code": "validation_error",
+                  "message": "at most 200 paths per request"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                },
+                "example": {
+                  "code": "unauthorized",
+                  "message": "valid authentication required"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Token lacks the mcp scope, or no access.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                },
+                "example": {
+                  "code": "insufficient_scope",
+                  "message": "token is missing the required mcp scope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v0/mcp/projects/{projectId}/folder": {
       "post": {
         "operationId": "createMcpFolder",

@@ -21,6 +21,7 @@ import McpUrlFetcher from './McpUrlFetcher.mjs'
 import { regexSearchLines } from './McpRegexSearch.mjs'
 import {
   hasDotSegment,
+  invalid,
   isTrueParam,
   parseIntParam,
 } from './McpRequestParams.mjs'
@@ -28,6 +29,8 @@ import {
 // Most projects a single multi-project zip may bundle. Each one costs an access
 // check and a flush, so the count is bounded.
 const MAX_ZIP_PROJECTS = 500
+// Paths one batch document read may ask for.
+const MAX_BATCH_DOCS = 200
 // Documents fetched at a time while searching a project without a regex.
 const SEARCH_BATCH_SIZE = 10
 // Caps on search parameters, so one request cannot ask for an unbounded reply.
@@ -353,6 +356,118 @@ async function getDoc(req, res) {
     // The expectedHash for a write, over the whole document rather than the range.
     hash: contentHash(all),
   })
+}
+
+/**
+ * Read many documents in one request. `paths` lists them (answered in that
+ * order); without `paths`, `ext` selects every document with that extension
+ * and neither selects the whole project. `startLine` and `endLine` apply to
+ * each document. A document whose range starts past its end gets an `error`
+ * entry instead of content.
+ */
+async function readDocs(req, res) {
+  const projectId = req.params.projectId
+  const body = req.body || {}
+  // null counts as absent, so a client may send every field it has.
+  const paths = body.paths ?? undefined
+  const ext = body.ext ?? undefined
+  if (
+    paths !== undefined &&
+    (!Array.isArray(paths) ||
+      paths.some(p => typeof p !== 'string' || p.trim() === ''))
+  ) {
+    return invalid(res, 'paths must be an array of non-empty strings')
+  }
+  if (Array.isArray(paths) && paths.length > MAX_BATCH_DOCS) {
+    return invalid(res, `at most ${MAX_BATCH_DOCS} paths per request`)
+  }
+  const extName = typeof ext === 'string' ? ext.trim().replace(/^\./, '') : ''
+  if (ext !== undefined && extName === '') {
+    return invalid(res, 'ext must be a non-empty string')
+  }
+  const start = parseIntParam(body.startLine, 1, { min: 1 })
+  const requestedEnd = parseIntParam(body.endLine, Infinity, { min: 1 })
+  if (start === null || requestedEnd === null) {
+    return invalid(res, 'startLine and endLine must be positive integers')
+  }
+  if (requestedEnd < start) {
+    return invalid(res, 'endLine must not be before startLine')
+  }
+  const targetPaths = Array.isArray(paths) ? paths.map(normalise) : null
+  if (targetPaths?.some(hasDotSegment)) {
+    return invalid(res, 'paths must not contain .. segments')
+  }
+
+  const { docs, files } = await ProjectEntityHandler.promises.getAllEntities(
+    projectId
+  )
+  const binaryPaths = new Set(files.map(f => normalise(f.path)))
+  const selected = []
+  const missing = []
+  if (targetPaths) {
+    const docByPath = new Map(docs.map(d => [normalise(d.path), d]))
+    for (const target of targetPaths) {
+      const match = docByPath.get(target)
+      if (match) {
+        selected.push({ path: target, doc: match.doc })
+      } else {
+        missing.push({
+          path: target,
+          reason: binaryPaths.has(target) ? 'binary' : 'not_found',
+        })
+      }
+    }
+  } else {
+    const suffix = ext === undefined ? '' : '.' + extName.toLowerCase()
+    for (const d of docs) {
+      const docPath = normalise(d.path)
+      if (suffix && !docPath.toLowerCase().endsWith(suffix)) continue
+      selected.push({ path: docPath, doc: d.doc })
+    }
+    selected.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+  }
+
+  // Every document's lines come from one docstore call; ids it misses are
+  // fetched one by one.
+  const linesById = new Map()
+  if (selected.length > 0) {
+    const all = await DocstoreManager.promises.getAllDocs(projectId)
+    for (const d of all || []) linesById.set(String(d._id), d.lines)
+    const absent = [
+      ...new Set(
+        selected.map(s => s.doc._id.toString()).filter(id => !linesById.has(id))
+      ),
+    ]
+    const fetched = await promiseMapWithLimit(
+      SEARCH_BATCH_SIZE,
+      absent,
+      id => DocstoreManager.promises.getDoc(projectId, id)
+    )
+    absent.forEach((id, i) => linesById.set(id, fetched[i]?.lines))
+  }
+
+  const documents = selected.map(({ path: docPath, doc }) => {
+    const lines = linesById.get(doc._id.toString())
+    const all = Array.isArray(lines) && lines.length > 0 ? lines : ['']
+    const total = all.length
+    if (start > total) {
+      return {
+        path: docPath,
+        totalLines: total,
+        error: `startLine ${start} is past the end (${total} lines)`,
+      }
+    }
+    const end = Math.min(requestedEnd, total)
+    return {
+      path: docPath,
+      content: all.slice(start - 1, end).join('\n'),
+      totalLines: total,
+      startLine: start,
+      endLine: end,
+      hash: contentHash(all),
+    }
+  })
+  res.json({ documents, missing })
 }
 
 /**
@@ -1164,6 +1279,7 @@ async function deleteEntity(req, res) {
 export default {
   getTree,
   getDoc,
+  readDocs,
   writeDoc,
   createFolder,
   moveEntity,

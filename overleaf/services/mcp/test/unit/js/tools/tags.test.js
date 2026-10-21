@@ -79,18 +79,40 @@ describe('tag tools', function () {
     expect(client.get.firstCall.args[2]).to.deep.equal({
       includeProjects: true,
     })
-    expect(result.structuredContent.summary).to.include('thesis (2)')
-    expect(result.structuredContent.nextSteps[0]).to.include(
-      'add_projects_to_tag(tagId="t1"'
+    expect(result.structuredContent.summary).to.equal('1 tag(s).')
+    expect(result.structuredContent.nextSteps).to.be.undefined
+    expect(result.content[0].text).to.equal(
+      '1 tag(s).\nt1  thesis  #3366CC  2 projects'
     )
     await validOutput(server, 'list_tags', result)
   })
 
-  it('list_tags points at create_tag when there are none', async function () {
+  it('list_tags adds the projectIds of each tag only when includeProjects is set', async function () {
+    const withIds = { ...tag, projectIds: ['p1', 'p2'] }
+    client.get.resolves({ tags: [withIds, { ...tag, id: 't2', name: 'empty', color: null, projectCount: 0 }], total: 2 })
+    const result = await server.call('list_tags', { includeProjects: true })
+    expect(result.content[0].text).to.equal(
+      [
+        '2 tag(s).',
+        't1  thesis  #3366CC  2 projects: p1, p2',
+        't2  empty  0 projects',
+      ].join('\n')
+    )
+    expect(result.content[0].text).to.not.include('null')
+    expect(result.content[0].text).to.not.include('{')
+
+    client.get.resolves({ tags: [withIds], total: 1 })
+    const plain = await server.call('list_tags', {})
+    expect(plain.content[0].text).to.equal('1 tag(s).\nt1  thesis  #3366CC  2 projects')
+    expect(plain.content[0].text).to.not.include('p1')
+  })
+
+  it('list_tags reports an empty tag list in one line', async function () {
     client.get.resolves({ tags: [], total: 0 })
     const result = await server.call('list_tags', {})
-    expect(result.structuredContent.summary).to.equal('You have no tags yet.')
-    expect(result.structuredContent.nextSteps[0]).to.include('create_tag')
+    expect(result.structuredContent.summary).to.equal('No tags.')
+    expect(result.structuredContent.nextSteps).to.be.undefined
+    expect(result.content[0].text).to.equal('No tags.')
     await validOutput(server, 'list_tags', result)
   })
 
@@ -108,6 +130,8 @@ describe('tag tools', function () {
     expect(result.structuredContent.summary).to.equal(
       'Created tag "thesis" (id t1).'
     )
+    expect(result.content[0].text).to.equal('Created tag "thesis" (id t1).')
+    expect(result.structuredContent.nextSteps).to.be.undefined
     await validOutput(server, 'create_tag', result)
   })
 
@@ -207,6 +231,6 @@ describe('tag tools', function () {
     client.post.rejects(new Error('boom'))
     const result = await server.call('create_tag', { name: 'x' })
     expect(result.isError).to.be.true
-    expect(JSON.parse(result.content[0].text).ok).to.equal(false)
+    expect(result.structuredContent.ok).to.equal(false)
   })
 })

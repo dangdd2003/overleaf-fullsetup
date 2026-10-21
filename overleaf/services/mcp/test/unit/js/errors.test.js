@@ -56,7 +56,7 @@ describe('errors', function () {
     it('preserves the upstream code in the payload', function () {
       const result = toToolError(new OverleafApiError('forbidden', 'read-only', 403))
       expect(result.isError).to.be.true
-      const payload = JSON.parse(result.content[0].text)
+      const payload = result.structuredContent
       expect(payload.ok).to.equal(false)
       expect(payload.error.code).to.equal('forbidden')
       expect(payload.error.message).to.equal('read-only')
@@ -71,17 +71,36 @@ describe('errors', function () {
           details: { candidates: ['main.tex'] },
         })
       )
-      const { error } = JSON.parse(result.content[0].text)
+      const { error } = result.structuredContent
       expect(error.hint).to.equal('did you mean main.tex?')
       expect(error.details).to.deep.equal({ candidates: ['main.tex'] })
     })
 
     it('maps an unknown error to upstream_error without leaking its message', function () {
       const result = toToolError(new TypeError('fetch failed for http://web:3000'))
-      const { error } = JSON.parse(result.content[0].text)
+      const { error } = result.structuredContent
       expect(error.code).to.equal('upstream_error')
       expect(error.message).to.not.include('web:3000')
       expect(error.retryable).to.equal(true)
+    })
+
+    it('renders the envelope as compact text', function () {
+      const result = toToolError(
+        new OverleafApiError('not_found', 'no such file', 404, {
+          hint: 'did you mean main.tex?',
+          details: { candidates: ['main.tex'] },
+        })
+      )
+      expect(result.content[0].text).to.equal(
+        'error not_found: no such file\n' +
+          'hint: did you mean main.tex?\n' +
+          'details: {"candidates":["main.tex"]}'
+      )
+    })
+
+    it('marks only retryable errors as such', function () {
+      const text = toToolError(new TypeError('boom')).content[0].text
+      expect(text.split('\n').at(-1)).to.equal('retryable')
     })
   })
 })

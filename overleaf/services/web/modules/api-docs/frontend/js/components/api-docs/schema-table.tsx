@@ -10,6 +10,8 @@ type FieldRow = {
   /** Unique within the table: parent field name joined with this one */
   key: string
   schema: SchemaObject
+  /** `schema` with its $ref and allOf resolved, computed once in fieldRows */
+  resolved: SchemaObject
   required: boolean
   nested: boolean
 }
@@ -36,13 +38,14 @@ function fieldRows(
         name,
         key: nested ? `${parent}.${name}` : name,
         schema: property,
+        resolved: resolveSchema(spec, property),
         required: required.has(name),
         nested,
       }
       if (nested) {
         return [row]
       }
-      let target = resolveSchema(spec, property)
+      let target = row.resolved
       if (target.type === 'array') {
         target = resolveSchema(spec, target.items)
       }
@@ -129,7 +132,7 @@ function FieldTable({
       </thead>
       <tbody>
         {rows.map((row) => {
-          const resolved = resolveSchema(spec, row.schema)
+          const resolved = row.resolved
           return (
             <Field
               key={row.key}

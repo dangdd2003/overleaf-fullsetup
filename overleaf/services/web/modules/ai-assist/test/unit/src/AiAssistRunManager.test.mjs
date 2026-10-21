@@ -4700,7 +4700,6 @@ describe('AiAssistRunManager connector tools', function () {
       deferred: true,
       loadedTools: new Set(),
       specs: () => [spec('search_connector_tools')],
-      pendingSpecs: () => [spec('mcp__docs__get'), spec('mcp__docs__put')],
       catalog: () => [
         {
           name: 'mcp__docs__get',

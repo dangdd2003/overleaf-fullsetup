@@ -266,8 +266,10 @@ export function latestCompactIndex(transcript: TranscriptEntry[]): number {
  * the tail of the newest compact boundary, else the boundary itself, else 0.
  * Entries before it are gone from every request.
  */
-export function sentFromIndex(transcript: TranscriptEntry[]): number {
-  const boundary = latestCompactIndex(transcript)
+export function sentFromIndex(
+  transcript: TranscriptEntry[],
+  boundary = latestCompactIndex(transcript)
+): number {
   if (boundary === -1) return 0
   const entry = transcript[boundary] as Extract<TranscriptEntry, { role: 'compact' }>
   const tailIndex = entry.tailFromId
@@ -300,7 +302,7 @@ export function toAgentMessages(transcript: TranscriptEntry[]): AgentMessage[] {
 
   return [
     { role: 'user', content: renderCompactionMessage(boundaryEntry) },
-    ...entriesToMessages(transcript, sentFromIndex(transcript), boundary),
+    ...entriesToMessages(transcript, sentFromIndex(transcript, boundary), boundary),
     ...entriesToMessages(transcript, boundary + 1, transcript.length),
   ]
 }

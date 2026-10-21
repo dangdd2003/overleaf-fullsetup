@@ -69,6 +69,33 @@ describe('AgentMessageView Actions & Badges', function () {
       expect(actionBtns.length).to.equal(3)
     })
 
+    it('shows one tick while sent and two once the run has read it', function () {
+      const { container, rerender } = render(
+        <AgentMessageView
+          entry={userEntry}
+          pendingApprovalId={null}
+          onDecision={sinon.stub()}
+        />
+      )
+      const status = () =>
+        container.querySelector('.ai-assist-user-message-status')!
+      expect(status().getAttribute('aria-label')).to.equal('Sent')
+      expect(status().classList.contains('is-read')).to.be.false
+
+      rerender(
+        <AgentMessageView
+          entry={userEntry}
+          pendingApprovalId={null}
+          onDecision={sinon.stub()}
+          read
+        />
+      )
+      expect(status().getAttribute('aria-label')).to.equal(
+        'Read by the assistant'
+      )
+      expect(status().classList.contains('is-read')).to.be.true
+    })
+
     it('orders user buttons Fork, Rewind, Copy so Copy sits at the right edge', function () {
       const { container } = render(
         <AgentMessageView

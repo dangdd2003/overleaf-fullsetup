@@ -13,6 +13,15 @@ import { McpToolDetail } from './mcp-tool-detail'
 import { SiteIcon } from './site-icon'
 import { CopyToClipboard } from '@/shared/components/copy-to-clipboard'
 import { ImageLightbox } from './image-lightbox'
+import {
+  CompileLogEntry,
+  FileLink,
+  PdfDetailHeader,
+  getPdfImages,
+} from './pdf-tool-shared'
+import { PdfDiffDetail } from './pdf-diff-detail'
+import { PdfStyleDetail } from './pdf-style-detail'
+import { PdfBlockDetail, PdfHighlightDetail } from './pdf-locate-detail'
 
 export { SiteIcon }
 
@@ -220,78 +229,6 @@ function WebToolError({ call, result }: { call: ToolCallRecord; result: any }) {
   )
 }
 
-/**
- * One compile error or warning, collapsed to its title — location and
- * message on a single line. Clicking the title drops down the log excerpt.
- */
-function CompileLogEntry({
-  entry,
-  level,
-  openFile,
-}: {
-  entry: any
-  level: 'error' | 'warning'
-  openFile: (path: string, line?: number) => void
-}) {
-  const [expanded, setExpanded] = useState(false)
-  const hasExcerpt = Boolean(entry.excerpt)
-
-  return (
-    <div className={`ai-assist-log-entry ${level}`}>
-      <div className="ai-assist-log-title">
-        <span
-          role="button"
-          tabIndex={0}
-          className={entry.file ? 'ai-assist-file-link' : 'ai-assist-log-loc'}
-          onClick={() => {
-            if (entry.file) openFile(entry.file, entry.line)
-          }}
-          onKeyDown={e => {
-            if (e.key === 'Enter' && entry.file)
-              openFile(entry.file, entry.line)
-          }}
-        >
-          {entry.file
-            ? `${entry.file}:${entry.line ?? '?'}`
-            : level === 'error'
-              ? 'Error'
-              : 'Warning'}
-        </span>
-        {hasExcerpt ? (
-          <button
-            type="button"
-            className="ai-assist-log-toggle"
-            aria-expanded={expanded}
-            onClick={() => setExpanded(open => !open)}
-          >
-            <span className="ai-assist-log-msg">{entry.message}</span>
-            <svg
-              className={`ai-assist-tool-call-chevron ${expanded ? 'is-expanded' : ''}`}
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 16 16"
-              width="13"
-              height="13"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <polyline points="6 4 10 8 6 12" />
-            </svg>
-          </button>
-        ) : (
-          <span className="ai-assist-log-msg">{entry.message}</span>
-        )}
-      </div>
-      {hasExcerpt && expanded && (
-        <pre className="ai-assist-log-excerpt">{entry.excerpt}</pre>
-      )}
-    </div>
-  )
-}
-
 const VIA_LABELS: Record<string, string> = {
   browser: 'browser',
   ollama: 'Ollama',
@@ -411,7 +348,7 @@ export function overviewFindings(page: any, t: TranslateFn): string[] {
       const side = overflow.side === 'left' ? 'left' : 'right'
       findings.push(
         t('ai_assist_tool_pdf_overflow', {
-          defaultValue: `${Math.round(overflow.mm)}mm past ${side} margin`,
+          defaultValue: `${Math.round(overflow.mm)} mm past ${side} margin`,
         })
       )
     }
@@ -421,9 +358,30 @@ export function overviewFindings(page: any, t: TranslateFn): string[] {
   }
   const refs = Number(page.unresolved?.refs) || 0
   const cites = Number(page.unresolved?.cites) || 0
-  if (refs > 0) findings.push(`${refs}× ??`)
-  if (cites > 0) findings.push(`${cites}× [?]`)
+  if (refs > 0) {
+    findings.push(
+      t('ai_assist_tool_pdf_unresolved_refs', {
+        count: refs,
+        defaultValue: `${refs} unresolved ref${refs === 1 ? '' : 's'}`,
+      })
+    )
+  }
+  if (cites > 0) {
+    findings.push(
+      t('ai_assist_tool_pdf_unresolved_cites', {
+        count: cites,
+        defaultValue: `${cites} unresolved cite${cites === 1 ? '' : 's'}`,
+      })
+    )
+  }
   return findings
+}
+
+/** A line range as one span: `12` for a single line, `12–18` for several */
+function lineSpan(startLine: number, endLine?: number): string {
+  return typeof endLine === 'number' && endLine > startLine
+    ? `${startLine}–${endLine}`
+    : `${startLine}`
 }
 
 /** The context with the query emphasised, as text and never as markup */
@@ -454,22 +412,21 @@ function PdfOverviewPage({
   return (
     <div className={`ai-assist-pdf-page ${isClean ? 'is-clean' : 'has-findings'}`}>
       <div className="ai-assist-outline-section ai-assist-pdf-page-row">
-        <span className="ai-assist-outline-line ai-assist-pdf-page-badge">p{page?.page}</span>
+        <span className="ai-assist-outline-line ai-assist-pdf-page-badge">
+          {t('ai_assist_tool_pdf_page_badge', {
+            page: page?.page,
+            defaultValue: `p${page?.page}`,
+          })}
+        </span>
         {sources.map((source: any, idx: number) => (
-          <span
+          <FileLink
             key={`${source.path}:${source.startLine}:${idx}`}
-            role="button"
-            tabIndex={0}
-            className="ai-assist-file-link"
-            onClick={() => openFile(source.path, source.startLine)}
-            onKeyDown={e =>
-              (e.key === 'Enter' || e.key === ' ') &&
-              openFile(source.path, source.startLine)
-            }
+            path={source.path}
+            line={source.startLine}
+            openFile={openFile}
           >
-            {source.path}:{source.startLine}
-            {source.endLine > source.startLine ? `–${source.endLine}` : ''}
-          </span>
+            {`${source.path}:${lineSpan(source.startLine, source.endLine)}`}
+          </FileLink>
         ))}
         {findings.length > 0 ? (
           <span className="ai-assist-outline-findings is-flagged">
@@ -496,45 +453,6 @@ function PdfOverviewPage({
       )}
     </div>
   )
-}
-
-/**
- * A page picture the server rendered inline. A remote URL in tool output is
- * never loaded: the browser would fetch whatever address the output names.
- */
-const INLINE_RASTER_IMAGE = /^data:image\/(?:png|jpe?g|gif|webp);base64,/i
-
-function getPdfImages(result: any): Array<{ src: string; alt: string }> {
-  if (!result || typeof result !== 'object') return []
-  const items: Array<{ src: string; alt: string }> = []
-  const rawList = Array.isArray(result.images)
-    ? result.images
-    : result.image
-      ? [result.image]
-      : []
-
-  for (let i = 0; i < rawList.length; i++) {
-    const img = rawList[i]
-    if (!img) continue
-    let src: unknown = ''
-    if (typeof img === 'string') {
-      src = img.startsWith('data:') ? img : `data:image/png;base64,${img}`
-    } else if (typeof img === 'object') {
-      src =
-        [img.url, img.src].find(
-          (candidate: unknown) =>
-            typeof candidate === 'string' &&
-            INLINE_RASTER_IMAGE.test(candidate)
-        ) ??
-        (typeof img.data === 'string'
-          ? `data:${img.mediaType || 'image/png'};base64,${img.data}`
-          : '')
-    }
-    if (typeof src === 'string' && INLINE_RASTER_IMAGE.test(src)) {
-      items.push({ src, alt: `PDF preview ${i + 1}` })
-    }
-  }
-  return items
 }
 
 function PdfPageDetail({
@@ -596,42 +514,32 @@ function PdfPageDetail({
   const pdfImages = getPdfImages(result)
   const isClean = boxes.length === 0
 
-  const headerParts = [
-    page
-      ? pageCount
-        ? `Page ${page} of ${pageCount}`
-        : `Page ${page}`
-      : undefined,
-    regionLabel,
-    sizeText,
-  ].filter(Boolean)
+  const pageLabel = t('ai_assist_tool_pdf_page_label', {
+    page,
+    defaultValue: `Page ${page}`,
+  })
+  const pageTitle = pageCount
+    ? t('ai_assist_tool_pdf_page_of', {
+        page,
+        count: pageCount,
+        defaultValue: `Page ${page} of ${pageCount}`,
+      })
+    : pageLabel
 
   return (
     <div className="ai-assist-tool-detail-outline ai-assist-tool-detail-pdf-page">
-      {headerParts.length > 0 && (
-        <div className="ai-assist-outline-class ai-assist-pdf-overview-header">
-          <span className="ai-assist-pdf-overview-header-title">
-            {headerParts.join(' · ')}
-          </span>
-        </div>
-      )}
+      <PdfDetailHeader parts={[pageTitle, regionLabel, sizeText]} />
 
       {zoomed && (
         <div className="ai-assist-outline-class">
           {t('ai_assist_tool_pdf_zoomed_on', 'Zoomed on')}{' '}
-          <span
-            role="button"
-            tabIndex={0}
-            className="ai-assist-file-link"
-            onClick={() => openFile(focus.path, focus.line)}
-            onKeyDown={e =>
-              (e.key === 'Enter' || e.key === ' ') &&
-              openFile(focus.path, focus.line)
-            }
+          <FileLink
+            path={focus.path}
+            line={focus.line}
+            openFile={openFile}
           >
-            {focus.path}:{focus.line}
-            {focus.endLine > focus.line ? `–${focus.endLine}` : ''}
-          </span>
+            {`${focus.path}:${lineSpan(focus.line, focus.endLine)}`}
+          </FileLink>
           {continuesOn.length > 0 && (
             <>
               {' · '}
@@ -658,21 +566,21 @@ function PdfPageDetail({
               tabIndex={0}
               title={t('ai_assist_click_to_zoom', 'Click to enlarge preview')}
               onClick={() =>
-                setPreviewImage({
-                  src: img.src,
-                  title: `Page ${page}`,
-                })
+                setPreviewImage({ src: img.src, title: pageLabel })
               }
               onKeyDown={e => {
                 if (e.key === 'Enter' || e.key === ' ') {
-                  setPreviewImage({
-                    src: img.src,
-                    title: `Page ${page}`,
-                  })
+                  setPreviewImage({ src: img.src, title: pageLabel })
                 }
               }}
             >
-              <img src={img.src} alt={img.alt} />
+              <img
+                src={img.src}
+                alt={t('ai_assist_tool_pdf_preview_alt', {
+                  count: idx + 1,
+                  defaultValue: `PDF preview ${idx + 1}`,
+                })}
+              />
             </div>
           ))}
         </div>
@@ -684,18 +592,14 @@ function PdfPageDetail({
             {t('ai_assist_tool_pdf_sources', 'Sources:')}
           </span>{' '}
           {sourceRanges.map((sr, idx) => (
-            <span
-              key={`${sr.path}:${sr.startLine}:${idx}`}
-              role="button"
-              tabIndex={0}
-              className="ai-assist-file-link"
-              onClick={() => openFile(sr.path, sr.startLine)}
-              onKeyDown={e =>
-                (e.key === 'Enter' || e.key === ' ') &&
-                openFile(sr.path, sr.startLine)
-              }
-            >
-              {sr.path}:{sr.startLine}–{sr.endLine}
+            <span key={`${sr.path}:${sr.startLine}:${idx}`}>
+              <FileLink
+                path={sr.path}
+                line={sr.startLine}
+                openFile={openFile}
+              >
+                {`${sr.path}:${lineSpan(sr.startLine, sr.endLine)}`}
+              </FileLink>
               {idx < sourceRanges.length - 1 ? ', ' : ''}
             </span>
           ))}
@@ -707,19 +611,13 @@ function PdfPageDetail({
           key={`${row.path}:${row.line}:${idx}`}
           className="ai-assist-outline-section"
         >
-          <span className="ai-assist-outline-line">{row.y}% down:</span>
-          <span
-            role="button"
-            tabIndex={0}
-            className="ai-assist-file-link"
-            onClick={() => openFile(row.path, row.line)}
-            onKeyDown={e =>
-              (e.key === 'Enter' || e.key === ' ') &&
-              openFile(row.path, row.line)
-            }
-          >
-            {row.path}:{row.line}
+          <span className="ai-assist-outline-line">
+            {t('ai_assist_tool_pdf_at_percent', {
+              y: row.y,
+              defaultValue: `At ${row.y}%:`,
+            })}
           </span>
+          <FileLink path={row.path} line={row.line} openFile={openFile} />
         </div>
       ))}
 
@@ -822,27 +720,22 @@ function PdfOverviewDetail({
           defaultValue: `${result.pageCount} page${result.pageCount === 1 ? '' : 's'}`,
         })
       : undefined
-  const header =
-    [
-      ...(result?.mixedSizes
-        ? [t('ai_assist_tool_pdf_mixed_sizes', 'Mixed page sizes')]
-        : [paper.name, paper.orientation, size]),
-      pageCount,
-    ]
-      .filter(Boolean)
-      .join(' · ') ||
-    (result?.pageCount ? `${result.pageCount} pages` : 'PDF Overview')
+  const overviewTitle = t('ai_assist_tool_pdf_overview_title', 'PDF overview')
+  const headerParts = [
+    ...(result?.mixedSizes
+      ? [t('ai_assist_tool_pdf_mixed_sizes', 'Mixed page sizes')]
+      : [paper.name, paper.orientation, size]),
+    pageCount,
+  ].filter(Boolean)
 
   const overviewImages = getPdfImages(result)
   const pages: any[] = Array.isArray(result?.pages) ? result.pages : []
 
   return (
     <div className="ai-assist-tool-detail-outline ai-assist-tool-detail-pdf-overview">
-      {header && (
-        <div className="ai-assist-outline-class ai-assist-pdf-overview-header">
-          <span className="ai-assist-pdf-overview-header-title">{header}</span>
-        </div>
-      )}
+      <PdfDetailHeader
+        parts={headerParts.length > 0 ? headerParts : [overviewTitle]}
+      />
 
       {overviewImages.length > 0 && (
         <div className="ai-assist-pdf-image-container">
@@ -854,15 +747,21 @@ function PdfOverviewDetail({
               tabIndex={0}
               title={t('ai_assist_click_to_zoom', 'Click to enlarge preview')}
               onClick={() =>
-                setPreviewImage({ src: img.src, title: 'PDF Overview' })
+                setPreviewImage({ src: img.src, title: overviewTitle })
               }
               onKeyDown={e => {
                 if (e.key === 'Enter' || e.key === ' ') {
-                  setPreviewImage({ src: img.src, title: 'PDF Overview' })
+                  setPreviewImage({ src: img.src, title: overviewTitle })
                 }
               }}
             >
-              <img src={img.src} alt={img.alt} />
+              <img
+                src={img.src}
+                alt={t('ai_assist_tool_pdf_preview_alt', {
+                  count: idx + 1,
+                  defaultValue: `PDF preview ${idx + 1}`,
+                })}
+              />
             </div>
           ))}
         </div>
@@ -1261,65 +1160,122 @@ export const ToolCallDetailView: FC<{ call: ToolCallRecord }> = ({ call }) => {
           : ''
     if (matches.length === 0) {
       return (
-        <div className="ai-assist-tool-detail-note">
-          {t('ai_assist_tool_pdf_search_none', {
-            defaultValue: `No matches found for "${query}".`,
-          })}
+        <div className="ai-assist-tool-detail-outline">
+          <PdfDetailHeader
+            parts={[
+              t('ai_assist_tool_pdf_search_none', {
+                query,
+                defaultValue: `No matches for "${query}"`,
+              }),
+            ]}
+          />
         </div>
       )
     }
     const total =
       typeof result.matchCount === 'number' ? result.matchCount : matches.length
+    // The pages the shown matches fall on, as one range
+    const shownPages: number[] = matches
+      .map((match: any) => match?.page)
+      .filter((page: unknown): page is number => typeof page === 'number')
+    const firstPage = Math.min(...shownPages)
+    const lastPage = Math.max(...shownPages)
+    const pagesLabel =
+      shownPages.length === 0
+        ? undefined
+        : firstPage === lastPage
+          ? t('ai_assist_tool_pdf_search_page', {
+              page: firstPage,
+              defaultValue: `page ${firstPage}`,
+            })
+          : t('ai_assist_tool_pdf_search_pages', {
+              first: firstPage,
+              last: lastPage,
+              defaultValue: `pages ${firstPage}–${lastPage}`,
+            })
     return (
-      <div className="ai-assist-tool-detail-search">
-        {matches.map((match: any, idx: number) => {
-          const context =
-            typeof match?.context === 'string'
-              ? match.context
-              : typeof match?.text === 'string'
-                ? match.text
-                : ''
-          const line = match?.line ?? undefined
-          return (
-            <div
-              key={`pdf-match-${match?.page}:${match?.y}:${idx}`}
-              className="ai-assist-search-hit"
-            >
-              <span className="ai-assist-search-loc">
-                p{match?.page}
-                {typeof match?.y === 'number' ? ` · ${match.y}%` : ''}
-              </span>
-              {typeof match?.path === 'string' && (
-                <span
-                  role="button"
-                  tabIndex={0}
-                  className="ai-assist-file-link"
-                  onClick={() => openFile(match.path, line)}
-                  onKeyDown={e =>
-                    (e.key === 'Enter' || e.key === ' ') &&
-                    openFile(match.path, line)
-                  }
-                >
-                  {match.path}
-                  {line != null ? `:${line}` : ''}
-                </span>
-              )}
-              <span className="ai-assist-search-text">
-                {highlightQuery(context, query)}
-              </span>
-            </div>
-          )
-        })}
-        {result.truncated && (
-          <div className="ai-assist-tool-detail-note">
-            {t('ai_assist_tool_pdf_search_showing', {
+      <div className="ai-assist-tool-detail-outline">
+        <PdfDetailHeader
+          parts={[
+            t('ai_assist_tool_pdf_search_matches', {
               count: total,
-              shown: matches.length,
-              defaultValue: `showing ${matches.length} of ${total}`,
-            })}
-          </div>
-        )}
+              query,
+              defaultValue: `${total} ${total === 1 ? 'match' : 'matches'} for "${query}"`,
+            }),
+            pagesLabel,
+          ]}
+        />
+        <div className="ai-assist-tool-detail-search">
+          {matches.map((match: any, idx: number) => {
+            const context =
+              typeof match?.context === 'string'
+                ? match.context
+                : typeof match?.text === 'string'
+                  ? match.text
+                  : ''
+            const line = match?.line ?? undefined
+            return (
+              <div
+                key={`pdf-match-${match?.page}:${match?.y}:${idx}`}
+                className="ai-assist-search-hit"
+              >
+                <span className="ai-assist-search-loc">
+                  {t('ai_assist_tool_pdf_page_badge', {
+                    page: match?.page,
+                    defaultValue: `p${match?.page}`,
+                  })}
+                  {typeof match?.y === 'number' ? ` · ${match.y}%` : ''}
+                </span>
+                {typeof match?.path === 'string' && (
+                  <FileLink
+                    path={match.path}
+                    line={line}
+                    openFile={openFile}
+                  />
+                )}
+                <span className="ai-assist-search-text">
+                  {highlightQuery(context, query)}
+                </span>
+              </div>
+            )
+          })}
+          {result.truncated && (
+            <div className="ai-assist-tool-detail-note">
+              {t('ai_assist_tool_pdf_search_showing', {
+                count: total,
+                shown: matches.length,
+                defaultValue: `showing ${matches.length} of ${total}`,
+              })}
+            </div>
+          )}
+        </div>
       </div>
+    )
+  }
+
+  // 6e. resolve_pdf_block: the block's page and the source lines it came from
+  if (call.name === 'resolve_pdf_block') {
+    return <PdfBlockDetail result={result} args={args} openFile={openFile} />
+  }
+
+  // 6f. diff_compiled_pdf: what each page changed since the build before
+  if (call.name === 'diff_compiled_pdf') {
+    return <PdfDiffDetail result={result} args={args} openFile={openFile} />
+  }
+
+  // 6g. inspect_compiled_style: the measured style, and how it differs
+  if (
+    call.name === 'inspect_compiled_style' &&
+    result?.style &&
+    typeof result.style === 'object'
+  ) {
+    return <PdfStyleDetail result={result} openFile={openFile} />
+  }
+
+  // 6h. highlight_in_pdf: what was highlighted in the user's viewer
+  if (call.name === 'highlight_in_pdf') {
+    return (
+      <PdfHighlightDetail result={result} args={args} openFile={openFile} />
     )
   }
 

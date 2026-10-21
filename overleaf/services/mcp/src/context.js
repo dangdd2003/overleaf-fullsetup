@@ -1,4 +1,5 @@
 import { CODES, OverleafApiError, toToolError } from './errors.js'
+import { compactJson, lines } from './format.js'
 
 /**
  * Pull the caller's Overleaf token out of the per-request MCP context.
@@ -40,30 +41,47 @@ export function runTool(fn) {
 }
 
 /**
- * The shared success envelope every tool returns.
+ * The shared success result every tool returns.
  *
- * Shape (identical in the text block and `structuredContent`):
+ * `structuredContent` holds the full envelope for programmatic clients:
  *
  *   {
  *     ok: true,
  *     summary: 'One sentence saying what happened, with the key numbers.',
  *     data: { ...tool-specific payload... },
  *     warnings?: ['Things the model should notice but that did not fail'],
- *     nextSteps?: ['Concrete follow-up calls, e.g. "get_compile_log(projectId, ...)"']
+ *     nextSteps?: ['Concrete follow-up calls']
  *   }
  *
- * Failures use `{ ok: false, error: { code, message, hint, retryable } }`
- * from errors.js, with `isError: true` on the MCP result. Keeping both halves
- * fixed means a model learns one shape and can branch on `ok` everywhere.
+ * The text block, which is what a model reads, is compact text instead:
  *
- * @param {{ summary: string, data?: object, warnings?: string[], nextSteps?: string[] }} parts
+ *   <summary>
+ *   <text: the tool's compact rendering of data, when it gives one;
+ *    otherwise single-line JSON of data with empty fields dropped>
+ *   ! <each warning>
+ *   → <each next step>
+ *
+ * Failures use `{ ok: false, error: { code, message, hint, retryable } }`
+ * from errors.js, with `isError: true` on the MCP result.
+ *
+ * @param {{ summary: string, data?: object, text?: string, warnings?: string[], nextSteps?: string[] }} parts
  */
-export function okResult({ summary, data = {}, warnings, nextSteps }) {
+export function okResult({ summary, data = {}, text, warnings, nextSteps }) {
   const value = { ok: true, summary, data }
   if (warnings?.length) value.warnings = warnings
   if (nextSteps?.length) value.nextSteps = nextSteps
   return {
-    content: [{ type: 'text', text: JSON.stringify(value, null, 2) }],
+    content: [
+      {
+        type: 'text',
+        text: lines(
+          summary,
+          text === undefined ? compactJson(data) : text,
+          (warnings ?? []).map(warning => `! ${warning}`),
+          (nextSteps ?? []).map(step => `→ ${step}`)
+        ),
+      },
+    ],
     structuredContent: value,
   }
 }

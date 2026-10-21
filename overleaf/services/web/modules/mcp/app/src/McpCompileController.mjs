@@ -20,6 +20,7 @@ import {
 import { buildFingerprint, diffFingerprints } from '../../../../app/src/Features/PdfInspection/BuildFingerprint.mjs'
 import {
   findBuild,
+  latestBuild,
   previousBuild,
   rememberBuild,
 } from './McpBuildRecords.mjs'
@@ -92,7 +93,8 @@ async function readOnlyRootDoc(projectId) {
 }
 
 async function compile(req, res) {
-  const { compiler, draft, stopOnFirstError, rootDocPath } = req.body || {}
+  const { compiler, draft, stopOnFirstError, rootDocPath, diagnostics } =
+    req.body || {}
   if (
     (compiler != null && typeof compiler !== 'string') ||
     (rootDocPath != null && typeof rootDocPath !== 'string')
@@ -110,6 +112,14 @@ async function compile(req, res) {
       res,
       McpErrors.CODES.VALIDATION,
       'draft and stopOnFirstError must be true or false'
+    )
+  }
+  const diagnosticsFlag = booleanFlag(diagnostics)
+  if (!diagnosticsFlag) {
+    return McpErrors.send(
+      res,
+      McpErrors.CODES.VALIDATION,
+      'diagnostics must be true or false'
     )
   }
   if (compiler && !Settings.safeCompilers.includes(compiler)) {
@@ -222,6 +232,30 @@ async function compile(req, res) {
     // The compiler this build used: the requested one, for this compile only
     body.compiler = compiler
   }
+  if (diagnosticsFlag.value && result.buildId) {
+    // The same view get_compile_diagnostics gives, so a failed build needs no
+    // second call. A failure here is reported, not made the compile's failure.
+    try {
+      const root = rootDocPath
+        ? options.rootResourcePath
+        : await currentRootDocPath(projectId)
+      const view = await buildDiagnostics(
+        projectId,
+        req.mcpUserId,
+        result.clsiServerId ?? null,
+        result.buildId,
+        root
+      )
+      if (view.tooLarge) {
+        body.diagnosticsError = 'build log is too large'
+      } else {
+        body.diagnostics = view
+      }
+    } catch (err) {
+      logger.warn({ err, projectId }, 'could not read compile diagnostics')
+      body.diagnosticsError = 'could not read the build logs'
+    }
+  }
   res.json(body)
 }
 
@@ -235,6 +269,31 @@ const NETWORK_ERROR_CODES = new Set([
   'EAI_AGAIN',
   'ABORT_ERR',
 ])
+
+// The build a request is about: the one it names, or else the newest build
+// this process recorded for the project, with its compile server. Returns null
+// when no buildId is named and no build is recorded.
+function resolveBuild(projectId, query) {
+  const { buildId, clsiserverid: clsiServerId } = query || {}
+  if (buildId) return { buildId, clsiServerId }
+  const latest = latestBuild(projectId)
+  if (!latest) return null
+  return {
+    buildId: latest.buildId,
+    clsiServerId: clsiServerId || latest.clsiServerId,
+  }
+}
+
+function sendNoBuild(res) {
+  return McpErrors.send(
+    res,
+    McpErrors.CODES.VALIDATION,
+    'no build recorded for this project; call compile_project first',
+    {
+      hint: 'Call compile_project to build the project, then retry without buildId to use its latest build.',
+    }
+  )
+}
 
 // Validate the CLSI passthrough params at the controller boundary so a
 // malformed value becomes a 400 validation_error rather than a 502 from deep
@@ -268,14 +327,10 @@ function isTransientFetchError(err) {
 }
 
 async function getLog(req, res) {
-  const { buildId, clsiserverid: clsiServerId, fromLine } = req.query || {}
-  if (!buildId) {
-    return McpErrors.send(
-      res,
-      McpErrors.CODES.VALIDATION,
-      'buildId is required'
-    )
-  }
+  const { fromLine } = req.query || {}
+  const build = resolveBuild(req.params.projectId, req.query)
+  if (!build) return sendNoBuild(res)
+  const { buildId, clsiServerId } = build
   const paramError = validateBuildParams({ buildId, clsiServerId })
   if (paramError) {
     return McpErrors.send(res, McpErrors.CODES.VALIDATION, paramError)
@@ -465,33 +520,11 @@ async function staleFor(projectId, buildId) {
  * from output.log and output.blg. The LaTeX and BibTeX parsing lives in
  * CompileLogSummary.mjs.
  */
-async function getDiagnostics(req, res) {
-  const { buildId, clsiserverid: clsiServerId, rootDocPath } = req.query || {}
-  if (!buildId) {
-    return McpErrors.send(
-      res,
-      McpErrors.CODES.VALIDATION,
-      'buildId is required'
-    )
-  }
-  const paramError = validateBuildParams({ buildId, clsiServerId })
-  if (paramError) {
-    return McpErrors.send(res, McpErrors.CODES.VALIDATION, paramError)
-  }
-  if (rootDocPath && String(rootDocPath).split('/').includes('..')) {
-    return McpErrors.send(
-      res,
-      McpErrors.CODES.VALIDATION,
-      'invalid rootDocPath'
-    )
-  }
-
-  const projectId = req.params.projectId
-  const userId = req.mcpUserId
-  const root = rootDocPath
-    ? String(rootDocPath).replace(/^\/+/, '')
-    : await currentRootDocPath(projectId)
-
+// The diagnostics view of a build, read from its output.log and output.blg,
+// with `root` as the main file the paths are judged against. Returns
+// `{ tooLarge: true }` when a log is over the cap. Throws when a log cannot be
+// read at all.
+async function buildDiagnostics(projectId, userId, clsiServerId, buildId, root) {
   const log = await readOutputText(
     projectId,
     userId,
@@ -507,30 +540,60 @@ async function getDiagnostics(req, res) {
     'output.blg'
   )
   if (log?.tooLarge || blg?.tooLarge) {
-    return sendLogTooLarge(res)
+    return { tooLarge: true }
   }
   const diagnostics = summarizeCompileLogs({
     latexLog: log?.text ?? null,
     bibLogs: blg?.text != null ? [blg.text] : [],
     rootDocPath: root,
   })
-  res.json({
+  return {
     buildId,
     logAvailable: log != null,
     rootDocPath: root || null,
     ...diagnostics,
-  })
+  }
 }
 
-async function getPdf(req, res) {
-  const { buildId, clsiserverid: clsiServerId } = req.query || {}
-  if (!buildId) {
+async function getDiagnostics(req, res) {
+  const { rootDocPath } = req.query || {}
+  const projectId = req.params.projectId
+  const build = resolveBuild(projectId, req.query)
+  if (!build) return sendNoBuild(res)
+  const { buildId, clsiServerId } = build
+  const paramError = validateBuildParams({ buildId, clsiServerId })
+  if (paramError) {
+    return McpErrors.send(res, McpErrors.CODES.VALIDATION, paramError)
+  }
+  if (rootDocPath && String(rootDocPath).split('/').includes('..')) {
     return McpErrors.send(
       res,
       McpErrors.CODES.VALIDATION,
-      'buildId is required'
+      'invalid rootDocPath'
     )
   }
+
+  const root = rootDocPath
+    ? String(rootDocPath).replace(/^\/+/, '')
+    : await currentRootDocPath(projectId)
+
+  const view = await buildDiagnostics(
+    projectId,
+    req.mcpUserId,
+    clsiServerId,
+    buildId,
+    root
+  )
+  if (view.tooLarge) {
+    return sendLogTooLarge(res)
+  }
+  res.json(view)
+}
+
+async function getPdf(req, res) {
+  const build = resolveBuild(req.params.projectId, req.query)
+  if (!build) return sendNoBuild(res)
+  const { buildId, clsiServerId } = build
   const paramError = validateBuildParams({ buildId, clsiServerId })
   if (paramError) {
     return McpErrors.send(res, McpErrors.CODES.VALIDATION, paramError)
@@ -647,19 +710,10 @@ const PDF_PAGE_FAILURES = {
  * PdfPageInspector.mjs, shared with the AI assistant.
  */
 async function getPdfPage(req, res) {
-  const {
-    buildId,
-    clsiserverid: clsiServerId,
-    path,
-    region = 'full',
-  } = req.query || {}
-  if (!buildId) {
-    return McpErrors.send(
-      res,
-      McpErrors.CODES.VALIDATION,
-      'buildId is required'
-    )
-  }
+  const { path, region = 'full' } = req.query || {}
+  const build = resolveBuild(req.params.projectId, req.query)
+  if (!build) return sendNoBuild(res)
+  const { buildId, clsiServerId } = build
   const paramError = validateBuildParams({ buildId, clsiServerId })
   if (paramError) {
     return McpErrors.send(res, McpErrors.CODES.VALIDATION, paramError)
@@ -753,14 +807,9 @@ async function getPdfPage(req, res) {
  * measurements, paper size and problem fonts.
  */
 async function getPdfOverview(req, res) {
-  const { buildId, clsiserverid: clsiServerId } = req.query || {}
-  if (!buildId) {
-    return McpErrors.send(
-      res,
-      McpErrors.CODES.VALIDATION,
-      'buildId is required'
-    )
-  }
+  const build = resolveBuild(req.params.projectId, req.query)
+  if (!build) return sendNoBuild(res)
+  const { buildId, clsiServerId } = build
   const paramError = validateBuildParams({ buildId, clsiServerId })
   if (paramError) {
     return McpErrors.send(res, McpErrors.CODES.VALIDATION, paramError)
@@ -823,14 +872,10 @@ async function getPdfOverview(req, res) {
  * height and the source line that typeset it.
  */
 async function searchPdf(req, res) {
-  const { buildId, clsiserverid: clsiServerId, query } = req.query || {}
-  if (!buildId) {
-    return McpErrors.send(
-      res,
-      McpErrors.CODES.VALIDATION,
-      'buildId is required'
-    )
-  }
+  const { query } = req.query || {}
+  const build = resolveBuild(req.params.projectId, req.query)
+  if (!build) return sendNoBuild(res)
+  const { buildId, clsiServerId } = build
   const paramError = validateBuildParams({ buildId, clsiServerId })
   if (paramError) {
     return McpErrors.send(res, McpErrors.CODES.VALIDATION, paramError)
@@ -957,14 +1002,10 @@ const PDF_DIFF_FAILURES = {
  * the comparison, shared with the AI assistant.
  */
 async function getPdfDiff(req, res) {
-  const {
-    buildId,
-    beforeBuildId,
-    clsiserverid: clsiServerId,
-  } = req.query || {}
-  if (!buildId) {
-    return McpErrors.send(res, McpErrors.CODES.VALIDATION, 'buildId is required')
-  }
+  const { beforeBuildId } = req.query || {}
+  const build = resolveBuild(req.params.projectId, req.query)
+  if (!build) return sendNoBuild(res)
+  const { buildId, clsiServerId } = build
   const paramError = validateBuildParams({ buildId, clsiServerId })
   if (paramError) {
     return McpErrors.send(res, McpErrors.CODES.VALIDATION, paramError)
@@ -1026,10 +1067,10 @@ async function getPdfDiff(req, res) {
  * the page), then reads it again.
  */
 async function getPdfBlock(req, res) {
-  const { buildId, clsiserverid: clsiServerId, blockId } = req.query || {}
-  if (!buildId) {
-    return McpErrors.send(res, McpErrors.CODES.VALIDATION, 'buildId is required')
-  }
+  const { blockId } = req.query || {}
+  const build = resolveBuild(req.params.projectId, req.query)
+  if (!build) return sendNoBuild(res)
+  const { buildId, clsiServerId } = build
   const paramError = validateBuildParams({ buildId, clsiServerId })
   if (paramError) {
     return McpErrors.send(res, McpErrors.CODES.VALIDATION, paramError)

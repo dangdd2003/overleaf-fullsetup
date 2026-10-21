@@ -166,6 +166,8 @@ function rotateRefreshToken(grant, presentedHash, newHash) {
         ...expiry,
         refreshToken: newHash,
       },
+      // Grants written before accessTokenExpiresAt was dropped lose it here
+      $unset: { accessTokenExpiresAt: '' },
       // Keeps the superseded hash so its reuse can be detected
       $push: {
         supersededRefreshTokens: {

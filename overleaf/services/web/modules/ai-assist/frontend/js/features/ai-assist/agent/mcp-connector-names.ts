@@ -101,10 +101,3 @@ export function useMcpConnector(
     ? connectorFor(connectors, segment)
     : undefined
 }
-
-export function useMcpConnectorName(
-  name: string | undefined
-): string | undefined {
-  const connector = useMcpConnector(name)
-  return connector?.name
-}

@@ -1,4 +1,4 @@
-import { AgentEvent } from '../agent-events'
+import { AgentEvent, RunTrigger } from '../agent-events'
 import { TranscriptEntry } from '../agent-messages'
 import { ProviderSettings, WebSearchSettings } from '../../providers/types'
 import { prepareTranscriptForRun } from '../conversation-store'
@@ -129,7 +129,7 @@ export async function startBackgroundRun({
   kind?: 'compact'
   /** The words after `/compact`, appended to the summary request. */
   instructions?: string
-  trigger?: 'manual' | 'auto'
+  trigger?: RunTrigger
   /**
    * Whether this is the run of the chat on screen, which a reload reconnects
    * to. A run started for a chat already left is recorded as detached instead.

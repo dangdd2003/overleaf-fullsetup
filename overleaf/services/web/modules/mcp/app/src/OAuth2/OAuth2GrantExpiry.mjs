@@ -42,7 +42,19 @@ export async function ensureGrantExpiry() {
     try {
       await db.oauthAccessTokens.createIndex(key, options)
     } catch (err) {
-      logger.error({ err, index: options.name }, '[MCP] grant index not created')
+      logger.error(
+        { err, index: options.name },
+        '[MCP] grant index not created'
+      )
     }
   }
+  // Grants written before accessTokenExpiresAt was dropped would be deleted by
+  // upstream's TTL on that field, refresh token included. Clear it once.
+  await db.oauthAccessTokens.updateMany(
+    {
+      refreshTokenExpiresAt: { $exists: true },
+      accessTokenExpiresAt: { $exists: true },
+    },
+    { $unset: { accessTokenExpiresAt: '' } }
+  )
 }

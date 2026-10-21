@@ -488,25 +488,10 @@ export class ConnectorSession {
   }
 
   /**
-   * The specs of the deferred tools not loaded yet, as they would be sent once
-   * search_connector_tools loads them. Empty unless deferred: otherwise every
-   * tool is already in specs().
-   */
-  pendingSpecs() {
-    if (!this.deferred) return []
-    const specs = []
-    for (const [name, entry] of this.toolMap) {
-      if (this.loadedTools.has(name)) continue
-      specs.push(this._toolSpec(name, entry, MAX_LOADED_DESCRIPTION_CHARS))
-    }
-    return specs
-  }
-
-  /**
    * Every tool the session offers, sent or deferred, for the context
    * dashboard. `name` is the session's name (mcp__server__tool), `originalName`
    * the connector's own, `server` the connector's display name, `spec` the
-   * spec as specs() or pendingSpecs() would send it, and `deferred` whether
+   * spec as specs() would send it, and `deferred` whether
    * it is held back this request.
    */
   catalog() {

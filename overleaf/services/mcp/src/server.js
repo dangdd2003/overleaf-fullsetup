@@ -29,22 +29,21 @@ const TOOL_CATEGORIES = [
 /**
  * Operational instructions transmitted to clients on initialize.
  *
- * Directs frontier LLMs (Claude Opus/Sonnet, GPT-6/5.6, Gemini 3/2.5) to use
- * the optimal tool sequence (outline -> range-read -> surgical edit -> compile)
- * without requiring client-side system prompt configuration.
+ * The workflow guidance lives here once, so tool descriptions can stay short:
+ * clients resend every description on every turn.
  */
 const SECTIONS = [
-  'Result format: every tool returns JSON. Success is { ok: true, summary, data, warnings?, nextSteps? }; read summary first, then data. Failure is { ok: false, error: { code, message, hint, retryable, details? } }; follow error.hint, and use error.details (e.g. candidates, nearest, matches, allowed) to correct the call instead of guessing. Only retry unchanged when retryable is true.',
-  'Conventions: every tool takes projectId (from list_projects). Paths are project paths such as /chapters/intro.tex (leading "/" optional on input, always present on output) and are named path everywhere. Line numbers are 1-based and inclusive everywhere (read_file, edit_lines, outlines, compile errors, history diffs, SyncTeX).',
-  '1. Orient: list_projects (filter with query) -> get_project (settings, allowedValues, rootDocPath, your access) -> list_files.',
-  '2. Read narrowly: get_doc_outline (followIncludes: true for multi-file documents) gives section line ranges; read_file with startLine/endLine, or paths[] for several files at once. read_file returns 500 lines per call unless endLine is given; follow nextSteps for the next range. search_files finds text or regex across files.',
-  '3. Edit: edit_lines to replace/insert/delete by the line numbers you just read, or edit_file with an exact oldString (several edits in one atomic call via edits[]). write_file only for new files or full rewrites; folders are created automatically. move_file, delete_file and upload_asset manage the tree.',
-  '4. Compile and verify: compile_project always parses the log. Check data.status: "success" is clean; "success_with_errors" means a PDF exists BUT LaTeX reported errors that must be fixed; "failure"/"timedout" means no usable PDF. Each errors[] item has path and line you can pass straight to read_file/edit_lines. Fix, then compile again until status is "success". clean: true only for stale .aux/.bbl problems (clearCache is a deprecated alias). get_compile_log re-reads a build (parsed, or raw: true). sync_pdf_source maps "page N" to source lines and back, as text.',
-  '5. Check the look: "success" only means the log is clean. When your edits change what a page shows (tables, figures, TikZ, equations, page breaks), call view_compiled_pdf_page with the buildId and look at the image for content past the margins, overlaps, misplaced floats and ?? references. Its data.sourceMap gives the source line at each height of the page: fix there, compile, and view the page again. Never tell the user a layout looks right without viewing it. For many pages at once, view_compiled_pdf_overview shows thumbnails with each page\'s measured problems; open the pages it flags with view_compiled_pdf_page. To find where text, ?? or [?] lands in the output, use search_compiled_pdf; it returns the page and source line. With labels true, view_compiled_pdf_page draws block ids; resolve_pdf_block turns one into its file and lines. After a fix, diff_compiled_pdf against the build before shows which pages and regions changed.',
-  '6. Undo and review: list_history shows recent versions and changed paths; get_history_diff shows the exact changes; restore_file puts a file back to an earlier version (also recovers deleted files).',
-  '7. Settings and lifecycle: update_project changes compiler, TeX Live image, spell-check language, root document (rootDocPath) or name; invalid values return error.details.allowed. set_project_status archives/trashes/restores, copy_project duplicates, delete_project (confirm: true) only when the user explicitly asks for permanent deletion.',
-  '8. Tags: tags are the user\'s personal dashboard labels (not shared with collaborators, no effect on access or files). list_tags (includeProjects: true for the tagged project ids) -> create_tag, update_tag (rename/recolour), delete_tag (only the label goes; projects are untouched), add_projects_to_tag / remove_projects_from_tag (any number of projectIds per call, idempotent). Use the tagId from list_tags/create_tag.',
-  '9. Semantics: scan_latex (citations, labels_refs, equations, floats, commands, todos, includes) and search_bib instead of manual regex.',
+  'Results are compact text: first line is the outcome, then the data. "! " lines are warnings to act on, "→ " lines suggested next calls. Errors read "error <code>: <message>" with a hint line; use the details line (candidates, nearest, allowed) to fix the call. Retry unchanged only when marked retryable.',
+  'Conventions: projectId comes from list_projects. Paths look like /chapters/intro.tex. Line numbers are 1-based and inclusive everywhere; path:line refs can be passed straight to read_file/edit_lines.',
+  '1. Orient: list_projects -> get_project -> list_files.',
+  '2. Read narrowly: get_doc_outline (followIncludes for multi-file documents) gives section line ranges; read_file with startLine/endLine, or paths[] for several files. search_files finds text or regex.',
+  '3. Edit: edit_lines by the line numbers you read, or edit_file with exact oldString (edits[] for several, atomic). Edit results show the changed lines, so no re-read is needed. write_file only for new files or full rewrites.',
+  '4. Compile: compile_project parses the log. "success" is clean; "success_with_errors" means the PDF exists but errors must be fixed; "failure"/"timedout" means no usable PDF. Fix each path:line error, compile again until "success". clean: true only for stale .aux/.bbl problems. Build tools default to the latest build.',
+  '5. Check the look when edits change what a page shows (tables, figures, TikZ, equations, breaks): view_compiled_pdf_page and look for overflow, overlaps, misplaced floats, ?? refs; its source map gives the line at each height, and with labels true resolve_pdf_block turns a drawn block id into file and lines. view_compiled_pdf_overview for many pages, search_compiled_pdf to find text in the output, diff_compiled_pdf to see what a fix changed. Never claim a layout looks right without viewing it.',
+  '6. Undo: list_history -> get_history_diff -> restore_file (also recovers deleted files).',
+  '7. Settings: update_project (invalid values return the allowed list); set_project_status archives/trashes/restores; delete_project only when the user explicitly asks.',
+  '8. Tags are personal dashboard labels with no effect on files or access.',
+  '9. Semantics: scan_latex and search_bib instead of manual regex.',
 ]
 
 export const OVERLEAF_INSTRUCTIONS = [
@@ -77,26 +76,56 @@ export function registerAllTools(server, deps) {
 }
 
 /**
+ * Advertised input schemas, converted once per tool and reused by every
+ * per-request server. The zod schema each registration passes still does the
+ * validation; only the JSON Schema conversion is shared.
+ */
+const ADVERTISED_INPUTS = new Map()
+
+/**
  * Interpose on registration so every tool advertises portable JSON Schema.
  *
  * Doing it here rather than at each `registerTool` call keeps the tool
  * definitions readable as plain zod, and leaves one place to look when a
  * client rejects a schema keyword.
  *
+ * `outputSchema` is not advertised: clients resend tool definitions on every
+ * turn, and the output schemas were most of that cost while telling the model
+ * nothing the compact result text does not. Tools still declare it, as the
+ * contract `structuredContent` is tested against.
+ *
  * @param {McpServer} server
  */
 function withPortableSchemas(server) {
   return {
-    registerTool(name, config, handler) {
+    registerTool(name, { outputSchema, ...config }, handler) {
+      if (config.inputSchema && !ADVERTISED_INPUTS.has(name)) {
+        ADVERTISED_INPUTS.set(name, portable(config.inputSchema))
+      }
+      const advertised = ADVERTISED_INPUTS.get(name)
       return server.registerTool(
         name,
         {
           ...config,
-          ...(config.inputSchema ? { inputSchema: portable(config.inputSchema) } : {}),
-          ...(config.outputSchema ? { outputSchema: portable(config.outputSchema) } : {}),
+          ...(config.inputSchema
+            ? { inputSchema: sharedConversion(config.inputSchema, advertised) }
+            : {}),
         },
         handler
       )
+    },
+  }
+}
+
+/**
+ * A portable wrapper that validates with this registration's zod schema but
+ * reuses the JSON Schema already converted for the tool.
+ */
+function sharedConversion(schema, advertised) {
+  return {
+    '~standard': {
+      ...advertised['~standard'],
+      validate: value => schema['~standard'].validate(value),
     },
   }
 }

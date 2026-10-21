@@ -9,7 +9,7 @@ import {
 } from '../../../../../frontend/js/features/ai-assist/agent/agent-messages'
 import {
   AUTO_COMPACT_MAX_FAILURES,
-  formatTokenCount,
+  formatCompactTokens,
   renderCompactionMessage,
   shouldAutoCompact,
   userTurnsSinceAutoCompact,
@@ -436,10 +436,10 @@ describe('compaction', function () {
     })
 
     it('formats token counts like the meter', function () {
-      expect(formatTokenCount(152000)).to.equal('152k')
-      expect(formatTokenCount(9800)).to.equal('9.8k')
-      expect(formatTokenCount(1_200_000)).to.equal('1.2M')
-      expect(formatTokenCount(512)).to.equal('512')
+      expect(formatCompactTokens(152000)).to.equal('152k')
+      expect(formatCompactTokens(9800)).to.equal('9.8k')
+      expect(formatCompactTokens(1_200_000)).to.equal('1.2M')
+      expect(formatCompactTokens(512)).to.equal('512')
     })
   })
 })

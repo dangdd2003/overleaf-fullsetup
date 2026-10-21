@@ -74,6 +74,11 @@ describe('McpRouter', function () {
       publicApiRouter.post.calledWith('/api/v0/mcp/projects/:projectId/doc')
     ).toBe(true)
     expect(
+      publicApiRouter.post.calledWith(
+        '/api/v0/mcp/projects/:projectId/docs/read'
+      )
+    ).toBe(true)
+    expect(
       publicApiRouter.post.calledWith('/api/v0/mcp/projects/:projectId/move')
     ).toBe(true)
     expect(
@@ -173,6 +178,16 @@ describe('McpRouter', function () {
     const treeNames = treeCall.args.slice(1).map(h => h.name)
     expect(treeNames).toContain('requireMcpAuth')
     expect(treeNames).toContain('requireMcpProjectRead')
+
+    const readDocsCall = publicApiRouter.post
+      .getCalls()
+      .find(c => c.args[0] === '/api/v0/mcp/projects/:projectId/docs/read')
+    expect(readDocsCall.args.slice(1).map(h => h.name)).toContain(
+      'requireMcpProjectRead'
+    )
+    expect(readDocsCall.args.slice(1).map(h => h.name)).not.toContain(
+      'requireMcpProjectWrite'
+    )
 
     const writeCall = publicApiRouter.post
       .getCalls()

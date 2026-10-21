@@ -73,6 +73,14 @@ export function findBuild(projectId, buildId) {
 }
 
 /**
+ * The newest build compiled for a project, or null when none is recorded.
+ */
+export function latestBuild(projectId) {
+  const builds = byProject.get(String(projectId)) ?? []
+  return builds.length > 0 ? builds[builds.length - 1] : null
+}
+
+/**
  * The build compiled before `buildId` for the same project, or null when this
  * process has no earlier one.
  */

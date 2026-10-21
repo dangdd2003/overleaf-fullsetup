@@ -141,6 +141,12 @@ const McpRouter = {
       mcpHandler(McpFilesController.getDoc)
     )
     router.post(
+      '/api/v0/mcp/projects/:projectId/docs/read',
+      requireMcpAuthWithRateLimit,
+      requireMcpProjectRead,
+      mcpHandler(McpFilesController.readDocs)
+    )
+    router.post(
       '/api/v0/mcp/projects/:projectId/doc',
       requireMcpAuthWithRateLimit,
       requireMcpProjectWrite,

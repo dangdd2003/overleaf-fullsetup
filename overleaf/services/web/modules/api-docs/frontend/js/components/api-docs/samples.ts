@@ -330,7 +330,10 @@ function javascriptSample(request: RequestModel, origin: string): string {
   let bodyExpression: string | null = null
 
   if (body?.kind === 'json') {
-    lines.push(`const body = ${JSON.stringify(body.value, null, 2)}`, '')
+    lines.push(
+      `const body = ${JSON.stringify(body.value ?? {}, null, 2)}`,
+      ''
+    )
     bodyExpression = 'JSON.stringify(body)'
   } else if (body?.kind === 'multipart') {
     if (body.fields.some((field) => field.file)) {

@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { Archive } from '@phosphor-icons/react'
 import { CompactEntry } from '../../agent/agent-messages'
 import {
-  formatTokenCount,
+  formatCompactTokens,
   renderCompactLedger,
 } from '../../agent/context/compaction'
 import { MarkdownContent } from './markdown-content'
@@ -54,9 +54,9 @@ export const CompactBoundary: FC<{ entry: CompactEntry }> = ({ entry }) => {
   const parts = [
     t('ai_assist_compact_title', 'Conversation compacted'),
     t('ai_assist_compact_tokens', {
-      before: formatTokenCount(entry.preTokens),
-      after: formatTokenCount(entry.postTokens),
-      defaultValue: `${formatTokenCount(entry.preTokens)} → ${formatTokenCount(entry.postTokens)} tokens`,
+      before: formatCompactTokens(entry.preTokens),
+      after: formatCompactTokens(entry.postTokens),
+      defaultValue: `${formatCompactTokens(entry.preTokens)} → ${formatCompactTokens(entry.postTokens)} tokens`,
     }),
     t('ai_assist_compact_retained', {
       percent: retained,

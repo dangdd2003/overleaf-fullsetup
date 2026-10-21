@@ -3,6 +3,7 @@ import {
   MAX_BUILDS_PER_PROJECT,
   MAX_PROJECTS,
   findBuild,
+  latestBuild,
   previousBuild,
   rememberBuild,
   resetBuildRecords,
@@ -31,6 +32,22 @@ describe('McpBuildRecords', () => {
     expect(previousBuild('p1', 'b2')).toMatchObject({ buildId: 'b1', clsiServerId: 'c1' })
     expect(previousBuild('p1', 'b1')).toBeNull()
     expect(previousBuild('p1', 'unknown')).toBeNull()
+  })
+
+  it('gives the newest build of a project, or null when there is none', () => {
+    expect(latestBuild('p1')).toBeNull()
+    rememberBuild('p1', { buildId: 'b1', clsiServerId: 'c1', fingerprint: FP })
+    rememberBuild('p2', { buildId: 'x9', fingerprint: FP })
+    rememberBuild('p1', { buildId: 'b2', clsiServerId: 'c2', fingerprint: FP })
+    expect(latestBuild('p1')).toMatchObject({ buildId: 'b2', clsiServerId: 'c2' })
+    expect(latestBuild('p2')).toMatchObject({ buildId: 'x9' })
+  })
+
+  it('makes a re-recorded build the latest one', () => {
+    rememberBuild('p1', { buildId: 'b1', fingerprint: FP })
+    rememberBuild('p1', { buildId: 'b2', fingerprint: FP })
+    rememberBuild('p1', { buildId: 'b1', fingerprint: FP })
+    expect(latestBuild('p1')).toMatchObject({ buildId: 'b1' })
   })
 
   it('moves a re-recorded build to the newest end', () => {

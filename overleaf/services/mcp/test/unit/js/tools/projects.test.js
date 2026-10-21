@@ -21,7 +21,7 @@ function fakeServer() {
 }
 
 function envelopeOf(result) {
-  return JSON.parse(result.content[0].text)
+  return result.structuredContent
 }
 
 describe('project tools', function () {
@@ -75,8 +75,52 @@ describe('project tools', function () {
     })
     const value = envelopeOf(await server.call('list_projects', {}))
     expect(value.ok).to.be.true
-    expect(value.summary).to.be.a('string').and.include('1 of 1')
+    expect(value.summary).to.equal('1/1 projects')
     expect(value.data.projects[0].id).to.equal('p1')
+  })
+
+  it('list_projects renders one compact line per project in the text block', async function () {
+    client.get.resolves({
+      projects: [
+        {
+          id: 'p1',
+          name: 'Paper',
+          lastUpdated: '2026-01-02T10:00:00.000Z',
+          accessLevel: 'owner',
+          owner: { id: 'u1', name: 'Me' },
+          compiler: 'pdflatex',
+        },
+        {
+          id: 'p2',
+          name: 'Shared Notes',
+          lastUpdated: '2025-12-30T08:00:00.000Z',
+          accessLevel: 'readAndWrite',
+          owner: { id: 'u2', name: 'Ada' },
+          archived: true,
+        },
+        {
+          id: 'p3',
+          name: 'Old Draft',
+          lastUpdated: '2025-11-01T08:00:00.000Z',
+          accessLevel: 'readOnly',
+          owner: { id: 'u3', name: 'Bob' },
+          trashed: true,
+        },
+      ],
+      total: 3,
+      returned: 3,
+      truncated: false,
+    })
+    const result = await server.call('list_projects', {})
+    expect(result.content[0].text.split('\n')[0]).to.equal('3/3 projects')
+    const lines = result.content[0].text.split('\n').slice(1)
+    expect(lines[0]).to.equal('p1  Paper  2026-01-02  owner')
+    expect(lines[1]).to.equal('p2  Shared Notes  2025-12-30  readAndWrite  archived  owner Ada')
+    expect(lines[2]).to.equal('p3  Old Draft  2025-11-01  readOnly  trashed  owner Bob')
+    expect(result.content[0].text).to.not.include('u1')
+    expect(result.content[0].text).to.not.include('compiler')
+    expect(result.content[0].text).to.not.include('{')
+    expect(result.content[0].text).to.not.include('null')
   })
 
   it('list_projects forwards the token and only the filters the caller set', async function () {
@@ -99,8 +143,8 @@ describe('project tools', function () {
     })
     const value = envelopeOf(await server.call('list_projects', { limit: 1 }))
     expect(value.warnings).to.have.length(1)
-    expect(value.warnings[0]).to.include('2 more project(s)')
-    expect(value.nextSteps[0]).to.include('get_project')
+    expect(value.warnings[0]).to.include('2 more match')
+    expect(value.nextSteps).to.be.undefined
   })
 
   it('create_project posts the name, template and files as initialFiles', async function () {
@@ -109,16 +153,15 @@ describe('project tools', function () {
       rootDocPath: '/main.tex',
       filesCreated: ['/main.tex'],
     })
-    const value = envelopeOf(
-      await server.call('create_project', {
-        name: 'New',
-        template: 'example',
-        files: [
-          { path: '/main.tex', content: '\\documentclass{article}' },
-          { path: 'refs.bib', content: '' },
-        ],
-      })
-    )
+    const result = await server.call('create_project', {
+      name: 'New',
+      template: 'example',
+      files: [
+        { path: '/main.tex', content: '\\documentclass{article}' },
+        { path: 'refs.bib', content: '' },
+      ],
+    })
+    const value = envelopeOf(result)
     expect(client.post.firstCall.args[1]).to.equal('/projects')
     expect(client.post.firstCall.args[2]).to.deep.equal({
       name: 'New',
@@ -129,8 +172,13 @@ describe('project tools', function () {
       ],
     })
     expect(value.data.rootDocPath).to.equal('/main.tex')
-    expect(value.nextSteps[0]).to.include('get_project')
+    expect(value.nextSteps).to.be.undefined
     expect(value.warnings).to.be.undefined
+    expect(value.summary).to.equal('Created project.')
+    expect(value.data.project.id).to.equal('p2')
+    expect(result.content[0].text).to.equal(
+      'Created project.\nproject p2  New\nroot /main.tex\nfiles written 1'
+    )
   })
 
   it('create_project warns when the new project has no root document', async function () {
@@ -173,12 +221,53 @@ describe('project tools', function () {
     expect(client.get.firstCall.args[1]).to.equal('/projects/p1')
     const value = envelopeOf(result)
     expect(value.data.allowedValues.compiler).to.include('xelatex')
-    expect(value.summary).to.include('3 document(s)')
+    expect(value.summary).to.equal('Project Thesis')
     expect(value.warnings).to.be.undefined
-    expect(value.nextSteps).to.include.members([
-      'list_files with projectId "p1" to see the document tree',
-      'compile_project with projectId "p1" to build the project',
-    ])
+    expect(value.nextSteps).to.be.undefined
+    expect(result.content[0].text).to.equal(
+      [
+        'Project Thesis',
+        'name Thesis | compiler pdflatex | image default | spell en | root /main.tex',
+        'access owner',
+        'docs 3, files 1',
+      ].join('\n')
+    )
+  })
+
+  it('get_project lists allowed values in the text only when include asks for them', async function () {
+    client.get.resolves({
+      project: { id: 'p1', name: 'Thesis', accessLevel: 'owner', canWrite: true, canAdmin: true },
+      settings: { name: 'Thesis', compiler: 'pdflatex', imageName: 'texlive/x:2024', spellCheckLanguage: '', rootDocPath: '/main.tex', rootDocId: 'd1' },
+      allowedValues: {
+        compiler: ['pdflatex', 'xelatex'],
+        imageName: [{ value: 'texlive/x:2024', description: 'TeX Live 2024' }],
+        spellCheckLanguage: [
+          { value: '', name: 'Spell check off' },
+          { value: 'en', name: 'English' },
+          { value: 'de', name: 'German' },
+        ],
+      },
+      files: { documents: 3, files: 1, rootDocCandidates: ['/main.tex'] },
+    })
+    const plain = await server.call('get_project', { projectId: 'p1' })
+    expect(plain.content[0].text).to.not.include('compilers:')
+    expect(plain.content[0].text).to.include('image texlive/x:2024')
+    expect(plain.content[0].text).to.not.include('Spell check off')
+    expect(plain.structuredContent.data.allowedValues.imageName[0].description).to.equal('TeX Live 2024')
+
+    const withValues = await server.call('get_project', {
+      projectId: 'p1',
+      include: ['allowedValues'],
+    })
+    expect(withValues.content[0].text).to.include('compilers: pdflatex, xelatex')
+    expect(withValues.content[0].text).to.include('images: texlive/x:2024')
+    expect(withValues.content[0].text).to.include('spell: en, de')
+    expect(withValues.content[0].text).to.not.include('Spell check off')
+    expect(withValues.content[0].text).to.not.include('TeX Live 2024')
+    expect(withValues.content[0].text).to.not.include('null')
+    expect(withValues.content[0].text).to.not.include('"')
+    expect(withValues.content[0].text).to.not.include('rootDocId')
+    expect(withValues.content[0].text).to.not.include('d1')
   })
 
   it('get_project suggests the first root document candidate when none is set', async function () {
@@ -194,16 +283,17 @@ describe('project tools', function () {
       allowedValues: { compiler: [], imageName: [], spellCheckLanguage: [] },
       files: { documents: 2, files: 0, rootDocCandidates: ['/paper.tex'] },
     })
-    const value = envelopeOf(await server.call('get_project', { projectId: 'p1' }))
-    expect(value.nextSteps[0]).to.equal(
-      'update_project with projectId "p1" and rootDocPath "/paper.tex"'
+    const result = await server.call('get_project', { projectId: 'p1' })
+    const value = envelopeOf(result)
+    expect(value.nextSteps).to.deep.equal(['update_project(rootDocPath="/paper.tex")'])
+    expect(value.warnings).to.include(
+      'No root document set; compiles may pick the wrong file.'
     )
     expect(value.warnings).to.include(
-      'No root document is set, so compiles may pick the wrong file.'
+      'No selectable TeX Live images; imageName cannot be changed.'
     )
-    expect(value.warnings).to.include(
-      'This server offers no selectable TeX Live images, so imageName cannot be changed.'
-    )
+    expect(result.content[0].text).to.include('root candidates: /paper.tex')
+    expect(result.content[0].text).to.include('! No root document set')
   })
 
   it('get_project warns read-only callers that edits will be refused', async function () {
@@ -224,9 +314,9 @@ describe('project tools', function () {
       files: { documents: 1, files: 0, rootDocCandidates: ['/main.tex'] },
     })
     const value = envelopeOf(await server.call('get_project', { projectId: 'p1' }))
-    expect(value.warnings[0]).to.include('read-only')
+    expect(value.warnings[0]).to.include('Read-only')
     expect(
-      value.nextSteps.some(step => step.startsWith('update_project'))
+      (value.nextSteps ?? []).some(step => step.startsWith('update_project'))
     ).to.be.false
   })
 
@@ -245,9 +335,11 @@ describe('project tools', function () {
     expect(client.patch.firstCall.args[1]).to.equal('/projects/p1/settings')
     expect(client.patch.firstCall.args[2]).to.deep.equal({ compiler: 'xelatex' })
     const value = envelopeOf(result)
-    expect(value.summary).to.equal(
-      'Updated project p1: compiler pdflatex -> xelatex.'
+    expect(value.summary).to.equal('Updated 1 setting(s).')
+    expect(result.content[0].text).to.equal(
+      'Updated 1 setting(s).\ncompiler: pdflatex -> xelatex'
     )
+    expect(value.nextSteps).to.be.undefined
     expect(value.data.changes[0].changed).to.be.true
   })
 
@@ -280,7 +372,8 @@ describe('project tools', function () {
     expect(client.post.firstCall.args[1]).to.equal('/projects/p1/status')
     expect(client.post.firstCall.args[2]).to.deep.equal({ status: 'trashed' })
     const value = envelopeOf(result)
-    expect(value.summary).to.equal('Project p1 moved from active to trashed.')
+    expect(value.summary).to.equal('Moved from active to trashed.')
+    expect(result.content[0].text.split('\n')[0]).to.equal('Moved from active to trashed.')
     expect(value.nextSteps[0]).to.include('"active"')
   })
 
@@ -289,7 +382,7 @@ describe('project tools', function () {
     const value = envelopeOf(
       await server.call('set_project_status', { projectId: 'p1', status: 'archived' })
     )
-    expect(value.summary).to.include('already archived')
+    expect(value.summary).to.include('Already archived')
   })
 
   it('copy_project posts the optional name and returns the new project', async function () {
@@ -297,17 +390,21 @@ describe('project tools', function () {
       project: { id: 'p9', name: 'Thesis (Copy)', accessLevel: 'owner' },
       sourceProjectId: 'p1',
     })
-    const value = envelopeOf(await server.call('copy_project', { projectId: 'p1' }))
+    const result = await server.call('copy_project', { projectId: 'p1' })
+    const value = envelopeOf(result)
     expect(client.post.firstCall.args[1]).to.equal('/projects/p1/copy')
     expect(client.post.firstCall.args[2]).to.deep.equal({})
     expect(value.data.project.id).to.equal('p9')
-    expect(value.nextSteps[0]).to.include('p9')
+    expect(value.data.sourceProjectId).to.equal('p1')
+    expect(value.nextSteps).to.be.undefined
+    expect(value.summary).to.equal('Copied project.')
+    expect(result.content[0].text).to.equal('Copied project.\nproject p9  Thesis (Copy)')
   })
 
   it('delete_project refuses to run without confirm: true', async function () {
     const missing = await server.call('delete_project', { projectId: 'p1' })
     expect(missing.isError).to.be.true
-    expect(JSON.parse(missing.content[0].text).error.code).to.equal('validation_error')
+    expect(missing.structuredContent.error.code).to.equal('validation_error')
     expect(client.request.called).to.be.false
   })
 
@@ -319,20 +416,21 @@ describe('project tools', function () {
     expect(client.request.firstCall.args[0]).to.equal(TOKEN)
     expect(client.request.firstCall.args[1]).to.equal('DELETE')
     expect(client.request.firstCall.args[2]).to.equal('/projects/p1')
-    expect(value.summary).to.equal('Permanently deleted project p1.')
+    expect(value.summary).to.equal('Project permanently deleted.')
+    expect(value.summary).to.not.include('p1')
   })
 
   it('surfaces the upstream code as a tool error', async function () {
     client.get.rejects(new OverleafApiError('not_found', 'not found', 404))
     const result = await server.call('get_project', { projectId: 'p1' })
     expect(result.isError).to.be.true
-    expect(JSON.parse(result.content[0].text).error.code).to.equal('not_found')
+    expect(result.structuredContent.error.code).to.equal('not_found')
   })
 
   it('fails closed when no token is present in the context', async function () {
     const result = await server.call('list_projects', {}, {})
     expect(result.isError).to.be.true
-    expect(JSON.parse(result.content[0].text).error.code).to.equal('unauthorized')
+    expect(result.structuredContent.error.code).to.equal('unauthorized')
     expect(client.get.called).to.be.false
   })
 
@@ -529,7 +627,8 @@ describe('project tools', function () {
     expect(value.data.bundled).to.be.false
     expect(value.data.projectIds).to.deep.equal(['p1'])
     expect(value.data.filename).to.equal('My_Thesis.zip')
-    expect(value.summary).to.include('Exported project "p1"')
+    expect(value.summary).to.equal('Exported "My_Thesis.zip" (0 KB).')
+    expect(result.content[0].text).to.equal('Exported "My_Thesis.zip" (0 KB).')
     expect(result.structuredContent.data.filename).to.equal('My_Thesis.zip')
   })
 

@@ -45,9 +45,13 @@ export function listEndpoints(spec: OpenApiSpec): Endpoint[] {
       if (!operation) {
         continue
       }
-      let id = operation.operationId || `${method}-${slugify(path)}`
+      const fallbackId = `${method}-${slugify(path)}`
+      let id = operation.operationId || fallbackId
       if (seen.has(id)) {
-        id = `${method}-${slugify(path)}`
+        id = fallbackId
+      }
+      for (let n = 2; seen.has(id); n++) {
+        id = `${fallbackId}-${n}`
       }
       seen.add(id)
       endpoints.push({ id, path, method, operation })

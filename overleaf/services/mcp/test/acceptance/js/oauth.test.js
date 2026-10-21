@@ -370,7 +370,7 @@ describe('OAuth 2.1 Complete Handshake Acceptance Test', function () {
 
     expect(toolCallResult.status).to.equal(200)
     expect(toolCallResult.body.result).to.exist
-    const content = JSON.parse(toolCallResult.body.result.content[0].text)
+    const content = toolCallResult.body.result.structuredContent
     expect(content.ok).to.equal(true)
     expect(content.data.projects).to.be.an('array')
     expect(content.data.projects[0].name).to.equal('Thesis')

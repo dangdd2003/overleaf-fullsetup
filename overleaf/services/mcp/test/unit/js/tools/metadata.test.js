@@ -1,6 +1,12 @@
 import { expect } from 'chai'
 import sinon from 'sinon'
 import { registerAllTools } from '../../../../src/server.js'
+import { registerProjectTools } from '../../../../src/tools/projects.js'
+import { registerFileTools } from '../../../../src/tools/files.js'
+import { registerCompileTools } from '../../../../src/tools/compile.js'
+import { registerLatexTools } from '../../../../src/tools/latex.js'
+import { registerHistoryTools } from '../../../../src/tools/history.js'
+import { registerTagTools } from '../../../../src/tools/tags.js'
 
 const TOKEN = 'olp_0123456789abcdef'
 const CTX = { http: { authInfo: { token: TOKEN } } }
@@ -55,6 +61,22 @@ function fakeServer() {
   }
 }
 
+/** Tool configs as each module declares them, before registration strips them. */
+function declaredTools() {
+  const server = fakeServer()
+  for (const register of [
+    registerProjectTools,
+    registerFileTools,
+    registerCompileTools,
+    registerLatexTools,
+    registerHistoryTools,
+    registerTagTools,
+  ]) {
+    register(server, { client: {}, staticToken: TOKEN })
+  }
+  return server.tools
+}
+
 describe('tool metadata', function () {
   let server, client
 
@@ -72,13 +94,13 @@ describe('tool metadata', function () {
     })
   })
 
-  it('gives every tool a title, a description and both schemas', function () {
+  it('gives every tool a title, a description and an input schema', function () {
     for (const [name, { config }] of server.tools) {
       expect(config.title, `${name} title`).to.be.a('string').and.not.be.empty
       expect(config.inputSchema, `${name} inputSchema`).to.exist
-      // Clients such as ChatGPT use the output schema to understand results.
-      expect(config.outputSchema, `${name} outputSchema`).to.exist
-      expect(config.outputSchema['~standard'], `${name} outputSchema`).to.exist
+      // Tool definitions are resent on every turn; the output schemas were
+      // most of their size, so they are declared but not advertised.
+      expect(config.outputSchema, `${name} outputSchema`).to.be.undefined
       expect(config.description, `${name} description`).to.be.a('string')
       expect(
         config.description.length,
@@ -143,7 +165,7 @@ describe('tool metadata', function () {
       endLine: 1,
       content: '1\thello',
     })
-    const { config } = server.tools.get('read_file')
+    const { config } = declaredTools().get('read_file')
     const validated = await config.outputSchema['~standard'].validate(
       result.structuredContent
     )
@@ -170,15 +192,21 @@ describe('tool metadata', function () {
     })
   })
 
-  it('omits structuredContent from an error result', async function () {
+  it('declares an output schema on every tool', function () {
+    for (const [name, { config }] of declaredTools()) {
+      expect(config.outputSchema?.['~standard'], `${name} outputSchema`).to
+        .exist
+    }
+  })
+
+  it('returns the error envelope as structuredContent and compact text', async function () {
     client.get.rejects(new Error('upstream is down'))
     const result = await server.call('read_file', {
       projectId: 'p1',
       path: '/main.tex',
     })
-    // MCP skips output validation for errors, so an error must not carry a
-    // half-built structured payload the schema would reject.
     expect(result.isError).to.be.true
-    expect(result.structuredContent).to.be.undefined
+    expect(result.structuredContent.error.code).to.equal('upstream_error')
+    expect(result.content[0].text).to.match(/^error upstream_error: /)
   })
 })

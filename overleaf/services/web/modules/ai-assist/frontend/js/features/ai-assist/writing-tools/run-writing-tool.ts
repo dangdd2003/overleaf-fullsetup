@@ -53,37 +53,42 @@ export async function runWritingTool({
   const chat = client ?? new EditorTextClient(settings)
   let text = ''
   let retrying = false
-  for await (const chunk of chat.streamChat({
-    system,
-    messages,
-    maxTokens: Math.min(limits.maxOutputTokens, maxTokens),
-    contextWindow: limits.contextWindow,
-    cacheHints: {
-      cacheSystem: true,
-      cacheTools: false,
-      lastStableMessage: null,
-      ...(cacheKey ? { cacheKey } : {}),
-    },
-    signal,
-    retryPolicy,
-  })) {
-    if (chunk.type === 'retrying') {
-      const { type: _type, ...retry } = chunk
-      retrying = true
-      onRetry?.(retry)
-    } else if (chunk.type === 'text') {
-      if (retrying) {
-        retrying = false
-        onRetry?.(null)
+  try {
+    for await (const chunk of chat.streamChat({
+      system,
+      messages,
+      maxTokens: Math.min(limits.maxOutputTokens, maxTokens),
+      contextWindow: limits.contextWindow,
+      cacheHints: {
+        cacheSystem: true,
+        cacheTools: false,
+        lastStableMessage: null,
+        ...(cacheKey ? { cacheKey } : {}),
+      },
+      signal,
+      retryPolicy,
+    })) {
+      if (chunk.type === 'retrying') {
+        const { type: _type, ...retry } = chunk
+        retrying = true
+        onRetry?.(retry)
+      } else if (chunk.type === 'text') {
+        if (retrying) {
+          retrying = false
+          onRetry?.(null)
+        }
+        text += chunk.text
+        onText(text)
+      } else if (chunk.type === 'stop') {
+        throw new ProviderError(
+          'outputTruncated',
+          'The reply was cut off before it finished.'
+        )
       }
-      text += chunk.text
-      onText(text)
-    } else if (chunk.type === 'stop') {
-      throw new ProviderError(
-        'outputTruncated',
-        'The reply was cut off before it finished.'
-      )
     }
+  } finally {
+    // Failed or aborted while a retry was pending: clear the countdown
+    if (retrying) onRetry?.(null)
   }
   return text
 }

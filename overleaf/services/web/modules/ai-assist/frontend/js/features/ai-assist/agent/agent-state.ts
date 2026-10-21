@@ -2,6 +2,7 @@ import {
   AgentEvent,
   ApprovalKind,
   CompactPhase,
+  RunTrigger,
   SettingsApproval,
   ConnectorApproval,
 } from './agent-events'
@@ -28,7 +29,7 @@ export type PendingApproval = {
 
 /** A `/compact` run in progress, for the status line. */
 export type CompactingState = {
-  trigger: 'manual' | 'auto'
+  trigger: RunTrigger
   phase: CompactPhase
   chunk?: number
   chunks?: number

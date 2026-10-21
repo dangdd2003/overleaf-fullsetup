@@ -101,5 +101,3 @@ function abortError() {
   err.name = 'AbortError'
   return err
 }
-
-export default { regexSearchLines }

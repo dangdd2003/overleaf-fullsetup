@@ -63,6 +63,16 @@ function readBody(req, res, next, route) {
   })
 }
 
+let ipRateLimit
+/** Created on first request, like the limiters it wraps. */
+function ipRateLimitGate() {
+  ipRateLimit ??= rateLimitGate(getMcpRateLimiters().ip, {
+    ipOnly: true,
+    respond: mcpRateLimited,
+  })
+  return ipRateLimit
+}
+
 /**
  * Runs before the app's body parsers for every /api/v0/mcp request, so a
  * request is rate-limited and authenticated before its body is read. The
@@ -71,11 +81,7 @@ function readBody(req, res, next, route) {
  * parser never sees them.
  */
 export function mcpRequestGuard(req, res, next) {
-  const limiters = getMcpRateLimiters()
-  rateLimitGate(limiters.ip, {
-    ipOnly: true,
-    respond: mcpRateLimited,
-  })(req, res, err => {
+  ipRateLimitGate()(req, res, err => {
     if (err) return next(err)
     const route = routeOf(req)
     const publicRoute =
@@ -90,5 +96,3 @@ export function mcpRequestGuard(req, res, next) {
 export function applyMcpRequestGuard(app) {
   app.use(MCP_PATH, mcpRequestGuard)
 }
-
-export default { mcpRequestGuard, applyMcpRequestGuard, MCP_MAX_UPLOAD_BODY_BYTES }

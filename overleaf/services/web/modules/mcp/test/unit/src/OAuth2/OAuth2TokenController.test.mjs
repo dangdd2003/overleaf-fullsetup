@@ -857,6 +857,9 @@ describe('OAuth2TokenController', () => {
         Date.now() + 90 * DAY_MS
       )
       expect($set).to.not.have.property('accessTokenExpiresAt')
+      expect(findOneAndUpdate.mock.calls[0][1].$unset).to.deep.equal({
+        accessTokenExpiresAt: '',
+      })
       expect($set.expiresAt).to.be.null
     })
 

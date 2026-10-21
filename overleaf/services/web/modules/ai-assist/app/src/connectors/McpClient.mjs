@@ -153,9 +153,9 @@ function headerValueOf(value) {
 }
 
 /** The Mcp-Param-* headers a call's arguments mirror, per the tool's schema. */
-function paramHeaders(schema, args) {
+function paramHeaders(headerParams, args) {
   const headers = {}
-  for (const [header, path] of headerParamsIn(schema) || []) {
+  for (const [header, path] of headerParams || []) {
     let value = args
     for (const key of path) {
       value = value !== null && typeof value === 'object' ? value[key] : undefined
@@ -301,11 +301,22 @@ export class McpClient {
     this._connected = false
     this._sseClosed = false
     this._toolSchemas = new Map()
+    this._headerParams = new Map()
+    this._connecting = null
   }
 
-  async connect({ signal, timeoutMs } = {}) {
-    if (this._connected) return
+  /** Concurrent callers share one handshake; a failed one is cleared to retry. */
+  connect({ signal, timeoutMs } = {}) {
+    if (this._connected) return Promise.resolve()
+    if (!this._connecting) {
+      this._connecting = this._doConnect({ signal, timeoutMs }).finally(() => {
+        this._connecting = null
+      })
+    }
+    return this._connecting
+  }
 
+  async _doConnect({ signal, timeoutMs } = {}) {
     if (this.transport === 'sse') {
       await this._connectSse({ signal, timeoutMs })
       this._connected = true
@@ -471,7 +482,13 @@ export class McpClient {
     this.postEndpoint = postEndpoint
 
     // Initialize via postEndpoint
-    await this._initialize({ signal: abortSignal, timeoutMs })
+    try {
+      await this._initialize({ signal: abortSignal, timeoutMs })
+    } catch (err) {
+      // Same teardown as close(): stop the event stream before rethrowing
+      await this.close()
+      throw err
+    }
   }
 
   /**
@@ -793,6 +810,19 @@ export class McpClient {
     }))
   }
 
+  /**
+   * The header params of a tool, cached per name. A cached entry is reused only
+   * for the same schema object, so a new listing (which replaces the schema in
+   * _toolSchemas) recomputes it.
+   */
+  _headerParamsFor(name, schema) {
+    const cached = this._headerParams.get(name)
+    if (cached && cached.schema === schema) return cached.params
+    const params = headerParamsIn(schema)
+    this._headerParams.set(name, { schema, params })
+    return params
+  }
+
   async callTool(name, args = {}, { signal, timeoutMs, inputSchema } = {}) {
     await this.connect({ signal, timeoutMs })
     const schema = inputSchema ?? this._toolSchemas.get(name)
@@ -801,7 +831,7 @@ export class McpClient {
       { name, arguments: args || {} },
       {
         name,
-        headers: paramHeaders(schema, args || {}),
+        headers: paramHeaders(this._headerParamsFor(name, schema), args || {}),
         signal,
         timeoutMs,
       }

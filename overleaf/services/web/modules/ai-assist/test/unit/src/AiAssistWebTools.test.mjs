@@ -2634,7 +2634,7 @@ describe('AiAssistWebTools', function () {
         },
       }
 
-      it('keeps valid search and read options and drops invalid values', function () {
+      it('keeps valid Exa search and read options and drops invalid values', function () {
         const settings = normalizeWebSearchSettings({
           providers: {
             exa: {
@@ -2911,7 +2911,7 @@ describe('AiAssistWebTools', function () {
         },
       }
 
-      it('keeps valid search and read options and drops invalid values', function () {
+      it('keeps valid Parallel search and read options and drops invalid values', function () {
         const settings = normalizeWebSearchSettings({
           providers: {
             parallel: {

@@ -628,8 +628,10 @@ describe('McpCompileController.getPdf', () => {
       params: { projectId: 'p1' },
       query: { buildId: '0a1b-2c3d' },
     }
+    // Listen before the call: the sink can finish before the await returns.
+    const finished = new Promise(resolve => sink.on('finish', resolve))
     await McpCompileController.getPdf(req, sink)
-    await new Promise(resolve => sink.on('finish', resolve))
+    await finished
     expect(ClsiManager.promises.getOutputFileStream).toHaveBeenCalledWith(
       'p1',
       'u1',
@@ -857,7 +859,6 @@ describe('McpCompileController.getPdfPage', () => {
   })
 
   it.each([
-    [{}, 'buildId is required'],
     [{ buildId: 'not a build' }, 'invalid buildId'],
     [
       { buildId: BUILD_ID, page: '0' },
@@ -1426,12 +1427,11 @@ describe('McpCompileController output caps', () => {
       },
     })
     sink.setHeader = () => {}
-    await expect(
-      McpCompileController.getPdf(
-        { mcpUserId: 'u1', params: { projectId: 'p1' }, query: { buildId: '0a1b-2c3d' } },
-        sink
-      )
-    ).rejects.toMatchObject({ code: 'OUTPUT_TOO_LARGE' })
+    const err = await McpCompileController.getPdf(
+      { mcpUserId: 'u1', params: { projectId: 'p1' }, query: { buildId: '0a1b-2c3d' } },
+      sink
+    ).catch(e => e)
+    expect(err).toMatchObject({ code: 'OUTPUT_TOO_LARGE' })
   })
 })
 
@@ -1516,5 +1516,318 @@ describe('McpCompileController render_failed hint', () => {
     )
     expect(r.statusCode).toBe(502)
     expect(r.body.hint).toMatch(/pass region/)
+  })
+})
+
+describe('McpCompileController compile diagnostics flag', () => {
+  const BUILD = '18f4c3a2b10-0123456789abcdef'
+  const LOG = [
+    './chapters/intro.tex:12: Undefined control sequence.',
+    'l.12 \\foo',
+    '',
+  ].join('\n')
+
+  function logFiles(log) {
+    return async (_p, _u, _s, _b, path) => {
+      if (path === 'output.log') return Readable.from([Buffer.from(log)])
+      throw new Errors.OutputFileFetchFailedError('missing output file')
+    }
+  }
+
+  function compileRequest(body) {
+    return { mcpUserId: 'u1', params: { projectId: 'p1' }, body }
+  }
+
+  beforeEach(() => {
+    CompileManager.promises.compile.mockResolvedValue({
+      status: 'failure',
+      buildId: BUILD,
+      clsiServerId: 's1',
+      outputFiles: [],
+    })
+    ProjectGetter.promises.getProject.mockResolvedValue({
+      rootDoc_id: 'd1',
+      rootFolder: [],
+    })
+    ProjectEntityHandler.promises.getDocPathFromProjectByDocId.mockResolvedValue(
+      '/main.tex'
+    )
+    ClsiManager.promises.getOutputFileStream.mockImplementation(logFiles(LOG))
+  })
+
+  it('adds the diagnostics of the build when asked, as get_compile_diagnostics gives them', async () => {
+    const r = res()
+    await McpCompileController.compile(compileRequest({ diagnostics: true }), r)
+    expect(r.statusCode).toBe(200)
+    expect(r.body.status).toBe('failure')
+    expect(r.body.diagnosticsError).toBeUndefined()
+    expect(r.body.diagnostics).toMatchObject({
+      buildId: BUILD,
+      logAvailable: true,
+      rootDocPath: 'main.tex',
+      counts: { errors: 1 },
+    })
+    expect(ClsiManager.promises.getOutputFileStream).toHaveBeenCalledWith(
+      'p1',
+      'u1',
+      's1',
+      BUILD,
+      'output.log'
+    )
+  })
+
+  it('reads the diagnostics of the override root document when one is given', async () => {
+    ProjectLocator.promises.findElementByPath.mockResolvedValue({
+      element: { _id: 'd2' },
+      type: 'doc',
+    })
+    const r = res()
+    await McpCompileController.compile(
+      compileRequest({ diagnostics: true, rootDocPath: 'chapters/main.tex' }),
+      r
+    )
+    expect(r.body.diagnostics.rootDocPath).toBe('chapters/main.tex')
+  })
+
+  it('leaves the response unchanged without the flag', async () => {
+    const r = res()
+    await McpCompileController.compile(compileRequest({}), r)
+    expect(r.body).not.toHaveProperty('diagnostics')
+    expect(r.body).not.toHaveProperty('diagnosticsError')
+    expect(ClsiManager.promises.getOutputFileStream).not.toHaveBeenCalled()
+  })
+
+  it('does not read logs when the build produced no build id', async () => {
+    CompileManager.promises.compile.mockResolvedValue({
+      status: 'validation-problems',
+      outputFiles: [],
+    })
+    const r = res()
+    await McpCompileController.compile(compileRequest({ diagnostics: true }), r)
+    expect(r.statusCode).toBe(200)
+    expect(r.body).not.toHaveProperty('diagnostics')
+    expect(ClsiManager.promises.getOutputFileStream).not.toHaveBeenCalled()
+  })
+
+  it('reports a log over the cap as diagnosticsError, and still compiles', async () => {
+    ClsiManager.promises.getOutputFileStream.mockImplementation(
+      async (_p, _u, _s, _b, path) => {
+        if (path !== 'output.log') {
+          throw new Errors.OutputFileFetchFailedError('missing output file')
+        }
+        return Readable.from([Buffer.alloc(16 * 1024 * 1024 + 1, 'a')])
+      }
+    )
+    const r = res()
+    await McpCompileController.compile(compileRequest({ diagnostics: true }), r)
+    expect(r.statusCode).toBe(200)
+    expect(r.body.status).toBe('failure')
+    expect(r.body).not.toHaveProperty('diagnostics')
+    expect(r.body.diagnosticsError).toBe('build log is too large')
+  })
+
+  it('reports a failed log read as diagnosticsError, and still compiles', async () => {
+    ClsiManager.promises.getOutputFileStream.mockRejectedValue(
+      new Error('clsi unreachable')
+    )
+    const r = res()
+    await McpCompileController.compile(compileRequest({ diagnostics: true }), r)
+    expect(r.statusCode).toBe(200)
+    expect(r.body.buildId).toBe(BUILD)
+    expect(r.body).not.toHaveProperty('diagnostics')
+    expect(r.body.diagnosticsError).toBe('could not read the build logs')
+  })
+
+  it('reports a failed root lookup as diagnosticsError, and still compiles', async () => {
+    ProjectGetter.promises.getProject.mockRejectedValue(new Error('mongo down'))
+    const r = res()
+    await McpCompileController.compile(compileRequest({ diagnostics: true }), r)
+    expect(r.statusCode).toBe(200)
+    expect(r.body.buildId).toBe(BUILD)
+    expect(r.body).not.toHaveProperty('diagnostics')
+    expect(r.body.diagnosticsError).toBe('could not read the build logs')
+  })
+
+  it.each(['true', 1, 'yes'])(
+    'rejects a diagnostics flag of %j, instead of reading it as true',
+    async value => {
+      const r = res()
+      await McpCompileController.compile(compileRequest({ diagnostics: value }), r)
+      expect(r.statusCode).toBe(400)
+      expect(r.body.code).toBe('validation_error')
+      expect(r.body.message).toBe('diagnostics must be true or false')
+      expect(CompileManager.promises.compile).not.toHaveBeenCalled()
+    }
+  )
+})
+
+describe('McpCompileController build defaults to the latest build', () => {
+  const OLD_ID = '18f4c3a2b00-0123456789abcd00'
+  const NEW_ID = '18f4c3a2b10-0123456789abcdef'
+  const FP = { contentHash: 'h', entries: [] }
+
+  function fileStream() {
+    return async () => Readable.from([Buffer.from('ok\n')])
+  }
+
+  function sinkResponse() {
+    const sink = new Writable({
+      write(chunk, enc, cb) {
+        cb()
+      },
+    })
+    sink.setHeader = () => {}
+    return sink
+  }
+
+  function request(query) {
+    return { mcpUserId: 'u1', params: { projectId: 'p1' }, query }
+  }
+
+  beforeEach(() => {
+    resetBuildRecords()
+    rememberBuild('p1', { buildId: OLD_ID, clsiServerId: 'c0', fingerprint: FP })
+    rememberBuild('p1', { buildId: NEW_ID, clsiServerId: 'c1', fingerprint: FP })
+    ProjectGetter.promises.getProject.mockResolvedValue({
+      rootDoc_id: 'd1',
+      rootFolder: [],
+    })
+    ProjectEntityHandler.promises.getDocPathFromProjectByDocId.mockResolvedValue(
+      '/main.tex'
+    )
+    ClsiManager.promises.getOutputFileStream.mockImplementation(fileStream())
+    PdfPageInspector.inspectPdfPage.mockResolvedValue({ page: 1 })
+    PdfPageInspector.overviewPdfPages.mockResolvedValue({ pages: [] })
+    PdfPageInspector.searchPdfText.mockResolvedValue({ hits: [] })
+    PdfPageInspector.resolveBlock.mockResolvedValue({ file: 'main.tex' })
+    PdfVisualDiff.diffBuilds.mockResolvedValue({ ok: true, changed: false, pages: [] })
+  })
+
+  it('reads the log of the latest build when no buildId is given', async () => {
+    const r = res()
+    await McpCompileController.getLog(request({}), r)
+    expect(r.statusCode).toBe(200)
+    expect(ClsiManager.promises.getOutputFileStream).toHaveBeenCalledWith(
+      'p1',
+      'u1',
+      'c1',
+      NEW_ID,
+      'output.log'
+    )
+  })
+
+  it('reads the diagnostics of the latest build and reports its buildId', async () => {
+    const r = res()
+    await McpCompileController.getDiagnostics(request({}), r)
+    expect(r.body.buildId).toBe(NEW_ID)
+    expect(ClsiManager.promises.getOutputFileStream).toHaveBeenCalledWith(
+      'p1',
+      'u1',
+      'c1',
+      NEW_ID,
+      'output.log'
+    )
+  })
+
+  it('streams the PDF of the latest build', async () => {
+    await McpCompileController.getPdf(request({}), sinkResponse())
+    expect(ClsiManager.promises.getOutputFileStream).toHaveBeenCalledWith(
+      'p1',
+      'u1',
+      'c1',
+      NEW_ID,
+      'output.pdf'
+    )
+  })
+
+  it('renders a page of the latest build', async () => {
+    const r = res()
+    await McpCompileController.getPdfPage(request({ page: '1' }), r)
+    expect(PdfPageInspector.inspectPdfPage).toHaveBeenCalledWith(
+      expect.objectContaining({ buildId: NEW_ID, clsiServerId: 'c1' })
+    )
+    expect(r.body.buildId).toBe(NEW_ID)
+  })
+
+  it('gives the overview of the latest build and reports its buildId', async () => {
+    const r = res()
+    await McpCompileController.getPdfOverview(request({}), r)
+    expect(PdfPageInspector.overviewPdfPages).toHaveBeenCalledWith(
+      expect.objectContaining({ buildId: NEW_ID, clsiServerId: 'c1' })
+    )
+    expect(r.body.buildId).toBe(NEW_ID)
+  })
+
+  it('searches the latest build and reports its buildId', async () => {
+    const r = res()
+    await McpCompileController.searchPdf(request({ query: 'intro' }), r)
+    expect(PdfPageInspector.searchPdfText).toHaveBeenCalledWith(
+      expect.objectContaining({ buildId: NEW_ID, clsiServerId: 'c1' })
+    )
+    expect(r.body.buildId).toBe(NEW_ID)
+  })
+
+  it('finds a block on the latest build and reports its buildId', async () => {
+    const r = res()
+    await McpCompileController.getPdfBlock(request({ page: '1', blockId: 'B3' }), r)
+    expect(PdfPageInspector.resolveBlock).toHaveBeenCalledWith(
+      expect.objectContaining({ buildId: NEW_ID, clsiServerId: 'c1' })
+    )
+    expect(r.body.buildId).toBe(NEW_ID)
+  })
+
+  it('diffs the latest build against the one before it', async () => {
+    await McpCompileController.getPdfDiff(request({}), res())
+    expect(PdfVisualDiff.diffBuilds).toHaveBeenCalledWith(
+      expect.objectContaining({ afterBuildId: NEW_ID, beforeBuildId: OLD_ID })
+    )
+  })
+
+  it('keeps the buildId and clsiserverid a request names', async () => {
+    await McpCompileController.getLog(
+      request({ buildId: OLD_ID, clsiserverid: 'c9' }),
+      res()
+    )
+    expect(ClsiManager.promises.getOutputFileStream).toHaveBeenCalledWith(
+      'p1',
+      'u1',
+      'c9',
+      OLD_ID,
+      'output.log'
+    )
+  })
+
+  it('uses the latest build compile server only when none is named', async () => {
+    await McpCompileController.getLog(request({ clsiserverid: 'c9' }), res())
+    expect(ClsiManager.promises.getOutputFileStream).toHaveBeenCalledWith(
+      'p1',
+      'u1',
+      'c9',
+      NEW_ID,
+      'output.log'
+    )
+  })
+
+  it.each([
+    'getLog',
+    'getDiagnostics',
+    'getPdf',
+    'getPdfPage',
+    'getPdfOverview',
+    'searchPdf',
+    'getPdfBlock',
+    'getPdfDiff',
+  ])('%s says so when no build is recorded for the project', async name => {
+    resetBuildRecords()
+    const r = res()
+    await McpCompileController[name](request({ query: 'x', page: '1', blockId: 'B3' }), r)
+    expect(r.statusCode).toBe(400)
+    expect(r.body).toEqual({
+      code: 'validation_error',
+      message: 'no build recorded for this project; call compile_project first',
+      hint: 'Call compile_project to build the project, then retry without buildId to use its latest build.',
+    })
+    expect(ClsiManager.promises.getOutputFileStream).not.toHaveBeenCalled()
+    expect(PdfPageInspector.inspectPdfPage).not.toHaveBeenCalled()
   })
 })

@@ -1,6 +1,7 @@
 import * as z from 'zod/v4'
 import { CODES, OverleafApiError } from '../errors.js'
 import { okResult, runTool, tokenFrom, withBlocks } from '../context.js'
+import { lines } from '../format.js'
 import { envelope, looseObject, projectId, READ_ONLY, WRITES } from '../schemas.js'
 
 const PROJECT_STATUSES = ['active', 'archived', 'trashed']
@@ -113,12 +114,28 @@ function projectPath(id) {
   return `/projects/${encodeURIComponent(id)}`
 }
 
+/** One project per line: id, name, date, access, then state and owner when they add information. */
+function projectLine(project) {
+  const parts = [
+    project.id,
+    project.name,
+    project.lastUpdated?.slice(0, 10),
+    project.accessLevel,
+  ]
+  if (project.archived) parts.push('archived')
+  if (project.trashed) parts.push('trashed')
+  if (project.accessLevel !== 'owner' && project.owner?.name) {
+    parts.push(`owner ${project.owner.name}`)
+  }
+  return parts.filter(Boolean).join('  ')
+}
+
 /**
  * Register the project-level tools.
  *
  * Handlers forward the caller's token and validated arguments to web, which
- * owns authorization and validation. They only shape the result: the summary,
- * warnings and nextSteps a model reads to choose its next call.
+ * owns authorization and validation. They only shape the result: the compact
+ * text a model reads, plus the warnings and nextSteps that matter for the next call.
  *
  * @param {object} server an McpServer
  * @param {{ client: object, staticToken: string }} deps
@@ -129,7 +146,7 @@ export function registerProjectTools(server, { client, staticToken }) {
     {
       title: 'List projects',
       description:
-        'List the Overleaf projects the signed-in user can open, most recently changed first. Filter by name (query), status (active by default, archived, trashed or all) and ownership (owned, shared or all). Each project carries its id, name, lastUpdated, accessLevel, owner, compiler and archived/trashed state; total counts every match before the limit. Call this first to turn a project name the user mentioned into the projectId every other tool needs.',
+        'List your Overleaf projects, most recently changed first. Each line starts with the projectId other tools need, so use it to turn a project name into an id.',
       annotations: READ_ONLY,
       inputSchema: z.object({
         query: z
@@ -139,17 +156,15 @@ export function registerProjectTools(server, { client, staticToken }) {
         status: z
           .enum(PROJECT_STATUSES.concat('all'))
           .optional()
-          .describe(
-            '"active" (default) excludes archived and trashed projects; "archived" or "trashed" return only those; "all" returns every project'
-          ),
+          .describe('"active" (default), "archived", "trashed" or "all"'),
         ownership: z
           .enum(['all', 'owned', 'shared'])
           .optional()
-          .describe('"all" (default), only projects you "owned", or only projects "shared" with you'),
+          .describe('"all" (default), "owned" by you or "shared" with you'),
         sortBy: z
           .enum(['lastUpdated', 'name'])
           .optional()
-          .describe('"lastUpdated" (default, newest first) or "name"'),
+          .describe('"lastUpdated" (default) or "name"'),
         order: z
           .enum(['asc', 'desc'])
           .optional()
@@ -173,18 +188,12 @@ export function registerProjectTools(server, { client, staticToken }) {
       const total = data.total ?? projects.length
       const returned = data.returned ?? projects.length
       const truncated = Boolean(data.truncated)
-      const scope = [
-        args.status ?? 'active',
-        args.ownership && args.ownership !== 'all' ? args.ownership : null,
-      ].filter(Boolean)
       return okResult({
-        summary: `${returned} of ${total} matching project(s) returned (${scope.join(', ')}).`,
+        summary: `${returned}/${total} projects`,
+        text: lines(projects.map(projectLine)),
         data: { projects, total, returned, truncated },
         warnings: truncated
-          ? [`${total - returned} more project(s) match; raise limit or narrow the query.`]
-          : undefined,
-        nextSteps: projects[0]
-          ? [`get_project with projectId "${projects[0].id}" to see its settings`]
+          ? [`${total - returned} more match; raise limit or narrow the query.`]
           : undefined,
       })
     })
@@ -195,7 +204,7 @@ export function registerProjectTools(server, { client, staticToken }) {
     {
       title: 'Create project',
       description:
-        "Create a new Overleaf project owned by the signed-in user. template picks the starting files: 'blank' (default) gives a short main.tex, 'example' gives Overleaf's sample project, 'empty' gives no files. files adds text documents on top of the template; a /main.tex entry replaces the template's main.tex. The root document is main.tex when the project has one. Returns the projectId to use for every later call.",
+        "Create a project you own. template picks the starting files; files adds text documents on top, and a /main.tex entry replaces the template's main.tex. Returns the projectId for later calls.",
       annotations: { ...WRITES, destructiveHint: false, idempotentHint: false },
       inputSchema: z.object({
         name: z
@@ -234,20 +243,17 @@ export function registerProjectTools(server, { client, staticToken }) {
         definedOnly({ ...args, initialFiles: files })
       )
       const { project, rootDocPath = null, filesCreated = [] } = data
-      const template = args.template ?? 'blank'
-      const warnings = rootDocPath
-        ? undefined
-        : ['No root document is set. Write /main.tex with write_file, then set rootDocPath with update_project.']
       return okResult({
-        summary: `Created project "${project.name}" from the "${template}" template${
-          filesCreated.length ? `, writing ${filesCreated.length} file(s)` : ''
-        }; root document ${rootDocPath ?? 'not set'}.`,
+        summary: 'Created project.',
+        text: lines(
+          `project ${project.id}  ${project.name}`,
+          rootDocPath ? `root ${rootDocPath}` : null,
+          filesCreated.length ? `files written ${filesCreated.length}` : null
+        ),
         data: { project, rootDocPath, filesCreated },
-        warnings,
-        nextSteps: [
-          `get_project with projectId "${project.id}" to review its settings`,
-          `write_file with projectId "${project.id}" to add or edit documents`,
-        ],
+        warnings: rootDocPath
+          ? undefined
+          : ['No root document set; write /main.tex with write_file, then update_project rootDocPath.'],
       })
     })
   )
@@ -257,37 +263,58 @@ export function registerProjectTools(server, { client, staticToken }) {
     {
       title: 'Get project details',
       description:
-        "Read one project in a single call: its settings with current values (name, compiler, imageName, spellCheckLanguage, rootDocPath), the values update_project accepts (allowedValues), file counts with root document candidates, the owner, and the caller's access level with canWrite and canAdmin. Use it before changing settings or compiling.",
+        'Read one project: current settings, file counts with root document candidates, and your access level. Use it before changing settings or compiling. Pass include: ["allowedValues"] to also list the values update_project accepts.',
       annotations: READ_ONLY,
-      inputSchema: z.object({ projectId }),
+      inputSchema: z.object({
+        projectId,
+        include: z
+          .array(z.enum(['allowedValues']))
+          .optional()
+          .describe('Extra sections: allowedValues lists valid compiler/imageName/spellCheckLanguage'),
+      }),
       outputSchema: envelope(detailData),
     },
-    runTool(async ({ projectId: id }, ctx) => {
+    runTool(async ({ projectId: id, include }, ctx) => {
       const data = await client.get(tokenFrom(ctx, staticToken), projectPath(id))
       const { project, settings, allowedValues: allowed, files } = data
       const warnings = []
       if (!project.canWrite) {
-        warnings.push('You have read-only access to this project; edits and settings changes will be refused.')
+        warnings.push('Read-only access; edits and settings changes will be refused.')
       }
       if (!settings.rootDocPath) {
-        warnings.push('No root document is set, so compiles may pick the wrong file.')
+        warnings.push('No root document set; compiles may pick the wrong file.')
       }
       if (allowed.imageName.length === 0) {
-        warnings.push('This server offers no selectable TeX Live images, so imageName cannot be changed.')
+        warnings.push('No selectable TeX Live images; imageName cannot be changed.')
       }
+      const withAllowed = include?.includes('allowedValues')
       const nextSteps = []
       if (!settings.rootDocPath && project.canWrite && files.rootDocCandidates[0]) {
         nextSteps.push(
-          `update_project with projectId "${id}" and rootDocPath "${files.rootDocCandidates[0]}"`
+          `update_project(rootDocPath="${files.rootDocCandidates[0]}")`
         )
       }
-      nextSteps.push(`list_files with projectId "${id}" to see the document tree`)
-      nextSteps.push(`compile_project with projectId "${id}" to build the project`)
+      const spellCodes = withAllowed
+        ? allowed.spellCheckLanguage.map(language => language.value).filter(Boolean)
+        : []
       return okResult({
-        summary: `Project "${settings.name}": ${files.documents} document(s) and ${files.files} file(s), compiles with ${settings.compiler}, root document ${settings.rootDocPath ?? 'not set'}, your access ${project.accessLevel}.`,
+        summary: `Project ${settings.name}`,
+        text: lines(
+          `name ${settings.name} | compiler ${settings.compiler} | image ${settings.imageName || 'default'} | spell ${settings.spellCheckLanguage || 'off'} | root ${settings.rootDocPath || 'none'}`,
+          `access ${project.accessLevel}${project.canWrite ? '' : ' read-only'}`,
+          `docs ${files.documents}, files ${files.files}`,
+          !settings.rootDocPath && files.rootDocCandidates.length
+            ? `root candidates: ${files.rootDocCandidates.join(', ')}`
+            : null,
+          withAllowed && allowed.compiler.length ? `compilers: ${allowed.compiler.join(', ')}` : null,
+          withAllowed && allowed.imageName.length
+            ? `images: ${allowed.imageName.map(image => image.value).join(', ')}`
+            : null,
+          withAllowed && spellCodes.length ? `spell: ${spellCodes.join(', ')}` : null
+        ),
         data,
         warnings: warnings.length ? warnings : undefined,
-        nextSteps,
+        nextSteps: nextSteps.length ? nextSteps : undefined,
       })
     })
   )
@@ -297,7 +324,7 @@ export function registerProjectTools(server, { client, staticToken }) {
     {
       title: 'Update project settings',
       description:
-        "Change one or more project settings: name (owner only), compiler, imageName, spellCheckLanguage and rootDocPath. Supply only the settings to change; the rest are left alone. Valid compiler, imageName and spellCheckLanguage values come from get_project's allowedValues, and rootDocPath is a file path such as /main.tex. Nothing changes if any value is invalid. Returns each requested setting with its before and after value.",
+        'Change project settings: name (owner only), compiler, imageName, spellCheckLanguage and rootDocPath. Supply only the settings to change. Valid values come from get_project include allowedValues; an invalid value changes nothing.',
       annotations: { ...WRITES, destructiveHint: false, idempotentHint: true },
       inputSchema: z
         .object({
@@ -340,21 +367,17 @@ export function registerProjectTools(server, { client, staticToken }) {
         `${projectPath(id)}/settings`,
         definedOnly(settings)
       )
-      const changes = data.changes || []
-      const changed = changes.filter(change => change.changed)
-      const describeChange = change =>
-        `${change.field} ${change.before ?? 'unset'} -> ${change.after ?? 'unset'}`
+      const changed = (data.changes || []).filter(change => change.changed)
       return okResult({
         summary: changed.length
-          ? `Updated project ${id}: ${changed.map(describeChange).join('; ')}.`
-          : `No settings changed on project ${id}; the requested values already matched.`,
+          ? `Updated ${changed.length} setting(s).`
+          : 'No change; the requested values already matched.',
+        text: lines(
+          changed.map(
+            change => `${change.field}: ${change.before ?? 'unset'} -> ${change.after ?? 'unset'}`
+          )
+        ),
         data,
-        nextSteps: changed.length
-          ? [
-              `get_project with projectId "${id}" to confirm the current settings`,
-              `compile_project with projectId "${id}" to check the change`,
-            ]
-          : undefined,
       })
     })
   )
@@ -364,7 +387,7 @@ export function registerProjectTools(server, { client, staticToken }) {
     {
       title: 'Archive, trash or restore a project',
       description:
-        "Move a project between your active list, your archive and your trash. status 'active' restores it, 'archived' archives it and 'trashed' moves it to the trash. These only change the signed-in user's own view of the project; no files are deleted and each step can be reversed with this tool.",
+        "Move a project between your active list, archive and trash, for your own view only. status 'active' restores it. No files are deleted and each step is reversible.",
       annotations: { ...WRITES, destructiveHint: false, idempotentHint: true },
       inputSchema: z.object({
         projectId,
@@ -388,14 +411,15 @@ export function registerProjectTools(server, { client, staticToken }) {
       )
       const summary =
         data.previousStatus === data.status
-          ? `Project ${id} was already ${data.status}; nothing changed.`
-          : `Project ${id} moved from ${data.previousStatus} to ${data.status}.`
+          ? `Already ${data.status}; nothing changed.`
+          : `Moved from ${data.previousStatus} to ${data.status}.`
       return okResult({
         summary,
+        text: '',
         data,
         nextSteps:
           data.status === 'trashed'
-            ? [`set_project_status with projectId "${id}" and status "active" to restore it`]
+            ? ['set_project_status with status "active" to restore it']
             : undefined,
       })
     })
@@ -406,7 +430,7 @@ export function registerProjectTools(server, { client, staticToken }) {
     {
       title: 'Copy project',
       description:
-        "Duplicate a project into a new project owned by the signed-in user, with all its documents and files. name defaults to '<name> (Copy)'. Copying a large project can take a while; if the call times out, check list_projects before retrying so you do not create a second copy. Returns the new project, whose id is the projectId for later calls.",
+        "Duplicate a project into a new one you own, with all its files. name defaults to '<name> (Copy)'. Large copies can time out; check list_projects before retrying so you do not create a second copy.",
       annotations: { ...WRITES, destructiveHint: false, idempotentHint: false },
       inputSchema: z.object({
         projectId,
@@ -430,9 +454,9 @@ export function registerProjectTools(server, { client, staticToken }) {
         definedOnly(rest)
       )
       return okResult({
-        summary: `Copied project ${id} to "${data.project.name}" (projectId ${data.project.id}).`,
+        summary: 'Copied project.',
+        text: `project ${data.project.id}  ${data.project.name}`,
         data,
-        nextSteps: [`get_project with projectId "${data.project.id}" to review the copy`],
       })
     })
   )
@@ -442,7 +466,7 @@ export function registerProjectTools(server, { client, staticToken }) {
     {
       title: 'Permanently delete project',
       description:
-        'Permanently delete a project and all of its files for everyone who shares it. Only the project owner can do this, and these tools cannot undo it. Requires confirm: true. To hide a project in a reversible way, use set_project_status with "trashed" instead.',
+        'Permanently delete a project and its files for everyone who shares it. Owner only, and not undoable. Requires confirm: true. To hide a project reversibly, use set_project_status "trashed".',
       annotations: { ...WRITES, destructiveHint: true, idempotentHint: true },
       inputSchema: z.object({
         projectId,
@@ -472,7 +496,8 @@ export function registerProjectTools(server, { client, staticToken }) {
         projectPath(id)
       )
       return okResult({
-        summary: `Permanently deleted project ${id}.`,
+        summary: 'Project permanently deleted.',
+        text: '',
         data,
       })
     })
@@ -483,15 +508,13 @@ export function registerProjectTools(server, { client, staticToken }) {
     {
       title: 'Export projects as ZIP',
       description:
-        "Download projects as a single ZIP archive, the same archive the download button in the Overleaf UI produces. One project id returns that project's own zip, named after the project. Several project ids return one bundle zip holding a zip per project, named after the moment it was exported. Either way exactly one binary ZIP resource comes back, plus its metadata. Use it to back up or hand off whole projects rather than reading files one at a time.",
+        "Download projects as a ZIP, like the UI download button. One id gives that project's zip; several ids give one bundle zip holding a zip per project. Use it to back up or hand off whole projects.",
       annotations: READ_ONLY,
       inputSchema: z.object({
         projectIds: z
           .array(projectId)
           .min(1)
-          .describe(
-            'Overleaf project ids to export. One id exports that project on its own; several ids export one bundle zip containing a zip per project.'
-          ),
+          .describe('Project ids to export; several ids make one bundle zip'),
       }),
       outputSchema: envelope(
         looseObject({
@@ -549,11 +572,12 @@ export function registerProjectTools(server, { client, staticToken }) {
         : `overleaf://projects/${projectIds[0]}/project.zip`
       const mimeType = contentType || 'application/zip'
       const summary = bundled
-        ? `Exported ${projectIds.length} projects as "${name}" (${sizeKb} KB), one zip per project inside the bundle.`
-        : `Exported project "${projectIds[0]}" as "${name}" (${sizeKb} KB).`
+        ? `Exported ${projectIds.length} projects as "${name}" (${sizeKb} KB).`
+        : `Exported "${name}" (${sizeKb} KB).`
       return withBlocks(
         okResult({
           summary,
+          text: '',
           data: {
             projectIds,
             count: projectIds.length,

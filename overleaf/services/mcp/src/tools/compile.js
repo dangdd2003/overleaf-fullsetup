@@ -9,16 +9,30 @@ import {
   READ_ONLY,
 } from '../schemas.js'
 import { normalisePath } from '../parsers/paths.js'
+import { clip, compactJson, lines, numberRuns, ref } from '../format.js'
 
 const LOG_LEVELS = ['all', 'errors', 'warnings']
 /** Vertical points sampled down a page when sync_pdf_source has no x/y. */
 const SYNCTEX_PAGE_SAMPLES = [90, 230, 370, 510, 650, 790]
 const PAGE_REGIONS = ['full', 'top', 'middle', 'bottom']
 const PAGE_SPLITS = ['none', 'halves']
-// Long edge of a page image in pixels. Most vision models downscale above
-// about 1568px, so that is the default.
-const DEFAULT_PAGE_MAX_EDGE_PX = 1568
+// Long edge of a page image in pixels. Vision models read this size well and
+// it keeps the image cheap in context.
+const DEFAULT_PAGE_MAX_EDGE_PX = 1024
 const MIN_PAGE_MAX_EDGE_PX = 512
+// Raw log lines returned when the caller does not ask for a window.
+const DEFAULT_LOG_LINES = 200
+// Text rendering limits, so a large log or document stays readable and small.
+const MAX_ERROR_GROUPS = 30
+const EXCERPT_ERRORS = 3
+const EXCERPT_LINES = 2
+const EXCERPT_LINE_WIDTH = 160
+const MAX_BAD_BOX_LINES = 20
+const MAX_SOURCE_ROWS = 12
+const DEFECT_EVIDENCE_WIDTH = 140
+const BAD_BOX_WIDTH = 100
+const UNDEFINED_KEY = /`([^']+)'|"([^"]+)"/
+const TEX_SYSTEM = '(TeX system file)'
 
 // Statuses that mean "try again shortly", not "the project is broken".
 const TRANSIENT_STATUSES = new Set([
@@ -118,12 +132,10 @@ function definedOnly(object) {
 }
 
 /**
- * Fetch the parsed log of a build, renaming each entry's `file` to a
- * `/`-prefixed `path` so compile results use the same key and form as every
- * file tool.
+ * Rename each diagnostics entry's `file` to a `/`-prefixed `path`, so compile
+ * results use the same key and form as every file tool.
  */
-async function fetchDiagnostics(client, token, id, query) {
-  const diag = await client.get(token, `/projects/${id}/compile/diagnostics`, query)
+function normaliseDiagnostics(diag) {
   const withPath = entries =>
     Array.isArray(entries)
       ? entries.map(({ file, ...rest }) => ({
@@ -139,14 +151,209 @@ async function fetchDiagnostics(client, token, id, query) {
   }
 }
 
+/**
+ * Fetch the parsed log of a build, with its entries normalised.
+ */
+async function fetchDiagnostics(client, token, id, query) {
+  const diag = await client.get(token, `/projects/${id}/compile/diagnostics`, query)
+  return normaliseDiagnostics(diag)
+}
+
 function sleepFor(ms) {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
-/** The argument list a follow-up log call needs, as the model would type it. */
-function logCallArgs(buildId, clsiServerId) {
-  const extra = clsiServerId ? `, clsiServerId="${clsiServerId}"` : ''
-  return `projectId, buildId="${buildId}"${extra}`
+/**
+ * The buildId to append to a next step. The latest build is the default, so
+ * it is only written out when the caller chose a build.
+ */
+function pinned(buildId) {
+  return buildId ? ` buildId=${buildId}` : ''
+}
+
+/** A location as "path:line" (or "path:line-end"), with a placeholder for TeX system files. */
+function where(path, line, endLine) {
+  return ref(path ?? TEX_SYSTEM, line, endLine)
+}
+
+/**
+ * Errors grouped by message: one "E" line per message with every place it
+ * occurs, then the source excerpt of the first few groups.
+ */
+function renderErrorGroups(errors) {
+  const groups = new Map()
+  for (const entry of errors) {
+    if (!groups.has(entry.message)) {
+      groups.set(entry.message, { message: entry.message, context: entry.context, entries: [] })
+    }
+    groups.get(entry.message).entries.push(entry)
+  }
+  const list = [...groups.values()]
+  const out = []
+  list.slice(0, MAX_ERROR_GROUPS).forEach((group, index) => {
+    const byPath = new Map()
+    for (const entry of group.entries) {
+      const key = entry.path ?? TEX_SYSTEM
+      if (!byPath.has(key)) byPath.set(key, [])
+      if (entry.line != null) byPath.get(key).push(entry.line)
+    }
+    const places = [...byPath].map(([path, nums]) =>
+      ref(path, [...new Set(nums)].sort((a, b) => a - b).join(',') || undefined)
+    )
+    out.push(`E ${group.message} — ${places.join('; ')}`)
+    if (index < EXCERPT_ERRORS && group.context) {
+      for (const line of String(group.context).split('\n').slice(0, EXCERPT_LINES)) {
+        out.push(`    ${clip(line, EXCERPT_LINE_WIDTH)}`)
+      }
+    }
+  })
+  if (list.length > MAX_ERROR_GROUPS) {
+    out.push(`… ${list.length - MAX_ERROR_GROUPS} more error groups`)
+  }
+  return out
+}
+
+/** The key an undefined reference or citation names, between ` and ' or quotes. */
+function undefinedKey(message) {
+  const match = UNDEFINED_KEY.exec(String(message))
+  return match ? (match[1] ?? match[2]) : null
+}
+
+/**
+ * Log warnings in text form: undefined references and citations as their
+ * keys on one line each, every other kind counted with its first message.
+ */
+function renderLogWarnings(warnings) {
+  const undefinedKinds = [
+    ['undefined-reference', 'undefined refs'],
+    ['undefined-citation', 'undefined cites'],
+  ]
+  const out = []
+  for (const [kind, label] of undefinedKinds) {
+    // key -> the places it is used, so each one can be fixed where it is
+    const keys = new Map()
+    let unnamed = 0
+    for (const entry of warnings) {
+      if (entry.kind !== kind) continue
+      const key = undefinedKey(entry.message)
+      if (key === null) {
+        unnamed++
+        continue
+      }
+      if (!keys.has(key)) keys.set(key, [])
+      if (entry.path) keys.get(key).push(where(entry.path, entry.line))
+    }
+    if (keys.size) {
+      const named = [...keys].map(([key, places]) =>
+        places.length ? `${key} (${[...new Set(places)].join(', ')})` : key
+      )
+      out.push(`${label}: ${named.join(', ')}${unnamed ? ` (+${unnamed} unnamed)` : ''}`)
+    } else if (unnamed) {
+      out.push(`${label} ×${unnamed}`)
+    }
+  }
+  const others = new Map()
+  for (const entry of warnings) {
+    if (undefinedKinds.some(([kind]) => kind === entry.kind)) continue
+    const kind = entry.kind ?? 'other'
+    if (!others.has(kind)) others.set(kind, { count: 0, message: entry.message })
+    others.get(kind).count++
+  }
+  for (const [kind, { count, message }] of others) {
+    out.push(`W ${kind} ×${count}: ${clip(message, 120)}`)
+  }
+  return out
+}
+
+/** Bad boxes as "B <path>:<line> <message>", capped at max lines. */
+function renderBadBoxes(boxes, { max = MAX_BAD_BOX_LINES, width = Infinity } = {}) {
+  const out = boxes.slice(0, max).map(box => {
+    const times = box.occurrences > 1 ? ` ×${box.occurrences}` : ''
+    return `B ${where(box.path, box.line)} ${clip(box.message, width)}${times}`
+  })
+  if (boxes.length > max) out.push(`… ${boxes.length - max} more bad boxes`)
+  return out
+}
+
+/** Defects as one line each, with the fixes the rules ban for them. */
+function renderDefects(defects) {
+  return defects.flatMap(defect => {
+    const at = defect.path ? ref(defect.path, defect.line) : null
+    const head = [
+      defect.id,
+      defect.category,
+      defect.severity,
+      at,
+      clip(defect.evidence ?? '', DEFECT_EVIDENCE_WIDTH),
+    ]
+      .filter(Boolean)
+      .join(' ')
+    return defect.bannedFixes?.length
+      ? [head, `    banned: ${defect.bannedFixes.join(', ')}`]
+      : [head]
+  })
+}
+
+/**
+ * Source map rows as "<y>% <path>:<line>", with consecutive rows in the same
+ * file collapsed into one "<y1>-<y2>% <path>:<l1>-<l2>" row.
+ */
+function renderSourceMap(sourceMap) {
+  const runs = []
+  for (const row of sourceMap) {
+    const last = runs.at(-1)
+    if (last && last.path === row.path) {
+      last.yEnd = row.y
+      last.lineMin = Math.min(last.lineMin, row.line)
+      last.lineMax = Math.max(last.lineMax, row.line)
+    } else {
+      runs.push({ path: row.path, yStart: row.y, yEnd: row.y, lineMin: row.line, lineMax: row.line })
+    }
+  }
+  const out = runs.slice(0, MAX_SOURCE_ROWS).map(run => {
+    const height = run.yStart === run.yEnd ? `${run.yStart}%` : `${run.yStart}-${run.yEnd}%`
+    return `${height} ${ref(run.path, run.lineMin, run.lineMax)}`
+  })
+  if (runs.length > MAX_SOURCE_ROWS) out.push(`… ${runs.length - MAX_SOURCE_ROWS} more`)
+  return out
+}
+
+/** Blocks drawn on a page as "<id> <path>:<line>[-endLine]". */
+function renderBlocks(blocks) {
+  return blocks.map(block => `${block.id} ${where(block.path, block.line, block.endLine)}`)
+}
+
+const NO_BUILD_REASONS = {
+  'validation-problems': 'Overleaf rejected the project',
+  timedout: 'compile timed out',
+}
+
+/** The first line of a compile result: status, counts and build, or the reason there is none. */
+function compileHeadline({ status, counts, buildId, attempts, clsiStatus }) {
+  if (!buildId) {
+    const reason = TRANSIENT_STATUSES.has(clsiStatus)
+      ? `still busy after ${attempts} attempt(s)`
+      : NO_BUILD_REASONS[clsiStatus] ?? `status "${clsiStatus}"`
+    return `${status}: no build, ${reason}`
+  }
+  const head = `${status}: ${counts.errors} errors, ${counts.warnings} warnings, ${counts.badBoxes} bad boxes  build ${buildId}`
+  return attempts > 1 ? `${head}  (attempts ${attempts})` : head
+}
+
+/**
+ * Advice lines, minus the ones the rendered errors, warnings and counts
+ * already say.
+ */
+function adviceLines(advice, { errorCount, rerunNeeded, counts }) {
+  return advice
+    .filter(text => {
+      if (/^Fix the errors from the top/.test(text)) return errorCount === 0
+      if (/^LaTeX asked for another pass/.test(text)) return !rerunNeeded
+      if (/^Undefined references/.test(text)) return counts.undefinedReferences === 0
+      if (/^Undefined citations/.test(text)) return counts.undefinedCitations === 0
+      return true
+    })
+    .map(text => `advice: ${text}`)
 }
 
 /**
@@ -174,23 +381,10 @@ export function compileStatus(clsiStatus, errorCount, pdfProduced = false) {
   return clsiStatus || 'unknown'
 }
 
-function compileSummary({ status, counts, logChecked, attempts }) {
-  switch (status) {
-    case 'success':
-      return logChecked
-        ? `Compiled cleanly: a PDF was produced with no errors, ${counts.warnings} warning(s) and ${counts.badBoxes} bad box(es).`
-        : 'A PDF was produced, but the compile log could not be read, so errors are unknown.'
-    case 'success_with_errors':
-      return `Compiled WITH ERRORS: a PDF was produced, but the log reports ${counts.errors} error(s), so the PDF is likely incomplete or wrong.`
-    case 'failure':
-      return `Compile FAILED: no PDF was produced, and the log reports ${counts.errors} error(s).`
-    case 'timedout':
-      return 'Compile timed out before it finished, so no complete PDF was produced.'
-    default:
-      return `Compile did not produce a build: status "${status}" after ${attempts} attempt(s).`
-  }
-}
-
+/**
+ * Warnings for the status a caller acts on. The undefined references and
+ * citations are listed in the text, so they are not repeated here.
+ */
 function compileWarnings({
   status,
   counts,
@@ -204,84 +398,47 @@ function compileWarnings({
   const warnings = []
   if (status === 'success_with_errors') {
     warnings.push(
-      `Do not trust the PDF yet: the log reports ${counts.errors} error(s). Fix every entry in data.errors and compile again.`
+      `Do not trust the PDF: the log has ${counts.errors} error(s). Fix them and compile again.`
     )
   }
   if (status === 'failure' && counts.errors === 0) {
     warnings.push(
-      'No PDF was produced and the parsed log has no error, so read the raw log with get_compile_log(raw=true).'
+      'No PDF and no parsed error: read the raw log with get_compile_log raw=true.'
     )
   }
   if (!logChecked && logProblem) {
-    warnings.push(
-      `The compile log could not be read (${logProblem}), so errors are unknown.`
-    )
+    warnings.push(`Compile log unreadable (${logProblem}); errors unknown.`)
   }
   if (rerunNeeded) {
-    warnings.push(
-      'LaTeX asked for another pass because labels or citations changed. Compile again so cross-references are settled.'
-    )
-  }
-  if (counts.undefinedReferences > 0 || counts.undefinedCitations > 0) {
-    warnings.push(
-      `${counts.undefinedReferences} undefined reference(s) and ${counts.undefinedCitations} undefined citation(s) remain.`
-    )
+    warnings.push('LaTeX asked for another pass; compile again to settle references.')
   }
   if (validationProblems) {
-    warnings.push(
-      `Overleaf rejected the project before compiling: ${JSON.stringify(validationProblems)}.`
-    )
+    warnings.push('Overleaf rejected the project before compiling (see validation).')
   }
   if (TRANSIENT_STATUSES.has(clsiStatus)) {
     warnings.push(
-      `Still "${clsiStatus}" after ${attempts} attempt(s). Wait a few seconds, then call compile_project again.`
+      `Still "${clsiStatus}" after ${attempts} attempt(s). Wait a few seconds, then compile again.`
     )
   }
   return warnings
 }
 
-function compileNextSteps({
-  id,
-  status,
-  buildId,
-  clsiServerId,
-  errors,
-  counts,
-  rerunNeeded,
-  logChecked,
-  clsiStatus,
-}) {
+/** Next steps that are not already obvious from the text. */
+function compileNextSteps({ status, buildId, rerunNeeded, logChecked, clsiStatus }) {
   const steps = []
-  if (errors.length > 0) {
-    const first = errors[0]
-    steps.push(
-      first.path
-        ? `read_file(projectId="${id}", path="${first.path}") around line ${first.line ?? '?'}, fix it with edit_lines or edit_file, then compile_project(projectId="${id}")`
-        : `Fix the error in data.errors[0] (its file is outside the project); then compile_project(projectId="${id}")`
-    )
-  }
-  if (buildId && counts.warnings > 0) {
-    steps.push(
-      `get_compile_log(${logCallArgs(buildId, clsiServerId)}, level="warnings")`
-    )
-  }
   if (buildId && !logChecked) {
-    steps.push(
-      `get_compile_log(${logCallArgs(buildId, clsiServerId)}, raw=true)`
-    )
+    steps.push('get_compile_log raw=true')
   }
   if (rerunNeeded && status !== 'failure') {
-    steps.push(`compile_project(projectId="${id}")`)
+    steps.push('compile_project again to settle references')
   }
   if (status === 'success' && buildId) {
     // A clean log says nothing about how the pages look; checking them is
     // the step a model skips unless it is the obvious next one.
-    steps.push(
-      `view_compiled_pdf_page(${logCallArgs(buildId, clsiServerId)}, page=<the page you changed>) to check the layout, which the log cannot`
-    )
+    steps.push('view_compiled_pdf_page page=<n> to check layout of changed pages')
   }
   if (TRANSIENT_STATUSES.has(clsiStatus)) {
-    steps.push(`compile_project(projectId="${id}") again after a few seconds`)
+    steps.push('compile_project again after a few seconds')
   }
   return steps
 }
@@ -320,7 +477,7 @@ export function registerCompileTools(server, deps) {
     {
       title: 'Compile project',
       description:
-        'Compile the project and check the result. Always reads the LaTeX and BibTeX logs, so errors are reported even when a PDF was produced. data.status is one of: success (clean PDF), success_with_errors (PDF produced but the log has errors, so it is wrong or incomplete), failure (no PDF), timedout, or a transient or setup status (too-recently-compiled, compile-in-progress, validation-problems, project-too-large, unavailable). Each error has path and 1-based line to pass to read_file and edit_lines, plus a source excerpt. After editing, call this and fix every entry in data.errors before the next compile. Pass rootDocPath to compile a different main file for one run.',
+        'Compile the project and read its LaTeX and BibTeX logs, so errors are reported even when a PDF was produced. data.status is success, success_with_errors (PDF with log errors, so not trustworthy), failure, timedout, or a transient or setup status. Pass rootDocPath to compile another main file for one run.',
       // Read-only in the sense the annotation is about: compiling never
       // changes the project's content. The only thing it writes is Overleaf's
       // own build output, and clearCache discards exactly that. Labelling it a
@@ -341,21 +498,15 @@ export function registerCompileTools(server, deps) {
         clean: z
           .boolean()
           .optional()
-          .describe(
-            'Clear the auxiliary build files before compiling, when a stale build is suspected (needs write access)'
-          ),
+          .describe('Clear auxiliary build files first when a build looks stale'),
         clearCache: z
           .boolean()
           .optional()
-          .describe(
-            'Deprecated alias of clean; still accepted, but use clean'
-          ),
+          .describe('Deprecated alias of clean'),
         rootDocPath: z
           .string()
           .optional()
-          .describe(
-            'Project path of the main .tex file to compile for this run only, e.g. /thesis/main.tex. Defaults to the project root document'
-          ),
+          .describe('Main .tex to compile for this run, e.g. /thesis/main.tex'),
       }),
       outputSchema: envelope(
         looseObject({
@@ -440,7 +591,7 @@ export function registerCompileTools(server, deps) {
         client,
         token,
         id,
-        definedOnly(options),
+        { ...definedOnly(options), diagnostics: true },
         sleep
       )
 
@@ -450,9 +601,13 @@ export function registerCompileTools(server, deps) {
       const rootDocPath = result.rootDocPath ?? null
       const pdf = result.pdf ?? null
 
-      let diagnostics = null
+      // web returns the parsed log with the compile; the separate read is only
+      // a fallback for when it did not.
+      let diagnostics = result.diagnostics
+        ? normaliseDiagnostics(result.diagnostics)
+        : null
       let logError = null
-      if (buildId) {
+      if (!diagnostics && buildId) {
         try {
           diagnostics = await fetchDiagnostics(client, token, id, {
             buildId,
@@ -460,7 +615,8 @@ export function registerCompileTools(server, deps) {
             rootDocPath,
           })
         } catch (err) {
-          logError = err?.message || 'the log could not be fetched'
+          logError =
+            result.diagnosticsError || err?.message || 'the log could not be fetched'
         }
       }
       // A build with no output.log has no errors on record, but that is not
@@ -477,7 +633,7 @@ export function registerCompileTools(server, deps) {
       const warnings = diagnostics?.warnings ?? []
       const rerunNeeded = diagnostics?.rerunNeeded ?? false
 
-      const summary = compileSummary({ status, counts, logChecked, attempts })
+      const summary = compileHeadline({ status, counts, buildId, attempts, clsiStatus })
       const toolWarnings = compileWarnings({
         status,
         counts,
@@ -489,19 +645,27 @@ export function registerCompileTools(server, deps) {
         logProblem,
       })
       const nextSteps = compileNextSteps({
-        id,
         status,
         buildId,
-        clsiServerId,
-        errors,
-        counts,
         rerunNeeded,
         logChecked,
         clsiStatus,
       })
+      const text = lines(
+        renderErrorGroups(errors),
+        renderLogWarnings(warnings),
+        result.validationProblems &&
+          `validation: ${compactJson(result.validationProblems)}`,
+        adviceLines(diagnostics?.advice ?? [], {
+          errorCount: errors.length,
+          rerunNeeded,
+          counts,
+        })
+      )
 
       return okResult({
         summary,
+        text,
         data: {
           status,
           clsiStatus,
@@ -535,11 +699,15 @@ export function registerCompileTools(server, deps) {
     {
       title: 'Get compile log',
       description:
-        'Re-read a build without recompiling (compile_project already returns its errors). By default returns the parsed view: errors (with path, 1-based line and a source excerpt), warnings (undefined references and citations, BibTeX messages) and bad-box counts. Use level to filter. Pass raw=true to read the raw output.log text in windows of maxLines, starting at startLine. Pass the buildId and clsiServerId that compile_project returned.',
+        'Re-read a build without recompiling: by default the parsed errors, warnings and bad boxes; with raw=true the output.log text, in windows of maxLines lines.',
       annotations: READ_ONLY,
       inputSchema: z.object({
         projectId,
-        buildId: z.string().min(1).describe('Build id from compile_project'),
+        buildId: z
+          .string()
+          .min(1)
+          .optional()
+          .describe('Build id from compile_project; defaults to the latest build'),
         clsiServerId: z
           .string()
           .optional()
@@ -549,9 +717,7 @@ export function registerCompileTools(server, deps) {
         level: z
           .enum(LOG_LEVELS)
           .optional()
-          .describe(
-            'Parsed view only: "errors", "warnings" (warnings and bad boxes), or "all" (the default)'
-          ),
+          .describe('Parsed view: errors, warnings (with bad boxes) or all (default)'),
         raw: z
           .boolean()
           .optional()
@@ -561,21 +727,22 @@ export function registerCompileTools(server, deps) {
           .int()
           .positive()
           .optional()
-          .describe(
-            'Raw view only: first line (1-based) to return; defaults to the last maxLines lines'
-          ),
+          .describe('Raw view: first line, 1-based; defaults to the last maxLines lines'),
         maxLines: z
           .number()
           .int()
           .positive()
           .optional()
-          .describe('Raw view only: lines to return; defaults to 1000'),
+          .describe(`Raw view: lines to return; defaults to ${DEFAULT_LOG_LINES}`),
+        grep: z
+          .string()
+          .min(1)
+          .optional()
+          .describe('Raw view: keep only lines containing this text, ignoring case'),
         rootDocPath: z
           .string()
           .optional()
-          .describe(
-            'Parsed view only: the main file the build compiled, when it is not the current root document, so error paths resolve correctly'
-          ),
+          .describe('Parsed view: main file the build compiled, if not the root document'),
       }),
       outputSchema: envelope(
         looseObject({
@@ -608,6 +775,7 @@ export function registerCompileTools(server, deps) {
           raw,
           startLine,
           maxLines,
+          grep,
           rootDocPath,
         },
         ctx
@@ -618,17 +786,34 @@ export function registerCompileTools(server, deps) {
             buildId,
             clsiserverid: clsiServerId,
             fromLine: startLine,
-            maxLines,
+            maxLines: maxLines ?? DEFAULT_LOG_LINES,
           })
+          const log = page.log ?? ''
+          const total = page.totalLines ?? 0
+          const more = page.endLine != null && page.endLine < total
+          const first = page.startLine ?? 1
           const shown =
             page.startLine != null
-              ? `lines ${page.startLine}-${page.endLine} of ${page.totalLines}`
-              : `no lines of ${page.totalLines ?? 0}`
-          const more = page.endLine != null && page.endLine < page.totalLines
+              ? `log lines ${page.startLine}-${page.endLine}/${total}`
+              : `no log lines (total ${total})`
+          let text = log
+          let matched = ''
+          if (grep) {
+            const needle = grep.toLowerCase()
+            const hits = []
+            log.split('\n').forEach((line, index) => {
+              if (line.toLowerCase().includes(needle)) {
+                hits.push(`${first + index}: ${line}`)
+              }
+            })
+            text = hits.join('\n')
+            matched = `, ${hits.length} match(es)`
+          }
           return okResult({
-            summary: `Raw log: ${shown}.`,
+            summary: `${shown}${matched}`,
+            text,
             data: {
-              buildId,
+              buildId: page.buildId ?? buildId,
               raw: true,
               log: page.log,
               startLine: page.startLine ?? null,
@@ -637,9 +822,7 @@ export function registerCompileTools(server, deps) {
               truncated: page.truncated,
             },
             nextSteps: more
-              ? [
-                  `get_compile_log(${logCallArgs(buildId, clsiServerId)}, raw=true, startLine=${page.endLine + 1})`,
-                ]
+              ? [`get_compile_log${pinned(buildId)} raw=true startLine=${page.endLine + 1}`]
               : undefined,
           })
         }
@@ -650,7 +833,6 @@ export function registerCompileTools(server, deps) {
           rootDocPath,
         })
         const { counts } = diag
-        const firstFile = diag.errors.find(entry => entry.path)
         const include = {
           errors: level === 'all' || level === 'errors',
           warnings: level === 'all' || level === 'warnings',
@@ -678,9 +860,16 @@ export function registerCompileTools(server, deps) {
           )
         }
         return okResult({
-          summary: `Build ${buildId}: ${counts.errors} error(s), ${counts.warnings} warning(s) and ${counts.badBoxes} bad box(es)${level === 'all' ? '' : ` (showing ${level})`}.`,
+          summary: `${counts.errors} errors, ${counts.warnings} warnings, ${counts.badBoxes} bad boxes${level === 'all' ? '' : ` (showing ${level})`}`,
+          text: lines(
+            include.errors ? renderErrorGroups(diag.errors) : null,
+            include.warnings ? renderLogWarnings(diag.warnings ?? []) : null,
+            include.badBoxes
+              ? renderBadBoxes(diag.badBoxes ?? [], { width: Infinity })
+              : null
+          ),
           data: {
-            buildId,
+            buildId: diag.buildId ?? buildId,
             raw: false,
             level,
             logAvailable: diag.logAvailable,
@@ -693,11 +882,6 @@ export function registerCompileTools(server, deps) {
             ...(include.badBoxes ? { badBoxes: diag.badBoxes } : {}),
           },
           warnings,
-          nextSteps: firstFile
-            ? [
-                `read_file(projectId="${id}", path="${firstFile.path}") near line ${firstFile.line ?? '?'}`,
-              ]
-            : undefined,
         })
       }
     )
@@ -708,11 +892,15 @@ export function registerCompileTools(server, deps) {
     {
       title: 'Download compiled PDF',
       description:
-        'Download the whole PDF produced by a build as a binary resource, using the buildId returned by compile_project. Use it to hand the document to the user or save it; to look at a page yourself, use view_compiled_pdf_page. A build with errors may still have a PDF, but check compile_project status first. A failed build has no PDF; read its errors with get_compile_log instead.',
+        'Download the whole PDF of a build as a binary resource, to hand over or save. To look at pages, use view_compiled_pdf_page; a failed build has no PDF.',
       annotations: READ_ONLY,
       inputSchema: z.object({
         projectId,
-        buildId: z.string().min(1).describe('Build id from compile_project'),
+        buildId: z
+          .string()
+          .min(1)
+          .optional()
+          .describe('Build id from compile_project; defaults to the latest build'),
         clsiServerId: z
           .string()
           .optional()
@@ -724,7 +912,10 @@ export function registerCompileTools(server, deps) {
         looseObject({
           ...binaryFields,
           projectId: z.string().describe('The project the PDF was built from'),
-          buildId: z.string().describe('The build the PDF was produced by'),
+          buildId: z
+            .string()
+            .nullable()
+            .describe('The build the PDF was produced by, or null when the latest was used'),
         })
       ),
     },
@@ -734,14 +925,15 @@ export function registerCompileTools(server, deps) {
         `/projects/${id}/compile/pdf`,
         { buildId, clsiserverid: clsiServerId }
       )
-      const uri = `overleaf://projects/${id}/builds/${buildId}/output.pdf`
+      const uri = `overleaf://projects/${id}/builds/${buildId ?? 'latest'}/output.pdf`
       const sizeBytes = Buffer.byteLength(base64, 'base64')
       return withBlocks(
         okResult({
-          summary: `PDF for build ${buildId}: ${sizeBytes} bytes.`,
+          summary: `PDF: ${sizeBytes} bytes`,
+          text: '',
           data: {
             projectId: id,
-            buildId,
+            buildId: buildId ?? null,
             uri,
             mimeType: contentType,
             sizeBytes,
@@ -766,16 +958,14 @@ export function registerCompileTools(server, deps) {
     {
       title: 'Get word count',
       description:
-        'Count the words in a project, or in one document, using the same TeX-aware counter Overleaf shows in the editor. Headings, maths and captions are reported separately from body text, so use it to check a paper against a length limit.',
+        'Count words in the project or one document, with the TeX-aware counter Overleaf uses in the editor. Headings, maths and captions are counted separately from body text.',
       annotations: READ_ONLY,
       inputSchema: z.object({
         projectId,
         path: z
           .string()
           .optional()
-          .describe(
-            'Count one document instead of the whole project, e.g. /chapters/intro.tex'
-          ),
+          .describe('Count one document instead, e.g. /chapters/intro.tex'),
       }),
       outputSchema: envelope(
         looseObject({
@@ -823,11 +1013,23 @@ export function registerCompileTools(server, deps) {
       const warnings = []
       if (counts.errors > 0) {
         warnings.push(
-          `The word counter reported ${counts.errors} error(s)${counts.messages ? `: ${counts.messages}` : ''}. The count may be low.`
+          `Word counter: ${counts.errors} error(s)${counts.messages ? `: ${counts.messages}` : ''}; the count may be low.`
         )
       }
+      const parts = [
+        ['body', counts.textWords],
+        ['headings', counts.headWords],
+        ['outside', counts.outside],
+        ['captions/floats', counts.elements],
+        ['inline math', counts.mathInline],
+        ['display math', counts.mathDisplay],
+      ]
       return okResult({
-        summary: `${scope}: ${counts.textWords ?? 0} body words, ${counts.headWords ?? 0} heading words, ${counts.mathDisplay ?? 0} displayed equation(s).`,
+        summary: `${scope}: ${counts.textWords ?? 0} words`,
+        text: parts
+          .filter(([, value]) => value)
+          .map(([label, value]) => `${label} ${value}`)
+          .join(', '),
         data: { scope, ...counts },
         warnings,
       })
@@ -838,7 +1040,7 @@ export function registerCompileTools(server, deps) {
     {
       title: 'Map PDF pages to source lines',
       description:
-        'Text-only SyncTeX lookup between the compiled PDF and the LaTeX source, for the latest build; nothing is rendered. Give page to find the source lines that produced that page (add x and y, in PDF points from the top-left corner, for one exact spot; otherwise the page is sampled top to bottom). Or give path and line to find the page and position where that line appears. Use it when the user refers to "page 4" or "the table at the bottom of page 2". To see what the page looks like, use view_compiled_pdf_page instead. Compile with compile_project first.',
+        'Text-only SyncTeX lookup on the latest build, nothing rendered. Give page (and optionally x and y) to get the source lines that produced it, or path and line to get the pages where that line appears. To see the page, use view_compiled_pdf_page.',
       annotations: READ_ONLY,
       inputSchema: z.object({
         projectId,
@@ -847,17 +1049,17 @@ export function registerCompileTools(server, deps) {
           .int()
           .min(1)
           .optional()
-          .describe('PDF page, 1-based; give this OR path and line'),
+          .describe('PDF page, 1-based; give this or path and line'),
         x: z
           .number()
           .min(0)
           .optional()
-          .describe('Horizontal position on the page in points from the left (A4 is 595 wide)'),
+          .describe('Points from the left edge (A4 is 595 wide)'),
         y: z
           .number()
           .min(0)
           .optional()
-          .describe('Vertical position on the page in points from the top (A4 is 842 tall)'),
+          .describe('Points from the top edge (A4 is 842 tall)'),
         path: z
           .string()
           .min(1)
@@ -872,7 +1074,7 @@ export function registerCompileTools(server, deps) {
         buildId: z
           .string()
           .optional()
-          .describe('buildId from compile_project; defaults to the latest build'),
+          .describe('Build id from compile_project; defaults to the latest build'),
         clsiServerId: z
           .string()
           .optional()
@@ -943,12 +1145,13 @@ export function registerCompileTools(server, deps) {
         const pages = [...new Set(pdfPositions.map(p => p.page))]
         return okResult({
           summary: pdfPositions.length
-            ? `/${file} line ${line} appears on page ${pages.join(', ')} of the PDF.`
-            : `/${file} line ${line} was not found in the PDF; it may produce no output, or the build is stale.`,
+            ? `/${file} line ${line} is on page ${pages.join(', ')}`
+            : `/${file} line ${line} is not in the PDF; it may produce no output, or the build is stale.`,
+          text: pdfPositions
+            .map(p => `page ${p.page} x${Math.round(p.x)} y${Math.round(p.y)}`)
+            .join('\n'),
           data: { direction: 'source_to_pdf', pdfPositions },
-          nextSteps: pdfPositions.length
-            ? undefined
-            : [`compile_project(projectId="${id}") and try again`],
+          nextSteps: pdfPositions.length ? undefined : ['compile_project again, then retry'],
         })
       }
 
@@ -991,16 +1194,17 @@ export function registerCompileTools(server, deps) {
       const ranges = [...spans.values()]
       return okResult({
         summary: ranges.length
-          ? `Page ${page} comes from ${ranges
-              .map(r => `${r.path} lines ${r.startLine}-${r.endLine}`)
-              .join('; ')}.`
+          ? `Page ${page}: ${ranges.length} source span(s)`
           : `No source found for page ${page}; the page may not exist, or the build is stale.`,
+        text: ranges
+          .map(r => ref(r.path, r.startLine, r.endLine))
+          .join('\n'),
         data: { direction: 'pdf_to_source', sourceLines, ranges },
         nextSteps: ranges.length
           ? [
-              `read_file(projectId="${id}", path="${ranges[0].path}", startLine=${ranges[0].startLine}, endLine=${ranges[0].endLine})`,
+              `read_file path=${ranges[0].path} startLine=${ranges[0].startLine} endLine=${ranges[0].endLine}`,
             ]
-          : [`compile_project(projectId="${id}") and try again`],
+          : ['compile_project again, then retry'],
       })
     })
   )
@@ -1009,24 +1213,21 @@ export function registerCompileTools(server, deps) {
     'diff_compiled_pdf',
     {
       title: 'Diff two compiled PDFs',
-      description: [
-        'Compare the pages of a build with the build compiled before it (or with beforeBuildId), pixel by pixel. Use it after a fix to see exactly what changed on each page, and to confirm nothing else moved.',
-        'Returns the changed pages with their regions (% of page height), a summary line per page, and one image of the newer build with the changed regions boxed. Pages are paired by position, or by their words when a page was added or removed.',
-      ].join('\n'),
+      description:
+        'Compare a build pixel by pixel with the build before it, to see what a fix changed and confirm nothing else moved. Returns the changed pages, their regions, and one image of the newer build with the changes boxed.',
       annotations: READ_ONLY,
       inputSchema: z.object({
         projectId,
         buildId: z
           .string()
           .min(1)
-          .describe('The newer build, from compile_project'),
+          .optional()
+          .describe('Newer build id from compile_project; defaults to the latest build'),
         beforeBuildId: z
           .string()
           .min(1)
           .optional()
-          .describe(
-            'The older build. Defaults to the build compiled before buildId'
-          ),
+          .describe('Older build id; defaults to the build compiled before buildId'),
         clsiServerId: z
           .string()
           .optional()
@@ -1063,8 +1264,17 @@ export function registerCompileTools(server, deps) {
       const images = imagesOf(diff)
       const changedPages = pages.map(p => p.page)
       const summary = changedPages.length
-        ? `${changedPages.length} of ${diff.pageCount?.after ?? '?'} page(s) changed between build ${diff.beforeBuildId} and build ${diff.afterBuildId}: pages ${changedPages.join(', ')}.`
-        : `No page changed between build ${diff.beforeBuildId} and build ${diff.afterBuildId}.`
+        ? `${changedPages.length} of ${diff.pageCount?.after ?? '?'} page(s) changed`
+        : 'No page changed'
+      const summaryLines = diff.summary ?? []
+      const text = lines(
+        summaryLines.length || !changedPages.length
+          ? summaryLines
+          : `changed: ${numberRuns(changedPages)}`,
+        diff.unchangedPages?.length
+          ? `unchanged: ${numberRuns(diff.unchangedPages)}`
+          : null
+      )
       const warnings = []
       if (diff.truncated) {
         warnings.push('Only the first pages were compared; the rest are not in this diff.')
@@ -1072,12 +1282,13 @@ export function registerCompileTools(server, deps) {
       const nextSteps = []
       if (changedPages.length) {
         nextSteps.push(
-          `view_compiled_pdf_page(projectId="${id}", buildId="${diff.afterBuildId}", page=${changedPages[0]}) to see the change at full size`
+          `view_compiled_pdf_page page=${changedPages[0]}${pinned(buildId)} to see the change at full size`
         )
       }
       return withBlocks(
         okResult({
           summary,
+          text,
           data: {
             beforeBuildId: diff.beforeBuildId,
             afterBuildId: diff.afterBuildId,
@@ -1103,19 +1314,16 @@ export function registerCompileTools(server, deps) {
     'view_compiled_pdf_page',
     {
       title: 'View compiled PDF page',
-      description: [
-        'See one page of a compiled PDF as an image, the way the user sees it. compile_project only parses the log, and LaTeX often reports status "success" while a table runs off the page, TikZ labels or arrows overlap, or a figure floats pages away from its text.',
-        'When: after every successful compile_project whose edits change what a page shows (tables, figures, TikZ, equations, page breaks), and before telling the user the result looks right. Pass the buildId and clsiServerId compile_project returned.',
-        'Page: pass page for a PDF page number, or path and line to open the page where that source line is typeset. With neither, page 1. Add endLine to path and line to zoom on where that block of lines is typeset (a table, figure or tikzpicture).',
-        `Size: the image is at most maxEdgePx pixels on its long side (default ${DEFAULT_PAGE_MAX_EDGE_PX}, at least ${MIN_PAGE_MAX_EDGE_PX}); raise it when small print is unreadable, lower it to save context. split "halves" sends the page as two overlapping images (top and bottom) for small print. grayscale defaults to true for a page and false when zooming on a block with endLine, so figures keep their colour.`,
-        'Returns: the image content blocks, data.sourceMap (height on the page, % from the top -> path:line typeset there), data.sourceRanges (line span per file, ready for read_file), data.badBoxes (overfull/underfull boxes on this page) and data.sourceStatus, which says whether the source map is trustworthy.',
-        'Fixing: look for content past the margins, overlapping text, labels or arrows, floats far from their text, ?? or [?] for broken refs and citations, missing symbols, and bad breaks. Take the sourceMap entry nearest the problem\'s height, read_file those lines, fix with edit_lines or edit_file, compile_project, then view the page again with the new buildId. Pass region to zoom in when details are too small to judge.',
-        'Blocks: pass labels true to draw a numbered id ([B1], [B2], ...) beside each block on the page; then resolve_pdf_block gives the file and lines of an id.',
-      ].join('\n'),
+      description:
+        'See one page of a compiled PDF as an image, the way the user sees it; the log cannot show overlaps, overflowing tables or floats far from their text. Use it after a compile that changed what a page shows, before saying the result looks right. Select by page, or by path and line (add endLine for a block such as a table or figure, shown magnified); region zooms into a third of the page, maxEdgePx sets the image size, split halves sends top and bottom images, and labels draws block ids for resolve_pdf_block.',
       annotations: READ_ONLY,
       inputSchema: z.object({
         projectId,
-        buildId: z.string().min(1).describe('Build id from compile_project'),
+        buildId: z
+          .string()
+          .min(1)
+          .optional()
+          .describe('Build id from compile_project; defaults to the latest build'),
         clsiServerId: z
           .string()
           .optional()
@@ -1127,16 +1335,12 @@ export function registerCompileTools(server, deps) {
           .int()
           .min(1)
           .optional()
-          .describe(
-            'PDF page, 1-based. Omit to choose the page with path and line; with neither, page 1'
-          ),
+          .describe('PDF page, 1-based; defaults to 1 unless path and line are given'),
         path: z
           .string()
           .min(1)
           .optional()
-          .describe(
-            'Source document, e.g. /chapters/results.tex; with line, shows the page where that line is typeset'
-          ),
+          .describe('Source document, e.g. /chapters/results.tex; with line, shows where it is typeset'),
         line: z
           .number()
           .int()
@@ -1148,41 +1352,31 @@ export function registerCompileTools(server, deps) {
           .int()
           .min(1)
           .optional()
-          .describe(
-            'With path and line: the last line of the block to zoom on, e.g. the \\end{tabular} or \\end{tikzpicture} line. The image then shows only where lines line to endLine are typeset, magnified.'
-          ),
+          .describe('With path and line: last line of the block, e.g. the \\end{tabular} line'),
         region: z
           .enum(PAGE_REGIONS)
           .optional()
-          .describe(
-            'full (default) shows the whole page; top, middle or bottom zooms into that third at double resolution, to read small text, table cells and subscripts or see whether lines and arrows touch'
-          ),
+          .describe('full (default), or top, middle, bottom: zoom into that third'),
         maxEdgePx: z
           .number()
           .int()
           .min(MIN_PAGE_MAX_EDGE_PX)
           .optional()
           .describe(
-            `Longest side of the image in pixels, at least ${MIN_PAGE_MAX_EDGE_PX}. Default ${DEFAULT_PAGE_MAX_EDGE_PX}, a size most vision models read well. Raise it for dense small print; a zoomed region is magnified within the same cap`
+            `Longest image side in pixels, at least ${MIN_PAGE_MAX_EDGE_PX}; default ${DEFAULT_PAGE_MAX_EDGE_PX}`
           ),
         grayscale: z
           .boolean()
           .optional()
-          .describe(
-            'Render in grayscale. Defaults to true, except when zooming on a block with endLine, where colour is kept for figures and TikZ'
-          ),
+          .describe('Grayscale; defaults to true, or false when endLine zooms on a block'),
         split: z
           .enum(PAGE_SPLITS)
           .optional()
-          .describe(
-            'none (default) sends one image. halves sends the page, or the zoomed part, as two overlapping images, top and bottom, each within maxEdgePx, so body text stays readable'
-          ),
+          .describe('none (default), or halves: top and bottom images for small print'),
         labels: z
           .boolean()
           .optional()
-          .describe(
-            'Draw block ids [B1], [B2], ... in a margin strip, for resolve_pdf_block and data.blocks'
-          ),
+          .describe('Draw block ids [B1], [B2], ... in a margin strip'),
       }),
       outputSchema: envelope(
         looseObject({
@@ -1326,50 +1520,46 @@ export function registerCompileTools(server, deps) {
         const sourceStatus = shown.sourceStatus ?? null
         const sourceNote = shown.sourceNote ?? null
 
-        const of = shown.pageCount ? ` of ${shown.pageCount}` : ''
+        const of = shown.pageCount ? `/${shown.pageCount}` : ''
         const zoom =
           shown.region && shown.region !== 'full'
             ? ` (${shown.region} third, zoomed)`
             : zoomsOnBlock
               ? ' (zoomed on the block)'
               : ''
-        const where = sourceRanges.length
-          ? ` Source: ${sourceRanges
-              .map(r => `${r.path} lines ${r.startLine}-${r.endLine}`)
-              .join('; ')}.`
-          : ' SyncTeX found no source on it.'
         const attached =
-          images.length > 1 ? `${images.length} images` : 'an image'
+          images.length > 1 ? `attached as ${images.length} images` : 'attached'
         const warnings = []
         if (stale) warnings.push(staleWarning(stale))
-        if (sourceStatus && sourceStatus !== 'mapped' && sourceNote) {
-          warnings.push(sourceNote)
-        }
-        if (badBoxes.length) {
-          warnings.push(
-            `${badBoxes.length} overfull/underfull box(es) on this page; an overfull \\hbox is content wider than the text block, so check it in the image.`
-          )
-        }
         const nextSteps = sourceRanges.length
           ? [
-              `read_file(projectId="${id}", path="${sourceRanges[0].path}", startLine=${sourceRanges[0].startLine}, endLine=${sourceRanges[0].endLine}) to fix what the image shows`,
-              `after the fix: compile_project(projectId="${id}"), then view_compiled_pdf_page with the new buildId and page=${shown.page}`,
+              `read_file path=${sourceRanges[0].path} startLine=${sourceRanges[0].startLine} endLine=${sourceRanges[0].endLine} to fix what the image shows`,
+              `compile_project, then view_compiled_pdf_page page=${shown.page} with the new build`,
             ]
           : undefined
 
         const blocks = slashPaths(shown.blocks ?? [])
         const defects = slashPaths(shown.defects ?? [])
-        if (defects.length) {
-          warnings.push(
-            `${defects.length} layout defect(s) on this page are listed in data.defects. Fix each at its file and line; do not use a banned quick fix named there.`
-          )
-        }
+        const text = lines(
+          located && `located ${ref(located.path, located.line)} at ${located.y}%`,
+          sourceMap.length > 0
+            ? ['source:', renderSourceMap(sourceMap)]
+            : sourceRanges.length > 0 &&
+              ['source:', sourceRanges.map(r => ref(r.path, r.startLine, r.endLine))],
+          renderBadBoxes(badBoxes, { width: BAD_BOX_WIDTH }),
+          sourceStatus &&
+            sourceStatus !== 'mapped' &&
+            `sourceStatus: ${sourceStatus}${sourceNote ? `. ${sourceNote}` : ''}`,
+          blocks.length > 0 && renderBlocks(blocks),
+          defects.length > 0 && renderDefects(defects)
+        )
 
         return withBlocks(
           okResult({
-            summary: `${stale ? staleSummary(stale) : ''}Page ${shown.page}${of}${zoom} of build ${buildId}, attached as ${attached}.${located ? ` ${located.path} line ${located.line} is about ${located.y}% down the page.` : ''}${where}`,
+            summary: `${stale ? staleSummary(stale) : ''}Page ${shown.page}${of}${zoom} ${attached}`,
+            text,
             data: {
-              buildId,
+              buildId: shown.buildId ?? buildId,
               page: shown.page,
               pageCount: shown.pageCount ?? null,
               pageSize: shown.pageSize ?? null,
@@ -1401,11 +1591,15 @@ export function registerCompileTools(server, deps) {
     {
       title: 'Find a PDF block',
       description:
-        'Turn a block id drawn on a page image (B1, B2, ...) into the source file and lines typeset there. Use it after view_compiled_pdf_page with labels true, when a problem is in a numbered block and you need the lines to edit.',
+        'Turn a block id drawn on a page image (B1, B2, ...) by view_compiled_pdf_page with labels into its source file and lines.',
       annotations: READ_ONLY,
       inputSchema: z.object({
         projectId,
-        buildId: z.string().min(1).describe('Build id from compile_project'),
+        buildId: z
+          .string()
+          .min(1)
+          .optional()
+          .describe('Build id from compile_project; defaults to the latest build'),
         clsiServerId: z
           .string()
           .optional()
@@ -1418,7 +1612,7 @@ export function registerCompileTools(server, deps) {
         blockId: z
           .string()
           .regex(/^B\d+$/)
-          .describe('The block id as drawn, e.g. B3'),
+          .describe('Block id as drawn, e.g. B3'),
       }),
       outputSchema: envelope(
         looseObject({
@@ -1437,11 +1631,9 @@ export function registerCompileTools(server, deps) {
         { buildId, clsiserverid: clsiServerId, page, blockId }
       )
       const path = slashed(block.path)
-      const range = block.endLine && block.endLine !== block.line
-        ? `${block.line}-${block.endLine}`
-        : `${block.line}`
       return okResult({
-        summary: `${blockId} on page ${page} is typeset from ${path} line${range.includes('-') ? 's' : ''} ${range}.`,
+        summary: `typeset at ${ref(path, block.line, block.endLine)}`,
+        text: '',
         data: {
           blockId,
           page,
@@ -1450,7 +1642,7 @@ export function registerCompileTools(server, deps) {
           ...(block.endLine ? { endLine: block.endLine } : {}),
         },
         nextSteps: [
-          `read_file(projectId="${id}", path="${path}", startLine=${block.line}, endLine=${block.endLine ?? block.line})`,
+          `read_file path=${path} startLine=${block.line} endLine=${block.endLine ?? block.line}`,
         ],
       })
     })
@@ -1460,14 +1652,16 @@ export function registerCompileTools(server, deps) {
     'view_compiled_pdf_overview',
     {
       title: 'View compiled PDF overview',
-      description: [
-        'See many pages of a compiled PDF at once: up to 12 pages as thumbnails in one image, each labelled with its page number, plus what measuring the pages found. Use it to judge the document as a whole (page count, paper size, where sections start, where floats landed, page breaks, blank or half-empty pages, content sticking into the margins) and to choose which page to open with view_compiled_pdf_page.',
-        'Thumbnails are too small to read text or check a table\'s cells; open the page for that. Returns the image, the page count, paper size and fonts that are not embedded or are bitmap, then per page the source file:lines typeset on it and any problem found.',
-      ].join('\n'),
+      description:
+        'See up to 12 pages of a compiled PDF as thumbnails in one image, with the paper, fonts, and each page\'s source files and problems. Thumbnails are too small to read text; open a page with view_compiled_pdf_page.',
       annotations: READ_ONLY,
       inputSchema: z.object({
         projectId,
-        buildId: z.string().min(1).describe('Build id from compile_project'),
+        buildId: z
+          .string()
+          .min(1)
+          .optional()
+          .describe('Build id from compile_project; defaults to the latest build'),
         clsiServerId: z
           .string()
           .optional()
@@ -1477,15 +1671,13 @@ export function registerCompileTools(server, deps) {
           .int()
           .min(1)
           .optional()
-          .describe('First page, 1-based. Defaults to 1.'),
+          .describe('First page, 1-based; defaults to 1'),
         toPage: z
           .number()
           .int()
           .min(1)
           .optional()
-          .describe(
-            'Last page. At most 12 pages per call; defaults to fromPage + 11. A shorter range gives larger thumbnails.'
-          ),
+          .describe('Last page; at most 12 per call, defaults to fromPage + 11'),
       }),
       outputSchema: envelope(
         looseObject({
@@ -1526,22 +1718,38 @@ export function registerCompileTools(server, deps) {
       const images = imagesOf(shown)
       const stale = staleOf(shown)
       const defects = slashPaths(shown.defects ?? [])
-      const warnings = overviewWarnings(pages)
-      if (stale) warnings.unshift(staleWarning(stale))
+      const warnings = []
+      if (stale) warnings.push(staleWarning(stale))
       const from = shown.fromPage ?? fromPage ?? 1
       const to = shown.toPage ?? from
-      const of = shown.pageCount ? ` of ${shown.pageCount}` : ''
-      const paper = shown.paper?.name ? `, ${shown.paper.name} paper` : ''
+      const of = shown.pageCount ? `/${shown.pageCount}` : ''
+      const attached =
+        images.length > 1 ? `attached as ${images.length} images` : 'attached'
+      const paper = shown.paper
+        ? `paper ${shown.paper.name ?? `${shown.paper.width}x${shown.paper.height}`}${shown.paper.orientation ? ` ${shown.paper.orientation}` : ''}`
+        : null
+      const fontNames = list => list.map(font => (typeof font === 'string' ? font : font?.name ?? compactJson(font)))
+      const fonts = shown.fonts ?? {}
+      const text = lines(
+        paper,
+        shown.mixedSizes === true && 'mixed page sizes',
+        fonts.notEmbedded?.length > 0 && `fonts not embedded: ${fontNames(fonts.notEmbedded).join(', ')}`,
+        fonts.type3?.length > 0 && `fonts type 3: ${fontNames(fonts.type3).join(', ')}`,
+        shown.sourceStatus &&
+          shown.sourceStatus !== 'mapped' &&
+          `sourceStatus: ${shown.sourceStatus}`,
+        pages.map(renderOverviewPage),
+        defects.length > 0 && renderDefects(defects)
+      )
       const nextSteps = pages.some(p => p.blank || p.overflow?.length)
-        ? [
-            `view_compiled_pdf_page(projectId="${id}", buildId="${buildId}", page=<a page above>) to see the problem at full size`,
-          ]
+        ? [`view_compiled_pdf_page page=<a page above>${pinned(buildId)} to see the problem at full size`]
         : undefined
       return withBlocks(
         okResult({
-          summary: `${stale ? staleSummary(stale) : ''}Pages ${from}-${to}${of}${paper} of build ${buildId}, attached as ${images.length > 1 ? `${images.length} images` : 'an image'}.`,
+          summary: `${stale ? staleSummary(stale) : ''}Pages ${from}-${to}${of} ${attached}`,
+          text,
           data: {
-            buildId,
+            buildId: shown.buildId ?? buildId,
             fromPage: from,
             toPage: to,
             pageCount: shown.pageCount ?? null,
@@ -1569,14 +1777,17 @@ export function registerCompileTools(server, deps) {
     {
       title: 'Search compiled PDF text',
       description: [
-        "Find text in the compiled PDF as the reader sees it, after macros, numbering, \\ref, \\cite and the bibliography are resolved, and get each match's page, height on the page and the source file:line that typeset it. search_text searches the .tex source; this searches the output.",
-        'Use it to: find ?? (undefined \\ref) and [?] (undefined \\cite) in the output; find the page of a caption, heading, equation number or bibliography entry; check what generated text came out as; and get the page number for view_compiled_pdf_page.',
-        'Matching ignores case, line breaks and hyphenation; ligatures match their letters. Returns the matches with the total count and every page that has one.',
+        'Find text in the compiled PDF as the reader sees it, after macros, \\ref, \\cite and numbering are resolved, with each match\'s page, height and source file:line. Use it to find ?? and [?] markers, or the page of a caption or equation; search_text searches the .tex source instead.',
+        'Matching ignores case, line breaks and hyphenation.',
       ].join('\n'),
       annotations: READ_ONLY,
       inputSchema: z.object({
         projectId,
-        buildId: z.string().min(1).describe('Build id from compile_project'),
+        buildId: z
+          .string()
+          .min(1)
+          .optional()
+          .describe('Build id from compile_project; defaults to the latest build'),
         clsiServerId: z
           .string()
           .optional()
@@ -1584,21 +1795,19 @@ export function registerCompileTools(server, deps) {
         query: z
           .string()
           .min(1)
-          .describe(
-            'Text as it appears in the PDF, e.g. "Figure 3", "??", "Smith et al.". Plain text, not a regular expression'
-          ),
+          .describe('Text as it appears in the PDF, e.g. "Figure 3" or "??"; not a regex'),
         fromPage: z
           .number()
           .int()
           .min(1)
           .optional()
-          .describe('Only search from this page (1-based). Defaults to the whole PDF.'),
+          .describe('Search from this page, 1-based; defaults to the start'),
         toPage: z
           .number()
           .int()
           .min(1)
           .optional()
-          .describe('Only search up to this page (1-based). Defaults to the whole PDF.'),
+          .describe('Search up to this page, 1-based; defaults to the end'),
       }),
       outputSchema: envelope(
         looseObject({
@@ -1635,10 +1844,24 @@ export function registerCompileTools(server, deps) {
       const first = matches[0]
       const hits = found.matchCount ?? matches.length
       const summary = hits
-        ? `${hits} match(es) for "${query}" in build ${buildId}${found.truncated ? `; the first ${matches.length} are located` : ''}, on page(s) ${(found.pages ?? []).join(', ')}.`
-        : `No match for "${query}" in build ${buildId}.`
+        ? `${hits} matches on pages ${numberRuns(found.pages ?? [])}${found.truncated ? `; first ${matches.length} located` : ''}`
+        : 'No matches'
+      const text = matches
+        .map(match => {
+          const at = [
+            `p${match.page}`,
+            match.y != null ? `${Math.round(match.y)}%` : null,
+            match.path ? ref(match.path, match.line) : null,
+          ]
+            .filter(Boolean)
+            .join(' ')
+          const context = match.context ? ` | ${clip(match.context, 100)}` : ''
+          return `${at}  ${match.text}${context}`
+        })
+        .join('\n')
       return okResult({
         summary: `${stale ? staleSummary(stale) : ''}${summary}`,
+        text,
         data: {
           query,
           fromPage: found.fromPage ?? fromPage ?? 1,
@@ -1653,9 +1876,7 @@ export function registerCompileTools(server, deps) {
         },
         warnings: stale ? [staleWarning(stale)] : undefined,
         nextSteps: first
-          ? [
-              `view_compiled_pdf_page(projectId="${id}", buildId="${buildId}", page=${first.page}) to see the match`,
-            ]
+          ? [`view_compiled_pdf_page page=${first.page}${pinned(buildId)} to see the match`]
           : undefined,
       })
     })
@@ -1768,7 +1989,7 @@ function staleOf(shown) {
 }
 
 function staleSummary(stale) {
-  return `The PDF is OUT OF DATE (${stale.reason}), so this is the old build, not the current source. `
+  return `OUT OF DATE (${stale.reason}): the old build, not the current source; `
 }
 
 function staleWarning(stale) {
@@ -1778,19 +1999,55 @@ function staleWarning(stale) {
   return `The PDF is out of date (${stale.reason}).${changed} Compile again before judging the layout or the text.`
 }
 
-/** Warnings for the problems measured on each page of an overview. */
-function overviewWarnings(pages) {
-  const warnings = []
-  for (const page of pages) {
-    const problems = []
-    if (page.blank) problems.push('blank')
-    if (page.overflow?.length) problems.push('content past the margin')
-    if (page.badBoxes) problems.push(`${page.badBoxes} bad box(es)`)
-    const unresolved = (page.unresolved?.refs ?? 0) + (page.unresolved?.cites ?? 0)
-    if (unresolved) problems.push('?? or [?] markers')
-    if (problems.length) {
-      warnings.push(`Page ${page.page}: ${problems.join(', ')}.`)
-    }
+/** Page fields an overview line already renders; any other field is shown as JSON. */
+const OVERVIEW_PAGE_FIELDS = new Set([
+  'page',
+  'source',
+  'blank',
+  'endsAt',
+  'gaps',
+  'overflow',
+  'badBoxes',
+  'worstBadBox',
+  'unresolved',
+  'sourceStatus',
+  'sourceNote',
+])
+
+/**
+ * One overview line per page: "p<n>  <source ranges>  <problems>". Problems
+ * are the things a reader acts on: blank, margin overflow, bad boxes, broken
+ * refs and cites, how far down the page the body ends, and gaps.
+ */
+function renderOverviewPage(page) {
+  const source = (page.source ?? []).map(s => ref(s.path, s.startLine, s.endLine))
+  const problems = []
+  if (page.blank) problems.push('blank')
+  if (page.overflow?.length) {
+    const sides = [...new Set(page.overflow.map(o => o.side).filter(Boolean))]
+    problems.push(sides.length ? `overflow ${sides.join('/')}` : 'overflow')
   }
-  return warnings
+  if (page.badBoxes) problems.push(`badBoxes ${page.badBoxes}`)
+  if (page.unresolved?.refs) problems.push(`?? ${page.unresolved.refs}`)
+  if (page.unresolved?.cites) problems.push(`[?] ${page.unresolved.cites}`)
+  if (typeof page.endsAt === 'number') problems.push(`ends at ${page.endsAt}%`)
+  for (const gap of page.gaps ?? []) {
+    problems.push(`gap ${gap.top}-${gap.bottom}%`)
+  }
+  if (page.worstBadBox) {
+    const worst = page.worstBadBox
+    problems.push(
+      `worst ${where(slashed(worst.path), worst.line)} ${clip(worst.message ?? '', BAD_BOX_WIDTH)}`
+    )
+  }
+  if (page.sourceStatus && page.sourceStatus !== 'mapped') {
+    problems.push(`sourceStatus ${page.sourceStatus}`)
+  }
+  const extra = Object.fromEntries(
+    Object.entries(page).filter(([key]) => !OVERVIEW_PAGE_FIELDS.has(key) && key !== 'page')
+  )
+  if (compactJson(extra)) problems.push(compactJson(extra))
+  return [`p${page.page}`, source.length ? source.join(' ') : 'no source', problems.join(', ')]
+    .filter(Boolean)
+    .join('  ')
 }

@@ -564,7 +564,11 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
 
 .ai-assist-panel {
   --ai-status-accent: var(--content-positive-themed);
-  --ai-status-highlight: #ffffff;
+  --ai-status-highlight: color-mix(
+    in srgb,
+    var(--ai-status-accent) 50%,
+    var(--bg-primary-themed)
+  );
   container-type: size;
   display: flex;
   flex-direction: column;
@@ -957,6 +961,11 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
   align-items: center;
   color: var(--content-secondary-themed, #888);
   margin-right: 4px;
+}
+
+// Read by the run: the second tick lands and the mark firms up
+.ai-assist-user-message-status.is-read {
+  color: var(--content-primary-themed, #555);
 }
 
 // Edited Code Summary Badge
@@ -2307,6 +2316,45 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
       word-break: normal;
       font-size: var(--font-size-01);
     }
+
+    // Measured values (inspect_compiled_style): the settings rows' look, at
+    // the outline's size, with where each value comes from muted after it
+    .ai-assist-settings-rows {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      margin-bottom: 4px;
+    }
+
+    .ai-assist-settings-row {
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+
+      .ai-assist-settings-key {
+        font-weight: 500;
+        color: var(--content-secondary-themed);
+        min-width: 110px;
+        flex-shrink: 0;
+      }
+
+      .ai-assist-settings-val {
+        color: var(--content-primary-themed);
+        font-family: $font-family-monospace;
+        font-size: 0.6875rem;
+        word-break: break-word;
+
+        code {
+          font-size: inherit;
+        }
+
+        .ai-assist-outline-line {
+          font-family: var(--bs-body-font-family);
+          color: var(--content-secondary-themed);
+          opacity: 0.6;
+        }
+      }
+    }
   }
 
   .ai-assist-settings-detail {
@@ -2570,6 +2618,20 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
       border: 0 !important;
     }
 
+    .ai-assist-tool-detail-badge {
+      display: inline-block;
+      padding: 1px 6px;
+      font-size: 0.625rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      border-radius: 3px;
+      background: color-mix(
+        in srgb,
+        var(--content-danger-themed) 20%,
+        transparent
+      );
+      margin-bottom: 4px;
+    }
   }
 
   .ai-assist-tool-detail-badge.rejected {
@@ -3013,7 +3075,11 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
 // accent; the counters stay muted.
 .ai-assist-status-line {
   --ai-status-accent: var(--content-positive-themed);
-  --ai-status-highlight: #ffffff;
+  --ai-status-highlight: color-mix(
+    in srgb,
+    var(--ai-status-accent) 50%,
+    var(--bg-primary-themed)
+  );
 
   display: flex;
   align-items: center;

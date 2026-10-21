@@ -104,7 +104,7 @@ import { LocalSlashCommandId } from "../../agent/slash-commands/local";
 import { compactStatusLabel } from "./compact-boundary";
 import {
   AUTO_COMPACT_SETTINGS,
-  CompactOutcome,
+  type CompactOutcome,
   countUserTurns,
   isCompactError,
   shouldAutoCompact,
@@ -598,6 +598,12 @@ function AgentPanelInner({
       1 -
       countTrailingPendingUserEntries(state.transcript)
     : -1;
+
+  // A user turn is read once anything but a queued message follows it
+  const lastReadIndex =
+    state.transcript.length -
+    1 -
+    countTrailingPendingUserEntries(state.transcript);
 
   const promptHistory = useMemo(
     () =>
@@ -2017,6 +2023,10 @@ function AgentPanelInner({
                   key={entry.id}
                   entry={entry}
                   compacted={entryIndex < compactBoundaryIndex}
+                  read={
+                    entry.role === "user" &&
+                    (entry.sentDuringRun === true || entryIndex < lastReadIndex)
+                  }
                   pendingApprovalId={state.pendingApproval?.id ?? null}
                   approvalContext={approvalContext}
                   onDecision={onDecision}

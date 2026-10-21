@@ -305,7 +305,7 @@ export const AUTO_COMPACT_SETTINGS: AutoCompactSettings = {
 }
 
 /** Token counts as the chat shows them: 9.8k, 152k, 1.2M. */
-export function formatTokenCount(tokens: number): string {
+export function formatCompactTokens(tokens: number): string {
   if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`
   if (tokens >= 10_000) return `${Math.round(tokens / 1000)}k`
   if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}k`

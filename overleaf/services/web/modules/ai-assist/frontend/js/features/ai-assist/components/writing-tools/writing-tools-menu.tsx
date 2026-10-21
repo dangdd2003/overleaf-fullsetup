@@ -73,12 +73,22 @@ export function WritingToolsMenu({
       setAbove(!fitsBelow && fitsAbove)
     }
     measure()
+    // Scroll events fire many times a frame, so measure at most once per frame
+    let frame = 0
+    const scheduleMeasure = () => {
+      if (frame) return
+      frame = window.requestAnimationFrame(() => {
+        frame = 0
+        measure()
+      })
+    }
     // The editor scrolls, and the window resizes, under the button
     window.addEventListener('resize', measure)
-    document.addEventListener('scroll', measure, true)
+    document.addEventListener('scroll', scheduleMeasure, true)
     return () => {
       window.removeEventListener('resize', measure)
-      document.removeEventListener('scroll', measure, true)
+      document.removeEventListener('scroll', scheduleMeasure, true)
+      window.cancelAnimationFrame(frame)
     }
   }, [inline])
 

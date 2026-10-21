@@ -188,6 +188,27 @@ describe('McpHistoryController.listHistory path filter paging', () => {
     expect(r.body.nextBefore).toBe(4)
   })
 
+  it('trims an overshooting page to limit and resumes after the last kept entry', async () => {
+    const page = [
+      { ...touching, fromV: 30, toV: 31 },
+      { ...touching, fromV: 20, toV: 21 },
+      { ...touching, fromV: 10, toV: 11 },
+    ]
+    fetchJson.mockResolvedValueOnce({ updates: page, nextBeforeTimestamp: 5 })
+    const r = res()
+    await McpHistoryController.listHistory(
+      {
+        params: { projectId: 'p1' },
+        query: { path: 'main.tex', limit: '2' },
+        mcpUserId: 'u1',
+      },
+      r
+    )
+    expect(fetchJson).toHaveBeenCalledTimes(1)
+    expect(r.body.entries.map(e => e.fromVersion)).toEqual([30, 20])
+    expect(r.body.nextBefore).toBe(20)
+  })
+
   it('stops when history runs out, returning no nextBefore', async () => {
     fetchJson.mockResolvedValueOnce({ updates: [elsewhere] })
     const r = res()
