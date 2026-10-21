@@ -1,5 +1,9 @@
 import { FC, Fragment, ReactNode, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { AssistantBlock } from '../../agent/agent-messages'
+import type { RetryingState } from '../../agent/agent-state'
+import { useRetryCountdown } from '../../hooks/use-retry-countdown'
+import { RetryError, retryLabel } from '../retry-status'
 import {
   formatElapsed,
   formatCompletedStatus,
@@ -100,6 +104,10 @@ export const AgentStatusLine: FC<{
   durationMs?: number
   completedWord?: string
   onWordChange?: (word: string) => void
+  /** A fixed line in place of the rotating word, e.g. a compaction's phase. */
+  fixedLabel?: string
+  /** A provider retry in progress; its countdown replaces the word. */
+  retry?: RetryingState | null
 }> = ({
   startedAt,
   blocks = [],
@@ -109,7 +117,11 @@ export const AgentStatusLine: FC<{
   durationMs,
   completedWord,
   onWordChange,
+  fixedLabel,
+  retry = null,
 }) => {
+  const { t } = useTranslation()
+  const retrySeconds = useRetryCountdown(retry?.deadline ?? null)
   const [word, setWord] = useState(() => nextStatusWord(null))
   const [elapsedMs, setElapsedMs] = useState(() =>
     durationMs !== undefined ? durationMs : Math.max(0, Date.now() - startedAt)
@@ -251,7 +263,10 @@ export const AgentStatusLine: FC<{
   }
 
   const now = Date.now()
-  const stalled = mode !== 'tool' && now - activityRef.current.at >= STALL_MS
+  // A retry is waiting on the provider, not stalled: the countdown says so
+  const retrying = retry ? retryLabel(t, retry, retrySeconds ?? 0) : null
+  const stalled =
+    !retry && mode !== 'tool' && now - activityRef.current.at >= STALL_MS
 
   // Claude's two forms, never mixed: the rotating word on its own, or — while
   // the model is visibly doing something — the counters followed by what it
@@ -265,7 +280,7 @@ export const AgentStatusLine: FC<{
   }
 
   const meta: { key: string; content: ReactNode }[] = []
-  if (activity) {
+  if (activity && !retrying) {
     const elapsed = formatElapsed(elapsedMs)
     if (elapsed) {
       meta.push({ key: 'elapsed', content: <RollingText text={elapsed} /> })
@@ -280,7 +295,7 @@ export const AgentStatusLine: FC<{
 
   return (
     <div
-      className={`ai-assist-status-line is-${mode}${stalled ? ' is-stalled' : ''}`}
+      className={`ai-assist-status-line is-${mode}${retry ? ' is-retrying' : ''}${stalled ? ' is-stalled' : ''}`}
       role="status"
       aria-live="polite"
     >
@@ -297,7 +312,10 @@ export const AgentStatusLine: FC<{
             ))}
           </span>
         )}
-        <span className="ai-assist-status-verb">{activity ?? word}…</span>
+        <span className="ai-assist-status-verb">
+          {retrying ?? fixedLabel ?? `${activity ?? word}…`}
+        </span>
+        {retry && <RetryError retry={retry} />}
       </span>
     </div>
   )

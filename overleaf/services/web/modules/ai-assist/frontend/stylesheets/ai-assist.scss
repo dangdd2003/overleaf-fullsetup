@@ -564,6 +564,7 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
 
 .ai-assist-panel {
   --ai-status-accent: var(--content-positive-themed);
+  --ai-status-highlight: #ffffff;
   container-type: size;
   display: flex;
   flex-direction: column;
@@ -781,6 +782,41 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
     font-size: 0.6875rem;
     white-space: normal;
     color: var(--content-secondary-themed);
+  }
+
+  // Overleaf's green, as a small pill: the one action that makes the
+  // assistant act on the message, so it reads ahead of Edit
+  .ai-assist-queued-send-now {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-01);
+    padding: 1px var(--spacing-03);
+    border: 1px solid
+      color-mix(in srgb, var(--content-positive-themed) 35%, transparent);
+    border-radius: var(--border-radius-full);
+    background: color-mix(
+      in srgb,
+      var(--content-positive-themed) 10%,
+      transparent
+    );
+    color: var(--content-positive-themed);
+    font: inherit;
+    font-weight: 600;
+    line-height: 1.5;
+    cursor: pointer;
+    transition:
+      background-color 0.15s ease,
+      border-color 0.15s ease;
+
+    &:hover,
+    &:focus-visible {
+      border-color: var(--content-positive-themed);
+      background: color-mix(
+        in srgb,
+        var(--content-positive-themed) 18%,
+        transparent
+      );
+    }
   }
 
   .ai-assist-queued-take-back {
@@ -1225,6 +1261,127 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
     opacity 0.15s ease,
     color 0.15s ease;
   margin-right: 5px;
+}
+
+// The verb and its target, as one run of text so a running call's glimmer
+// crosses both. Lays out as the row did before: the verb holds its width,
+// the target ellipsises.
+.ai-assist-tool-call-label {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+
+  .ai-assist-tool-call-action {
+    margin-right: 6px;
+  }
+}
+
+// Running activity, after Claude Code: the row's glyph pulses as its `⏺`
+// does, and a narrow bright band glimmers across the text from left to
+// right, entering and leaving off the edges before it wraps round. The
+// running group header and the running row inside it both carry it, beside
+// the status line's own sweep.
+@mixin ai-assist-activity-glimmer {
+  color: var(--ai-status-accent);
+  background-image: linear-gradient(
+    90deg,
+    var(--content-secondary-themed) 0% 44%,
+    var(--ai-status-accent) 48% 52%,
+    var(--content-secondary-themed) 56% 100%
+  );
+  background-size: 400% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: ai-assist-activity-glimmer 2.2s linear infinite;
+  opacity: 1;
+}
+
+// With a 400% wide image the band's centre sits at (2 - 3p) widths across
+// the box for position p, so 74% → 26% runs it from just off the left edge
+// to just off the right.
+@keyframes ai-assist-activity-glimmer {
+  from {
+    background-position: 74% 0;
+  }
+
+  to {
+    background-position: 26% 0;
+  }
+}
+
+.ai-assist-activity-dot {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background-color: var(--ai-status-accent);
+  animation: ai-assist-activity-pulse 1.2s ease-in-out infinite;
+}
+
+// Same slot as the row's tool icon, so nothing shifts when it swaps in
+.ai-assist-subresult-group-header > .ai-assist-activity-dot {
+  margin: 0 3px;
+}
+
+@keyframes ai-assist-activity-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.ai-assist-subresult-group-title.is-active {
+  @include ai-assist-activity-glimmer;
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.ai-assist-tool-call-label.is-active {
+  @include ai-assist-activity-glimmer;
+  font-weight: 500;
+
+  // The label paints the text; its parts only lay it out
+  .ai-assist-tool-call-action,
+  .ai-assist-tool-call-target,
+  .ai-assist-file-link {
+    opacity: 1;
+    -webkit-text-fill-color: transparent;
+  }
+}
+
+.ai-assist-tool-call-icon.is-active {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-assist-subresult-group-title.is-active,
+  .ai-assist-tool-call-label.is-active {
+    animation: none;
+    background-image: none;
+    -webkit-text-fill-color: currentColor;
+
+    .ai-assist-tool-call-action,
+    .ai-assist-tool-call-target,
+    .ai-assist-file-link {
+      -webkit-text-fill-color: currentColor;
+    }
+  }
+
+  .ai-assist-activity-dot {
+    animation: none;
+  }
 }
 
 // Activity rows stay on one line: the verb keeps its width and the title,
@@ -1686,15 +1843,11 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
     gap: 6px;
   }
 
+  // The same red ✗ a failed tool shows, as a done one shows a green ✓
   .ai-assist-web-error-icon {
     flex-shrink: 0;
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--content-danger-themed);
-    // the dot sits on the first line's x-height
-    transform: translateY(-1px);
-    font-size: 0;
+    color: var(--content-danger-themed);
+    font-weight: 500;
   }
 
   .ai-assist-web-error-text {
@@ -2417,20 +2570,6 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
       border: 0 !important;
     }
 
-    .ai-assist-tool-detail-badge {
-      display: inline-block;
-      padding: 1px 6px;
-      font-size: 0.625rem;
-      font-weight: 700;
-      text-transform: uppercase;
-      border-radius: 3px;
-      background: color-mix(
-        in srgb,
-        var(--content-danger-themed) 20%,
-        transparent
-      );
-      margin-bottom: 4px;
-    }
   }
 
   .ai-assist-tool-detail-badge.rejected {
@@ -2556,6 +2695,9 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
 
 .ai-assist-mode-menu {
   @include ai-assist-floating-box(true);
+  // The popups' layer: above the chat content, so a resize of the panel
+  // can never bury a menu under it
+  z-index: 1070;
   width: max-content;
   min-width: 320px;
   max-width: 380px;
@@ -2564,9 +2706,9 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
 
   // Rows with a title only, such as the reasoning effort levels
   &.is-compact {
-    width: 200px;
-    min-width: 180px;
-    max-width: 240px;
+    width: max-content;
+    min-width: 0;
+    max-width: 200px;
 
     .ai-assist-mode-menu-row {
       min-height: 32px !important;
@@ -2871,11 +3013,7 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
 // accent; the counters stay muted.
 .ai-assist-status-line {
   --ai-status-accent: var(--content-positive-themed);
-  --ai-status-highlight: color-mix(
-    in srgb,
-    var(--ai-status-accent) 50%,
-    var(--bg-primary-themed)
-  );
+  --ai-status-highlight: #ffffff;
 
   display: flex;
   align-items: center;
@@ -2890,6 +3028,11 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
   // colour so a hung provider reads differently from a busy one.
   &.is-stalled {
     --ai-status-accent: var(--content-danger-themed);
+  }
+
+  // The provider is being retried: amber, and never the stall red
+  &.is-retrying {
+    --ai-status-accent: var(--content-warning-themed);
   }
 
   &.is-completed,
@@ -2970,6 +3113,7 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
   );
   background-size: 300% 100%;
   background-clip: text;
+  -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   animation: ai-assist-status-shimmer 2.8s linear infinite;
 
@@ -2977,11 +3121,9 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
     animation-duration: 1.2s;
   }
 
-  // A tool is running: no tokens to sweep with, so the whole word breathes.
+  // A tool is running: keep the bright shimmer sweeping
   .is-tool & {
-    background-image: none;
-    -webkit-text-fill-color: currentcolor;
-    animation: ai-assist-status-glow 2s ease-in-out infinite;
+    animation-duration: 2.2s;
   }
 }
 
@@ -2992,17 +3134,6 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
 
   to {
     background-position: 0% 0;
-  }
-}
-
-@keyframes ai-assist-status-glow {
-  0%,
-  100% {
-    color: var(--ai-status-accent);
-  }
-
-  50% {
-    color: var(--ai-status-highlight);
   }
 }
 
@@ -3018,6 +3149,30 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
 .ai-assist-status-meta {
   font-variant-numeric: tabular-nums;
   color: var(--content-secondary-themed);
+}
+
+// A retry's reason sits under the countdown, in red, once retries are
+// going on a while. The label and reason are shared with the editor's
+// loading lines (components/retry-status.tsx).
+.ai-assist-retry-notice {
+  display: block;
+  min-width: 0;
+  font-size: 0.78125rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--content-warning-themed);
+}
+
+.ai-assist-retry-label {
+  font-weight: 500;
+}
+
+.ai-assist-retry-error {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.71875rem;
+  color: var(--content-danger-themed);
 }
 
 // The elapsed time ticks over like Claude's: a changed digit rolls up out of
@@ -3758,10 +3913,11 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
   }
 
   // Padding rather than a margin above the card, so the pointer can cross
-  // from the pill to the card without the card closing
+  // from the pill to the card without the card closing. Its position is set
+  // on hover (fixed, beside the pill); below the pill is the default side.
   .ai-assist-citation-card {
-    position: absolute;
-    top: 100%;
+    position: fixed;
+    top: 0;
     left: 0;
     z-index: 20;
     padding-top: 4px;
@@ -3771,14 +3927,7 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
       opacity 0.12s ease,
       visibility 0.12s ease;
 
-    &.is-flipped {
-      left: auto;
-      right: 0;
-    }
-
-    &.is-above {
-      top: auto;
-      bottom: 100%;
+    &[data-placement='top'] {
       padding-top: 0;
       padding-bottom: 4px;
     }
@@ -3791,6 +3940,8 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
     flex-direction: column;
     width: 280px;
     max-width: 80vw;
+    max-height: var(--ai-floating-max-height);
+    overflow-y: auto;
     line-height: normal;
   }
 
@@ -5190,7 +5341,9 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
 }
 
 // Shown in the composer while a box is being drawn on the PDF
-.ai-assist-pdf-box-hint {
+// A send or /compact held back (e.g. while compacting) shares the hint's look
+.ai-assist-pdf-box-hint,
+.ai-assist-composer-notice {
   display: flex;
   align-items: center;
   padding: 0 4px 6px;
@@ -5230,10 +5383,9 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
 
 // The button that floats over the PDF when text is selected in it, to send
 // the selection to the AI. Portalled to body and kept above the viewer (z-index
-// 1) and its controls; the component sets the same z-index inline.
+// 1) and its controls. Its position comes from the floating hook.
 .ai-assist-pdf-selection-action {
   @include ai-assist-floating-box;
-  position: fixed;
   z-index: 1040;
   display: inline-flex;
   align-items: center;
@@ -5247,8 +5399,14 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
   color: var(--content-primary-themed);
   cursor: pointer;
   user-select: none;
+  // Grows from the selection's side: above it, from the bottom edge. Animates
+  // the individual scale property, as the floating hook owns transform.
   transform-origin: top right;
   animation: ai-assist-pdf-selection-action-in 140ms ease-out both;
+
+  &[data-placement='top'] {
+    transform-origin: bottom right;
+  }
 
   &:hover,
   &:focus-visible {
@@ -5263,12 +5421,12 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
 @keyframes ai-assist-pdf-selection-action-in {
   from {
     opacity: 0;
-    transform: translateY(-3px) scale(0.96);
+    scale: 0.96;
   }
 
   to {
     opacity: 1;
-    transform: none;
+    scale: 1;
   }
 }
 
@@ -5326,58 +5484,78 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
 
 .ai-assist-composer-plus-btn {
   @include ai-assist-composer-button;
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
   font-size: 16px;
 }
 
+// The composer's "+" menu. Its metrics are Claude Code's: a 24px row with
+// 13px text on a 19px line, a 16px icon and a 6px gap. The box and its rows
+// are the Mode and Effort menus': a 4px gutter, rows with a 1px margin above
+// and below, and the base/medium radii, so the hover fill sits the same
+// distance from the edges as it does there.
 .ai-assist-plus-menu {
   @include ai-assist-floating-box;
   position: absolute;
   bottom: 100%;
   left: 0;
-  margin-bottom: 8px;
-  min-width: 216px;
+  margin-bottom: 6px;
+  width: max-content;
+  min-width: 128px;
+  max-width: 320px;
   padding: 4px;
-  z-index: 1000;
+  z-index: 1070;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
-  border-radius: var(--border-radius-medium, 8px);
-  animation: ai-assist-menu-fade-in 0.15s ease-out;
-}
-
-@keyframes ai-assist-menu-fade-in {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  border-radius: var(--border-radius-medium);
+  // The same fade the mode menu in this panel uses, rather than the mixin's
+  // sliding one
+  animation: ai-assist-fade-in 0.15s ease-out both;
 }
 
 .ai-assist-plus-menu-item {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   width: 100%;
-  padding: 6px 8px;
+  min-width: 0;
+  padding: 2.5px 8px;
+  margin: 1px 0;
   background: transparent;
   border: none;
-  border-radius: var(--border-radius-base, 4px);
+  border-radius: var(--border-radius-base);
   color: var(--content-primary-themed);
   font-size: 13px;
+  line-height: 19px;
   text-align: left;
   cursor: pointer;
   user-select: none;
   transition: background-color 0.1s ease, color 0.1s ease;
 
-  &:hover {
+  // Keyboard focus is the hover fill, not a ring: an outline would spill
+  // over the box's 4px gutter and make that edge look thinner than the rest
+  &:hover,
+  &:focus-visible,
+  &.is-open {
     @include ai-assist-floating-box-row-hover;
   }
+
+  &:focus,
+  &:focus-visible {
+    outline: none;
+    box-shadow: none;
+  }
+}
+
+// The label takes what the icon and the shortcut leave, and is cut off with
+// an ellipsis rather than wrapping onto a second line
+.ai-assist-plus-menu-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ai-assist-plus-menu-icon {
@@ -5392,10 +5570,13 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
 
 .ai-assist-plus-menu-shortcut {
   margin-left: auto;
+  padding-left: 8px;
   font-size: 11px;
+  line-height: 19px;
   color: var(--content-secondary-themed);
   opacity: 0.8;
   font-family: inherit;
+  white-space: nowrap;
 }
 
 .ai-assist-plus-menu-chevron {
@@ -5405,64 +5586,99 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
 
 // The Connectors flyout, opened to the right of its item. It is a child of
 // the plus menu, so a pointer or click inside it counts as inside the menu.
+// Its build is Claude Code's: no height of its own, it grows with its rows up
+// to the room the viewport leaves (--ai-floating-max-height) and only then
+// scrolls, Manage connectors and all, as one body.
 .ai-assist-plus-submenu {
   @include ai-assist-floating-box;
-  position: absolute;
-  top: 0;
-  left: 100%;
-  margin-left: 4px;
-  min-width: 200px;
-  max-width: 260px;
-  padding: 4px;
+  width: max-content;
+  min-width: 180px;
+  max-width: 320px;
+  max-height: var(--ai-floating-max-height);
+  // The body scrolls inside the rounded box, so the box clips it
+  overflow: hidden;
+  padding: 0;
   z-index: 1001;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
-  border-radius: var(--border-radius-medium, 8px);
-  animation: ai-assist-menu-fade-in 0.15s ease-out;
+  border-radius: var(--border-radius-medium);
+  // The same fade the mode menu in this panel uses
+  animation: ai-assist-fade-in 0.15s ease-out both;
 
-  // Not enough room on the right of the panel: open to the left instead
-  &--left {
-    left: auto;
-    right: 100%;
-    margin-left: 0;
-    margin-right: 4px;
+  // Opened to the left of the row, it grows from its right edge
+  &[data-placement='left'] {
+    transform-origin: right bottom;
   }
-
-  // Not enough room on either side: drop below the plus menu
-  &--below {
-    left: 0;
-    top: 100%;
-    margin-left: 0;
-    margin-top: 4px;
-  }
-
-  .ai-assist-plus-menu-item.is-open {
-    @include ai-assist-floating-box-row-hover;
+  &[data-placement='right'] {
+    transform-origin: left bottom;
   }
 }
 
+// The scroller carries the 4px gutter, so the gutter scrolls with the rows.
+// Its scrollbar is Claude Code's: thin, a faint thumb on no track. An edge
+// fades out over 28px while there is more to scroll towards it.
+.ai-assist-plus-submenu-body {
+  --ai-plus-fade-top: 0px;
+  --ai-plus-fade-bottom: 0px;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 4px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-radius: inherit;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(
+      in srgb,
+      var(--content-secondary-themed) 35%,
+      transparent
+    )
+    transparent;
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    #000 var(--ai-plus-fade-top),
+    #000 calc(100% - var(--ai-plus-fade-bottom)),
+    transparent
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    #000 var(--ai-plus-fade-top),
+    #000 calc(100% - var(--ai-plus-fade-bottom)),
+    transparent
+  );
+
+  &[data-fade-top] {
+    --ai-plus-fade-top: 28px;
+  }
+  &[data-fade-bottom] {
+    --ai-plus-fade-bottom: 28px;
+  }
+
+  > * {
+    flex-shrink: 0;
+  }
+}
+
+// The rule spans the rows' text inset (8px), not the full box
 .ai-assist-plus-submenu-separator {
   height: 1px;
-  margin: 4px 4px;
+  margin: 4px 8px;
   background-color: var(--border-divider-themed);
 }
 
 .ai-assist-plus-submenu-empty {
-  padding: 6px 8px;
-  font-size: 12px;
+  padding: 2.5px 8px;
+  font-size: 13px;
+  line-height: 19px;
   color: var(--content-secondary-themed);
   user-select: none;
 }
 
 .ai-assist-plus-connector {
   cursor: pointer;
-
-  &:focus-visible {
-    outline: 2px solid var(--border-active-themed);
-    outline-offset: -2px;
-  }
 }
 
 .ai-assist-plus-connector-avatar {
@@ -5470,35 +5686,58 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--content-secondary-themed);
-  background-color: var(--bg-secondary-themed);
+  width: 16px;
+  height: 16px;
+  overflow: hidden;
 }
 
+// Beats the 20px !important size of .ai-assist-web-favicon by selector weight
+.ai-assist-web-favicon.ai-assist-plus-connector-icon {
+  width: 16px !important;
+  height: 16px !important;
+  max-width: 16px !important;
+  max-height: 16px !important;
+  object-fit: contain;
+  border-radius: 3px;
+}
+
+// The switch sits 12px clear of the name, as Claude Code's trailing slot does
 .ai-assist-plus-connector-name {
   flex: 1;
   min-width: 0;
+  margin-right: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-// Compact on/off switch, 28 x 16, for a connector's state in this chat
+// Claude Code's extra-small switch: a 14px track 1.8 times as wide, a 2px
+// inset, and a knob that travels 0.8 of the height with a slight overshoot
 .ai-assist-plus-switch {
+  --ai-plus-switch-h: 14px;
   position: relative;
   flex-shrink: 0;
-  width: 28px;
-  height: 16px;
+  width: calc(var(--ai-plus-switch-h) * 1.8);
+  height: var(--ai-plus-switch-h);
   margin-left: auto;
   border-radius: 999px;
-  background-color: var(--border-primary-themed);
+  background-color: color-mix(
+    in srgb,
+    var(--content-secondary-themed) 30%,
+    transparent
+  );
   transition: background-color 0.15s ease;
 
-  &.is-on {
+  .ai-assist-plus-connector:hover > & {
+    background-color: color-mix(
+      in srgb,
+      var(--content-secondary-themed) 40%,
+      transparent
+    );
+  }
+
+  &.is-on,
+  .ai-assist-plus-connector:hover > &.is-on {
     background-color: var(--bg-accent-01);
   }
 }
@@ -5507,15 +5746,19 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
   position: absolute;
   top: 2px;
   left: 2px;
-  width: 12px;
-  height: 12px;
+  width: calc(var(--ai-plus-switch-h) - 4px);
+  height: calc(var(--ai-plus-switch-h) - 4px);
   border-radius: 50%;
   background-color: #fff;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
-  transition: transform 0.15s ease;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  transition: transform 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
 
   .is-on > & {
-    transform: translateX(12px);
+    transform: translateX(calc(var(--ai-plus-switch-h) * 0.8));
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    transition: none;
   }
 }
 
@@ -5869,6 +6112,27 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
       }
     }
   }
+}
+
+// /compact: the boundary row reads as a thinking block (same disclosure);
+// entries above it are no longer sent to the model, so they are dimmed
+.ai-assist-compact-boundary {
+  .ai-assist-thinking-title {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .ai-assist-compact-content {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-03);
+  }
+}
+
+.ai-assist-user-turn-wrapper.is-compacted,
+.ai-assist-message-assistant.is-compacted {
+  opacity: 0.6;
 }
 
 .ai-assist-stopped-notice {
@@ -6780,6 +7044,7 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
 
 .ai-assist-history-menu {
   @include ai-assist-floating-box(true);
+  z-index: 1070;
   width: 340px;
   max-height: 380px;
   overflow-y: auto;
@@ -7313,11 +7578,15 @@ $ai-card-width: 600px;
   display: flex;
   flex-direction: column;
   gap: var(--spacing-03);
-  width: min(#{$ai-card-width}, calc(100vw - 32px));
+  // The room the editor card gives it (see floating/editor-card.ts); the
+  // window's width and height stand in outside of one
+  width: min(#{$ai-card-width}, var(--ai-floating-max-width, calc(100vw - 32px)));
   max-width: $ai-card-width;
   // The footer drops its secondary labels when the card is squeezed
   container: ai-card / inline-size;
-  max-height: 480px;
+  // Never narrower than its footer on one line (see floating/editor-card.ts)
+  min-width: var(--ai-floating-min-width, 0px);
+  max-height: min(480px, var(--ai-floating-max-height, 480px));
   padding: var(--spacing-03) var(--spacing-04) var(--spacing-04);
   box-sizing: border-box;
   border: 1px solid var(--border-divider-themed);
@@ -7395,6 +7664,7 @@ $ai-card-width: 600px;
 
 .ai-writing-tools-card-header {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: space-between;
   gap: var(--spacing-03);
@@ -7427,6 +7697,8 @@ $ai-card-width: 600px;
 }
 
 .ai-writing-tools-card-body {
+  // Shrinks with the card's max-height, so the header and footer stay in view
+  min-height: 0;
   overflow-y: auto;
 }
 
@@ -7514,6 +7786,7 @@ $ai-card-width: 600px;
 
 .ai-writing-tools-card-footer {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: space-between;
   gap: var(--spacing-03);
@@ -7622,13 +7895,15 @@ $ai-card-width: 600px;
 }
 
 .ai-texgpt-popup {
-  position: fixed;
   z-index: 1000;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: var(--spacing-03);
   min-height: 0;
+  // Never taller than the room the floating hook leaves; the body scrolls
+  overflow-y: auto;
+  overscroll-behavior: contain;
   box-sizing: border-box;
   // The gaps between the cards let clicks through to the editor
   pointer-events: none;
@@ -7650,12 +7925,15 @@ $ai-card-width: 600px;
 // A Writing tool chosen in the popup runs in its card, in place of the bar
 // and menu
 .ai-texgpt-popup .ai-writing-tools-popup-wrapper.is-embedded {
+  align-self: stretch;
   min-height: 0;
   pointer-events: auto;
 
+  // Fills the popup, which is sized to the room it has and scrolls
   .ai-writing-tools-card {
+    width: 100%;
     max-width: none;
-    max-height: calc(100vh - 140px);
+    max-height: none;
   }
 }
 
@@ -7868,6 +8146,12 @@ $ai-card-width: 600px;
     top: auto;
     bottom: calc(-1 * var(--spacing-03) - 1px);
   }
+}
+
+// No room to the right of the row: the flyout opens to its left
+.ai-writing-tools-submenu-left .ai-texgpt-submenu {
+  left: auto;
+  right: calc(100% + var(--spacing-02) + var(--spacing-03));
 }
 
 .ai-texgpt-language-list {
@@ -8342,10 +8626,10 @@ $ai-card-width: 600px;
 // Generators (equation, table): the review card
 
 .ai-generator-card {
-  width: min(#{$ai-card-width}, calc(100vw - 32px));
+  width: min(#{$ai-card-width}, var(--ai-floating-max-width, calc(100vw - 32px)));
   max-width: $ai-card-width;
   height: auto;
-  max-height: min(700px, 80vh);
+  max-height: min(700px, var(--ai-floating-max-height, 80vh));
 }
 
 .ai-generator-card-title {
@@ -8595,7 +8879,11 @@ $ai-card-width: 600px;
   display: flex;
   flex-direction: column;
   gap: var(--spacing-03);
-  width: min(480px, calc(100vw - 32px));
+  width: min(480px, var(--ai-floating-max-width, calc(100vw - 32px)));
+  // Never narrower than its row of actions on one line
+  min-width: min-content;
+  max-height: var(--ai-floating-max-height, calc(100vh - 32px));
+  min-height: 0;
   padding: var(--spacing-03) var(--spacing-04) var(--spacing-04);
   box-sizing: border-box;
   border: 1px solid var(--border-divider-themed);
@@ -8614,7 +8902,19 @@ $ai-card-width: 600px;
   }
 }
 
+// Grows from the text when it flips above the line
+.ol-language-suggestion-card-container[data-placement='top'] .ai-language-suggestion-card {
+  transform-origin: bottom left;
+}
+
+.ol-language-suggestion-card-container[data-placement='bottom'] .ai-language-suggestion-card {
+  transform-origin: top left;
+}
+
+// The text scrolls when the card has less room than it needs; the footer stays
 .ai-language-suggestion-card-text {
+  min-height: 0;
+  overflow-y: auto;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   color: var(--content-primary-themed);
@@ -8760,6 +9060,7 @@ $cursor-tool-failed-cross: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.o
 
 .ai-language-suggestion-card-footer {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: space-between;
   gap: var(--spacing-02);
@@ -9073,6 +9374,16 @@ $cursor-tool-failed-cross: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.o
 // fixed positioning and keep the rest of its look.
 .ai-inline-popup {
   position: static;
+  // The result body scrolls within the room the editor leaves
+  max-height: var(--ai-floating-max-height, calc(100vh - 32px));
+}
+
+.ai-inline-popup-container[data-placement='top'] .ai-inline-popup {
+  transform-origin: bottom left;
+}
+
+.ai-inline-popup-container[data-placement='bottom'] .ai-inline-popup {
+  transform-origin: top left;
 }
 
 // Rewind dialog modal
@@ -9522,3 +9833,427 @@ $cursor-tool-failed-cross: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.o
 @import './ai-assist-connectors.scss';
 @import './ai-assist-tool-output.scss';
 
+
+// ---------------------------------------------------------------------------
+// Context usage: the composer's meter and the /context popover
+// ---------------------------------------------------------------------------
+
+// The meter sits in the composer toolbar, beside the effort picker. It takes
+// the toolbar button's height and hover, and only its colour changes by level.
+.ai-assist-context-meter {
+  gap: 4px;
+  padding: 0 6px;
+  color: var(--content-secondary-themed);
+
+  // Amber from the warn threshold, orange from the auto-compact threshold,
+  // red once the request is blocked
+  &.is-warn {
+    color: var(--yellow-50);
+  }
+
+  &.is-compact {
+    color: color-mix(in srgb, var(--yellow-60) 50%, var(--red-50));
+  }
+
+  &.is-blocked {
+    color: var(--content-danger-themed);
+  }
+}
+
+.ai-assist-context-meter-ring {
+  display: block;
+  flex-shrink: 0;
+  overflow: visible;
+}
+
+// The track is the same colour as the arc, faded, so the ring reads in both themes
+.ai-assist-context-meter-track {
+  stroke: currentColor;
+  opacity: 0.2;
+}
+
+.ai-assist-context-meter-arc {
+  stroke: currentColor;
+  transition: stroke-dasharray 0.4s ease;
+}
+
+// Threshold ticks across the ring: where warn and auto-compact start
+.ai-assist-context-meter-tick {
+  stroke-linecap: round;
+  opacity: 0.6;
+}
+
+.ai-assist-context-meter-tick-warn {
+  stroke: var(--yellow-50);
+}
+
+.ai-assist-context-meter-tick-compact {
+  stroke: color-mix(in srgb, var(--yellow-60) 50%, var(--red-50));
+}
+
+.ai-assist-context-meter-label {
+  font-size: var(--font-size-01);
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.ai-assist-context-meter-tooltip {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+}
+
+.ai-assist-context-meter-tooltip-note {
+  opacity: 0.8;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-assist-context-meter-arc {
+    transition: none;
+  }
+}
+
+// The /context popover, anchored to the meter. Its surface, type and rows reuse
+// the mode menu's floating-box styles so it reads as one of the panel's popups.
+// One continuous dashboard: no divider lines anywhere, groups are spaced apart.
+.ai-assist-context-popover {
+  // Row colours, as Claude Code's context panel draws them: the four largest
+  // rows take blue, coral, teal and amber in that order, the rest are grey.
+  --ai-ctx-rank-1: #4f8ff7;
+  --ai-ctx-rank-2: #e06c4c;
+  --ai-ctx-rank-3: #2fa58c;
+  --ai-ctx-rank-4: #c58a2a;
+
+  @include ai-assist-floating-box(true);
+  // The mixin's box, as the Mode and Effort menus use it
+  z-index: 1070;
+  box-sizing: border-box;
+  width: 300px;
+  max-width: 92vw;
+  max-height: min(520px, 70vh);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  margin: 0 !important;
+  font-family: inherit;
+  animation: ai-assist-fade-in 0.15s ease-out both;
+
+  button {
+    font-family: inherit;
+  }
+
+  .ai-assist-context-cat-rank-1 { background-color: var(--ai-ctx-rank-1); }
+  .ai-assist-context-cat-rank-2 { background-color: var(--ai-ctx-rank-2); }
+  .ai-assist-context-cat-rank-3 { background-color: var(--ai-ctx-rank-3); }
+  .ai-assist-context-cat-rank-4 { background-color: var(--ai-ctx-rank-4); }
+  .ai-assist-context-cat-other { background-color: var(--neutral-40); }
+  .ai-assist-context-cat-reserved { background-color: var(--neutral-60); }
+
+  // Free space is the empty track: the bar's track and the swatch match it
+  .ai-assist-context-cat-free { background-color: var(--border-divider-themed); }
+
+  // Deferred rows are out of the window: a faint swatch, like the free track
+  .ai-assist-context-cat-deferred {
+    background-color: color-mix(in srgb, var(--content-secondary-themed) 35%, transparent);
+  }
+
+  // The title, styled like the Mode and Effort menus' headers. It still folds
+  // the panel, but reads as a title: no row box, no hover fill.
+  .ai-assist-context-popover-header {
+    @include ai-assist-floating-box-header;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    margin: 0;
+    border: none;
+    background: transparent;
+    line-height: 1.3;
+    text-align: left;
+    cursor: pointer;
+    outline: none;
+
+    &:hover .ai-assist-context-popover-title,
+    &:focus-visible .ai-assist-context-popover-title {
+      color: var(--content-primary-themed);
+    }
+  }
+
+  // "Context" and its caret sit together, as in Claude Code
+  .ai-assist-context-popover-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    transition: color 0.15s ease;
+  }
+
+  // Folded: only the percent and a mini bar stay on the header row
+  .ai-assist-context-popover-folded {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-variant-numeric: tabular-nums;
+    color: var(--content-secondary-themed);
+  }
+
+  .ai-assist-context-popover-mini-bar {
+    display: block;
+    width: 28px;
+    height: 4px;
+    border-radius: 2px;
+    overflow: hidden;
+    background-color: color-mix(in srgb, var(--content-secondary-themed) 30%, transparent);
+
+    span {
+      display: block;
+      height: 100%;
+      width: max(2px, var(--ai-ctx-fill, 0%));
+      border-radius: 2px;
+      background-color: var(--blue-50);
+    }
+
+    &.is-warn span {
+      background-color: var(--yellow-50);
+    }
+
+    &.is-compact span {
+      background-color: color-mix(in srgb, var(--yellow-60) 50%, var(--red-50));
+    }
+
+    &.is-blocked span {
+      background-color: var(--content-danger-themed);
+    }
+  }
+
+  .ai-assist-context-popover-caret {
+    flex-shrink: 0;
+    color: var(--content-placeholder-themed);
+    transition: transform 0.15s ease;
+
+    &.is-collapsed {
+      transform: rotate(-90deg);
+    }
+  }
+
+  // No bottom padding: the box's 4px plus the last row's 1px margin is the
+  // gap under it, as under the Mode and Effort menus' last row
+  .ai-assist-context-popover-body {
+    padding: 0 8px;
+  }
+
+  // "3% used" large on the left, "27.5k / 1M" muted on the right. The
+  // auto-compact point and the count's basis are in its tooltip.
+  .ai-assist-context-popover-summary {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 2px 0 8px;
+    font-variant-numeric: tabular-nums;
+    cursor: default;
+  }
+
+  .ai-assist-context-popover-used {
+    font-size: 0.9375rem;
+    font-weight: 600;
+    line-height: 1.3;
+    color: var(--content-primary-themed);
+  }
+
+  .ai-assist-context-popover-total {
+    font-size: 0.8125rem;
+    color: var(--content-secondary-themed);
+  }
+
+  // The segmented bar: the track is the free space
+  .ai-assist-context-popover-bar {
+    display: flex;
+    gap: 2px;
+    height: 6px;
+    margin-bottom: 12px;
+    border-radius: 3px;
+    overflow: hidden;
+    background-color: var(--border-divider-themed);
+
+    span {
+      display: block;
+      height: 100%;
+      flex-shrink: 1;
+      border-radius: 3px;
+    }
+  }
+
+  // Category rows: swatch, name, then two fixed-width columns that stack
+  .ai-assist-context-popover-rows {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+
+    // Muted, and spaced from the rows above (no rule)
+    &.is-deferred {
+      margin-top: 10px;
+      color: var(--content-secondary-themed);
+
+      .ai-assist-context-popover-row,
+      .ai-assist-context-popover-percent {
+        color: inherit;
+        font-weight: 400;
+      }
+    }
+  }
+
+  .ai-assist-context-popover-row {
+    display: grid;
+    grid-template-columns: 10px minmax(0, 1fr) 56px 48px;
+    column-gap: 8px;
+    align-items: center;
+    min-height: 24px;
+    font-size: 0.8125rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--content-primary-themed);
+  }
+
+  .ai-assist-context-popover-swatch {
+    display: block;
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+  }
+
+  .ai-assist-context-popover-name {
+    min-width: 0;
+    font-weight: 400;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+
+    // A hint on a name: dotted underline, the tooltip explains it
+    &.is-hint {
+      text-decoration: underline dotted;
+      text-underline-offset: 3px;
+      cursor: help;
+    }
+  }
+
+  .ai-assist-context-popover-tokens {
+    min-width: 3.5em;
+    font-size: 0.75rem;
+    color: var(--content-secondary-themed);
+    text-align: right;
+  }
+
+  .ai-assist-context-popover-percent {
+    font-weight: 600;
+    text-align: right;
+  }
+
+  // The MCP tools section: no rule above it, only space
+  .ai-assist-context-popover-section {
+    margin-top: 10px;
+  }
+
+  // Same grid as the rows: the chevron sits in the swatch column, so the title
+  // starts where the row names start. The count shares the list's token column.
+  // Its size matches the rows exactly — the same 22px height and 500 title
+  // weight — so the fold reads as one more row, as in Claude Code, not as the
+  // boxy button it used to be.
+  .ai-assist-context-popover-section-toggle {
+    display: grid;
+    grid-template-columns: 10px minmax(0, 1fr) 3.5em;
+    column-gap: 8px;
+    align-items: center;
+    // Bleeds into the body's 8px gutter so the hover fill has room, while the
+    // columns stay aligned with the rows above
+    width: calc(100% + 16px);
+    min-height: 22px;
+    // The mode menu rows' 1px above and below
+    margin: 1px -8px;
+    padding: 2px 28px 2px 8px;
+    border: none;
+    border-radius: var(--border-radius-base);
+    background-color: transparent;
+    text-align: left;
+    cursor: pointer;
+    color: var(--content-primary-themed);
+    transition: background-color 0.15s ease;
+
+    &:hover,
+    &:focus-visible {
+      @include ai-assist-floating-box-row-hover;
+    }
+
+    // Focus shows as the fill; a ring would spill over the 4px gutter
+    &:focus,
+    &:focus-visible {
+      outline: none;
+      box-shadow: none;
+    }
+  }
+
+  .ai-assist-context-popover-section-title {
+    min-width: 0;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    line-height: 1.3;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .ai-assist-context-popover-section-count {
+    font-size: 0.71875rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--content-secondary-themed);
+    text-align: right;
+  }
+
+  // Names start at the title's x (chevron column + gap); tokens line up under
+  // the count. The scrollbar gutter is kept whether or not the list scrolls.
+  .ai-assist-context-popover-list {
+    list-style: none;
+    margin: 0;
+    padding: 0 12px 0 18px;
+    max-height: 200px;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+    scrollbar-width: thin;
+  }
+
+  .ai-assist-context-popover-detail {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 3.5em;
+    column-gap: 8px;
+    align-items: baseline;
+    min-height: 20px;
+    font-size: 0.71875rem;
+    color: var(--content-primary-themed);
+    font-variant-numeric: tabular-nums;
+
+    // Deferred tools are not in the window; muted like the deferred row
+    &.is-deferred {
+      opacity: 0.55;
+    }
+
+    .ai-assist-context-popover-tokens {
+      font-size: inherit;
+    }
+  }
+
+  .ai-assist-context-popover-detail-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .ai-assist-context-popover-footer {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px 0 4px;
+    font-size: 0.6875rem;
+    line-height: 1.35;
+    color: var(--content-placeholder-themed);
+  }
+}

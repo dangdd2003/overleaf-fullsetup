@@ -115,7 +115,8 @@ describe('buildRequest', function () {
   it('forwards the misconfigured-budget reason rather than reporting a long chat', function () {
     const { exhausted, reason } = buildRequest({
       transcript: turnTwo,
-      limits: { contextWindow: 100, maxOutputTokens: 95 },
+      // The output cap takes the whole window: no block threshold is left
+      limits: { contextWindow: 100, maxOutputTokens: 100 },
     })
     expect(exhausted).to.equal(true)
     expect(reason).to.equal('budget-non-positive')

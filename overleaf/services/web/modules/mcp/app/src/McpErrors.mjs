@@ -11,6 +11,7 @@ const CODES = {
   UPSTREAM: 'upstream_error',
   CONFLICT: 'conflict',
   TOO_LARGE: 'output_too_large',
+  PAYLOAD_TOO_LARGE: 'payload_too_large',
 }
 
 const STATUS = {
@@ -23,6 +24,7 @@ const STATUS = {
   [CODES.UPSTREAM]: 502,
   [CODES.CONFLICT]: 409,
   [CODES.TOO_LARGE]: 413,
+  [CODES.PAYLOAD_TOO_LARGE]: 413,
 }
 
 const DEFAULT_MESSAGE = {
@@ -35,6 +37,7 @@ const DEFAULT_MESSAGE = {
   [CODES.UPSTREAM]: 'an upstream service failed',
   [CODES.CONFLICT]: 'the target already exists or was changed',
   [CODES.TOO_LARGE]: 'output too large; download it from Overleaf directly',
+  [CODES.PAYLOAD_TOO_LARGE]: 'request body too large',
 }
 
 /**

@@ -1,6 +1,7 @@
 import customLocalStorage from '@/infrastructure/local-storage'
 import getMeta from '@/utils/meta'
 import { TranscriptEntry, ToolCallRecord } from './agent-messages'
+import { ContextBreakdown } from './context/context-usage-types'
 
 export const MAX_STORED_BYTES = 500000
 const MAX_RESULT_CHARS = 4000
@@ -205,6 +206,16 @@ function deepShrinkCall(call: ToolCallRecord): ToolCallRecord {
   return call
 }
 
+/** The breakdown's per-tool sub-lists, which only the `/context` dashboard reads. */
+function withoutBreakdownDetails(breakdown: ContextBreakdown): ContextBreakdown {
+  const {
+    connectorToolDetails: _connectors,
+    toolResultDetails: _results,
+    ...rest
+  } = breakdown
+  return rest
+}
+
 function deepShrink(entry: TranscriptEntry): TranscriptEntry {
   if (entry.role !== 'assistant') return entry
   const dedupedCalls = deduplicateToolCalls(entry.toolCalls || [])
@@ -212,6 +223,13 @@ function deepShrink(entry: TranscriptEntry): TranscriptEntry {
 
   return {
     ...entry,
+    // The per-tool sub-lists are for the dashboard only; the totals stay
+    ...(entry.contextBreakdown
+      ? { contextBreakdown: withoutBreakdownDetails(entry.contextBreakdown) }
+      : {}),
+    ...(entry.usageBreakdown
+      ? { usageBreakdown: withoutBreakdownDetails(entry.usageBreakdown) }
+      : {}),
     toolCalls: dedupedCalls.map(deepShrinkCall),
     blocks: dedupedBlocks?.map(block =>
       block && block.type === 'tool_call' && block.call
@@ -349,14 +367,31 @@ function fit(transcript: TranscriptEntry[]): TranscriptEntry[] {
   }
 
   // Pass 4: Fallback limit for extreme synthetic cases (e.g. hundreds of massive user messages)
-  const sizes = kept.map(entry => JSON.stringify(entry).length)
+  return dropOldestPlain(kept, MAX_STORED_BYTES)
+}
+
+/**
+ * Drops the oldest entries until the transcript fits, keeping the last entry
+ * and every compact boundary: a boundary carries the summary the rest of the
+ * chat is rebuilt from, so it is never the entry dropped.
+ */
+function dropOldestPlain(
+  transcript: TranscriptEntry[],
+  maxBytes: number
+): TranscriptEntry[] {
+  const sizes = transcript.map(entry => JSON.stringify(entry).length)
   let total = jsonLengthOfArray(sizes)
-  let first = 0
-  while (kept.length - first > 1 && total > MAX_STORED_BYTES) {
-    total -= sizes[first] + 1
-    first++
+  const dropped = new Set<number>()
+  for (
+    let i = 0;
+    i < transcript.length - 1 && total > maxBytes;
+    i++
+  ) {
+    if (transcript[i].role === 'compact') continue
+    total -= sizes[i] + 1
+    dropped.add(i)
   }
-  return kept.slice(first)
+  return transcript.filter((_, i) => !dropped.has(i))
 }
 
 /**
@@ -405,11 +440,7 @@ export function prepareTranscriptForRun(
   }
 
   // Fourth pass: if still exceeds budget, drop oldest entries (preserving at least the last turn)
-  while (result.length > 1 && JSON.stringify(result).length > maxBytes) {
-    result = result.slice(1)
-  }
-
-  return result
+  return dropOldestPlain(result, maxBytes)
 }
 
 /**
@@ -427,7 +458,10 @@ export function dropRepeatedEntries(
       entry?.id &&
       entry.id === previous.id &&
       entry.role === previous.role &&
-      entry.text === previous.text
+      // A boundary is its id: the same one twice is a repeat
+      (entry.role === 'compact' ||
+        previous.role === 'compact' ||
+        entry.text === previous.text)
     )
   })
   return kept.length === transcript.length ? transcript : kept

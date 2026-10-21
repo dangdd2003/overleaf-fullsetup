@@ -1,13 +1,15 @@
 import crypto from 'node:crypto'
 import SessionManager from '../../../../../app/src/Features/Authentication/SessionManager.mjs'
 import OAuth2RedirectUri from './OAuth2RedirectUri.mjs'
-import { getBaseUrl, hashToken, normalizeScope } from './OAuth2Utils.mjs'
+import {
+  getBaseUrl,
+  hashToken,
+  isValidS256Challenge,
+  normalizeScope,
+} from './OAuth2Utils.mjs'
 import { OauthApplication } from '../../../../../app/src/models/OauthApplication.mjs'
 import { OauthAuthorizationCode } from '../../../../../app/src/models/OauthAuthorizationCode.mjs'
 import { getToolCategories } from './OAuth2ToolCatalog.mjs'
-
-// An S256 code_challenge is the base64url SHA-256 of the verifier: 43 characters.
-const S256_CHALLENGE_PATTERN = /^[A-Za-z0-9_-]{43}$/
 
 // Clients exist only once they have registered at /oauth/register; there are no
 // pre-trusted client ids.
@@ -136,7 +138,8 @@ const OAuth2AuthorizeController = {
       )
     }
 
-    // Strict PKCE requirement (RFC 7636 / OAuth 2.1)
+    // Strict PKCE requirement (RFC 7636 / OAuth 2.1). Checked here as well as on
+    // the consent POST, so a bad challenge fails before the user reaches consent.
     if (!code_challenge) {
       return redirectWithError(
         res,
@@ -154,6 +157,16 @@ const OAuth2AuthorizeController = {
         state,
         'invalid_request',
         'Only code_challenge_method=S256 is supported'
+      )
+    }
+
+    if (!isValidS256Challenge(code_challenge)) {
+      return redirectWithError(
+        res,
+        redirect_uri,
+        state,
+        'invalid_request',
+        'code_challenge must be a 43-character base64url S256 value'
       )
     }
 
@@ -239,8 +252,7 @@ const OAuth2AuthorizeController = {
 
     // Strict PKCE requirement. An S256 challenge is 43 base64url characters.
     if (
-      typeof code_challenge !== 'string' ||
-      !S256_CHALLENGE_PATTERN.test(code_challenge) ||
+      !isValidS256Challenge(code_challenge) ||
       code_challenge_method !== 'S256'
     ) {
       return redirectWithError(

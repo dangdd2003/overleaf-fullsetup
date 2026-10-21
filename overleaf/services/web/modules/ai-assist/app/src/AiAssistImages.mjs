@@ -9,9 +9,9 @@
  * conversation rebuilt for a later run has no images in it.
  */
 
-export const MAX_IMAGES_PER_REQUEST = 2
+const MAX_IMAGES_PER_REQUEST = 2
 export const MAX_IMAGE_BYTES = 4 * 1024 * 1024
-export const IMAGE_MEDIA_TYPES = new Set([
+const IMAGE_MEDIA_TYPES = new Set([
   'image/png',
   'image/jpeg',
   'image/webp',
@@ -28,6 +28,95 @@ const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/
 function decodedBytes(data) {
   const padding = data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0
   return (data.length / 4) * 3 - padding
+}
+
+const isAscii = (bytes, offset, text) =>
+  bytes.toString('latin1', offset, offset + text.length) === text
+// Start-of-frame markers of a JPEG: baseline, extended, progressive, lossless
+const JPEG_SOF = new Set([
+  0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf,
+])
+// Base64 characters of a JPEG decoded first (48 KB); the frame header is
+// nearly always in them, and a longer prefix is decoded only when it is not
+const JPEG_PREFIX_CHARS = 64 * 1024
+
+/**
+ * The size in a JPEG's first frame header, walking the segments to it.
+ * Undefined when the walk runs off the end of `bytes`, where a longer prefix
+ * of the image may still hold the header.
+ */
+function jpegFrameSize(bytes) {
+  let pos = 2
+  while (pos + 4 <= bytes.length) {
+    if (bytes[pos] !== 0xff) {
+      pos++
+      continue
+    }
+    const marker = bytes[pos + 1]
+    if (marker === 0xff) {
+      pos++
+      continue
+    }
+    if (JPEG_SOF.has(marker)) {
+      if (pos + 9 > bytes.length) return undefined
+      return {
+        width: bytes.readUInt16BE(pos + 7),
+        height: bytes.readUInt16BE(pos + 5),
+      }
+    }
+    // Markers with no length: standalone, restart and start/end of image
+    if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
+      pos += 2
+      continue
+    }
+    pos += 2 + bytes.readUInt16BE(pos + 2)
+  }
+  return undefined
+}
+
+/**
+ * The pixel size of a base64 image, read from its header: PNG, GIF, WebP
+ * (VP8, VP8L, VP8X) or JPEG. The type comes from the bytes, not the media
+ * type. Null when the header is none of those or is cut short.
+ */
+export function imageDimensions({ data } = {}) {
+  if (typeof data !== 'string' || data.length < 32) return null
+  // 64 characters are 48 bytes, past the longest header read here (WebP VP8X,
+  // 30 bytes). A JPEG's frame header can sit far in, so JPEG decodes more.
+  const bytes = Buffer.from(data.slice(0, 64), 'base64')
+  let width = 0
+  let height = 0
+  if (bytes[0] === 0x89 && isAscii(bytes, 1, 'PNG') && bytes.length >= 24) {
+    width = bytes.readUInt32BE(16)
+    height = bytes.readUInt32BE(20)
+  } else if (isAscii(bytes, 0, 'GIF8') && bytes.length >= 10) {
+    width = bytes.readUInt16LE(6)
+    height = bytes.readUInt16LE(8)
+  } else if (isAscii(bytes, 0, 'RIFF') && isAscii(bytes, 8, 'WEBP')) {
+    if (isAscii(bytes, 12, 'VP8 ') && bytes.length >= 30) {
+      width = bytes.readUInt16LE(26) & 0x3fff
+      height = bytes.readUInt16LE(28) & 0x3fff
+    } else if (isAscii(bytes, 12, 'VP8L') && bytes.length >= 25) {
+      const b1 = bytes[22]
+      width = 1 + (((b1 & 0x3f) << 8) | bytes[21])
+      height = 1 + (((bytes[24] & 0x0f) << 10) | (bytes[23] << 2) | ((b1 & 0xc0) >> 6))
+    } else if (isAscii(bytes, 12, 'VP8X') && bytes.length >= 30) {
+      width = 1 + bytes.readUIntLE(24, 3)
+      height = 1 + bytes.readUIntLE(27, 3)
+    }
+  } else if (bytes[0] === 0xff && bytes[1] === 0xd8) {
+    // A prefix that holds the frame header gives what the whole image would;
+    // the whole image is decoded only as the last step
+    for (let chars = JPEG_PREFIX_CHARS; ; chars *= 4) {
+      const size = jpegFrameSize(Buffer.from(data.slice(0, chars), 'base64'))
+      if (size) {
+        width = size.width
+        height = size.height
+      }
+      if (size || chars >= data.length) break
+    }
+  }
+  return width > 0 && height > 0 ? { width, height } : null
 }
 
 export function hasImages(messages) {
@@ -87,7 +176,7 @@ export function imageStats(messages) {
  * Tool images kept in the conversation. Each one is re-sent on every later
  * request of the run, and the model only needs the pages it is working on.
  */
-export const MAX_CONTEXT_IMAGES = 4
+const MAX_CONTEXT_IMAGES = 4
 
 /**
  * Images past MAX_CONTEXT_IMAGES are dropped only once this many more have
@@ -96,7 +185,7 @@ export const MAX_CONTEXT_IMAGES = 4
  * conversation is read again at full price. Dropping one per new image would
  * do that on every page view; this does it once per few.
  */
-export const CONTEXT_IMAGE_SLACK = 4
+const CONTEXT_IMAGE_SLACK = 4
 
 /**
  * What one image costs in context when its size is unknown. A known size is
@@ -135,9 +224,13 @@ export function detachToolImages(result, policy = null) {
       mediaType: image.mediaType ?? image.mimeType,
       data: image.data,
     }
-    if (Number.isFinite(image.width) && Number.isFinite(image.height)) {
-      out.width = image.width
-      out.height = image.height
+    const size =
+      Number.isFinite(image.width) && Number.isFinite(image.height)
+        ? { width: image.width, height: image.height }
+        : imageDimensions(image)
+    if (size) {
+      out.width = size.width
+      out.height = size.height
     }
     if (choice) {
       if (choice.detail) out.detail = choice.detail

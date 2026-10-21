@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next'
 import { ParsedEquation } from '../../equation/parse-output'
 import { EquationResult } from '../../equation/generate'
+import type { RetryingState } from '../../agent/agent-state'
 import { MathKind } from '../../equation/context'
 import { previewTex } from '../../equation/math-render'
 import { normalizeBody } from '../../equation/wrap'
@@ -19,6 +20,8 @@ export type EquationPhase = GeneratorPhase<ParsedEquation>
 export type EquationCardProps = {
   /** The prompt, or "From image". */
   title: string
+  /** A provider retry while streaming; see GeneratorCard. */
+  retry?: RetryingState | null
   imageAttached: boolean
   phase: EquationPhase
   versions: EquationVersion[]
@@ -111,6 +114,7 @@ export function EquationCard(props: EquationCardProps) {
       durationMs={props.durationMs}
       copyText={current?.wrapped ?? null}
       streamingPreview={streamingPreview}
+      retry={props.retry}
       notes={current?.notes ?? null}
       warnings={current?.warnings ?? []}
       packages={current?.packages ?? []}

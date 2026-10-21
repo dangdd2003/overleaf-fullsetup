@@ -4,6 +4,7 @@ import { makeDocument } from "../document.mjs";
 import { REQUEST_TIMEOUT_MS } from "../transport.mjs";
 import { isoDay, webError } from "../util.mjs";
 import { classifyFailure } from "../routing.mjs";
+import { mcpTarget, readViaMcp } from "../mcp.mjs";
 
 /**
  * Hosted services that read a page for us.
@@ -33,6 +34,7 @@ export const READER_ORDER = [
   "jina",
   "exa",
   "parallel",
+  "mcp",
 ];
 export const READER_LABELS = {
   ollama: "Ollama",
@@ -43,6 +45,7 @@ export const READER_LABELS = {
   jina: "Jina Reader",
   exa: "Exa",
   parallel: "Parallel",
+  mcp: "Custom search server",
 };
 
 function text(value) {
@@ -688,6 +691,33 @@ export function parallelReader(
   );
 }
 
+/**
+ * An MCP search server's own page reader tool (for example a `fetch` tool).
+ * A server without one fails here, and the next reader answers instead.
+ */
+export function mcpReader(
+  url,
+  { signal, endpoints, rotator, router = rotator, fetchFn },
+) {
+  const targetEndpoints =
+    endpoints || router?.pool?.filter((e) => e.provider === "mcp") || [];
+  return withEndpoints("mcp", targetEndpoints, router, async (endpoint) => {
+    const page = await readViaMcp(
+      mcpTarget(endpoint, {
+        fetchFn,
+        signal,
+        timeoutMs: REQUEST_TIMEOUT_MS,
+      }),
+      url,
+    );
+    return makeDocument({
+      url,
+      title: page.title,
+      text: page.text,
+    });
+  });
+}
+
 export const READERS = {
   ollama: ollamaReader,
   websearchapi: websearchapiReader,
@@ -697,4 +727,5 @@ export const READERS = {
   jina: jinaReader,
   exa: exaReader,
   parallel: parallelReader,
+  mcp: mcpReader,
 };

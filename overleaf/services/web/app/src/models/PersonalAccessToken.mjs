@@ -3,7 +3,7 @@ import mongoose from '../infrastructure/Mongoose.mjs'
 const { Schema } = mongoose
 const { ObjectId } = Schema
 
-export const PersonalAccessTokenSchema = new Schema(
+const PersonalAccessTokenSchema = new Schema(
   {
     user_id: {
       type: ObjectId,
@@ -50,5 +50,3 @@ export const PersonalAccessToken = mongoose.model(
   'PersonalAccessToken',
   PersonalAccessTokenSchema
 )
-
-export default PersonalAccessToken

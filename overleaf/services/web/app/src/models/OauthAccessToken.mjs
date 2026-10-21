@@ -34,19 +34,6 @@ export const OauthAccessTokenSchema = new Schema(
   }
 )
 
-// Built by the mcp module at startup (OAuth2GrantExpiry.mjs)
-OauthAccessTokenSchema.index(
-  { refreshTokenExpiresAt: 1 },
-  {
-    expireAfterSeconds: 0,
-    partialFilterExpression: { refreshTokenExpiresAt: { $exists: true } },
-  }
-)
-
-// The refresh_token grant resolves the token with findOne({ refreshToken }).
-// The TTL index above does not serve that lookup, so without this it scans.
-OauthAccessTokenSchema.index({ refreshToken: 1 })
-
 export const OauthAccessToken = mongoose.model(
   'OauthAccessToken',
   OauthAccessTokenSchema

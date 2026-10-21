@@ -1,8 +1,13 @@
 import logger from '@overleaf/logger'
 import Settings from '@overleaf/settings'
 import './ModuleSettings.mjs'
-import { createProviderClient, ProviderError } from './AiAssistProviders.mjs'
+import {
+  createProviderClient,
+  normalizeProviderBaseUrl,
+} from './AiAssistProviders.mjs'
+import { ProviderError } from './AiAssistErrors.mjs'
 import defaultUserSettingsStore from './AiAssistUserSettingsStore.mjs'
+import { streamWithRetry } from './AiAssistRetry.mjs'
 import SessionManager from '../../../../app/src/Features/Authentication/SessionManager.mjs'
 import {
   normalizeWebSearchSettings,
@@ -67,6 +72,9 @@ function abortOnDisconnect(req, res) {
 /** What the editor's text-only route passes on: no tool calls, no thinking. */
 const EDITOR_CHUNKS = new Set(['text', 'stop'])
 
+// The retry policies a page may ask the relay for; anything else gets the default
+const RELAY_RETRY_POLICIES = new Set(['interactive', 'background', 'inline'])
+
 /** Starts an NDJSON response; returns the line writer. */
 function openNdjson(res) {
   res.status(200)
@@ -121,7 +129,12 @@ export class AiAssistProviderController {
     ) {
       return null
     }
-    return providerSettings
+    const rawBaseUrl = providerSettings.baseUrl || providerSettings.baseURL
+    const baseUrl = normalizeProviderBaseUrl(providerSettings.type, rawBaseUrl)
+    return {
+      ...providerSettings,
+      baseUrl,
+    }
   }
 
   /** One small search through the configured web search backend. */
@@ -344,23 +357,43 @@ export class AiAssistProviderController {
     const write = openNdjson(res)
     let emittedAny = false
     let currentSettings = activePrimary
+    // The chat panel shows a status line while it waits; editor features run unseen
+    const retryPolicy = RELAY_RETRY_POLICIES.has(req.body?.retryPolicy)
+      ? req.body.retryPolicy
+      : toolsAllowed
+        ? 'interactive'
+        : 'background'
 
     const tryStream = async settings => {
       currentSettings = settings
       const client = this.clientFactory(settings)
-      for await (const chunk of client.streamChat({
-        system: typeof request.system === 'string' ? request.system : '',
-        messages: request.messages,
-        maxTokens: request.maxTokens,
-        contextWindow:
-          Number(request.contextWindow) > 0
-            ? Number(request.contextWindow)
-            : undefined,
-        tools: toolsAllowed ? tools : [],
-        cacheHints: request.cacheHints,
-        signal: controller.signal,
-      })) {
-        if (!toolsAllowed && !EDITOR_CHUNKS.has(chunk?.type)) continue
+      // A failure is retried only while nothing has reached the page yet
+      const relayed = streamWithRetry(
+        async function* () {
+          for await (const chunk of client.streamChat({
+            system: typeof request.system === 'string' ? request.system : '',
+            messages: request.messages,
+            maxTokens: request.maxTokens,
+            contextWindow:
+              Number(request.contextWindow) > 0
+                ? Number(request.contextWindow)
+                : undefined,
+            tools: toolsAllowed ? tools : [],
+            cacheHints: request.cacheHints,
+            signal: controller.signal,
+          })) {
+            if (!toolsAllowed && !EDITOR_CHUNKS.has(chunk?.type)) continue
+            yield chunk
+          }
+        },
+        {
+          policy: retryPolicy,
+          signal: controller.signal,
+          canRetry: () => !emittedAny,
+          onRetry: event => write(event),
+        }
+      )
+      for await (const chunk of relayed) {
         emittedAny = true
         write(chunk)
       }

@@ -1,4 +1,3 @@
-import React from 'react'
 import { useEditorThemeStyles } from '../../hooks/use-editor-theme-styles'
 
 export interface CodeViewProps {

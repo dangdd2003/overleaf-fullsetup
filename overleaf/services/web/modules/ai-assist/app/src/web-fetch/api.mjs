@@ -1,4 +1,5 @@
-import { ProviderError, fetchWithRetry } from "../AiAssistProviders.mjs";
+import { fetchWithRetry } from "../AiAssistProviders.mjs";
+import { ProviderError } from "../AiAssistErrors.mjs";
 import { connectorFetch } from "../connectors/ConnectorFetch.mjs";
 import { REQUEST_TIMEOUT_MS } from "./transport.mjs";
 import { webError } from "./util.mjs";

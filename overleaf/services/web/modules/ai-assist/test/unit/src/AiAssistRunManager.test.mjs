@@ -7,11 +7,16 @@ import {
   SENT_DURING_RUN_NOTE,
   TRIM_TARGET_FRACTION,
   WEB_CALL_NUDGE,
+  anchorAt,
+  anchoredRequestCount,
   applyContextBudget,
   applyContextTrim,
-  estimateMessagesTokens,
+  autoCompactionAllowed,
   latestContextTrim,
+  queuedEntry,
   recordContextTrim,
+  recordRunStep,
+  usageTokens,
   extractTextToolCall,
   toAgentMessages,
   toQueuedMessage,
@@ -25,6 +30,11 @@ import {
   reduceAgentEvent,
 } from '../../../frontend/js/features/ai-assist/agent/agent-state.ts'
 import { hydrateTranscript } from '../../../app/src/AiAssistChatHistoryStore.mjs'
+import {
+  contextThresholds,
+  estimateRequestTokens,
+  estimateToolTokens,
+} from '../../../app/src/AiAssistContextUsage.mjs'
 
 describe('AiAssistRunManager', function () {
   let manager
@@ -309,6 +319,57 @@ describe('AiAssistRunManager', function () {
     expect(mockStore.updateStatus.calledWith('run-1', 'done')).to.be.true
   })
 
+  it('emits the provider usage and a context breakdown for each step', async function () {
+    mockClient.streamChat.callsFake(async function* () {
+      yield { type: 'text', text: 'hello' }
+      yield {
+        type: 'usage',
+        usage: {
+          inputTokens: 5,
+          outputTokens: 2,
+          cacheReadTokens: 0,
+          cacheCreationTokens: 0,
+        },
+      }
+    })
+
+    await manager.startRun({
+      runId: 'run-usage',
+      projectId: '0123456789abcdef01234567',
+      userId: 'abcdef0123456789abcdef01',
+      transcript: [{ id: 'u0', role: 'user', text: 'hi there' }],
+      providerSettings: {
+        type: 'openai',
+        apiKey: 'k',
+        model: 'gpt-x',
+        contextWindow: 100000,
+        maxOutputTokens: 4000,
+      },
+    })
+
+    const events = mockStore.appendEvent.args.map(args => args[1])
+    expect(events).to.deep.include({
+      type: 'usage',
+      usage: {
+        inputTokens: 5,
+        outputTokens: 2,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        step: 1,
+      },
+      step: 1,
+    })
+    const breakdown = events.find(event => event.type === 'contextBreakdown')
+    expect(breakdown.step).to.equal(1)
+    expect(breakdown.breakdown.contextWindow).to.equal(100000)
+    expect(breakdown.breakdown.maxOutputTokens).to.equal(4000)
+    expect(breakdown.breakdown.budget).to.equal(
+      contextThresholds({ contextWindow: 100000, maxOutputTokens: 4000 }).blockAt
+    )
+    expect(breakdown.breakdown.model).to.equal('gpt-x')
+    expect(breakdown.breakdown.userMessages).to.be.above(0)
+  })
+
   describe('provider 5xx errors', function () {
     let clock
 
@@ -334,6 +395,11 @@ describe('AiAssistRunManager', function () {
         status: 500,
       })
 
+    const retryingEvents = () =>
+      mockStore.appendEvent.args
+        .map(args => args[1])
+        .filter(event => event.type === 'retrying')
+
     it('keeps retrying a step through five failures in a row', async function () {
       let calls = 0
       mockClient.streamChat.callsFake(async function* () {
@@ -349,14 +415,24 @@ describe('AiAssistRunManager', function () {
         transcript: [{ role: 'user', content: 'hi' }],
         providerSettings: { type: 'ollama', model: 'm' },
       })
-      await advance(60000)
+      await advance(300000)
       await runPromise
 
       expect(mockClient.streamChat.callCount).to.equal(6)
       expect(mockStore.updateStatus.calledWith('run-retry', 'done')).to.be.true
+      const retries = retryingEvents()
+      expect(retries.map(event => event.attempt)).to.deep.equal([1, 2, 3, 4, 5])
+      expect(retries[0]).to.include({
+        type: 'retrying',
+        maxRetries: 10,
+        message: 'Server error (500)',
+        status: 500,
+      })
+      expect(retries[0].retryInMs).to.be.above(0)
+      expect(retries[0].retryAt).to.be.a('number')
     })
 
-    it('gives up after six failed attempts', async function () {
+    it('gives up after the tenth retry, with the error', async function () {
       mockClient.streamChat.callsFake(async function* () {
         throw serverError()
       })
@@ -368,12 +444,66 @@ describe('AiAssistRunManager', function () {
         transcript: [{ role: 'user', content: 'hi' }],
         providerSettings: { type: 'ollama', model: 'm' },
       })
-      await advance(60000)
+      await advance(300000)
       await runPromise
 
-      expect(mockClient.streamChat.callCount).to.equal(6)
+      // The first try and ten retries
+      expect(mockClient.streamChat.callCount).to.equal(11)
+      expect(retryingEvents()).to.have.lengthOf(10)
       expect(mockStore.updateStatus.calledWith('run-give-up', 'error')).to.be
         .true
+      const errorEvent = mockStore.appendEvent.args
+        .map(args => args[1])
+        .find(event => event.type === 'error')
+      expect(errorEvent).to.include({ status: 500, message: 'Internal Server Error (ref: abc)' })
+    })
+
+    it('reports a connect timeout as an error, not as a stop', async function () {
+      mockClient.streamChat.callsFake(async function* () {
+        throw Object.assign(new Error('Connection timed out'), {
+          code: 'providerTimeout',
+        })
+      })
+
+      const runPromise = manager.startRun({
+        runId: 'run-timeout',
+        projectId: 'p1',
+        userId: 'u1',
+        transcript: [{ role: 'user', content: 'hi' }],
+        providerSettings: { type: 'ollama', model: 'm' },
+      })
+      await advance(300000)
+      await runPromise
+
+      const events = mockStore.appendEvent.args.map(args => args[1])
+      expect(events.find(event => event.type === 'turnFinished')).to.be.undefined
+      expect(events.find(event => event.type === 'error')).to.include({
+        code: 'providerTimeout',
+      })
+      expect(mockStore.updateStatus.calledWith('run-timeout', 'error')).to.be
+        .true
+    })
+
+    it('does not retry a request the provider refuses', async function () {
+      mockClient.streamChat.callsFake(async function* () {
+        throw Object.assign(new Error('Invalid API key'), {
+          status: 401,
+          code: 'providerAuth',
+        })
+      })
+
+      const runPromise = manager.startRun({
+        runId: 'run-auth',
+        projectId: 'p1',
+        userId: 'u1',
+        transcript: [{ role: 'user', content: 'hi' }],
+        providerSettings: { type: 'ollama', model: 'm' },
+      })
+      await advance(10000)
+      await runPromise
+
+      expect(mockClient.streamChat.callCount).to.equal(1)
+      expect(retryingEvents()).to.have.lengthOf(0)
     })
   })
 
@@ -1104,6 +1234,12 @@ describe('AiAssistRunManager', function () {
       .getCalls()
       .filter(c => c.args[0] === 'run-order')
       .map(c => c.args[1])
+      .filter(
+        e =>
+          e.type !== 'contextBreakdown' &&
+          e.type !== 'usage' &&
+          e.type !== 'contextUsage'
+      )
 
     const summary = eventTypes.map(e =>
       e.type === 'text' ? `text:${e.text.trim()}` : e.type
@@ -1222,7 +1358,7 @@ describe('AiAssistRunManager', function () {
       const result = applyContextBudget({
         system: 'Sys',
         messages,
-        limits: { contextWindow: 5000, maxOutputTokens: 500 },
+        limits: { contextWindow: 4500, maxOutputTokens: 500 },
       })
 
       expect(result.exhausted).to.be.false
@@ -1342,8 +1478,8 @@ describe('AiAssistRunManager', function () {
         })
       }
       messages.push({ role: 'user', content: 'latest' })
-      // budget = 20000 - 1000 - 2000 = 17000; target = 11900
-      const limits = { contextWindow: 20000, maxOutputTokens: 1000 }
+      // budget (blockAt) = 17000: an 18525 window, 1000 reserved, 3% buffer of 17525 (525); target = 11900
+      const limits = { contextWindow: 18525, maxOutputTokens: 1000 }
 
       const result = applyContextBudget({ system: 'Sys', messages, limits })
 
@@ -1352,7 +1488,9 @@ describe('AiAssistRunManager', function () {
       )
       expect(result.exhausted).to.equal(false)
       expect(elided).to.have.length(3)
-      expect(estimateMessagesTokens('Sys', result.messages)).to.be.at.most(
+      expect(
+        estimateRequestTokens({ system: 'Sys', messages: result.messages }),
+      ).to.be.at.most(
         Math.floor(17000 * TRIM_TARGET_FRACTION)
       )
 
@@ -2412,6 +2550,190 @@ describe('AiAssistRunManager', function () {
       expect(messages[1].toolCalls.map(c => c.id)).to.deep.equal(['c1'])
       expect(messages[3].toolCalls.map(c => c.id)).to.deep.equal(['c2', 'c3'])
       expect(messages[6]).to.deep.equal({ role: 'assistant', content: 'Done.' })
+    })
+  })
+
+  describe('sending a queued message now', function () {
+    describe('sendQueuedNow and the control channel', function () {
+      it('returns false for a message the run does not hold', async function () {
+        const interruptStep = sinon.stub()
+        manager.activeRuns.set('run-s1', {
+          queuedMessages: [{ id: 'q1' }],
+          interruptStep,
+        })
+        expect(await manager.sendQueuedNow('run-s1', 'zz')).to.be.false
+        expect(interruptStep.called).to.be.false
+      })
+
+      it('returns true for a held message and interrupts the step', async function () {
+        const interruptStep = sinon.stub()
+        manager.activeRuns.set('run-s2', {
+          queuedMessages: [{ id: 'q1' }],
+          interruptStep,
+        })
+        expect(await manager.sendQueuedNow('run-s2', 'q1')).to.be.true
+        expect(interruptStep.calledOnce).to.be.true
+      })
+
+      it('publishes sendNow and returns null when another instance owns the run', async function () {
+        const publish = sinon.stub().resolves()
+        manager.attachControl({ publish })
+        expect(await manager.sendQueuedNow('run-s3', 'q1')).to.be.null
+        expect(publish.calledWith('run-s3', { action: 'sendNow', id: 'q1' }))
+          .to.be.true
+      })
+
+      it('returns false with no run and no control channel', async function () {
+        expect(await manager.sendQueuedNow('run-s4', 'q1')).to.be.false
+      })
+
+      it('onCommand sendNow interrupts the step for a held message', function () {
+        const interruptStep = sinon.stub()
+        manager.activeRuns.set('run-s5', {
+          queuedMessages: [{ id: 'q1' }],
+          interruptStep,
+        })
+        manager.onCommand({ runId: 'run-s5', action: 'sendNow', id: 'other' })
+        expect(interruptStep.called).to.be.false
+        manager.onCommand({ runId: 'run-s5', action: 'sendNow', id: 'q1' })
+        expect(interruptStep.calledOnce).to.be.true
+      })
+    })
+
+    it('cuts the streaming reply short and carries on with the queued message', async function () {
+      const requests = []
+      let answer
+      let signalAbortedAtCut
+      mockClient.streamChat.callsFake(async function* (opts) {
+        requests.push([...opts.messages])
+        if (requests.length === 1) {
+          yield { type: 'text', text: 'Looking at ' }
+          yield { type: 'text', text: 'the preamble' }
+          await manager.queueMessage('run-now', {
+            id: 'q1',
+            text: 'check the bibliography instead',
+          })
+          answer = await manager.sendQueuedNow('run-now', 'q1')
+          // The request is cut: its signal aborts and the stream ends
+          await new Promise(resolve => {
+            if (opts.signal.aborted) return resolve()
+            opts.signal.addEventListener('abort', resolve, { once: true })
+          })
+          signalAbortedAtCut = opts.signal.aborted
+        } else {
+          yield { type: 'text', text: 'Bibliography checked.' }
+        }
+      })
+
+      await manager.startRun({
+        runId: 'run-now',
+        projectId: 'p1',
+        userId: 'u1',
+        transcript: [{ role: 'user', content: 'check the preamble' }],
+        providerSettings: { type: 'openai', apiKey: 'k', model: 'gpt-4o' },
+      })
+
+      expect(answer).to.be.true
+      expect(signalAbortedAtCut).to.be.true
+      expect(mockClient.streamChat.callCount).to.equal(2)
+
+      // The partial reply stays as an assistant message, then the queued
+      // message follows it at the top of the next request
+      const second = requests[1]
+      expect(second.slice(-2)[0]).to.deep.equal({
+        role: 'assistant',
+        content: 'Looking at the preamble',
+      })
+      expect(second.at(-1).role).to.equal('user')
+      expect(second.at(-1).content).to.include('check the bibliography instead')
+
+      expect(
+        mockStore.appendEvent.calledWith(
+          'run-now',
+          sinon.match({
+            type: 'userMessage',
+            id: 'q1',
+            text: 'check the bibliography instead',
+          })
+        )
+      ).to.be.true
+
+      // The run was not stopped or aborted: it finished normally
+      const statuses = mockStore.updateStatus
+        .getCalls()
+        .map(c => c.args[1])
+      expect(statuses).to.include('done')
+      expect(statuses).to.not.include('stopped')
+      expect(statuses).to.not.include('interrupted')
+      expect(statuses).to.not.include('error')
+    })
+
+    it('does nothing when nothing is queued', async function () {
+      let answer
+      let abortedAfterCall
+      mockClient.streamChat.callsFake(async function* (opts) {
+        yield { type: 'text', text: 'Hello.' }
+        answer = await manager.sendQueuedNow('run-empty', 'q1')
+        abortedAfterCall = opts.signal.aborted
+        yield { type: 'text', text: ' Done.' }
+      })
+
+      await manager.startRun({
+        runId: 'run-empty',
+        projectId: 'p1',
+        userId: 'u1',
+        transcript: [{ role: 'user', content: 'hi' }],
+        providerSettings: { type: 'openai', apiKey: 'k', model: 'gpt-4o' },
+      })
+
+      expect(answer).to.be.false
+      expect(abortedAfterCall).to.be.false
+      expect(mockClient.streamChat.callCount).to.equal(1)
+      expect(
+        mockStore.appendEvent.calledWith(
+          'run-empty',
+          sinon.match({ type: 'userMessage' })
+        )
+      ).to.be.false
+    })
+
+    it('waits for the tool calls to finish when no reply is streaming', async function () {
+      const requests = []
+      let answer
+      mockTools.execute.callsFake(async () => {
+        await manager.queueMessage('run-busy', { id: 'q1', text: 'and then this' })
+        answer = await manager.sendQueuedNow('run-busy', 'q1')
+        return { content: 'file content' }
+      })
+      mockClient.streamChat.callsFake(async function* (opts) {
+        requests.push([...opts.messages])
+        if (requests.length === 1) {
+          yield {
+            type: 'tool_call',
+            id: 'r1',
+            name: 'read_file',
+            args: { path: 'main.tex' },
+          }
+        } else {
+          yield { type: 'text', text: 'Read it.' }
+        }
+      })
+
+      await manager.startRun({
+        runId: 'run-busy',
+        projectId: 'p1',
+        userId: 'u1',
+        transcript: [{ role: 'user', content: 'read it' }],
+        providerSettings: { type: 'openai', apiKey: 'k', model: 'gpt-4o' },
+      })
+
+      expect(answer).to.be.true
+      expect(mockClient.streamChat.callCount).to.equal(2)
+      // The tool result is kept, and nothing was cut short: the queued
+      // message comes after it, not after a partial assistant message
+      expect(requests[1].at(-2).role).to.equal('tool')
+      expect(requests[1].at(-1).role).to.equal('user')
+      expect(requests[1].at(-1).content).to.include('and then this')
     })
   })
 
@@ -4373,6 +4695,115 @@ describe('AiAssistRunManager connector tools', function () {
     expect(session.execute.calledWith('mcp__docs__get')).to.be.true
   })
 
+  it('counts the deferred connector tools it has not loaded in the breakdown, not in the offered tools', async function () {
+    const session = connectorSession({
+      deferred: true,
+      loadedTools: new Set(),
+      specs: () => [spec('search_connector_tools')],
+      pendingSpecs: () => [spec('mcp__docs__get'), spec('mcp__docs__put')],
+      catalog: () => [
+        {
+          name: 'mcp__docs__get',
+          originalName: 'get',
+          server: 'Docs',
+          spec: spec('mcp__docs__get'),
+          deferred: true,
+        },
+        {
+          name: 'mcp__docs__put',
+          originalName: 'put',
+          server: 'Docs',
+          spec: spec('mcp__docs__put'),
+          deferred: true,
+        },
+      ],
+      execute: sinon.stub().resolves({ result: 'ok' }),
+    })
+    const client = scriptedClient([])
+    const store = storeStub()
+    const manager = new AiAssistRunManager({
+      store,
+      tools: builtIns,
+      clientFactory: () => client,
+      connectorSessionFactory: async () => session,
+    })
+
+    await runWith(manager, 'run-deferred-count')
+
+    const offered = client.streamChat.args.map(([a]) => a.tools.map(t => t.name))
+    expect(offered[0]).to.not.include('mcp__docs__get')
+    const breakdown = store.appendEvent.args
+      .map(args => args[1])
+      .find(event => event.type === 'contextBreakdown').breakdown
+    expect(breakdown.deferredConnectorToolCount).to.equal(2)
+    // Each spec in the wire shape of the run's provider (anthropic here)
+    const tokens = name => estimateToolTokens(spec(name), 'anthropic', 'claude-x')
+    expect(breakdown.deferredConnectorTools).to.equal(
+      tokens('mcp__docs__get') + tokens('mcp__docs__put')
+    )
+    // The dashboard lists them by the connector's own tool names, as deferred
+    expect(breakdown.connectorToolDetails).to.have.deep.members([
+      { name: 'get', server: 'Docs', tokens: tokens('mcp__docs__get'), deferred: true },
+      { name: 'put', server: 'Docs', tokens: tokens('mcp__docs__put'), deferred: true },
+    ])
+  })
+
+  it('emits the breakdown again with the provider counts once they land, for the same step', async function () {
+    const countTokens = sinon.stub().callsFake(async ({ system = '', tools = [] }) => {
+      // The base count is 10; the system prompt counts a token a character
+      return 10 + system.length + tools.length * 50
+    })
+    const client = {
+      model: 'claude-x',
+      baseURL: 'https://api.anthropic.com',
+      exactCountsSupported: true,
+      countTokens,
+      streamChat: sinon.stub().callsFake(async function* () {
+        // The stream stays open a moment, as a provider's does, so the counts land within the run
+        await new Promise(resolve => setTimeout(resolve, 20))
+        yield { type: 'text', text: 'Done' }
+        yield { type: 'usage', usage: { inputTokens: 5, outputTokens: 2, cacheReadTokens: 0, cacheCreationTokens: 0 } }
+      }),
+    }
+    const store = storeStub()
+    const manager = new AiAssistRunManager({
+      store,
+      tools: builtIns,
+      clientFactory: () => client,
+    })
+
+    await runWith(manager, 'run-exact-counts')
+
+    const events = store.appendEvent.args.map(args => args[1])
+    const breakdowns = events.filter(event => event.type === 'contextBreakdown')
+    expect(breakdowns).to.have.lengthOf(2)
+    expect(breakdowns[0].breakdown.exactFixed).to.equal(false)
+    expect(breakdowns[1].breakdown.exactFixed).to.equal(true)
+    expect(breakdowns.map(event => event.step)).to.deep.equal([1, 1])
+    expect(breakdowns[1].breakdown.step).to.equal(1)
+    const systemText = countTokens.args.find(([args]) => args.system)[0].system
+    const {
+      systemPrompt,
+      skills,
+      projectInstructions,
+      connectorInstructions,
+    } = breakdowns[1].breakdown
+    expect(
+      systemPrompt + skills + projectInstructions + connectorInstructions
+    ).to.equal(systemText.length)
+    expect(events).to.deep.include({
+      type: 'usage',
+      usage: {
+        inputTokens: 5,
+        outputTokens: 2,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        step: 1,
+      },
+      step: 1,
+    })
+  })
+
   it('refuses a deferred connector tool that is not loaded yet, before asking the user', async function () {
     const session = connectorSession({
       deferred: true,
@@ -4544,5 +4975,358 @@ describe('AiAssistRunManager queue bounds', function () {
     manager.activeRuns.set('run-m', active)
     manager.onCommand({ runId: 'run-m', action: 'setMode', mode: 'root' })
     expect(active.mode).to.equal('manual')
+  })
+})
+
+describe('AiAssistRunManager context meter and automatic compaction', function () {
+  // A 100000 window with 4000 reserved: effective 96000, autoCompactAt 83000,
+  // blockAt 93120
+  const PROVIDER = {
+    type: 'openai',
+    apiKey: 'k',
+    model: 'gpt-4o',
+    contextWindow: 100000,
+    maxOutputTokens: 4000,
+  }
+  const IDS = {
+    projectId: '0123456789abcdef01234567',
+    userId: 'abcdef0123456789abcdef01',
+  }
+  const spec = name => ({
+    name,
+    description: name,
+    parameters: { type: 'object', properties: {} },
+  })
+  function storeStub() {
+    return {
+      createRun: sinon.stub().resolves(),
+      appendEvent: sinon.stub().resolves(1),
+      updateStatus: sinon.stub().resolves(),
+      setPendingApproval: sinon.stub().resolves(),
+      clearPendingApproval: sinon.stub().resolves(),
+      getPendingApproval: sinon.stub().resolves(null),
+      getRun: sinon.stub().resolves({ status: 'running' }),
+      touchHeartbeat: sinon.stub().resolves(),
+      setMode: sinon.stub().resolves(),
+    }
+  }
+
+  function chatStore() {
+    return {
+      saveChat: sinon.stub().resolves({}),
+      getChat: sinon.stub().resolves({ titleGenerated: true }),
+      saveChatTitle: sinon.stub().resolves(null),
+    }
+  }
+
+  // Each reply: its provider usage, its tool calls, then its text. Past the
+  // last reply the model says 'Done'.
+  function usageClient(replies) {
+    let turn = 0
+    return {
+      streamChat: sinon.stub().callsFake(async function* () {
+        const reply = replies[turn++] ?? { text: 'Done' }
+        if (reply.usage) yield { type: 'usage', usage: reply.usage }
+        for (const call of reply.calls ?? []) {
+          yield { type: 'tool_call', ...call }
+        }
+        if (reply.text) yield { type: 'text', text: reply.text }
+      }),
+    }
+  }
+
+  const toolReply = (id, usage, extra = {}) => ({
+    usage,
+    calls: [{ id, name: 'read_file', args: { path: `${id}.tex` } }],
+    ...extra,
+  })
+
+  function build({ client, store, history = chatStore(), compactor, tools }) {
+    return new AiAssistRunManager({
+      store,
+      tools: tools ?? {
+        getToolSpecs: () => [spec('read_file')],
+        execute: sinon.stub().resolves({ content: 'file' }),
+      },
+      clientFactory: () => client,
+      chatHistoryStore: history,
+      ...(compactor ? { compactor } : {}),
+    })
+  }
+
+  const eventsOf = store =>
+    store.appendEvent.args.map(args => args[1])
+
+  const withChat = {
+    chatId: 'chat1',
+    userId: IDS.userId,
+    projectId: IDS.projectId,
+  }
+
+  // Long enough that the compacted summary, with its framing, is smaller
+  const LONG = 'Background detail on the thesis chapters. '.repeat(120)
+  const TRANSCRIPT = [
+    { id: 'u0', role: 'user', text: `first question. ${LONG}` },
+    { id: 'a0', role: 'assistant', text: `first answer. ${LONG}` },
+    { id: 'u1', role: 'user', text: `second question. ${LONG}` },
+  ]
+
+  it('emits contextUsage before each provider request, with its thresholds and state', async function () {
+    const store = storeStub()
+    const client = usageClient([{ text: 'Hello' }])
+    const manager = build({ client, store })
+
+    await manager.startRun({
+      runId: 'run-usage',
+      projectId: IDS.projectId,
+      userId: IDS.userId,
+      transcript: [{ id: 'u0', role: 'user', text: 'hi' }],
+      providerSettings: PROVIDER,
+    })
+
+    const events = eventsOf(store)
+    const usage = events.filter(e => e.type === 'contextUsage')
+    expect(usage).to.have.length(1)
+    expect(usage[0]).to.deep.include({
+      step: 1,
+      exact: false,
+      anchoredTokens: 0,
+      contextWindow: 100000,
+      state: 'ok',
+    })
+    expect(usage[0].tokens).to.equal(usage[0].estimatedTokens)
+    expect(usage[0].thresholds).to.deep.equal({
+      effective: 96000,
+      autoCompactAt: 83000,
+      warnAt: 76800,
+      blockAt: 93120,
+    })
+    expect(events.indexOf(usage[0])).to.be.below(
+      events.findIndex(e => e.type === 'text')
+    )
+  })
+
+  it('anchors the next request on the usage the last response reported', async function () {
+    const store = storeStub()
+    const client = usageClient([
+      toolReply('c1', {
+        inputTokens: 5000,
+        outputTokens: 100,
+        cacheReadTokens: 1000,
+        cacheCreationTokens: 0,
+      }),
+      { text: 'Done' },
+    ])
+    const manager = build({ client, store })
+
+    await manager.startRun({
+      runId: 'run-anchor',
+      projectId: IDS.projectId,
+      userId: IDS.userId,
+      transcript: [{ id: 'u0', role: 'user', text: 'read a file' }],
+      providerSettings: PROVIDER,
+    })
+
+    const usage = eventsOf(store).filter(e => e.type === 'contextUsage')
+    expect(usage).to.have.length(2)
+    expect(usage[1]).to.deep.include({
+      step: 2,
+      exact: true,
+      anchoredTokens: 6100,
+    })
+    expect(usage[1].estimatedTokens).to.be.above(0)
+    expect(usage[1].estimatedTokens).to.be.below(100)
+    expect(usage[1].tokens).to.equal(6100 + usage[1].estimatedTokens)
+  })
+
+  it('compacts the chat mid-run once the count reaches autoCompactAt, and goes on with the compacted messages', async function () {
+    const store = storeStub()
+    const history = chatStore()
+    const compactor = sinon.stub().resolves({
+      summary: 'Earlier work on the thesis, summarized.',
+      ledger: {},
+    })
+    const client = usageClient([
+      toolReply('c1', { inputTokens: 90000, outputTokens: 10 }),
+      { text: 'Carrying on' },
+    ])
+    const manager = build({ client, store, history, compactor })
+
+    await manager.startRun({
+      runId: 'run-auto',
+      transcript: TRANSCRIPT,
+      providerSettings: PROVIDER,
+      ...withChat,
+    })
+
+    expect(compactor.calledOnce).to.equal(true)
+    expect(compactor.firstCall.args[0].trigger).to.equal('auto')
+    const events = eventsOf(store)
+    const started = events.find(e => e.type === 'compactStarted')
+    const finished = events.find(e => e.type === 'compactFinished')
+    expect(started).to.deep.equal({ type: 'compactStarted', trigger: 'auto' })
+    expect(finished.entry).to.deep.include({
+      role: 'compact',
+      trigger: 'auto',
+      summary: 'Earlier work on the thesis, summarized.',
+    })
+    expect(finished.entry.id).to.be.a('string')
+    // Persisted the way /compact persists it: the transcript with the entry last
+    const lastSave = history.saveChat.lastCall.args[3]
+    expect(lastSave.at(-1)).to.deep.include({ role: 'compact', trigger: 'auto' })
+    // The second request starts from the summary, and the run finishes on it
+    const second = client.streamChat.secondCall.args[0].messages
+    expect(second[0].content).to.include('Earlier work on the thesis, summarized.')
+    expect(events.some(e => e.type === 'text' && e.text === 'Carrying on')).to.equal(true)
+    expect(events.at(-1)).to.deep.include({ type: 'turnFinished', reason: 'stop' })
+    const compactIndex = events.indexOf(finished)
+    const usage = events.filter(e => e.type === 'contextUsage')
+    expect(events.indexOf(usage[1])).to.be.above(compactIndex)
+  })
+
+  it('waits two steps between automatic compactions and blocks at blockAt when none can run', async function () {
+    const store = storeStub()
+    const compactor = sinon.stub().rejects(
+      Object.assign(new Error('provider down'), { code: 'compactFailed' })
+    )
+    const client = usageClient([
+      toolReply('c1', { inputTokens: 90000, outputTokens: 10 }),
+      toolReply('c2', { inputTokens: 94000, outputTokens: 10 }),
+      { text: 'never reached' },
+    ])
+    const manager = build({ client, store, history: chatStore(), compactor })
+
+    await manager.startRun({
+      runId: 'run-blocked',
+      transcript: TRANSCRIPT,
+      providerSettings: PROVIDER,
+      ...withChat,
+    })
+
+    expect(compactor.callCount).to.equal(1)
+    const events = eventsOf(store)
+    expect(events.filter(e => e.type === 'compactFailed')).to.have.length(1)
+    expect(events.find(e => e.type === 'compactFailed')).to.deep.include({
+      trigger: 'auto',
+      code: 'compactFailed',
+    })
+    expect(events.find(e => e.type === 'error')).to.deep.include({
+      code: 'contextExhausted',
+    })
+    expect(client.streamChat.callCount).to.equal(2)
+  })
+
+  it('stops trying automatic compactions after three failures in a run', async function () {
+    const store = storeStub()
+    const compactor = sinon.stub().rejects(
+      Object.assign(new Error('provider down'), { code: 'compactFailed' })
+    )
+    const replies = Array.from({ length: 7 }, (_, i) =>
+      toolReply(`c${i}`, { inputTokens: 88000, outputTokens: 10 })
+    )
+    const client = usageClient(replies)
+    const manager = build({ client, store, history: chatStore(), compactor })
+
+    await manager.startRun({
+      runId: 'run-breaker',
+      transcript: TRANSCRIPT,
+      providerSettings: PROVIDER,
+      ...withChat,
+    })
+
+    // Steps 2, 4 and 6 try; after the third failure no more tries
+    expect(compactor.callCount).to.equal(3)
+    const events = eventsOf(store)
+    expect(events.filter(e => e.type === 'compactFailed')).to.have.length(3)
+    expect(events.some(e => e.type === 'error')).to.equal(false)
+    expect(events.at(-1)).to.deep.include({ type: 'turnFinished', reason: 'stop' })
+  })
+
+  it('refuses a compaction that does not shrink the context, and keeps the chat as it was', async function () {
+    const store = storeStub()
+    const history = chatStore()
+    const compactor = sinon.stub().resolves({
+      summary: 'x'.repeat(4000),
+      ledger: {},
+    })
+    const client = usageClient([
+      toolReply('c1', { inputTokens: 90000, outputTokens: 10 }),
+      { text: 'Done' },
+    ])
+    const manager = build({ client, store, history, compactor })
+
+    await manager.startRun({
+      runId: 'run-no-progress',
+      transcript: [{ id: 'u0', role: 'user', text: 'hi' }],
+      providerSettings: PROVIDER,
+      ...withChat,
+    })
+
+    const failed = eventsOf(store).find(e => e.type === 'compactFailed')
+    expect(failed.code).to.equal('compactNoProgress')
+    expect(history.saveChat.callCount).to.equal(1)
+    expect(client.streamChat.secondCall.args[0].messages[0].content).to.equal('hi')
+  })
+
+  it('records the reply of each request in the stored shape, with its calls and results', function () {
+    const entries = [{ id: 'u0', role: 'user', text: 'hi' }]
+    const call = { id: 'c1', name: 'read_file', args: { path: 'a.tex' } }
+    recordRunStep(entries, {
+      runId: 'r',
+      step: 1,
+      text: 'Reading',
+      calls: [call],
+      results: new Map([[call, { result: { content: 'x' }, isError: false }]]),
+    })
+    recordRunStep(entries, { runId: 'r', step: 2, text: 'Done' })
+
+    expect(entries).to.have.length(2)
+    expect(entries[1].text).to.equal('ReadingDone')
+    expect(entries[1].toolCalls[0]).to.deep.equal({
+      id: 'c1',
+      name: 'read_file',
+      args: { path: 'a.tex' },
+      step: 1,
+      result: { content: 'x' },
+      isError: false,
+    })
+    expect(queuedEntry({ id: 'q1', text: 'more', images: [] })).to.deep.equal({
+      id: 'q1',
+      role: 'user',
+      text: 'more',
+    })
+  })
+
+  it('counts the last response by its usage, and only the messages after it by estimate', function () {
+    expect(
+      usageTokens({ inputTokens: 1, outputTokens: 2, cacheReadTokens: 3, cacheCreationTokens: 4 })
+    ).to.equal(10)
+    expect(anchorAt({ inputTokens: 1, partialInput: true }, 3)).to.equal(null)
+    expect(anchorAt({ inputTokens: 10 }, 3)).to.deep.equal({ tokens: 10, index: 3 })
+
+    const messages = [
+      { role: 'user', content: 'a'.repeat(400) },
+      { role: 'assistant', content: 'b' },
+      { role: 'user', content: 'c'.repeat(40) },
+    ]
+    const count = anchoredRequestCount({
+      system: '',
+      messages,
+      provider: 'openai',
+      model: 'gpt-4o',
+      anchor: { tokens: 500, index: 2 },
+    })
+    expect(count.exact).to.equal(true)
+    expect(count.anchoredTokens).to.equal(500)
+    // Only the message at index 2 is after the anchor: 40 characters, 10 tokens, and 3 of framing
+    expect(count.estimatedTokens).to.equal(13)
+    expect(anchoredRequestCount({ system: '', messages, provider: 'openai', model: 'gpt-4o' }).exact).to.equal(false)
+  })
+
+  it('allows an automatic compaction at most once every two steps', function () {
+    expect(autoCompactionAllowed({ lastStep: null, failures: 0, disabled: false }, 1)).to.equal(true)
+    expect(autoCompactionAllowed({ lastStep: 3, failures: 0, disabled: false }, 4)).to.equal(false)
+    expect(autoCompactionAllowed({ lastStep: 3, failures: 0, disabled: false }, 5)).to.equal(true)
+    expect(autoCompactionAllowed({ lastStep: null, failures: 3, disabled: true }, 9)).to.equal(false)
   })
 })

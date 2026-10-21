@@ -8,8 +8,8 @@ import {
   GoogleServerClient,
   OllamaServerClient,
   OpenAiServerClient,
-  ProviderError,
   fetchWithRetry,
+  toolWireSpec,
   isOfficialOpenAiUrl,
   markMessageCacheBreakpoints,
   parseSseLines,
@@ -19,10 +19,12 @@ import {
   toolImageTurns,
   toOllamaMessages,
   validateSafeProviderBaseUrl,
+  normalizeProviderBaseUrl,
 } from '../../../app/src/AiAssistProviders.mjs'
 import Settings from '@overleaf/settings'
 import { dockerHostGateway } from '../../../app/src/DockerHost.mjs'
 import { readJsonReply } from '../../../app/src/AiAssistProviders.mjs'
+import { ProviderError } from '../../../app/src/AiAssistErrors.mjs'
 
 describe('AiAssistProviders', function () {
   describe('validateSafeProviderBaseUrl', function () {
@@ -117,6 +119,216 @@ describe('AiAssistProviders', function () {
 
     it('accepts a LAN address, where a self-hosted provider lives', function () {
       expect(validateSafeProviderBaseUrl('http://203.0.113.20:11434')).to.be.true
+    })
+  })
+
+  describe('normalizeProviderBaseUrl', function () {
+    it('hard fixes the ending /v1 for openai endpoints', function () {
+      expect(normalizeProviderBaseUrl('openai', '')).to.equal(
+        'https://api.openai.com/v1'
+      )
+      expect(normalizeProviderBaseUrl('openai', 'https://api.openai.com')).to.equal(
+        'https://api.openai.com/v1'
+      )
+      expect(normalizeProviderBaseUrl('openai', 'https://api.openai.com/')).to.equal(
+        'https://api.openai.com/v1'
+      )
+      expect(normalizeProviderBaseUrl('openai', 'https://api.openai.com/v1')).to.equal(
+        'https://api.openai.com/v1'
+      )
+      expect(normalizeProviderBaseUrl('openai', 'https://api.openai.com/v1/')).to.equal(
+        'https://api.openai.com/v1'
+      )
+      expect(
+        normalizeProviderBaseUrl(
+          'openai',
+          'https://api.openai.com/v1/chat/completions'
+        )
+      ).to.equal('https://api.openai.com/v1')
+      expect(
+        normalizeProviderBaseUrl(
+          'openai',
+          'https://api.openai.com/chat/completions'
+        )
+      ).to.equal('https://api.openai.com/v1')
+      expect(
+        normalizeProviderBaseUrl('openai', 'https://api.openai.com/v1/models')
+      ).to.equal('https://api.openai.com/v1')
+      expect(
+        normalizeProviderBaseUrl('openai', 'http://localhost:1234')
+      ).to.equal('http://localhost:1234/v1')
+      expect(
+        normalizeProviderBaseUrl('openai', 'http://localhost:1234/')
+      ).to.equal('http://localhost:1234/v1')
+      expect(
+        normalizeProviderBaseUrl('openai', 'http://localhost:1234/v1')
+      ).to.equal('http://localhost:1234/v1')
+      expect(
+        normalizeProviderBaseUrl('openai', 'https://openrouter.ai/api')
+      ).to.equal('https://openrouter.ai/api/v1')
+      expect(
+        normalizeProviderBaseUrl('openai', 'https://openrouter.ai/api/v1')
+      ).to.equal('https://openrouter.ai/api/v1')
+    })
+
+    it('defaults and cleans anthropic compatible endpoints without /v1 suffix', function () {
+      expect(normalizeProviderBaseUrl('anthropic', '')).to.equal(
+        'https://api.anthropic.com'
+      )
+      expect(
+        normalizeProviderBaseUrl('anthropic', 'https://api.anthropic.com')
+      ).to.equal('https://api.anthropic.com')
+      expect(
+        normalizeProviderBaseUrl('anthropic', 'https://api.anthropic.com/')
+      ).to.equal('https://api.anthropic.com')
+      expect(
+        normalizeProviderBaseUrl('anthropic', 'https://api.anthropic.com/v1')
+      ).to.equal('https://api.anthropic.com')
+      expect(
+        normalizeProviderBaseUrl(
+          'anthropic',
+          'https://api.anthropic.com/v1/messages'
+        )
+      ).to.equal('https://api.anthropic.com')
+      expect(
+        normalizeProviderBaseUrl('anthropic', 'https://api.deepseek.com')
+      ).to.equal('https://api.deepseek.com')
+      expect(
+        normalizeProviderBaseUrl('anthropic', 'https://api.deepseek.com/v1')
+      ).to.equal('https://api.deepseek.com')
+      expect(
+        normalizeProviderBaseUrl(
+          'anthropic',
+          'https://api.deepseek.com/v1/messages'
+        )
+      ).to.equal('https://api.deepseek.com')
+      expect(
+        normalizeProviderBaseUrl(
+          'anthropic',
+          'https://api.deepseek.com/v1/models'
+        )
+      ).to.equal('https://api.deepseek.com')
+    })
+
+    it('normalizes google gemini endpoints to have /v1beta and strip /openai', function () {
+      expect(normalizeProviderBaseUrl('google', '')).to.equal(
+        'https://generativelanguage.googleapis.com/v1beta'
+      )
+      expect(
+        normalizeProviderBaseUrl(
+          'google',
+          'https://generativelanguage.googleapis.com'
+        )
+      ).to.equal('https://generativelanguage.googleapis.com/v1beta')
+      expect(
+        normalizeProviderBaseUrl(
+          'google',
+          'https://generativelanguage.googleapis.com/'
+        )
+      ).to.equal('https://generativelanguage.googleapis.com/v1beta')
+      expect(
+        normalizeProviderBaseUrl(
+          'google',
+          'https://generativelanguage.googleapis.com/v1beta'
+        )
+      ).to.equal('https://generativelanguage.googleapis.com/v1beta')
+      expect(
+        normalizeProviderBaseUrl(
+          'google',
+          'https://generativelanguage.googleapis.com/v1beta/'
+        )
+      ).to.equal('https://generativelanguage.googleapis.com/v1beta')
+      expect(
+        normalizeProviderBaseUrl(
+          'google',
+          'https://generativelanguage.googleapis.com/v1beta/openai'
+        )
+      ).to.equal('https://generativelanguage.googleapis.com/v1beta')
+      expect(
+        normalizeProviderBaseUrl(
+          'google',
+          'https://generativelanguage.googleapis.com/v1beta/openai/'
+        )
+      ).to.equal('https://generativelanguage.googleapis.com/v1beta')
+      expect(
+        normalizeProviderBaseUrl(
+          'google',
+          'https://generativelanguage.googleapis.com/v1beta/models'
+        )
+      ).to.equal('https://generativelanguage.googleapis.com/v1beta')
+      expect(
+        normalizeProviderBaseUrl('google', 'https://custom-proxy.com/v1')
+      ).to.equal('https://custom-proxy.com/v1')
+    })
+
+    it('normalizes ollama endpoints to root host and strips /v1 or /api', function () {
+      expect(normalizeProviderBaseUrl('ollama', '')).to.equal(
+        'http://localhost:11434'
+      )
+      expect(
+        normalizeProviderBaseUrl('ollama', 'http://localhost:11434')
+      ).to.equal('http://localhost:11434')
+      expect(
+        normalizeProviderBaseUrl('ollama', 'http://localhost:11434/')
+      ).to.equal('http://localhost:11434')
+      expect(
+        normalizeProviderBaseUrl('ollama', 'http://localhost:11434/v1')
+      ).to.equal('http://localhost:11434')
+      expect(
+        normalizeProviderBaseUrl('ollama', 'http://localhost:11434/api')
+      ).to.equal('http://localhost:11434')
+      expect(
+        normalizeProviderBaseUrl('ollama', 'http://localhost:11434/api/tags')
+      ).to.equal('http://localhost:11434')
+      expect(
+        normalizeProviderBaseUrl('ollama', 'http://localhost:11434/api/chat')
+      ).to.equal('http://localhost:11434')
+      expect(
+        normalizeProviderBaseUrl('ollama', 'http://ollama.lan:11434/v1')
+      ).to.equal('http://ollama.lan:11434')
+    })
+  })
+
+  describe('createProviderClient URL handling', function () {
+    it('hard fixes OpenAI baseURL to end with /v1', function () {
+      const client = createProviderClient({
+        type: 'openai',
+        baseUrl: 'https://api.openai.com',
+        apiKey: 'key',
+        model: 'gpt-4o',
+      })
+      expect(client.baseURL).to.equal('https://api.openai.com/v1')
+    })
+
+    it('cleans Anthropic compatible baseURL so it does not end with /v1', function () {
+      const client = createProviderClient({
+        type: 'anthropic',
+        baseUrl: 'https://api.anthropic.com/v1',
+        apiKey: 'key',
+        model: 'claude-3-7-sonnet',
+      })
+      expect(client.baseURL).to.equal('https://api.anthropic.com')
+    })
+
+    it('ensures Google Gemini baseURL has /v1beta', function () {
+      const client = createProviderClient({
+        type: 'google',
+        baseUrl: 'https://generativelanguage.googleapis.com',
+        apiKey: 'key',
+        model: 'gemini-2.0-flash',
+      })
+      expect(client.baseURL).to.equal(
+        'https://generativelanguage.googleapis.com/v1beta'
+      )
+    })
+
+    it('ensures Ollama baseURL strips /v1', function () {
+      const client = createProviderClient({
+        type: 'ollama',
+        baseUrl: 'http://ollama.lan:11434/v1',
+        model: 'llama3',
+      })
+      expect(client.baseURL).to.equal('http://ollama.lan:11434')
     })
   })
 
@@ -1037,6 +1249,443 @@ describe('AiAssistProviders', function () {
     })
   })
 
+  describe('provider usage', function () {
+    function fakeStream(body) {
+      return {
+        ok: true,
+        status: 200,
+        body: (async function* () {
+          yield new TextEncoder().encode(body)
+        })(),
+      }
+    }
+
+    function sseOf(frames) {
+      return frames.map(frame => `data: ${JSON.stringify(frame)}\n\n`).join('')
+    }
+
+    async function collect(client) {
+      const chunks = []
+      for await (const chunk of client.streamChat({
+        system: 'test',
+        messages: [{ role: 'user', content: 'hello' }],
+      })) {
+        chunks.push(chunk)
+      }
+      return chunks
+    }
+
+    function usageOf(chunks) {
+      return chunks.filter(chunk => chunk.type === 'usage')
+    }
+
+    it('reads Anthropic input counts from message_start and output from message_delta', async function () {
+      const sseBody = [
+        'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":12,"cache_creation_input_tokens":5,"cache_read_input_tokens":7,"output_tokens":1}}}\n\n',
+        'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hi"}}\n\n',
+        'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":42}}\n\n',
+        'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+      ].join('')
+      const client = createProviderClient({
+        type: 'anthropic',
+        apiKey: 'test-key',
+        model: 'claude-3-7-sonnet',
+        fetchFn: sinon.stub().resolves(fakeStream(sseBody)),
+      })
+
+      const chunks = await collect(client)
+
+      expect(usageOf(chunks)).to.deep.equal([
+        {
+          type: 'usage',
+          usage: {
+            inputTokens: 12,
+            outputTokens: 42,
+            cacheReadTokens: 7,
+            cacheCreationTokens: 5,
+          },
+        },
+      ])
+      expect(chunks).to.deep.include({ type: 'text', text: 'Hi' })
+    })
+
+    it('asks OpenAI for usage and takes cached tokens out of the prompt count', async function () {
+      const sseBody = sseOf([
+        { choices: [{ delta: { content: 'Done' } }] },
+        { choices: [{ delta: {}, finish_reason: 'stop' }] },
+        {
+          choices: [],
+          usage: {
+            prompt_tokens: 100,
+            completion_tokens: 9,
+            prompt_tokens_details: { cached_tokens: 30 },
+          },
+        },
+      ]).concat('data: [DONE]\n\n')
+      const fetchFn = sinon.stub().resolves(fakeStream(sseBody))
+      const client = createProviderClient({
+        type: 'openai',
+        apiKey: 'key',
+        model: 'gpt-4o',
+        fetchFn,
+      })
+
+      const chunks = await collect(client)
+
+      const payload = JSON.parse(fetchFn.firstCall.args[1].body)
+      expect(payload.stream_options).to.deep.equal({ include_usage: true })
+      // The usage chunk comes after the finish reason, so it must still be read
+      expect(usageOf(chunks)).to.deep.equal([
+        {
+          type: 'usage',
+          usage: {
+            inputTokens: 70,
+            outputTokens: 9,
+            cacheReadTokens: 30,
+            cacheCreationTokens: 0,
+          },
+        },
+      ])
+      expect(chunks).to.deep.include({ type: 'text', text: 'Done' })
+    })
+
+    it('sends no stream_options to a compatible gateway, and yields no usage it did not send', async function () {
+      const sseBody = sseOf([
+        { choices: [{ delta: { content: 'Done' } }] },
+        { choices: [{ delta: {}, finish_reason: 'stop' }] },
+      ]).concat('data: [DONE]\n\n')
+      const fetchFn = sinon.stub().resolves(fakeStream(sseBody))
+      const client = createProviderClient({
+        type: 'openai',
+        baseUrl: 'https://gateway.example.com/v1',
+        apiKey: 'key',
+        model: 'some-model',
+        fetchFn,
+      })
+
+      const chunks = await collect(client)
+
+      const payload = JSON.parse(fetchFn.firstCall.args[1].body)
+      expect(payload).to.not.have.property('stream_options')
+      expect(usageOf(chunks)).to.have.lengthOf(0)
+      expect(chunks).to.deep.include({ type: 'text', text: 'Done' })
+    })
+
+    it('reads Gemini usageMetadata from a chunk with no parts, thoughts billed as output', async function () {
+      const sseBody = sseOf([
+        { candidates: [{ content: { parts: [{ text: 'Hi' }] } }] },
+        {
+          candidates: [{ content: { parts: [] }, finishReason: 'STOP' }],
+          usageMetadata: {
+            promptTokenCount: 50,
+            cachedContentTokenCount: 20,
+            candidatesTokenCount: 6,
+            thoughtsTokenCount: 4,
+          },
+        },
+      ])
+      const client = createProviderClient({
+        type: 'google',
+        apiKey: 'gemini-key',
+        model: 'gemini-2.0-flash',
+        fetchFn: sinon.stub().resolves(fakeStream(sseBody)),
+      })
+
+      const chunks = await collect(client)
+
+      expect(usageOf(chunks)).to.deep.equal([
+        {
+          type: 'usage',
+          usage: {
+            inputTokens: 30,
+            outputTokens: 10,
+            cacheReadTokens: 20,
+            cacheCreationTokens: 0,
+          },
+        },
+      ])
+    })
+
+    it('reads Ollama prompt_eval_count and eval_count from the done chunk', async function () {
+      const ndjsonBody = [
+        JSON.stringify({ message: { role: 'assistant', content: 'Hi' } }) +
+          '\n',
+        JSON.stringify({
+          message: { role: 'assistant', content: '' },
+          done: true,
+          done_reason: 'stop',
+          prompt_eval_count: 33,
+          eval_count: 8,
+        }) + '\n',
+      ].join('')
+      const client = createProviderClient({
+        type: 'ollama',
+        baseUrl: 'http://203.0.113.20:11434',
+        model: 'gemma4:cloud',
+        fetchFn: sinon.stub().resolves(fakeStream(ndjsonBody)),
+      })
+
+      const chunks = await collect(client)
+
+      // prompt_eval_count leaves out the cached prefix: a floor, not the size
+      expect(usageOf(chunks)).to.deep.equal([
+        {
+          type: 'usage',
+          usage: {
+            inputTokens: 33,
+            outputTokens: 8,
+            cacheReadTokens: 0,
+            cacheCreationTokens: 0,
+            partialInput: true,
+          },
+        },
+      ])
+    })
+  })
+
+  describe('exact token counts', function () {
+    const tool = {
+      name: 'read_file',
+      description: 'Reads a file.',
+      parameters: {
+        type: 'object',
+        properties: { path: { type: 'string' } },
+        required: ['path'],
+      },
+    }
+    const reply = body =>
+      new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+
+    it('counts an Anthropic request on the count API, in the wire shape of the tools', async function () {
+      const fetchFn = sinon.stub().resolves(reply({ input_tokens: 42 }))
+      const client = createProviderClient({
+        type: 'anthropic',
+        apiKey: 'k',
+        model: 'claude-sonnet-4-6',
+        baseUrl: 'https://api.anthropic.com',
+        fetchFn,
+      })
+
+      const count = await client.countTokens({
+        system: 'Be brief.',
+        tools: [tool],
+      })
+
+      expect(count).to.equal(42)
+      const [url, init] = fetchFn.firstCall.args
+      expect(url).to.equal('https://api.anthropic.com/v1/messages/count_tokens')
+      expect(init.headers['x-api-key']).to.equal('k')
+      const body = JSON.parse(init.body)
+      expect(body.model).to.equal('claude-sonnet-4-6')
+      expect(body.system).to.equal('Be brief.')
+      expect(body.messages).to.deep.equal([{ role: 'user', content: 'x' }])
+      expect(body.tools).to.deep.equal([
+        {
+          name: 'read_file',
+          description: 'Reads a file.',
+          input_schema: body.tools[0].input_schema,
+        },
+      ])
+    })
+
+    it('sends a bearer token to Anthropic-compatible hosts such as Ollama cloud, but not to api.anthropic.com', async function () {
+      const headersFor = async baseUrl => {
+        const fetchFn = sinon.stub().resolves(reply({ input_tokens: 1 }))
+        const client = createProviderClient({
+          type: 'anthropic',
+          apiKey: 'k',
+          model: 'glm-4.6',
+          baseUrl,
+          fetchFn,
+        })
+        await client.countTokens({})
+        return fetchFn.firstCall.args[1].headers
+      }
+
+      const official = await headersFor('https://api.anthropic.com')
+      expect(official['x-api-key']).to.equal('k')
+      expect(official.authorization).to.equal(undefined)
+
+      const ollama = await headersFor('https://ollama.com')
+      expect(ollama['x-api-key']).to.equal('k')
+      expect(ollama.authorization).to.equal('Bearer k')
+    })
+
+    it('keeps the estimate on Ollama endpoints, which have no count API', function () {
+      const supported = baseUrl =>
+        createProviderClient({
+          type: 'anthropic',
+          apiKey: 'k',
+          model: 'glm-4.6',
+          baseUrl,
+        }).exactCountsSupported
+
+      expect(supported('https://api.anthropic.com')).to.equal(true)
+      expect(supported('https://gateway.example.com')).to.equal(true)
+      expect(supported('https://ollama.com')).to.equal(false)
+      expect(supported('http://ollama:11434')).to.equal(false)
+    })
+
+    it('counts on a gateway base URL on the plain count endpoint, not the beta one', async function () {
+      const fetchFn = sinon.stub().resolves(reply({ input_tokens: 7 }))
+      const client = createProviderClient({
+        type: 'anthropic',
+        apiKey: 'k',
+        model: 'claude-sonnet-4-6',
+        baseUrl: 'https://gateway.example.com',
+        fetchFn,
+      })
+
+      expect(await client.countTokens({ system: 'S', tools: [] })).to.equal(7)
+      const [url, init] = fetchFn.firstCall.args
+      expect(url).to.match(/\/v1\/messages\/count_tokens$/)
+      expect(url).to.not.include('beta')
+      expect(init.headers).to.not.have.property('anthropic-beta')
+    })
+
+    it('keeps the provider message of a refused count, for the caller to classify', async function () {
+      const client = createProviderClient({
+        type: 'anthropic',
+        apiKey: 'k',
+        model: 'claude-sonnet-4-6',
+        baseUrl: 'https://gateway.example.com',
+        fetchFn: sinon.stub().resolves(
+          new Response(
+            JSON.stringify({ error: { message: 'count_tokens route not found' } }),
+            { status: 400 }
+          )
+        ),
+      })
+
+      let error = null
+      await client.countTokens({}).catch(err => (error = err))
+      expect(error.status).to.equal(400)
+      expect(error.message).to.include('count_tokens route not found')
+    })
+
+    it('counts a Google request on countTokens with the generateContentRequest wrapper', async function () {
+      const fetchFn = sinon.stub().resolves(reply({ totalTokens: 17 }))
+      const client = createProviderClient({
+        type: 'google',
+        apiKey: 'g',
+        model: 'models/gemini-2.5-flash',
+        baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+        fetchFn,
+      })
+
+      const count = await client.countTokens({ system: 'Be brief.', tools: [tool] })
+
+      expect(count).to.equal(17)
+      const [url, init] = fetchFn.firstCall.args
+      expect(url).to.equal(
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:countTokens'
+      )
+      const { generateContentRequest } = JSON.parse(init.body)
+      expect(generateContentRequest.model).to.equal('models/gemini-2.5-flash')
+      expect(generateContentRequest.systemInstruction).to.deep.equal({
+        parts: [{ text: 'Be brief.' }],
+      })
+      expect(generateContentRequest.tools[0].functionDeclarations[0].name).to.equal(
+        'read_file'
+      )
+    })
+
+    it('throws when the count API refuses the request or sends no count', async function () {
+      const refused = createProviderClient({
+        type: 'anthropic',
+        apiKey: 'k',
+        model: 'claude-sonnet-4-6',
+        baseUrl: 'https://api.anthropic.com',
+        fetchFn: sinon.stub().resolves(new Response('{}', { status: 400 })),
+      })
+      const silent = createProviderClient({
+        type: 'anthropic',
+        apiKey: 'k',
+        model: 'claude-sonnet-4-6',
+        baseUrl: 'https://api.anthropic.com',
+        fetchFn: sinon.stub().resolves(reply({})),
+      })
+
+      let refusedError = null
+      await refused.countTokens({}).catch(err => (refusedError = err))
+      expect(refusedError).to.be.instanceOf(ProviderError)
+      expect(refusedError.status).to.equal(400)
+      let silentError = null
+      await silent.countTokens({}).catch(err => (silentError = err))
+      expect(silentError?.message).to.equal('Anthropic count API gave no count')
+    })
+
+    it('offers exact counts on any base URL of the provider type', function () {
+      const official = createProviderClient({
+        type: 'anthropic',
+        apiKey: 'k',
+        model: 'claude-sonnet-4-6',
+        baseUrl: 'https://api.anthropic.com',
+        fetchFn: sinon.stub(),
+      })
+      const gateway = createProviderClient({
+        type: 'anthropic',
+        apiKey: 'k',
+        model: 'claude-sonnet-4-6',
+        baseUrl: 'https://gateway.example.com',
+        fetchFn: sinon.stub(),
+      })
+      const google = createProviderClient({
+        type: 'google',
+        apiKey: 'g',
+        model: 'gemini-2.5-flash',
+        baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+        fetchFn: sinon.stub(),
+      })
+      const openai = createProviderClient({
+        type: 'openai',
+        apiKey: 'k',
+        model: 'gpt-4o',
+        baseUrl: 'https://api.openai.com/v1',
+        fetchFn: sinon.stub(),
+      })
+
+      expect(official.exactCountsSupported).to.equal(true)
+      expect(gateway.exactCountsSupported).to.equal(true)
+      expect(google.exactCountsSupported).to.equal(true)
+      expect(openai.countTokens).to.equal(undefined)
+    })
+  })
+
+  describe('toolWireSpec', function () {
+    const tool = {
+      name: 'read_file',
+      description: 'Reads a file.',
+      parameters: { type: 'object', properties: {} },
+    }
+
+    it('takes the provider wire shape of each tool', function () {
+      expect(toolWireSpec('anthropic', tool)).to.deep.include({
+        name: 'read_file',
+        description: 'Reads a file.',
+      })
+      expect(toolWireSpec('anthropic', tool)).to.have.property('input_schema')
+      expect(toolWireSpec('openai', tool)).to.deep.equal({
+        type: 'function',
+        function: {
+          name: 'read_file',
+          description: 'Reads a file.',
+          parameters: toolWireSpec('openai', tool).function.parameters,
+        },
+      })
+      expect(toolWireSpec('ollama', tool)).to.deep.equal(toolWireSpec('openai', tool))
+    })
+
+    it('omits the parameters of a no-argument tool for Google', function () {
+      const wire = toolWireSpec('google', tool)
+
+      expect(wire).to.deep.equal({ name: 'read_file', description: 'Reads a file.' })
+    })
+  })
+
   describe('fetchWithRetry', function () {
     it('retries on transient 503 and returns response on success', async function () {
       const failResponse = {
@@ -1176,6 +1825,59 @@ describe('AiAssistProviders', function () {
     })
   })
 
+  describe('retry fields on provider errors', function () {
+    it('carries Retry-After and x-should-retry from an error reply', async function () {
+      const reply = new Response(
+        JSON.stringify({ error: { type: 'rate_limit_error', message: 'Slow down' } }),
+        {
+          status: 429,
+          headers: { 'retry-after': '3', 'x-should-retry': 'true' },
+        }
+      )
+      const client = createProviderClient({
+        type: 'anthropic',
+        apiKey: 'key',
+        fetchFn: sinon.stub().resolves(reply),
+      })
+
+      const err = await (async () => {
+        for await (const _ of client.streamChat({ system: 'x', messages: [] })) {
+          void _
+        }
+      })().catch(e => e)
+
+      expect(err).to.be.instanceOf(ProviderError)
+      expect(err.status).to.equal(429)
+      expect(err.retryAfterMs).to.equal(3000)
+      expect(err.shouldRetry).to.be.true
+    })
+
+    it('maps a mid-stream overloaded_error to status 529', async function () {
+      const sse =
+        'event: error\n' +
+        'data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}\n\n'
+      const client = createProviderClient({
+        type: 'anthropic',
+        apiKey: 'key',
+        fetchFn: sinon.stub().resolves(
+          new Response(sse, {
+            status: 200,
+            headers: { 'content-type': 'text/event-stream' },
+          })
+        ),
+      })
+
+      const err = await (async () => {
+        for await (const _ of client.streamChat({ system: 'x', messages: [] })) {
+          void _
+        }
+      })().catch(e => e)
+
+      expect(err.status).to.equal(529)
+      expect(err.message).to.equal('Overloaded')
+    })
+  })
+
   describe('timeouts and watchdog', function () {
     it('aborts when connect timeout elapses before headers arrive', async function () {
       const hangingFetch = sinon.stub().callsFake((_url, opts) => {
@@ -1206,7 +1908,8 @@ describe('AiAssistProviders', function () {
       }
 
       expect(error).to.exist
-      expect(error.code).to.equal('aborted')
+      expect(error.code).to.equal('providerTimeout')
+      expect(error.message).to.equal('Connection timed out')
     })
 
     it('aborts when stream stalls and idle watchdog timeout elapses', async function () {
@@ -1254,7 +1957,7 @@ describe('AiAssistProviders', function () {
 
       expect(chunks).to.have.lengthOf(1)
       expect(error).to.exist
-      expect(error.code).to.equal('providerError')
+      expect(error.code).to.equal('providerStalled')
       expect(error.message).to.include('stalled')
     })
 
@@ -1333,6 +2036,46 @@ describe('AiAssistProviders', function () {
       expect(chunks[1].type).to.equal('tool_call')
       expect(chunks[1].name).to.equal('edit_file')
       expect(chunks[1].args).to.deep.equal({ path: 'main.tex' })
+    })
+
+    it('keeps parallel tool calls apart when they share an index but not an id (Ollama /v1)', async function () {
+      const fakeResponse = {
+        ok: true,
+        status: 200,
+        body: (async function* () {
+          yield new TextEncoder().encode(
+            'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"web_search","arguments":"{\\"query\\":\\"To Lam\\"}"}},{"index":0,"id":"call_2","function":{"name":"web_fetch","arguments":"{\\"url\\":\\"https://a.example\\"}"}}]}}]}\n\n'
+          )
+          yield new TextEncoder().encode(
+            'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_3","function":{"name":"web_fetch","arguments":"{\\"url\\":"}}]}}]}\n\n'
+          )
+          yield new TextEncoder().encode(
+            'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\\"https://b.example\\"}"}}]}}]}\n\n'
+          )
+          yield new TextEncoder().encode(
+            'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n'
+          )
+        })(),
+      }
+
+      const client = createProviderClient({
+        type: 'openai',
+        apiKey: 'key',
+        baseUrl: 'https://ollama.com/v1',
+        fetchFn: sinon.stub().resolves(fakeResponse),
+        streamIdleTimeoutMs: 500,
+      })
+
+      const calls = []
+      for await (const chunk of client.streamChat({ system: 'x', messages: [] })) {
+        if (chunk.type === 'tool_call') calls.push(chunk)
+      }
+
+      expect(calls.map(({ id, name, args }) => ({ id, name, args }))).to.deep.equal([
+        { id: 'call_1', name: 'web_search', args: { query: 'To Lam' } },
+        { id: 'call_2', name: 'web_fetch', args: { url: 'https://a.example' } },
+        { id: 'call_3', name: 'web_fetch', args: { url: 'https://b.example' } },
+      ])
     })
 
     it('exits Anthropic stream immediately on message_stop', async function () {
@@ -1668,7 +2411,7 @@ describe('AiAssistProviders', function () {
       expect(body.max_completion_tokens).to.equal(1000)
       expect(body).to.not.have.property('max_tokens')
       expect(body.prompt_cache_key).to.equal(promptCacheKey('project-1'))
-      expect(body).to.not.have.property('stream_options')
+      expect(body.stream_options).to.deep.equal({ include_usage: true })
     })
 
     it('keeps max_tokens and sends no OpenAI-only fields to compatible gateways', async function () {

@@ -5,6 +5,10 @@ import {
   useRef,
 } from 'react'
 import classNames from 'classnames'
+import { useTranslation } from 'react-i18next'
+import type { RetryingState } from '../../agent/agent-state'
+import { useRetryCountdown } from '../../hooks/use-retry-countdown'
+import { RetryError, retryLabel } from '../retry-status'
 import {
   MAX_FADE_LEAD_MS,
   STREAM_FADE_MS,
@@ -105,7 +109,20 @@ export const PopupStatusLine: FC<{
   completed?: boolean
   verb?: string
   durationMs?: number
-}> = ({ text, subtext, className, completed = false, verb, durationMs }) => {
+  /** A provider retry in progress; its countdown replaces the text. */
+  retry?: RetryingState | null
+}> = ({
+  text,
+  subtext,
+  className,
+  completed = false,
+  verb,
+  durationMs,
+  retry = null,
+}) => {
+  const { t } = useTranslation()
+  const retrySeconds = useRetryCountdown(retry?.deadline ?? null)
+
   if (completed) {
     const statusText =
       text || formatCompletedStatus(verb || 'Written', durationMs ?? 1000)
@@ -138,6 +155,7 @@ export const PopupStatusLine: FC<{
     <div
       className={classNames(
         'ai-assist-status-line is-responding ai-popup-status-line',
+        { 'is-retrying': retry !== null },
         className
       )}
       role="status"
@@ -149,7 +167,10 @@ export const PopupStatusLine: FC<{
         </svg>
       </span>
       <span className="ai-assist-status-body">
-        <span className="ai-assist-status-verb">{text}</span>
+        <span className="ai-assist-status-verb">
+          {retry ? retryLabel(t, retry, retrySeconds ?? 0) : text}
+        </span>
+        {retry && <RetryError retry={retry} />}
         {subtext && (
           <span className="ai-assist-status-subtext"> · {subtext}</span>
         )}

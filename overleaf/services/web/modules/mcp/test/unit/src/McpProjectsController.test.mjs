@@ -509,6 +509,53 @@ describe('McpProjectsController.createProject', () => {
     expect(r.body.rootDocPath).toBe('/main.tex')
   })
 
+  it('deletes the project again when adding its files fails, so a retry does not duplicate it', async () => {
+    ProjectCreationHandler.promises.createBasicProject.mockResolvedValue({
+      _id: 'pHalf',
+      name: 'Paper',
+    })
+    EditorController.promises.upsertDocWithPath.mockRejectedValueOnce(
+      new Error('docstore down')
+    )
+    const err = await McpProjectsController.createProject(
+      {
+        mcpUserId: 'u1',
+        body: { name: 'Paper', initialFiles: [{ path: 'a.tex' }] },
+        ip: '10.0.0.1',
+      },
+      res()
+    ).catch(e => e)
+    expect(err.message).toBe('docstore down')
+    expect(ProjectDeleter.promises.deleteProject).toHaveBeenCalledWith(
+      'pHalf',
+      expect.objectContaining({
+        deleterUser: { _id: 'u1' },
+        ipAddress: '10.0.0.1',
+      })
+    )
+  })
+
+  it('reports the half-created project id when it cannot be deleted either', async () => {
+    ProjectCreationHandler.promises.createBasicProject.mockResolvedValue({
+      _id: 'pStuck',
+      name: 'Paper',
+    })
+    EditorController.promises.upsertDocWithPath.mockRejectedValueOnce(
+      new Error('docstore down')
+    )
+    ProjectDeleter.promises.deleteProject.mockRejectedValueOnce(
+      new Error('mongo down')
+    )
+    const r = res()
+    await McpProjectsController.createProject(
+      { mcpUserId: 'u1', body: { name: 'Paper', initialFiles: [{ path: 'a.tex' }] } },
+      r
+    )
+    expect(r.statusCode).toBe(502)
+    expect(r.body.code).toBe('upstream_error')
+    expect(r.body.details).toEqual({ projectId: 'pStuck' })
+  })
+
   it('leaves the root document unset for an empty project with no main.tex', async () => {
     ProjectCreationHandler.promises.createBlankProject.mockResolvedValue({
       _id: 'pE',

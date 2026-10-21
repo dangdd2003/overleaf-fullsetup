@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { PlugsConnected } from '@phosphor-icons/react'
 import OLButton from '@/shared/components/ol/ol-button'
@@ -18,6 +18,9 @@ import {
 } from '../../connectors/api'
 import { OAUTH_CHANNEL, OAUTH_STORAGE_KEY } from '../../connectors/oauth-popup'
 
+// Rows shown before the list folds; the rest sit behind a Show more toggle
+const FOLDED_COUNT = 3
+
 export default function ConnectorsWidget() {
   const { t } = useTranslation()
   const enabled = isConnectorsEnabled()
@@ -36,6 +39,7 @@ export default function ConnectorsWidget() {
   })
 
   const [importing, setImporting] = useState(false)
+  const [expanded, setExpanded] = useState(false)
 
   const [configuringToolsConnector, setConfiguringToolsConnector] =
     useState<ConnectorView | null>(null)
@@ -85,6 +89,20 @@ export default function ConnectorsWidget() {
     }
   }, [enabled, fetchConnectors])
 
+  // A connector added or imported lands at the end of the list, so unfold
+  // it rather than leave the new row hidden
+  const previousCount = useRef<number | null>(null)
+  useEffect(() => {
+    if (loading) return
+    if (
+      previousCount.current !== null &&
+      connectors.length > previousCount.current
+    ) {
+      setExpanded(true)
+    }
+    previousCount.current = connectors.length
+  }, [loading, connectors.length])
+
   const handleSaved = useCallback(() => {
     fetchConnectors()
   }, [fetchConnectors])
@@ -95,6 +113,14 @@ export default function ConnectorsWidget() {
     c => c.enabled && c.status === 'connected'
   ).length
   const totalCount = connectors.length
+
+  const foldable = totalCount > FOLDED_COUNT
+  const visibleConnectors =
+    foldable && !expanded ? connectors.slice(0, FOLDED_COUNT) : connectors
+  const hiddenConnectors = connectors.slice(visibleConnectors.length)
+  const hiddenNeedingAttention = hiddenConnectors.filter(
+    c => c.status === 'error' || c.status === 'needs_auth'
+  ).length
 
   return (
     <div
@@ -203,10 +229,11 @@ export default function ConnectorsWidget() {
 
         {connectors.length > 0 ? (
           <ul
+            id="connectors-card-list"
             className="connectors-card-list"
             aria-label={t('connectors', 'Connectors')}
           >
-            {connectors.map(connector => (
+            {visibleConnectors.map(connector => (
               <li key={connector.id}>
                 <ConnectorCard
                   connector={connector}
@@ -219,6 +246,37 @@ export default function ConnectorsWidget() {
               </li>
             ))}
           </ul>
+        ) : null}
+
+        {foldable ? (
+          <div className="connectors-fold">
+            <OLButton
+              variant="ghost"
+              size="sm"
+              type="button"
+              className="connectors-fold-toggle"
+              trailingIcon={expanded ? 'expand_less' : 'expand_more'}
+              aria-expanded={expanded}
+              aria-controls="connectors-card-list"
+              onClick={() => setExpanded(value => !value)}
+              data-testid="connectors-fold-toggle"
+            >
+              {expanded
+                ? t('connectors_show_less', 'Show less')
+                : t('connectors_show_more', 'Show __count__ more', {
+                    count: hiddenConnectors.length,
+                  })}
+            </OLButton>
+            {!expanded && hiddenNeedingAttention > 0 ? (
+              <span className="small connectors-fold-attention">
+                {t(
+                  'connectors_hidden_need_attention',
+                  '__count__ hidden need attention',
+                  { count: hiddenNeedingAttention }
+                )}
+              </span>
+            ) : null}
+          </div>
         ) : null}
       </div>
 

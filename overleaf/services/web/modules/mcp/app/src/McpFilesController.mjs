@@ -30,6 +30,12 @@ import {
 const MAX_ZIP_PROJECTS = 500
 // Documents fetched at a time while searching a project without a regex.
 const SEARCH_BATCH_SIZE = 10
+// Caps on search parameters, so one request cannot ask for an unbounded reply.
+const MAX_SEARCH_MATCHES = 500
+const MAX_SEARCH_CONTEXT_LINES = 20
+// Document text copied into the regex worker for one search. A larger project
+// is refused, and the caller is told to narrow the search with path or glob.
+const MAX_REGEX_SEARCH_CHARS = 16 * 1024 * 1024
 
 const MIME_TYPES = {
   '.tex': 'application/x-tex',
@@ -76,6 +82,47 @@ function normalise(p) {
 /** Every normalised path across the given entity lists. */
 function pathsOf(...lists) {
   return lists.flat().map(entity => normalise(entity.path))
+}
+
+/**
+ * An existing folder that a folder path names in a different letter case, or
+ * null. Upstream folder creation folds case, so a write through such a path
+ * would land in that folder, while the MCP's exact-match lookups would miss
+ * it. The MCP refuses instead.
+ *
+ * @param {string} folderPath a normalised folder path
+ * @param {Array<{path: string}>} folders every folder in the project
+ */
+function caseVariantFolder(folderPath, folders) {
+  const exact = new Set(folders.map(f => normalise(f.path)))
+  const segments = folderPath.split('/').filter(Boolean)
+  for (let i = 1; i <= segments.length; i++) {
+    const prefix = '/' + segments.slice(0, i).join('/')
+    if (exact.has(prefix)) continue
+    // The first folder that does not exist exactly decides it: anything below
+    // it is new, so only this level can be a case variant.
+    const variant = [...exact].find(p => p.toLowerCase() === prefix.toLowerCase())
+    return variant ?? null
+  }
+  return null
+}
+
+function folderCaseConflict(res, target, variant) {
+  return McpErrors.send(
+    res,
+    McpErrors.CODES.CONFLICT,
+    `a folder named ${variant} already exists, and ${target} differs from it only in letter case`,
+    {
+      hint: `Use ${variant} exactly as it is named in the project.`,
+      details: { folder: variant },
+    }
+  )
+}
+
+/** Bytes of binary files in a project. They do not compress, so this bounds a zip from below. */
+async function binaryBytes(projectId) {
+  const { files } = await ProjectEntityHandler.promises.getAllEntities(projectId)
+  return files.reduce((sum, f) => sum + (f.file?.size || 0), 0)
 }
 
 /**
@@ -303,6 +350,8 @@ async function getDoc(req, res) {
     totalLines: total,
     startLine: start,
     endLine: end,
+    // The expectedHash for a write, over the whole document rather than the range.
+    hash: contentHash(all),
   })
 }
 
@@ -335,9 +384,8 @@ async function writeDoc(req, res) {
     return McpErrors.send(res, McpErrors.CODES.VALIDATION, 'invalid path')
   }
   const projectId = req.params.projectId
-  const { docs, files } = await ProjectEntityHandler.promises.getAllEntities(
-    projectId
-  )
+  const { docs, files, folders } =
+    await ProjectEntityHandler.promises.getAllEntities(projectId)
   if (files.some(f => normalise(f.path) === target)) {
     return McpErrors.send(
       res,
@@ -346,6 +394,8 @@ async function writeDoc(req, res) {
       { hint: 'Delete it with delete_file, or choose another path.' }
     )
   }
+  const variant = caseVariantFolder(path.dirname(target), folders)
+  if (variant) return folderCaseConflict(res, target, variant)
   const existing = docs.find(d => normalise(d.path) === target)
   let previousLineCount
   if (existing) {
@@ -400,6 +450,11 @@ async function createFolder(req, res) {
   if (hasDotSegment(target)) {
     return McpErrors.send(res, McpErrors.CODES.VALIDATION, 'invalid path')
   }
+  const { folders } = await ProjectEntityHandler.promises.getAllEntities(
+    req.params.projectId
+  )
+  const variant = caseVariantFolder(target, folders)
+  if (variant) return folderCaseConflict(res, target, variant)
   await EditorController.promises.mkdirp(
     req.params.projectId,
     target,
@@ -479,6 +534,9 @@ async function moveEntity(req, res) {
 
   const destFolderPath = normalise(path.dirname(to))
   const newName = path.basename(to)
+  const folderToCheck = entityType === 'folder' ? to : destFolderPath
+  const variant = caseVariantFolder(folderToCheck, folders)
+  if (variant) return folderCaseConflict(res, folderToCheck, variant)
 
   let destFolder = folders.find(f => normalise(f.path) === destFolderPath)
   if (!destFolder) {
@@ -536,6 +594,7 @@ async function moveEntity(req, res) {
 
 async function uploadFile(req, res) {
   const { path: target, contentBase64, url } = req.body || {}
+  const overwrite = isTrueParam(req.body?.overwrite)
   if (!target || typeof target !== 'string') {
     return McpErrors.send(res, McpErrors.CODES.VALIDATION, 'path is required')
   }
@@ -553,6 +612,24 @@ async function uploadFile(req, res) {
   const norm = normalise(target)
   if (hasDotSegment(norm)) {
     return McpErrors.send(res, McpErrors.CODES.VALIDATION, 'invalid path')
+  }
+
+  // Checked before the content is decoded or fetched. Replacing a text document
+  // with a binary file drops its text, so that needs an explicit overwrite.
+  const projectId = req.params.projectId
+  const { docs, folders } =
+    await ProjectEntityHandler.promises.getAllEntities(projectId)
+  const variant = caseVariantFolder(path.dirname(norm), folders)
+  if (variant) return folderCaseConflict(res, norm, variant)
+  if (!overwrite && docs.some(d => normalise(d.path) === norm)) {
+    return McpErrors.send(
+      res,
+      McpErrors.CODES.CONFLICT,
+      `a text document already exists at ${norm}`,
+      {
+        hint: 'Uploading a binary file would replace the document and lose its text. Pass "overwrite": true to replace it, or choose another path.',
+      }
+    )
   }
 
   let buffer
@@ -589,7 +666,7 @@ async function uploadFile(req, res) {
   await fs.writeFile(tmp, buffer)
   try {
     const { file } = await EditorController.promises.upsertFileWithPath(
-      req.params.projectId,
+      projectId,
       norm,
       tmp,
       null,
@@ -617,6 +694,17 @@ async function downloadProjectZip(req, res) {
     logger.warn(
       { err, projectId },
       'failed to flush project before zip download'
+    )
+  }
+
+  // Refused before headers are sent: once streaming starts, the cap can only
+  // cut the zip off, and the client never sees the error envelope.
+  const bytes = await binaryBytes(projectId)
+  if (bytes > MAX_BINARY_BYTES) {
+    return McpErrors.send(
+      res,
+      McpErrors.CODES.TOO_LARGE,
+      tooLargeMessage(bytes)
     )
   }
 
@@ -706,6 +794,17 @@ async function downloadMultipleProjectsZip(req, res) {
       DocumentUpdaterHandler.promises.flushProjectToMongo(pid)
     )
   )
+
+  // Refused before headers are sent (see downloadProjectZip).
+  const sizes = await promiseMapWithLimit(5, projectIds, binaryBytes)
+  const totalBytes = sizes.reduce((sum, n) => sum + n, 0)
+  if (totalBytes > MAX_BINARY_BYTES) {
+    return McpErrors.send(
+      res,
+      McpErrors.CODES.TOO_LARGE,
+      tooLargeMessage(totalBytes)
+    )
+  }
 
   ProjectZipStreamManager.createZipStreamForMultipleProjects(
     projectIds,
@@ -812,6 +911,13 @@ async function searchFiles(req, res) {
       'maxMatches must be at least 1 and contextLines at least 0'
     )
   }
+  if (maxMatches > MAX_SEARCH_MATCHES || contextLines > MAX_SEARCH_CONTEXT_LINES) {
+    return McpErrors.send(
+      res,
+      McpErrors.CODES.VALIDATION,
+      `maxMatches must be at most ${MAX_SEARCH_MATCHES} and contextLines at most ${MAX_SEARCH_CONTEXT_LINES}`
+    )
+  }
 
   const folder = req.query?.path ? normalise(req.query.path) : '/'
   const inScope = path =>
@@ -858,14 +964,34 @@ async function searchFiles(req, res) {
   })
 
   if (regex) {
-    const docLines = await promiseMapWithLimit(
-      10,
-      candidates,
-      async d => {
-        const { lines } = await DocstoreManager.promises.getDoc(projectId, d.id)
-        return Array.isArray(lines) ? lines : []
+    // Each document is copied into the search worker, so the text is capped
+    // and checked batch by batch: a large project is refused before the rest
+    // of it is fetched.
+    const docLines = []
+    let chars = 0
+    for (let start = 0; start < candidates.length; start += SEARCH_BATCH_SIZE) {
+      const batch = candidates.slice(start, start + SEARCH_BATCH_SIZE)
+      const batchLines = await Promise.all(
+        batch.map(async d => {
+          const { lines } = await DocstoreManager.promises.getDoc(projectId, d.id)
+          return Array.isArray(lines) ? lines : []
+        })
+      )
+      for (const lines of batchLines) {
+        for (const line of lines) chars += String(line ?? '').length
       }
-    )
+      if (chars > MAX_REGEX_SEARCH_CHARS) {
+        return McpErrors.send(
+          res,
+          McpErrors.CODES.VALIDATION,
+          'the project is too large for a regular expression search',
+          {
+            hint: 'Narrow the search with path or glob, or search without regex.',
+          }
+        )
+      }
+      docLines.push(...batchLines)
+    }
     filesSearched = docLines.length
     // A pattern can run for as long as it likes; the search stops only when
     // the client has gone away, so nobody waits on a response it cannot get.
@@ -882,6 +1008,14 @@ async function searchFiles(req, res) {
       })
     } catch (err) {
       if (err.name === 'AbortError') return
+      if (err.name === 'SearchBusyError') {
+        return McpErrors.send(
+          res,
+          McpErrors.CODES.RATE_LIMITED,
+          'too many regular expression searches are running',
+          { hint: 'Retry in a few seconds.' }
+        )
+      }
       if (err.name === 'RegexTimeoutError') {
         return McpErrors.send(
           res,

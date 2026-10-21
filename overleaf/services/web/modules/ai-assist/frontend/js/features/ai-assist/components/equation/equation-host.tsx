@@ -142,12 +142,13 @@ export function EquationHostView({
     },
     normalize,
     prepare,
-    generate: ({ messages, facts, settings, signal, onProgress }) =>
+    generate: ({ messages, facts, settings, signal, onProgress, onRetry }) =>
       generateEquation({
         messages,
         facts,
         settings,
         signal,
+        onRetry,
         onProgress,
         checkMath: (tex, display) => checkMath(tex, display, definitions),
       }),
@@ -252,6 +253,7 @@ export function EquationHostView({
       title={run.run?.title ?? ''}
       imageAttached={Boolean(run.run?.image)}
       phase={run.phase}
+      retry={run.retry}
       versions={run.versions}
       index={run.index}
       onIndex={run.selectVersion}

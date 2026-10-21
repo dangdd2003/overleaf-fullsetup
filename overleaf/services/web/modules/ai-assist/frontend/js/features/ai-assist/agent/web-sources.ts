@@ -13,27 +13,33 @@ export type WebSource = {
 
 export type WebSources = Map<number, WebSource>
 
-function addSource(sources: WebSources, item: any) {
-  if (!item || typeof item !== 'object') return
-  if (!Number.isInteger(item.source) || typeof item.url !== 'string') return
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function addSource(sources: WebSources, item: unknown) {
+  if (!isRecord(item)) return
+  const { source, url, title, published } = item
+  if (typeof source !== 'number' || !Number.isInteger(source)) return
+  if (typeof url !== 'string') return
   // Citations are links: only a plain http(s) page may become one
-  if (!safeHttpHref(item.url)) return
-  const known = sources.get(item.source)
-  sources.set(item.source, {
-    n: item.source,
-    url: known?.url ?? item.url,
-    title: known?.title || (typeof item.title === 'string' ? item.title : undefined),
+  if (!safeHttpHref(url)) return
+  const known = sources.get(source)
+  sources.set(source, {
+    n: source,
+    url: known?.url ?? url,
+    title: known?.title || (typeof title === 'string' ? title : undefined),
     published:
-      known?.published || (typeof item.published === 'string' ? item.published : undefined),
+      known?.published || (typeof published === 'string' ? published : undefined),
   })
 }
 
 function addCall(sources: WebSources, call: ToolCallRecord | undefined) {
-  const result = call?.result as any
-  if (!result || typeof result !== 'object') return
-  if (call!.name === 'web_search' && Array.isArray(result.results)) {
+  const result = call?.result
+  if (!call || !isRecord(result)) return
+  if (call.name === 'web_search' && Array.isArray(result.results)) {
     result.results.forEach((item: unknown) => addSource(sources, item))
-  } else if (call!.name === 'web_fetch') {
+  } else if (call.name === 'web_fetch') {
     addSource(sources, result)
   }
 }

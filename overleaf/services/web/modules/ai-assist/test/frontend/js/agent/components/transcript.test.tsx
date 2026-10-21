@@ -113,6 +113,22 @@ describe('ToolCallCard', function () {
     expect(screen.getByText(/running/i)).to.exist
   })
 
+  it('renders blooming spinner and is-active classes when isActive is true', function () {
+    const { container } = render(
+      <ToolCallCard
+        call={{ id: 'c-active', name: 'read_file', args: { path: 'main.tex' } }}
+        isActive={true}
+      />
+    )
+    const card = container.querySelector('.ai-assist-tool-call')!
+    expect(card.classList.contains('is-active')).to.be.true
+    const icon = container.querySelector('.ai-assist-tool-call-icon')!
+    expect(icon.classList.contains('is-active')).to.be.true
+    expect(icon.querySelector('.ai-assist-tool-spinner')).to.exist
+    const action = container.querySelector('.ai-assist-tool-call-action')!
+    expect(action.classList.contains('is-active')).to.be.true
+  })
+
   it('shows a +/- line diff badge for an applied edit_file', function () {
     render(
       <ToolCallCard

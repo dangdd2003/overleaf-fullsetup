@@ -8,6 +8,8 @@ import {
   useCodeMirrorViewContext,
 } from '@/features/source-editor/components/codemirror-context'
 import { isWritingToolsAvailable } from '../../writing-tools/availability'
+import type { RetryingState } from '../../agent/agent-state'
+import { RetryNotice, retryingState } from '../retry-status'
 import { hasConsented, recordConsent } from '../../provider-store'
 import { resolveSlotModel } from '../../language-suggestions/model-choice'
 import { TEXGPT_SYSTEM } from '../../texgpt/prompt'
@@ -60,6 +62,7 @@ function InlinePopupContent({ popup }: { popup: InlinePopup }) {
   const loadSource = useProjectSource()
   const [prompt, setPrompt] = useState(popup.prompt)
   const [running, setRunning] = useState(false)
+  const [providerRetry, setProviderRetry] = useState<RetryingState | null>(null)
   const [notice, setNotice] = useState<TexGptNotice | null>(popup.notice)
   const rootRef = useRef<HTMLDivElement>(null)
   /** Bumped by every send and every stop; a stale run does nothing more. */
@@ -122,6 +125,7 @@ function InlinePopupContent({ popup }: { popup: InlinePopup }) {
     setNotice(null)
     const run = ++runRef.current
     setRunningState(true)
+    setProviderRetry(null)
     let pos = popup.pos
     try {
       const source = await loadSource()
@@ -147,12 +151,16 @@ function InlinePopupContent({ popup }: { popup: InlinePopup }) {
             },
           ],
           maxTokens: TEXGPT_MAX_TOKENS,
+          // The user is waiting on this prompt, so its retries are shown
+          retryPolicy: 'interactive',
+          onRetry: next => setProviderRetry(retryingState(next)),
         }),
         shape: shapeLatex,
         // The rest streams in the editor, where Tab and Esc work
         onFirstText: () => close(true),
       })
       if (run !== runRef.current) return
+      setProviderRetry(null)
       if (outcome.status === 'empty') reopen(pos, text, noticeForEmpty(outcome.raw))
       else if (outcome.status === 'cancelled') setRunningState(false)
     } catch (error: any) {
@@ -229,6 +237,7 @@ function InlinePopupContent({ popup }: { popup: InlinePopup }) {
           onStop={stop}
         />
       )}
+      {running && providerRetry && <RetryNotice retry={providerRetry} />}
       {notice && (
         <div className="ai-texgpt-result">
           <div className="ai-texgpt-result-body">

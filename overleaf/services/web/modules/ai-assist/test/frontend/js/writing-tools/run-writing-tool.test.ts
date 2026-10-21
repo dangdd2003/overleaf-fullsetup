@@ -101,3 +101,65 @@ describe('writing tools: model settings', function () {
     expect(writingToolsSettings(openai, 'high').thinking).to.equal(undefined)
   })
 })
+
+describe('writing tools: runWritingTool retries', function () {
+  it('reports each retry, then clears it once the reply flows again', async function () {
+    const { client } = fakeClient([
+      {
+        type: 'retrying',
+        attempt: 1,
+        maxRetries: 10,
+        retryInMs: 500,
+        retryAt: 1,
+        message: 'Server error (503)',
+        status: 503,
+      },
+      { type: 'text', text: '<rewrite>Hi</rewrite>' },
+      { type: 'done' },
+    ] as ChatChunk[])
+    const retries: unknown[] = []
+    await runWritingTool({
+      settings: SETTINGS,
+      system: 'SYSTEM',
+      messages: [{ role: 'user', content: 'USER' }],
+      maxTokens: 2000,
+      onText: () => {},
+      onRetry: retry => retries.push(retry),
+      client,
+    })
+    expect(retries).to.deep.equal([
+      {
+        attempt: 1,
+        maxRetries: 10,
+        retryInMs: 500,
+        retryAt: 1,
+        message: 'Server error (503)',
+        status: 503,
+      },
+      null,
+    ])
+  })
+
+  it('asks the relay for the policy the caller names, background by default', async function () {
+    const { client, requests } = fakeClient([{ type: 'done' }])
+    await runWritingTool({
+      settings: SETTINGS,
+      system: 'SYSTEM',
+      messages: [{ role: 'user', content: 'USER' }],
+      maxTokens: 2000,
+      onText: () => {},
+      client,
+    })
+    await runWritingTool({
+      settings: SETTINGS,
+      system: 'SYSTEM',
+      messages: [{ role: 'user', content: 'USER' }],
+      maxTokens: 2000,
+      onText: () => {},
+      client,
+      retryPolicy: 'interactive',
+    })
+    expect((requests[0] as any).retryPolicy).to.equal('background')
+    expect((requests[1] as any).retryPolicy).to.equal('interactive')
+  })
+})

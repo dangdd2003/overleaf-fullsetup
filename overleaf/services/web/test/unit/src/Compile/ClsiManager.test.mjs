@@ -1019,6 +1019,46 @@ describe('ClsiManager', function () {
       })
     })
 
+    describe('when a valid compiler is passed in the options', function () {
+      beforeEach(async function (ctx) {
+        await ctx.ClsiManager.promises.sendRequest(
+          null,
+          ctx.project._id,
+          ctx.user_id,
+          { compiler: 'xelatex' }
+        )
+      })
+
+      it('should use it for this compile', function (ctx) {
+        expect(ctx.FetchUtils.fetchStringWithResponse).to.have.been.calledWith(
+          sinon.match.any,
+          sinon.match({
+            json: { compile: { options: { compiler: 'xelatex' } } },
+          })
+        )
+      })
+    })
+
+    describe('when an invalid compiler is passed in the options', function () {
+      beforeEach(async function (ctx) {
+        await ctx.ClsiManager.promises.sendRequest(
+          null,
+          ctx.project._id,
+          ctx.user_id,
+          { compiler: 'context' }
+        )
+      })
+
+      it("should use the project's compiler", function (ctx) {
+        expect(ctx.FetchUtils.fetchStringWithResponse).to.have.been.calledWith(
+          sinon.match.any,
+          sinon.match({
+            json: { compile: { options: { compiler: 'latex' } } },
+          })
+        )
+      })
+    })
+
     describe('when there is no valid root document', function () {
       beforeEach(async function (ctx) {
         ctx.project.rootDoc_id = 'not-valid'

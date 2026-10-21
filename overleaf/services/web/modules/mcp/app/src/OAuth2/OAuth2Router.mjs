@@ -6,7 +6,7 @@ import OAuth2TokenController from './OAuth2TokenController.mjs'
 import OAuth2RevocationController from './OAuth2RevocationController.mjs'
 import SessionManager from '../../../../../app/src/Features/Authentication/SessionManager.mjs'
 import { RateLimiter } from '../../../../../app/src/infrastructure/RateLimiter.mjs'
-import RateLimiterMiddleware from '../../../../../app/src/Features/Security/RateLimiterMiddleware.mjs'
+import { oauthRateLimited, rateLimitGate } from '../McpRateLimit.mjs'
 
 const OAuth2Router = {
   apply(webRouter, privateApiRouter, publicApiRouter) {
@@ -56,32 +56,43 @@ const OAuth2Router = {
     // Dynamic Client Registration (cookieless, public API)
     publicApiRouter.post(
       '/oauth/register',
-      RateLimiterMiddleware.rateLimit(rateLimiters.register, { ipOnly: true }),
+      rateLimitGate(rateLimiters.register, {
+        ipOnly: true,
+        respond: oauthRateLimited,
+      }),
       OAuth2RegistrationController.register
     )
 
     // Token Endpoint (cookieless, Bearer/Basic/Body authentication)
     publicApiRouter.post(
       '/oauth/token',
-      RateLimiterMiddleware.rateLimit(rateLimiters.token, { ipOnly: true }),
+      rateLimitGate(rateLimiters.token, {
+        ipOnly: true,
+        respond: oauthRateLimited,
+      }),
       OAuth2TokenController.token
     )
 
     // Token Revocation (RFC 7009, cookieless, token possession is the credential)
     publicApiRouter.post(
       '/oauth/revoke',
-      RateLimiterMiddleware.rateLimit(rateLimiters.revoke, { ipOnly: true }),
+      rateLimitGate(rateLimiters.revoke, {
+        ipOnly: true,
+        respond: oauthRateLimited,
+      }),
       OAuth2RevocationController.revoke
     )
 
     // Authorization & Consent (Session-authenticated on webRouter). Limited per
     // IP for anonymous traffic, and per signed-in user where a session exists.
     const authorizeRateLimits = [
-      RateLimiterMiddleware.rateLimit(rateLimiters.authorizeIp, {
+      rateLimitGate(rateLimiters.authorizeIp, {
         ipOnly: true,
+        respond: oauthRateLimited,
       }),
-      RateLimiterMiddleware.rateLimit(rateLimiters.authorizeUser, {
+      rateLimitGate(rateLimiters.authorizeUser, {
         getUserId: req => SessionManager.getLoggedInUserId(req.session),
+        respond: oauthRateLimited,
       }),
     ]
     webRouter.get(

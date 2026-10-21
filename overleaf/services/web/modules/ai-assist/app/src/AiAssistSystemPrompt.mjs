@@ -645,3 +645,13 @@ export function systemPromptFor(
 export function joinSystemBlocks({ shared, instructions }) {
   return instructions ? `${shared}\n\n${instructions}` : shared
 }
+
+/**
+ * The slash commands section as it sits in a system block's shared text, or
+ * '' when the block does not include it. Used to measure it apart from the
+ * rest of the system prompt.
+ */
+export function slashCommandsSection(system) {
+  const shared = typeof system?.shared === 'string' ? system.shared : ''
+  return shared.includes(SLASH_COMMANDS_PROMPT) ? SLASH_COMMANDS_PROMPT : ''
+}

@@ -6,6 +6,10 @@ import GitBridgeApiController from '../../../app/src/GitBridgeApiController.mjs'
 import GitBridgeSnapshotManager from '../../../app/src/GitBridgeSnapshotManager.mjs'
 import GitBridgeFileTokenManager from '../../../app/src/GitBridgeFileTokenManager.mjs'
 import PersonalAccessTokenManager from '../../../../../app/src/Features/PersonalAccessToken/PersonalAccessTokenManager.mjs'
+import HistoryManager from '../../../../../app/src/Features/History/HistoryManager.mjs'
+import Errors from '../../../../../app/src/Features/Errors/Errors.js'
+import { Writable } from 'node:stream'
+import { Readable } from 'node:stream'
 
 describe('GitBridgeApiController', function () {
   let req, res, statusCalls, jsonCalls
@@ -118,6 +122,62 @@ describe('GitBridgeApiController', function () {
       expect(statusCalls[0]).toBe(401)
       expect(next.called).toBe(false)
     })
+
+    it('extracts query token and redacts it when empty Basic header is present (Authorization: Basic Z2l0Og==)', async function () {
+      req.headers.authorization = 'Basic Z2l0Og=='
+      req.query = { access_token: 'olp_secret_access_token_123' }
+      req.url = '/api/v0/docs/123?access_token=olp_secret_access_token_123'
+      req.originalUrl = '/api/v0/docs/123?access_token=olp_secret_access_token_123'
+
+      sinon
+        .stub(PersonalAccessTokenManager, 'validateToken')
+        .resolves({ userId: 'user-token-owner', scopes: ['git_bridge'] })
+
+      await GitBridgeApiController.requireGitBridgeAuth(req, res, next)
+
+      expect(next.calledOnce).toBe(true)
+      expect(req.gitBridgeUserId).toBe('user-token-owner')
+      expect(
+        PersonalAccessTokenManager.validateToken.calledWith(
+          'olp_secret_access_token_123'
+        )
+      ).toBe(true)
+      expect(req.query.access_token).toBe('olp_...')
+      expect(req.url).toBe('/api/v0/docs/123?access_token=[REDACTED]')
+      expect(req.originalUrl).toBe('/api/v0/docs/123?access_token=[REDACTED]')
+    })
+
+    it('ensures query token redaction is not bypassed when an empty Basic auth header is present and token is invalid', async function () {
+      req.headers.authorization = 'Basic Z2l0Og=='
+      req.query = { access_token: 'olp_invalid_token_xyz' }
+      req.url = '/api/v0/docs/123?access_token=olp_invalid_token_xyz'
+      req.originalUrl = '/api/v0/docs/123?access_token=olp_invalid_token_xyz'
+
+      sinon
+        .stub(PersonalAccessTokenManager, 'validateToken')
+        .resolves(null)
+
+      await GitBridgeApiController.requireGitBridgeAuth(req, res, next)
+
+      expect(statusCalls[0]).toBe(401)
+      expect(next.called).toBe(false)
+      expect(req.query.access_token).toBe('olp_...')
+      expect(req.url).toBe('/api/v0/docs/123?access_token=[REDACTED]')
+      expect(req.originalUrl).toBe('/api/v0/docs/123?access_token=[REDACTED]')
+    })
+
+    it('extracts query token and redacts it via extractToken directly with empty Basic auth header', function () {
+      req.headers.authorization = 'Basic Z2l0Og=='
+      req.query = { access_token: 'olp_direct_token' }
+      req.url = '/api/v0/docs/123?access_token=olp_direct_token'
+      req.originalUrl = '/api/v0/docs/123?access_token=olp_direct_token'
+
+      const extracted = GitBridgeApiController.extractToken(req)
+      expect(extracted).toBe('olp_direct_token')
+      expect(req.query.access_token).toBe('olp_...')
+      expect(req.url).toBe('/api/v0/docs/123?access_token=[REDACTED]')
+      expect(req.originalUrl).toBe('/api/v0/docs/123?access_token=[REDACTED]')
+    })
   })
 
   describe('requireProjectRead', function () {
@@ -158,6 +218,37 @@ describe('GitBridgeApiController', function () {
       req.query.token = token
       await GitBridgeApiController.requireFileAccess(req, res, next)
       expect(next.calledOnce).toBe(true)
+    })
+
+    it('redacts the token from the query and URL that get logged, and still accepts it', async function () {
+      const token = GitBridgeFileTokenManager.createFileToken(projectId, fileId)
+      const url = `/api/v0/docs/${projectId}/file/${fileId}?token=${encodeURIComponent(token)}`
+      req.url = url
+      req.originalUrl = url
+      req.query.token = token
+
+      await GitBridgeApiController.requireFileAccess(req, res, next)
+
+      expect(next.calledOnce).toBe(true)
+      expect(req.query.token).toBe('[REDACTED]')
+      expect(req.url).toBe(
+        `/api/v0/docs/${projectId}/file/${fileId}?token=[REDACTED]`
+      )
+      expect(req.originalUrl).toBe(req.url)
+      expect(req.url).not.toContain(token.split('.')[1])
+    })
+
+    it('redacts an invalid token from the logged URL too', async function () {
+      const url = `/api/v0/docs/${projectId}/file/${fileId}?token=invalid.secret&access_token=keep`
+      req.url = url
+      req.originalUrl = url
+      req.query.token = 'invalid.secret'
+
+      await GitBridgeApiController.requireFileAccess(req, res, next)
+
+      expect(req.url).not.toContain('invalid.secret')
+      expect(req.originalUrl).not.toContain('invalid.secret')
+      expect(req.query.token).toBe('[REDACTED]')
     })
 
     it('falls back to auth check when token is invalid or missing', async function () {
@@ -426,6 +517,62 @@ describe('GitBridgeApiController', function () {
       })
     })
 
+    it('refuses a push with a file URL outside git-bridge before accepting it', async function () {
+      req.body = {
+        latestVerId: 10,
+        files: [
+          {
+            name: 'stolen.tex',
+            url: 'http://169.254.169.254/latest/meta-data/?key=secret',
+          },
+        ],
+        postbackUrl: 'http://git-bridge:8000/postback',
+      }
+      let processPushCalled = false
+      GitBridgeSnapshotManager.validatePushVersion = async () => ({
+        valid: true,
+      })
+      GitBridgeSnapshotManager.processPush = async () => {
+        processPushCalled = true
+      }
+
+      await GitBridgeApiController.pushSnapshot(req, res)
+      expect(statusCalls).toEqual([400])
+      expect(jsonCalls[0].code).toBe('invalidFiles')
+      expect(jsonCalls[0].message).not.toContain('169.254.169.254')
+      expect(processPushCalled).toBe(false)
+    })
+
+    it('refuses a push without a files array, so no entity is deleted by mistake', async function () {
+      req.body = { latestVerId: 10, postbackUrl: 'http://git-bridge:8000/postback' }
+      let processPushCalled = false
+      GitBridgeSnapshotManager.validatePushVersion = async () => ({
+        valid: true,
+      })
+      GitBridgeSnapshotManager.processPush = async () => {
+        processPushCalled = true
+      }
+
+      await GitBridgeApiController.pushSnapshot(req, res)
+      expect(statusCalls).toEqual([400])
+      expect(jsonCalls[0].code).toBe('invalidFiles')
+      expect(processPushCalled).toBe(false)
+    })
+
+    it('refuses a file entry with no name', async function () {
+      req.body = {
+        latestVerId: 10,
+        files: [{ url: 'http://git-bridge:8000/raw' }],
+        postbackUrl: 'http://git-bridge:8000/postback',
+      }
+      GitBridgeSnapshotManager.validatePushVersion = async () => ({
+        valid: true,
+      })
+
+      await GitBridgeApiController.pushSnapshot(req, res)
+      expect(statusCalls).toEqual([400])
+    })
+
     it('returns 409 in pushSnapshot if out of date', async function () {
       req.body = {
         latestVerId: 8,
@@ -471,6 +618,7 @@ describe('GitBridgeApiController', function () {
     it('returns 500 in pushSnapshot if error thrown', async function () {
       req.body = {
         latestVerId: 8,
+        files: [],
       }
       GitBridgeSnapshotManager.validatePushVersion = async () => {
         throw new Error('validation error')
@@ -481,6 +629,137 @@ describe('GitBridgeApiController', function () {
       expect(statusCalls[0]).toBe(500)
       expect(jsonCalls[0].code).toBe('error')
       expect(jsonCalls[0].message).toBe('internal error')
+      expect(jsonCalls[0].errorId).toBeDefined()
+    })
+  })
+
+  describe('requireBlobAccess', function () {
+    const hash = 'a'.repeat(40)
+    let next
+
+    beforeEach(function () {
+      next = sinon.spy()
+      req = {
+        headers: {},
+        params: { projectId, hash },
+        query: {},
+        body: {},
+      }
+      Settings.security = { sessionSecret: 'test-secret-12345' }
+    })
+
+    it('calls next() when a valid blob token is provided in query', async function () {
+      req.query.token = GitBridgeFileTokenManager.createBlobToken(projectId, hash)
+      await GitBridgeApiController.requireBlobAccess(req, res, next)
+      expect(next.calledOnce).toBe(true)
+      expect(statusCalls).toEqual([])
+    })
+
+    it('redacts the blob token from the logged query and URL', async function () {
+      const token = GitBridgeFileTokenManager.createBlobToken(projectId, hash)
+      req.query.token = token
+      req.url = `/api/v0/docs/${projectId}/blob/${hash}?token=${token}`
+      await GitBridgeApiController.requireBlobAccess(req, res, next)
+      expect(req.query.token).toBe('[REDACTED]')
+      expect(req.url).not.toContain(token)
+    })
+
+    it('does not accept a blob token for another hash', async function () {
+      req.query.token = GitBridgeFileTokenManager.createBlobToken(
+        projectId,
+        'b'.repeat(40)
+      )
+      await GitBridgeApiController.requireBlobAccess(req, res, next)
+      expect(next.called).toBe(false)
+      expect(statusCalls[0]).toBe(401)
+    })
+  })
+
+  describe('getBlob', function () {
+    const hash = 'a'.repeat(40)
+    let chunks
+
+    beforeEach(function () {
+      chunks = []
+      req = { params: { projectId, hash }, query: {}, body: {} }
+      res = Object.assign(
+        new Writable({
+          write(chunk, _encoding, callback) {
+            chunks.push(chunk)
+            callback()
+          },
+        }),
+        {
+          headers: {},
+          setHeader(name, value) {
+            this.headers[name.toLowerCase()] = value
+          },
+          status(code) {
+            statusCalls.push(code)
+            return this
+          },
+          json(data) {
+            jsonCalls.push(data)
+            return this
+          },
+        }
+      )
+    })
+
+    afterEach(function () {
+      sinon.restore()
+    })
+
+    it('streams the blob for the project with its length', async function () {
+      let requested
+      sinon.stub(HistoryManager.promises, 'requestBlobWithProjectId').callsFake(
+        async (pId, h) => {
+          requested = [pId, h]
+          return {
+            stream: Readable.from([Buffer.from('png-'), Buffer.from('bytes')]),
+            contentLength: 9,
+          }
+        }
+      )
+
+      await GitBridgeApiController.getBlob(req, res)
+
+      expect(requested).toEqual([projectId, hash])
+      expect(Buffer.concat(chunks).toString()).toBe('png-bytes')
+      expect(res.headers['content-length']).toBe(9)
+      expect(res.headers['content-type']).toBe('application/octet-stream')
+      expect(statusCalls).toEqual([])
+    })
+
+    it('returns 404 when the blob is not in the project history', async function () {
+      sinon
+        .stub(HistoryManager.promises, 'requestBlobWithProjectId')
+        .rejects(new Errors.NotFoundError('no blob'))
+
+      await GitBridgeApiController.getBlob(req, res)
+
+      expect(statusCalls).toEqual([404])
+      expect(jsonCalls[0].code).toBe('notFound')
+    })
+
+    it('returns 400 for a hash that is not a blob hash', async function () {
+      const blobStub = sinon.stub(HistoryManager.promises, 'requestBlobWithProjectId')
+      req.params.hash = '../../etc/passwd'
+
+      await GitBridgeApiController.getBlob(req, res)
+
+      expect(statusCalls).toEqual([400])
+      expect(blobStub.called).toBe(false)
+    })
+
+    it('returns 500 when the history lookup fails unexpectedly', async function () {
+      sinon
+        .stub(HistoryManager.promises, 'requestBlobWithProjectId')
+        .rejects(new Error('history down'))
+
+      await GitBridgeApiController.getBlob(req, res)
+
+      expect(statusCalls).toEqual([500])
       expect(jsonCalls[0].errorId).toBeDefined()
     })
   })

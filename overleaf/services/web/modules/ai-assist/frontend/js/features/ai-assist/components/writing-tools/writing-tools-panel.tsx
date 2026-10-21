@@ -59,8 +59,10 @@ import { ACTION_ICONS, useActionLabel } from './action-labels'
 import { DiffText } from './diff-text'
 import { RephraseSettingsPanel } from './rephrase-settings'
 import { PopupStatusLine, StreamingText } from '../generator/streaming-text'
+import { retryingState } from '../retry-status'
+import type { RetryingState } from '../../agent/agent-state'
 import { aiEdit } from '../../ai-edit-glow/extension'
-import { aiCardWidth } from '../card-width'
+import { FLOATING_MARGIN } from '../../floating/editor-card'
 import { RevealBox } from '../reveal-box'
 import {
   getWritingToolHistory,
@@ -85,9 +87,11 @@ type Phase =
   | { name: 'cannot'; reason: string }
   | { name: 'error'; message: string; hint?: string }
 
+// The settings card's offset from the card (--spacing-02)
+const SETTINGS_GAP = 8
+
 /** Shown inside the TeXGPT popup instead of at the selection. */
 export type EmbeddedWritingTools = {
-  width: number
   /** Back to the TeXGPT menu. */
   onBack: () => void
   /** Closes the TeXGPT popup. */
@@ -191,8 +195,6 @@ export function WritingToolsPanel({
   const cardRef = useRef<HTMLDivElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
   const { onScroll: onBodyScroll } = useStickToBottom(bodyRef)
-  const [ownWidth] = useState(aiCardWidth)
-  const width = embedded?.width ?? ownWidth
 
   const current = history.versions[history.index]
   /** Per version: the changes the author switched back to their own text. */
@@ -251,18 +253,37 @@ export function WritingToolsPanel({
   )
   const stale = state.sliceDoc(session.from, session.to) !== session.original
   const streaming = phase.name === 'streaming'
+  const [providerRetry, setProviderRetry] = useState<RetryingState | null>(null)
+  // The settings card opens to the right of the card, or to its left when the
+  // window has no room on the right for it
   const [flipSide, setFlipSide] = useState(false)
 
   useLayoutEffect(() => {
-    if (settingsOpen && cardRef.current) {
-      const rect = cardRef.current.getBoundingClientRect()
-      if (rect.left + width + 300 > window.innerWidth) {
-        setFlipSide(true)
-      } else {
-        setFlipSide(false)
-      }
+    const card = cardRef.current
+    const panel = card?.querySelector<HTMLElement>('.ai-writing-tools-settings-card')
+    if (!card || !panel) return
+    const measure = () => {
+      const room = window.innerWidth - card.getBoundingClientRect().right
+      setFlipSide(room < SETTINGS_GAP + panel.offsetWidth + FLOATING_MARGIN)
     }
-  }, [settingsOpen, width])
+    measure()
+    // The card moves when the editor pane or the window is resized. Measure on
+    // the next frame, once CodeMirror has placed the card again
+    let frame = 0
+    const measureSoon = () => {
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(measure)
+    }
+    const observer =
+      typeof ResizeObserver === 'function' ? new ResizeObserver(measureSoon) : null
+    observer?.observe(view.scrollDOM)
+    window.addEventListener('resize', measureSoon)
+    return () => {
+      cancelAnimationFrame(frame)
+      observer?.disconnect()
+      window.removeEventListener('resize', measureSoon)
+    }
+  }, [settingsOpen, settingsClosing, view])
 
   const close = useCallback(() => {
     abortRef.current?.abort()
@@ -301,6 +322,7 @@ export function WritingToolsPanel({
       const rephraseSettings = rephrase ?? { ...preferences.rephrase, prompt }
       const unit = editUnit(session.action, rephraseSettings)
       setPhase({ name: 'streaming', text: '', options: [] })
+      setProviderRetry(null)
       startTimeRef.current = Date.now()
       try {
         const outcome = await generate({
@@ -322,6 +344,7 @@ export function WritingToolsPanel({
           doc,
           settings: writingToolsSettings(base, readReasoningEffort(base.type)),
           signal: controller.signal,
+          onRetry: next => setProviderRetry(retryingState(next)),
           onProgress: progress => {
             if (controller.signal.aborted) return
             setPhase(
@@ -341,6 +364,7 @@ export function WritingToolsPanel({
           },
         })
         if (controller.signal.aborted) return
+        setProviderRetry(null)
 
         switch (outcome.kind) {
           case 'cannot':
@@ -469,9 +493,13 @@ export function WritingToolsPanel({
       return
     }
     signalMenuRequested()
+    // In the direction it was made, so the selection box opens where it was
+    const [anchor, head] = session.backward
+      ? [session.to, session.from]
+      : [session.from, session.to]
     view.dispatch({
       effects: closeWritingSession.of(null),
-      selection: { anchor: session.from, head: session.to },
+      selection: { anchor, head },
       userEvent: 'select',
     })
     view.focus()
@@ -488,6 +516,7 @@ export function WritingToolsPanel({
         effects: openWritingSession.of({
           from: session.from,
           to: session.to,
+          backward: session.backward,
           action: session.action,
           targetLanguage: session.targetLanguage,
         }),
@@ -559,7 +588,7 @@ export function WritingToolsPanel({
       aria-label={title}
       onKeyDown={onKeyDown}
     >
-      <div className="ai-writing-tools-card" style={{ width }}>
+      <div className="ai-writing-tools-card">
         <div className="ai-writing-tools-card-header">
           <span className="ai-writing-tools-card-title">
             <ActionIcon aria-hidden="true" size={16} weight="bold" />
@@ -721,6 +750,7 @@ export function WritingToolsPanel({
             <>
               {phase.text ? <StreamingText text={phase.text} isLive /> : null}
               <PopupStatusLine
+                retry={providerRetry}
                 text={
                   phase.repairing
                     ? t(
@@ -757,6 +787,7 @@ export function WritingToolsPanel({
               ))}
               {phase.name === 'streaming' && phase.options.length === 0 && (
                 <PopupStatusLine
+                  retry={providerRetry}
                   text={t('ai_assist_writing_tools_finding', 'Finding alternatives…')}
                 />
               )}

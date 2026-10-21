@@ -10,6 +10,9 @@ import EditorController from '../../../../../app/src/Features/Editor/EditorContr
 import Settings from '@overleaf/settings'
 import { fetchNothing } from '@overleaf/fetch-utils'
 import { db } from '../../../../../app/src/infrastructure/mongodb.mjs'
+import HistoryManager from '../../../../../app/src/Features/History/HistoryManager.mjs'
+import GitBridgeFileTokenManager from '../../../app/src/GitBridgeFileTokenManager.mjs'
+import { RequestFailedError } from '@overleaf/fetch-utils'
 
 describe('GitBridgeSnapshotManager', function () {
   const projectId = '60f1b4a9e1b2c3d4e5f6a7b8'
@@ -35,6 +38,7 @@ describe('GitBridgeSnapshotManager', function () {
   let origUpsertFileWithPath
   let origDeleteEntityWithPath
   let origProjectHistoryLabels
+  let origGetContentAtVersion
 
   function setMockProject(fn) {
     ProjectGetter.getProjectWithoutLock = fn
@@ -84,6 +88,7 @@ describe('GitBridgeSnapshotManager', function () {
     origUpsertDocWithPath = EditorController.promises.upsertDocWithPath
     origUpsertFileWithPath = EditorController.promises.upsertFileWithPath
     origDeleteEntityWithPath = EditorController.promises.deleteEntityWithPath
+    origGetContentAtVersion = HistoryManager.promises.getContentAtVersion
     origProjectHistoryLabels = db.projectHistoryLabels
     db.projectHistoryLabels = {
       find: () => ({
@@ -98,6 +103,7 @@ describe('GitBridgeSnapshotManager', function () {
     sinon.restore()
     delete Settings.gitBridgePublicBaseUrl
     db.projectHistoryLabels = origProjectHistoryLabels
+    HistoryManager.promises.getContentAtVersion = origGetContentAtVersion
     Settings.security = origSecurity
     ProjectGetter.getProjectWithoutLock = origGetProjectWithoutLock
     if (ProjectGetter.promises) {
@@ -346,6 +352,63 @@ describe('GitBridgeSnapshotManager', function () {
       expect(snapshot).toBeNull()
     })
 
+    it('returns null without calling getDoc when versionId is negative or non-integer', async function () {
+      let getDocCalled = false
+      const origGetDoc = GitBridgeSnapshotManager.getDoc
+      GitBridgeSnapshotManager.getDoc = async () => {
+        getDocCalled = true
+        return { latestVerId: 10 }
+      }
+      try {
+        expect(
+          await GitBridgeSnapshotManager.getSnapshotForVersion(
+            projectId,
+            -1,
+            'http://overleaf:3000'
+          )
+        ).toBeNull()
+        expect(getDocCalled).toBe(false)
+
+        expect(
+          await GitBridgeSnapshotManager.getSnapshotForVersion(
+            projectId,
+            -5,
+            'http://overleaf:3000'
+          )
+        ).toBeNull()
+        expect(getDocCalled).toBe(false)
+
+        expect(
+          await GitBridgeSnapshotManager.getSnapshotForVersion(
+            projectId,
+            1.5,
+            'http://overleaf:3000'
+          )
+        ).toBeNull()
+        expect(getDocCalled).toBe(false)
+
+        expect(
+          await GitBridgeSnapshotManager.getSnapshotForVersion(
+            projectId,
+            '12',
+            'http://overleaf:3000'
+          )
+        ).toBeNull()
+        expect(getDocCalled).toBe(false)
+
+        expect(
+          await GitBridgeSnapshotManager.getSnapshotForVersion(
+            projectId,
+            NaN,
+            'http://overleaf:3000'
+          )
+        ).toBeNull()
+        expect(getDocCalled).toBe(false)
+      } finally {
+        GitBridgeSnapshotManager.getDoc = origGetDoc
+      }
+    })
+
     it('returns project snapshot when versionId is provided', async function () {
       const mockProject = {
         _id: projectId,
@@ -365,10 +428,228 @@ describe('GitBridgeSnapshotManager', function () {
 
       const snapshot = await GitBridgeSnapshotManager.getSnapshotForVersion(
         projectId,
-        5,
+        12,
         'http://overleaf:3000'
       )
       expect(snapshot).toEqual({ srcs: [], atts: [] })
+    })
+
+    describe('at an older version', function () {
+      const oldProjectId = projectId
+      const textHash = 'c'.repeat(40)
+      const sameHash = 'a'.repeat(40)
+      const otherHash = 'b'.repeat(40)
+
+      beforeEach(function () {
+        setMockProject(async () => ({
+          _id: oldProjectId,
+          version: 9,
+          rootFolder: [
+            {
+              _id: 'root-id',
+              name: 'rootFolder',
+              docs: [{ _id: 'doc-now', name: 'main.tex' }],
+              fileRefs: [
+                { _id: 'file-same', name: 'figure.png', hash: sameHash },
+                { _id: 'file-now', name: 'new.png', hash: textHash },
+              ],
+              folders: [],
+            },
+          ],
+        }))
+        DocstoreManager.promises.getAllDocVersions = async () => []
+        DocstoreManager.promises.getAllDocs = async () => [
+          { _id: 'doc-now', lines: ['current text only'] },
+        ]
+      })
+
+      function historyAt(files) {
+        return {
+          files,
+          projectVersion: '5.0',
+          v2DocVersions: {},
+        }
+      }
+
+      it('returns the text and binary files as they were at that version', async function () {
+        const requested = []
+        HistoryManager.promises.getContentAtVersion = async (pId, version) => {
+          requested.push([pId, version])
+          return historyAt({
+            'main.tex': { content: 'old line 1\nold line 2' },
+            'chapters/intro.tex': { content: '\\section{Old}' },
+            'figure.png': { hash: sameHash, byteLength: 10 },
+            'logo.png': { hash: otherHash, byteLength: 20 },
+          })
+        }
+
+        const snapshot = await GitBridgeSnapshotManager.getSnapshotForVersion(
+          oldProjectId,
+          5,
+          'http://overleaf:3000'
+        )
+
+        expect(requested).toEqual([[oldProjectId, 5]])
+        // Pathnames are sorted, so the order is stable.
+        expect(snapshot.srcs).toEqual([
+          ['\\section{Old}', 'chapters/intro.tex'],
+          ['old line 1\nold line 2', 'main.tex'],
+        ])
+        expect(snapshot.atts.map(([, p]) => p)).toEqual([
+          'figure.png',
+          'logo.png',
+        ])
+      })
+
+      it('reuses the current file link when a current file has the same hash', async function () {
+        HistoryManager.promises.getContentAtVersion = async () =>
+          historyAt({
+            'figure.png': { hash: sameHash, byteLength: 10 },
+          })
+
+        const snapshot = await GitBridgeSnapshotManager.getSnapshotForVersion(
+          oldProjectId,
+          5,
+          'http://overleaf:3000'
+        )
+
+        const [url] = snapshot.atts[0]
+        expect(url.startsWith(`http://overleaf:3000/api/v0/docs/${oldProjectId}/file/file-same?token=`)).toBe(true)
+        const token = new URL(url).searchParams.get('token')
+        expect(
+          GitBridgeFileTokenManager.verifyFileToken(token, oldProjectId, 'file-same')
+        ).toBe(true)
+      })
+
+      it('links a binary file with no current copy by its hash, with a blob token', async function () {
+        HistoryManager.promises.getContentAtVersion = async () =>
+          historyAt({
+            'logo.png': { hash: otherHash, byteLength: 20 },
+          })
+
+        const snapshot = await GitBridgeSnapshotManager.getSnapshotForVersion(
+          oldProjectId,
+          5,
+          'http://overleaf:3000'
+        )
+
+        const [url, filePath] = snapshot.atts[0]
+        expect(filePath).toBe('logo.png')
+        const parsed = new URL(url)
+        expect(parsed.origin).toBe('http://overleaf:3000')
+        expect(parsed.pathname).toBe(`/api/v0/docs/${oldProjectId}/blob/${otherHash}`)
+        const token = parsed.searchParams.get('token')
+        expect(
+          GitBridgeFileTokenManager.verifyBlobToken(token, oldProjectId, otherHash)
+        ).toBe(true)
+      })
+
+      it('handles historical snapshots with non-BMP/emojis or other editable extensions', async function () {
+        HistoryManager.promises.getContentAtVersion = async () =>
+          historyAt({
+            'script.py': { content: 'print("hello 🐍 🚀")' },
+            'build.sh': { content: '#!/bin/bash\necho "test"' },
+            'main.tex': { content: 'Emoji text 🎉\nUnicode: 𠮷' },
+          })
+
+        const snapshot = await GitBridgeSnapshotManager.getSnapshotForVersion(
+          oldProjectId,
+          5,
+          'http://overleaf:3000'
+        )
+
+        expect(snapshot.srcs).toEqual([
+          ['#!/bin/bash\necho "test"', 'build.sh'],
+          ['Emoji text 🎉\nUnicode: 𠮷', 'main.tex'],
+          ['print("hello 🐍 🚀")', 'script.py'],
+        ])
+        expect(snapshot.atts).toEqual([])
+      })
+
+      it('returns null when project does not have a history id', async function () {
+        HistoryManager.promises.getContentAtVersion = async () => {
+          throw new Error('project does not have a history id')
+        }
+
+        const snapshot = await GitBridgeSnapshotManager.getSnapshotForVersion(
+          oldProjectId,
+          5,
+          'http://overleaf:3000'
+        )
+
+        expect(snapshot).toBeNull()
+      })
+
+      it('uses the current tree for the latest version and does not read history', async function () {
+        HistoryManager.promises.getContentAtVersion = async () => {
+          throw new Error('history must not be read for the latest version')
+        }
+
+        const snapshot = await GitBridgeSnapshotManager.getSnapshotForVersion(
+          oldProjectId,
+          9,
+          'http://overleaf:3000'
+        )
+
+        expect(snapshot.srcs).toEqual([['current text only', 'main.tex']])
+        expect(snapshot.atts[0][1]).toBe('figure.png')
+      })
+
+      it('returns null when history has no such version', async function () {
+        HistoryManager.promises.getContentAtVersion = async () => {
+          throw new RequestFailedError(
+            'http://history/versions/2/content',
+            {},
+            { status: 404 },
+            ''
+          )
+        }
+
+        const snapshot = await GitBridgeSnapshotManager.getSnapshotForVersion(
+          oldProjectId,
+          2,
+          'http://overleaf:3000'
+        )
+
+        expect(snapshot).toBeNull()
+      })
+
+      it('rethrows history failures that are not a missing version', async function () {
+        HistoryManager.promises.getContentAtVersion = async () => {
+          throw new RequestFailedError(
+            'http://history/versions/2/content',
+            {},
+            { status: 500 },
+            ''
+          )
+        }
+
+        let err
+        try {
+          await GitBridgeSnapshotManager.getSnapshotForVersion(
+            oldProjectId,
+            2,
+            'http://overleaf:3000'
+          )
+        } catch (e) {
+          err = e
+        }
+        expect(err).toBeInstanceOf(RequestFailedError)
+      })
+
+      it('returns null for a version that is not a whole number', async function () {
+        HistoryManager.promises.getContentAtVersion = async () => {
+          throw new Error('history must not be read')
+        }
+
+        const snapshot = await GitBridgeSnapshotManager.getSnapshotForVersion(
+          oldProjectId,
+          NaN,
+          'http://overleaf:3000'
+        )
+
+        expect(snapshot).toBeNull()
+      })
     })
   })
 
@@ -411,9 +692,10 @@ describe('GitBridgeSnapshotManager', function () {
         return { lines: ['fallback'] }
       }
 
+      // Latest is 3: project version 1 plus the two doc versions.
       const snapshot = await GitBridgeSnapshotManager.getSnapshotForVersion(
         batchProjectId,
-        undefined,
+        3,
         'http://overleaf:3000'
       )
 
@@ -457,7 +739,7 @@ describe('GitBridgeSnapshotManager', function () {
 
       const snapshot = await GitBridgeSnapshotManager.getSnapshotForVersion(
         projectId,
-        undefined,
+        1,
         'http://overleaf:3000'
       )
 
@@ -790,6 +1072,56 @@ describe('GitBridgeSnapshotManager', function () {
 
       await GitBridgeSnapshotManager.processPush(projectId, userId, [], null)
       expect(deletedPaths).toContain('/images')
+    })
+
+    it('does not delete a folder that still holds a pushed file', async function () {
+      const deletedPaths = []
+      setMockProject(async () => ({
+        _id: projectId,
+        version: 1,
+        rootFolder: [
+          {
+            _id: 'root-id',
+            name: 'rootFolder',
+            docs: [],
+            fileRefs: [],
+            folders: [
+              {
+                _id: 'f1',
+                name: 'chapters',
+                docs: [{ _id: 'doc-intro', name: 'intro.tex' }],
+                fileRefs: [],
+                folders: [],
+              },
+            ],
+          },
+        ],
+      }))
+      DocstoreManager.promises.getAllDocVersions = async () => []
+      globalThis.fetch = async () => ({
+        ok: true,
+        arrayBuffer: async () => Buffer.from('\\section{Intro}'),
+      })
+      EditorController.promises.upsertDocWithPath = async () => {}
+      EditorController.promises.deleteEntityWithPath = async (pId, path) => {
+        deletedPaths.push(path)
+      }
+
+      // git-bridge sends every current file, never folders
+      await GitBridgeSnapshotManager.processPush(
+        projectId,
+        userId,
+        [
+          {
+            name: 'chapters/intro.tex',
+            url: 'http://git-bridge/raw/intro.tex',
+          },
+        ],
+        null
+      )
+
+      expect(deletedPaths).not.toContain('/chapters')
+      expect(deletedPaths).not.toContain('/chapters/intro.tex')
     })
   })
 })

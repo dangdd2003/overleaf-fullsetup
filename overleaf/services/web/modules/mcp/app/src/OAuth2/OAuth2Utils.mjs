@@ -19,6 +19,20 @@ export const ACCESS_TOKEN_TTL_SECONDS = 60 * 60
 /** A refresh token that goes this long unused is refused; each refresh resets it. */
 export const REFRESH_TOKEN_IDLE_MS = 90 * 24 * 60 * 60 * 1000
 
+// An S256 code_challenge is the base64url SHA-256 of the verifier: 43 characters.
+const S256_CHALLENGE_PATTERN = /^[A-Za-z0-9_-]{43}$/
+
+/**
+ * Whether a `code_challenge` request parameter is a well-formed S256 challenge.
+ * Shared by the authorize page (GET) and the consent submit (POST).
+ */
+export function isValidS256Challenge(codeChallenge) {
+  return (
+    typeof codeChallenge === 'string' &&
+    S256_CHALLENGE_PATTERN.test(codeChallenge)
+  )
+}
+
 // Only hashes of tokens are stored, so a database read does not reveal a
 // usable refresh token.
 export function hashToken(token) {

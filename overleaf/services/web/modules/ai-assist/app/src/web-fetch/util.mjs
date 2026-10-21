@@ -1,4 +1,4 @@
-import { ProviderError } from '../AiAssistProviders.mjs'
+import { ProviderError } from '../AiAssistErrors.mjs'
 
 /** Shared by the web tools: errors for the model, and small text helpers. */
 

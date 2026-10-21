@@ -12,8 +12,7 @@ import McpHistoryController from './McpHistoryController.mjs'
 import McpTagsController from './McpTagsController.mjs'
 import McpOpenApiController from './McpOpenApiController.mjs'
 import McpErrors from './McpErrors.mjs'
-import { RateLimiter } from '../../../../app/src/infrastructure/RateLimiter.mjs'
-import RateLimiterMiddleware from '../../../../app/src/Features/Security/RateLimiterMiddleware.mjs'
+import { getMcpRateLimiters, mcpRateLimited, rateLimitGate } from './McpRateLimit.mjs'
 
 /**
  * Wrap an async MCP route handler so a thrown manager error becomes a proper
@@ -64,29 +63,12 @@ const McpRouter = {
     // by the global csurf middleware on `webRouter` for every write route.
     const router = publicApiRouter
 
-    // Created here rather than at import, so a deployment without MCP never
-    // constructs them.
-    const rateLimiters = {
-      ip: new RateLimiter('mcp-ip', {
-        points: 600,
-        duration: 60,
-      }),
-      token: new RateLimiter('mcp-token', {
-        points: 120,
-        duration: 60,
-      }),
-    }
-
-    // Bound unauthenticated traffic before token validation, then apply a
-    // separate per-token budget after authentication on protected endpoints.
-    if (typeof router.use === 'function') {
-      router.use(
-        '/api/v0/mcp',
-        RateLimiterMiddleware.rateLimit(rateLimiters.ip, { ipOnly: true })
-      )
-    }
-    const tokenRateLimit = RateLimiterMiddleware.rateLimit(rateLimiters.token, {
+    // The per-IP budget is checked before authentication in the request guard
+    // (McpRequestGuard.mjs, mounted ahead of the body parsers). This is the
+    // per-token budget, applied after authentication on protected endpoints.
+    const tokenRateLimit = rateLimitGate(getMcpRateLimiters().token, {
       getUserId: req => req.mcpTokenId,
+      respond: mcpRateLimited,
     })
     function requireMcpAuthWithRateLimit(req, res, next) {
       return requireMcpAuth(req, res, () => tokenRateLimit(req, res, next))

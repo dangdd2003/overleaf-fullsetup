@@ -1,20 +1,16 @@
-import React, {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   CaretRight,
   Crop,
-  GearSix,
   Paperclip,
   PlugsConnected,
+  Wrench,
 } from '@phosphor-icons/react'
 import { useChatConnectors } from '../../connectors/use-chat-connectors'
 import { ConnectorView } from '../../connectors/types'
+import { placementSide, useFloatingBox } from '../../floating/use-floating-box'
+import { SiteIcon, connectorIconUrl } from './site-icon'
 
 export interface ComposerPlusMenuProps {
   isOpen: boolean
@@ -30,14 +26,41 @@ export interface ComposerPlusMenuProps {
   pdfAreaSelecting?: boolean
 }
 
-// Where the submenu sits relative to the plus menu. `right` is the default;
-// the others are used when the panel is too narrow to show it there.
-type SubmenuPlacement = 'right' | 'left' | 'below'
+const SUBMENU_GAP_PX = 2
 
-const SUBMENU_OPEN_DELAY_MS = 120
-const SUBMENU_CLOSE_DELAY_MS = 150
-const VIEWPORT_GUTTER_PX = 8
-const SUBMENU_GAP_PX = 4
+/**
+ * The submenu opens beside the whole plus menu, not beside the row that
+ * opened it: its anchor spans the menu's width and only takes the row's
+ * height. A submenu placed to the right of that anchor starts at the menu's
+ * right edge, and one flipped to the left ends at its left edge, so it can
+ * never land on top of the menu it belongs to.
+ */
+export function submenuAnchor(trigger: HTMLElement) {
+  return {
+    get contextElement() {
+      return trigger
+    },
+    getBoundingClientRect: () => {
+      const row = trigger.getBoundingClientRect()
+      const menu = trigger.closest<HTMLElement>('.ai-assist-plus-menu')
+      const box = menu?.getBoundingClientRect()
+      const x = box?.x ?? row.x
+      const width = box?.width ?? row.width
+      const y = box?.y ?? row.y
+      const height = box?.height ?? row.height
+      return {
+        x,
+        y,
+        width,
+        height,
+        top: y,
+        left: x,
+        right: x + width,
+        bottom: y + height,
+      }
+    },
+  }
+}
 
 export function SquareSlashIcon({
   size = 16,
@@ -77,8 +100,27 @@ function detectMac(): boolean {
   return /Mac/i.test(platform)
 }
 
-function connectorInitial(connector: ConnectorView) {
-  return connector.name.trim().charAt(0).toUpperCase() || '?'
+export function ConnectorAvatar({
+  connector,
+}: {
+  connector: ConnectorView
+}) {
+  // Without an icon the row shows the generic connector glyph, the one
+  // Claude Code gives every connector row
+  return (
+    <span className="ai-assist-plus-connector-avatar" aria-hidden="true">
+      <SiteIcon
+        url={connector.url}
+        src={connectorIconUrl(connector)}
+        className="ai-assist-plus-connector-icon"
+        fallback={
+          <span className="ai-assist-plus-menu-icon">
+            <PlugsConnected size={16} />
+          </span>
+        }
+      />
+    </span>
+  )
 }
 
 export function ComposerPlusMenu({
@@ -93,19 +135,15 @@ export function ComposerPlusMenu({
 }: ComposerPlusMenuProps) {
   const { t } = useTranslation()
   const menuRef = useRef<HTMLDivElement>(null)
-  const connectorsItemRef = useRef<HTMLButtonElement>(null)
-  const submenuRef = useRef<HTMLDivElement>(null)
-  const openTimerRef = useRef<number | undefined>(undefined)
-  const closeTimerRef = useRef<number | undefined>(undefined)
+  const connectorsItemRef = useRef<HTMLButtonElement | null>(null)
+  const submenuRef = useRef<HTMLDivElement | null>(null)
   // Read by the document keydown handler, which must know whether Escape
   // should close the submenu or the whole menu.
   const submenuOpenRef = useRef(false)
   const focusFirstOnOpenRef = useRef(false)
 
   const [submenuOpen, setSubmenuOpen] = useState(false)
-  const [submenuPlacement, setSubmenuPlacement] =
-    useState<SubmenuPlacement>('right')
-  const [submenuTop, setSubmenuTop] = useState(0)
+  const submenuBodyRef = useRef<HTMLDivElement | null>(null)
 
   const {
     enabled: showConnectors,
@@ -114,44 +152,81 @@ export function ComposerPlusMenu({
     setEnabled: setConnectorEnabled,
   } = useChatConnectors(chatId, { active: isOpen })
 
-  const clearTimers = useCallback(() => {
-    window.clearTimeout(openTimerRef.current)
-    window.clearTimeout(closeTimerRef.current)
-  }, [])
+  // Beside the Connectors row: right, else left, kept inside the viewport
+  const {
+    refs,
+    floatingStyles,
+    isPositioned,
+    placement: submenuPlacement,
+  } = useFloatingBox({
+    open: submenuOpen && showConnectors,
+    placement: 'right-end',
+    fallbackPlacements: ['left-end', 'right-start', 'left-start'],
+    gap: SUBMENU_GAP_PX,
+    // The anchor already spans the menu, so the box must not slide back
+    // along the axis it opens on
+    shiftMainAxis: false,
+  })
+  const setConnectorsItem = useCallback(
+    (node: HTMLButtonElement | null) => {
+      connectorsItemRef.current = node
+      refs.setReference(node)
+      refs.setPositionReference(node ? submenuAnchor(node) : null)
+    },
+    [refs]
+  )
+  const setSubmenu = useCallback(
+    (node: HTMLDivElement | null) => {
+      submenuRef.current = node
+      refs.setFloating(node)
+    },
+    [refs]
+  )
 
   const openSubmenu = useCallback(
     (focusFirst: boolean) => {
-      clearTimers()
       focusFirstOnOpenRef.current = focusFirst
       submenuOpenRef.current = true
-      setSubmenuTop(connectorsItemRef.current?.offsetTop ?? 0)
-      setSubmenuPlacement('right')
       setSubmenuOpen(true)
     },
-    [clearTimers]
+    []
   )
+
+  // The flyout grows with its rows up to the room the viewport leaves, and
+  // scrolls past that. An edge fades out while there is more to scroll
+  // towards it, as Claude Code's menus do
+  useEffect(() => {
+    const body = submenuBodyRef.current
+    if (!submenuOpen || !body) return
+    const updateFade = () => {
+      const { scrollTop, scrollHeight, clientHeight } = body
+      body.toggleAttribute('data-fade-top', scrollTop > 0)
+      body.toggleAttribute(
+        'data-fade-bottom',
+        scrollTop + clientHeight < scrollHeight - 1
+      )
+    }
+    updateFade()
+    body.addEventListener('scroll', updateFade, { passive: true })
+    const observer =
+      typeof ResizeObserver === 'undefined'
+        ? null
+        : new ResizeObserver(updateFade)
+    observer?.observe(body)
+    return () => {
+      body.removeEventListener('scroll', updateFade)
+      observer?.disconnect()
+    }
+  }, [submenuOpen, connectors.length])
 
   const closeSubmenu = useCallback(
     (returnFocus: boolean) => {
-      clearTimers()
       submenuOpenRef.current = false
       setSubmenuOpen(false)
       if (returnFocus) connectorsItemRef.current?.focus()
     },
-    [clearTimers]
+    []
   )
-
-  const scheduleSubmenuClose = () => {
-    window.clearTimeout(closeTimerRef.current)
-    closeTimerRef.current = window.setTimeout(
-      () => closeSubmenu(false),
-      SUBMENU_CLOSE_DELAY_MS
-    )
-  }
-
-  const cancelSubmenuClose = () => {
-    window.clearTimeout(closeTimerRef.current)
-  }
 
   useEffect(() => {
     if (!isOpen) return
@@ -189,8 +264,6 @@ export function ComposerPlusMenu({
     if (!isOpen) closeSubmenu(false)
   }, [isOpen, closeSubmenu])
 
-  useEffect(() => () => clearTimers(), [clearTimers])
-
   // Focus the first row when the submenu was opened from the keyboard
   useEffect(() => {
     if (!submenuOpen || !focusFirstOnOpenRef.current) return
@@ -198,31 +271,6 @@ export function ComposerPlusMenu({
     submenuRef.current
       ?.querySelector<HTMLElement>('[role^="menuitem"]')
       ?.focus()
-  }, [submenuOpen])
-
-  // Flip the submenu to whichever side fits: right, then left, then below
-  useLayoutEffect(() => {
-    if (!submenuOpen) return
-    const menu = menuRef.current
-    const submenu = submenuRef.current
-    if (!menu || !submenu) return
-
-    const panel = menu.closest('.ai-assist-panel')?.getBoundingClientRect()
-    const minLeft = Math.max(VIEWPORT_GUTTER_PX, panel?.left ?? 0)
-    const maxRight = Math.min(
-      window.innerWidth - VIEWPORT_GUTTER_PX,
-      panel?.right ?? Infinity
-    )
-    const menuRect = menu.getBoundingClientRect()
-    const submenuRect = submenu.getBoundingClientRect()
-
-    if (submenuRect.right <= maxRight) {
-      setSubmenuPlacement('right')
-    } else if (menuRect.left - SUBMENU_GAP_PX - submenuRect.width >= minLeft) {
-      setSubmenuPlacement('left')
-    } else {
-      setSubmenuPlacement('below')
-    }
   }, [submenuOpen])
 
   if (!isOpen) {
@@ -252,7 +300,11 @@ export function ComposerPlusMenu({
 
   const handleConnectorsClick = (event: React.MouseEvent) => {
     event.preventDefault()
-    openSubmenu(false)
+    if (submenuOpenRef.current) {
+      closeSubmenu(false)
+    } else {
+      openSubmenu(false)
+    }
   }
 
   const handleConnectorsKeyDown = (event: React.KeyboardEvent) => {
@@ -260,21 +312,6 @@ export function ComposerPlusMenu({
       event.preventDefault()
       openSubmenu(true)
     }
-  }
-
-  const handleConnectorsHoverEnter = () => {
-    cancelSubmenuClose()
-    if (submenuOpenRef.current) return
-    window.clearTimeout(openTimerRef.current)
-    openTimerRef.current = window.setTimeout(
-      () => openSubmenu(false),
-      SUBMENU_OPEN_DELAY_MS
-    )
-  }
-
-  const handleConnectorsHoverLeave = () => {
-    window.clearTimeout(openTimerRef.current)
-    scheduleSubmenuClose()
   }
 
   const handleManageConnectors = (event: React.MouseEvent) => {
@@ -314,15 +351,6 @@ export function ComposerPlusMenu({
     }
   }
 
-  const submenuClassName = [
-    'ai-assist-plus-submenu',
-    submenuPlacement !== 'right'
-      ? `ai-assist-plus-submenu--${submenuPlacement}`
-      : '',
-  ]
-    .filter(Boolean)
-    .join(' ')
-
   return (
     <div
       ref={menuRef}
@@ -339,7 +367,9 @@ export function ComposerPlusMenu({
         <span className="ai-assist-plus-menu-icon" aria-hidden="true">
           <Paperclip size={16} />
         </span>
-        <span>{t('ai_assist_add_files_or_photos', 'Add files or photos')}</span>
+        <span className="ai-assist-plus-menu-label">
+          {t('ai_assist_add_files_or_photos', 'Add files or photos')}
+        </span>
         <span className="ai-assist-plus-menu-shortcut">{shortcut}</span>
       </button>
 
@@ -358,7 +388,7 @@ export function ComposerPlusMenu({
           <span className="ai-assist-plus-menu-icon" aria-hidden="true">
             <Crop size={16} />
           </span>
-          <span>
+          <span className="ai-assist-plus-menu-label">
             {pdfAreaSelecting
               ? t('ai_assist_pdf_area_cancel', 'Cancel PDF area')
               : t('ai_assist_pdf_area_select', 'Select PDF area')}
@@ -378,12 +408,14 @@ export function ComposerPlusMenu({
         <span className="ai-assist-plus-menu-icon" aria-hidden="true">
           <SquareSlashIcon size={16} />
         </span>
-        <span>{t('ai_assist_slash_commands', 'Slash commands')}</span>
+        <span className="ai-assist-plus-menu-label">
+          {t('ai_assist_slash_commands', 'Slash commands')}
+        </span>
       </button>
 
       {showConnectors && (
         <button
-          ref={connectorsItemRef}
+          ref={setConnectorsItem}
           type="button"
           className={`ai-assist-plus-menu-item ${submenuOpen ? 'is-open' : ''}`}
           role="menuitem"
@@ -391,13 +423,13 @@ export function ComposerPlusMenu({
           aria-expanded={submenuOpen}
           onClick={handleConnectorsClick}
           onKeyDown={handleConnectorsKeyDown}
-          onMouseEnter={handleConnectorsHoverEnter}
-          onMouseLeave={handleConnectorsHoverLeave}
         >
           <span className="ai-assist-plus-menu-icon" aria-hidden="true">
             <PlugsConnected size={16} />
           </span>
-          <span>{t('ai_assist_chat_connectors', 'Connectors')}</span>
+          <span className="ai-assist-plus-menu-label">
+            {t('ai_assist_chat_connectors', 'Connectors')}
+          </span>
           <CaretRight
             size={14}
             className="ai-assist-plus-menu-chevron"
@@ -408,46 +440,47 @@ export function ComposerPlusMenu({
 
       {showConnectors && submenuOpen && (
         <div
-          ref={submenuRef}
-          className={submenuClassName}
+          ref={setSubmenu}
+          className="ai-assist-plus-submenu"
+          data-placement={placementSide(submenuPlacement)}
           role="menu"
           aria-label={t('ai_assist_chat_connectors', 'Connectors')}
-          style={submenuPlacement === 'below' ? undefined : { top: submenuTop }}
-          onMouseEnter={cancelSubmenuClose}
-          onMouseLeave={scheduleSubmenuClose}
+          style={{
+            ...floatingStyles,
+            opacity: isPositioned ? undefined : 0,
+          }}
           onKeyDown={handleSubmenuKeyDown}
         >
-          <button
-            type="button"
-            className="ai-assist-plus-menu-item"
-            role="menuitem"
-            onClick={handleManageConnectors}
+          <div
+            ref={submenuBodyRef}
+            className="ai-assist-plus-submenu-body"
+            role="none"
           >
-            <span className="ai-assist-plus-menu-icon" aria-hidden="true">
-              <GearSix size={16} />
-            </span>
-            <span>
-              {t('ai_assist_manage_connectors', 'Manage connectors')}
-            </span>
-          </button>
-
-          {connectors.length === 0 ? (
-            <div
-              className="ai-assist-plus-submenu-empty"
-              role="none"
+            <button
+              type="button"
+              className="ai-assist-plus-menu-item"
+              role="menuitem"
+              onClick={handleManageConnectors}
             >
-              {t(
-                'ai_assist_no_connectors_configured',
-                'No connectors configured'
-              )}
-            </div>
-          ) : (
-            <>
-              <div
-                className="ai-assist-plus-submenu-separator"
-                role="separator"
-              />
-              {connectors.map(connector => {
+              <span className="ai-assist-plus-menu-icon" aria-hidden="true">
+                <Wrench size={16} />
+              </span>
+              <span className="ai-assist-plus-menu-label">
+                {t('ai_assist_manage_connectors', 'Manage connectors')}
+              </span>
+            </button>
+
+            <div className="ai-assist-plus-submenu-separator" role="separator" />
+
+            {connectors.length === 0 ? (
+              <div className="ai-assist-plus-submenu-empty" role="none">
+                {t(
+                  'ai_assist_no_connectors_configured',
+                  'No connectors configured'
+                )}
+              </div>
+            ) : (
+              connectors.map(connector => {
                 const isActive = !disabledIds.includes(connector.id)
                 return (
                   <div
@@ -465,12 +498,7 @@ export function ComposerPlusMenu({
                       handleConnectorRowKeyDown(event, connector.id, isActive)
                     }
                   >
-                    <span
-                      className="ai-assist-plus-connector-avatar"
-                      aria-hidden="true"
-                    >
-                      {connectorInitial(connector)}
-                    </span>
+                    <ConnectorAvatar connector={connector} />
                     <span className="ai-assist-plus-connector-name">
                       {connector.name}
                     </span>
@@ -482,9 +510,9 @@ export function ComposerPlusMenu({
                     </span>
                   </div>
                 )
-              })}
-            </>
-          )}
+              })
+            )}
+          </div>
         </div>
       )}
     </div>

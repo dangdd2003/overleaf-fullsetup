@@ -13,6 +13,11 @@ describe('ApiDocsRouter', function () {
         __esModule: true,
       })
     )
+    // The controller loads the User model, which mongoose can't recompile
+    // after resetModules
+    vi.doMock('../../../../../app/src/models/User.mjs', () => ({
+      User: {},
+    }))
     const { default: ApiDocsRouter } =
       await import('../../../app/src/ApiDocsRouter.mjs')
     routes = {}
@@ -143,5 +148,19 @@ describe('ApiDocsRouter', function () {
     Settings.enableMcp = false
     const spec = await fetchSpec()
     expect(spec.paths['/user/personal-access-tokens']).to.not.exist
+  })
+
+  it('renders page safely when no user is logged in or user is not found', async function () {
+    Settings.enableApiDocs = true
+    await loadRouter()
+    const { default: ApiDocsController } =
+      await import('../../../app/src/ApiDocsController.mjs')
+    const res = {
+      render: vi.fn(),
+    }
+    const req = { session: {} }
+    await ApiDocsController.renderPage(req, res)
+    expect(res.render).toHaveBeenCalledOnce()
+    expect(res.render.mock.calls[0][1]).toHaveProperty('userSettings')
   })
 })

@@ -49,6 +49,21 @@ describe('PdfSelectionAction timing', function () {
     await waitFor(() => screen.getByRole('button', { name: 'Add to chat' }))
   })
 
+  it('is placed fixed to the window, from the end of the selection', async function () {
+    render(<PdfSelectionAction />)
+    act(() => {
+      document.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+      selectText()
+      document.dispatchEvent(new Event('pointerup', { bubbles: true }))
+    })
+    const button = await waitFor(() =>
+      screen.getByRole('button', { name: 'Add to chat' })
+    )
+    expect(button.style.position).to.equal('fixed')
+    // Below the selection, or above it when there is no room below
+    expect(button.getAttribute('data-placement')).to.be.oneOf(['bottom', 'top'])
+  })
+
   it('hides when a new selection starts', async function () {
     render(<PdfSelectionAction />)
     act(() => {

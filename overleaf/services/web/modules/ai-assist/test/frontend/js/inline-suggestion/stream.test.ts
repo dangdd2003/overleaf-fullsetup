@@ -78,3 +78,41 @@ describe('inline suggestions: chat text stream', function () {
     }
   })
 })
+
+describe('inline suggestions: chat text stream retries', function () {
+  it('reports a retry to the caller, and asks for the inline policy by default', async function () {
+    let seen: any = null
+    const client = {
+      async *streamChat(request: any) {
+        seen = request
+        yield {
+          type: 'retrying',
+          attempt: 1,
+          maxRetries: 1,
+          retryInMs: 250,
+          retryAt: 1,
+          message: 'Connection reset',
+        } as const
+        yield { type: 'text', text: 'Hi' } as const
+      },
+    }
+    const retries: unknown[] = []
+    const stream = chatTextStream({
+      settings: { type: 'anthropic', baseUrl: 'x', apiKey: 'k', model: 'm' } as any,
+      system: 'SYSTEM',
+      messages: [],
+      maxTokens: 100,
+      client,
+      onRetry: retry => retries.push(retry),
+    })
+    const texts: string[] = []
+    for await (const text of stream(new AbortController().signal)) texts.push(text)
+
+    expect(texts).to.deep.equal(['Hi'])
+    expect(retries).to.deep.equal([
+      { attempt: 1, maxRetries: 1, retryInMs: 250, retryAt: 1, message: 'Connection reset' },
+      null,
+    ])
+    expect(seen.retryPolicy).to.equal('inline')
+  })
+})

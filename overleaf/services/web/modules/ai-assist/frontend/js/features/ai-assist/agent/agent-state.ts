@@ -1,6 +1,7 @@
 import {
   AgentEvent,
   ApprovalKind,
+  CompactPhase,
   SettingsApproval,
   ConnectorApproval,
 } from './agent-events'
@@ -9,6 +10,8 @@ import {
   ToolCallRecord,
   AssistantBlock,
 } from './agent-messages'
+import { ContextBreakdown } from './context/context-usage-types'
+import { pairedBreakdown } from './context/context-usage'
 import { EditRequest } from './project-handle'
 import { SlashCommandInvocation } from './slash-commands/types'
 import { AgentMode } from './agent-mode'
@@ -23,9 +26,32 @@ export type PendingApproval = {
   connector?: ConnectorApproval
 }
 
+/** A `/compact` run in progress, for the status line. */
+export type CompactingState = {
+  trigger: 'manual' | 'auto'
+  phase: CompactPhase
+  chunk?: number
+  chunks?: number
+}
+
+/** A scheduled provider retry: the status line counts it down. */
+export type RetryingState = {
+  /** 1-based number of the retry about to run. */
+  attempt: number
+  maxRetries: number
+  /** Client epoch ms the retry runs at: receipt time plus `retryInMs`. */
+  deadline: number
+  message: string
+  status?: number
+}
+
 export type AgentState = {
   transcript: TranscriptEntry[]
   running: boolean
+  /** Set from compactStarted until the boundary lands or the run fails. */
+  compacting: CompactingState | null
+  /** Set by a `retrying` event until output, a tool call or the run's end. */
+  retrying: RetryingState | null
   mode: AgentMode
   chatTitle?: string
   isTitleGenerated?: boolean
@@ -49,6 +75,8 @@ export function emptyAgentState(
   return {
     transcript,
     running: false,
+    compacting: null,
+    retrying: null,
     mode,
     chatTitle,
     isTitleGenerated: false,
@@ -72,6 +100,15 @@ export function countTrailingPendingUserEntries(
     }
   }
   return count
+}
+
+/** `entry` placed above the messages still queued at the end. */
+function insertBeforePending(
+  transcript: TranscriptEntry[],
+  entry: TranscriptEntry
+): TranscriptEntry[] {
+  const at = transcript.length - countTrailingPendingUserEntries(transcript)
+  return [...transcript.slice(0, at), entry, ...transcript.slice(at)]
 }
 
 /**
@@ -424,20 +461,61 @@ export function replaceStepText(
   })
 }
 
+/**
+ * Sets or clears the breakdown paired with the entry's usage. Cleared, not
+ * kept as undefined, so the entry carries the key only when it has a value.
+ */
+function withUsageBreakdown(
+  entry: Extract<TranscriptEntry, { role: 'assistant' }>,
+  usageBreakdown: ContextBreakdown | undefined
+): Extract<TranscriptEntry, { role: 'assistant' }> {
+  const { usageBreakdown: _previous, ...rest } = entry
+  return usageBreakdown ? { ...rest, usageBreakdown } : rest
+}
+
+/** Stamps the event's step onto a usage or breakdown record that lacks one. */
+function withEventStep<T extends { step?: number }>(
+  record: T,
+  step: number | undefined
+): T {
+  return record.step === undefined && step !== undefined
+    ? { ...record, step }
+    : record
+}
+
+/** Drops a retry notice once the request it was for has produced output. */
+function withoutRetry(state: AgentState): AgentState {
+  return state.retrying ? { ...state, retrying: null } : state
+}
+
 export function reduceAgentEvent(
   state: AgentState,
   event: AgentEvent
 ): AgentState {
   switch (event.type) {
-    case 'thinking':
+    case 'retrying':
       return {
         ...state,
-        transcript: appendThinking(state.transcript, event.text),
+        retrying: {
+          attempt: event.attempt,
+          maxRetries: event.maxRetries,
+          deadline: Date.now() + event.retryInMs,
+          message: event.message,
+          ...(event.status !== undefined ? { status: event.status } : {}),
+        },
       }
+    case 'thinking':
+      return withoutRetry({
+        ...state,
+        transcript: appendThinking(state.transcript, event.text),
+      })
     case 'text':
-      return { ...state, transcript: appendText(state.transcript, event.text) }
+      return withoutRetry({
+        ...state,
+        transcript: appendText(state.transcript, event.text),
+      })
     case 'toolCallStarted':
-      return {
+      return withoutRetry({
         ...state,
         transcript: appendToolCall(state.transcript, {
           id: event.id,
@@ -445,7 +523,7 @@ export function reduceAgentEvent(
           args: event.args,
           ...(event.step !== undefined ? { step: event.step } : {}),
         }),
-      }
+      })
     case 'toolCallFinished':
       return {
         ...state,
@@ -465,11 +543,14 @@ export function reduceAgentEvent(
         ...state,
         transcript: deliverUserMessage(state.transcript, event),
       }
-    case 'stepText':
-      return {
+    case 'stepText': {
+      const next = {
         ...state,
         transcript: replaceStepText(state.transcript, event.text),
       }
+      // An empty step is a retried request starting over, not output yet
+      return event.text ? withoutRetry(next) : next
+    }
     case 'nudge':
       return {
         ...state,
@@ -492,6 +573,52 @@ export function reduceAgentEvent(
           contextTrim: event.trim,
         })),
       }
+    case 'usage': {
+      const usage = withEventStep(event.usage, event.step)
+      return {
+        ...state,
+        transcript: updateAssistantTurn(state.transcript, entry =>
+          withUsageBreakdown(
+            { ...entry, usage },
+            pairedBreakdown(usage, entry.contextBreakdown)
+          )
+        ),
+      }
+    }
+    case 'contextBreakdown': {
+      const breakdown = withEventStep(event.breakdown, event.step)
+      return {
+        ...state,
+        transcript: updateAssistantTurn(state.transcript, entry => {
+          const paired = pairedBreakdown(entry.usage, breakdown)
+          // An exact fixed-part count of the same request is not replaced by
+          // an estimate of it.
+          const keepExact =
+            entry.usageBreakdown?.exactFixed === true &&
+            breakdown.exactFixed !== true
+          return withUsageBreakdown(
+            { ...entry, contextBreakdown: breakdown },
+            paired ? (keepExact ? entry.usageBreakdown : breakdown) : entry.usageBreakdown
+          )
+        }),
+      }
+    }
+    case 'contextUsage': {
+      // The record is kept on the turn it was made for, so a reload shows the
+      // same count the meter showed live.
+      const { type: _type, ...record } = event
+      return {
+        ...state,
+        transcript: updateAssistantTurn(state.transcript, entry => ({
+          ...entry,
+          contextUsage: record,
+        })),
+      }
+    }
+    case 'compactFailed':
+      // A failed automatic compaction mid-run: the run goes on, uncompacted.
+      // Only the compacting indicator clears; no error is shown.
+      return withoutRetry({ ...state, compacting: null })
     case 'chatTitle':
       return { ...state, chatTitle: event.title, isTitleGenerated: true }
     case 'awaitingApproval':
@@ -506,6 +633,32 @@ export function reduceAgentEvent(
           connector: event.connector,
         },
       }
+    case 'compactStarted':
+      return {
+        ...state,
+        compacting: { trigger: event.trigger, phase: 'masking' },
+      }
+    case 'compactProgress':
+      return withoutRetry({
+        ...state,
+        compacting: {
+          trigger: state.compacting?.trigger ?? 'manual',
+          phase: event.phase,
+          ...(event.chunk !== undefined ? { chunk: event.chunk } : {}),
+          ...(event.chunks !== undefined ? { chunks: event.chunks } : {}),
+        },
+      })
+    case 'compactFinished':
+      return withoutRetry({
+        ...state,
+        // A replayed stream (a follower reattaching) must not add it twice.
+        // It goes above the messages queued behind the compaction, which
+        // are sent after it
+        transcript: state.transcript.some(entry => entry.id === event.entry.id)
+          ? state.transcript
+          : insertBeforePending(state.transcript, event.entry),
+        compacting: null,
+      })
     case 'turnFinished': {
       const last = state.transcript.at(-1)
       let nextTranscript = state.transcript
@@ -528,6 +681,8 @@ export function reduceAgentEvent(
         ...state,
         transcript: nextTranscript,
         running: false,
+        compacting: null,
+        retrying: null,
         stoppedByUser,
         pendingApproval: null,
         error: stoppedByUser
@@ -542,6 +697,8 @@ export function reduceAgentEvent(
         ...state,
         transcript: cancelPendingToolCalls(state.transcript),
         running: false,
+        compacting: null,
+        retrying: null,
         pendingApproval: null,
         error: {
           code: event.code,

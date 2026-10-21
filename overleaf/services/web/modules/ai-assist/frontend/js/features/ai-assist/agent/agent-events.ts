@@ -1,7 +1,8 @@
 import { EditRequest } from './project-handle'
-import { ChatImage, ProviderErrorCode } from '../providers/types'
+import { ChatImage, ProviderErrorCode, ProviderRetry } from '../providers/types'
 import { AgentMode } from './agent-mode'
-import { ContextTrim } from './agent-messages'
+import { CompactEntry, ContextTrim } from './agent-messages'
+import { ContextUsageEvent } from './context/context-usage-types'
 import { SlashCommandInvocation } from './slash-commands/types'
 
 export type ApprovalKind =
@@ -24,7 +25,17 @@ export type ConnectorApproval = {
   args?: Record<string, unknown>
 }
 
+/** What the chat shows while an approval is pending, beyond the call itself. */
+export type ApprovalContext = {
+  startLine?: number
+  kind?: ApprovalKind
+  connector?: Partial<ConnectorApproval>
+}
+
+export type CompactPhase = 'masking' | 'summarizing' | 'verifying' | 'repairing'
+
 export type AgentEvent =
+  | ContextUsageEvent
   | { type: 'thinking'; text: string }
   | { type: 'text'; text: string }
   | {
@@ -81,10 +92,37 @@ export type AgentEvent =
   | { type: 'contextTrimmed'; trim: ContextTrim }
   /** A server run asks the editor to compile, as its Recompile button would. */
   | { type: 'awaitingCompile'; id: string; clean: boolean }
+  /** A `/compact` run started; see CompactPhase for the phases. */
+  | { type: 'compactStarted'; trigger: 'manual' | 'auto' }
+  | {
+      type: 'compactProgress'
+      phase: CompactPhase
+      chunk?: number
+      chunks?: number
+    }
+  /** The new boundary. The server has assigned its id and creation time. */
+  | { type: 'compactFinished'; entry: CompactEntry }
+  /**
+   * An automatic compaction mid-run failed (or had nothing to gain, or no
+   * progress). The run goes on with the messages it had.
+   */
+  | {
+      type: 'compactFailed'
+      trigger: 'auto'
+      code: 'compactFailed' | 'compactNoProgress' | 'compactNothing'
+      message: string
+    }
+  /**
+   * A provider request failed in a way that retries, and runs again after
+   * `retryInMs`. Cleared by the next model output, tool call or the run's end;
+   * see reduceAgentEvent.
+   */
+  | ({ type: 'retrying' } & ProviderRetry)
   | { type: 'turnFinished'; reason: 'stop' | 'aborted' | 'interrupted' }
   | {
       type: 'error'
-      code: ProviderErrorCode
+      /** A provider failure, or how a `/compact` run ended without a boundary. */
+      code: ProviderErrorCode | 'compactFailed' | 'compactNothing'
       message: string
       status?: number
       hint?: string

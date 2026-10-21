@@ -43,6 +43,18 @@ describe('PersonalAccessTokenRouter', function () {
     expect(webRouter.post.calledWith('/user/personal-access-tokens')).toBe(true)
   })
 
+  it('rate limits token creation between login and the controller', function () {
+    Settings.enableGitBridge = true
+    Settings.enableMcp = false
+    PersonalAccessTokenRouter.apply(webRouter)
+
+    const args = webRouter.post.firstCall.args
+    expect(args[0]).toBe('/user/personal-access-tokens')
+    expect(args).toHaveLength(4)
+    expect(typeof args[2]).toBe('function')
+    expect(args[3]).toBeTypeOf('function')
+  })
+
   it('does not mount any routes when both flags are falsy', function () {
     Settings.enableGitBridge = false
     Settings.enableMcp = undefined

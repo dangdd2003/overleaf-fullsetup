@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import {
   OLModal,
   OLModalBody,
@@ -81,6 +82,22 @@ function copyTextToClipboard(text: string): boolean {
   return true
 }
 
+function getGenerateErrorMessage(t: TFunction, status?: number) {
+  if (status === 409) {
+    return t(
+      'token_limit_reached',
+      'You’ve reached the token limit. To generate a new authentication token, please delete an existing one.'
+    )
+  }
+  if (status === 429) {
+    return t(
+      'too_many_requests',
+      'Too many requests were received in a short space of time. Please wait for a few moments and try again.'
+    )
+  }
+  return t('generic_something_went_wrong', 'Sorry, something went wrong')
+}
+
 export default function GitBridgeModal({ show, onHide }: GitBridgeModalProps) {
   const { t } = useTranslation()
   const { project } = useProjectContext()
@@ -90,6 +107,7 @@ export default function GitBridgeModal({ show, onHide }: GitBridgeModalProps) {
   const [copied, setCopied] = useState<boolean>(false)
   const [tokenCopied, setTokenCopied] = useState<boolean>(false)
   const [loading, setLoading] = useState<boolean>(false)
+  const [generateError, setGenerateError] = useState<string | null>(null)
 
   const handleClose = useCallback(() => {
     if (token) {
@@ -112,6 +130,7 @@ export default function GitBridgeModal({ show, onHide }: GitBridgeModalProps) {
 
   // Check if user has existing tokens and clear ephemeral state when modal opens
   useEffect(() => {
+    setGenerateError(null)
     if (!show) {
       setToken(null)
       setTokenCopied(false)
@@ -132,6 +151,7 @@ export default function GitBridgeModal({ show, onHide }: GitBridgeModalProps) {
 
   const handleGenerateToken = useCallback(async () => {
     setLoading(true)
+    setGenerateError(null)
     try {
       const csrfToken =
         (typeof window !== 'undefined' && (window as any).csrfToken) ||
@@ -150,11 +170,15 @@ export default function GitBridgeModal({ show, onHide }: GitBridgeModalProps) {
       if (res.ok) {
         const data = await res.json()
         setToken(data.token)
+      } else {
+        setGenerateError(getGenerateErrorMessage(t, res.status))
       }
+    } catch {
+      setGenerateError(getGenerateErrorMessage(t))
     } finally {
       setLoading(false)
     }
-  }, [project?.name])
+  }, [project?.name, t])
 
   const copyCloneCommand = useCallback(() => {
     copyTextToClipboard(cloneCommand)
@@ -239,6 +263,12 @@ export default function GitBridgeModal({ show, onHide }: GitBridgeModalProps) {
                 ? t('generating', 'Generating...')
                 : t('generate_token', 'Generate token')}
             </button>
+          </div>
+        )}
+
+        {generateError && (
+          <div className="alert alert-danger small mt-3 mb-0" role="alert">
+            {generateError}
           </div>
         )}
 

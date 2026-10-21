@@ -3,6 +3,7 @@ import { expect } from 'chai'
 import {
   detachToolImages,
   hasImages,
+  imageDimensions,
   imageProblem,
   imageStats,
   isImageRejection,
@@ -211,6 +212,86 @@ describe('AiAssistImages', function () {
         'Unsupported image type.'
       )
       expect(messageImagesProblem('x')).to.equal('Images must be a list.')
+    })
+  })
+
+  describe('imageDimensions', function () {
+    const base64 = bytes => Buffer.from(bytes).toString('base64')
+    const padded = (head, length = 40) => {
+      const out = Buffer.alloc(length)
+      Buffer.from(head).copy(out, 0)
+      return out
+    }
+
+    it('reads the size of a PNG from its IHDR', function () {
+      const bytes = padded([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+      bytes.writeUInt32BE(1200, 16)
+      bytes.writeUInt32BE(800, 20)
+
+      expect(imageDimensions({ data: base64(bytes) })).to.deep.equal({
+        width: 1200,
+        height: 800,
+      })
+    })
+
+    it('reads the size of a GIF from its logical screen', function () {
+      const bytes = padded(Buffer.from('GIF89a'))
+      bytes.writeUInt16LE(320, 6)
+      bytes.writeUInt16LE(240, 8)
+
+      expect(imageDimensions({ data: base64(bytes) })).to.deep.equal({
+        width: 320,
+        height: 240,
+      })
+    })
+
+    it('reads the size of a JPEG from its first frame header, after other segments', function () {
+      const bytes = Buffer.alloc(48)
+      Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x04, 0x00, 0x00]).copy(bytes, 0)
+      // A start-of-frame segment: marker, length 17, precision, height, width
+      Buffer.from([0xff, 0xc0, 0x00, 0x11, 0x08]).copy(bytes, 8)
+      bytes.writeUInt16BE(600, 13)
+      bytes.writeUInt16BE(900, 15)
+
+      expect(imageDimensions({ data: base64(bytes) })).to.deep.equal({
+        width: 900,
+        height: 600,
+      })
+    })
+
+    it('reads the size of a WebP in its VP8X, VP8L and VP8 forms', function () {
+      const vp8x = padded(Buffer.from('RIFF\0\0\0\0WEBPVP8X'))
+      vp8x.writeUIntLE(1000 - 1, 24, 3)
+      vp8x.writeUIntLE(700 - 1, 27, 3)
+      expect(imageDimensions({ data: base64(vp8x) })).to.deep.equal({
+        width: 1000,
+        height: 700,
+      })
+
+      // VP8L packs 14-bit width-1 and height-1 across bytes 21 to 24
+      const vp8l = padded(Buffer.from('RIFF\0\0\0\0WEBPVP8L'))
+      vp8l[21] = 0x2b
+      vp8l[22] = 0xc1
+      vp8l[23] = 0x31
+      vp8l[24] = 0x00
+      expect(imageDimensions({ data: base64(vp8l) })).to.deep.equal({
+        width: 300,
+        height: 200,
+      })
+
+      const vp8 = padded(Buffer.from('RIFF\0\0\0\0WEBPVP8 '))
+      vp8.writeUInt16LE(640, 26)
+      vp8.writeUInt16LE(480, 28)
+      expect(imageDimensions({ data: base64(vp8) })).to.deep.equal({
+        width: 640,
+        height: 480,
+      })
+    })
+
+    it('returns null for bytes it does not know, or a header cut short', function () {
+      expect(imageDimensions({ data: base64(padded([1, 2, 3])) })).to.equal(null)
+      expect(imageDimensions({ data: 'bm9wZQ==' })).to.equal(null)
+      expect(imageDimensions({})).to.equal(null)
     })
   })
 })

@@ -267,6 +267,7 @@ export function TableHostView({
       title={run.run?.title ?? ''}
       imageAttached={Boolean(run.run?.image)}
       phase={run.phase}
+      retry={run.retry}
       versions={run.versions}
       index={run.index}
       onIndex={run.selectVersion}

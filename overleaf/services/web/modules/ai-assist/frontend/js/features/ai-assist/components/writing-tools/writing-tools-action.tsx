@@ -62,6 +62,7 @@ export default function WritingToolsAction() {
         effects: openWritingSession.of({
           from: selection.from,
           to: selection.to,
+          backward: selection.head < selection.anchor,
           action,
           targetLanguage,
         }),

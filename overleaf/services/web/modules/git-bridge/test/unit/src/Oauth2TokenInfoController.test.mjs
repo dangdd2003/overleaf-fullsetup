@@ -80,4 +80,58 @@ describe('Oauth2TokenInfoController', () => {
       })
     ).toBe(true)
   })
+
+  it('rejects a token that does not carry the git_bridge scope', async () => {
+    req.headers.authorization = 'Bearer olp_mcponlytoken'
+    sinon.stub(PersonalAccessTokenManager, 'validateToken').resolves({
+      userId: 'user-123',
+      email: 'test@example.com',
+      scopes: ['mcp'],
+    })
+
+    await Oauth2TokenInfoController.getTokenInfo(req, res)
+    expect(res.status.calledWith(401)).toBe(true)
+    expect(res.json.firstCall.args[0]).toMatchObject({ error: 'invalid_token' })
+  })
+
+  it('rejects a token with no scopes', async () => {
+    req.headers.authorization = 'Bearer olp_noscopes'
+    sinon.stub(PersonalAccessTokenManager, 'validateToken').resolves({
+      userId: 'user-123',
+      email: 'test@example.com',
+    })
+
+    await Oauth2TokenInfoController.getTokenInfo(req, res)
+    expect(res.status.calledWith(401)).toBe(true)
+  })
+
+  it('prefers the Authorization header over the access_token query parameter', async () => {
+    req.headers.authorization = 'Bearer olp_fromheader'
+    req.query = { access_token: 'olp_fromquery' }
+    const validate = sinon.stub(PersonalAccessTokenManager, 'validateToken').resolves({
+      userId: 'user-123',
+      email: 'test@example.com',
+      scopes: ['git_bridge'],
+    })
+
+    await Oauth2TokenInfoController.getTokenInfo(req, res)
+    expect(validate.calledWith('olp_fromheader')).toBe(true)
+    expect(validate.calledWith('olp_fromquery')).toBe(false)
+  })
+
+  it('falls back to the access_token query parameter and redacts it', async () => {
+    req.url = '/oauth/token/info?access_token=olp_fromquery'
+    req.originalUrl = req.url
+    req.query = { access_token: 'olp_fromquery' }
+    const validate = sinon.stub(PersonalAccessTokenManager, 'validateToken').resolves({
+      userId: 'user-123',
+      email: 'test@example.com',
+      scopes: ['git_bridge'],
+    })
+
+    await Oauth2TokenInfoController.getTokenInfo(req, res)
+    expect(validate.calledWith('olp_fromquery')).toBe(true)
+    expect(req.originalUrl).not.toContain('olp_fromquery')
+    expect(req.query.access_token).not.toContain('olp_fromquery')
+  })
 })

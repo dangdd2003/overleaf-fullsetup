@@ -1,0 +1,268 @@
+extends ../../../../app/views/layout-website-redesign
+
+block vars
+	- isWebsiteRedesign = true
+
+mixin contactLink()
+	if contactEmail
+		a(href='mailto:' + contactEmail)= contactEmail
+	else
+		| the administrator of this instance
+
+mixin legalTab(id, title, active)
+	li(role='presentation')
+		a.nav-link(
+			class={active}
+			href='#' + id
+			aria-controls=id
+			role='tab'
+			id=id + '-tab'
+			data-bs-toggle='tab'
+			data-bs-target='#' + id
+			data-ol-bookmarkable-tab
+			aria-selected=active ? 'true' : 'false'
+			tabindex=active ? undefined : '-1'
+		)= title
+
+mixin legalPane(id, heading, active)
+	.tab-pane(
+		class={active}
+		role='tabpanel'
+		id=id
+		aria-labelledby=id + '-tab'
+	)
+		.row.section-row
+			.col-12.col-lg-12
+				.no-card
+					div
+						h2= heading
+						p Last Modified: #{lastModified}
+						block
+
+block content
+	- var cellStyle = 'border:1px solid black;border-collapse:collapse;padding:8px'
+
+	main.content.cms-page.content-page#main-content
+		.content-container
+			section
+				.row.section-row
+					.col-12.col-lg-12
+						.no-card
+							div
+								h2 #{appName} Privacy &amp; Terms Overview
+								p Last Modified: #{lastModified}
+								p Thank you for using #{appName}!
+								p
+									| #{appName} is free and open-source software, licensed under the
+									|
+									a(href='https://www.gnu.org/licenses/agpl-3.0.html') GNU Affero General Public License v3.0
+									|
+									| (AGPL-3.0). It costs nothing to use: there are no subscriptions, paid plans, ads or trackers. Anyone may self-host it, modify it, fork it, keep developing it, and use it for any purpose, as long as they follow the AGPL.
+								p
+									| Below you will find the full Terms of Service, Privacy Notice, Cookie Policy, Security Overview and Acceptable Use Policy for this instance of #{appName}. If you have any questions, please contact
+									|
+									+contactLink()
+									| .
+
+			section
+				.row.section-row
+					.col-sm-12
+						.ol-tabs(data-ol-bookmarkable-tabset)
+							.nav-tabs-container
+								ul.nav.nav-tabs(role='tablist')
+									+legalTab('Terms', 'Terms of Service', true)
+									+legalTab('Privacy', 'Privacy Notice')
+									+legalTab('Cookies', 'Cookie Policy')
+									+legalTab('Security', 'Security Overview')
+									+legalTab('Use', 'Acceptable Use Policy')
+
+							.tab-content
+								+legalPane('Terms', appName + ' Terms of Service', true)
+									p
+										| These terms of service (the
+										|
+										strong “Terms”
+										| ) govern your use of this instance of #{appName} (the
+										|
+										strong “Service”
+										| ). The Service runs free and open-source software (the
+										|
+										strong “Software”
+										| ) that is developed by its community of contributors and hosted by the administrator of this instance (the
+										|
+										strong “Operator”
+										| ).
+									p
+										| By creating an account or using the Service, you agree to these Terms. If you do not agree, please do not use the Service.
+
+									h3 The Software is Free and Open Source
+									p
+										| The Software is licensed under the
+										|
+										a(href='https://www.gnu.org/licenses/agpl-3.0.html') GNU Affero General Public License v3.0
+										| . Its source code is available at
+										|
+										a(href=sourceUrl)= sourceUrl
+										| .
+									p
+										| You are free to run, study, change, share and fork the Software, and to use it for any purpose, including commercial purposes, as long as you follow the AGPL. For example, if you run a modified version that people use over a network, you must offer those users its source code. Nothing in these Terms limits the rights the AGPL gives you.
+									p
+										| Using the Software and this Service costs nothing. There are no subscriptions, paid plans, payments or refunds.
+
+									h3 Your Stuff &amp; Your Privacy
+									p
+										| You keep ownership of everything you create or upload, including your documents, files and projects (your
+										|
+										strong “Stuff”
+										| ). The Operator claims no ownership of it. You give the Operator only the permission needed to run the Service for you: to store, back up, compile and display your Stuff to you and to the people you share it with.
+									p
+										| Your Stuff is never sold, and it is not used to train AI models. You are responsible for your Stuff and for making sure you have the right to use it.
+
+									h3 Sharing Your Stuff
+									p
+										| You choose who can see and edit each project, including collaborators and anyone with a share link. Only share content that you have the right to share.
+
+									h3 Registering with us
+									p
+										| Keep your password secret and give accurate account information. You are responsible for activity on your account. If you think someone else has used your account, tell the Operator straight away.
+
+									h3 Optional Features &amp; Third Parties
+									p
+										| Every extra feature is turned off unless the Operator turns it on. This includes AI assistance, Git integration, GitHub and Google Drive sync, and email delivery. When one of these features is on and you use it, the content you use it with is sent to the outside provider the Operator has set up, and that provider's own terms apply. AI output may be wrong, so check it before you rely on it.
+
+									h3 Usage Limits
+									p
+										| The Operator may set limits, such as storage, compile time, file size, number of projects or request rates, to keep the Service fair and working for everyone.
+
+									h3 Your Responsibilities
+									p
+										| You must follow the laws that apply to you and the Acceptable Use Policy. Keep your own copies of important work, for example by downloading your projects. Backups made by the Operator are not a promise that your data can be recovered.
+
+									h3 Self-hosting
+									p
+										| If you run your own copy of the Software, you are the Operator of that copy. You control its data and are responsible for following the laws that apply to it, including privacy laws. You may change these Terms for your own copy to suit it. This page is a starting point and is not legal advice.
+
+									h3 Termination
+									p
+										| You can stop using the Service and delete your account at any time. The Operator may suspend or remove accounts that break these Terms. After an account is deleted, copies of its data may stay in backups for a limited time.
+
+									h3 “AS-IS” Disclaimer &amp; Limitation of Liability
+									p
+										| The Software is provided “AS IS”, without warranty of any kind, as set out in sections 15 and 16 of the AGPL-3.0. Its contributors are not liable for any damages that come from using it. The Operator provides the Service on the same terms and, as far as the law allows, is not liable for lost data or for the Service being unavailable.
+
+									h3 Trademarks
+									p
+										| “Overleaf” is a trademark of Digital Science. This project is an independent community build of the open-source Overleaf code. It is not affiliated with Digital Science and is not endorsed by them.
+
+									h3 Changes to these Terms
+									p
+										| The Operator may update these Terms. The “Last Modified” date shows when they last changed. If you keep using the Service after a change, you accept the new Terms.
+
+								+legalPane('Privacy', appName + ' Privacy Notice')
+									p
+										| This notice explains what data this instance of #{appName} holds and how it is used. Your data is held only by the Operator of this instance. The Software's contributors do not run this instance and do not receive your data.
+
+									h3 What we collect
+									ul
+										li Account information: your email address, your name and your password. The password is stored only as a bcrypt hash.
+										li Your Stuff: the projects, files and version history you create.
+										li Technical logs: IP address, browser user agent and timestamps, kept for security and to fix problems.
+
+									h3 How we use it
+									p
+										| We use this data only to run the Service: to sign you in, to store, compile and sync your projects, to let you collaborate, and to keep the Service secure.
+
+									h3 What we never do
+									ul
+										li Sell your data.
+										li Show ads or use advertising or analytics trackers.
+										li Use your Stuff to train AI models.
+
+									h3 Sharing
+									p
+										| Your data is shared only with the collaborators you choose, and with outside providers for optional features that the Operator turns on and that you choose to use. See “Optional Features &amp; Third Parties” in the Terms of Service. The Operator may also disclose data when the law requires it.
+
+									h3 Retention
+									p
+										| Your account and projects are kept until you or an administrator delete them. Copies in backups are removed over time. The Operator decides how long logs are kept.
+
+									h3 Your rights
+									p
+										| You can view and correct your account details, download your projects, and delete your projects or your whole account. Depending on where you live, local law may give you more rights. To use them, contact
+										|
+										+contactLink()
+										| .
+
+								+legalPane('Cookies', appName + ' Cookie Policy')
+									p
+										| #{appName} uses only the cookies and browser storage that it needs to work. It sets no analytics, advertising or tracking cookies, so there is nothing to opt out of.
+
+									table(style='border:1px solid black;border-collapse:collapse')
+										tbody
+											tr
+												th(style=cellStyle) Name
+												th(style=cellStyle) Type
+												th(style=cellStyle) Purpose of cookie
+												th(style=cellStyle) Opt-out
+											tr
+												td(style=cellStyle)
+													code overleaf_session2
+												td(style=cellStyle) Session cookie
+												td(style=cellStyle) Authentication
+												td(style=cellStyle) necessary
+											tr
+												td(style=cellStyle)
+													code doc.*
+													| ,
+													|
+													code editor.*
+													| ,
+													|
+													code layout.*
+													| ,
+													|
+													code pdf.*
+												td(style=cellStyle) Local storage
+												td(style=cellStyle) Editor preferences
+												td(style=cellStyle) necessary
+
+									p
+										| You can block or delete cookies in your browser settings. If you block the session cookie, you will not be able to sign in.
+
+								+legalPane('Security', appName + ' Security Overview')
+									h3 Open Code
+									p
+										| The full source code is public, so anyone can check how the Software handles data.
+
+									h3 Secure Storage &amp; Transfers
+									p
+										| Passwords are hashed with bcrypt and are never stored in plain text. How data is encrypted while it travels and while it is stored depends on how the Operator sets up the instance. We recommend serving every instance over HTTPS only.
+
+									h3 Backups
+									p
+										| Backups are managed by the Operator. Keep your own copies of important projects.
+
+									h3 Reporting Vulnerabilities
+									p
+										| Report problems in the Software itself through the
+										|
+										a(href=sourceUrl) source repository
+										| . Report problems with this instance, such as with accounts, data or configuration, to
+										|
+										+contactLink()
+										| .
+
+								+legalPane('Use', appName + ' Acceptable Use Policy')
+									p You agree not to misuse the Service. In particular, you will not:
+									ul
+										li Store, share or publish illegal content, or content that infringes the rights of others.
+										li Upload malware or use the Service to attack other systems.
+										li Probe, scan or test the Service for weaknesses, or try to get around its security or limits.
+										li Access accounts, projects or data that you have no permission to access.
+										li Send spam or phishing, or harass or abuse other people.
+										li Overload the Service with excessive automated requests or compile jobs.
+									p
+										| The Operator may remove content or suspend accounts that break this policy. To report abuse, contact
+										|
+										+contactLink()
+										| .

@@ -24,6 +24,7 @@ export const READ_CAPABLE = new Set([
   'jina',
   'exa',
   'parallel',
+  'mcp',
 ])
 
 const MAX_PAUSE_MS = 10 * 60 * 1000 // 10 minutes

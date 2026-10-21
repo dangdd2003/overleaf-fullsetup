@@ -5,7 +5,7 @@ const OPENAPI_SPEC = {
     title: 'Overleaf MCP Web API',
     version: '1.0.0',
     description:
-      'REST API powering the Overleaf Model Context Protocol (MCP) microservice and Custom GPT Actions.',
+      'REST API powering the Overleaf Model Context Protocol (MCP) microservice and Custom GPT Actions. Errors use the McpError envelope ({code, message, hint?, details?, errorId?}). Limits: 600 requests per minute per client IP (checked before authentication) and 120 per token; over a limit the response is 429 code rate_limited with a Retry-After header. Request bodies must be application/json (other content types get 400 validation_error); a body over the route limit (about 12 MB, or 70 MB for POST .../file) gets 413 payload_too_large.',
   },
   servers: [{ url: '/api/v0/mcp' }],
   components: {
@@ -41,6 +41,7 @@ const OPENAPI_SPEC = {
       post: {
         summary: 'Create project',
         operationId: 'createProject',
+        description: 'Creates the project from a template, then adds initialFiles and mainTex. If adding the files fails, the new project is deleted again and the call returns 502 upstream_error, so a retry does not create a duplicate. If that delete also fails, the 502 carries details.projectId so the project can be removed by hand.',
         responses: { '200': { description: 'Created project' } },
       },
     },
@@ -63,7 +64,7 @@ const OPENAPI_SPEC = {
         responses: { '200': { description: 'Project details' } },
       },
       delete: {
-        summary: 'Permanently delete a project (owner only, requires confirm)',
+        summary: 'Permanently delete a project (owner only)',
         operationId: 'deleteProject',
         responses: { '200': { description: 'Project deleted' } },
       },
@@ -72,7 +73,7 @@ const OPENAPI_SPEC = {
       patch: {
         summary: 'Update name, compiler, image, spell check or root document',
         operationId: 'updateProjectSettings',
-        responses: { '200': { description: 'Before/after changes' } },
+        responses: { '200': { description: 'JSON object {changes, settings}. changes is an array of {field, before, after, changed} for each field sent (rootDocId is reported as rootDocPath); settings is the project settings after the update.' } },
       },
     },
     '/projects/{projectId}/status': {
@@ -124,7 +125,10 @@ const OPENAPI_SPEC = {
       post: {
         summary: 'Upload a binary file from base64 content or a URL',
         operationId: 'uploadFile',
-        responses: { '200': { description: 'Stored file' } },
+        responses: {
+          '200': { description: 'Stored file' },
+          '413': { description: 'The JSON body is over 70 MB (payload_too_large). Files over 50 MB are rejected with 400 validation_error.' },
+        },
       },
       delete: {
         summary: 'Delete a file or folder by path',
@@ -174,6 +178,7 @@ const OPENAPI_SPEC = {
       post: {
         summary: 'Trigger project compile',
         operationId: 'compileProject',
+        description: 'Body fields draft and stopOnFirstError must be JSON booleans (true or false); any other value, including the strings "true" and "false", gets 400 validation_error. compiler must be one of xelatex, pdflatex, latex, lualatex; it is applied to this build only (the stored project compiler is unchanged) and reported as compiler. Compile failures return 200 with status failure, timedout or unavailable.',
         responses: { '200': { description: 'Compile output' } },
       },
     },
@@ -181,14 +186,20 @@ const OPENAPI_SPEC = {
       get: {
         summary: 'Get compile log',
         operationId: 'getCompileLog',
-        responses: { '200': { description: 'Raw build log' } },
+        responses: {
+          '200': { description: 'Raw build log' },
+          '413': { description: 'The log is larger than the cap (output_too_large).' },
+        },
       },
     },
     '/projects/{projectId}/compile/diagnostics': {
       get: {
         summary: 'Parsed compile log: errors, warnings, bad boxes and advice',
         operationId: 'getCompileDiagnostics',
-        responses: { '200': { description: 'Structured log diagnostics' } },
+        responses: {
+          '200': { description: 'Structured log diagnostics' },
+          '413': { description: 'The build log is larger than the cap (output_too_large).' },
+        },
       },
     },
     '/projects/{projectId}/compile/pdf-page': {
@@ -215,7 +226,7 @@ const OPENAPI_SPEC = {
     },
     '/projects/{projectId}/compile/pdf-overview': {
       get: {
-        summary: 'Thumbnails of up to 12 pages of a build in one image, with what measuring each page found',
+        summary: 'Thumbnails of up to 40 pages of a build in one image, with what measuring each page found',
         operationId: 'getCompiledPdfOverview',
         parameters: [
           { name: 'projectId', in: 'path', required: true, schema: { type: 'string' } },
@@ -250,6 +261,7 @@ const OPENAPI_SPEC = {
           { name: 'projectId', in: 'path', required: true, schema: { type: 'string' } },
           { name: 'buildId', in: 'query', required: true, schema: { type: 'string' }, description: 'The newer build' },
           { name: 'beforeBuildId', in: 'query', required: false, schema: { type: 'string' }, description: 'The older build; defaults to the one compiled before buildId' },
+          { name: 'pages', in: 'query', required: false, schema: { type: 'string', pattern: '^[1-9]\\d*(,[1-9]\\d*)*$' }, description: 'Comma-separated 1-based page numbers of the newer build to compare, e.g. 3,4. A diff compares at most 40 pages, so pass this when the build is longer; without it a build with more than 40 changed pages fails with 502 upstream_error. Invalid values give 400 validation_error.' },
           { name: 'clsiserverid', in: 'query', required: false, schema: { type: 'string' } },
         ],
         responses: { '200': { description: 'Changed pages, regions and an annotated image' } },
@@ -321,6 +333,7 @@ const OPENAPI_SPEC = {
       post: {
         summary: 'Create a tag (returns the existing tag when the name is taken)',
         operationId: 'createTag',
+        description: 'name is trimmed and must be 1 to 50 characters; a longer name gets 400 validation_error.',
         responses: { '200': { description: 'The tag' } },
       },
     },
@@ -328,6 +341,7 @@ const OPENAPI_SPEC = {
       patch: {
         summary: 'Rename a tag or change its colour',
         operationId: 'updateTag',
+        description: 'A new name must be 1 to 50 characters; a longer name gets 400 validation_error.',
         responses: { '200': { description: 'The tag before and after' } },
       },
       delete: {
@@ -354,7 +368,10 @@ const OPENAPI_SPEC = {
       get: {
         summary: 'Download compiled PDF',
         operationId: 'getCompilePdf',
-        responses: { '200': { description: 'PDF stream' } },
+        responses: {
+          '200': { description: 'PDF stream' },
+          '413': { description: 'The PDF is over the download cap (output_too_large), checked before streaming.' },
+        },
       },
     },
   },

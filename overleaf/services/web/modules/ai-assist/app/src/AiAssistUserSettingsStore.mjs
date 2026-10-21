@@ -1,5 +1,6 @@
 import { AiAssistUserSettingsModel } from './AiAssistUserSettingsModel.mjs'
 import { seal, open } from './connectors/ConnectorCrypto.mjs'
+import { normalizeProviderBaseUrl } from './AiAssistProviders.mjs'
 
 export const MASKED_SECRET = '••••••••'
 
@@ -26,9 +27,13 @@ function sealProvider(userId, slot, incoming, existing) {
     apiKey = seal(incoming.apiKey.trim(), providerContext(userId, slot, 'apiKey'))
   }
 
+  const type = String(incoming.type)
+  const rawBaseUrl = typeof incoming.baseUrl === 'string' ? incoming.baseUrl.trim() : ''
+  const baseUrl = rawBaseUrl ? normalizeProviderBaseUrl(type, rawBaseUrl) : ''
+
   return {
-    type: String(incoming.type),
-    baseUrl: typeof incoming.baseUrl === 'string' ? incoming.baseUrl.trim() : '',
+    type,
+    baseUrl,
     apiKey,
     model: typeof incoming.model === 'string' ? incoming.model.trim() : '',
     modelName: typeof incoming.modelName === 'string' ? incoming.modelName.trim() : '',

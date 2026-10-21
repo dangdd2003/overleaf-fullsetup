@@ -3542,7 +3542,9 @@ describe('AiAssistWebTools', function () {
         )
 
         const res = await tools.search({ query: 'failover test' }, { useCache: false })
-        expect(attemptedUrls).to.deep.equal([
+        // Each endpoint is asked over MCP first, then the plain contract, so
+        // the order of endpoints is what counts here
+        expect([...new Set(attemptedUrls)]).to.deep.equal([
           'https://mcp-1.example.com/search',
           'https://mcp-2.example.com/search',
         ])
@@ -3815,6 +3817,27 @@ describe('AiAssistWebTools', function () {
           url: 'https://r0.example.com/',
           snippet: 'snippet 0',
         })
+      })
+
+      it('answers through the contract when the URL refuses the MCP handshake', async () => {
+        const seen = []
+        const fetchFn = async (url, init) => {
+          // The MCP client's legacy SSE GET has no body
+          const body = init.body ? JSON.parse(init.body) : {}
+          seen.push(body.method ?? 'q')
+          if (!init.body || body.method) return new Response('Not Found', { status: 404 })
+          return new Response(
+            JSON.stringify({ results: [{ title: 'Contract', url: 'https://contract.example.com', snippet: 'plain' }] }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          )
+        }
+        const tools = new AiAssistWebTools(
+          { providers: { mcp: { enabled: true, serverUrls: ['https://search.internal.lan/v1/search'] } } },
+          { fetchFn }
+        )
+        const res = await tools.search({ query: 'contract' }, { useCache: false })
+        expect(res.results[0]).to.include({ title: 'Contract', url: 'https://contract.example.com' })
+        expect(seen[seen.length - 1]).to.equal('q')
       })
 
       it('truncates each snippet to 600 characters', async () => {

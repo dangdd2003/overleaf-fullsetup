@@ -20,7 +20,11 @@ import { AgentTool } from '../agent/tools/registry'
 import { EditRequest } from '../agent/project-handle'
 import { locateAnchorInText } from '../agent/latex-matcher'
 import { TranscriptEntry } from '../agent/agent-messages'
-import { AgentEvent, dispatchAiEditHighlight } from '../agent/agent-events'
+import {
+  AgentEvent,
+  ApprovalContext,
+  dispatchAiEditHighlight,
+} from '../agent/agent-events'
 import { AgentMode } from '../agent/agent-mode'
 import {
   AgentState,
@@ -42,6 +46,7 @@ import {
   setBackgroundRunMode,
   sendBackgroundRunMessage,
   takeBackRunMessage,
+  sendRunMessageNow,
   setDetachedRun,
 } from '../agent/background/background-run-client'
 import { followDetachedRun } from '../agent/background/detached-run-follower'
@@ -96,11 +101,8 @@ export function useAgentRun({
   const chatIdRef = useRef(chatId)
   chatIdRef.current = chatId
 
-  const [approvalContext, setApprovalContext] = useState<{
-    startLine?: number
-    kind?: string
-    connector?: any
-  } | null>(null)
+  const [approvalContext, setApprovalContext] =
+    useState<ApprovalContext | null>(null)
 
   const userSettingsContext = useContext(UserSettingsContext)
   const projectContext = useContext(ProjectContext)
@@ -209,8 +211,8 @@ export function useAgentRun({
     if (event.type === 'awaitingApproval') {
       if (event.kind === 'connector' || event.kind === 'connectorAuth') {
         setApprovalContext({ kind: event.kind, connector: event.connector })
-      } else if ((event as any).edit) {
-        const edit = (event as any).edit
+      } else if (event.edit) {
+        const edit = event.edit
       if (typeof edit?.startLine === 'number' && edit.startLine > 0) {
         setApprovalContext({ startLine: edit.startLine })
       } else if (edit?.path) {
@@ -364,6 +366,19 @@ export function useAgentRun({
     [whenRunEnded]
   )
 
+  /**
+   * Has the run answer a message `queueMessage` handed it now, instead of
+   * after the reply it is writing. A message it has read, or a run that has
+   * ended, needs nothing more: its events say what became of the message.
+   */
+  const sendQueuedNow = useCallback(async (id: string): Promise<void> => {
+    const runId = currentRunIdRef.current
+    if (!runId) return
+    await sendRunMessageNow(projectIdRef.current, runId, id).catch(err => {
+      debugConsole.warn('Failed to send the queued message now:', err)
+    })
+  }, [])
+
   const setMode = useCallback((mode: AgentMode) => {
     // Before the re-render, so a send in the same tick starts in the new mode.
     modeRef.current = mode
@@ -428,10 +443,13 @@ export function useAgentRun({
       overrides: {
         tools?: Record<string, AgentTool>
         systemPrompt?: string
+        /** A `/compact` run: summarizes the chat, no tools, no reply. */
+        compact?: { trigger: 'manual' | 'auto'; instructions?: string }
       } = {}
-    ) => {
+    ): Promise<boolean | undefined> => {
       const runTools = overrides.tools ?? tools
       const runSystemPrompt = overrides.systemPrompt ?? systemPrompt
+      const compact = overrides.compact
       // The chat this run belongs to. The panel may move to another chat while
       // the run is being started; the run then carries on for this one.
       const runChatId = chatIdRef.current
@@ -468,13 +486,18 @@ export function useAgentRun({
           ...current,
           transcript,
           running: true,
+          // Shown at once: the run's compactStarted event confirms it
+          compacting: compact
+            ? { trigger: compact.trigger, phase: 'masking' }
+            : null,
+          retrying: null,
           stoppedByUser: false,
           error: null,
         }))
       }
 
       // If a narrow system prompt was supplied (e.g. compile-log fix), keep in-page
-      if (runSystemPrompt) {
+      if (runSystemPrompt && !compact) {
         abortRef.current?.abort()
         const controller = new AbortController()
         abortRef.current = controller
@@ -572,6 +595,13 @@ export function useAgentRun({
             : null,
           ...(connectorIds ? { connectorIds } : {}),
           trackActive: false,
+          ...(compact
+            ? {
+                kind: 'compact' as const,
+                trigger: compact.trigger,
+                instructions: compact.instructions,
+              }
+            : {}),
         })
         if (leftChat()) {
           // Its chat was left while the request was out: the run goes on in
@@ -626,12 +656,19 @@ export function useAgentRun({
             }))
           },
         })
+        // Followed on screen: the caller can wait on its end (whenRunEnded)
+        return true
       } catch (err: any) {
         if (leftChat()) return
         setState(current => ({
           ...current,
           running: false,
-          error: { code: 'runFailed', message: err.message },
+          compacting: null,
+          // A refused compaction says why (chatBusy)
+          error: {
+            code: compact ? (err?.code ?? 'compactFailed') : 'runFailed',
+            message: err.message,
+          },
         }))
       }
     },
@@ -813,6 +850,7 @@ export function useAgentRun({
     isTitleGenerated: state.isTitleGenerated,
     queueMessage,
     unqueueMessage,
+    sendQueuedNow,
     whenRunEnded,
     running: state.running,
     error: state.error,

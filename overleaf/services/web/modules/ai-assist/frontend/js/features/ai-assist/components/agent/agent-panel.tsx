@@ -99,6 +99,19 @@ import {
 import { useAiDock, DockPosition } from "../../hooks/use-ai-dock";
 import { useEditorThemeStyles } from "../../hooks/use-editor-theme-styles";
 import { StreamCatchUpContext } from "../../hooks/use-stream-reveal";
+import { useContextUsage } from "../../hooks/use-context-usage";
+import { LocalSlashCommandId } from "../../agent/slash-commands/local";
+import { compactStatusLabel } from "./compact-boundary";
+import {
+  AUTO_COMPACT_SETTINGS,
+  CompactOutcome,
+  countUserTurns,
+  isCompactError,
+  shouldAutoCompact,
+  userTurnsSinceAutoCompact,
+  userTurnsSinceBoundary,
+} from "../../agent/context/compaction";
+import { latestCompactIndex } from "../../agent/agent-messages";
 
 /** The PDF fields of the envelope: what the viewer shows and what the user picked in it. */
 function pdfEnvelopeFields(
@@ -114,6 +127,8 @@ function pdfEnvelopeFields(
   if (pdfContext?.areas.length) fields.pdfAreas = pdfContext.areas;
   return fields;
 }
+
+type UserEntry = Extract<TranscriptEntry, { role: "user" }>;
 
 export async function buildUserEntry({
   handle,
@@ -157,14 +172,18 @@ export async function buildUserEntry({
   pdfContext?: PdfTurnContextSnapshot | null;
   /** Attached images (e.g. pasted or uploaded photos). */
   images?: ChatImage[];
-}): Promise<TranscriptEntry> {
+}): Promise<Extract<TranscriptEntry, { role: "user" }>> {
   const id = `u${transcript.length}`;
-  const previousUser = [...transcript]
+  const lastUser = [...transcript]
     .reverse()
-    .find((entry) => entry.role === "user") as
-    | Extract<TranscriptEntry, { role: "user" }>
-    | undefined;
-  const turn = (previousUser?.envelopeState?.turn ?? 0) + 1;
+    .find((entry): entry is UserEntry => entry.role === "user");
+  // The envelope is a delta on the turn before it, unless a compact boundary
+  // lies between: the model no longer sees that turn, so this one is full
+  const boundary = latestCompactIndex(transcript);
+  const previousUser =
+    lastUser && transcript.indexOf(lastUser) > boundary ? lastUser : undefined;
+  // Turns keep counting across a boundary, so "unchanged since turn N" stays unique
+  const turn = (lastUser?.envelopeState?.turn ?? 0) + 1;
 
   const activeSel =
     attachedSelection !== undefined
@@ -304,6 +323,8 @@ function latestAssistantIndexOf(transcript: TranscriptEntry[]) {
   for (let i = transcript.length - 1; i >= 0; i--) {
     const entry = transcript[i];
     if (entry.role === "user" && !entry.pending) return -1;
+    // A reply summarized away by a compaction cannot be redone
+    if (entry.role === "compact") return -1;
     if (entry.role === "assistant") return i;
   }
   return -1;
@@ -375,6 +396,7 @@ function AgentPanelInner({
     onDecision,
     queueMessage,
     unqueueMessage,
+    sendQueuedNow,
     whenRunEnded,
     needsConsent,
     allowConsent,
@@ -488,6 +510,8 @@ function AgentPanelInner({
   // Queued sends not yet handed to a run, and those taken back before they were
   const waitingIdsRef = useRef<Set<string>>(new Set());
   const takenBackIdsRef = useRef<Set<string>>(new Set());
+  // Asked to be sent now before a run held them: sent now once one does
+  const sendNowIdsRef = useRef<Set<string>>(new Set());
   // Moves on with the chat; a send still on its way leaves the new chat alone
   const chatEpochRef = useRef(0);
   // The chat each epoch was spent in, as it was left: a send still on its way
@@ -578,8 +602,9 @@ function AgentPanelInner({
   const promptHistory = useMemo(
     () =>
       state.transcript
-        .filter((entry) => entry.role === "user" && Boolean(entry.text?.trim()))
-        .map((entry) => entry.text.trim()),
+        .flatMap((entry) =>
+          entry.role === "user" && entry.text?.trim() ? [entry.text.trim()] : [],
+        ),
     [state.transcript],
   );
 
@@ -783,6 +808,160 @@ function AgentPanelInner({
     [run, whenRunEnded],
   );
 
+  // A compaction under way, from the moment it is asked for until its run has
+  // ended. The server would take a message sent into it as part of the chat,
+  // so sends wait (auto) or are refused (composer) meanwhile.
+  const compactingRef = useRef(false);
+  const [compactBusy, setCompactBusy] = useState(false);
+  const setCompacting = useCallback((on: boolean) => {
+    compactingRef.current = on;
+    setCompactBusy(on);
+  }, []);
+  // Settled by the effect below once the compaction's run has ended
+  const compactWaiterRef = useRef<{
+    before: Set<string>;
+    /** The run has been seen going, so its end can be told from its start */
+    seenRunning: boolean;
+    resolve: (outcome: CompactOutcome) => void;
+  } | null>(null);
+  // Per chat, this session: automatic compactions failed in a row (circuit
+  // breaker) and the user turn count at the last automatic attempt (thrash guard)
+  const autoCompactRef = useRef(
+    new Map<string, { failures: number; atUserTurns: number | null }>(),
+  );
+  // "Nothing to compact yet": shown as information, never as an error
+  const [compactNotice, setCompactNotice] = useState<string | null>(null);
+  const contextUsageRef = useRef<ReturnType<typeof useContextUsage>>(null);
+
+  useEffect(() => {
+    const waiter = compactWaiterRef.current;
+    if (!waiter) return;
+    if (state.running) {
+      waiter.seenRunning = true;
+      return;
+    }
+    if (!waiter.seenRunning) return;
+    compactWaiterRef.current = null;
+    const added = state.transcript.some(
+      (entry) => entry.role === "compact" && !waiter.before.has(entry.id),
+    );
+    waiter.resolve(
+      added
+        ? "done"
+        : state.error?.code === "compactNothing"
+          ? "nothing"
+          : state.stoppedByUser
+            ? "stopped"
+            : "failed",
+    );
+  }, [state.running, state.transcript, state.error, state.stoppedByUser]);
+
+  /**
+   * Compacts the chat on screen through the run machinery and waits for the
+   * run to end. Called from inside the send line only, so it never races a
+   * send. The server appends and saves the boundary; the reducer mirrors it.
+   */
+  const runCompaction = useCallback(
+    async ({
+      trigger,
+      instructions,
+    }: {
+      trigger: "manual" | "auto";
+      instructions?: string;
+    }): Promise<CompactOutcome> => {
+      const epoch = chatEpochRef.current;
+      await whenRunEnded();
+      if (chatEpochRef.current !== epoch) return "failed";
+      const before = liveTranscriptRef.current;
+      setCompacting(true);
+      setCompactNotice(null);
+      try {
+        const done = new Promise<CompactOutcome>((resolve) => {
+          compactWaiterRef.current = {
+            before: new Set(before.map((entry) => entry.id)),
+            seenRunning: runningRef.current,
+            resolve,
+          };
+        });
+        const started = await run(before, {
+          compact: { trigger, ...(instructions ? { instructions } : {}) },
+        });
+        if (!started) {
+          compactWaiterRef.current = null;
+          return "failed";
+        }
+        const outcome = await done;
+        if (outcome === "nothing" && chatEpochRef.current === epoch) {
+          // Not an error: there is just nothing to gain yet
+          setState((current) =>
+            current.error?.code === "compactNothing"
+              ? { ...current, error: null }
+              : current,
+          );
+          setCompactNotice(
+            t(
+              "ai_assist_compact_nothing",
+              "Nothing to compact yet: the conversation would not get shorter.",
+            ),
+          );
+        }
+        return outcome;
+      } finally {
+        if (chatEpochRef.current === epoch) setCompacting(false);
+      }
+    },
+    [run, whenRunEnded, setCompacting, setState, t],
+  );
+
+  /**
+   * Records an automatic attempt for the circuit breaker and thrash guard.
+   * A server auto compaction (mid-run) is not recorded here; the transcript's
+   * boundary is read for it in `wantsAutoCompact`.
+   */
+  const recordAutoCompact = useCallback(
+    (chat: string, outcome: CompactOutcome, userTurns: number) => {
+      const current = autoCompactRef.current.get(chat) ?? {
+        failures: 0,
+        atUserTurns: null,
+      };
+      autoCompactRef.current.set(chat, {
+        failures:
+          outcome === "failed"
+            ? current.failures + 1
+            : outcome === "stopped"
+              ? current.failures
+              : 0,
+        atUserTurns: outcome === "stopped" ? current.atUserTurns : userTurns,
+      });
+    },
+    [],
+  );
+
+  /** Whether a send now should compact the chat first (spec: auto-compact). */
+  const wantsAutoCompact = useCallback(() => {
+    const usage = contextUsageRef.current;
+    if (!usage) return false;
+    const transcript = liveTranscriptRef.current;
+    const memory = autoCompactRef.current.get(chatIdRef.current);
+    const userTurns = countUserTurns(transcript);
+    // The thrash guard counts this session's attempts and the server's
+    // automatic boundaries, whichever came last
+    const sinceAttempt =
+      memory?.atUserTurns == null ? null : userTurns - memory.atUserTurns;
+    const sinceServer = userTurnsSinceAutoCompact(transcript);
+    const sinceLast = [sinceAttempt, sinceServer].filter(
+      (turns): turns is number => turns !== null,
+    );
+    return shouldAutoCompact(AUTO_COMPACT_SETTINGS, {
+      usedTokens: usage.usedTokens,
+      autoCompactAt: usage.thresholds.autoCompactAt,
+      userTurnsSinceBoundary: userTurnsSinceBoundary(transcript),
+      consecutiveFailures: memory?.failures ?? 0,
+      userTurnsSincePreviousAuto:
+        sinceLast.length > 0 ? Math.min(...sinceLast) : null,
+    }).compact;
+  }, []);
+
   // Builds the user entry from scratch and sends it. Shared by `onSend` and
   // the compile-log handoff, so every prompt takes the same path.
   const sendPrompt = useCallback(
@@ -821,7 +1000,17 @@ function AgentPanelInner({
       // way, this does not start a second run. It is shown as queued and handed
       // to the run in flight, which reads it as soon as its current tool calls
       // finish, or once its reply ends, as Claude Code does.
-      const queueing = state.running || sendsInFlightRef.current > 0;
+      // Nothing goes into a compaction's run: the composer refuses, and a
+      // handoff arriving meanwhile is dropped rather than read as chat
+      if (compactingRef.current) return Promise.resolve();
+      setCompactNotice(null);
+      // A chat close to its budget is compacted first; the message waits,
+      // shown as queued, and is sent after the boundary with a full envelope
+      const autoCompact =
+        !state.running && sendsInFlightRef.current === 0 && wantsAutoCompact();
+      if (autoCompact) setCompacting(true);
+      const queueing =
+        state.running || sendsInFlightRef.current > 0 || autoCompact;
       const entryId = queueing
         ? `q${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
         : `u${liveTranscriptRef.current.length}`;
@@ -856,6 +1045,28 @@ function AgentPanelInner({
 
       return enqueueSend(async () => {
         try {
+          if (autoCompact) {
+            if (chatLeft()) return;
+            const chat = chatIdRef.current;
+            const userTurns = countUserTurns(liveTranscriptRef.current);
+            const outcome = await runCompaction({ trigger: "auto" });
+            recordAutoCompact(chat, outcome, userTurns);
+            if (chatLeft()) return;
+            // Stopped: the message is not sent either, as with a stopped run
+            if (outcome === "stopped") {
+              waitingIdsRef.current.delete(entryId);
+              updateTranscript((transcript) =>
+                transcript.filter((entry) => entry.id !== entryId),
+              );
+              setRestoredDraft({ text, command });
+              return;
+            }
+            // A failed automatic compaction leaves the trim to the budget
+            if (outcome === "failed") {
+              setState((current) => ({ ...current, error: null }));
+            }
+            setState((current) => ({ ...current, running: true }));
+          }
           if (takenBack()) return;
           // A message queued behind a run of a chat since left stays saved in
           // that chat; only one that would have started a run still goes
@@ -936,6 +1147,9 @@ function AgentPanelInner({
                 // The run's `userMessage` event clears `pending` once it has
                 // actually read it
                 queuedIdsRef.current.add(entryId);
+                if (sendNowIdsRef.current.has(entryId)) {
+                  void sendQueuedNow(entryId);
+                }
               }
               return;
             }
@@ -958,6 +1172,7 @@ function AgentPanelInner({
         } finally {
           waitingIdsRef.current.delete(entryId);
           takenBackIdsRef.current.delete(entryId);
+          sendNowIdsRef.current.delete(entryId);
         }
       });
     },
@@ -969,12 +1184,17 @@ function AgentPanelInner({
       updateTranscript,
       queueMessage,
       unqueueMessage,
+      sendQueuedNow,
       whenRunEnded,
       startRunWith,
       setState,
       scrollToBottom,
       projectId,
       runDetached,
+      wantsAutoCompact,
+      setCompacting,
+      runCompaction,
+      recordAutoCompact,
     ],
   );
 
@@ -1059,6 +1279,65 @@ function AgentPanelInner({
     });
   }, [state.running, enqueueSend, startRunWith]);
 
+  // The chat's context window usage: the composer's meter and the /context dashboard
+  const contextUsage = useContextUsage(state.transcript);
+  contextUsageRef.current = contextUsage;
+  const [contextOpen, setContextOpen] = useState(false);
+
+  /**
+   * `/compact [instructions]` and the error card's "Compact and continue".
+   * Through the send line, so it cannot race a send; refused while a run,
+   * an approval or a queued message is live (the composer says so).
+   */
+  const compactChat = useCallback(
+    ({
+      trigger = "manual",
+      instructions,
+    }: { trigger?: "manual" | "auto"; instructions?: string } = {}) => {
+      if (
+        runningRef.current ||
+        compactingRef.current ||
+        sendsInFlightRef.current > 0
+      ) {
+        return Promise.resolve<CompactOutcome>("failed");
+      }
+      setCompacting(true);
+      let outcome: CompactOutcome = "failed";
+      return enqueueSend(async () => {
+        outcome = await runCompaction({ trigger, instructions });
+      }).then(() => outcome);
+    },
+    [enqueueSend, runCompaction, setCompacting],
+  );
+
+  /** After a contextExhausted error: compact, then send the last prompt again. */
+  const compactAndContinue = useCallback(async () => {
+    const lastUser = [...liveTranscriptRef.current]
+      .reverse()
+      .find(
+        (entry): entry is UserEntry => entry.role === "user" && !entry.pending
+      );
+    setState((current) => ({ ...current, error: null }));
+    const outcome = await compactChat({ trigger: "manual" });
+    if (outcome !== "done" || !lastUser) return;
+    void sendPrompt({
+      text: lastUser.text,
+      ...(lastUser.command ? { command: lastUser.command } : {}),
+      ...(lastUser.images?.length ? { images: lastUser.images } : {}),
+    });
+  }, [compactChat, sendPrompt, setState]);
+
+  const onLocalCommand = useCallback(
+    (id: LocalSlashCommandId, args?: string) => {
+      // Without a meter (no provider yet) there is nothing to anchor to
+      if (id === "context" && contextUsage) setContextOpen(true);
+      if (id === "compact") {
+        void compactChat({ trigger: "manual", instructions: args });
+      }
+    },
+    [contextUsage, compactChat],
+  );
+
   // A queued message taken back lands in the composer to be edited
   const [restoredDraft, setRestoredDraft] = useState<{
     text: string;
@@ -1102,6 +1381,22 @@ function AgentPanelInner({
       });
     },
     [enqueueSend, unqueueMessage, updateTranscript],
+  );
+
+  /**
+   * Has the run answer a queued message now, as Claude Code's "send now"
+   * does, rather than after the reply it is writing. One not yet handed to a
+   * run is sent now as soon as a run takes it.
+   */
+  const sendNow = useCallback(
+    (entryId: string) => {
+      if (queuedIdsRef.current.has(entryId)) {
+        void sendQueuedNow(entryId);
+      } else if (waitingIdsRef.current.has(entryId)) {
+        sendNowIdsRef.current.add(entryId);
+      }
+    },
+    [sendQueuedNow],
   );
 
   // The blocked run already committed its transcript, user entry included, so
@@ -1231,6 +1526,11 @@ function AgentPanelInner({
         (waitStartRef.current !== null ? now - waitStartRef.current : 0);
       waitedMsRef.current = 0;
       waitStartRef.current = null;
+      // A compaction going on is left to finish off screen, like any run
+      compactWaiterRef.current?.resolve("stopped");
+      compactWaiterRef.current = null;
+      setCompacting(false);
+      setCompactNotice(null);
       const live = detach();
       if (!save) {
         if (live) void stopBackgroundRun(live.runId).catch(() => {});
@@ -1278,7 +1578,7 @@ function AgentPanelInner({
         });
       }
     },
-    [chatId, chatTitle, detach, projectId, state.mode],
+    [chatId, chatTitle, detach, projectId, state.mode, setCompacting],
   );
 
   /** Shows a chat: a new one, or one opened from the history. */
@@ -1462,7 +1762,7 @@ function AgentPanelInner({
         title: chatTitle ? `${chatTitle} (Fork)` : "Forked chat",
       });
       setRestoredDraft({
-        text: entry.text,
+        text: entry.role === "compact" ? "" : entry.text,
         command: entry.role === "user" ? entry.command : undefined,
       });
       const userMessageIds = prefix
@@ -1577,6 +1877,11 @@ function AgentPanelInner({
 
   const latestAssistantIndex = useMemo(
     () => latestAssistantIndexOf(state.transcript),
+    [state.transcript],
+  );
+  // Entries above it are no longer sent: shown dimmed, Rewind only
+  const compactBoundaryIndex = useMemo(
+    () => latestCompactIndex(state.transcript),
     [state.transcript],
   );
 
@@ -1711,12 +2016,14 @@ function AgentPanelInner({
                 <AgentMessageView
                   key={entry.id}
                   entry={entry}
+                  compacted={entryIndex < compactBoundaryIndex}
                   pendingApprovalId={state.pendingApproval?.id ?? null}
                   approvalContext={approvalContext}
                   onDecision={onDecision}
                   isRunning={state.running && entryIndex === liveEntryIndex}
                   webSources={webSources}
                   onTakeBack={takeBack}
+                  onSendNow={sendNow}
                   onRewindPrompt={onRewindPrompt}
                   onForkFromPrompt={onForkFromPrompt}
                   onRewindCode={onRewindCode}
@@ -1741,6 +2048,12 @@ function AgentPanelInner({
               isRunning={true}
               isPaused={Boolean(state.pendingApproval)}
               onWordChange={handleWordChange}
+              fixedLabel={
+                state.compacting
+                  ? compactStatusLabel(t, state.compacting)
+                  : undefined
+              }
+              retry={state.retrying}
               blocks={(() => {
                 const live = state.transcript[liveEntryIndex];
                 return live?.role === "assistant" ? (live.blocks ?? []) : [];
@@ -1760,6 +2073,12 @@ function AgentPanelInner({
               isRunning={false}
             />
           ) : null}
+
+          {compactNotice && !state.running && (
+            <div className="ai-assist-stopped-notice" role="status">
+              <span>{compactNotice}</span>
+            </div>
+          )}
 
           {state.stoppedByUser && (
             <div className="ai-assist-stopped-notice" role="status">
@@ -1793,14 +2112,27 @@ function AgentPanelInner({
               {state.error.code === "contextExhausted" ? (
                 <div className="ai-assist-context-exhausted">
                   <p>{state.error.message}</p>
-                  <OLButton
-                    type="button"
-                    variant="primary"
-                    size="sm"
-                    onClick={onNewChat}
-                  >
-                    {t("ai_assist_start_new_chat", "Start a new chat")}
-                  </OLButton>
+                  <div className="ai-assist-error-actions">
+                    <OLButton
+                      type="button"
+                      variant="primary"
+                      size="sm"
+                      onClick={() => void compactAndContinue()}
+                    >
+                      {t(
+                        "ai_assist_compact_and_continue",
+                        "Compact and continue",
+                      )}
+                    </OLButton>
+                    <OLButton
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      onClick={onNewChat}
+                    >
+                      {t("ai_assist_start_new_chat", "Start a new chat")}
+                    </OLButton>
+                  </div>
                 </div>
               ) : (
                 <>
@@ -1814,7 +2146,12 @@ function AgentPanelInner({
                             ? "Connection Error"
                             : state.error.code === "runFailed"
                               ? "Failed to Start Run"
-                              : "AI Provider Error"}
+                              : isCompactError(state.error.code)
+                                ? t(
+                                    "ai_assist_compact_failed_title",
+                                    "Could not compact the conversation",
+                                  )
+                                : "AI Provider Error"}
                     </span>
                     {state.error.upstreamCode && (
                       <span className="ai-assist-error-badge">
@@ -1837,7 +2174,11 @@ function AgentPanelInner({
                       type="button"
                       variant="secondary"
                       size="sm"
-                      onClick={() => void enqueueSend(() => startRunWith())}
+                      onClick={() =>
+                        isCompactError(state.error?.code)
+                          ? void compactChat({ trigger: "manual" })
+                          : void enqueueSend(() => startRunWith())
+                      }
                     >
                       {t("try_again", "Try again")}
                     </OLButton>
@@ -1889,6 +2230,11 @@ function AgentPanelInner({
         history={promptHistory}
         restoredDraft={restoredDraft}
         showSelectionActions={state.transcript.length > 0}
+        contextUsage={contextUsage}
+        contextOpen={contextOpen}
+        onContextOpenChange={setContextOpen}
+        onLocalCommand={onLocalCommand}
+        compacting={compactBusy || Boolean(state.compacting)}
       />
       <PdfSelectionAction />
 

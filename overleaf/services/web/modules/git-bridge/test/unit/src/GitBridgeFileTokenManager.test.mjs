@@ -165,4 +165,54 @@ describe('GitBridgeFileTokenManager', function () {
       expect(valid).toBe(false)
     })
   })
+
+  describe('blob tokens', function () {
+    const hash = 'a'.repeat(40)
+
+    it('verifies for the project and blob hash it was made for', function () {
+      const token = GitBridgeFileTokenManager.createBlobToken(projectId, hash)
+      expect(typeof token).toBe('string')
+      expect(
+        GitBridgeFileTokenManager.verifyBlobToken(token, projectId, hash)
+      ).toBe(true)
+    })
+
+    it('does not verify for another project or another hash', function () {
+      const token = GitBridgeFileTokenManager.createBlobToken(projectId, hash)
+      expect(
+        GitBridgeFileTokenManager.verifyBlobToken(token, 'other-project', hash)
+      ).toBe(false)
+      expect(
+        GitBridgeFileTokenManager.verifyBlobToken(
+          token,
+          projectId,
+          'b'.repeat(40)
+        )
+      ).toBe(false)
+    })
+
+    it('does not verify as a file token, and a file token does not verify as a blob token', function () {
+      const blobToken = GitBridgeFileTokenManager.createBlobToken(
+        projectId,
+        hash
+      )
+      expect(
+        GitBridgeFileTokenManager.verifyFileToken(blobToken, projectId, hash)
+      ).toBe(false)
+      const fileToken = GitBridgeFileTokenManager.createFileToken(
+        projectId,
+        hash
+      )
+      expect(
+        GitBridgeFileTokenManager.verifyBlobToken(fileToken, projectId, hash)
+      ).toBe(false)
+    })
+
+    it('returns null when signing is unavailable', function () {
+      Settings.security = {}
+      expect(GitBridgeFileTokenManager.createBlobToken(projectId, hash)).toBe(
+        null
+      )
+    })
+  })
 })

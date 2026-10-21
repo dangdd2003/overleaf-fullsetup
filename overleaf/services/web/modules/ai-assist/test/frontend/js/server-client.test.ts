@@ -136,6 +136,41 @@ describe('ServerProviderClient', function () {
     }
   })
 
+  describe('retry policy', function () {
+    it('sends the policy the caller names on the chat relay, and none otherwise', async function () {
+      fakeFetch.resolves(ndjsonResponse(['{"type":"done"}\n']))
+      const request: any = { system: 's', messages: [], maxTokens: 10 }
+      for await (const _chunk of new ServerProviderClient(settings, { retryPolicy: 'interactive' }).streamChat(request)) {
+        // drained
+      }
+      expect(JSON.parse(fakeFetch.firstCall.args[1].body).retryPolicy).to.equal('interactive')
+
+      fakeFetch.resetHistory()
+      fakeFetch.resolves(ndjsonResponse(['{"type":"done"}\n']))
+      for await (const _chunk of new ServerProviderClient(settings).streamChat(request)) {
+        // drained
+      }
+      expect(JSON.parse(fakeFetch.firstCall.args[1].body)).to.not.have.property('retryPolicy')
+    })
+
+    it('passes a retrying chunk from the relay through to the caller', async function () {
+      const retry = '{"type":"retrying","attempt":1,"maxRetries":10,"retryInMs":500,"retryAt":1,"message":"Connection timed out"}\n'
+      fakeFetch.resolves(ndjsonResponse([retry, '{"type":"done"}\n']))
+      const chunks: any[] = []
+      for await (const chunk of new EditorTextClient(settings).streamChat({
+        system: 's',
+        messages: [],
+        maxTokens: 10,
+        retryPolicy: 'inline',
+      })) {
+        chunks.push(chunk)
+      }
+      expect(chunks[0]).to.deep.include({ type: 'retrying', attempt: 1, message: 'Connection timed out' })
+      expect(JSON.parse(fakeFetch.firstCall.args[1].body).retryPolicy).to.equal('inline')
+      expect(JSON.parse(fakeFetch.firstCall.args[1].body).request).to.not.have.property('retryPolicy')
+    })
+  })
+
   describe('EditorTextClient', function () {
     it('sends the editor features to the text-only route, never with tools', async function () {
       fakeFetch.resolves(ndjsonResponse(['{"type":"text","text":"ok"}\n', '{"type":"done"}\n']))

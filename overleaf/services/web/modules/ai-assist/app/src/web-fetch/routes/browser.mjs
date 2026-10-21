@@ -1,5 +1,5 @@
 import Settings from '@overleaf/settings'
-import { ProviderError } from '../../AiAssistProviders.mjs'
+import { ProviderError } from '../../AiAssistErrors.mjs'
 import {
   MAX_DOWNLOAD_BYTES,
   MAX_PDF_BYTES,

@@ -6,13 +6,20 @@ import defaultManager from './AiAssistRunManager.mjs'
 import defaultStore, { TERMINAL_STATUSES } from './AiAssistRunStore.mjs'
 import defaultSubscriber from './AiAssistRunSubscriber.mjs'
 import defaultUserSettingsStore from './AiAssistUserSettingsStore.mjs'
-import { validateSafeProviderBaseUrl } from './AiAssistProviders.mjs'
+import {
+  normalizeProviderBaseUrl,
+  validateSafeProviderBaseUrl,
+} from './AiAssistProviders.mjs'
 import {
   fetchOnlyWebSettings,
   normalizeWebSearchSettings,
 } from './AiAssistWebTools.mjs'
 import { MODES } from './AiAssistModePolicy.mjs'
 import { messageImagesProblem, suggestCaptureTitle } from './AiAssistImages.mjs'
+import {
+  COMPACT_INSTRUCTIONS_MAX_CHARS,
+  compactEntriesProblem,
+} from './AiAssistChatHistoryStore.mjs'
 import { normalizeCommandInvocation } from './AiAssistSlashCommands.mjs'
 import SessionManager from '../../../../app/src/Features/Authentication/SessionManager.mjs'
 import AuthorizationManager from '../../../../app/src/Features/Authorization/AuthorizationManager.mjs'
@@ -138,14 +145,49 @@ export class AiAssistRunController {
         entry?.role === 'user' ? messageImagesProblem(entry.images) : null
       if (problem) return res.status(400).json({ error: problem })
     }
+    const compactProblem = compactEntriesProblem(transcript)
+    if (compactProblem) return res.status(400).json({ error: compactProblem })
 
-    const baseUrl = providerSettings.baseUrl || providerSettings.baseURL
+    // A run is a chat turn (the default) or a compaction of the chat
+    const kind = req.body?.kind ?? 'chat'
+    if (kind !== 'chat' && kind !== 'compact') {
+      return res.status(400).json({ error: 'Unknown run kind' })
+    }
+    let compaction = null
+    if (kind === 'compact') {
+      const instructions = req.body?.instructions ?? ''
+      if (
+        typeof instructions !== 'string' ||
+        instructions.length > COMPACT_INSTRUCTIONS_MAX_CHARS
+      ) {
+        return res.status(400).json({
+          error: `instructions must be a string of at most ${COMPACT_INSTRUCTIONS_MAX_CHARS} characters`,
+        })
+      }
+      const trigger = req.body?.trigger ?? 'manual'
+      if (trigger !== 'manual' && trigger !== 'auto') {
+        return res.status(400).json({ error: 'trigger must be manual or auto' })
+      }
+      compaction = { instructions: instructions.trim(), trigger }
+      // One compaction or turn at a time per chat, as the panel expects
+      if (this.manager.hasActiveRunForChat(projectId, userId, chatId)) {
+        return res
+          .status(409)
+          .json({ error: 'The chat is already running', code: 'chatBusy' })
+      }
+    }
+
+    const rawBaseUrl = providerSettings.baseUrl || providerSettings.baseURL
+    const baseUrl = rawBaseUrl
+      ? normalizeProviderBaseUrl(providerSettings.type, rawBaseUrl)
+      : ''
     if (baseUrl) {
       try {
         validateSafeProviderBaseUrl(baseUrl)
       } catch (err) {
         return res.status(400).json({ error: err.message })
       }
+      providerSettings = { ...providerSettings, baseUrl }
     }
 
     let clientWebSearchSettings = req.body?.webSearchSettings
@@ -211,6 +253,8 @@ export class AiAssistRunController {
         chatId,
         webSearchSettings,
         connectorIds,
+        kind,
+        compaction,
       })
       .catch(err => {
         logger.error({ err, runId }, '[AiAssist] Run background failed')
@@ -530,7 +574,25 @@ export class AiAssistRunController {
    * Takes back a message sent into a run before the run has read it. 409 when
    * it is too late: `reason` says whether the run read it or has ended.
    */
-  unqueueMessage = async (req, res) => {
+  unqueueMessage = async (req, res) =>
+    this.#actOnQueuedMessage(req, res, (runId, messageId) =>
+      this.manager.unqueueMessage(runId, messageId)
+    )
+
+  /**
+   * Has the run answer a queued message now rather than after the reply it is
+   * writing. 409 when the run has read it already or has ended.
+   */
+  sendQueuedNow = async (req, res) =>
+    this.#actOnQueuedMessage(req, res, (runId, messageId) =>
+      this.manager.sendQueuedNow(runId, messageId)
+    )
+
+  /**
+   * Checks the run of a queued message is live and in this project, then
+   * applies `action`. 409 with reason 'read' when it answers false.
+   */
+  async #actOnQueuedMessage(req, res, action) {
     const { runId, messageId } = req.params
     const run = await this.store.getRun(runId)
     if (!run) {
@@ -548,7 +610,7 @@ export class AiAssistRunController {
       return res.status(409).json({ error: 'Run has ended', reason: 'ended' })
     }
 
-    if ((await this.manager.unqueueMessage(runId, messageId)) === false) {
+    if ((await action(runId, messageId)) === false) {
       return res
         .status(409)
         .json({ error: 'The run has already read it', reason: 'read' })

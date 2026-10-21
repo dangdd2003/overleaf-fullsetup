@@ -34,7 +34,6 @@ import { useOpenFileInEditor } from '../../hooks/use-open-file'
 import {
   SiteIcon,
   ToolCallDetailView,
-  WEB_TOOLS,
   badBoxesLabel,
   overviewFindings,
 } from './tool-call-detail'
@@ -48,7 +47,7 @@ import {
   READ_CONNECTOR_RESULT,
   SEARCH_CONNECTOR_TOOLS,
 } from '../../agent/mcp-tool-output'
-import { useMcpConnectorName } from '../../agent/mcp-connector-names'
+import { useMcpConnector } from '../../agent/mcp-connector-names'
 import { subresultExpansionStore } from './subresult-expansion-store'
 
 export function getToolIcon(name: string, size = 13) {
@@ -431,7 +430,12 @@ function summariseCall(
   if (!('result' in call)) {
     return {
       action: t('ai_assist_tool_running', 'Running…'),
-      target: pdfPendingTarget(call.name, args, t),
+      target:
+        pdfPendingTarget(call.name, args, t) ||
+        args.path ||
+        args.file_path ||
+        (typeof args.query === 'string' ? args.query : undefined),
+      isFile: Boolean(args.path || args.file_path),
     }
   }
 
@@ -668,12 +672,19 @@ function summariseCall(
  * have their own expand/collapse control and just need this inline, e.g. a
  * group header that collapses down to a single tool call.
  */
-export function ToolCallSummaryLine({ call }: { call: ToolCallRecord }) {
+export function ToolCallSummaryLine({
+  call,
+  isActive,
+}: {
+  call: ToolCallRecord
+  isActive?: boolean
+}) {
   const { t } = useTranslation()
   const openFile = useOpenFileInEditor()
-  // The real connector name once the connectors are known, else the server
+  // The real connector once the connectors are known, else the server
   // name the call's tool name carries
-  const connectorName = useMcpConnectorName(call?.name)
+  const connector = useMcpConnector(call?.name)
+  const connectorName = connector?.name
   if (!call) return null
   const summarised = summarise(call, t)
   const summary =
@@ -681,51 +692,64 @@ export function ToolCallSummaryLine({ call }: { call: ToolCallRecord }) {
       ? { ...summarised, target: connectorName }
       : summarised
   const diffStats = diffStatsForCall(call)
-  // A fetched page is shown with its site's icon, as Claude.ai does
+  // A fetched page or connector is shown with its site's icon, as Claude.ai does
   const pageUrl =
     call.name === 'web_fetch'
       ? ((call.result as any)?.url ?? (call.args as any)?.url)
-      : undefined
+      : connector?.url
 
   return (
     <>
-      <span className="ai-assist-tool-call-icon" aria-hidden="true">
-        {typeof pageUrl === 'string' && pageUrl ? (
-          <SiteIcon url={pageUrl} />
+      <span
+        className={`ai-assist-tool-call-icon ${isActive ? 'is-active' : ''}`}
+        aria-hidden="true"
+      >
+        {isActive ? (
+          <span className="ai-assist-activity-dot" />
+        ) : typeof pageUrl === 'string' && pageUrl ? (
+          <SiteIcon url={pageUrl} fallback={getToolIcon(call.name || '')} />
         ) : (
           getToolIcon(call.name || '')
         )}
       </span>
-      <span className="ai-assist-tool-call-action">{summary.action}</span>
-      {summary.target && ' '}
-      {summary.target &&
-        (summary.isFile ? (
-          <span
-            role="button"
-            tabIndex={0}
-            className="ai-assist-file-link"
-            title={t('ai_assist_open_file', {
-              path: summary.target,
-              defaultValue: `Open ${summary.target}`,
-            })}
-            onClick={event => {
-              event.stopPropagation()
-              openFile(summary.target!, summary.fileLine)
-            }}
-            onKeyDown={event => {
-              if (event.key === 'Enter') {
+      {/* One label for the verb and its target, so a running call's glimmer
+          sweeps across both as a single line of text */}
+      <span
+        className={`ai-assist-tool-call-label ${isActive ? 'is-active' : ''}`}
+      >
+        <span className="ai-assist-tool-call-action">{summary.action}</span>
+        {summary.target &&
+          (summary.isFile ? (
+            <span
+              role="button"
+              tabIndex={0}
+              className="ai-assist-file-link"
+              title={t('ai_assist_open_file', {
+                path: summary.target,
+                defaultValue: `Open ${summary.target}`,
+              })}
+              onClick={event => {
                 event.stopPropagation()
                 openFile(summary.target!, summary.fileLine)
-              }
-            }}
-          >
-            {summary.target}
-          </span>
-        ) : (
-          <span className="ai-assist-tool-call-target" title={summary.target}>
-            {summary.target}
-          </span>
-        ))}
+              }}
+              onKeyDown={event => {
+                if (event.key === 'Enter') {
+                  event.stopPropagation()
+                  openFile(summary.target!, summary.fileLine)
+                }
+              }}
+            >
+              {summary.target}
+            </span>
+          ) : (
+            <span
+              className="ai-assist-tool-call-target"
+              title={summary.target}
+            >
+              {summary.target}
+            </span>
+          ))}
+      </span>
 
       {summary.compileCounts && (
         <span className="ai-assist-tool-call-target">
@@ -809,9 +833,11 @@ export const toolCallExpansionStore = {
 export function ToolCallCard({
   call,
   defaultExpanded = false,
+  isActive = false,
 }: {
   call: ToolCallRecord
   defaultExpanded?: boolean
+  isActive?: boolean
 }) {
   const [userToggled, setUserToggled] = useState<boolean | null>(() => {
     if (call?.id && toolCallExpansionStore.has(call.id)) {
@@ -838,14 +864,14 @@ export function ToolCallCard({
   }
 
   return (
-    <div className="ai-assist-tool-call">
+    <div className={`ai-assist-tool-call ${isActive ? 'is-active' : ''}`}>
       <button
         type="button"
         className="ai-assist-tool-call-summary"
         aria-expanded={expanded}
         onClick={handleToggle}
       >
-        <ToolCallSummaryLine call={call} />
+        <ToolCallSummaryLine call={call} isActive={isActive} />
 
         <svg
           className={`ai-assist-tool-call-chevron ${expanded ? 'is-expanded' : ''}`}

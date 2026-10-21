@@ -10,5 +10,3 @@ export async function revokeUserGrants(userId) {
   await OauthAccessToken.deleteMany({ user_id: userId }).exec()
   await OauthAuthorizationCode.deleteMany({ user_id: userId }).exec()
 }
-
-export default { revokeUserGrants }

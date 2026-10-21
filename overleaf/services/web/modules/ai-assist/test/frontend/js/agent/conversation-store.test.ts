@@ -23,6 +23,55 @@ describe('conversation-store', function () {
     expect(loadConversation(PROJECT)).to.deep.equal([])
   })
 
+  it('keeps the totals of the paired breakdown and drops its per-tool lists when shrinking', function () {
+    const details = Array.from({ length: 200 }, (_, i) => ({
+      name: `tool_${i}_${'x'.repeat(60)}`,
+      server: 'docs',
+      tokens: i,
+    }))
+    const detailed = {
+      systemPrompt: 900,
+      projectInstructions: 0,
+      connectorInstructions: 0,
+      builtinTools: 300,
+      webTools: 0,
+      connectorTools: 40,
+      connectorToolDetails: details,
+      userMessages: 20,
+      projectContext: 0,
+      assistantMessages: 0,
+      toolResults: 0,
+      toolResultDetails: [{ name: 'read_file', tokens: 5, count: 1 }],
+      images: 0,
+      elidedMessages: 0,
+      droppedMessages: 0,
+      contextWindow: 200000,
+      maxOutputTokens: 32000,
+      budget: 167000,
+      step: 1,
+    }
+    // Large enough that the store has to shrink; the older assistant entry
+    // is the one it deep-shrinks, so it is not the last one.
+    const transcript: TranscriptEntry[] = [
+      { id: '1', role: 'user', text: 'a'.repeat(485000) },
+      {
+        id: '2',
+        role: 'assistant',
+        text: 'hi',
+        toolCalls: [],
+        usage: { inputTokens: 1000, outputTokens: 5, cacheReadTokens: 0, cacheCreationTokens: 0, step: 1 },
+        contextBreakdown: detailed,
+        usageBreakdown: detailed,
+      },
+      { id: '3', role: 'assistant', text: 'last', toolCalls: [] },
+    ]
+    saveConversation(PROJECT, transcript)
+    const [, stored] = loadConversation(PROJECT) as any[]
+    const { connectorToolDetails: _c, toolResultDetails: _r, ...totals } = detailed
+    expect(stored.usageBreakdown).to.deep.equal(totals)
+    expect(stored.contextBreakdown).to.deep.equal(totals)
+  })
+
   it('round-trips a transcript', function () {
     const transcript: TranscriptEntry[] = [
       { id: '1', role: 'user', text: 'hello' },

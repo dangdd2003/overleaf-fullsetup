@@ -23,6 +23,12 @@ parentPort.postMessage(hits)
 // catastrophic pattern tie up resources until the client gave up.
 export const REGEX_SEARCH_TIMEOUT_MS = 10 * 1000
 
+// Searches that may hold a worker thread at once in this process. A search
+// beyond this is refused (SearchBusyError) rather than queued, so a burst of
+// requests cannot start unbounded threads.
+export const MAX_CONCURRENT_SEARCHES = 4
+let activeSearches = 0
+
 /**
  * Line-by-line regex search over document lines, off the main thread.
  *
@@ -53,15 +59,22 @@ export function regexSearchLines({
     if (signal?.aborted) {
       return reject(abortError())
     }
+    if (activeSearches >= MAX_CONCURRENT_SEARCHES) {
+      const err = new Error('too many regular expression searches are running')
+      err.name = 'SearchBusyError'
+      return reject(err)
+    }
     let settled = false
     let timer
     const worker = new Worker(WORKER_SOURCE, {
       eval: true,
       workerData: { query, flags: caseSensitive ? '' : 'i', docs, limit },
     })
+    activeSearches++
     const finish = (err, hits) => {
       if (settled) return
       settled = true
+      activeSearches--
       clearTimeout(timer)
       signal?.removeEventListener('abort', onAbort)
       void worker.terminate()

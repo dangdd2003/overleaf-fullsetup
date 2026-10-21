@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next'
+import type { RetryingState } from '../../agent/agent-state'
 import { GeneratorPhase, Versioned } from '../../generator/types'
 import { TableResult } from '../../table/generate'
 import { ParsedTable } from '../../table/parse-output'
@@ -23,6 +24,8 @@ export type TableCardProps = {
   original: string
   /** The rows streamed so far, wrapped; null before there are any. */
   streamingCode: string | null
+  /** A provider retry while the rows stream; see GeneratorCard. */
+  retry?: RetryingState | null
   canAddPackages: boolean
   addPackages: boolean
   onAddPackages: (value: boolean) => void
@@ -70,6 +73,7 @@ export function TableCard(props: TableCardProps) {
 
   return (
     <GeneratorCard
+      retry={props.retry}
       text={{
         kind: t('ai_assist_table_label', 'Table'),
         label: t('ai_assist_table_card', 'Generated table'),

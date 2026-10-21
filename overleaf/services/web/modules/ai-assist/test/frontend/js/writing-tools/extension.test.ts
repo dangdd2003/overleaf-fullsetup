@@ -23,6 +23,26 @@ describe('writing tools: editor session', function () {
     expect(session.action).to.equal('rephrase')
   })
 
+  it('remembers a selection made backwards, for the back button', function () {
+    const state = EditorState.create({
+      doc: 'Hello brave world',
+      extensions: writingToolsExtension(),
+    })
+    const forward = state.update({
+      effects: openWritingSession.of({ from: 6, to: 11, action: 'rephrase' }),
+    }).state
+    const backward = state.update({
+      effects: openWritingSession.of({
+        from: 6,
+        to: 11,
+        backward: true,
+        action: 'rephrase',
+      }),
+    }).state
+    expect(forward.field(writingSessionField)!.backward).to.equal(false)
+    expect(backward.field(writingSessionField)!.backward).to.equal(true)
+  })
+
   it('follows edits made before and inside the range', function () {
     let state = open('Hello brave world', 6, 11)
     state = state.update({ changes: { from: 0, insert: '>> ' } }).state
@@ -46,6 +66,11 @@ describe('writing tools: editor session', function () {
     expect(second).not.to.equal(first)
     expect(second.create).to.equal(first.create)
     expect(second.pos).to.equal(first.pos + 3)
+  })
+
+  it('lets the card flip to whichever side of the selection has room', function () {
+    const session = open('Hello brave world', 6, 11).field(writingSessionField)!
+    expect(session.tooltip).to.include({ above: false, strictSide: false })
   })
 
   it('closes when the target text is deleted, or on request', function () {

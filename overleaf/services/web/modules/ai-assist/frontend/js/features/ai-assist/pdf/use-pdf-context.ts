@@ -13,8 +13,6 @@ import { cropCanvas } from './crop'
 import { pagePointToPdf, PageBox, startBoxDrag } from './box-select'
 import {
   cancelPdfBoxSelect,
-  beginPdfArea,
-  finishPdfArea,
   addPdfArea,
   updatePdfAreaSource,
   updatePdfTurnContext,

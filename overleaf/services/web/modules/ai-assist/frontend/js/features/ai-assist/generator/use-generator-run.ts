@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { AgentMessage, ProviderSettings } from '../providers/types'
+import type { RetryingState } from '../agent/agent-state'
+import { retryingState } from '../components/retry-status'
+import { AgentMessage, ProviderRetry, ProviderSettings } from '../providers/types'
 import {
   hasConsented,
   readReasoningEffort,
@@ -51,6 +53,8 @@ export type GeneratorRunOptions<Facts, Extra, Result extends { raw: string }, Re
     settings: ProviderSettings
     signal: AbortSignal
     onProgress: (progress: GeneratorProgress<Reply>) => void
+    /** Each scheduled retry of the request, and null once output flows again. */
+    onRetry: (retry: ProviderRetry | null) => void
   }) => Promise<Result | NonResult>
   followUpMessage: (text: string) => string
   retryMessage: (versions: Array<Versioned<Result>>) => string
@@ -91,6 +95,7 @@ export function useGeneratorRun<Facts, Extra, Result extends { raw: string }, Re
   const [followUp, setFollowUp] = useState('')
   const [pending, setPending] = useState<GeneratorRequest | null>(null)
   const [durationMs, setDurationMs] = useState<number | null>(null)
+  const [retry, setRetry] = useState<RetryingState | null>(null)
   const startTimeRef = useRef<number>(Date.now())
   const runRef = useRef<GeneratorRun<Facts, Extra> | null>(null)
   const abortRef = useRef<AbortController | null>(null)
@@ -140,6 +145,7 @@ export function useGeneratorRun<Facts, Extra, Result extends { raw: string }, Re
     abortRef.current = controller
     startTimeRef.current = Date.now()
     setPhase({ name: 'streaming', reply: null, repairing: false })
+    setRetry(null)
 
     try {
       let facts = run.facts
@@ -168,6 +174,10 @@ export function useGeneratorRun<Facts, Extra, Result extends { raw: string }, Re
         facts,
         settings: writingToolsSettings(base, readReasoningEffort(base.type)),
         signal: controller.signal,
+        onRetry: next => {
+          if (controller.signal.aborted) return
+          setRetry(retryingState(next))
+        },
         onProgress: progress => {
           if (controller.signal.aborted) return
           if (progress.stage === 'repairing') {
@@ -180,6 +190,7 @@ export function useGeneratorRun<Facts, Extra, Result extends { raw: string }, Re
         },
       })
       if (controller.signal.aborted) return
+      setRetry(null)
 
       if (isNonResult(outcome)) {
         if (outcome.kind === 'cannot') setPhase({ name: 'cannot', reason: outcome.reason })
@@ -194,6 +205,7 @@ export function useGeneratorRun<Facts, Extra, Result extends { raw: string }, Re
       onVersion?.()
       setPhase({ name: 'ready' })
     } catch (error: any) {
+      setRetry(null)
       if (controller.signal.aborted) return
       if (error?.code === 'imageUnsupported') {
         setPhase({ name: 'imageUnsupported' })
@@ -295,6 +307,8 @@ export function useGeneratorRun<Facts, Extra, Result extends { raw: string }, Re
     dialogError,
     setDialogError,
     phase,
+    /** The provider retry in progress while streaming, if any. */
+    retry,
     durationMs,
     versions,
     index,

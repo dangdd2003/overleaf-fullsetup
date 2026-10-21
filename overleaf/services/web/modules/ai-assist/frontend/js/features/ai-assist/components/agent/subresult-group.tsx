@@ -1,12 +1,9 @@
 import { FC, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { AssistantBlock } from '../../agent/agent-messages'
-import {
-  ToolCallCard,
-  ToolCallSummaryLine,
-  toolCallDetailClass,
-} from './tool-call-card'
-import { ToolCallDetailView } from './tool-call-detail'
+import { AssistantBlock, ToolCallRecord } from '../../agent/agent-messages'
+import { ApprovalContext, ConnectorApproval } from '../../agent/agent-events'
+import { EditRequest } from '../../agent/project-handle'
+import { ToolCallCard, summarise } from './tool-call-card'
 import { ThinkingBlock } from './thinking-block'
 import { EditApprovalCard } from './edit-approval-card'
 import { SettingsApprovalCard } from './settings-approval-card'
@@ -19,17 +16,41 @@ import { subresultExpansionStore } from './subresult-expansion-store'
 
 export { subresultExpansionStore }
 
+type ToolArgs = Record<string, unknown>
+
+function isRecord(value: unknown): value is ToolArgs {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** Tool args are model-supplied JSON, so read them as a record or as nothing. */
+function toArgs(value: unknown): ToolArgs {
+  return isRecord(value) ? value : {}
+}
+
+/** The first of several keys that is set (not null or undefined), as text. */
+function firstText(...values: unknown[]): string {
+  const value = values.find(v => v !== undefined && v !== null)
+  return typeof value === 'string' ? value : ''
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value !== ''
+}
+
+type DecisionHandler = (decision: { accepted: boolean; note?: string }) => void
+
 function renderApprovalCard(
-  pendingCall: any,
-  approvalContext: any,
-  onDecision: any
+  pendingCall: ToolCallRecord | null | undefined,
+  approvalContext: ApprovalContext | null | undefined,
+  onDecision: DecisionHandler
 ) {
   if (!pendingCall) return null
+  const args = toArgs(pendingCall.args)
   if (pendingCall.name === 'present_plan') {
     return (
       <PlanApprovalCard
         key={pendingCall.id}
-        plan={pendingCall.args?.plan || ''}
+        plan={firstText(args.plan)}
         onDecision={onDecision}
       />
     )
@@ -39,18 +60,18 @@ function renderApprovalCard(
       <SettingsApprovalCard
         key={pendingCall.id}
         toolName={pendingCall.name}
-        args={pendingCall.args || {}}
+        args={args}
         onDecision={onDecision}
       />
     )
   }
   if (pendingCall.name && pendingCall.name.startsWith('mcp__')) {
-    const connector = approvalContext?.connector || {}
+    const connector: Partial<ConnectorApproval> = approvalContext?.connector ?? {}
     if (approvalContext?.kind === 'connectorAuth') {
       return (
         <ConnectorAuthCard
           key={pendingCall.id}
-          connectorId={connector.connectorId}
+          connectorId={connector.connectorId ?? ''}
           connectorName={connector.connectorName || 'MCP Connector'}
           toolName={pendingCall.name}
           onDecision={onDecision}
@@ -63,16 +84,20 @@ function renderApprovalCard(
         connectorName={connector.connectorName || 'MCP Connector'}
         toolName={pendingCall.name}
         toolTitle={connector.toolTitle}
-        args={pendingCall.args || {}}
+        args={args}
         onDecision={onDecision}
       />
     )
   }
+  const startLine =
+    typeof args.startLine === 'number'
+      ? args.startLine
+      : (approvalContext?.startLine ?? 1)
   return (
     <EditApprovalCard
       key={pendingCall.id}
       edit={getSafeEdit(pendingCall)}
-      startLine={pendingCall.args?.startLine ?? approvalContext?.startLine ?? 1}
+      startLine={startLine}
       onDecision={onDecision}
     />
   )
@@ -90,7 +115,7 @@ export type SubresultItem =
  * spelling out every kind at that point stops being readable.
  */
 export function summariseToolCallActions(
-  toolCalls: Array<{ name: string; result?: any }>
+  toolCalls: Array<{ name: string; result?: unknown }>
 ): string {
   if (!Array.isArray(toolCalls) || toolCalls.length === 0) return ''
 
@@ -104,7 +129,7 @@ export function summariseToolCallActions(
   for (const call of toolCalls) {
     if (!call || !call.name) continue
     validCount++
-    const status = (call.result as any)?.status
+    const status = isRecord(call.result) ? call.result.status : undefined
     const isRejected = status === 'rejected'
     const isCancelled = status === 'stopped'
     if (call.name === 'edit_file') {
@@ -225,7 +250,7 @@ export function summariseToolCallActions(
 export function formatSubresultsSummary(
   items: SubresultItem[],
   isLive: boolean,
-  _t?: (key: string, opts?: any) => string
+  _t?: unknown
 ): { title: string; isOnlyThinking: boolean; diffStats: DiffStats | null } {
   const toolCalls = items
     .filter(
@@ -274,42 +299,45 @@ export function formatSubresultsSummary(
   return { title: actionsStr, isOnlyThinking: false, diffStats }
 }
 
-function getSafeEdit(call: any) {
-  const name = call.name || ''
-  const isCreateTool = name === 'create_file'
-  const oldText =
-    isCreateTool
-      ? ''
-      : (call.args?.oldText ??
-        call.args?.old_text ??
-        call.args?.old_string ??
-        '')
-  const newText =
-    isCreateTool
-      ? (call.args?.content ?? call.args?.newText ?? '')
-      : (call.args?.newText ??
-        call.args?.new_text ??
-        call.args?.new_string ??
-        call.args?.content ??
-        '')
+function isEditAction(
+  value: unknown
+): value is NonNullable<EditRequest['action']> {
+  return (
+    value === 'create' ||
+    value === 'append' ||
+    value === 'delete' ||
+    value === 'edit'
+  )
+}
 
-  const action: 'create' | 'append' | 'delete' | 'edit' =
-    call.args?.action ??
-    (isCreateTool
+function getSafeEdit(call: ToolCallRecord): EditRequest {
+  const name = call.name || ''
+  const args = toArgs(call.args)
+  const isCreateTool = name === 'create_file'
+  const oldText = isCreateTool
+    ? ''
+    : firstText(args.oldText, args.old_text, args.old_string)
+  const newText = isCreateTool
+    ? firstText(args.content, args.newText)
+    : firstText(args.newText, args.new_text, args.new_string, args.content)
+
+  const action: NonNullable<EditRequest['action']> = isEditAction(args.action)
+    ? args.action
+    : isCreateTool
       ? 'create'
       : !oldText
-      ? 'append'
-      : !newText
-      ? 'delete'
-      : 'edit')
+        ? 'append'
+        : !newText
+          ? 'delete'
+          : 'edit'
 
   return {
-    path: call.args?.path ?? '',
+    path: firstText(args.path),
     oldText,
     newText,
     action,
     toolName: name,
-    startLine: call.args?.startLine,
+    startLine: typeof args.startLine === 'number' ? args.startLine : undefined,
   }
 }
 
@@ -318,8 +346,8 @@ export const SubresultGroup: FC<{
   items: SubresultItem[]
   isLive?: boolean
   pendingApprovalId?: string | null
-  approvalContext?: { startLine?: number; kind?: string; connector?: any } | null
-  onDecision: (decision: { accepted: boolean; note?: string }) => void
+  approvalContext?: ApprovalContext | null
+  onDecision: DecisionHandler
 }> = ({
   groupId,
   items,
@@ -425,7 +453,7 @@ export const SubresultGroup: FC<{
     )
   }
 
-  const { title: rawTitle, diffStats } = formatSubresultsSummary(pastItems, isLive, t)
+  const { title: rawTitle, diffStats } = formatSubresultsSummary(pastItems, isLive)
 
   const callsForSummary = isLive
     ? toolCalls
@@ -433,9 +461,54 @@ export const SubresultGroup: FC<{
         .filter(call => 'result' in call && call.result !== undefined)
     : toolCalls.map(i => i.call)
 
-  // If the user already opened the activity bar, it must NEVER vanish or return null while a live tool call is running.
-  const title =
-    rawTitle && rawTitle.trim()
+  // In-flight active tool call or thinking block
+  const inFlightCall = toolCalls.find(
+    i => i.call && i.call.result === undefined
+  )?.call
+  const inFlightThinking = pastItems.find(
+    i => i.type === 'thinking' && !i.elapsedMs
+  )
+  const isGroupActive = Boolean(isLive && (inFlightCall || inFlightThinking))
+
+  const inFlightLabel = inFlightCall
+    ? (() => {
+        const args = toArgs(inFlightCall.args)
+        const target =
+          [args.path, args.file_path, args.query, args.url].find(
+            isNonEmptyString
+          ) ?? ''
+        switch (inFlightCall.name) {
+          case 'read_file':
+            return target ? `Read ${target}…` : 'Reading file…'
+          case 'edit_file':
+            return target ? `Edit ${target}…` : 'Editing file…'
+          case 'create_file':
+            return target ? `Create ${target}…` : 'Creating file…'
+          case 'search_text':
+          case 'search_project':
+            return target ? `Search "${target}"…` : 'Searching project…'
+          case 'compile_project':
+            return 'Compiling project…'
+          case 'web_search':
+            return target ? `Search web: ${target}…` : 'Searching web…'
+          case 'web_fetch':
+            return target ? `Fetch ${target}…` : 'Fetching…'
+          default: {
+            const s = summarise(inFlightCall, t)
+            const act = s.action && !s.action.startsWith('Running') ? s.action : inFlightCall.name
+            return `${act}${target ? ` ${target}` : ''}…`
+          }
+        }
+      })()
+    : inFlightThinking
+      ? 'Thinking…'
+      : 'Running tools…'
+
+  const title = isGroupActive
+    ? rawTitle && rawTitle.trim()
+      ? `${rawTitle} · ${inFlightLabel}`
+      : inFlightLabel
+    : rawTitle && rawTitle.trim()
       ? rawTitle
       : expanded && toolCalls.length > 0
         ? (summariseToolCallActions(callsForSummary) || 'Running tools')
@@ -473,14 +546,21 @@ export const SubresultGroup: FC<{
 
   return (
     <>
-      <div className="ai-assist-subresult-group">
+      <div className={`ai-assist-subresult-group ${isGroupActive ? 'is-active' : ''}`}>
         <button
           type="button"
-          className="ai-assist-subresult-group-header"
+          className={`ai-assist-subresult-group-header ${isGroupActive ? 'is-active' : ''}`}
           aria-expanded={expanded}
           onClick={handleToggle}
         >
-          <span className="ai-assist-subresult-group-title">{title}</span>
+          {isGroupActive && (
+            <span className="ai-assist-activity-dot" aria-hidden="true" />
+          )}
+          <span
+            className={`ai-assist-subresult-group-title ${isGroupActive ? 'is-active' : ''}`}
+          >
+            {title}
+          </span>
 
           {diffStats && <DiffStatBadge stats={diffStats} />}
 
@@ -521,12 +601,14 @@ export const SubresultGroup: FC<{
               const { call } = item
               if (!call) return null
 
+              const isCallActive = Boolean(isLive && call.result === undefined)
+
               return (
                 <div
                   key={call.id || `call-${idx}`}
-                  className="ai-assist-subresult-item"
+                  className={`ai-assist-subresult-item ${isCallActive ? 'is-active' : ''}`}
                 >
-                  <ToolCallCard call={call} />
+                  <ToolCallCard call={call} isActive={isCallActive} />
                 </div>
               )
             })}

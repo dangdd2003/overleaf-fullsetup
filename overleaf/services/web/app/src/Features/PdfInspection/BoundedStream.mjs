@@ -47,20 +47,30 @@ export async function readBounded(stream, maxBytes) {
 }
 
 /**
- * Copies a stream to `target`. Throws OutputTooLargeError, leaving a partial
- * file for the caller to remove, once more than `maxBytes` have arrived.
+ * A pass-through that fails with `makeError()` once more than `maxBytes` have
+ * flowed through it.
  */
-export async function pipeBounded(stream, target, maxBytes) {
+export function limitBytes(
+  maxBytes,
+  makeError = () => new OutputTooLargeError(maxBytes)
+) {
   let total = 0
-  const limit = new Transform({
+  return new Transform({
     transform(chunk, _encoding, callback) {
       total += Buffer.byteLength(chunk)
       if (total > maxBytes) {
-        callback(new OutputTooLargeError(maxBytes))
+        callback(makeError())
         return
       }
       callback(null, chunk)
     },
   })
-  await pipeline(stream, limit, fs.createWriteStream(target))
+}
+
+/**
+ * Copies a stream to `target`. Throws OutputTooLargeError, leaving a partial
+ * file for the caller to remove, once more than `maxBytes` have arrived.
+ */
+export async function pipeBounded(stream, target, maxBytes) {
+  await pipeline(stream, limitBytes(maxBytes), fs.createWriteStream(target))
 }

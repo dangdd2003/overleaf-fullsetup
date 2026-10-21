@@ -4,8 +4,15 @@ block entrypointVar
 	- entrypoint = 'modules/api-docs/pages/api-docs'
 
 block vars
+	- const suppressNavContentLinks = true
+	- const suppressNavbar = true
+	- const suppressFooter = true
+	- const suppressPugCookieBanner = true
 	- isWebsiteRedesign = true
 
+block append meta
+	meta(name='ol-userSettings' data-type='json' content=userSettings)
+	meta(name='ol-overallThemes' data-type='json' content=overallThemes)
+
 block content
-	#main-content.content.content-alt
-		#api-docs-page-root
+	#api-docs-page-root

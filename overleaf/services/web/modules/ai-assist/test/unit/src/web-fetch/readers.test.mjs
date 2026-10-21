@@ -48,6 +48,7 @@ describe('page readers', function () {
       'jina',
       'exa',
       'parallel',
+      'mcp',
     ])
     expect(Object.keys(READERS)).to.have.members(READER_ORDER)
   })

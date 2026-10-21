@@ -35,6 +35,8 @@ import {
   ArrowDown,
   ArrowBendDownLeft,
   Lightning,
+  ChartDonut,
+  Archive,
 } from "@phosphor-icons/react";
 import {
   OLDropdown,
@@ -47,6 +49,15 @@ import { AttachmentRef } from "../../agent/context/types";
 import { parseAttachmentRef } from "../../agent/context/attachments";
 import { AgentMode, nextMode } from "../../agent/agent-mode";
 import { ReasoningEffortPicker } from "./reasoning-effort-picker";
+import { ContextUsageMeter } from "./context-usage-meter";
+import { ContextUsagePopover } from "./context-usage-popover";
+import type { ContextUsageSnapshot } from "../../agent/context/context-usage-types";
+import {
+  LocalSlashCommand,
+  LocalSlashCommandId,
+  filterLocalSlashCommands,
+  parseLocalSlashInput,
+} from "../../agent/slash-commands/local";
 import { ChatSendButton } from "./chat-send-button";
 import { SelectionScope } from "../../agent/starters/selection-types";
 import { SelectionQuickActions } from "./selection-quick-actions";
@@ -167,9 +178,14 @@ export function slashQueryAt(value: string, caret: number): string | null {
   return match[1];
 }
 
-function slashOptionId(command: SlashCommandDefinition): string {
+function slashOptionId(command: { id: string }): string {
   return `ai-assist-slash-option-${command.id}`;
 }
+
+/** A row of the slash menu: a model command, or one the composer runs itself. */
+type SlashMenuItem =
+  | { kind: "model"; command: SlashCommandDefinition }
+  | { kind: "local"; command: LocalSlashCommand };
 
 export function getSlashCommandIcon(id: SlashCommandId) {
   switch (id) {
@@ -224,6 +240,11 @@ export function AgentComposer({
   restoredDraft = null,
   showSelectionActions = false,
   chatId = null,
+  contextUsage = null,
+  contextOpen = false,
+  onContextOpenChange,
+  onLocalCommand,
+  compacting = false,
 }: {
   running: boolean;
   disabled?: boolean;
@@ -253,6 +274,15 @@ export function AgentComposer({
   /** A queued message taken back to be edited; a new object each time. */
   restoredDraft?: { text: string; command?: SlashCommandInvocation } | null;
   showSelectionActions?: boolean;
+  /** The chat's context window usage; null until a provider is set up. */
+  contextUsage?: ContextUsageSnapshot | null;
+  /** Whether the context usage popover is open; it is anchored to the meter. */
+  contextOpen?: boolean;
+  onContextOpenChange?: (open: boolean) => void;
+  /** Runs a local slash command (e.g. `/context`) instead of sending it. */
+  onLocalCommand?: (id: LocalSlashCommandId, args?: string) => void;
+  /** A compaction is going: nothing can be sent or queued until it ends. */
+  compacting?: boolean;
 }) {
   const { t } = useTranslation();
   const [value, setValue] = useState("");
@@ -353,6 +383,7 @@ export function AgentComposer({
     ),
   );
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const contextMeterRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLUListElement>(null);
   const plusBtnRef = useRef<HTMLButtonElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -362,6 +393,11 @@ export function AgentComposer({
   const slashMenuRef = useRef<HTMLDivElement>(null);
   // Set when a send was held for a missing required input, until the next edit
   const [slashMissing, setSlashMissing] = useState(false);
+  // Why the last send was held back, shown above the input until it changes
+  const [heldNotice, setHeldNotice] = useState<string | null>(null);
+  useEffect(() => {
+    if (!running) setHeldNotice(null);
+  }, [running]);
 
   const autoResize = useCallback(() => {
     const el = textareaRef.current;
@@ -562,10 +598,20 @@ export function AgentComposer({
     };
   }, [query]);
 
-  const slashMatches =
-    slashQuery === null ? [] : filterSlashCommands(slashQuery);
-  const slashOpen = slashMatches.length > 0;
-  const activeSlash = Math.min(slashIndex, slashMatches.length - 1);
+  // Model commands first, then the local ones (run by the composer) in their own group
+  const slashItems: SlashMenuItem[] =
+    slashQuery === null
+      ? []
+      : [
+          ...filterSlashCommands(slashQuery).map(
+            (command): SlashMenuItem => ({ kind: "model", command }),
+          ),
+          ...filterLocalSlashCommands(slashQuery).map(
+            (command): SlashMenuItem => ({ kind: "local", command }),
+          ),
+        ];
+  const slashOpen = slashItems.length > 0;
+  const activeSlash = Math.min(slashIndex, slashItems.length - 1);
   const topUsedIds = useMemo(
     () => (slashOpen ? getTopUsedCommandIds(3) : []),
     [slashOpen],
@@ -593,7 +639,7 @@ export function AgentComposer({
   useEffect(() => {
     if (!slashOpen) return;
     const option = document.getElementById(
-      slashOptionId(slashMatches[activeSlash]),
+      slashOptionId(slashItems[activeSlash].command),
     );
     option?.scrollIntoView?.({ block: "nearest" });
   }, [slashOpen, activeSlash, slashQuery]);
@@ -667,6 +713,7 @@ export function AgentComposer({
     setQuery(mentionQueryAt(next, caret));
     setSlashQuery(slashQueryAt(next, caret));
     setSlashMissing(false);
+    setHeldNotice(null);
     setSlashIndex(0);
   };
 
@@ -690,9 +737,65 @@ export function AgentComposer({
     images.length > 0 ||
     hasPdfContent;
 
+  /**
+   * A local command is run here and never sent: the input is cleared, the
+   * menu closes, and the chat gets the id. It works mid-run too.
+   */
+  const runLocalCommand = (id: LocalSlashCommandId, args?: string) => {
+    // A compaction needs the chat to itself: refused while a reply, an
+    // approval or a queued message is live, and the text stays to retry.
+    // /context reads the chat and works mid-run.
+    if (id === "compact" && running) {
+      const typed = args ? `/compact ${args}` : "/compact";
+      setValue(typed);
+      setCaretToEnd(typed.length);
+      setSlashQuery(null);
+      setHeldNotice(
+        compacting
+          ? t(
+              "ai_assist_compact_wait_compacting",
+              "Wait for the compaction to finish",
+            )
+          : t(
+              "ai_assist_compact_wait_reply",
+              "Wait for the current reply to finish",
+            ),
+      );
+      return;
+    }
+    setHeldNotice(null);
+    setValue("");
+    setSlashQuery(null);
+    setQuery(null);
+    setSlashMissing(false);
+    setHistoryIndex(-1);
+    draftRef.current = "";
+    if (args) onLocalCommand?.(id, args);
+    else onLocalCommand?.(id);
+  };
+
   const sendText = (text: string) => {
     if (disabled) return;
     const trimmed = text.trim();
+    // Nothing can be queued into a compaction: the text stays in the box
+    if (compacting && !parseLocalSlashInput(trimmed)) {
+      setHeldNotice(
+        t(
+          "ai_assist_compact_wait_compacting",
+          "Wait for the compaction to finish",
+        ),
+      );
+      return;
+    }
+    // A local command typed in full, with or without words, runs here
+    const localInput = parseLocalSlashInput(trimmed);
+    if (localInput) {
+      runLocalCommand(
+        localInput.command.id,
+        localInput.args || undefined,
+      );
+      return;
+    }
     if (
       !trimmed &&
       attachments.length === 0 &&
@@ -795,6 +898,24 @@ export function AgentComposer({
 
   // Each `t()` takes a literal key so the static extraction sees it, the same
   // rule as agent-empty-state.tsx. The catalog's English is the fallback.
+  const localLabelFor = (command: LocalSlashCommand): string => {
+    switch (command.id) {
+      case "context":
+        return t("ai_assist_slash_context", command.label);
+      case "compact":
+        return t("ai_assist_slash_compact", command.label);
+    }
+  };
+
+  const localDescriptionFor = (command: LocalSlashCommand): string => {
+    switch (command.id) {
+      case "context":
+        return t("ai_assist_slash_context_desc", command.description);
+      case "compact":
+        return t("ai_assist_slash_compact_desc", command.description);
+    }
+  };
+
   const slashLabelFor = (command: SlashCommandDefinition): string => {
     switch (command.id) {
       case "fix":
@@ -880,29 +1001,42 @@ export function AgentComposer({
     if (slashOpen && !event.shiftKey) {
       if (event.key === "ArrowDown") {
         event.preventDefault();
-        setSlashIndex((activeSlash + 1) % slashMatches.length);
+        setSlashIndex((activeSlash + 1) % slashItems.length);
         return;
       }
       if (event.key === "ArrowUp") {
         event.preventDefault();
         setSlashIndex(
-          (activeSlash - 1 + slashMatches.length) % slashMatches.length,
+          (activeSlash - 1 + slashItems.length) % slashItems.length,
         );
         return;
       }
       if (event.key === "Enter" || event.key === "Tab") {
         event.preventDefault();
-        const picked = slashMatches[activeSlash];
+        const picked = slashItems[activeSlash];
+        // A local command runs on pick. Tab on one that takes words
+        // completes it, so the words can be typed (`/compact keep the math`)
+        if (picked.kind === "local") {
+          if (event.key === "Tab" && picked.command.argumentHint) {
+            const completed = `/${picked.command.id} `;
+            setValue(completed);
+            setCaretToEnd(completed.length);
+            setSlashQuery(null);
+            return;
+          }
+          runLocalCommand(picked.command.id);
+          return;
+        }
         // A name typed out in full is a command to run, as in Claude Code:
         // Enter sends it with no arguments. Tab, or a partial name, completes.
         const typedInFull =
           event.key === "Enter" &&
           slashQuery !== null &&
-          findSlashCommand(slashQuery) === picked;
+          findSlashCommand(slashQuery) === picked.command;
         if (typedInFull) {
           sendText(`/${slashQuery}`);
         } else {
-          pickCommand(picked);
+          pickCommand(picked.command);
         }
         return;
       }
@@ -1016,6 +1150,57 @@ export function AgentComposer({
       ? slashCommand.command.argumentHint
       : null;
 
+  // A local command being typed with its words, e.g. `/compact keep the math`
+  const typedLocal = parseLocalSlashInput(value);
+
+  /** A local command row: no model command behind it, so it only runs. */
+  const renderLocalSlashOption = (command: LocalSlashCommand, index: number) => {
+    const startsGroup =
+      !slashQuery && index > 0 && slashItems[index - 1].kind === "model";
+    return (
+      <li key={command.id}>
+        {startsGroup && (
+          <div className="ai-assist-slash-section-header">
+            <span>{t("ai_assist_slash_session_header", "This chat")}</span>
+          </div>
+        )}
+        <button
+          type="button"
+          role="option"
+          id={slashOptionId(command)}
+          className={`ai-assist-slash-option ${index === activeSlash ? "is-active" : ""}`}
+          aria-selected={index === activeSlash}
+          onMouseEnter={() => setSlashIndex(index)}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => runLocalCommand(command.id)}
+        >
+          <span className="ai-assist-slash-option-icon">
+            {command.id === "compact" ? (
+              <Archive size={16} aria-hidden="true" />
+            ) : (
+              <ChartDonut size={16} aria-hidden="true" />
+            )}
+          </span>
+          <div className="ai-assist-slash-option-content">
+            <div className="ai-assist-slash-option-top">
+              <span className="ai-assist-slash-menu-id">/{command.id}</span>
+              <span className="ai-assist-slash-menu-label">
+                {localLabelFor(command)}
+              </span>
+            </div>
+            {command.argumentHint && (
+              <span className="ai-assist-slash-menu-args">
+                {command.argumentHint}
+              </span>
+            )}
+            <span className="ai-assist-slash-menu-desc">
+              {localDescriptionFor(command)}
+            </span>
+          </div>
+        </button>
+      </li>
+    );
+  };
   return (
     <div className="ai-assist-composer">
       {showSelectionActions &&
@@ -1079,7 +1264,11 @@ export function AgentComposer({
               role="listbox"
               aria-label={t("ai_assist_slash_menu_label", "Commands")}
             >
-              {slashMatches.map((command, index) => {
+              {slashItems.map((item, index) => {
+                if (item.kind === "local") {
+                  return renderLocalSlashOption(item.command, index);
+                }
+                const command = item.command;
                 const IconComponent = getSlashCommandIcon(command.id);
                 const selectionUsed =
                   command.selection !== "none" && attachedSelection !== null;
@@ -1091,7 +1280,10 @@ export function AgentComposer({
                   topUsedIds.length > 0 &&
                   index > 0 &&
                   !isFrequent &&
-                  topUsedIds.includes(slashMatches[index - 1].id);
+                  slashItems[index - 1].kind !== "local" &&
+                  topUsedIds.includes(
+                    slashItems[index - 1].command.id as SlashCommandId,
+                  );
 
                 return (
                   <li key={command.id}>
@@ -1232,6 +1424,23 @@ export function AgentComposer({
           </div>
         )}
 
+        {typedLocal?.command.argumentHint && !slashOpen && (
+          <div className="ai-assist-slash-hint">
+            <span className="ai-assist-slash-hint-label">
+              {localLabelFor(typedLocal.command)}
+            </span>
+            <span className="ai-assist-slash-hint-args">
+              {typedLocal.command.argumentHint}
+            </span>
+          </div>
+        )}
+
+        {heldNotice && (
+          <div className="ai-assist-composer-notice" role="status">
+            {heldNotice}
+          </div>
+        )}
+
         {pdfTurn.boxSelecting && (
           <div className="ai-assist-pdf-box-hint" role="status">
             {t("ai_assist_pdf_area_drawing", "Drag a box on the PDF · Esc to cancel")}
@@ -1322,7 +1531,7 @@ export function AgentComposer({
             onPaste={onPaste}
             aria-controls={slashOpen ? "ai-assist-slash-menu" : undefined}
             aria-activedescendant={
-              slashOpen ? slashOptionId(slashMatches[activeSlash]) : undefined
+              slashOpen ? slashOptionId(slashItems[activeSlash].command) : undefined
             }
             placeholder={
               disabled
@@ -1467,6 +1676,20 @@ export function AgentComposer({
           </div>
 
           <div className="ai-assist-composer-right-actions">
+            <ContextUsageMeter
+              ref={contextMeterRef}
+              snapshot={contextUsage}
+              open={contextOpen}
+              onToggle={() => onContextOpenChange?.(!contextOpen)}
+            />
+            {contextUsage && (
+              <ContextUsagePopover
+                show={contextOpen}
+                onHide={() => onContextOpenChange?.(false)}
+                targetRef={contextMeterRef}
+                snapshot={contextUsage}
+              />
+            )}
             <ReasoningEffortPicker />
             <ChatSendButton
               running={running && !hasContent}

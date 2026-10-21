@@ -7,12 +7,8 @@ import {
   Check,
   X,
 } from "@phosphor-icons/react";
-import {
-  OLDropdown,
-  OLDropdownMenu,
-  OLDropdownToggle,
-} from "@/shared/components/ol/ol-dropdown-menu";
 import OLTooltip from "@/shared/components/ol/ol-tooltip";
+import { useFloatingBox } from "../../floating/use-floating-box";
 import { ChatSummary, listChats } from "../../agent/chat-history-client";
 
 function formatWhen(timestamp: number) {
@@ -23,6 +19,11 @@ function formatWhen(timestamp: number) {
     : date.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
+/**
+ * The chat history menu in the panel header. The menu floats under its
+ * toggle through the panel-tracking engine, so it follows the toggle,
+ * and the header around it, while the panel is resized.
+ */
 export function ChatHistoryMenu({
   projectId,
   activeChatId,
@@ -43,6 +44,14 @@ export function ChatHistoryMenu({
   const [editingChatId, setEditingChatId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+  const toggleRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLUListElement | null>(null);
+
+  const { refs, floatingStyles } = useFloatingBox({
+    open,
+    placement: "bottom-end",
+    gap: 8,
+  });
 
   useEffect(() => {
     if (editingChatId) {
@@ -65,6 +74,53 @@ export function ChatHistoryMenu({
     },
     [projectId],
   );
+
+  // The toggle is rendered in the header, above this menu; hand its
+  // element to the engine as the anchor.
+  useEffect(() => {
+    if (open && toggleRef.current) {
+      refs.setReference(toggleRef.current);
+    }
+  }, [open, refs]);
+
+  const setMenu = useCallback(
+    (node: HTMLUListElement | null) => {
+      menuRef.current = node;
+      refs.setFloating(node);
+    },
+    [refs],
+  );
+
+  // Closing on everything but this menu and the toggle: clicks inside it,
+  // such as the rename input, must not be eaten by root-close.
+  useEffect(() => {
+    if (!open) return;
+    const onMouseDown = (event: MouseEvent) => {
+      const node = event.target as Node;
+      if (
+        menuRef.current?.contains(node) ||
+        toggleRef.current?.contains(node)
+      ) {
+        return;
+      }
+      setOpen(false);
+      setEditingChatId(null);
+    };
+    document.addEventListener("mousedown", onMouseDown);
+    return () => document.removeEventListener("mousedown", onMouseDown);
+  }, [open]);
+
+  const closeMenu = useCallback(() => {
+    setOpen(false);
+    setEditingChatId(null);
+    toggleRef.current?.focus();
+  }, []);
+
+  const onMenuKeyDown = (event: React.KeyboardEvent<HTMLUListElement>) => {
+    if (event.key !== "Escape") return;
+    event.stopPropagation();
+    closeMenu();
+  };
 
   const commitRename = useCallback(
     (id: string) => {
@@ -91,12 +147,7 @@ export function ChatHistoryMenu({
   const label = t("ai_assist_chat_history", "Chat history");
 
   return (
-    <OLDropdown
-      align="end"
-      show={open}
-      onToggle={onToggle}
-      className="d-inline-flex"
-    >
+    <>
       <OLTooltip
         id="ai-assist-history-tooltip"
         description={label}
@@ -104,36 +155,28 @@ export function ChatHistoryMenu({
         hidden={open}
       >
         <span>
-          <OLDropdownToggle
+          <button
             id="ai-assist-history-toggle"
-            as="button"
+            ref={toggleRef}
+            type="button"
             className="btn icon-button-small rail-panel-header-button-subdued d-inline-flex align-items-center justify-content-center ai-assist-history-toggle"
+            aria-haspopup="true"
+            aria-expanded={open}
             aria-label={label}
+            onClick={() => onToggle(!open)}
           >
             <ClockCounterClockwise size={18} />
-          </OLDropdownToggle>
+          </button>
         </span>
       </OLTooltip>
       {open && (
-        <OLDropdownMenu
+        <ul
+          ref={setMenu}
+          style={floatingStyles}
           className="ai-assist-history-menu"
-          popperConfig={{
-            modifiers: [
-              {
-                name: "offset",
-                options: {
-                  offset: [0, 8],
-                },
-              },
-              {
-                name: "preventOverflow",
-                options: {
-                  altAxis: false,
-                  mainAxis: false,
-                },
-              },
-            ],
-          }}
+          role="menu"
+          aria-labelledby="ai-assist-history-toggle"
+          onKeyDown={onMenuKeyDown}
         >
           {failed ? (
             <li className="ai-assist-history-empty">
@@ -264,8 +307,8 @@ export function ChatHistoryMenu({
               );
             })
           )}
-        </OLDropdownMenu>
+        </ul>
       )}
-    </OLDropdown>
+    </>
   );
 }

@@ -184,7 +184,7 @@ describe('AgentPanel switching chats', function () {
       'first question'
     )
     expect(
-      loadConversation(PROJECT_ID, 'chat_first').map(entry => entry.text)
+      loadConversation(PROJECT_ID, 'chat_first').map((entry: any) => entry.text)
     ).to.include('first question')
     // Nothing of the chat left is shown in the new one
     expect(screen.queryByText('first question')).to.equal(null)

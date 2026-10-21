@@ -119,6 +119,10 @@ function incompleteCallError(
     : `The arguments of this ${call.name} call were not valid JSON, so it was not run. Send the call again with complete arguments.`
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
 export async function* runAgent({
   client,
   handle,
@@ -279,6 +283,9 @@ export async function* runAgent({
           calls.push({ id, name: chunk.name, args: chunk.args })
         } else if (chunk.type === 'stop') {
           truncated = true
+        } else if (chunk.type === 'retrying') {
+          const { type: _type, ...retry } = chunk
+          yield { type: 'retrying', ...retry }
         }
       }
     } catch (error: any) {
@@ -395,7 +402,7 @@ export async function* runAgent({
         try {
           const toolHandle = tool.mutates ? handle : readOnlyHandle(handle)
           result = await tool.execute(call.args, toolHandle, { signal })
-          isError = Boolean((result as any)?.error)
+          isError = isRecord(result) && Boolean(result.error)
         } catch (error: any) {
           // A broken tool is data for the model, never the end of the run.
           result = { error: error?.message ?? 'The tool failed.' }
@@ -403,14 +410,15 @@ export async function* runAgent({
         }
       }
 
-      const status = (result as any)?.status
+      const status = isRecord(result) ? result.status : undefined
       if (
         tool?.suspends &&
         tool.mutates &&
         status === 'rejected' &&
         result !== EDITS_BLOCKED_AFTER_REJECTION
       ) {
-        rejectedEditPaths.push(String((call.args as any)?.path ?? 'the file'))
+        const path = isRecord(call.args) ? call.args.path : undefined
+        rejectedEditPaths.push(String(path ?? 'the file'))
       }
       const isFailed = isError || status === 'noMatch' || status === 'ambiguous'
       let stop: StopReason | null = null

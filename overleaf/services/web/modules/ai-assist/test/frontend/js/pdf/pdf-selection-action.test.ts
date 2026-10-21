@@ -1,8 +1,5 @@
 import { expect } from 'chai'
-import {
-  pdfSelectionTarget,
-  selectionActionPosition,
-} from '../../../../frontend/js/features/ai-assist/pdf/pdf-selection-action'
+import { pdfSelectionTarget } from '../../../../frontend/js/features/ai-assist/pdf/pdf-selection-action'
 
 function buildRoot() {
   const root = document.createElement('div')
@@ -83,31 +80,6 @@ describe('PDF selection action', function () {
     it('hides when the selection has no line boxes to place it by', function () {
       const span = root.querySelector('.textLayer span')!.firstChild
       expect(pdfSelectionTarget(root, selectionOf(span, { rects: [] }))).to.equal(null)
-    })
-  })
-
-  describe('where the button goes', function () {
-    const viewport = { width: 1000, height: 800 }
-
-    it('sits below the end of the selection, lined up with it', function () {
-      const end = { left: 100, top: 300, right: 200, bottom: 316 }
-      expect(selectionActionPosition(end, viewport)).to.deep.equal({
-        top: 322,
-        left: 96,
-      })
-    })
-
-    it('goes above the selection when there is no room below', function () {
-      const end = { left: 100, top: 780, right: 200, bottom: 796 }
-      expect(selectionActionPosition(end, viewport)).to.deep.equal({
-        top: 744,
-        left: 96,
-      })
-    })
-
-    it('stays inside the window at the right edge', function () {
-      const end = { left: 900, top: 300, right: 1000, bottom: 316 }
-      expect(selectionActionPosition(end, viewport).left).to.equal(896)
     })
   })
 })

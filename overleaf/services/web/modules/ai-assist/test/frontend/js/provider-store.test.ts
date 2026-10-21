@@ -266,6 +266,42 @@ describe('provider-store', function () {
         model: 'custom-model',
       })
     })
+
+    it('normalizes endpoint URLs according to provider requirements', function () {
+      customLocalStorage.setItem(SETTINGS_KEY, {
+        type: 'openai',
+        baseUrl: 'https://api.openai.com',
+        apiKey: 'sk-test',
+        model: 'gpt-4o',
+      })
+      expect(readSettings()?.baseUrl).to.equal('https://api.openai.com/v1')
+
+      customLocalStorage.setItem(SETTINGS_KEY, {
+        type: 'anthropic',
+        baseUrl: 'https://api.deepseek.com/v1',
+        apiKey: 'sk-test',
+        model: 'deepseek-chat',
+      })
+      expect(readSettings()?.baseUrl).to.equal('https://api.deepseek.com')
+
+      customLocalStorage.setItem(SETTINGS_KEY, {
+        type: 'google',
+        baseUrl: 'https://generativelanguage.googleapis.com',
+        apiKey: 'sk-test',
+        model: 'gemini-2.0-flash',
+      })
+      expect(readSettings()?.baseUrl).to.equal(
+        'https://generativelanguage.googleapis.com/v1beta'
+      )
+
+      customLocalStorage.setItem(SETTINGS_KEY, {
+        type: 'ollama',
+        baseUrl: 'http://localhost:11434/v1',
+        apiKey: '',
+        model: 'llama3.2',
+      })
+      expect(readSettings()?.baseUrl).to.equal('http://localhost:11434')
+    })
   })
 
   describe('writeSettings & clearSettings', function () {

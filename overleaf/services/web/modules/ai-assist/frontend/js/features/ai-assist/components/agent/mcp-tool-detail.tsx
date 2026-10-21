@@ -222,15 +222,11 @@ function OutputSection({
 
   if (outcome.isError) {
     return (
-      <div className="ai-assist-tool-detail-error ai-assist-mcp-error">
-        <span className="ai-assist-tool-detail-badge error">
-          {t('ai_assist_mcp_error', 'Error')}
-        </span>
-        <pre className="ai-assist-tool-detail-text">
-          {outcome.error ||
-            outcome.raw ||
-            t('ai_assist_mcp_failed', 'The tool failed.')}
-        </pre>
+      <div className="ai-assist-tool-detail-error" role="alert">
+        ✗{' '}
+        {outcome.error ||
+          outcome.raw ||
+          t('ai_assist_mcp_failed', 'The tool failed.')}
       </div>
     )
   }

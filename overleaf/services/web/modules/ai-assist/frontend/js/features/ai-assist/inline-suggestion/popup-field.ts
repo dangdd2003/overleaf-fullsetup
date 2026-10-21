@@ -1,12 +1,11 @@
 import { Extension, Prec, StateEffect, StateField } from '@codemirror/state'
-import {
-  EditorView,
-  keymap,
-  showTooltip,
-  Tooltip,
-  TooltipView,
-} from '@codemirror/view'
+import { keymap, showTooltip, Tooltip } from '@codemirror/view'
 import type { TexGptNotice } from '../components/texgpt/texgpt-notices'
+import {
+  floatingCard,
+  floatingCardTheme,
+  floatingTooltip,
+} from '../floating/editor-card'
 
 /** `prompt`: the TeXGPT bar on an empty line. `notice`: a message at the cursor (sentence completion). */
 export type InlinePopupMode = 'prompt' | 'notice'
@@ -38,20 +37,10 @@ let nextPopupId = 0
  * One function for every popup tooltip, so CodeMirror reuses its DOM (and the
  * React tree portalled into it) when the popup moves with an edit.
  */
-const createPopupContainer = (): TooltipView => {
-  const dom = document.createElement('div')
-  dom.className = 'ai-inline-popup-container'
-  return { dom, overlap: true, offset: { x: 0, y: 6 } }
-}
+const createPopupContainer = floatingCard({ className: 'ai-inline-popup-container' })
 
 function popupTooltip(pos: number): Tooltip {
-  return {
-    pos,
-    above: false,
-    strictSide: true,
-    arrow: false,
-    create: createPopupContainer,
-  }
+  return floatingTooltip(pos, createPopupContainer)
 }
 
 export const inlinePopupField = StateField.define<InlinePopup | null>({
@@ -78,17 +67,10 @@ export const inlinePopupField = StateField.define<InlinePopup | null>({
   provide: field => showTooltip.from(field, popup => popup?.tooltip ?? null),
 })
 
-const popupTheme = EditorView.baseTheme({
-  '.ai-inline-popup-container.cm-tooltip': {
-    backgroundColor: 'transparent',
-    border: 'none',
-  },
-})
-
 export function inlinePopupExtension(): Extension {
   return [
     inlinePopupField,
-    popupTheme,
+    floatingCardTheme,
     Prec.high(
       keymap.of([
         {

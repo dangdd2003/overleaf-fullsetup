@@ -65,3 +65,61 @@ describe('ChatHistoryMenu rename', function () {
     })
   })
 })
+
+describe('ChatHistoryMenu floating', function () {
+  beforeEach(function () {
+    fetchMock.removeRoutes().clearHistory()
+    fetchMock.get(`/ai-assist/projects/${PROJECT}/chats`, {
+      chats: [
+        {
+          id: 'chat_a',
+          title: 'Original title',
+          createdAt: 1,
+          updatedAt: Date.now(),
+          messageCount: 1,
+        },
+      ],
+    })
+  })
+
+  afterEach(function () {
+    fetchMock.removeRoutes().clearHistory()
+    resetDocumentFocus()
+  })
+
+  async function openMenu() {
+    render(
+      <ChatHistoryMenu
+        projectId={PROJECT}
+        activeChatId="other"
+        onOpen={() => {}}
+        onDelete={async () => {}}
+      />
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Chat history' }))
+    await screen.findByText('Original title')
+    return screen.getByRole('menu') as HTMLElement
+  }
+
+  it('floats with the panel-tracking engine, like the other popovers', async function () {
+    const menu = await openMenu()
+    // floating-ui with autoUpdate: fixed positioning, repositioned by the
+    // engine as the anchor (and the panel around it) resizes
+    expect(menu.style.position).to.equal('fixed')
+    expect(menu.style.transform).to.not.equal('')
+  })
+
+  it('closes on a mousedown outside the box and the toggle', async function () {
+    await openMenu()
+    fireEvent.mouseDown(document.body)
+    expect(screen.queryByText('Original title')).to.be.null
+  })
+
+  it('stays open while the mousedown starts on the toggle', async function () {
+    await openMenu()
+    fireEvent.mouseDown(
+      screen.getByRole('button', { name: 'Chat history' })
+    )
+    expect(screen.getByText('Original title')).to.exist
+  })
+})

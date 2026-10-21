@@ -1243,3 +1243,36 @@ describe('runAgent', function () {
     expect(requests[0].contextWindow).to.equal(32000)
   })
 })
+
+describe('runAgent: provider retries', function () {
+  it('turns a relay retrying chunk into a retrying event, then goes on with the reply', async function () {
+    const retry = {
+      type: 'retrying',
+      attempt: 1,
+      maxRetries: 10,
+      retryInMs: 500,
+      retryAt: 1234,
+      message: 'Rate limited (429)',
+      status: 429,
+    }
+    const client = fakeClient([
+      [retry, { type: 'text', text: 'Hi' }, { type: 'done', stopReason: 'stop' }],
+    ])
+    const { handle } = createFakeHandle()
+
+    const events = await collect(
+      runAgent({
+        client: client as any,
+        handle,
+        tools: {},
+        transcript: [{ id: '1', role: 'user', text: 'go' }],
+      })
+    )
+
+    const { type: _type, ...expected } = retry
+    expect(events).to.deep.include({ type: 'retrying', ...expected })
+    expect(events.findIndex(event => event.type === 'retrying')).to.be.lessThan(
+      events.findIndex(event => event.type === 'text')
+    )
+  })
+})

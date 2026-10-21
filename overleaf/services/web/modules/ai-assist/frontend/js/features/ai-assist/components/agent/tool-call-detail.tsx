@@ -68,8 +68,6 @@ function DiffFileHeader({
   )
 }
 
-export const WEB_TOOLS = new Set(['web_search', 'web_fetch'])
-
 /**
  * One web page as a row, the way Claude.ai lists search results: the site's
  * icon, the page title, and the domain on the right, the whole row a link.
@@ -167,7 +165,9 @@ function WebToolError({ call, result }: { call: ToolCallRecord; result: any }) {
       )}
       <div className="ai-assist-web-error" role="alert">
         <div className="ai-assist-web-error-head">
-          <span className="ai-assist-web-error-icon" aria-hidden="true" />
+          <span className="ai-assist-web-error-icon" aria-hidden="true">
+            ✗
+          </span>
           <div className="ai-assist-web-error-text">
             <div className="ai-assist-web-error-title">{failure.title}</div>
             <div className="ai-assist-web-error-why">{failure.explanation}</div>
@@ -940,9 +940,8 @@ export const ToolCallDetailView: FC<{ call: ToolCallRecord }> = ({ call }) => {
       result?.error ||
       (typeof result === 'string' ? result : 'The tool execution failed.')
     return (
-      <div className="ai-assist-tool-detail-error">
-        <span className="ai-assist-tool-detail-badge error">Error</span>
-        <pre className="ai-assist-tool-detail-text">{errorMsg}</pre>
+      <div className="ai-assist-tool-detail-error" role="alert">
+        ✗ {errorMsg}
       </div>
     )
   }

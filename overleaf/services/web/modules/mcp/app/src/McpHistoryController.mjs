@@ -1,9 +1,11 @@
 import logger from '@overleaf/logger'
 import Settings from '@overleaf/settings'
-import { fetchJson } from '@overleaf/fetch-utils'
+import { fetchJson, RequestFailedError } from '@overleaf/fetch-utils'
+import { Snapshot } from 'overleaf-editor-core'
 import HistoryManager from '../../../../app/src/Features/History/HistoryManager.mjs'
 import RestoreManager from '../../../../app/src/Features/History/RestoreManager.mjs'
 import ProjectAuditLogHandler from '../../../../app/src/Features/Project/ProjectAuditLogHandler.mjs'
+import ProjectGetter from '../../../../app/src/Features/Project/ProjectGetter.mjs'
 import McpErrors from './McpErrors.mjs'
 import {
   hasDotSegment,
@@ -16,6 +18,8 @@ const DEFAULT_LIMIT = 20
 // Upper bound on one page, whatever limit a caller asks for, so one request
 // cannot pull the whole history into memory.
 const MAX_LIMIT = 1000
+// Pages read in one request when a path filter leaves a page short.
+const MAX_FILTER_PAGES = 10
 
 /** project-history paths have no leading slash; MCP paths do. */
 function historyPath(path) {
@@ -81,36 +85,46 @@ async function listHistory(req, res) {
   const filter = req.query?.path ? mcpPath(req.query.path) : null
 
   await flush(projectId)
-  const url = new URL(
-    `${Settings.apis.project_history.url}/project/${projectId}/updates`
-  )
-  url.searchParams.set('min_count', String(Math.min(limit, MAX_LIMIT)))
-  if (before != null) url.searchParams.set('before', String(before))
-  const body = await HistoryManager.promises.injectUserDetails(
-    await fetchJson(url, { headers: { 'X-User-Id': String(req.mcpUserId) } })
-  )
-
-  let entries = (body.updates || []).map(update => ({
-    fromVersion: update.fromV,
-    toVersion: update.toV,
-    startedAt: toIso(update.meta?.start_ts),
-    endedAt: toIso(update.meta?.end_ts),
-    authors: (update.meta?.users || []).map(userName).filter(Boolean),
-    origin: update.meta?.origin?.kind ?? null,
-    labels: (update.labels || []).map(label => label.comment),
-    changes: changedPaths(update),
-  }))
-  if (filter) {
-    entries = entries.filter(entry =>
-      entry.changes.some(
-        c => c.path === filter || c.change === `renamed to ${filter}`
-      )
+  const entriesOf = updates =>
+    (updates || []).map(update => ({
+      fromVersion: update.fromV,
+      toVersion: update.toV,
+      startedAt: toIso(update.meta?.start_ts),
+      endedAt: toIso(update.meta?.end_ts),
+      authors: (update.meta?.users || []).map(userName).filter(Boolean),
+      origin: update.meta?.origin?.kind ?? null,
+      labels: (update.labels || []).map(label => label.comment),
+      changes: changedPaths(update),
+    }))
+  const touches = entry =>
+    entry.changes.some(
+      c => c.path === filter || c.change === `renamed to ${filter}`
     )
+
+  // A filter is applied to each page, so one page can come back empty while
+  // older updates still match. Keep reading pages until the filtered list
+  // fills, history runs out, or the page budget is spent; nextBefore then
+  // resumes from the last page read, so no update is skipped.
+  let entries = []
+  let cursor = before
+  for (let page = 0; page < MAX_FILTER_PAGES; page++) {
+    const url = new URL(
+      `${Settings.apis.project_history.url}/project/${projectId}/updates`
+    )
+    url.searchParams.set('min_count', String(Math.min(limit, MAX_LIMIT)))
+    if (cursor != null) url.searchParams.set('before', String(cursor))
+    const body = await HistoryManager.promises.injectUserDetails(
+      await fetchJson(url, { headers: { 'X-User-Id': String(req.mcpUserId) } })
+    )
+    const pageEntries = entriesOf(body.updates)
+    entries = entries.concat(filter ? pageEntries.filter(touches) : pageEntries)
+    cursor = body.nextBeforeTimestamp ?? null
+    if (!filter || entries.length >= limit || cursor == null) break
   }
 
   res.json({
     entries,
-    nextBefore: body.nextBeforeTimestamp ?? null,
+    nextBefore: cursor,
     path: filter,
   })
 }
@@ -193,6 +207,85 @@ async function getDiff(req, res) {
   })
 }
 
+/**
+ * Whether the file's content can be fetched from history: a text document is
+ * in the snapshot already, a binary file is a blob that is fetched later.
+ * Mirrors the branch RestoreManager takes when it writes the file back.
+ */
+function needsBlob(snapshotFile) {
+  return !snapshotFile.isEditable()
+}
+
+/**
+ * Check that the file can be restored from the version, so that a bad version
+ * or path is reported as a 404 rather than a generic upstream error.
+ * RestoreManager fetches the old content before it deletes the current file,
+ * so a fetch failure during the restore leaves the current file intact.
+ *
+ * @returns {Promise<{code: string, message: string, hint?: string} | null>}
+ *   the error to send, or null when the restore can go ahead
+ */
+async function checkRestorable(projectId, version, pathname) {
+  const project = await ProjectGetter.promises.getProject(projectId, {
+    overleaf: true,
+  })
+  if (!project?.overleaf?.history?.rangesSupportEnabled) {
+    return {
+      code: McpErrors.CODES.VALIDATION,
+      message: 'this project does not support restoring files from history',
+    }
+  }
+
+  let snapshot
+  try {
+    snapshot = Snapshot.fromRaw(
+      await HistoryManager.promises.getContentAtVersion(projectId, version)
+    )
+  } catch (err) {
+    if (
+      err instanceof RequestFailedError &&
+      [400, 404, 422].includes(err.response?.status)
+    ) {
+      return {
+        code: McpErrors.CODES.NOT_FOUND,
+        message: `version ${version} could not be loaded from the project history`,
+        hint: 'Take version from list_history (toVersion of an entry).',
+      }
+    }
+    throw err
+  }
+
+  const file = snapshot.getFile(pathname)
+  if (!file) {
+    return {
+      code: McpErrors.CODES.NOT_FOUND,
+      message: `${mcpPath(pathname)} is not in version ${version}`,
+      hint: 'Use list_history with path to find a version that contains this file.',
+    }
+  }
+
+  if (needsBlob(file)) {
+    // Fetch the blob now and drop the stream, so a missing blob is reported
+    // as an error before the restore starts.
+    try {
+      const { stream } = await HistoryManager.promises.requestBlob(
+        project.overleaf.history.id,
+        file.getHash()
+      )
+      stream.destroy()
+    } catch (err) {
+      if (err instanceof RequestFailedError && err.response?.status === 404) {
+        return {
+          code: McpErrors.CODES.NOT_FOUND,
+          message: `content for ${mcpPath(pathname)} at version ${version} is not available in the history store`,
+        }
+      }
+      throw err
+    }
+  }
+  return null
+}
+
 async function restoreFile(req, res) {
   const { projectId } = req.params
   const { path, version } = req.body || {}
@@ -211,6 +304,12 @@ async function restoreFile(req, res) {
   }
   if (hasDotSegment(pathname)) {
     return invalid(res, 'path must not contain . or .. segments')
+  }
+  const problem = await checkRestorable(projectId, version, pathname)
+  if (problem) {
+    return McpErrors.send(res, problem.code, problem.message, {
+      hint: problem.hint,
+    })
   }
   const entity = await RestoreManager.promises.revertFile(
     req.mcpUserId,

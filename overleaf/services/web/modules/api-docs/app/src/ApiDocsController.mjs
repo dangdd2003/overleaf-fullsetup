@@ -1,6 +1,9 @@
 import Path from 'node:path'
 import Features from '../../../../app/src/infrastructure/Features.mjs'
 import openApiSpec from './openapi.json' with { type: 'json' }
+import SessionManager from '../../../../app/src/Features/Authentication/SessionManager.mjs'
+import UserSettingsHelper from '../../../../app/src/Features/Project/UserSettingsHelper.mjs'
+import { User } from '../../../../app/src/models/User.mjs'
 
 // `x-feature` is a Features.mjs feature name, or a list of names when the
 // endpoint is served if any one of them is enabled.
@@ -29,8 +32,28 @@ function buildVisibleSpec() {
 }
 
 const ApiDocsController = {
-  renderPage(req, res) {
-    res.render(Path.resolve(import.meta.dirname, '../views/api-docs'))
+  async renderPage(req, res, next) {
+    try {
+      // Same theme inputs as the project dashboard, so light, dark and system
+      // themes resolve identically on both pages
+      const userId = SessionManager.getLoggedInUserId(req.session)
+      const user = userId ? await User.findById(userId, 'ace').exec() : null
+      const userSettings = user
+        ? await UserSettingsHelper.buildUserSettings(req, res, user)
+        : {}
+      res.render(Path.resolve(import.meta.dirname, '../views/api-docs'), {
+        userSettings,
+        initialTheme: UserSettingsHelper.getInitialTheme(
+          userSettings.overallTheme || ''
+        ),
+      })
+    } catch (err) {
+      if (typeof next === 'function') {
+        next(err)
+      } else {
+        throw err
+      }
+    }
   },
 
   serveSpec(req, res) {

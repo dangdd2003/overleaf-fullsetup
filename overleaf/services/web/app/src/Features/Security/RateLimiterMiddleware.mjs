@@ -18,6 +18,9 @@ import { getRawReqInput } from '../../infrastructure/Validation.mjs'
  *
  * Unique clients are identified by user_id if logged in, and IP address if not.
  * The method label is used to identify this in our metrics.
+ *
+ * Pass opts.onLimited(res, rateLimiterRes) to answer an exceeded limit in
+ * another shape than the plain-text 429.
  */
 function rateLimit(rateLimiter, opts = {}) {
   const getUserId =
@@ -50,6 +53,8 @@ function rateLimit(rateLimiter, opts = {}) {
       .catch(err => {
         if (err instanceof Error) {
           next(err)
+        } else if (opts.onLimited) {
+          opts.onLimited(res, err)
         } else {
           res.status(429) // Too many requests
           res.write('Rate limit reached, please try again later')

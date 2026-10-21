@@ -526,6 +526,9 @@ export type WebSearchProviderType =
 export type Limits = {
   contextWindow: number;
   maxOutputTokens: number;
+  /** The provider and model the window belongs to; the token estimate depends on them. */
+  provider?: string;
+  model?: string;
 };
 
 export const DEFAULT_LIMITS: Record<ProviderType, Limits> = {
@@ -551,6 +554,8 @@ export function resolveLimits(settings: ProviderSettings): Limits {
       settings.maxOutputTokens,
       defaults.maxOutputTokens,
     ),
+    provider: settings.type,
+    model: settings.model,
   };
 }
 
@@ -593,7 +598,29 @@ export type ChatChunk =
    * The reply hit the output token limit. Sent last, and only then. The last
    * tool call of the reply, if any, has incomplete arguments.
    */
-  | { type: "stop"; reason: "max_tokens" };
+  | { type: "stop"; reason: "max_tokens" }
+  /** A failed request is about to run again; see `ProviderRetry`. */
+  | ({ type: "retrying" } & ProviderRetry);
+
+/**
+ * How the server retries a provider request before it fails. `interactive`
+ * for a call a user watches, `background` for a job nobody waits on, `inline`
+ * for ghost text that must not lag behind the cursor.
+ */
+export type RetryPolicy = "interactive" | "background" | "inline";
+
+/** One scheduled retry, as the relay reports it. `retryInMs` counts from receipt. */
+export type ProviderRetry = {
+  /** 1-based number of the retry about to run. */
+  attempt: number;
+  maxRetries: number;
+  retryInMs: number;
+  /** Server epoch ms the retry runs at. */
+  retryAt: number;
+  /** Short reason, e.g. "Rate limited (429)". */
+  message: string;
+  status?: number;
+};
 
 export type CacheHints = {
   cacheSystem: boolean;
@@ -673,6 +700,8 @@ export type ProviderErrorCode =
   | "modelsUnsupported"
   | "network"
   | "aborted"
+  | "providerTimeout"
+  | "providerStalled"
   | "contextExhausted"
   | "runawayToolLoop"
   | "consecutiveToolFailures"
@@ -731,6 +760,65 @@ export const DEFAULT_BASE_URLS: Record<ProviderType, string> = {
   google: "https://generativelanguage.googleapis.com/v1beta",
   ollama: "http://localhost:11434",
 };
+
+export function normalizeProviderBaseUrl(
+  type: ProviderType,
+  rawUrl?: string,
+  fallbackUrl: string = DEFAULT_BASE_URLS[type] || DEFAULT_BASE_URLS.openai,
+): string {
+  let url = typeof rawUrl === "string" ? rawUrl.trim() : "";
+  if (!url) {
+    return fallbackUrl || "";
+  }
+
+  // Trim trailing slashes
+  url = url.replace(/\/+$/, "");
+
+  if (type === "anthropic") {
+    // Anthropic official & compatible endpoints append /v1/messages and /v1/models.
+    // The base URL must NOT end in /v1, /messages, or /models.
+    url = url
+      .replace(/\/v1\/messages$/, "")
+      .replace(/\/messages$/, "")
+      .replace(/\/v1\/models$/, "")
+      .replace(/\/models$/, "")
+      .replace(/\/v1$/, "")
+      .replace(/\/+$/, "");
+    return url || fallbackUrl || DEFAULT_BASE_URLS.anthropic;
+  }
+
+  if (type === "google") {
+    // Google Gemini REST endpoints are ${baseURL}/models and ${baseURL}/models/{model}:streamGenerateContent
+    // Strip /openai or /models suffix if accidentally provided
+    url = url
+      .replace(/\/openai\/?$/, "")
+      .replace(/\/models\/?$/, "")
+      .replace(/\/+$/, "");
+    if (!url.endsWith("/v1beta") && !url.endsWith("/v1")) {
+      url = `${url}/v1beta`;
+    }
+    return url;
+  }
+
+  if (type === "ollama") {
+    // Ollama REST endpoints are /api/tags and /api/chat.
+    // Strip /v1 or /api or /api/tags or /api/chat if provided
+    url = url
+      .replace(/\/v1(\/(chat\/completions|models))?$/, "")
+      .replace(/\/api(\/(tags|chat))?$/, "")
+      .replace(/\/+$/, "");
+    return url || fallbackUrl || DEFAULT_BASE_URLS.ollama;
+  }
+
+  // Default is openai - hard fix the ending /v1
+  url = url
+    .replace(/\/(chat\/completions|models)$/, "")
+    .replace(/\/+$/, "");
+  if (!url.endsWith("/v1")) {
+    url = `${url}/v1`;
+  }
+  return url;
+}
 
 export const REQUIRES_API_KEY: Record<ProviderType, boolean> = {
   openai: true,

@@ -15,11 +15,15 @@ import {
   keymap,
   showTooltip,
   Tooltip,
-  TooltipView,
   WidgetType,
 } from '@codemirror/view'
 import { closeTexGpt } from '../texgpt/target'
 import { closeWritingSession } from '../writing-tools/extension'
+import {
+  floatingCard,
+  floatingCardTheme,
+  floatingTooltip,
+} from '../floating/editor-card'
 
 /** The cursor (`from === to`) or the selection a generator was opened on. */
 export type GeneratorAnchor = { from: number; to: number }
@@ -105,10 +109,6 @@ class InsertionCaret extends WidgetType {
 }
 
 const generatorTheme = EditorView.baseTheme({
-  '.ai-generator-card-container.cm-tooltip': {
-    backgroundColor: 'transparent',
-    border: 'none',
-  },
   '&light .ai-generator-target': {
     backgroundColor: 'rgba(56, 126, 245, 0.18)',
   },
@@ -141,12 +141,20 @@ export function defineGeneratorSession(name: string): GeneratorSessionKit {
    * One function for every card tooltip. CodeMirror reuses a tooltip's DOM
    * while the new tooltip has the same `create`, so the card (portalled into
    * that DOM) keeps its React state when the passage moves after an edit.
+   * The card flips around the whole passage.
    */
-  const createCardContainer = (): TooltipView => {
-    const dom = document.createElement('div')
-    dom.className = `ai-generator-card-container ai-${name}-card-container`
-    return { dom, overlap: true, offset: { x: 0, y: 6 } }
-  }
+  const createCardContainer = floatingCard({
+    className: `ai-generator-card-container ai-${name}-card-container`,
+    // The footer of buttons keeps to one line however narrow the pane
+    oneLine: '.ai-card-footer',
+    // Centred on its text, like the language suggestion cards
+    align: 'center',
+    range: state => {
+      const session = state.field(field, false)
+      const passage = session?.passage
+      return passage ? { from: passage.from, to: passage.to } : null
+    },
+  })
 
   /** Below the passage's last line, even when it ends at a line start. */
   const cardTooltip = (state: EditorState, passage: GeneratorPassage): Tooltip => {
@@ -155,7 +163,7 @@ export function defineGeneratorSession(name: string): GeneratorSessionKit {
       lineAtTo.from === passage.to && passage.to > passage.from
         ? passage.to - 1
         : passage.to
-    return { pos, above: false, strictSide: true, arrow: false, create: createCardContainer }
+    return floatingTooltip(pos, createCardContainer)
   }
 
   const passageMark = Decoration.mark({ class: `ai-generator-target ai-${name}-target` })
@@ -261,6 +269,6 @@ export function defineGeneratorSession(name: string): GeneratorSessionKit {
     startReview,
     close,
     open,
-    extension: () => [field, generatorTheme, escape],
+    extension: () => [field, floatingCardTheme, generatorTheme, escape],
   }
 }

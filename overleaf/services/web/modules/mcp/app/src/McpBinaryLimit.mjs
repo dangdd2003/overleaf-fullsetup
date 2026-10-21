@@ -1,4 +1,4 @@
-import { Transform } from 'node:stream'
+import { limitBytes } from '../../../../app/src/Features/PdfInspection/BoundedStream.mjs'
 
 /** Largest binary output served through the MCP API, in bytes. */
 export const MAX_BINARY_BYTES = 64 * 1024 * 1024
@@ -21,16 +21,9 @@ export function tooLargeMessage(totalBytes, maxBytes = MAX_BINARY_BYTES) {
  * instead of being sent in full.
  */
 export function limitBinaryStream(maxBytes = MAX_BINARY_BYTES) {
-  let total = 0
-  return new Transform({
-    transform(chunk, _encoding, callback) {
-      total += chunk.length
-      if (total > maxBytes) {
-        const err = new Error(tooLargeMessage(null, maxBytes))
-        err.code = 'OUTPUT_TOO_LARGE'
-        return callback(err)
-      }
-      callback(null, chunk)
-    },
+  return limitBytes(maxBytes, () => {
+    const err = new Error(tooLargeMessage(null, maxBytes))
+    err.code = 'OUTPUT_TOO_LARGE'
+    return err
   })
 }

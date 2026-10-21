@@ -7,6 +7,13 @@ export const SSE_ERA = 'sse'
 
 export const MODERN_PROTOCOL_VERSION = '2026-07-28'
 export const LEGACY_PROTOCOL_VERSION = '2025-11-25'
+const LEGACY_VERSIONS = [
+  LEGACY_PROTOCOL_VERSION,
+  '2025-06-18',
+  '2025-03-26',
+  '2024-11-05',
+]
+const CLIENT_INFO = { name: 'overleaf-ai-assist', version: '1.0' }
 
 export function encodeMcpName(name) {
   if (!name) return ''
@@ -25,10 +32,7 @@ export function parseWwwAuthenticate(header) {
     const key = match[1].toLowerCase()
     const val = match[2] !== undefined ? match[2] : match[3]
     if (key === 'resource_metadata') result.resourceMetadata = val
-    else if (key === 'scope') result.scope = val
-    else if (key === 'error') result.error = val
     else if (key === 'error_description') result.errorDescription = val
-    else if (key === 'realm') result.realm = val
     result[key] = val
   }
   return result
@@ -70,6 +74,96 @@ export class ConnectorRpcError extends Error {
 /** Server text (instructions) is kept only when the server sent a string. */
 function textOf(value) {
   return typeof value === 'string' ? value : ''
+}
+
+/** Server info: modern results carry it under _meta, legacy ones at the top. */
+function serverInfoOf(result) {
+  return (
+    result?.serverInfo ||
+    result?._meta?.['io.modelcontextprotocol/serverInfo'] ||
+    {}
+  )
+}
+
+/** The per-request metadata every modern (2026-07-28) request carries. */
+function modernMeta() {
+  return {
+    'io.modelcontextprotocol/protocolVersion': MODERN_PROTOCOL_VERSION,
+    'io.modelcontextprotocol/clientInfo': CLIENT_INFO,
+    'io.modelcontextprotocol/clientCapabilities': {},
+  }
+}
+
+const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/
+const HEADER_PARAM_TYPES = ['string', 'integer', 'boolean']
+
+/**
+ * The x-mcp-header parameters of a tool's input schema, as header name ->
+ * property path. Null when an annotation breaks the spec's rules (not on a
+ * property reached through `properties` alone, a bad or repeated name, or a
+ * non-primitive type): such a tool is left out of the list.
+ */
+function headerParamsIn(schema) {
+  const params = new Map()
+  const names = new Set()
+  let valid = true
+  const visit = (node, path, viaProperties) => {
+    if (!node || typeof node !== 'object' || Array.isArray(node)) return
+    if (node['x-mcp-header'] !== undefined) {
+      const header = node['x-mcp-header']
+      const lower = String(header).toLowerCase()
+      if (
+        !viaProperties ||
+        path.length === 0 ||
+        typeof header !== 'string' ||
+        !HEADER_NAME.test(header) ||
+        names.has(lower) ||
+        !HEADER_PARAM_TYPES.includes(node.type)
+      ) {
+        valid = false
+      } else {
+        names.add(lower)
+        params.set(header, path)
+      }
+    }
+    for (const [key, child] of Object.entries(node)) {
+      if (key === 'properties' && child && typeof child === 'object') {
+        for (const [prop, sub] of Object.entries(child)) {
+          visit(sub, [...path, prop], viaProperties)
+        }
+      } else {
+        visit(child, path, false)
+      }
+    }
+  }
+  visit(schema, [], true)
+  return valid ? params : null
+}
+
+/** A parameter value as a header value; base64 when it is not plain ASCII. */
+function headerValueOf(value) {
+  let text
+  if (typeof value === 'string') text = value
+  else if (typeof value === 'boolean') text = String(value)
+  else if (Number.isSafeInteger(value)) text = String(value)
+  else return null
+  const plain = /^[\x21-\x7E]([\x20-\x7E]*[\x21-\x7E])?$/.test(text)
+  if (plain && !/^=\?base64\?.*\?=$/.test(text)) return text
+  return `=?base64?${Buffer.from(text, 'utf8').toString('base64')}?=`
+}
+
+/** The Mcp-Param-* headers a call's arguments mirror, per the tool's schema. */
+function paramHeaders(schema, args) {
+  const headers = {}
+  for (const [header, path] of headerParamsIn(schema) || []) {
+    let value = args
+    for (const key of path) {
+      value = value !== null && typeof value === 'object' ? value[key] : undefined
+    }
+    const encoded = headerValueOf(value)
+    if (encoded !== null) headers[`Mcp-Param-${header}`] = encoded
+  }
+  return headers
 }
 
 function getHeader(headers, name) {
@@ -167,17 +261,22 @@ function waitForResponse(promise, { timeoutMs, signal } = {}) {
       })
     )
   }
+  let onAbort = null
   if (signal) {
     waits.push(
       new Promise((_, reject) => {
         if (signal.aborted) return reject(new Error('Aborted'))
-        signal.addEventListener('abort', () => reject(new Error('Aborted')), {
-          once: true,
-        })
+        onAbort = () => reject(new Error('Aborted'))
+        signal.addEventListener('abort', onAbort, { once: true })
       })
     )
   }
-  return Promise.race(waits).finally(() => clearTimeout(timer))
+  // The listener is removed once answered, so a long-lived signal does not
+  // keep one per request
+  return Promise.race(waits).finally(() => {
+    clearTimeout(timer)
+    if (onAbort) signal.removeEventListener('abort', onAbort)
+  })
 }
 
 export class McpClient {
@@ -200,6 +299,8 @@ export class McpClient {
     this.nextRequestId = 1
     this._pendingRequests = new Map()
     this._connected = false
+    this._sseClosed = false
+    this._toolSchemas = new Map()
   }
 
   async connect({ signal, timeoutMs } = {}) {
@@ -216,13 +317,11 @@ export class McpClient {
       this.protocolVersion = MODERN_PROTOCOL_VERSION
       const result = await this._sendHttpRpc(
         'server/discover',
-        {
-          _meta: { client: { name: 'overleaf-ai-assist', version: '1.0' } },
-        },
-        { signal, timeoutMs }
+        {},
+        { modern: true, signal, timeoutMs }
       )
       this.era = MODERN_ERA
-      this.serverInfo = result?.serverInfo || result?.server || result || {}
+      this.serverInfo = serverInfoOf(result)
       this.capabilities = result?.capabilities || {}
       this.instructions = textOf(result?.instructions)
       this._connected = true
@@ -247,21 +346,8 @@ export class McpClient {
 
     // Legacy Streamable HTTP (2025-11-25)
     try {
-      this.protocolVersion = LEGACY_PROTOCOL_VERSION
-      const result = await this._sendHttpRpc(
-        'initialize',
-        {
-          protocolVersion: LEGACY_PROTOCOL_VERSION,
-          capabilities: {},
-          clientInfo: { name: 'overleaf-ai-assist', version: '1.0' },
-        },
-        { signal, timeoutMs }
-      )
+      await this._initialize({ signal, timeoutMs })
       this.era = LEGACY_ERA
-      this.serverInfo = result?.serverInfo || result || {}
-      this.capabilities = result?.capabilities || {}
-      this.instructions = textOf(result?.instructions)
-      await this._sendNotification('notifications/initialized').catch(() => {})
       this._connected = true
       return
     } catch (err) {
@@ -289,6 +375,7 @@ export class McpClient {
   async _connectSse({ signal, timeoutMs } = {}) {
     this.era = SSE_ERA
     this.protocolVersion = LEGACY_PROTOCOL_VERSION
+    this._sseClosed = false
 
     const reqHeaders = {
       Accept: 'text/event-stream',
@@ -303,11 +390,11 @@ export class McpClient {
       ? AbortSignal.any([signal, this.sseAbortController.signal])
       : this.sseAbortController.signal
 
+    // No idle timeout here: the stream stays quiet between calls
     const sseRes = await this.fetch(this.url, {
       method: 'GET',
       headers: reqHeaders,
       signal: abortSignal,
-      timeoutMs,
     })
 
     if (sseRes.status === 401) {
@@ -365,7 +452,9 @@ export class McpClient {
           }
         } catch {}
       }
-    }).catch(() => {})
+    })
+      .catch(() => {})
+      .then(() => this._closeSse())
 
     // Wait for endpoint event with timeout
     let endpointTimer
@@ -382,23 +471,50 @@ export class McpClient {
     this.postEndpoint = postEndpoint
 
     // Initialize via postEndpoint
-    const initResult = await this._sendHttpRpc(
+    await this._initialize({ signal: abortSignal, timeoutMs })
+  }
+
+  /**
+   * The legacy initialize handshake. The server's version must be one this
+   * client speaks; every later request then carries that version.
+   */
+  async _initialize({ signal, timeoutMs } = {}) {
+    this.protocolVersion = LEGACY_PROTOCOL_VERSION
+    const result = await this._sendHttpRpc(
       'initialize',
       {
         protocolVersion: LEGACY_PROTOCOL_VERSION,
         capabilities: {},
-        clientInfo: { name: 'overleaf-ai-assist', version: '1.0' },
+        clientInfo: CLIENT_INFO,
       },
-      { signal: abortSignal, timeoutMs }
+      { signal, timeoutMs }
     )
-
-    this.serverInfo = initResult?.serverInfo || initResult || {}
-    this.capabilities = initResult?.capabilities || {}
-    this.instructions = textOf(initResult?.instructions)
-    await this._sendNotification('notifications/initialized').catch(() => {})
+    const version = result?.protocolVersion
+    if (version !== undefined && !LEGACY_VERSIONS.includes(version)) {
+      throw new Error(
+        `The server speaks MCP protocol version ${version}, which this client does not support`
+      )
+    }
+    this.protocolVersion = version || LEGACY_PROTOCOL_VERSION
+    this.serverInfo = result?.serverInfo || {}
+    this.capabilities = result?.capabilities || {}
+    this.instructions = textOf(result?.instructions)
+    await this._sendNotification('notifications/initialized', {}, { signal })
   }
 
-  async _sendNotification(method, params = {}) {
+  _closeSse() {
+    this._sseClosed = true
+    for (const { reject } of this._pendingRequests.values()) {
+      reject(
+        new Error(
+          'SSE connection failed: the event stream closed before the response'
+        )
+      )
+    }
+    this._pendingRequests.clear()
+  }
+
+  async _sendNotification(method, params = {}, { signal } = {}) {
     const payload = {
       jsonrpc: '2.0',
       method,
@@ -406,6 +522,7 @@ export class McpClient {
     }
     const reqHeaders = {
       'Content-Type': 'application/json',
+      Accept: 'application/json, text/event-stream',
       'MCP-Protocol-Version': this.protocolVersion || LEGACY_PROTOCOL_VERSION,
       'Mcp-Method': method,
       ...this.customHeaders,
@@ -422,16 +539,29 @@ export class McpClient {
       method: 'POST',
       headers: reqHeaders,
       body: JSON.stringify(payload),
+      signal,
     }).catch(() => {})
   }
 
-  async _sendHttpRpc(method, params = {}, { name, signal, timeoutMs } = {}) {
+  async _sendHttpRpc(
+    method,
+    params = {},
+    {
+      name,
+      headers = {},
+      signal,
+      timeoutMs,
+      modern = this.era === MODERN_ERA,
+    } = {}
+  ) {
     const id = this.nextRequestId++
     const payload = {
       jsonrpc: '2.0',
       id,
       method,
-      params,
+      params: modern
+        ? { ...params, _meta: { ...params._meta, ...modernMeta() } }
+        : params,
     }
 
     const reqHeaders = {
@@ -440,6 +570,7 @@ export class McpClient {
       'MCP-Protocol-Version': this.protocolVersion || MODERN_PROTOCOL_VERSION,
       'Mcp-Method': method,
       ...this.customHeaders,
+      ...headers,
     }
     if (name) {
       reqHeaders['Mcp-Name'] = encodeMcpName(name)
@@ -472,7 +603,6 @@ export class McpClient {
       })
 
       if (res.status === 401) {
-        this._pendingRequests.delete(id)
         throw new ConnectorAuthError('Authentication required', {
           status: 401,
           wwwAuthenticate: getHeader(res.headers, 'www-authenticate'),
@@ -480,7 +610,6 @@ export class McpClient {
       }
 
       if (res.status === 403) {
-        this._pendingRequests.delete(id)
         const wwwAuth = getHeader(res.headers, 'www-authenticate') || ''
         const text = (await parseResponsePayload(res)) || ''
         const textStr = typeof text === 'string' ? text : JSON.stringify(text)
@@ -498,14 +627,12 @@ export class McpClient {
       }
 
       if (res.status === 404 || res.status === 405) {
-        this._pendingRequests.delete(id)
         const err = new Error(`HTTP ${res.status}`)
         err.status = res.status
         throw err
       }
 
       if (res.status >= 400) {
-        this._pendingRequests.delete(id)
         let errorObj
         try {
           const json = await parseResponsePayload(res)
@@ -519,7 +646,9 @@ export class McpClient {
             res.status
           )
         }
-        throw new Error(`HTTP ${res.status}`)
+        const err = new Error(`HTTP ${res.status}`)
+        err.status = res.status
+        throw err
       }
 
       const sessId =
@@ -529,8 +658,16 @@ export class McpClient {
         this.sessionId = sessId
       }
 
-      // If accepted for background delivery on SSE stream
+      // Only the HTTP+SSE transport answers on its event stream
       if (res.status === 202 || res.status === 204) {
+        if (this.era !== SSE_ERA) {
+          throw new Error('The server accepted the request without a response')
+        }
+        if (this._sseClosed) {
+          throw new Error(
+            'SSE connection failed: the event stream is closed'
+          )
+        }
         return await waitForResponse(ssePromise, { timeoutMs, signal })
       }
 
@@ -597,7 +734,20 @@ export class McpClient {
   }
 
   async _sendRpc(method, params = {}, options = {}) {
-    return this._sendHttpRpc(method, params, options)
+    try {
+      return await this._sendHttpRpc(method, params, options)
+    } catch (err) {
+      if (err.status !== 404 || !this.sessionId || this.era !== LEGACY_ERA) {
+        throw err
+      }
+      // The server dropped the session: start a new one, then send again
+      this.sessionId = null
+      await this._initialize({
+        signal: options.signal,
+        timeoutMs: options.timeoutMs,
+      })
+      return this._sendHttpRpc(method, params, options)
+    }
   }
 
   async listTools({ signal, timeoutMs } = {}) {
@@ -616,7 +766,15 @@ export class McpClient {
       if (Array.isArray(result?.tools)) {
         for (const tool of result.tools) {
           if (tools.length >= MAX_TOOLS) break
-          if (tool && typeof tool === 'object') tools.push(tool)
+          // A tool whose x-mcp-header annotations break the spec is left out
+          if (
+            tool &&
+            typeof tool === 'object' &&
+            headerParamsIn(tool.inputSchema) !== null
+          ) {
+            tools.push(tool)
+            this._toolSchemas.set(tool.name, tool.inputSchema)
+          }
         }
       }
       cursor = result?.nextCursor
@@ -635,12 +793,18 @@ export class McpClient {
     }))
   }
 
-  async callTool(name, args = {}, { signal, timeoutMs } = {}) {
+  async callTool(name, args = {}, { signal, timeoutMs, inputSchema } = {}) {
     await this.connect({ signal, timeoutMs })
+    const schema = inputSchema ?? this._toolSchemas.get(name)
     return this._sendRpc(
       'tools/call',
       { name, arguments: args || {} },
-      { name, signal, timeoutMs }
+      {
+        name,
+        headers: paramHeaders(schema, args || {}),
+        signal,
+        timeoutMs,
+      }
     )
   }
 
@@ -651,6 +815,23 @@ export class McpClient {
         this.sseAbortController.abort()
       } catch {}
       this.sseAbortController = null
+    }
+    if (this.era === LEGACY_ERA && this.sessionId) {
+      // Ends the session on the server; one that keeps none may refuse it
+      const headers = {
+        'MCP-Protocol-Version': this.protocolVersion || LEGACY_PROTOCOL_VERSION,
+        ...this.customHeaders,
+        'Mcp-Session-Id': this.sessionId,
+      }
+      if (this.accessToken) {
+        headers['Authorization'] = `Bearer ${this.accessToken}`
+      }
+      this.sessionId = null
+      Promise.resolve()
+        .then(() =>
+          this.fetch(this.url, { method: 'DELETE', headers, timeoutMs: 5000 })
+        )
+        .catch(() => {})
     }
     for (const { reject } of this._pendingRequests.values()) {
       reject(new Error('McpClient closed'))

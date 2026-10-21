@@ -132,7 +132,16 @@ async function getContentAtVersion(req, res, next) {
   const projectId = params.project_id
   const version = params.version
   const blobStore = new BlobStore(projectId)
-  const snapshot = await getSnapshotAtVersion(projectId, version)
+  let snapshot
+  try {
+    snapshot = await getSnapshotAtVersion(projectId, version)
+  } catch (err) {
+    if (err instanceof Chunk.NotFoundError) {
+      return render.notFound(res)
+    } else {
+      throw err
+    }
+  }
   await snapshot.loadFiles('eager', blobStore)
   res.json(snapshot.toRaw())
 }

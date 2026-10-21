@@ -195,6 +195,28 @@ describe('OAuth2AuthorizeController', () => {
       expect(res.redirectUrl).to.include('S256')
     })
 
+    it('redirects to redirect_uri with error on GET if code_challenge is not a 43-character S256 value', async () => {
+      const sessionUser = vi.spyOn(SessionManager, 'getSessionUser')
+      const req = {
+        query: {
+          client_id: 'client_registered',
+          redirect_uri: 'http://localhost:8080/callback',
+          response_type: 'code',
+          code_challenge: 'too-short',
+          code_challenge_method: 'S256',
+          state: 'xyz123',
+        },
+      }
+      const res = createMockRes()
+
+      await OAuth2AuthorizeController.showAuthorizePage(req, res)
+      expect(res.redirectUrl).to.include('http://localhost:8080/callback')
+      expect(res.redirectUrl).to.include('error=invalid_request')
+      expect(res.redirectUrl).to.include('43-character')
+      expect(res.renderedView).to.be.null
+      expect(sessionUser.mock.calls).to.have.lengthOf(0)
+    })
+
     it('redirects to /login if user is not logged in', async () => {
       vi.spyOn(SessionManager, 'getSessionUser').mockReturnValue(null)
 

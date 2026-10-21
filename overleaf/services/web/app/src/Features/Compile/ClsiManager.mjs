@@ -1191,7 +1191,10 @@ function _finaliseRequest(projectId, options, project, docs, files) {
         historyId: options.historyId?.toString(), // send as string, if set
         buildId: options.buildId,
         editorId: options.editorId,
-        compiler: project.compiler,
+        // a per-compile override (MCP API) wins over the project's setting
+        compiler: VALID_COMPILERS.includes(options.compiler)
+          ? options.compiler
+          : project.compiler,
         timeout: options.timeout,
         imageName: project.imageName,
         draft: Boolean(options.draft),

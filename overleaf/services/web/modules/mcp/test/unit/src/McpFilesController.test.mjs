@@ -106,6 +106,195 @@ beforeEach(() => {
   vi.clearAllMocks()
   fsPromises.writeFile.mockImplementation(async () => undefined)
   fsPromises.unlink.mockImplementation(async () => undefined)
+  ProjectEntityHandler.promises.getAllEntities.mockResolvedValue({
+    docs: [],
+    files: [],
+    folders: [],
+  })
+})
+
+const MIB = 1024 * 1024
+
+describe('McpFilesController guards and caps', () => {
+  const projectWith = ({ docs = [], files = [], folders = [] }) =>
+    ProjectEntityHandler.promises.getAllEntities.mockResolvedValue({
+      docs,
+      files,
+      folders,
+    })
+
+  it('refuses a binary upload over a text document unless overwrite is set', async () => {
+    projectWith({ docs: [{ path: '/main.tex', doc: { _id: 'd1' } }] })
+    const r = res()
+    await McpFilesController.uploadFile(
+      {
+        mcpUserId: 'u1',
+        params: { projectId: 'p1' },
+        body: { path: '/main.tex', contentBase64: 'AAAA' },
+      },
+      r
+    )
+    expect(r.statusCode).toBe(409)
+    expect(r.body.code).toBe('conflict')
+    expect(McpUrlFetcher.fetchToBuffer).not.toHaveBeenCalled()
+    expect(EditorController.promises.upsertFileWithPath).not.toHaveBeenCalled()
+  })
+
+  it('replaces a text document with a binary file when overwrite is true', async () => {
+    projectWith({ docs: [{ path: '/main.tex', doc: { _id: 'd1' } }] })
+    EditorController.promises.upsertFileWithPath.mockResolvedValue({
+      file: { _id: 'f1' },
+    })
+    const r = res()
+    await McpFilesController.uploadFile(
+      {
+        mcpUserId: 'u1',
+        params: { projectId: 'p1' },
+        body: { path: '/main.tex', contentBase64: 'AAAA', overwrite: true },
+      },
+      r
+    )
+    expect(r.statusCode).toBe(200)
+    expect(EditorController.promises.upsertFileWithPath).toHaveBeenCalled()
+  })
+
+  it('refuses a folder path that differs from an existing folder only in case', async () => {
+    projectWith({ folders: [{ path: '/', folder: {} }, { path: '/chapters', folder: {} }] })
+    const r = res()
+    await McpFilesController.createFolder(
+      { mcpUserId: 'u1', params: { projectId: 'p1' }, body: { path: '/Chapters' } },
+      r
+    )
+    expect(r.statusCode).toBe(409)
+    expect(r.body.details).toEqual({ folder: '/chapters' })
+    expect(EditorController.promises.mkdirp).not.toHaveBeenCalled()
+  })
+
+  it('refuses a write through a folder path that differs only in case', async () => {
+    projectWith({ folders: [{ path: '/', folder: {} }, { path: '/chapters', folder: {} }] })
+    const r = res()
+    await McpFilesController.writeDoc(
+      {
+        mcpUserId: 'u1',
+        params: { projectId: 'p1' },
+        body: { path: '/Chapters/a.tex', content: 'x' },
+      },
+      r
+    )
+    expect(r.statusCode).toBe(409)
+    expect(EditorController.promises.upsertDocWithPath).not.toHaveBeenCalled()
+  })
+
+  it('creates a folder whose name does not exist in any case', async () => {
+    projectWith({ folders: [{ path: '/', folder: {} }, { path: '/chapters', folder: {} }] })
+    const r = res()
+    await McpFilesController.createFolder(
+      { mcpUserId: 'u1', params: { projectId: 'p1' }, body: { path: '/appendix' } },
+      r
+    )
+    expect(r.statusCode).toBe(200)
+    expect(EditorController.promises.mkdirp).toHaveBeenCalledWith('p1', '/appendix', 'u1')
+  })
+
+  it('returns the hash that a write accepts as expectedHash', async () => {
+    projectWith({ docs: [{ path: '/main.tex', doc: { _id: 'd1' } }] })
+    DocstoreManager.promises.getDoc.mockResolvedValue({ lines: ['a', 'b'] })
+    const read = res()
+    await McpFilesController.getDoc(
+      { params: { projectId: 'p1' }, query: { path: '/main.tex', startLine: '2' } },
+      read
+    )
+    const expected = (await import('node:crypto'))
+      .createHash('sha256')
+      .update('a\nb')
+      .digest('hex')
+    expect(read.body.hash).toBe(expected)
+
+    EditorController.promises.upsertDocWithPath.mockResolvedValue({ doc: { _id: 'd1' } })
+    const write = res()
+    await McpFilesController.writeDoc(
+      {
+        mcpUserId: 'u1',
+        params: { projectId: 'p1' },
+        body: { path: '/main.tex', content: 'c', expectedHash: read.body.hash },
+      },
+      write
+    )
+    expect(write.statusCode).toBe(200)
+  })
+
+  it('rejects a maxMatches or contextLines above the caps', async () => {
+    for (const query of [
+      { query: 'hit', maxMatches: '501' },
+      { query: 'hit', contextLines: '21' },
+    ]) {
+      const r = res()
+      await McpFilesController.searchFiles(
+        { mcpUserId: 'u1', params: { projectId: 'p1' }, query },
+        r
+      )
+      expect(r.statusCode, JSON.stringify(query)).toBe(400)
+      expect(r.body.code).toBe('validation_error')
+    }
+  })
+
+  it('refuses a regex search over the text cap before fetching the rest of the project', async () => {
+    projectWith({
+      docs: [
+        { path: '/a.tex', doc: { _id: 'd1' } },
+        { path: '/b.tex', doc: { _id: 'd2' } },
+        { path: '/c.tex', doc: { _id: 'd3' } },
+      ],
+    })
+    DocstoreManager.promises.getDoc.mockResolvedValue({
+      lines: ['x'.repeat(6 * MIB)],
+    })
+    const r = res()
+    await McpFilesController.searchFiles(
+      {
+        mcpUserId: 'u1',
+        params: { projectId: 'p1' },
+        query: { query: 'x', regex: 'true' },
+      },
+      r
+    )
+    expect(r.statusCode).toBe(400)
+    expect(r.body.message).toContain('too large for a regular expression search')
+  })
+
+  it('refuses a project zip whose binary files exceed the cap before streaming', async () => {
+    ProjectGetter.promises.getProject.mockResolvedValue({ name: 'Big' })
+    projectWith({
+      files: [{ path: '/video.mp4', file: { _id: 'f1', size: 70 * MIB } }],
+    })
+    const r = res()
+    await McpFilesController.downloadProjectZip(
+      { mcpUserId: 'u1', params: { projectId: 'p1' } },
+      r
+    )
+    expect(r.statusCode).toBe(413)
+    expect(r.body.code).toBe('output_too_large')
+    expect(ProjectZipStreamManager.createZipStreamForProject).not.toHaveBeenCalled()
+  })
+
+  it('refuses a multi-project zip whose binary files together exceed the cap', async () => {
+    AuthorizationManager.promises.canUserReadProject.mockResolvedValue(true)
+    ProjectEntityHandler.promises.getAllEntities.mockResolvedValue({
+      docs: [],
+      files: [{ path: '/a.bin', file: { _id: 'f1', size: 40 * MIB } }],
+      folders: [],
+    })
+    const r = res()
+    await McpFilesController.downloadMultipleProjectsZip(
+      { mcpUserId: 'u1', body: { projectIds: ['p1', 'p2'] } },
+      r
+    )
+    expect(r.statusCode).toBe(413)
+    expect(r.body.code).toBe('output_too_large')
+    expect(
+      ProjectZipStreamManager.createZipStreamForMultipleProjects
+    ).not.toHaveBeenCalled()
+  })
 })
 
 describe('McpFilesController.getTree', () => {
@@ -201,6 +390,7 @@ describe('McpFilesController.getDoc', () => {
       totalLines: 3,
       startLine: 2,
       endLine: 3,
+      hash: expect.stringMatching(/^[0-9a-f]{64}$/),
     })
   })
 
@@ -548,6 +738,57 @@ describe('McpFilesController.moveEntity', () => {
       'u1',
       'mcp'
     )
+  })
+
+  it('rejects renaming a folder when destination differs only in letter case from existing folder', async () => {
+    ProjectEntityHandler.promises.getAllEntities.mockResolvedValue({
+      docs: [],
+      files: [],
+      folders: [
+        { path: '/', folder: { _id: 'root' } },
+        { path: '/chapters', folder: { _id: 'f1' } },
+        { path: '/other', folder: { _id: 'f2' } },
+      ],
+    })
+    const req = {
+      mcpUserId: 'u1',
+      params: { projectId: 'p1' },
+      body: { oldPath: '/other', newPath: '/Chapters' },
+    }
+    const r = res()
+    await McpFilesController.moveEntity(req, r)
+    expect(r.statusCode).toBe(409)
+    expect(r.body.code).toBe('conflict')
+    expect(r.body.message).toBe(
+      'a folder named /chapters already exists, and /Chapters differs from it only in letter case'
+    )
+    expect(EditorController.promises.moveEntity).not.toHaveBeenCalled()
+    expect(EditorController.promises.renameEntity).not.toHaveBeenCalled()
+  })
+
+  it('rejects moving an entity when destination folder path differs only in letter case', async () => {
+    ProjectEntityHandler.promises.getAllEntities.mockResolvedValue({
+      docs: [{ path: '/a.tex', doc: { _id: 'd1' } }],
+      files: [],
+      folders: [
+        { path: '/', folder: { _id: 'root' } },
+        { path: '/chapters', folder: { _id: 'f1' } },
+      ],
+    })
+    const req = {
+      mcpUserId: 'u1',
+      params: { projectId: 'p1' },
+      body: { oldPath: '/a.tex', newPath: '/Chapters/a.tex' },
+    }
+    const r = res()
+    await McpFilesController.moveEntity(req, r)
+    expect(r.statusCode).toBe(409)
+    expect(r.body.code).toBe('conflict')
+    expect(r.body.message).toBe(
+      'a folder named /chapters already exists, and /Chapters differs from it only in letter case'
+    )
+    expect(EditorController.promises.moveEntity).not.toHaveBeenCalled()
+    expect(EditorController.promises.renameEntity).not.toHaveBeenCalled()
   })
 })
 

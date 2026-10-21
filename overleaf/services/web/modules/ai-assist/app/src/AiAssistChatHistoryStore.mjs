@@ -180,6 +180,72 @@ function isShrunkResult(result) {
   return Boolean(result && typeof result === 'object' && result._shrunk)
 }
 
+// Bounds on a stored compact entry (see AiAssistCompaction.mjs): the summary
+// and the ledger as JSON. An entry past them is refused, never cut.
+const COMPACT_SUMMARY_MAX_CHARS = 60_000
+const COMPACT_LEDGER_MAX_CHARS = 200_000
+export const COMPACT_INSTRUCTIONS_MAX_CHARS = 2000
+// The edited-region excerpts the engine budgets by window (<=6% of it)
+const COMPACT_EXCERPTS_MAX_CHARS = 250_000
+
+/**
+ * The reason a compact entry cannot be stored, or null when it can. Only the
+ * fields the rebuilt conversation reads are checked; the rest is kept as sent.
+ */
+export function compactEntryProblem(entry) {
+  if (typeof entry?.id !== 'string' || !entry.id) {
+    return 'A compacted conversation needs an id.'
+  }
+  if (entry.trigger !== 'manual' && entry.trigger !== 'auto') {
+    return 'A compacted conversation has an unknown trigger.'
+  }
+  if (typeof entry.summary !== 'string') {
+    return 'A compacted conversation needs a summary.'
+  }
+  if (entry.summary.length > COMPACT_SUMMARY_MAX_CHARS) {
+    return 'The compacted summary is too long.'
+  }
+  if (
+    !entry.ledger ||
+    typeof entry.ledger !== 'object' ||
+    Array.isArray(entry.ledger)
+  ) {
+    return 'A compacted conversation needs a ledger.'
+  }
+  if (JSON.stringify(entry.ledger).length > COMPACT_LEDGER_MAX_CHARS) {
+    return 'The compacted ledger is too long.'
+  }
+  if (
+    entry.excerpts !== undefined &&
+    (typeof entry.excerpts !== 'string' ||
+      entry.excerpts.length > COMPACT_EXCERPTS_MAX_CHARS)
+  ) {
+    return 'The compacted excerpts are too long.'
+  }
+  if (entry.tailFromId !== undefined && typeof entry.tailFromId !== 'string') {
+    return 'The kept tail of a compacted conversation is not an entry id.'
+  }
+  if (
+    entry.instructions !== undefined &&
+    (typeof entry.instructions !== 'string' ||
+      entry.instructions.length > COMPACT_INSTRUCTIONS_MAX_CHARS)
+  ) {
+    return 'The compact instructions are too long.'
+  }
+  return null
+}
+
+/** The first problem with the compact entries of a transcript, or null. */
+export function compactEntriesProblem(transcript) {
+  if (!Array.isArray(transcript)) return null
+  for (const entry of transcript) {
+    if (entry?.role !== 'compact') continue
+    const problem = compactEntryProblem(entry)
+    if (problem) return problem
+  }
+  return null
+}
+
 export function countSteps(transcript) {
   if (!Array.isArray(transcript)) return 0
   let steps = 0
@@ -210,6 +276,10 @@ function entriesMatch(a, b) {
   if (!a || !b) return false
   if (a.id && b.id && a.id === b.id) return true
   if (a.role !== b.role) return false
+  if (a.role === 'compact') {
+    // A compacted span is one unit: the same summary and time, or not the same
+    return a.summary === b.summary && a.createdAt === b.createdAt
+  }
   if (a.role === 'user') {
     return a.text === b.text
   }

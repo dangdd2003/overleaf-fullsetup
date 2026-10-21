@@ -3,6 +3,7 @@ import sinon from 'sinon'
 import { fireEvent, render, screen } from '@testing-library/react'
 import {
   SubresultGroup,
+  SubresultItem,
   formatSubresultsSummary,
 } from '../../../../../frontend/js/features/ai-assist/components/agent/subresult-group'
 import { partitionBlocks } from '../../../../../frontend/js/features/ai-assist/components/agent/agent-message'
@@ -714,5 +715,92 @@ describe('SubresultGroup Component', function () {
     const btn2 = c2.querySelector('.ai-assist-subresult-group-header')!
     // Must inherit the unfolded state from entryA
     expect(btn2.getAttribute('aria-expanded')).to.equal('true')
+  })
+
+  it('marks header and title as active and renders blooming spinner when group has active tool call', function () {
+    const items: any[] = [
+      {
+        type: 'tool_call',
+        call: {
+          id: 'c1',
+          name: 'read_file',
+          args: { path: 'main.tex' },
+          result: { content: 'doc' },
+        },
+      },
+      {
+        type: 'tool_call',
+        call: {
+          id: 'c2',
+          name: 'edit_file',
+          args: { path: 'main.tex' },
+          // in flight, result is undefined
+        },
+      },
+    ]
+
+    const { container } = render(
+      <SubresultGroup items={items} isLive={true} onDecision={sinon.stub()} />
+    )
+
+    const headerBtn = container.querySelector(
+      '.ai-assist-subresult-group-header'
+    )!
+    expect(headerBtn.classList.contains('is-active')).to.be.true
+
+    const spinner = container.querySelector(
+      '.ai-assist-subresult-group-spinner'
+    )
+    expect(spinner).to.exist
+    expect(spinner?.querySelector('.ai-assist-status-mark')).to.exist
+
+    const title = container.querySelector('.ai-assist-subresult-group-title')!
+    expect(title.classList.contains('is-active')).to.be.true
+    expect(title.textContent).to.contain('Read 1 file')
+    expect(title.textContent).to.contain('Edit main.tex')
+
+    // When clicked to expand, verify active tool call item has is-active
+    fireEvent.click(headerBtn)
+    const itemsDom = container.querySelectorAll('.ai-assist-subresult-item')
+    expect(itemsDom).to.have.length(2)
+    expect(itemsDom[0].classList.contains('is-active')).to.be.false
+    expect(itemsDom[1].classList.contains('is-active')).to.be.true
+
+    const activeToolCall = itemsDom[1].querySelector('.ai-assist-tool-call')!
+    expect(activeToolCall.classList.contains('is-active')).to.be.true
+    expect(activeToolCall.querySelector('.ai-assist-tool-spinner')).to.exist
+  })
+
+  it('renders active activity bar when first tool call is in flight with no prior completed tools', function () {
+    const items: SubresultItem[] = [
+      {
+        type: 'tool_call',
+        call: {
+          id: 'c1',
+          name: 'read_file',
+          args: { path: 'main.tex' },
+          // in flight, result is undefined
+        },
+      },
+    ]
+
+    const { container } = render(
+      <SubresultGroup items={items} isLive={true} onDecision={sinon.stub()} />
+    )
+
+    const headerBtn = container.querySelector(
+      '.ai-assist-subresult-group-header'
+    )
+    expect(headerBtn).to.exist
+    expect(headerBtn?.classList.contains('is-active')).to.be.true
+
+    const spinner = container.querySelector(
+      '.ai-assist-subresult-group-spinner'
+    )
+    expect(spinner).to.exist
+
+    const title = container.querySelector('.ai-assist-subresult-group-title')!
+    expect(title.textContent).to.contain('Read main.tex')
+    expect(title.classList.contains('is-active')).to.be.true
   })
 })

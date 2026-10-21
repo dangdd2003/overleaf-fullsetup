@@ -106,6 +106,38 @@ describe('<GitBridgeModal />', function () {
     expect(tokenCode.textContent).to.equal(fakeToken)
   })
 
+  it('shows a rate limit message when token creation is refused with 429', async function () {
+    fetchMock.post('/user/personal-access-tokens', {
+      status: 429,
+      body: 'Rate limit reached, please try again later',
+    })
+
+    renderModal()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Generate token' }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert').textContent).to.match(
+        /Too many requests/
+      )
+    })
+    expect(screen.queryByText(/Git authentication token/)).to.be.null
+  })
+
+  it('shows a generic error when token creation fails unexpectedly', async function () {
+    fetchMock.post('/user/personal-access-tokens', { status: 500, body: {} })
+
+    renderModal()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Generate token' }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert').textContent).to.equal(
+        'Sorry, something went wrong'
+      )
+    })
+  })
+
   it('shows link to settings when user already has existing tokens', async function () {
     fetchMock.removeRoutes().clearHistory()
     fetchMock.get('/user/personal-access-tokens', [
@@ -136,5 +168,39 @@ describe('<GitBridgeModal />', function () {
     fireEvent.click(closeBtn)
 
     expect(onHideStub).to.have.been.calledOnce
+  })
+
+  it('clears generateError when the modal closes or reopens', async function () {
+    fetchMock.post('/user/personal-access-tokens', { status: 500, body: {} })
+
+    const { rerender } = renderModal({ show: true, onHide: sinon.stub() })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Generate token' }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert').textContent).to.equal(
+        'Sorry, something went wrong'
+      )
+    })
+
+    rerender(
+      <ProjectContext.Provider value={mockProjectContextValue}>
+        <RailProvider>
+          <GitBridgeModal show={false} onHide={sinon.stub()} />
+        </RailProvider>
+      </ProjectContext.Provider>
+    )
+
+    rerender(
+      <ProjectContext.Provider value={mockProjectContextValue}>
+        <RailProvider>
+          <GitBridgeModal show={true} onHide={sinon.stub()} />
+        </RailProvider>
+      </ProjectContext.Provider>
+    )
+
+    await waitFor(() => {
+      expect(screen.queryByRole('alert')).to.be.null
+    })
   })
 })

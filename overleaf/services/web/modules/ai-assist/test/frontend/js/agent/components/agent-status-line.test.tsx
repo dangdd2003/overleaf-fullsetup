@@ -14,6 +14,7 @@ import {
 } from '../../../../../frontend/js/features/ai-assist/components/agent/status-words'
 import { AgentStatusLine } from '../../../../../frontend/js/features/ai-assist/components/agent/agent-status-line'
 import { SubresultGroup } from '../../../../../frontend/js/features/ai-assist/components/agent/subresult-group'
+import { PopupStatusLine } from '../../../../../frontend/js/features/ai-assist/components/generator/streaming-text'
 
 describe('formatElapsed', function () {
   it('says nothing for a run that has barely started', function () {
@@ -518,5 +519,105 @@ describe("the activity line stays out of the status line's job", function () {
     expect(header.textContent).to.contain('Read 1 file')
     expect(header.textContent).to.not.contain('Thinking')
     expect(header.textContent).to.not.contain('Working')
+  })
+})
+
+describe('AgentStatusLine: provider retries', function () {
+  let clock: sinon.SinonFakeTimers | null = null
+
+  afterEach(function () {
+    clock?.restore()
+    clock = null
+  })
+
+  const retry = (overrides: Record<string, unknown> = {}) => ({
+    attempt: 2,
+    maxRetries: 10,
+    deadline: Date.now() + 7000,
+    message: 'API overloaded (529)',
+    status: 529,
+    ...overrides,
+  })
+
+  it('counts the retry down with its attempt, in place of the word', function () {
+    const started = Date.now()
+    clock = sinon.useFakeTimers({
+      now: started,
+      toFake: ['setInterval', 'clearInterval', 'Date'],
+    })
+    const { container } = render(
+      <AgentStatusLine startedAt={started} retry={retry({ deadline: started + 7000 })} />
+    )
+    const line = container.querySelector('.ai-assist-status-line')!
+    expect(line.textContent).to.include('Retrying in 7s · attempt 2/10')
+
+    act(() => {
+      clock!.tick(1000)
+    })
+    expect(line.textContent).to.include('Retrying in 6s · attempt 2/10')
+
+    act(() => {
+      clock!.tick(6000)
+    })
+    expect(line.textContent).to.include('Retrying now · attempt 2/10')
+  })
+
+  it('shows the reason in red from the third attempt on, not before', function () {
+    const started = Date.now()
+    const { container, rerender } = render(
+      <AgentStatusLine startedAt={started} retry={retry({ attempt: 2, status: 503, message: 'Server error (503)' })} />
+    )
+    expect(container.querySelector('.ai-assist-retry-error')).to.equal(null)
+
+    rerender(
+      <AgentStatusLine startedAt={started} retry={retry({ attempt: 3, status: 503, message: 'Server error (503)' })} />
+    )
+    const error = container.querySelector('.ai-assist-retry-error')
+    expect(error?.textContent).to.equal('Server error (503)')
+  })
+
+  it('shows the reason at once when the provider rate limits', function () {
+    const { container } = render(
+      <AgentStatusLine startedAt={Date.now()} retry={retry({ attempt: 1, status: 429, message: 'Rate limited (429)' })} />
+    )
+    expect(container.querySelector('.ai-assist-retry-error')?.textContent).to.equal(
+      'Rate limited (429)'
+    )
+  })
+
+  it('is amber, and never reads as a stall while the retry waits', function () {
+    const started = Date.now()
+    clock = sinon.useFakeTimers({
+      now: started,
+      toFake: ['setInterval', 'clearInterval', 'Date'],
+    })
+    const { container } = render(
+      <AgentStatusLine startedAt={started} blocks={[]} retry={retry({ deadline: started + 60000 })} />
+    )
+    act(() => {
+      clock!.tick(10000)
+    })
+    const line = container.querySelector('.ai-assist-status-line')!
+    expect(line.classList.contains('is-retrying')).to.equal(true)
+    expect(line.classList.contains('is-stalled')).to.equal(false)
+  })
+
+  it('takes precedence over the compaction label while the retry is active', function () {
+    const { container } = render(
+      <AgentStatusLine startedAt={Date.now()} fixedLabel="Compacting conversation…" retry={retry()} />
+    )
+    const text = container.querySelector('.ai-assist-status-verb')?.textContent
+    expect(text).to.include('Retrying in')
+    expect(text).to.not.include('Compacting')
+  })
+
+  it('shows the retry notice in an editor loading line too', function () {
+    const { container } = render(
+      <PopupStatusLine text="Writing…" retry={retry({ deadline: Date.now() + 3000, attempt: 2 })} />
+    )
+    expect(container.querySelector('.ai-assist-status-verb')?.textContent).to.equal(
+      'Retrying in 3s · attempt 2/10'
+    )
+    expect(container.querySelector('.ai-assist-status-line')!.classList.contains('is-retrying')).to.equal(true)
   })
 })

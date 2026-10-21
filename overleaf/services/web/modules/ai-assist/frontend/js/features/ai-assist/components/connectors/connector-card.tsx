@@ -32,6 +32,7 @@ import {
 } from '../../connectors/api'
 import { connectWithPopup } from '../../connectors/oauth-popup'
 import { TEST_RESULT_MS, useAutoDismiss } from '../../hooks/use-auto-dismiss'
+import { SiteIcon, connectorIconUrl } from '../agent/site-icon'
 
 export type ConnectorCardProps = {
   connector: ConnectorView
@@ -144,6 +145,19 @@ export function RemoveConnectorModal({
         </OLButton>
       </OLModalFooter>
     </OLModal>
+  )
+}
+
+function ConnectorCardAvatar({ connector }: { connector: ConnectorView }) {
+  return (
+    <span className="connector-card-avatar">
+      <SiteIcon
+        url={connector.url ?? ''}
+        src={connectorIconUrl(connector)}
+        className="connector-card-icon"
+        fallback={<MaterialIcon type="extension" />}
+      />
+    </span>
   )
 }
 
@@ -403,9 +417,7 @@ export function ConnectorCard({
       data-testid={`connector-card-${connector.id}`}
     >
       <div className="connector-card-main">
-        <span className="connector-card-avatar">
-          <MaterialIcon type="extension" />
-        </span>
+        <ConnectorCardAvatar connector={connector} />
 
         <div className="connector-card-info">
           <div className="connector-card-name-row">

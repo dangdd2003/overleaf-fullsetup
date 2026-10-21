@@ -14,6 +14,13 @@ const ClsiManager = {
   promises: { getOutputFileStream: vi.fn() },
 }
 const ProjectGetter = { promises: { getProject: vi.fn() } }
+const AuthorizationManager = {
+  promises: { canUserWriteProjectContent: vi.fn(async () => true) },
+}
+vi.mock(
+  '../../../../../app/src/Features/Authorization/AuthorizationManager.mjs',
+  () => ({ default: AuthorizationManager })
+)
 const ProjectLocator = { promises: { findElementByPath: vi.fn() } }
 const ProjectEntityHandler = {
   promises: {
@@ -64,7 +71,7 @@ vi.mock(
 const { default: McpCompileController } = await import(
   '../../../app/src/McpCompileController.mjs'
 )
-const { resetBuildRecords, rememberBuild } = await import(
+const { resetBuildRecords, rememberBuild, findBuild } = await import(
   '../../../app/src/McpBuildRecords.mjs'
 )
 const { PdfPageError, PDF_PAGE_ERRORS } = await import(
@@ -237,8 +244,7 @@ describe('McpCompileController.compile result', () => {
     expect(CompileManager.promises.compile).not.toHaveBeenCalled()
   })
 
-  it('reports the compiler the project actually uses when one was requested', async () => {
-    ProjectGetter.promises.getProject.mockResolvedValue({ compiler: 'pdflatex' })
+  it('reports the requested compiler, used for this compile only', async () => {
     CompileManager.promises.compile.mockResolvedValue({
       status: 'success',
       outputFiles: [],
@@ -252,8 +258,64 @@ describe('McpCompileController.compile result', () => {
       },
       r
     )
-    expect(r.body.compiler).toBe('pdflatex')
-    expect(r.body.compilerRequested).toBe('xelatex')
+    expect(r.body.compiler).toBe('xelatex')
+    expect(r.body).not.toHaveProperty('compilerRequested')
+  })
+
+  it('records the requested compiler in the build fingerprint', async () => {
+    resetBuildRecords()
+    ProjectGetter.promises.getProject.mockResolvedValue({
+      compiler: 'pdflatex',
+      rootDoc_id: 'd1',
+      rootFolder: [],
+    })
+    ProjectEntityHandler.promises.getAllDocs.mockResolvedValue({})
+    ProjectEntityHandler.promises.getAllFiles.mockResolvedValue({})
+    CompileManager.promises.compile.mockResolvedValue({
+      status: 'success',
+      buildId: 'b-custom-compiler',
+      outputFiles: [],
+    })
+    const r = res()
+    await McpCompileController.compile(
+      {
+        mcpUserId: 'u1',
+        params: { projectId: 'p1' },
+        body: { compiler: 'xelatex' },
+      },
+      r
+    )
+    const record = findBuild('p1', 'b-custom-compiler')
+    expect(record).not.toBeNull()
+    expect(record.fingerprint.compiler).toBe('xelatex')
+  })
+
+  it('records project default compiler in fingerprint when not overridden', async () => {
+    resetBuildRecords()
+    ProjectGetter.promises.getProject.mockResolvedValue({
+      compiler: 'lualatex',
+      rootDoc_id: 'd1',
+      rootFolder: [],
+    })
+    ProjectEntityHandler.promises.getAllDocs.mockResolvedValue({})
+    ProjectEntityHandler.promises.getAllFiles.mockResolvedValue({})
+    CompileManager.promises.compile.mockResolvedValue({
+      status: 'success',
+      buildId: 'b-default-compiler',
+      outputFiles: [],
+    })
+    const r = res()
+    await McpCompileController.compile(
+      {
+        mcpUserId: 'u1',
+        params: { projectId: 'p1' },
+        body: {},
+      },
+      r
+    )
+    const record = findBuild('p1', 'b-default-compiler')
+    expect(record).not.toBeNull()
+    expect(record.fingerprint.compiler).toBe('lualatex')
   })
 })
 
@@ -1162,6 +1224,7 @@ describe('McpCompileController.getPdfDiff', () => {
       afterBuildId: NEW_ID,
       clsiServerId: 'c1',
       beforeClsiServerId: 'c0',
+      pages: null,
     })
     expect(r.body).toEqual(diff)
   })
@@ -1240,3 +1303,218 @@ describe('McpCompileController PDF failure hints', () => {
   })
 })
 
+
+describe('McpCompileController compile input and write guards', () => {
+  const doc = { _id: 'd9', lines: ['\\documentclass{article}'] }
+
+  beforeEach(() => {
+    CompileManager.promises.compile.mockResolvedValue({
+      status: 'success',
+      outputFiles: [],
+    })
+  })
+
+  it('rejects a draft flag that is not a boolean, instead of reading it as true', async () => {
+    const r = res()
+    await McpCompileController.compile(
+      { mcpUserId: 'u1', params: { projectId: 'p1' }, body: { draft: 'false' } },
+      r
+    )
+    expect(r.statusCode).toBe(400)
+    expect(r.body.code).toBe('validation_error')
+    expect(CompileManager.promises.compile).not.toHaveBeenCalled()
+  })
+
+  it('rejects a stopOnFirstError flag that is not a boolean', async () => {
+    const r = res()
+    await McpCompileController.compile(
+      { mcpUserId: 'u1', params: { projectId: 'p1' }, body: { stopOnFirstError: 1 } },
+      r
+    )
+    expect(r.body.code).toBe('validation_error')
+    expect(CompileManager.promises.compile).not.toHaveBeenCalled()
+  })
+
+  it('treats an absent or null flag as false', async () => {
+    const r = res()
+    await McpCompileController.compile(
+      { mcpUserId: 'u1', params: { projectId: 'p1' }, body: { draft: null } },
+      r
+    )
+    expect(CompileManager.promises.compile).toHaveBeenCalledWith(
+      'p1',
+      'u1',
+      expect.objectContaining({ draft: false, stopOnFirstError: false })
+    )
+  })
+
+  it('rejects a compiler that is not in the safe list', async () => {
+    const r = res()
+    await McpCompileController.compile(
+      { mcpUserId: 'u1', params: { projectId: 'p1' }, body: { compiler: 'shell-escape' } },
+      r
+    )
+    expect(r.statusCode).toBe(400)
+    expect(r.body.code).toBe('validation_error')
+    expect(CompileManager.promises.compile).not.toHaveBeenCalled()
+  })
+
+  it('does not let a reader change the root document when it is unset', async () => {
+    AuthorizationManager.promises.canUserWriteProjectContent.mockResolvedValueOnce(false)
+    ProjectGetter.promises.getProject.mockResolvedValue({ rootDoc_id: null, rootFolder: [] })
+    ProjectEntityHandler.promises.getAllDocs.mockResolvedValue({ '/main.tex': doc })
+    const r = res()
+    await McpCompileController.compile(
+      { mcpUserId: 'u1', params: { projectId: 'p1' }, body: {} },
+      r
+    )
+    expect(CompileManager.promises.compile).toHaveBeenCalledWith(
+      'p1',
+      'u1',
+      expect.objectContaining({ rootDoc_id: 'd9', rootResourcePath: 'main.tex' })
+    )
+  })
+
+  it('answers a reader with no usable root without calling CompileManager', async () => {
+    AuthorizationManager.promises.canUserWriteProjectContent.mockResolvedValueOnce(false)
+    ProjectGetter.promises.getProject.mockResolvedValue({ rootDoc_id: null, rootFolder: [] })
+    ProjectEntityHandler.promises.getAllDocs.mockResolvedValue({})
+    const r = res()
+    await McpCompileController.compile(
+      { mcpUserId: 'u1', params: { projectId: 'p1' }, body: {} },
+      r
+    )
+    expect(CompileManager.promises.compile).not.toHaveBeenCalled()
+    expect(r.body.status).toBe('validation-problems')
+    expect(r.body.validationProblems).toEqual({ mainFile: 'no main file specified' })
+  })
+
+  it('leaves the root repair to CompileManager for a writer', async () => {
+    const r = res()
+    await McpCompileController.compile(
+      { mcpUserId: 'u1', params: { projectId: 'p1' }, body: {} },
+      r
+    )
+    const options = CompileManager.promises.compile.mock.calls[0][2]
+    expect(options).not.toHaveProperty('rootDoc_id')
+  })
+})
+
+describe('McpCompileController output caps', () => {
+  const MIB = 1024 * 1024
+
+  it('refuses a compile log over 16 MB with output_too_large', async () => {
+    ClsiManager.promises.getOutputFileStream.mockResolvedValue(
+      Readable.from([Buffer.alloc(16 * MIB + 1, 'a')])
+    )
+    const r = res()
+    await McpCompileController.getLog(
+      { mcpUserId: 'u1', params: { projectId: 'p1' }, query: { buildId: '0a1b-2c3d' } },
+      r
+    )
+    expect(r.statusCode).toBe(413)
+    expect(r.body.code).toBe('output_too_large')
+  })
+
+  it('cuts a PDF off once it passes 64 MB', async () => {
+    ClsiManager.promises.getOutputFileStream.mockResolvedValue(
+      Readable.from([Buffer.alloc(64 * MIB + 1, 'a')])
+    )
+    const sink = new Writable({
+      write(chunk, enc, cb) {
+        cb()
+      },
+    })
+    sink.setHeader = () => {}
+    await expect(
+      McpCompileController.getPdf(
+        { mcpUserId: 'u1', params: { projectId: 'p1' }, query: { buildId: '0a1b-2c3d' } },
+        sink
+      )
+    ).rejects.toMatchObject({ code: 'OUTPUT_TOO_LARGE' })
+  })
+})
+
+describe('McpCompileController pdf-diff pages and synctex column', () => {
+  const OLD_ID = '18f4c3a2b00-0123456789abcd00'
+  const NEW_ID = '18f4c3a2b10-0123456789abcdef'
+
+  beforeEach(() => {
+    resetBuildRecords()
+    rememberBuild('p1', { buildId: OLD_ID, clsiServerId: 'c0', fingerprint: { contentHash: 'a', entries: [] } })
+    rememberBuild('p1', { buildId: NEW_ID, clsiServerId: 'c1', fingerprint: { contentHash: 'b', entries: [] } })
+    PdfVisualDiff.diffBuilds.mockResolvedValue({ ok: true, pages: [] })
+  })
+
+  it('passes a validated pages list to the diff', async () => {
+    const r = res()
+    await McpCompileController.getPdfDiff(
+      { mcpUserId: 'u1', params: { projectId: 'p1' }, query: { buildId: NEW_ID, pages: '3,4,4' } },
+      r
+    )
+    expect(PdfVisualDiff.diffBuilds).toHaveBeenCalledWith(
+      expect.objectContaining({ pages: [3, 4] })
+    )
+  })
+
+  it.each(['abc', '0', '2,,3', '1.5', ['1', '2']])(
+    'rejects pages=%s with validation_error',
+    async pages => {
+      const r = res()
+      await McpCompileController.getPdfDiff(
+        { mcpUserId: 'u1', params: { projectId: 'p1' }, query: { buildId: NEW_ID, pages } },
+        r
+      )
+      expect(r.statusCode).toBe(400)
+      expect(r.body.code).toBe('validation_error')
+      expect(PdfVisualDiff.diffBuilds).not.toHaveBeenCalled()
+    }
+  )
+
+  it('answers too_many_pages with validation_error and the pages hint', async () => {
+    PdfVisualDiff.diffBuilds.mockResolvedValue({
+      ok: false,
+      reason: 'too_many_pages',
+      message: 'A diff compares at most 40 pages at once.',
+    })
+    const r = res()
+    await McpCompileController.getPdfDiff(
+      { mcpUserId: 'u1', params: { projectId: 'p1' }, query: { buildId: NEW_ID } },
+      r
+    )
+    expect(r.statusCode).toBe(400)
+    expect(r.body.code).toBe('validation_error')
+    expect(r.body.hint).toMatch(/pages/)
+  })
+
+  it('defaults the synctex column to 0 when only a line is given', async () => {
+    CompileManager.promises.syncTeX.mockResolvedValue({ pdf: [] })
+    await McpCompileController.synctex(
+      { mcpUserId: 'u1', params: { projectId: 'p1' }, query: { file: 'main.tex', line: '10' } },
+      res()
+    )
+    expect(CompileManager.promises.syncTeX).toHaveBeenCalledWith(
+      'p1',
+      'u1',
+      expect.objectContaining({
+        validatedOptions: expect.objectContaining({ file: 'main.tex', line: 10, column: 0 }),
+      })
+    )
+  })
+})
+
+describe('McpCompileController render_failed hint', () => {
+  it('keeps the region hint when a page is too dense to render', async () => {
+    PdfPageInspector.inspectPdfPage.mockRejectedValue(
+      new PdfPageError(PDF_PAGE_ERRORS.RENDER_FAILED, 'too big')
+    )
+    ProjectGetter.promises.getProject.mockResolvedValue({ rootDoc_id: null, rootFolder: [] })
+    const r = res()
+    await McpCompileController.getPdfPage(
+      { mcpUserId: 'u1', params: { projectId: 'p1' }, query: { buildId: '18f4c3a2b10-0123456789abcdef', page: '1' } },
+      r
+    )
+    expect(r.statusCode).toBe(502)
+    expect(r.body.hint).toMatch(/pass region/)
+  })
+})

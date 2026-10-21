@@ -1,4 +1,4 @@
-import { ChangeSet, StateEffect, StateField } from '@codemirror/state'
+import { ChangeSet, EditorState, StateEffect, StateField } from '@codemirror/state'
 import {
   Decoration,
   DecorationSet,
@@ -8,6 +8,7 @@ import {
   TooltipView,
 } from '@codemirror/view'
 import { learnedWords } from '@/features/source-editor/extensions/spelling/learned-words'
+import { floatingCard, floatingTooltip } from '../floating/editor-card'
 import { sameEdit } from './cache'
 import { containsEdit, displayEdit, editKind, type MaskedEdit } from './edits'
 import type { MaskedText } from './masked-text'
@@ -39,6 +40,8 @@ export type CheckStatus =
   | { kind: 'stopped'; message: string }
 
 export type CardState = {
+  /** Tells this card's tooltip apart from every other card's (see `cardCreate`). */
+  id: number
   hash: string
   /** The unit's `from`: tells two copies of one sentence apart. */
   from: number
@@ -49,8 +52,8 @@ export type CardState = {
   /** Increasing layer order for pinned cards so newer pins sit above older ones. */
   pinOrder: number
   tooltip: Tooltip
-  /** This card's own tooltip DOM, kept across moves (see `cardTooltip`). */
-  create: () => TooltipView
+  /** This card's own tooltip DOM, kept across moves (see `cardCreate`). */
+  create: (view: EditorView) => TooltipView
 }
 
 export type LanguageSuggestionsState = {
@@ -201,25 +204,40 @@ function touches(changes: ChangeSet, from: number, to: number): boolean {
   return hit
 }
 
+const sameUnit = (a: { hash: string; from: number }, b: { hash: string; from: number }) =>
+  a.hash === b.hash && a.from === b.from
+
+let nextCardId = 0
+
 /**
  * One function per card: CodeMirror keeps a tooltip's DOM while the new
  * tooltip has the same `create`, so the card keeps its React state, and it
  * matches tooltips by `create`, so two open cards must not share one.
+ * The card's range is read by id, since its `from` moves with edits.
  */
-function cardContainer(): () => TooltipView {
-  return () => {
-    const dom = document.createElement('div')
-    dom.className = 'ol-language-suggestion-card-container'
-    return { dom, overlap: true, offset: { x: 0, y: 4 } }
-  }
+function cardCreate(id: number): (view: EditorView) => TooltipView {
+  return floatingCard({
+    className: 'ol-language-suggestion-card-container',
+    gap: 4,
+    range: state => cardRange(state, id),
+    // Centred on the suggested words, as on Overleaf's own suggestions
+    align: 'center',
+  })
 }
 
-function cardTooltip(pos: number, create: () => TooltipView): Tooltip {
-  return { pos, above: false, strictSide: true, arrow: false, create }
+/** The text the card underlines now: its active edit, or null when it is gone. */
+function cardRange(
+  state: EditorState,
+  id: number
+): { from: number; to: number } | null {
+  const value = state.field(languageSuggestionsField, false)
+  if (!value) return null
+  const card = (value.cards ?? []).find(c => c.id === id)
+  if (!card) return null
+  const unit = value.units.find(u => sameUnit(u, card))
+  const edit = unit?.edits[card.edit]
+  return unit && edit ? displayRange(unit, edit) : null
 }
-
-const sameUnit = (a: { hash: string; from: number }, b: { hash: string; from: number }) =>
-  a.hash === b.hash && a.from === b.from
 
 /** The card again, after a change: on a visible edit of its unit, or gone. */
 function resolveCard(
@@ -236,7 +254,7 @@ function resolveCard(
     : visible[0].index
   const pos = displayRange(unit, unit.edits[edit]).from
   if (edit === card.edit && card.tooltip.pos === pos) return card
-  return { ...card, edit, tooltip: cardTooltip(pos, card.create) }
+  return { ...card, edit, tooltip: floatingTooltip(pos, card.create) }
 }
 
 function nextPinOrder(cards: CardState[]): number {
@@ -358,15 +376,17 @@ export const languageSuggestionsField =
           } else {
             // Dismiss unpinned card when opening another, but keep all pinned cards
             cards = cards.filter(c => c.pinned)
-            const create = cardContainer()
+            const id = ++nextCardId
+            const create = cardCreate(id)
             const newCard: CardState = {
+              id,
               hash,
               from,
               edit,
               pinned: false,
               pinOrder: nextPinOrder(cards),
               create,
-              tooltip: cardTooltip(-1, create),
+              tooltip: floatingTooltip(-1, create),
             }
             cards = [...cards, newCard]
           }

@@ -69,6 +69,15 @@ beforeEach(() => {
 })
 
 describe('requireMcpAuth', () => {
+  it('does not authenticate again when the request guard already did', async () => {
+    const { req, res, next } = ctx({ authorization: 'Bearer olp_abcd' })
+    req.mcpUserId = 'u1'
+    await requireMcpAuth(req, res, next)
+    expect(validateToken).not.toHaveBeenCalled()
+    expect(next).toHaveBeenCalledWith()
+    expect(req.mcpUserId).toBe('u1')
+  })
+
   describe('PAT authentication (olp_...) backward-compatibility', () => {
     it('401 when no Authorization header and sets WWW-Authenticate header', async () => {
       const { req, res, next } = ctx()

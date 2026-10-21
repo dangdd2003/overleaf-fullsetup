@@ -49,6 +49,7 @@ describe('GitBridgeRouter', function () {
       expect(r.get.calledWith('/api/v0/docs/:projectId/saved_vers')).toBe(true)
       expect(r.get.calledWith('/api/v0/docs/:projectId/snapshots/:versionId')).toBe(true)
       expect(r.get.calledWith('/api/v0/docs/:projectId/file/:fileId')).toBe(true)
+      expect(r.get.calledWith('/api/v0/docs/:projectId/blob/:hash')).toBe(true)
       expect(r.post.calledWith('/api/v0/docs/:projectId/snapshots')).toBe(true)
     }
   })

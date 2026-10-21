@@ -49,6 +49,7 @@ block append meta
 		content={
 			showThinFooter: showThinFooter,
 			showPoweredBy: !hasFeature('saas') && !settings.nav.hide_powered_by,
+			showLegal: Boolean(settings.enableLegalPage),
 			subdomainLang: settings.i18n.subdomainLang,
 			translatedLanguages: settings.translatedLanguages,
 			leftItems: cloneAndTranslateText(settings.nav.left_footer),

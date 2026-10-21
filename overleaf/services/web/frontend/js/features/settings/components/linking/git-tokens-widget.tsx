@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import {
   OLModal,
   OLModalBody,
@@ -110,6 +111,22 @@ function copyTextToClipboard(text: string): boolean {
   return true
 }
 
+function getGenerateErrorMessage(t: TFunction, status?: number) {
+  if (status === 409) {
+    return t(
+      'token_limit_reached',
+      'You’ve reached the token limit. To generate a new authentication token, please delete an existing one.'
+    )
+  }
+  if (status === 429) {
+    return t(
+      'too_many_requests',
+      'Too many requests were received in a short space of time. Please wait for a few moments and try again.'
+    )
+  }
+  return t('generic_something_went_wrong', 'Sorry, something went wrong')
+}
+
 export function GitTokensWidget() {
   const { t } = useTranslation()
   const [tokens, setTokens] = useState<TokenRecord[]>([])
@@ -118,6 +135,7 @@ export function GitTokensWidget() {
   const [generatedToken, setGeneratedToken] = useState<string | null>(null)
   const [tokenCopied, setTokenCopied] = useState<boolean>(false)
   const [tokenToDelete, setTokenToDelete] = useState<TokenRecord | null>(null)
+  const [generateError, setGenerateError] = useState<string | null>(null)
   const mcpEnabled = Boolean(getMeta('ol-mcpEnabled'))
   const [scopeGitBridge, setScopeGitBridge] = useState<boolean>(true)
   const [scopeMcp, setScopeMcp] = useState<boolean>(false)
@@ -141,6 +159,7 @@ export function GitTokensWidget() {
   }, [fetchTokens])
 
   const handleGenerate = async () => {
+    setGenerateError(null)
     try {
       const scopes: string[] = []
       if (scopeGitBridge) scopes.push('git_bridge')
@@ -163,9 +182,12 @@ export function GitTokensWidget() {
         setGeneratedToken(data.token)
         setShowGenerateModal(true)
         fetchTokens()
+      } else {
+        setGenerateError(getGenerateErrorMessage(t, res.status))
       }
     } catch (err) {
       debugConsole.error('Failed to generate token', err)
+      setGenerateError(getGenerateErrorMessage(t))
     }
   }
 
@@ -190,6 +212,7 @@ export function GitTokensWidget() {
         return
       }
       setTokenToDelete(null)
+      setGenerateError(null)
       fetchTokens()
     } catch (err) {
       debugConsole.error('Failed to delete token', err)
@@ -240,11 +263,7 @@ export function GitTokensWidget() {
             {t('your_git_auth_tokens', 'Your Git authentication tokens')}
           </h4>
           {!hasTokens && !loading && (
-            <OLButton
-              variant="secondary"
-              onClick={handleGenerate}
-              aria-label={`${t('git_integration', 'Git integration')} ${t('generate_token', 'Generate token')}`}
-            >
+            <OLButton variant="secondary" onClick={handleGenerate}>
               {t('generate_token', 'Generate token')}
             </OLButton>
           )}
@@ -292,6 +311,12 @@ export function GitTokensWidget() {
           </div>
         )}
 
+        {generateError && (
+          <div className="alert alert-danger small mb-3" role="alert">
+            {generateError}
+          </div>
+        )}
+
         {!hasTokens ? (
           <ul className="small git-tokens-instruction-text git-tokens-hints ps-3">
             <li>
@@ -320,7 +345,7 @@ export function GitTokensWidget() {
             <li>
               {t(
                 'git_tokens_unlimited',
-                'You are free to generate as many tokens as possible.'
+                'You can have up to 20 tokens at a time. Delete an unused token to create a new one.'
               )}
             </li>
           </ul>

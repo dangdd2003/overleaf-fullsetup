@@ -1,15 +1,22 @@
-import readline from 'node:readline'
 import { pipeline } from 'node:stream/promises'
+import Settings from '@overleaf/settings'
 import logger from '@overleaf/logger'
 import CompileManager from '../../../../app/src/Features/Compile/CompileManager.mjs'
 import ClsiManager from '../../../../app/src/Features/Compile/ClsiManager.mjs'
+import AuthorizationManager from '../../../../app/src/Features/Authorization/AuthorizationManager.mjs'
+import DocumentHelper from '../../../../app/src/Features/Documents/DocumentHelper.mjs'
 import ProjectEntityHandler from '../../../../app/src/Features/Project/ProjectEntityHandler.mjs'
+import ProjectEntityUpdateHandler from '../../../../app/src/Features/Project/ProjectEntityUpdateHandler.mjs'
 import ProjectGetter from '../../../../app/src/Features/Project/ProjectGetter.mjs'
 import ProjectLocator from '../../../../app/src/Features/Project/ProjectLocator.mjs'
 import Errors from '../../../../app/src/Features/Errors/Errors.js'
 import McpErrors from './McpErrors.mjs'
 import { summarizeCompileLogs } from './CompileLogSummary.mjs'
 import { limitBinaryStream } from './McpBinaryLimit.mjs'
+import {
+  MAX_OUTPUT_LOG_BYTES,
+  readBounded,
+} from '../../../../app/src/Features/PdfInspection/BoundedStream.mjs'
 import { buildFingerprint, diffFingerprints } from '../../../../app/src/Features/PdfInspection/BuildFingerprint.mjs'
 import {
   findBuild,
@@ -40,6 +47,50 @@ async function resolveRootDoc(projectId, rootDocPath) {
   }
 }
 
+/**
+ * A JSON boolean flag. Absent or null is false; anything other than a boolean
+ * is rejected, so the string "false" does not switch the flag on.
+ * Returns `{ value }`, or `null` when the input is not a boolean.
+ */
+function booleanFlag(value) {
+  if (value == null) return { value: false }
+  if (typeof value !== 'boolean') return null
+  return { value }
+}
+
+/**
+ * The root document of a project without writing to it. CompileManager's own
+ * fallback (ensureRootDocumentIsValid) unsets a stale root and saves an
+ * automatic one, which a read-only caller must not cause. Returns null when no
+ * text document can serve as the root.
+ */
+async function readOnlyRootDoc(projectId) {
+  const project = await ProjectGetter.promises.getProject(projectId, {
+    rootDoc_id: 1,
+    rootFolder: 1,
+  })
+  if (!project) return null
+  const current = await rootPathOf(project)
+  if (current) {
+    return { rootDoc_id: project.rootDoc_id, rootResourcePath: current }
+  }
+  // Same choice setRootDocAutomatically makes, without saving it.
+  const docs = await ProjectEntityHandler.promises.getAllDocs(projectId)
+  for (const [path, doc] of Object.entries(docs)) {
+    if (
+      ProjectEntityUpdateHandler.isPathValidForRootDoc(path) &&
+      DocumentHelper.contentHasDocumentclass(doc.lines) &&
+      doc._id
+    ) {
+      return {
+        rootDoc_id: doc._id,
+        rootResourcePath: path.replace(/^\/+/, ''),
+      }
+    }
+  }
+  return null
+}
+
 async function compile(req, res) {
   const { compiler, draft, stopOnFirstError, rootDocPath } = req.body || {}
   if (
@@ -52,10 +103,26 @@ async function compile(req, res) {
       'compiler and rootDocPath must be strings'
     )
   }
+  const draftFlag = booleanFlag(draft)
+  const stopFlag = booleanFlag(stopOnFirstError)
+  if (!draftFlag || !stopFlag) {
+    return McpErrors.send(
+      res,
+      McpErrors.CODES.VALIDATION,
+      'draft and stopOnFirstError must be true or false'
+    )
+  }
+  if (compiler && !Settings.safeCompilers.includes(compiler)) {
+    return McpErrors.send(
+      res,
+      McpErrors.CODES.VALIDATION,
+      `compiler must be one of ${Settings.safeCompilers.join(', ')}`
+    )
+  }
   const projectId = req.params.projectId
   const options = {
-    draft: !!draft,
-    stopOnFirstError: !!stopOnFirstError,
+    draft: draftFlag.value,
+    stopOnFirstError: stopFlag.value,
     // Ask LaTeX for "file:line: message" errors, so each error names its file
     // and line instead of only the file that was open at the time.
     fileLineErrors: true,
@@ -77,11 +144,38 @@ async function compile(req, res) {
     }
     options.rootDoc_id = root.rootDoc_id
     options.rootResourcePath = root.rootResourcePath
+  } else if (
+    !(await AuthorizationManager.promises.canUserWriteProjectContent(
+      req.mcpUserId,
+      projectId,
+      null
+    ))
+  ) {
+    const root = await readOnlyRootDoc(projectId)
+    if (!root) {
+      // What CompileManager would answer, without the root-document writes.
+      return res.json({
+        status: 'validation-problems',
+        buildId: null,
+        clsiServerId: null,
+        rootDocPath: null,
+        pdf: null,
+        pdfProduced: false,
+        outputFiles: [],
+        validationProblems: { mainFile: 'no main file specified' },
+      })
+    }
+    options.rootDoc_id = root.rootDoc_id
+    options.rootResourcePath = root.rootResourcePath
   }
   // Taken before the build, so an edit made while LaTeX runs counts as a change.
   let fingerprint = null
   try {
-    fingerprint = await fingerprintOf(projectId, options.rootResourcePath)
+    fingerprint = await fingerprintOf(
+      projectId,
+      options.rootResourcePath,
+      compiler
+    )
   } catch (err) {
     logger.warn({ err, projectId }, 'could not fingerprint project for compile')
   }
@@ -125,13 +219,8 @@ async function compile(req, res) {
     body.validationProblems = result.validationProblems
   }
   if (compiler) {
-    // CLSI builds with the project's compiler; the request option is not
-    // applied. Report the real one so the caller can tell.
-    const project = await ProjectGetter.promises.getProject(projectId, {
-      compiler: 1,
-    })
-    body.compiler = project?.compiler ?? null
-    body.compilerRequested = compiler
+    // The compiler this build used: the requested one, for this compile only
+    body.compiler = compiler
   }
   res.json(body)
 }
@@ -224,43 +313,31 @@ async function getLog(req, res) {
     throw err
   }
 
-  // With maxLines and no fromLine, a ring buffer keeps only the trailing
-  // lines. Otherwise the lines from the first wanted line on are kept, up to
-  // maxLines when given. Every line is still counted for totalLines.
-  const ring = maxLines != null && fromLineNo == null ? new Array(maxLines) : null
-  const firstWanted = fromLineNo ?? 1
-  const windowLines = []
-  let total = 0
-  const rl = readline.createInterface({ input: stream, crlfDelay: Infinity })
-  try {
-    for await (const line of rl) {
-      total++
-      if (ring) {
-        ring[(total - 1) % maxLines] = line
-      } else if (
-        total >= firstWanted &&
-        (maxLines == null || windowLines.length < maxLines)
-      ) {
-        windowLines.push(line)
-      }
-    }
-  } finally {
-    rl.close()
-    stream.destroy()
+  // A window of a log past the cap would be wrong at its end, so a log over
+  // the cap is refused rather than cut.
+  const { buffer, truncated } = await readBounded(stream, MAX_OUTPUT_LOG_BYTES)
+  if (truncated) {
+    return sendLogTooLarge(res)
   }
 
-  let lines
+  // Lines end at \n, \r\n or a lone \r, as readline splits them. A final
+  // terminator ends the last line rather than starting an empty one.
+  const all = buffer.toString('utf8').split(/\r\n|\r|\n/)
+  if (all[all.length - 1] === '') all.pop()
+  const total = all.length
+
+  // With maxLines and no fromLine, the trailing maxLines lines. Otherwise the
+  // lines from the first wanted line on, up to maxLines when given. Every line
+  // is still counted for totalLines.
   let firstLine
-  if (ring) {
-    const kept = Math.min(total, maxLines)
-    firstLine = total - kept + 1
-    lines = []
-    for (let n = firstLine; n <= total; n++) {
-      lines.push(ring[(n - 1) % maxLines])
-    }
+  let lines
+  if (maxLines != null && fromLineNo == null) {
+    lines = all.slice(-maxLines)
+    firstLine = total - lines.length + 1
   } else {
-    lines = windowLines
-    firstLine = firstWanted
+    firstLine = fromLineNo ?? 1
+    const end = maxLines == null ? undefined : firstLine - 1 + maxLines
+    lines = all.slice(firstLine - 1, end)
   }
   res.json({
     log: lines.join('\n'),
@@ -271,8 +348,21 @@ async function getLog(req, res) {
   })
 }
 
-// Read a whole output file as text, or null when the build did not write it
-// (e.g. no output.blg when the project has no bibliography).
+function sendLogTooLarge(res) {
+  return McpErrors.send(
+    res,
+    McpErrors.CODES.TOO_LARGE,
+    `build log is larger than ${MAX_OUTPUT_LOG_BYTES / (1024 * 1024)} MB`,
+    {
+      hint: 'The build wrote an unusually large log, usually from a loop of errors or warnings. Fix the first error in get_compile_log or get_compile_diagnostics, then compile again.',
+    }
+  )
+}
+
+// Read a whole output file as text, up to the log cap. Returns null when the
+// build did not write it (e.g. no output.blg when the project has no
+// bibliography log), `{ tooLarge: true }` when it is over the cap, and
+// `{ text }` otherwise.
 async function readOutputText(projectId, userId, clsiServerId, buildId, path) {
   let stream
   try {
@@ -292,15 +382,9 @@ async function readOutputText(projectId, userId, clsiServerId, buildId, path) {
     }
     throw err
   }
-  const chunks = []
-  try {
-    for await (const chunk of stream) {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
-    }
-  } finally {
-    stream.destroy()
-  }
-  return Buffer.concat(chunks).toString('utf8')
+  const { buffer, truncated } = await readBounded(stream, MAX_OUTPUT_LOG_BYTES)
+  if (truncated) return { tooLarge: true }
+  return { text: buffer.toString('utf8') }
 }
 
 // The project's current root document, used to resolve log paths when the
@@ -329,7 +413,7 @@ async function currentRootDocPath(projectId) {
  * id). `rootOverride` names the main file a build was asked to compile
  * instead of the project's root.
  */
-async function fingerprintOf(projectId, rootOverride) {
+async function fingerprintOf(projectId, rootOverride, compilerOverride) {
   const project = await ProjectGetter.promises.getProject(projectId, {
     rootDoc_id: 1,
     rootFolder: 1,
@@ -341,7 +425,7 @@ async function fingerprintOf(projectId, rootOverride) {
   const files = await ProjectEntityHandler.promises.getAllFiles(projectId)
   return buildFingerprint({
     rootDocPath: rootOverride ?? (await rootPathOf(project)),
-    compiler: project.compiler ?? null,
+    compiler: compilerOverride ?? project.compiler ?? null,
     imageName: project.imageName ?? null,
     entries: [
       ...Object.entries(docs).map(([path, doc]) => ({
@@ -422,9 +506,12 @@ async function getDiagnostics(req, res) {
     buildId,
     'output.blg'
   )
+  if (log?.tooLarge || blg?.tooLarge) {
+    return sendLogTooLarge(res)
+  }
   const diagnostics = summarizeCompileLogs({
-    latexLog: log,
-    bibLogs: blg != null ? [blg] : [],
+    latexLog: log?.text ?? null,
+    bibLogs: blg?.text != null ? [blg.text] : [],
     rootDocPath: root,
   })
   res.json({
@@ -471,18 +558,11 @@ async function getPdf(req, res) {
     throw err
   }
 
+  // Streamed, so a PDF is never held whole in memory. The size is not known
+  // before the body arrives, so an over-cap PDF is cut off mid-stream: the
+  // client sees an incomplete response rather than a complete-looking one.
   res.setHeader('Content-Type', 'application/pdf')
-  const cleanup = () => stream.destroy()
-  res.on('close', cleanup)
-  stream.on('error', () => {
-    if (!res.headersSent) {
-      McpErrors.send(res, McpErrors.CODES.UPSTREAM)
-    } else {
-      res.destroy()
-    }
-  })
-  // Past the cap the body is cut off; the MCP service reports it as too large.
-  pipeline(stream, limitBinaryStream(), res).catch(() => {})
+  return pipeline(stream, limitBinaryStream(), res)
 }
 
 function positiveInteger(value) {
@@ -651,7 +731,10 @@ async function getPdfPage(req, res) {
         PDF_PAGE_FAILURES[err.code] ??
         PDF_PAGE_FAILURES[PDF_PAGE_ERRORS.RENDER_FAILED]
       if (failure.code === McpErrors.CODES.UPSTREAM) {
-        return McpErrors.sendInternal(res, err, { projectId: req.params.projectId })
+        return McpErrors.sendInternal(res, err, {
+          projectId: req.params.projectId,
+          hint: failure.hint,
+        })
       }
       return McpErrors.send(res, failure.code, err.message, {
         hint: failure.hint,
@@ -718,7 +801,10 @@ async function getPdfOverview(req, res) {
         PDF_PAGE_FAILURES[err.code] ??
         PDF_PAGE_FAILURES[PDF_PAGE_ERRORS.RENDER_FAILED]
       if (failure.code === McpErrors.CODES.UPSTREAM) {
-        return McpErrors.sendInternal(res, err, { projectId: req.params.projectId })
+        return McpErrors.sendInternal(res, err, {
+          projectId: req.params.projectId,
+          hint: failure.hint,
+        })
       }
       return McpErrors.send(res, failure.code, err.message, {
         hint: failure.hint,
@@ -788,7 +874,10 @@ async function searchPdf(req, res) {
         PDF_PAGE_FAILURES[err.code] ??
         PDF_PAGE_FAILURES[PDF_PAGE_ERRORS.RENDER_FAILED]
       if (failure.code === McpErrors.CODES.UPSTREAM) {
-        return McpErrors.sendInternal(res, err, { projectId: req.params.projectId })
+        return McpErrors.sendInternal(res, err, {
+          projectId: req.params.projectId,
+          hint: failure.hint,
+        })
       }
       return McpErrors.send(res, failure.code, err.message, {
         hint: failure.hint,
@@ -822,6 +911,22 @@ async function clean(req, res) {
 
 const clearCache = clean
 
+/**
+ * The `pages` query of a diff: comma-separated whole page numbers of the newer
+ * build, e.g. `pages=3,4`. Returns `{ pages }` (null when absent) or `{ error }`.
+ */
+function parsePageList(value) {
+  if (value == null || value === '') return { pages: null }
+  if (typeof value !== 'string') {
+    return { error: 'pages must be a comma-separated list of page numbers from 1' }
+  }
+  const pages = value.split(',').map(part => positiveInteger(part.trim()))
+  if (pages.some(page => page == null || Number.isNaN(page))) {
+    return { error: 'pages must be a comma-separated list of page numbers from 1' }
+  }
+  return { pages: [...new Set(pages)] }
+}
+
 // How a visual diff failure reads to the model.
 const PDF_DIFF_FAILURES = {
   [VISUAL_DIFF_ERRORS.PREVIOUS_BUILD_GONE]: {
@@ -835,6 +940,10 @@ const PDF_DIFF_FAILURES = {
   [VISUAL_DIFF_ERRORS.BUILD_UNAVAILABLE]: {
     code: McpErrors.CODES.NOT_FOUND,
     hint: 'One of the builds has no PDF. Diff two builds that each produced one.',
+  },
+  [VISUAL_DIFF_ERRORS.TOO_MANY_PAGES]: {
+    code: McpErrors.CODES.VALIDATION,
+    hint: 'Pass pages, a comma-separated list of page numbers of the newer build (for example pages=3,4,5), to compare at most 40 of them.',
   },
   [VISUAL_DIFF_ERRORS.RENDERER_UNAVAILABLE]: {
     code: McpErrors.CODES.NOT_FOUND,
@@ -863,6 +972,10 @@ async function getPdfDiff(req, res) {
   if (beforeBuildId != null && !BUILD_ID_RE.test(String(beforeBuildId))) {
     return McpErrors.send(res, McpErrors.CODES.VALIDATION, 'invalid beforeBuildId')
   }
+  const pageList = parsePageList(req.query.pages)
+  if (pageList.error) {
+    return McpErrors.send(res, McpErrors.CODES.VALIDATION, pageList.error)
+  }
 
   const projectId = req.params.projectId
   let before = null
@@ -889,6 +1002,7 @@ async function getPdfDiff(req, res) {
     afterBuildId: buildId,
     clsiServerId,
     beforeClsiServerId: before.clsiServerId ?? clsiServerId,
+    pages: pageList.pages,
   })
   if (!diff.ok) {
     const failure = PDF_DIFF_FAILURES[diff.reason] ?? {
@@ -969,7 +1083,10 @@ async function getPdfBlock(req, res) {
         PDF_PAGE_FAILURES[err.code] ??
         PDF_PAGE_FAILURES[PDF_PAGE_ERRORS.RENDER_FAILED]
       if (failure.code === McpErrors.CODES.UPSTREAM) {
-        return McpErrors.sendInternal(res, err, { projectId: req.params.projectId })
+        return McpErrors.sendInternal(res, err, {
+          projectId: req.params.projectId,
+          hint: failure.hint,
+        })
       }
       return McpErrors.send(res, failure.code, err.message, {
         hint: failure.hint,
@@ -1058,7 +1175,9 @@ async function synctex(req, res) {
         'file and a finite line are required'
       )
     }
-    validatedOptions = { file, line: lineNum }
+    // CLSI requires a column and rejects the request without one. Column 0
+    // is SyncTeX's "any column", so a line alone maps to its whole line.
+    validatedOptions = { file, line: lineNum, column: 0 }
     if (column != null && column !== '') {
       const columnNum = finiteNumber(column)
       if (columnNum == null) {

@@ -1,4 +1,4 @@
-import { AgentMessage, ProviderSettings } from '../providers/types'
+import { AgentMessage, ProviderRetry, ProviderSettings } from '../providers/types'
 import { runWritingTool, StreamingClient } from '../writing-tools/run-writing-tool'
 import { splitWhitespace } from '../writing-tools/prompt'
 import { Expect, parseReply, ParsedReply } from './parse-output'
@@ -57,6 +57,7 @@ export async function generateTexGpt({
   signal,
   onProgress,
   client,
+  onRetry,
 }: {
   messages: AgentMessage[]
   expect?: Expect
@@ -67,6 +68,8 @@ export async function generateTexGpt({
   signal?: AbortSignal
   onProgress: (progress: TexGptProgress) => void
   client?: StreamingClient
+  /** Each scheduled retry of the model call, and null once output flows again. */
+  onRetry?: (retry: ProviderRetry | null) => void
 }): Promise<TexGptOutcome> {
   const call = (conversation: AgentMessage[], onText: (text: string) => void) =>
     runWritingTool({
@@ -76,7 +79,9 @@ export async function generateTexGpt({
       maxTokens: TEXGPT_MAX_TOKENS,
       signal,
       onText,
+      onRetry,
       client,
+      retryPolicy: 'interactive',
     })
 
   const raw = await call(messages, text =>

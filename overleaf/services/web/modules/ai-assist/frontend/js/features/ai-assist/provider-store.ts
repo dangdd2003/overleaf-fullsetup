@@ -1,6 +1,5 @@
 import customLocalStorage from "@/infrastructure/local-storage";
 import { getJSON, putJSON } from "@/infrastructure/fetch-json";
-import { debugConsole } from "@/utils/debugging";
 import getMeta from "@/utils/meta";
 import {
   DEFAULT_BASE_URLS,
@@ -11,7 +10,7 @@ import {
   ReasoningEffort,
   WEB_SEARCH_DEFAULTS,
   WebSearchPreferences,
-  WebSearchSettings,
+  normalizeProviderBaseUrl,
 } from "./providers/types";
 
 export const SETTINGS_KEY = "ai-assist:provider";
@@ -54,22 +53,28 @@ export function normalizeProviderSettings(parsed: any): ProviderSettings | null 
   if (!parsed?.type) return null;
 
   let type = parsed.type as ProviderType;
-  if ((type as any) === "openai-compatible") type = "openai";
-  if ((type as any) === "anthropic-compatible") type = "anthropic";
+  if ((type as string) === "openai-compatible") type = "openai";
+  if ((type as string) === "anthropic-compatible") type = "anthropic";
 
   if (!Object.prototype.hasOwnProperty.call(DEFAULT_BASE_URLS, type)) {
     return null;
   }
 
+  const baseUrl = normalizeProviderBaseUrl(type, parsed.baseUrl);
+
   const result: ProviderSettings = {
     type,
-    baseUrl: (parsed.baseUrl || DEFAULT_BASE_URLS[type] || "").trim(),
+    baseUrl,
     apiKey: (parsed.apiKey ?? "").trim(),
     model: (parsed.model ?? "").trim(),
   };
   if (parsed.modelName) {
     result.modelName = parsed.modelName;
   }
+  const contextWindow = positiveNumber(parsed.contextWindow);
+  if (contextWindow) result.contextWindow = contextWindow;
+  const maxOutputTokens = positiveNumber(parsed.maxOutputTokens);
+  if (maxOutputTokens) result.maxOutputTokens = maxOutputTokens;
   return result;
 }
 
@@ -185,15 +190,14 @@ export function normalizeFastSettings(parsed: any): ProviderSettings | null {
   if (!parsed?.type) return null;
 
   let type = parsed.type as ProviderType;
-  if ((type as any) === "openai-compatible") type = "openai";
-  if ((type as any) === "anthropic-compatible") type = "anthropic";
+  if ((type as string) === "openai-compatible") type = "openai";
+  if ((type as string) === "anthropic-compatible") type = "anthropic";
 
   if (!Object.prototype.hasOwnProperty.call(DEFAULT_BASE_URLS, type)) {
     return null;
   }
 
-  let baseUrl = (parsed.baseUrl || DEFAULT_BASE_URLS[type]).trim();
-  if (type === "google") baseUrl = baseUrl.replace(/\/openai\/?$/, "");
+  const baseUrl = normalizeProviderBaseUrl(type, parsed.baseUrl);
   const result: ProviderSettings = {
     type,
     baseUrl,

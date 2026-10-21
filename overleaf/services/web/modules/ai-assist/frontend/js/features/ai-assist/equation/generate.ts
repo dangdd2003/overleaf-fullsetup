@@ -1,4 +1,8 @@
-import { AgentMessage, ProviderSettings } from '../providers/types'
+import {
+  AgentMessage,
+  ProviderRetry,
+  ProviderSettings,
+} from '../providers/types'
 import { runWritingTool, StreamingClient } from '../writing-tools/run-writing-tool'
 import { missingPackages, packageWarning } from '../texgpt/checks'
 import { CursorWhere } from './context'
@@ -216,6 +220,7 @@ export async function generateEquation({
   onProgress,
   client,
   checkMath,
+  onRetry,
 }: {
   messages: AgentMessage[]
   facts: EquationFacts
@@ -224,6 +229,8 @@ export async function generateEquation({
   onProgress: (progress: EquationProgress) => void
   client?: StreamingClient
   checkMath?: MathChecker
+  /** Each scheduled retry of the model call, and null once output flows again. */
+  onRetry?: (retry: ProviderRetry | null) => void
 }): Promise<EquationOutcome> {
   const call = (conversation: AgentMessage[], onText: (text: string) => void) =>
     runWritingTool({
@@ -233,7 +240,9 @@ export async function generateEquation({
       maxTokens: EQUATION_MAX_TOKENS,
       signal,
       onText,
+      onRetry,
       client,
+      retryPolicy: 'interactive',
     })
 
   const raw = await call(messages, text =>

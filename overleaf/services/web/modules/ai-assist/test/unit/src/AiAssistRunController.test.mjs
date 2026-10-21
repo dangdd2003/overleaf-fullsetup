@@ -241,6 +241,95 @@ describe('AiAssistRunController', function () {
     })
   })
 
+  describe('sendQueuedNow', function () {
+    const reply = () => {
+      const res = {
+        statusCode: 200,
+        body: null,
+        status(code) {
+          this.statusCode = code
+          return this
+        },
+        json(payload) {
+          this.body = payload
+          return this
+        },
+      }
+      return res
+    }
+
+    const sendNow = async (params = {}) => {
+      const res = reply()
+      await controller.sendQueuedNow(
+        {
+          params: {
+            Project_id: 'p1',
+            runId: 'run-1',
+            messageId: 'q1',
+            ...params,
+          },
+        },
+        res
+      )
+      return res
+    }
+
+    beforeEach(function () {
+      mockManager.sendQueuedNow = sinon.stub().resolves(true)
+    })
+
+    it('404s for an unknown run', async function () {
+      mockStore.getRun.resolves(null)
+      const res = await sendNow()
+      expect(res.statusCode).to.equal(404)
+      expect(mockManager.sendQueuedNow.called).to.be.false
+    })
+
+    it('403s for a run in another project', async function () {
+      const res = await sendNow({ Project_id: 'other-project' })
+      expect(res.statusCode).to.equal(403)
+      expect(mockManager.sendQueuedNow.called).to.be.false
+    })
+
+    it('409s with reason ended for a run that has finished', async function () {
+      for (const status of ['done', 'stopped', 'error', 'interrupted']) {
+        mockStore.getRun.resolves({
+          runId: 'run-1',
+          projectId: 'p1',
+          status,
+        })
+        const res = await sendNow()
+        expect(res.statusCode, status).to.equal(409)
+        expect(res.body.reason, status).to.equal('ended')
+      }
+      expect(mockManager.sendQueuedNow.called).to.be.false
+    })
+
+    it('409s with reason read when the run has already read the message', async function () {
+      mockManager.sendQueuedNow = sinon.stub().resolves(false)
+      const res = await sendNow()
+      expect(res.statusCode).to.equal(409)
+      expect(res.body.reason).to.equal('read')
+    })
+
+    it('passes the run and message ids to the manager and answers 200', async function () {
+      const res = await sendNow()
+      expect(mockManager.sendQueuedNow.firstCall.args).to.deep.equal([
+        'run-1',
+        'q1',
+      ])
+      expect(res.statusCode).to.equal(200)
+      expect(res.body).to.deep.equal({ ok: true })
+    })
+
+    it('accepts a request another instance was asked to carry out', async function () {
+      mockManager.sendQueuedNow = sinon.stub().resolves(null)
+      const res = await sendNow()
+      expect(res.statusCode).to.equal(200)
+      expect(res.body).to.deep.equal({ ok: true })
+    })
+  })
+
   it('handles stop run requests', async function () {
     const req = { params: { runId: 'run-1' } }
     const res = { json: sinon.stub(), status: sinon.stub().returnsThis() }

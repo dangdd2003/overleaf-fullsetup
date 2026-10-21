@@ -16,6 +16,7 @@ import {
   ProviderModel,
   ProviderSettings,
   ProviderType,
+  normalizeProviderBaseUrl,
 } from '../providers/types'
 import { TEST_RESULT_MS, useAutoDismiss } from '../hooks/use-auto-dismiss'
 
@@ -137,9 +138,15 @@ export default function ProviderForm({
           : undefined
     const parsedContextWindow = numeric(contextWindow)
     const parsedMaxOutputTokens = numeric(maxOutputTokens)
+    const fallbackBaseUrl = defaultBaseUrls[type] || DEFAULT_BASE_URLS[type]
+    const effectiveBaseUrl = normalizeProviderBaseUrl(
+      type,
+      baseUrl,
+      fallbackBaseUrl
+    )
     const out: ProviderSettings = {
       type,
-      baseUrl: baseUrl.trim() || defaultBaseUrls[type],
+      baseUrl: effectiveBaseUrl,
       apiKey,
       model: effectiveModel,
       ...(realName ? { modelName: realName } : {}),
@@ -229,7 +236,11 @@ export default function ProviderForm({
       className="linking-ai-assist-form"
       onSubmit={event => {
         event.preventDefault()
-        onSave(current())
+        const values = current()
+        if (baseUrl.trim()) {
+          setBaseUrl(values.baseUrl)
+        }
+        onSave(values)
       }}
     >
       <OLFormGroup controlId={`${idPrefix}-type`}>
@@ -254,6 +265,17 @@ export default function ProviderForm({
         <OLFormControl
           value={baseUrl}
           onChange={e => setBaseUrl(e.target.value)}
+          onBlur={() => {
+            if (baseUrl.trim()) {
+              setBaseUrl(
+                normalizeProviderBaseUrl(
+                  type,
+                  baseUrl,
+                  defaultBaseUrls[type] || DEFAULT_BASE_URLS[type]
+                )
+              )
+            }
+          }}
           placeholder={defaultBaseUrls[type]}
         />
         <OLFormText>

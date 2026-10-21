@@ -3,6 +3,7 @@ import Settings from '@overleaf/settings'
 import logger from '@overleaf/logger'
 import McpRouter from './app/src/McpRouter.mjs'
 import OAuth2Router from './app/src/OAuth2/OAuth2Router.mjs'
+import { applyMcpRequestGuard } from './app/src/McpRequestGuard.mjs'
 
 /**
  * @import { WebModule } from "../../types/web-module"
@@ -15,6 +16,12 @@ function isEnabled() {
 /** @type {WebModule} */
 const McpModule = {
   name: 'mcp',
+  // Runs before the app's body parsers, so MCP requests are authenticated
+  // before any large body is read (see McpRequestGuard.mjs).
+  appMiddleware(app) {
+    if (!isEnabled()) return
+    applyMcpRequestGuard(app)
+  },
   router: {
     apply(webRouter, privateApiRouter, publicApiRouter) {
       if (!isEnabled()) return

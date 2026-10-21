@@ -3,8 +3,14 @@ import {
   applyBudget,
   estimateTokens,
   estimateRequestTokens,
-  CHARS_PER_TOKEN,
-  MARGIN_FRACTION,
+  charsPerToken,
+  contextStateFor,
+  contextThresholds,
+  detectTextKind,
+  estimateJsonTokens,
+  LEGACY_CLAUDE_MODELS,
+  normalizeModelId,
+  usesNewClaudeTokenizer,
   KEEP_RECENT_TOOL_RESULTS,
 } from '../../../../frontend/js/features/ai-assist/agent/context/budget'
 import type {
@@ -155,16 +161,12 @@ describe('applyBudget', function () {
   })
 })
 
-/** Mirrors the internal `budget` computation so boundary specs can target it exactly. */
+/** The hard budget is the block threshold, so boundary specs target it exactly. */
 function budgetFor(theLimits: {
   contextWindow: number
   maxOutputTokens: number
 }): number {
-  return (
-    theLimits.contextWindow -
-    theLimits.maxOutputTokens -
-    Math.ceil(theLimits.contextWindow * MARGIN_FRACTION)
-  )
+  return contextThresholds(theLimits).blockAt
 }
 
 describe('applyBudget boundaries', function () {
@@ -173,7 +175,7 @@ describe('applyBudget boundaries', function () {
   it('leaves a request exactly at the limit untouched', function () {
     const budget = budgetFor(limits)
     const target = budget - estimateTokens('sys')
-    const content = 'x'.repeat(Math.floor(target * CHARS_PER_TOKEN))
+    const content = 'x'.repeat(Math.floor(target * charsPerToken('prose')))
     // Guards the construction itself against float surprises before relying on it.
     expect(estimateTokens(content)).to.equal(target)
 
@@ -187,7 +189,7 @@ describe('applyBudget boundaries', function () {
   it('reports exhaustion one token over the limit when nothing is elidable', function () {
     const budget = budgetFor(limits)
     const target = budget - estimateTokens('sys') + 1
-    const content = 'x'.repeat(Math.floor(target * CHARS_PER_TOKEN))
+    const content = 'x'.repeat(Math.floor(target * charsPerToken('prose')))
     expect(estimateTokens(content)).to.equal(target)
 
     const messages: AgentMessage[] = [{ role: 'user', content }]
@@ -280,7 +282,7 @@ describe('applyBudget — assistant elision never produces an invalid message', 
       messages.push({ role: 'user', content: `question ${index}` })
       messages.push({
         role: 'assistant',
-        content: 'y'.repeat(4400),
+        content: 'y'.repeat(5000),
         toolCalls: [
           {
             id: `call-${index}`,
@@ -305,7 +307,7 @@ describe('applyBudget — assistant elision never produces an invalid message', 
       message => message.role === 'assistant'
     ) as Extract<AgentMessage, { role: 'assistant' }>[]
     const rewritten = assistants.filter(
-      message => message.content !== 'y'.repeat(4400)
+      message => message.content !== 'y'.repeat(5000)
     )
     expect(rewritten.length).to.be.greaterThan(0)
     for (const message of rewritten) {
@@ -488,7 +490,88 @@ describe('applyBudget with a misconfigured budget', function () {
 })
 
 describe('estimateTokens ratio', function () {
-  it('pins the CHARS_PER_TOKEN ratio', function () {
+  it('pins the prose ratio at 4 characters per token', function () {
     expect(estimateTokens('x'.repeat(40))).to.equal(10)
+    expect(charsPerToken('prose')).to.equal(4)
+  })
+
+  it('uses 3.5 for LaTeX and 3 for JSON', function () {
+    expect(charsPerToken('latex')).to.equal(3.5)
+    expect(charsPerToken('json')).to.equal(3)
+    const latex = '\\begin{document}'
+    expect(estimateTokens(latex, {}, 'latex')).to.equal(Math.ceil(latex.length / 3.5))
+    const json = JSON.stringify({ a: 'bbbbbbbbb' })
+    expect(estimateJsonTokens({ a: 'bbbbbbbbb' })).to.equal(Math.ceil(json.length / 3))
+  })
+
+  it('detects LaTeX or code when 2% of the first 4096 characters are markup', function () {
+    expect(detectTextKind('plain words only, no markup at all')).to.equal('prose')
+    expect(detectTextKind('\\frac{a}{b} $x$ & y ^ 2 % c _ d')).to.equal('latex')
+    // 1 markup character in 100 is 1%: prose
+    expect(detectTextKind('{' + 'a'.repeat(99))).to.equal('prose')
+    expect(detectTextKind('{' + 'a'.repeat(49))).to.equal('latex')
+    expect(detectTextKind('')).to.equal('prose')
+  })
+
+  it('scales the ratio by 0.75 only for Anthropic models on the newer tokenizer', function () {
+    expect(charsPerToken('prose', { provider: 'anthropic', model: 'claude-opus-4-7' })).to.equal(3)
+    expect(charsPerToken('latex', { provider: 'anthropic', model: 'claude-opus-4-7' })).to.equal(2.625)
+    expect(charsPerToken('json', { provider: 'anthropic', model: 'claude-opus-4-7' })).to.equal(2.25)
+    // Legacy list, same model under another provider, and no model: unchanged
+    expect(charsPerToken('prose', { provider: 'anthropic', model: 'claude-sonnet-4-5' })).to.equal(4)
+    expect(charsPerToken('prose', { provider: 'openai', model: 'claude-opus-4-7' })).to.equal(4)
+    expect(charsPerToken('prose', { provider: 'anthropic' })).to.equal(4)
+    expect(charsPerToken('prose', { provider: 'ollama', model: 'llama3' })).to.equal(4)
+  })
+})
+
+describe('legacy Claude model list', function () {
+  it('holds the same fourteen ids as Claude Code', function () {
+    expect(LEGACY_CLAUDE_MODELS.size).to.equal(14)
+    expect([...LEGACY_CLAUDE_MODELS]).to.include.members([
+      'claude-3-opus',
+      'claude-3-5-haiku',
+      'claude-opus-4-5',
+      'claude-sonnet-4-6',
+      'claude-haiku-4-5',
+    ])
+  })
+
+  it('normalises provider prefixes, date suffixes and dots before comparing', function () {
+    expect(normalizeModelId('claude-sonnet-4-5-20250929')).to.equal('claude-sonnet-4-5')
+    expect(normalizeModelId('anthropic/claude-sonnet-4.5')).to.equal('claude-sonnet-4-5')
+    expect(normalizeModelId('us.anthropic.claude-haiku-4-5-20251001-v1:0')).to.equal('claude-haiku-4-5')
+    expect(usesNewClaudeTokenizer({ provider: 'anthropic', model: 'claude-sonnet-4.5-20250929' })).to.equal(false)
+    expect(usesNewClaudeTokenizer({ provider: 'anthropic', model: 'claude-sonnet-4-7' })).to.equal(true)
+  })
+})
+
+describe('context thresholds', function () {
+  it('computes Claude Code thresholds from the window and the output reserve', function () {
+    // reserve 20000, effective 180000; buffers 13000, 20000, 3000
+    expect(contextThresholds({ contextWindow: 200000, maxOutputTokens: 32000 })).to.deep.equal({
+      effective: 180000,
+      autoCompactAt: 167000,
+      warnAt: 160000,
+      blockAt: 177000,
+    })
+  })
+
+  it('caps the buffers on a small window so the headroom survives', function () {
+    // reserve 2000, effective 6000; auto 900, warn 1200, block 180
+    expect(contextThresholds({ contextWindow: 8000, maxOutputTokens: 2000 })).to.deep.equal({
+      effective: 6000,
+      autoCompactAt: 5100,
+      warnAt: 4800,
+      blockAt: 5820,
+    })
+  })
+
+  it('reads a count against the thresholds', function () {
+    const thresholds = contextThresholds({ contextWindow: 200000, maxOutputTokens: 32000 })
+    expect(contextStateFor(159999, thresholds)).to.equal('ok')
+    expect(contextStateFor(160000, thresholds)).to.equal('warn')
+    expect(contextStateFor(167000, thresholds)).to.equal('compact')
+    expect(contextStateFor(177000, thresholds)).to.equal('blocked')
   })
 })

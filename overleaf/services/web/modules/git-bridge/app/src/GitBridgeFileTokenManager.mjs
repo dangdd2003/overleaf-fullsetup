@@ -86,10 +86,43 @@ function verifyFileToken(token, projectId, fileId) {
   return crypto.timingSafeEqual(providedBuf, expectedBuf)
 }
 
+/**
+ * Blob tokens cover a content hash rather than a file id. The hash is signed
+ * under a `blob:` prefix, which no file id can carry (file ids are ObjectIds),
+ * so a blob token never verifies as a file token or the reverse.
+ *
+ * @param {string} projectId
+ * @param {string} hash
+ * @param {number} [ttlMs]
+ * @returns {string|null}
+ */
+function createBlobToken(projectId, hash, ttlMs = DEFAULT_TTL_MS) {
+  if (!hash) return null
+  return createFileToken(projectId, `blob:${hash}`, ttlMs)
+}
+
+/**
+ * @param {string} token
+ * @param {string} projectId
+ * @param {string} hash
+ * @returns {boolean}
+ */
+function verifyBlobToken(token, projectId, hash) {
+  if (!hash) return false
+  return verifyFileToken(token, projectId, `blob:${hash}`)
+}
+
 const GitBridgeFileTokenManager = {
   createFileToken,
   verifyFileToken,
+  createBlobToken,
+  verifyBlobToken,
 }
 
 export default GitBridgeFileTokenManager
-export { createFileToken, verifyFileToken }
+export {
+  createFileToken,
+  verifyFileToken,
+  createBlobToken,
+  verifyBlobToken,
+}

@@ -1,31 +1,5 @@
 import PersonalAccessTokenManager from '../../../../app/src/Features/PersonalAccessToken/PersonalAccessTokenManager.mjs'
-
-function extractToken(req) {
-  let token = null
-  if (typeof req.query?.access_token === 'string') {
-    token = req.query.access_token.trim()
-    req.query.access_token = token ? `${token.slice(0, 4)}...` : ''
-    if (typeof req.url === 'string' && req.url.includes('access_token=')) {
-      req.url = req.url.replace(/([?&]access_token=)[^&]+/g, '$1[REDACTED]')
-    }
-    if (typeof req.originalUrl === 'string' && req.originalUrl.includes('access_token=')) {
-      req.originalUrl = req.originalUrl.replace(/([?&]access_token=)[^&]+/g, '$1[REDACTED]')
-    }
-  }
-  if (!token) {
-    const authHeader = req.headers?.authorization || ''
-    if (authHeader.startsWith('Bearer ')) {
-      token = authHeader.slice(7).trim()
-    } else if (authHeader.startsWith('Basic ')) {
-      const decoded = Buffer.from(authHeader.slice(6), 'base64').toString('utf8')
-      const [user, ...passParts] = decoded.split(':')
-      const pass = passParts.join(':')
-      if (pass) token = pass.trim()
-      else if (user && user !== 'git') token = user.trim()
-    }
-  }
-  return token
-}
+import { extractToken } from './GitBridgeApiController.mjs'
 
 const Oauth2TokenInfoController = {
   async getTokenInfo(req, res) {
@@ -42,6 +16,17 @@ const Oauth2TokenInfoController = {
       return res.status(401).json({
         error: 'invalid_token',
         error_description: 'The access token provided is invalid or expired.',
+      })
+    }
+
+    // A token without the git_bridge scope (e.g. an mcp-only token) is refused
+    // here, as requireGitBridgeAuth refuses it for every git-bridge operation.
+    // 401 rather than 403: git-bridge treats any other 4xx from this endpoint as
+    // a server error, and a 401 keeps its "enter your Git token" message.
+    if (!(tokenInfo.scopes || []).includes('git_bridge')) {
+      return res.status(401).json({
+        error: 'invalid_token',
+        error_description: 'The access token is missing the git_bridge scope.',
       })
     }
 

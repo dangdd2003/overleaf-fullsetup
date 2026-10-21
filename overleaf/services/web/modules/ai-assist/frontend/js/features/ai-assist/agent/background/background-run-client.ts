@@ -114,6 +114,9 @@ export async function startBackgroundRun({
   webSearchSettings,
   connectorIds,
   trackActive = true,
+  kind,
+  instructions,
+  trigger,
 }: {
   projectId: string
   transcript: TranscriptEntry[]
@@ -122,6 +125,11 @@ export async function startBackgroundRun({
   chatId?: string
   webSearchSettings?: WebSearchSettings | null
   connectorIds?: string[]
+  /** `compact` runs a summary of the chat instead of a reply (see `/compact`). */
+  kind?: 'compact'
+  /** The words after `/compact`, appended to the summary request. */
+  instructions?: string
+  trigger?: 'manual' | 'auto'
   /**
    * Whether this is the run of the chat on screen, which a reload reconnects
    * to. A run started for a chat already left is recorded as detached instead.
@@ -142,17 +150,27 @@ export async function startBackgroundRun({
       ...(chatId ? { chatId } : {}),
       ...(webSearchSettings ? { webSearchSettings } : {}),
       ...(connectorIds ? { connectorIds } : {}),
+      ...(kind
+        ? {
+            kind,
+            ...(instructions ? { instructions } : {}),
+            ...(trigger ? { trigger } : {}),
+          }
+        : {}),
     }),
   })
   if (!res.ok) {
     let errorMsg = `Failed to start AI run (${res.status})`
+    let code: string | undefined
     try {
       const data = await res.json()
       if (data && typeof data === 'object' && data.error) {
         errorMsg = data.error
       }
+      if (data && typeof data.code === 'string') code = data.code
     } catch {}
-    throw new Error(errorMsg)
+    // The server's reason (e.g. chatBusy) travels as `code`
+    throw Object.assign(new Error(errorMsg), code ? { code } : {})
   }
   const data = await res.json()
   if (trackActive) setStoredActiveRunId(projectId, data.runId, Date.now())
@@ -385,6 +403,34 @@ export async function sendBackgroundRunMessage(
     throw new Error(`Failed to send message: ${res.status}`)
   }
   return true
+}
+
+/**
+ * Has the run answer a message sent into it now, cutting short the reply it
+ * is streaming, as Claude Code's "send now" does.
+ *
+ * 'sent' when the run holds it, 'read' when it has read it already, and
+ * 'ended' when the run is over.
+ */
+export async function sendRunMessageNow(
+  projectId: string,
+  runId: string,
+  messageId: string
+): Promise<'sent' | 'read' | 'ended'> {
+  const res = await fetch(
+    `/ai-assist/projects/${projectId}/runs/${runId}/message/${encodeURIComponent(messageId)}/now`,
+    {
+      method: 'POST',
+      headers: { ...getCsrfHeaders() },
+    }
+  )
+  if (res.ok) return 'sent'
+  if (res.status === 404) return 'ended'
+  if (res.status === 409) {
+    const data = await res.json().catch(() => null)
+    return data?.reason === 'ended' ? 'ended' : 'read'
+  }
+  throw new Error(`Failed to send the message now: ${res.status}`)
 }
 
 /**

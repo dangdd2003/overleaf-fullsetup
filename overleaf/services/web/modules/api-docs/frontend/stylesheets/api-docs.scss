@@ -1,0 +1,939 @@
+@use '../../../../frontend/stylesheets/foundations/typography' as *;
+@use '../../../../frontend/stylesheets/foundations/elevation' as *;
+
+// API reference page, laid out like common public API references (Claude,
+// Stripe, GitHub): a sticky table of contents on the left, documentation in the
+// middle and request/response samples beside it on wide screens. Colours,
+// spacing and type come from Overleaf's design tokens.
+
+$api-docs-header-height: 68px; // matches $header-height of the site navbar
+// Same width as Bootstrap's md breakpoint, where the projects sidebar appears
+$api-docs-md-down: 767.98px;
+
+// Page shell ----------------------------------------------------------------
+
+// The page uses the projects dashboard shell (project-ds-nav-page, navbar,
+// sidebar and scrolling content panel from main-style), so only the reading
+// column and states are styled here.
+
+// The site navbar switches to its dark tokens only on the project pages (see
+// components/navbar.scss), so apply the same override to this page's navbar
+[data-theme='default'] .api-docs-page .navbar-default {
+  --navbar-title-color: var(--content-primary-dark);
+  --navbar-title-color-hover: var(--content-secondary-dark);
+  --navbar-subdued-color: var(--content-primary-dark);
+  --navbar-subdued-hover-bg: var(--bg-dark-secondary);
+  --navbar-subdued-hover-color: var(--content-primary-dark);
+  --navbar-bg: var(--bg-dark-primary);
+  --navbar-link-color: var(--content-primary-dark);
+  --navbar-link-border-color: var(--border-primary-dark);
+  --navbar-link-hover-color: var(--navbar-link-color);
+  --navbar-link-hover-bg: var(--bg-dark-tertiary);
+  --navbar-link-hover-border-color: var(--navbar-link-border-color);
+  --navbar-toggler-expanded-color: var(--content-secondary-dark);
+  --navbar-hamburger-submenu-bg: var(--bg-dark-primary);
+  --navbar-hamburger-submenu-item-color: var(--navbar-link-color);
+  --navbar-hamburger-submenu-item-hover-color: var(--content-primary-dark);
+  --navbar-hamburger-submenu-item-hover-bg: var(--bg-dark-secondary);
+}
+
+// Floating "back to top": upstream secondary icon button with dropdown elevation
+.api-docs-back-to-top {
+  position: fixed;
+  right: var(--spacing-08);
+  bottom: var(--spacing-08);
+  z-index: 10;
+  border-radius: var(--border-radius-full);
+
+  @include shadow-md;
+
+  @media (max-width: 767px) {
+    right: var(--spacing-06);
+    bottom: var(--spacing-06);
+  }
+}
+
+// Upstream .loading-screen fills its parent; the page root has no height
+.api-docs-loading-screen {
+  height: 100dvh;
+}
+
+.api-docs-state {
+  padding: var(--spacing-10) var(--spacing-06);
+}
+
+.api-docs {
+  @include body-sm;
+  color: var(--content-primary-themed);
+
+  section[id],
+  article[id] {
+    scroll-margin-top: var(--spacing-08);
+  }
+
+  h1 {
+    @include heading-xl;
+    color: var(--content-primary-themed);
+    margin: 0;
+  }
+
+  h2 {
+    @include heading-sm;
+    color: var(--content-primary-themed);
+    margin: 0;
+  }
+
+  h3 {
+    @include body-base;
+    font-weight: 600;
+    color: var(--content-primary-themed);
+    margin: 0;
+  }
+
+  h4 {
+    @include body-sm;
+    font-weight: 600;
+    color: var(--content-primary-themed);
+    margin: 0;
+  }
+
+  // website-redesign enlarges every <p>; paragraphs follow their block here
+  p {
+    margin: 0;
+    font-size: inherit;
+    line-height: inherit;
+  }
+
+  code {
+    padding: 1px var(--spacing-02);
+    border-radius: var(--border-radius-base);
+    background-color: var(--bg-secondary-themed);
+    color: var(--content-primary-themed);
+    font-size: 0.875em;
+    overflow-wrap: anywhere;
+
+    @include font-mono;
+  }
+}
+
+.api-docs-muted {
+  color: var(--content-secondary-themed);
+}
+
+// Left table of contents ----------------------------------------------------
+// Sidebar markup and wrapper come from the projects dashboard sidebar
+// (.project-list-sidebar-wrapper-react, .ds-nav-sidebar-lower). These rules add
+// the API-specific list, and the mobile drawer that replaces it below md.
+
+.api-docs-nav-toggle {
+  @include body-sm;
+  font-weight: 600;
+  display: none;
+  align-items: center;
+  gap: var(--spacing-03);
+  width: calc(100% - 2 * var(--spacing-06));
+  white-space: nowrap;
+  margin: var(--spacing-05) var(--spacing-06) 0;
+  padding: var(--spacing-03) var(--spacing-05);
+  border: 1px solid var(--border-divider-themed);
+  border-radius: var(--border-radius-medium);
+  background-color: var(--bg-primary-themed);
+  color: var(--content-primary-themed);
+
+  @media (max-width: $api-docs-md-down) {
+    display: flex;
+  }
+}
+
+.api-docs-resize-handle {
+  @media (max-width: $api-docs-md-down) {
+    display: none !important;
+  }
+}
+
+// Below md the page stacks: the sidebar becomes a panel above the content,
+// shown only while the Browse endpoints toggle is open
+@media (max-width: $api-docs-md-down) {
+  .api-docs-page .project-list-wrapper {
+    flex-direction: column;
+  }
+
+  .api-docs-page .project-list-wrapper .api-docs-sidebar {
+    display: none;
+    flex: 0 0 auto;
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+    max-height: 60vh;
+  }
+
+  .api-docs-page.is-nav-open .project-list-wrapper .api-docs-sidebar {
+    display: flex;
+  }
+}
+
+.api-docs-search {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: var(--spacing-05) 0 var(--spacing-03);
+  background-color: var(--ds-nav-bg-color);
+
+  form {
+    margin: 0;
+  }
+}
+
+.api-docs-count {
+  @include body-xs;
+  margin-top: var(--spacing-03);
+  color: var(--ds-nav-color);
+}
+
+.api-docs-nav-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.api-docs-nav-group-title {
+  @include body-xs;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: var(--spacing-06) 0 var(--spacing-02) var(--spacing-05) !important;
+  color: var(--ds-nav-color);
+}
+
+.api-docs-nav-tag {
+  @include body-sm;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-03);
+  min-height: 36px;
+  margin-top: var(--spacing-01);
+  padding: var(--spacing-03) var(--spacing-05);
+  border-radius: var(--border-radius-medium);
+  color: var(--ds-nav-color);
+  text-decoration: none;
+
+  &:visited {
+    color: var(--ds-nav-color);
+  }
+
+  &:hover,
+  &:focus-visible {
+    background-color: var(--ds-nav-hover-bg);
+    color: var(--content-primary-themed);
+    text-decoration: none;
+  }
+}
+
+// Shared path of a tag's endpoints, shown once above them
+.api-docs-nav-prefix {
+  @include body-xs;
+  @include font-mono;
+  margin: 0 var(--spacing-05) var(--spacing-02) var(--spacing-05);
+  color: var(--ds-nav-color);
+}
+
+.api-docs-nav-children {
+  margin: 0 0 var(--spacing-03) !important;
+}
+
+.api-docs-nav-endpoint {
+  @include body-sm;
+  display: flex;
+  // Baseline alignment puts the method badge on the first line of the path
+  // and keeps the two optically centred when the path fits on one line
+  align-items: baseline;
+  gap: var(--spacing-03);
+  padding: var(--spacing-02) var(--spacing-05) var(--spacing-02) var(--spacing-06);
+  border-radius: var(--border-radius-medium);
+  color: var(--ds-nav-color);
+  text-decoration: none;
+
+  // Beat the global a:visited colour, these are in-page anchors
+  &:visited {
+    color: var(--ds-nav-color);
+  }
+
+  &:hover,
+  &:focus-visible {
+    background-color: var(--ds-nav-hover-bg);
+    color: var(--ds-nav-color);
+    text-decoration: none;
+  }
+
+  &.is-active,
+  &.is-active:visited {
+    background-color: var(--ds-nav-active-bg);
+    color: var(--ds-nav-active-color);
+  }
+
+  &.is-active .api-docs-nav-path-param {
+    color: inherit;
+  }
+}
+
+.api-docs-nav-path {
+  @include body-xs;
+  @include font-mono;
+  min-width: 0;
+  overflow-wrap: break-word; // break at slashes and hyphens first
+}
+
+// Paths need more room than the dashboard's filters (15%, 200-320px)
+@media (min-width: 768px) {
+  .project-ds-nav-page.api-docs-page
+    .project-list-wrapper
+    .project-list-sidebar-wrapper-react {
+    flex-basis: 22%;
+    min-width: 260px;
+    max-width: 400px;
+  }
+}
+
+.api-docs-nav-path-param {
+  color: var(--content-positive-themed);
+}
+
+// Method, status and auth pills ---------------------------------------------
+
+// Method, status and auth pills are upstream OLBadge; these only add the
+// monospace font and fixed width the API reference needs.
+.api-docs-method {
+  text-transform: uppercase;
+  flex-shrink: 0;
+  justify-content: center;
+  min-width: 3.75rem;
+
+  &.api-docs-method-sm {
+    min-width: 3rem;
+  }
+}
+
+.api-docs-status {
+  justify-content: center;
+  min-width: 2.75rem;
+}
+
+.api-docs-title-badge {
+  margin-left: var(--spacing-04);
+  vertical-align: middle;
+}
+
+// Main column ---------------------------------------------------------------
+
+.api-docs-main {
+  min-width: 0;
+  padding: var(--spacing-08) clamp(16px, 2.5vw, 40px) var(--spacing-13);
+  container-type: inline-size;
+}
+
+.api-docs-intro {
+  max-width: 880px;
+  padding-bottom: var(--spacing-08);
+}
+
+.api-docs .api-docs-eyebrow {
+  @include body-xs;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-02);
+  margin-bottom: var(--spacing-03);
+  color: var(--content-positive-themed);
+
+  .material-symbols {
+    font-size: 15px;
+  }
+}
+
+.api-docs .api-docs-title {
+  @include heading-xl;
+  font-weight: 600;
+}
+
+.api-docs .api-docs-lead {
+  @include body-base;
+  margin-top: var(--spacing-04);
+  color: var(--content-secondary-themed);
+}
+
+.api-docs-base-url {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacing-04);
+  margin-top: var(--spacing-07);
+  padding: var(--spacing-02) var(--spacing-02) var(--spacing-02)
+    var(--spacing-06);
+  border: 1px solid var(--border-divider-themed);
+  border-radius: var(--border-radius-full);
+
+  code {
+    padding: 0;
+    background: none;
+
+    @include body-sm;
+  }
+}
+
+.api-docs-base-url-label {
+  @include body-xs;
+  font-weight: bold;
+  text-transform: uppercase;
+  color: var(--content-secondary-themed);
+}
+
+// Neutral badges use upstream's themed tag colours so they work in dark mode
+.api-docs .badge.api-docs-badge-neutral {
+  color: var(--badge-tag-themed-content-color);
+  background-color: var(--badge-tag-themed-btn-bg) !important;
+}
+
+// Cards sit on the content panel like the dashboard's project table does
+.api-docs .card {
+  border: 1px solid var(--border-divider-themed);
+  background-color: var(--ds-nav-content-bg-primary);
+  color: var(--content-primary-themed);
+}
+
+// Overview cards
+
+.api-docs-overview {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--spacing-04);
+
+  // Fixed steps so the five groups never leave one card alone on a row
+  @container (min-width: 640px) {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  @container (min-width: 1200px) {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+  margin-bottom: var(--spacing-06);
+}
+
+// The whole card is the link (Bootstrap stretched-link)
+.api-docs-overview-link {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: var(--spacing-05);
+  align-items: start;
+  color: var(--content-primary-themed);
+  text-decoration: none;
+
+  &:hover,
+  &:focus-visible {
+    color: var(--content-primary-themed);
+    text-decoration: none;
+  }
+}
+
+.api-docs-overview-icon {
+  grid-row: span 2;
+  color: var(--content-positive-themed);
+  font-size: 20px;
+}
+
+.api-docs-overview-name {
+  @include body-sm;
+  font-weight: 600;
+}
+
+.api-docs .api-docs-overview-meta {
+  @include body-xs;
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--content-secondary-themed);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+// Section headers
+
+.api-docs .api-docs-group-title {
+  @include body-xs;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-top: var(--spacing-10) !important;
+  color: var(--content-positive-themed);
+}
+
+.api-docs-tag-header {
+  max-width: 880px;
+  margin: var(--spacing-09) 0 var(--spacing-06);
+
+  .api-docs-group-title + .api-docs-tag > & {
+    margin-top: var(--spacing-03);
+  }
+}
+
+.api-docs .api-docs-tag-title {
+  @include heading-sm;
+  font-weight: 600;
+}
+
+.api-docs-tag-description {
+  @include body-sm;
+  margin-top: var(--spacing-03);
+  color: var(--content-secondary-themed);
+}
+
+// Authentication
+
+.api-docs-section {
+  padding-top: var(--spacing-02);
+}
+
+.api-docs-schemes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  align-items: start;
+  gap: var(--spacing-06);
+}
+
+.api-docs-scheme {
+  @include body-sm;
+  height: 100%;
+
+  > .card-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-04);
+  }
+
+  .api-docs-code {
+    margin-top: var(--spacing-02);
+  }
+}
+
+.api-docs .api-docs-scheme-title {
+  @include body-base;
+  font-weight: 600;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacing-04);
+}
+
+.api-docs .api-docs-scheme-name {
+  @include body-xs;
+  @include font-mono;
+  padding: 0 var(--spacing-03);
+}
+
+.api-docs-flows {
+  @include body-xs;
+  margin: 0;
+  padding-left: var(--spacing-06);
+  color: var(--content-secondary-themed);
+}
+
+// Endpoint cards ------------------------------------------------------------
+
+.api-docs-endpoint {
+  margin-bottom: var(--spacing-06);
+  border: 1px solid var(--border-divider-themed);
+  border-radius: var(--border-radius-medium);
+  background-color: var(--bg-primary-themed);
+  color: var(--content-primary-themed);
+
+  &:target {
+    border-color: var(--content-positive-themed);
+    box-shadow: 0 0 0 3px
+      color-mix(in srgb, var(--content-positive-themed) 15%, transparent);
+  }
+}
+
+.api-docs-endpoint-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-04) var(--spacing-06);
+  padding: var(--spacing-06) var(--spacing-07);
+  border-bottom: 1px solid var(--border-divider-themed);
+
+  @media (max-width: 600px) {
+    padding: var(--spacing-05);
+  }
+}
+
+.api-docs .api-docs-endpoint-title {
+  @include body-base;
+  font-weight: 600;
+}
+
+.api-docs-endpoint-meta {
+  display: flex;
+  flex-basis: 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-04);
+}
+
+.api-docs-route {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-04);
+  min-width: 0;
+  max-width: 100%;
+  padding: var(--spacing-02) var(--spacing-05) var(--spacing-02)
+    var(--spacing-02);
+  border-radius: var(--border-radius-medium);
+  background-color: var(--bg-secondary-themed);
+
+  .api-docs-path {
+    padding: 0;
+    background: none;
+
+    @include body-sm;
+    @include font-mono;
+  }
+}
+
+// Two columns once the main area is wide enough, else stacked
+.api-docs-endpoint-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--spacing-07);
+  padding: var(--spacing-07);
+
+  @container (min-width: 1000px) {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 0.9fr);
+    gap: var(--spacing-09);
+  }
+
+  @media (max-width: 600px) {
+    gap: var(--spacing-06);
+    padding: var(--spacing-05);
+  }
+}
+
+.api-docs-endpoint-docs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-08);
+  min-width: 0;
+}
+
+.api-docs-endpoint-code {
+  min-width: 0;
+}
+
+.api-docs-code-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-06);
+
+  @container (min-width: 1000px) {
+    position: sticky;
+    top: $api-docs-header-height + 16px;
+  }
+}
+
+.api-docs-body {
+  @include body-sm;
+  color: var(--content-primary-themed);
+}
+
+.api-docs-prose {
+  @include body-sm;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-04);
+
+  p {
+    white-space: pre-line;
+    font-size: inherit;
+    line-height: inherit;
+  }
+
+  ul {
+    margin: 0;
+    padding-left: var(--spacing-07);
+    font-size: inherit;
+    line-height: inherit;
+  }
+
+  li {
+    font-size: inherit;
+    line-height: inherit;
+  }
+
+  li + li {
+    margin-top: var(--spacing-02);
+  }
+}
+
+.api-docs .api-docs-subsection {
+  h4 {
+    display: flex;
+    align-items: center;
+    margin-bottom: var(--spacing-04);
+    padding-bottom: var(--spacing-04);
+    border-bottom: 1px solid var(--border-divider-themed);
+
+    @include body-sm;
+
+    font-weight: 600;
+  }
+}
+
+.api-docs-media + .api-docs-media {
+  margin-top: var(--spacing-06);
+}
+
+.api-docs .api-docs-media-type {
+  @include body-xs;
+  @include font-mono;
+  display: inline-block;
+  margin-bottom: var(--spacing-02);
+  color: var(--content-secondary-themed);
+}
+
+.api-docs .api-docs-type {
+  @include body-sm;
+}
+
+// Field lists (parameters and schema properties)
+
+// Parameter and schema field tables (upstream OLTable)
+
+.api-docs .api-docs-fields {
+  @include body-sm;
+  margin: 0;
+
+  th {
+    color: var(--content-secondary-themed);
+
+    @include body-sm;
+
+    font-weight: bold;
+  }
+
+  td {
+    padding: var(--spacing-04) var(--spacing-03);
+    vertical-align: top;
+  }
+
+  .api-docs-field-name-cell {
+    width: 38%;
+  }
+
+  // Nested object fields are indented under their parent
+  .is-nested > td:first-child {
+    padding-left: var(--spacing-07);
+  }
+}
+
+.api-docs .api-docs-field-name {
+  @include body-sm;
+  @include font-mono;
+  font-weight: 500;
+  padding: 0;
+  background: none;
+  overflow-wrap: anywhere;
+}
+
+.api-docs-field-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacing-02) var(--spacing-03);
+  margin-top: var(--spacing-02);
+}
+
+.api-docs .api-docs-field-type {
+  @include body-xs;
+  @include font-mono;
+  color: var(--content-secondary-themed);
+  overflow-wrap: anywhere;
+}
+
+.api-docs-field-body {
+  color: var(--content-secondary-themed);
+}
+
+.api-docs-example {
+  @include body-xs;
+  margin-top: var(--spacing-02);
+  color: var(--content-secondary-themed);
+}
+
+// Responses
+
+.api-docs-responses {
+  border: 1px solid var(--border-divider-themed);
+  border-radius: var(--border-radius-medium);
+  overflow: hidden;
+}
+
+.api-docs-response + .api-docs-response {
+  border-top: 1px solid var(--border-divider-themed);
+}
+
+.api-docs-response-head {
+  @include body-sm;
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-05);
+  padding: var(--spacing-04) var(--spacing-05);
+  list-style: none;
+
+  &::-webkit-details-marker {
+    display: none;
+  }
+}
+
+summary.api-docs-response-head {
+  cursor: pointer;
+
+  &:hover {
+    background-color: var(--bg-secondary-themed);
+  }
+}
+
+.api-docs-response-description {
+  flex: 1;
+  min-width: 0;
+}
+
+.api-docs-response-chevron {
+  color: var(--content-secondary-themed);
+  transition: transform 0.15s;
+
+  details[open] > summary & {
+    transform: rotate(180deg);
+  }
+}
+
+.api-docs-response-body {
+  padding: 0 var(--spacing-05) var(--spacing-05);
+
+  .api-docs-code {
+    margin-top: var(--spacing-05);
+  }
+}
+
+// Code panels ---------------------------------------------------------------
+
+// Code panel: a themed surface with a border, so it stands apart from the
+// page in both light and dark mode
+.api-docs-code {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-divider-themed);
+  border-radius: var(--border-radius-medium);
+  background-color: var(--bg-secondary-themed);
+  color: var(--content-primary-themed);
+
+  .copy-button,
+  .copy-button .material-symbols {
+    margin-left: auto;
+    color: var(--content-secondary-themed);
+  }
+}
+
+.api-docs-code-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-05);
+  min-height: 40px;
+  padding: 0 var(--spacing-03) 0 var(--spacing-06);
+  border-bottom: 1px solid var(--border-divider-themed);
+  background-color: var(--bg-tertiary-themed);
+}
+
+.api-docs-code-label {
+  @include body-xs;
+  font-weight: bold;
+  text-transform: uppercase;
+  color: var(--content-secondary-themed);
+  white-space: nowrap;
+}
+
+.api-docs-tablist {
+  display: flex;
+  align-self: stretch;
+  gap: var(--spacing-02);
+}
+
+.api-docs-tab {
+  @include body-sm;
+  font-weight: 500;
+  padding: 0 var(--spacing-04);
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--content-secondary-themed);
+
+  &:hover {
+    color: var(--content-primary-themed);
+  }
+
+  &.is-active {
+    color: var(--content-primary-themed);
+    border-bottom-color: var(--green-50);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--green-50);
+    outline-offset: -2px;
+  }
+}
+
+.api-docs-code-body {
+  @include body-sm;
+  @include font-mono;
+  max-height: 480px;
+  margin: 0;
+  padding: var(--spacing-05) var(--spacing-06);
+  overflow: auto;
+  color: var(--content-primary-themed);
+  white-space: pre;
+
+  &:focus-visible {
+    outline: 2px solid var(--green-50);
+    outline-offset: -2px;
+  }
+
+  code {
+    padding: 0 !important;
+    background: none !important;
+    color: inherit !important;
+    font-size: inherit !important;
+    overflow-wrap: normal !important;
+  }
+}
+
+// Empty state ---------------------------------------------------------------
+
+.api-docs-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-04);
+  padding: var(--spacing-12) var(--spacing-06);
+  border: 1px dashed var(--border-divider-themed);
+  border-radius: var(--border-radius-medium);
+  color: var(--content-secondary-themed);
+  text-align: center;
+
+  .material-symbols {
+    font-size: 36px;
+  }
+}
+
+.api-docs-empty-text {
+  @include body-sm;
+  margin: 0;
+}

@@ -1,6 +1,12 @@
 import { AgentMessage, ChatImage } from '../providers/types'
 import { Attachment, EnvelopeState } from './context/types'
+import {
+  ContextBreakdown,
+  ContextUsageRecord,
+  ProviderUsage,
+} from './context/context-usage-types'
 import { SlashCommandInvocation } from './slash-commands/types'
+import { renderCompactionMessage } from './context/compaction'
 
 export type ToolCallRecord = {
   id: string
@@ -36,6 +42,87 @@ export type ContextTrim = {
   anchor: string
   dropped: number
   elided: number[]
+}
+
+/**
+ * What a compaction kept, read by code from the span it summarized (never
+ * written by the model). Rendered under the summary; see context/compaction.ts.
+ */
+export type CompactLedger = {
+  userMessages: { id: string; text: string }[]
+  filesRead: { path: string; ranges: string[] }[]
+  edits: {
+    path: string
+    startLine?: number
+    endLine?: number
+    oldText?: string
+    newText?: string
+    status: 'applied' | 'rejected' | 'failed'
+    turn?: string
+  }[]
+  filesCreated: string[]
+  compile: {
+    last?: {
+      status: string
+      errorCount: number
+      warningCount: number
+      firstError?: { file?: string; line?: number; message: string }
+    }
+    unresolved: { file?: string; line?: number; message: string }[]
+    resolved: string[]
+  }
+  latex: {
+    documentClass?: string
+    packages: string[]
+    macros: string[]
+    labels: string[]
+    citeKeys: string[]
+    unresolvedRefs: string[]
+    /** Server bookkeeping: whether unresolvedRefs came from a full check. */
+    refsChecked?: boolean
+  }
+  settings: { key: string; value: string }[]
+  pdf: { pages: number[]; notes: string[] }
+  web: { url: string; title?: string }[]
+  connectors: { tool: string; count: number }[]
+  slashCommands: string[]
+  rejected: string[]
+}
+
+/**
+ * A `/compact` boundary. The messages before the newest one are not sent
+ * again: the rebuilt conversation is this entry's compaction message, then
+ * the tail kept verbatim, then everything after the entry.
+ */
+export type CompactEntry = {
+  id: string
+  role: 'compact'
+  createdAt: number
+  trigger: 'manual' | 'auto'
+  /** The words after `/compact`, if any. */
+  instructions?: string
+  /** The summary, as markdown with `###` section headings. */
+  summary: string
+  ledger: CompactLedger
+  /** First entry kept verbatim (an entry before this one); absent: no tail. */
+  tailFromId?: string
+  preTokens: number
+  postTokens: number
+  summarizedEntries: number
+  model?: string
+  durationMs: number
+  retention: {
+    score: number
+    checked: number
+    missing: string[]
+    repaired: boolean
+  }
+  /** The model failed and the summary is the deterministic one. */
+  fallback?: boolean
+  /** More than one chunk was summarized (map-reduce). */
+  chunks?: number
+  /** Current text around the newest edits, appended to the message. */
+  excerpts?: string
 }
 
 export type TranscriptEntry =
@@ -96,7 +183,29 @@ export type TranscriptEntry =
       nudge?: { after: string | null }
       /** The latest trim recorded by the run that wrote this entry. */
       contextTrim?: ContextTrim
+      /**
+       * Tokens the provider billed for the newest request this turn made. Kept
+       * whole: it is a handful of numbers, and the meter needs it on reload.
+       */
+      usage?: ProviderUsage
+      /**
+       * The server's estimate of what the newest request held, by category.
+       * Newest wins; the dashboard reads its split and its budget from it.
+       */
+      contextBreakdown?: ContextBreakdown
+      /**
+       * The anchored count the run made before its newest request: the total
+       * the meter shows, newer than `usage` once a request is under way.
+       */
+      contextUsage?: ContextUsageRecord
+      /**
+       * The breakdown of the same request as `usage` (paired by step), kept
+       * apart from `contextBreakdown` so the meter calibrates against the
+       * request the provider billed, not the newest one.
+       */
+      usageBreakdown?: ContextBreakdown
     }
+  | CompactEntry
 
 /**
  * The ordered blocks of an assistant turn.
@@ -144,32 +253,84 @@ function userTurnContent(
     .join('\n\n')
 }
 
+/** The index of the newest `compact` entry, or -1 when there is none. */
+export function latestCompactIndex(transcript: TranscriptEntry[]): number {
+  for (let i = transcript.length - 1; i >= 0; i--) {
+    if (transcript[i].role === 'compact') return i
+  }
+  return -1
+}
+
+/**
+ * The index of the first transcript entry the provider still sees as history:
+ * the tail of the newest compact boundary, else the boundary itself, else 0.
+ * Entries before it are gone from every request.
+ */
+export function sentFromIndex(transcript: TranscriptEntry[]): number {
+  const boundary = latestCompactIndex(transcript)
+  if (boundary === -1) return 0
+  const entry = transcript[boundary] as Extract<TranscriptEntry, { role: 'compact' }>
+  const tailIndex = entry.tailFromId
+    ? transcript.findIndex(other => other.id === entry.tailFromId)
+    : -1
+  return tailIndex !== -1 && tailIndex < boundary ? tailIndex : boundary
+}
+
 /**
  * Rebuilds the provider-facing message array from the stored transcript.
  *
  * The transcript is what gets persisted and rendered; this is the only place
  * that knows how it maps onto a conversation, which is why switching provider
  * mid-project is safe.
+ *
+ * After a compact boundary (the newest `compact` entry, index c) the messages
+ * are the compaction message, then the tail kept verbatim (from `tailFromId`
+ * up to c), then everything after c. Entries before the tail are never sent
+ * again, and the entries before c are ignored.
  */
 export function toAgentMessages(transcript: TranscriptEntry[]): AgentMessage[] {
+  const boundary = latestCompactIndex(transcript)
+  const boundaryEntry =
+    boundary === -1
+      ? null
+      : (transcript[boundary] as Extract<TranscriptEntry, { role: 'compact' }>)
+  if (!boundaryEntry) {
+    return entriesToMessages(transcript, 0, transcript.length)
+  }
+
+  return [
+    { role: 'user', content: renderCompactionMessage(boundaryEntry) },
+    ...entriesToMessages(transcript, sentFromIndex(transcript), boundary),
+    ...entriesToMessages(transcript, boundary + 1, transcript.length),
+  ]
+}
+
+/** Messages for transcript[from, to). A compact entry sends nothing itself. */
+function entriesToMessages(
+  transcript: TranscriptEntry[],
+  from: number,
+  to: number
+): AgentMessage[] {
   const messages: AgentMessage[] = []
 
-  transcript.forEach((entry, index) => {
+  for (let index = from; index < to; index++) {
+    const entry = transcript[index]
+    if (entry.role === 'compact') continue
+
     if (entry.role === 'user') {
       const msg: AgentMessage = { role: 'user', content: userTurnContent(entry) }
       if (entry.images && entry.images.length > 0) {
         msg.images = entry.images
       }
       messages.push(msg)
-      return
+      continue
     }
 
-    const isLast = index === transcript.length - 1
-    if (isLast && !entry.text && entry.toolCalls.length === 0) return
+    if (index === transcript.length - 1 && !entry.text && entry.toolCalls.length === 0) continue
 
     if (entry.toolCalls.length === 0) {
       messages.push({ role: 'assistant', content: entry.text })
-      return
+      continue
     }
 
     messages.push({
@@ -194,7 +355,7 @@ export function toAgentMessages(transcript: TranscriptEntry[]): AgentMessage[] {
         isError: finished ? Boolean(call.isError) : true,
       })
     }
-  })
+  }
 
   return messages
 }

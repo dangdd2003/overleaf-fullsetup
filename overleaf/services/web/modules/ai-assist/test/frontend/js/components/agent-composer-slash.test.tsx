@@ -72,7 +72,7 @@ describe('AgentComposer slash commands', function () {
       renderComposer()
       type('/')
       expect(screen.getByRole('listbox', { name: /commands/i })).to.exist
-      expect(screen.getAllByRole('option')).to.have.length(15)
+      expect(screen.getAllByRole('option')).to.have.length(17)
     })
 
     it('filters as the name is typed', function () {
@@ -324,4 +324,168 @@ describe('AgentComposer slash commands', function () {
     })
   })
 
+})
+
+describe('AgentComposer local slash commands', function () {
+  const SNAPSHOT = {
+    usedTokens: 45200,
+    contextWindow: 200000,
+    maxOutputTokens: 8192,
+    budget: 188808,
+    thresholds: {
+      effective: 191808,
+      autoCompactAt: 178808,
+      warnAt: 171808,
+      blockAt: 188808,
+    },
+    percentUsed: 22.6,
+    percentOfBudget: 26.3,
+    state: 'ok' as const,
+    exact: true,
+    categories: [
+      { id: 'systemPrompt' as const, tokens: 4000, percent: 2 },
+      { id: 'messages' as const, tokens: 3000, percent: 1.5 },
+      { id: 'reserved' as const, tokens: 20000, percent: 10 },
+      { id: 'free' as const, tokens: 173000, percent: 86.5 },
+    ],
+    deferred: [],
+    empty: false,
+  }
+
+  it('runs /context on Enter without sending it to the model', function () {
+    const onSend = sinon.stub()
+    const onLocalCommand = sinon.stub()
+    renderComposer({ onSend, onLocalCommand })
+    const textarea = type('/context')
+    fireEvent.keyDown(textarea, { key: 'Enter' })
+    expect(onLocalCommand.calledOnceWithExactly('context')).to.equal(true)
+    expect(onSend.called).to.equal(false)
+    expect(textarea.value).to.equal('')
+  })
+
+  it('accepts an alias typed in full, such as /usage', function () {
+    const onSend = sinon.stub()
+    const onLocalCommand = sinon.stub()
+    renderComposer({ onSend, onLocalCommand })
+    const textarea = type('/usage')
+    fireEvent.keyDown(textarea, { key: 'Enter' })
+    expect(onLocalCommand.calledOnceWithExactly('context')).to.equal(true)
+    expect(onSend.called).to.equal(false)
+  })
+
+  it('runs the local command when its menu row is clicked', function () {
+    const onSend = sinon.stub()
+    const onLocalCommand = sinon.stub()
+    renderComposer({ onSend, onLocalCommand })
+    type('/con')
+    fireEvent.click(screen.getByRole('option', { name: /context usage/i }))
+    expect(onLocalCommand.calledOnceWithExactly('context')).to.equal(true)
+    expect(onSend.called).to.equal(false)
+  })
+
+  it('lists local commands after the model commands, under their own header', function () {
+    renderComposer({ onLocalCommand: sinon.stub() })
+    type('/')
+    const options = screen.getAllByRole('option')
+    expect(options.slice(-2).map(option => option.id)).to.deep.equal([
+      'ai-assist-slash-option-context',
+      'ai-assist-slash-option-compact',
+    ])
+    expect(screen.getByText('This chat')).to.exist
+  })
+
+  it('runs /compact with the words after it as instructions', function () {
+    const onSend = sinon.stub()
+    const onLocalCommand = sinon.stub()
+    renderComposer({ onSend, onLocalCommand })
+    const textarea = type('/compact keep the notation decisions')
+    expect(screen.getByText('[instructions]')).to.exist
+    fireEvent.keyDown(textarea, { key: 'Enter' })
+    expect(
+      onLocalCommand.calledOnceWithExactly(
+        'compact',
+        'keep the notation decisions'
+      )
+    ).to.equal(true)
+    expect(onSend.called).to.equal(false)
+    expect(textarea.value).to.equal('')
+  })
+
+  it('shows the [instructions] hint on the /compact row and completes it on Tab', function () {
+    const onLocalCommand = sinon.stub()
+    renderComposer({ onLocalCommand })
+    const textarea = type('/compact')
+    const row = screen.getByRole('option', { name: /compact conversation/i })
+    expect(within(row).getByText('[instructions]')).to.exist
+    fireEvent.keyDown(textarea, { key: 'Tab' })
+    expect(textarea.value).to.equal('/compact ')
+    expect(onLocalCommand.called).to.equal(false)
+  })
+
+  it('refuses /compact while a reply is running, keeping the text', function () {
+    const onLocalCommand = sinon.stub()
+    renderComposer({ onLocalCommand, running: true })
+    const textarea = type('/compact')
+    fireEvent.keyDown(textarea, { key: 'Enter' })
+    expect(onLocalCommand.called).to.equal(false)
+    expect(textarea.value).to.equal('/compact')
+    expect(screen.getByRole('status').textContent).to.equal(
+      'Wait for the current reply to finish'
+    )
+  })
+
+  it('still runs /context mid-run', function () {
+    const onLocalCommand = sinon.stub()
+    renderComposer({ onLocalCommand, running: true })
+    const textarea = type('/context')
+    fireEvent.keyDown(textarea, { key: 'Enter' })
+    expect(onLocalCommand.calledOnceWithExactly('context')).to.equal(true)
+  })
+
+  it('holds a message back while compacting instead of queueing it', function () {
+    const onSend = sinon.stub()
+    renderComposer({ onSend, running: true, compacting: true })
+    const textarea = type('one more thing')
+    fireEvent.keyDown(textarea, { key: 'Enter' })
+    expect(onSend.called).to.equal(false)
+    expect(textarea.value).to.equal('one more thing')
+    expect(screen.getByRole('status').textContent).to.equal(
+      'Wait for the compaction to finish'
+    )
+  })
+
+  it('shows the context meter beside the composer and toggles the popover from it', function () {
+    const onContextOpenChange = sinon.stub()
+    renderComposer({ contextUsage: SNAPSHOT, onContextOpenChange })
+    const meter = screen.getByRole('button', { name: 'Context usage' })
+    fireEvent.click(meter)
+    expect(onContextOpenChange.calledOnceWithExactly(true)).to.equal(true)
+  })
+
+  it('anchors the open popover to the meter and returns focus there on Escape', function () {
+    const onContextOpenChange = sinon.stub()
+    renderComposer({
+      contextUsage: SNAPSHOT,
+      contextOpen: true,
+      onContextOpenChange,
+    })
+    const meter = screen.getByRole('button', { name: 'Context usage' })
+    expect(meter.getAttribute('aria-expanded')).to.equal('true')
+    const popover = screen.getByRole('dialog', { name: 'Context usage' })
+    fireEvent.keyDown(popover, { key: 'Escape' })
+    expect(onContextOpenChange.calledWith(false)).to.equal(true)
+    expect(document.activeElement).to.equal(meter)
+  })
+
+  it('shows no popover while closed', function () {
+    renderComposer({ contextUsage: SNAPSHOT, contextOpen: false })
+    expect(screen.queryByRole('dialog')).to.equal(null)
+  })
+
+  it('shows no meter until a provider gives a snapshot', function () {
+    renderComposer({ contextUsage: null })
+    expect(screen.queryByRole('button', { name: 'Context usage' })).to.equal(
+      null
+    )
+  })
 })

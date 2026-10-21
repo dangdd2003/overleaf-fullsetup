@@ -28,6 +28,11 @@ function extractBearer(req) {
  * or returned in a response.
  */
 async function requireMcpAuth(req, res, next) {
+  // The request guard authenticates before the body is read and sets the
+  // user; the header has been rewritten by then, so do not validate it again.
+  if (req.mcpUserId) {
+    return next()
+  }
   const token = extractBearer(req)
   if (!token) {
     return McpErrors.send(res, McpErrors.CODES.UNAUTHORIZED)
@@ -96,9 +101,7 @@ async function requireMcpAuth(req, res, next) {
   req.mcpTokenPrefix = token.slice(0, 4)
   // Keep a stable, non-secret identifier for per-token rate limiting.
   req.mcpTokenId = createHash('sha256').update(token).digest('hex')
-  if (req.headers?.authorization) {
-    req.headers.authorization = `Bearer ${req.mcpTokenPrefix}...`
-  }
+  req.headers.authorization = `Bearer ${req.mcpTokenPrefix}...`
 
   logger.info(
     {

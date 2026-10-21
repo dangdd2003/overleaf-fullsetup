@@ -1,4 +1,5 @@
 import { expect } from 'chai'
+import sinon from 'sinon'
 import {
   reduceAgentEvent,
   emptyAgentState,
@@ -473,5 +474,362 @@ describe('reduceAgentEvent', function () {
     const trim = { total: 4, anchor: 'x', dropped: 0, elided: [2] }
     state = reduceAgentEvent(state, { type: 'contextTrimmed', trim })
     expect((state.transcript.at(-1) as any).contextTrim).to.deep.equal(trim)
+  })
+
+  it('stores usage and the context breakdown on the live assistant turn', function () {
+    const breakdown = {
+      systemPrompt: 900,
+      projectInstructions: 0,
+      connectorInstructions: 0,
+      builtinTools: 300,
+      webTools: 0,
+      connectorTools: 0,
+      userMessages: 40,
+      projectContext: 0,
+      assistantMessages: 0,
+      toolResults: 0,
+      images: 0,
+      elidedMessages: 0,
+      droppedMessages: 0,
+      contextWindow: 200000,
+      maxOutputTokens: 32000,
+      budget: 167000,
+    }
+    const usage = {
+      inputTokens: 10,
+      outputTokens: 5,
+      cacheReadTokens: 1200,
+      cacheCreationTokens: 0,
+    }
+    let state = emptyAgentState([{ id: '1', role: 'user', text: 'hi' }])
+
+    // The breakdown arrives before the provider answers, so it opens the turn
+    state = reduceAgentEvent(state, { type: 'contextBreakdown', breakdown })
+    expect(state.transcript.at(-1)).to.deep.include({
+      role: 'assistant',
+      text: '',
+      contextBreakdown: breakdown,
+    })
+
+    state = reduceAgentEvent(state, { type: 'usage', usage })
+    state = reduceAgentEvent(state, { type: 'text', text: 'Hello' })
+    expect(state.transcript.at(-1)).to.deep.include({
+      role: 'assistant',
+      text: 'Hello',
+      usage,
+      contextBreakdown: breakdown,
+    })
+  })
+
+  it('keeps the newest usage and breakdown when a run has several requests', function () {
+    const first = { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0 }
+    const second = { inputTokens: 2, outputTokens: 2, cacheReadTokens: 0, cacheCreationTokens: 0 }
+    let state = emptyAgentState([{ id: '1', role: 'user', text: 'hi' }])
+    state = reduceAgentEvent(state, { type: 'usage', usage: first })
+    state = reduceAgentEvent(state, { type: 'usage', usage: second })
+    expect((state.transcript.at(-1) as any).usage).to.deep.equal(second)
+    expect(state.transcript).to.have.length(2)
+  })
+
+  describe('usage paired with its breakdown by step', function () {
+    const parts = {
+      projectInstructions: 0,
+      connectorInstructions: 0,
+      builtinTools: 0,
+      webTools: 0,
+      connectorTools: 0,
+      userMessages: 0,
+      projectContext: 0,
+      assistantMessages: 0,
+      toolResults: 0,
+      images: 0,
+      elidedMessages: 0,
+      droppedMessages: 0,
+      contextWindow: 200000,
+      maxOutputTokens: 32000,
+      budget: 167000,
+    }
+    const at = (step: number, systemPrompt: number, extra = {}) => ({
+      ...parts,
+      systemPrompt,
+      step,
+      ...extra,
+    })
+    const usageAt = (step: number, inputTokens: number) => ({
+      inputTokens,
+      outputTokens: 5,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      step,
+    })
+    const lastEntry = (state: { transcript: unknown[] }) =>
+      state.transcript.at(-1) as any
+
+    it('pairs the usage with the breakdown of the same step, in either order', function () {
+      let state = emptyAgentState([{ id: '1', role: 'user', text: 'hi' }])
+      state = reduceAgentEvent(state, {
+        type: 'contextBreakdown',
+        breakdown: at(1, 900),
+        step: 1,
+      })
+      state = reduceAgentEvent(state, {
+        type: 'usage',
+        usage: usageAt(1, 1000),
+        step: 1,
+      })
+      expect(lastEntry(state).usageBreakdown).to.deep.equal(at(1, 900))
+    })
+
+    it('leaves usageBreakdown out when the usage has no breakdown of its step', function () {
+      let state = emptyAgentState([{ id: '1', role: 'user', text: 'hi' }])
+      state = reduceAgentEvent(state, {
+        type: 'contextBreakdown',
+        breakdown: at(2, 900),
+        step: 2,
+      })
+      state = reduceAgentEvent(state, {
+        type: 'usage',
+        usage: usageAt(1, 1000),
+        step: 1,
+      })
+      expect(lastEntry(state)).to.not.have.property('usageBreakdown')
+      expect(lastEntry(state).contextBreakdown).to.deep.equal(at(2, 900))
+    })
+
+    it('keeps the paired breakdown while the newer breakdown is for another step', function () {
+      let state = emptyAgentState([{ id: '1', role: 'user', text: 'hi' }])
+      state = reduceAgentEvent(state, {
+        type: 'contextBreakdown',
+        breakdown: at(1, 900),
+        step: 1,
+      })
+      state = reduceAgentEvent(state, {
+        type: 'usage',
+        usage: usageAt(1, 1000),
+        step: 1,
+      })
+      state = reduceAgentEvent(state, {
+        type: 'contextBreakdown',
+        breakdown: at(2, 950),
+        step: 2,
+      })
+      expect(lastEntry(state).usageBreakdown).to.deep.equal(at(1, 900))
+      expect(lastEntry(state).contextBreakdown).to.deep.equal(at(2, 950))
+    })
+
+    it('replaces the paired breakdown with a later exact count of the same step', function () {
+      let state = emptyAgentState([{ id: '1', role: 'user', text: 'hi' }])
+      state = reduceAgentEvent(state, {
+        type: 'contextBreakdown',
+        breakdown: at(1, 900),
+        step: 1,
+      })
+      state = reduceAgentEvent(state, {
+        type: 'usage',
+        usage: usageAt(1, 1000),
+        step: 1,
+      })
+      const exact = at(1, 880, { exactFixed: true })
+      state = reduceAgentEvent(state, {
+        type: 'contextBreakdown',
+        breakdown: exact,
+        step: 1,
+      })
+      expect(lastEntry(state).usageBreakdown).to.deep.equal(exact)
+      expect(lastEntry(state).contextBreakdown).to.deep.equal(exact)
+    })
+
+    it('keeps an exact count over a later estimate of the same step', function () {
+      const exact = at(1, 880, { exactFixed: true })
+      let state = emptyAgentState([{ id: '1', role: 'user', text: 'hi' }])
+      state = reduceAgentEvent(state, {
+        type: 'contextBreakdown',
+        breakdown: exact,
+        step: 1,
+      })
+      state = reduceAgentEvent(state, {
+        type: 'usage',
+        usage: usageAt(1, 1000),
+        step: 1,
+      })
+      state = reduceAgentEvent(state, {
+        type: 'contextBreakdown',
+        breakdown: at(1, 900),
+        step: 1,
+      })
+      expect(lastEntry(state).usageBreakdown).to.deep.equal(exact)
+      expect(lastEntry(state).contextBreakdown).to.deep.equal(at(1, 900))
+    })
+
+    it('drops the paired breakdown when a newer usage is for another step', function () {
+      let state = emptyAgentState([{ id: '1', role: 'user', text: 'hi' }])
+      state = reduceAgentEvent(state, {
+        type: 'contextBreakdown',
+        breakdown: at(1, 900),
+        step: 1,
+      })
+      state = reduceAgentEvent(state, {
+        type: 'usage',
+        usage: usageAt(1, 1000),
+        step: 1,
+      })
+      state = reduceAgentEvent(state, {
+        type: 'usage',
+        usage: usageAt(2, 1200),
+        step: 2,
+      })
+      expect(lastEntry(state)).to.not.have.property('usageBreakdown')
+      expect(lastEntry(state).usage.step).to.equal(2)
+    })
+
+    it('takes the step from the event when the usage carries none', function () {
+      let state = emptyAgentState([{ id: '1', role: 'user', text: 'hi' }])
+      state = reduceAgentEvent(state, {
+        type: 'contextBreakdown',
+        breakdown: at(3, 900),
+        step: 3,
+      })
+      state = reduceAgentEvent(state, {
+        type: 'usage',
+        usage: { ...usageAt(3, 1000), step: undefined },
+        step: 3,
+      })
+      expect(lastEntry(state).usage.step).to.equal(3)
+      expect(lastEntry(state).usageBreakdown).to.deep.equal(at(3, 900))
+    })
+  })
+})
+
+describe('reduceAgentEvent: context usage records', function () {
+  const lastEntry = (state: { transcript: unknown[] }) =>
+    state.transcript.at(-1) as Record<string, any>
+
+  const thresholds = {
+    effective: 180000,
+    autoCompactAt: 167000,
+    warnAt: 160000,
+    blockAt: 177000,
+  }
+  const record = (step: number, tokens: number) => ({
+    step,
+    tokens,
+    anchoredTokens: tokens,
+    estimatedTokens: 0,
+    exact: true,
+    contextWindow: 200000,
+    thresholds,
+    state: 'ok' as const,
+  })
+
+  it('stores the record on the open assistant turn, without its type', function () {
+    let state = emptyAgentState([{ id: '1', role: 'user', text: 'hi' }])
+    state = reduceAgentEvent(state, { type: 'text', text: 'Hello' })
+    state = reduceAgentEvent(state, {
+      type: 'contextUsage',
+      ...record(2, 5000),
+    })
+
+    expect(lastEntry(state).contextUsage).to.deep.equal(record(2, 5000))
+    expect(lastEntry(state).contextUsage).to.not.have.property('type')
+  })
+
+  it('keeps the newest record of the turn', function () {
+    let state = emptyAgentState([{ id: '1', role: 'user', text: 'hi' }])
+    state = reduceAgentEvent(state, { type: 'contextUsage', ...record(1, 1000) })
+    state = reduceAgentEvent(state, { type: 'contextUsage', ...record(2, 2000) })
+
+    expect(lastEntry(state).contextUsage?.tokens).to.equal(2000)
+  })
+
+  it('clears compacting on a failed automatic compaction and keeps the run going', function () {
+    let state = { ...emptyAgentState([{ id: '1', role: 'user', text: 'hi' }]), running: true }
+    state = reduceAgentEvent(state, { type: 'compactStarted', trigger: 'auto' })
+    state = reduceAgentEvent(state, {
+      type: 'compactFailed',
+      trigger: 'auto',
+      code: 'compactNoProgress',
+      message: 'Nothing would shrink',
+    })
+
+    expect(state.compacting).to.equal(null)
+    expect(state.error).to.equal(null)
+    expect(state.running).to.equal(true)
+  })
+})
+
+describe('reduceAgentEvent: provider retries', function () {
+  let clock: sinon.SinonFakeTimers
+
+  beforeEach(function () {
+    clock = sinon.useFakeTimers({ now: 1_000_000, toFake: ['Date'] })
+  })
+
+  afterEach(function () {
+    clock.restore()
+  })
+
+  const retrying = {
+    type: 'retrying' as const,
+    attempt: 2,
+    maxRetries: 10,
+    retryInMs: 7000,
+    retryAt: 1_007_000,
+    message: 'API overloaded (529)',
+    status: 529,
+  }
+
+  it('sets the retry with a deadline counted from receipt', function () {
+    const state = reduceAgentEvent(emptyAgentState(), retrying)
+
+    expect(state.retrying).to.deep.equal({
+      attempt: 2,
+      maxRetries: 10,
+      deadline: 1_007_000,
+      message: 'API overloaded (529)',
+      status: 529,
+    })
+  })
+
+  it('replaces an earlier retry with the newer one', function () {
+    let state = reduceAgentEvent(emptyAgentState(), retrying)
+    state = reduceAgentEvent(state, { ...retrying, attempt: 3, retryInMs: 1000 })
+
+    expect(state.retrying?.attempt).to.equal(3)
+    expect(state.retrying?.deadline).to.equal(1_001_000)
+  })
+
+  it('clears on output, a tool call and a compaction step', function () {
+    const events: any[] = [
+      { type: 'text', text: 'Hi' },
+      { type: 'thinking', text: 'hmm' },
+      { type: 'stepText', text: 'Hi' },
+      { type: 'toolCallStarted', id: 'c1', name: 'read_file', args: {} },
+      { type: 'compactProgress', phase: 'summarizing' },
+      { type: 'compactFinished', entry: { id: 'k1' } as any },
+    ]
+    for (const event of events) {
+      let state = reduceAgentEvent(emptyAgentState(), retrying)
+      state = reduceAgentEvent(state, event)
+      expect(state.retrying, event.type).to.equal(null)
+    }
+  })
+
+  it('keeps the retry through an empty step, the request starting over', function () {
+    let state = reduceAgentEvent(emptyAgentState(), retrying)
+    state = reduceAgentEvent(state, { type: 'stepText', text: '' })
+
+    expect(state.retrying).to.not.equal(null)
+  })
+
+  it('clears when the run ends or fails', function () {
+    const ended: any[] = [
+      { type: 'turnFinished', reason: 'stop' },
+      { type: 'error', code: 'providerError', message: 'boom' },
+    ]
+    for (const event of ended) {
+      let state = reduceAgentEvent(emptyAgentState(), retrying)
+      state = reduceAgentEvent(state, event)
+      expect(state.retrying, event.type).to.equal(null)
+    }
   })
 })

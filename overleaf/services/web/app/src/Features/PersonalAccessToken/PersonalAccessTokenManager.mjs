@@ -180,7 +180,5 @@ export {
   validateToken,
   listTokens,
   revokeToken,
-  PersonalAccessTokenManager,
   ALLOWED_SCOPES,
-  LAST_USED_THROTTLE_MS,
 }

@@ -41,6 +41,9 @@ export default {
     const faviconLimit = RateLimiterMiddleware.rateLimit(
       new RateLimiter('ai-assist-favicon', { points: 240, duration: 60 })
     )
+    const connectorIconLimit = RateLimiterMiddleware.rateLimit(
+      new RateLimiter('ai-assist-connector-icon', { points: 240, duration: 60 })
+    )
 
     // 0. Provider requests (model list, connection test, in-page agent turns)
     // are made from the server so internal providers work behind a public domain.
@@ -156,6 +159,15 @@ export default {
       AuthenticationController.requireLogin(),
       AuthorizationMiddleware.ensureUserCanWriteProjectContent,
       AiAssistRunController.unqueueMessage
+    )
+
+    // Has the run answer such a message now, cutting short the reply it is
+    // streaming
+    webRouter.post(
+      '/ai-assist/projects/:Project_id/runs/:runId/message/:messageId/now',
+      AuthenticationController.requireLogin(),
+      AuthorizationMiddleware.ensureUserCanWriteProjectContent,
+      AiAssistRunController.sendQueuedNow
     )
 
     webRouter.post(
@@ -361,6 +373,13 @@ export default {
       webRouter.get(
         '/ai-assist/connectors/oauth/client-metadata.json',
         ConnectorController.clientMetadata
+      )
+
+      webRouter.get(
+        '/ai-assist/connectors/:connectorId/icon',
+        AuthenticationController.requireLogin(),
+        connectorIconLimit,
+        ConnectorController.icon
       )
     }
 

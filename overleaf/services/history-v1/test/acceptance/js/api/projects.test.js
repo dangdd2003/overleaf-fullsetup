@@ -559,6 +559,17 @@ describe('project controller', function () {
       })
     })
 
+    describe('getContentAtVersion', function () {
+      it('returns 404 for an unknown version', async function () {
+        await expect(
+          testServer.basicAuthClient.apis.Project.getContentAtVersion({
+            project_id: projectId,
+            version: 20,
+          })
+        ).to.be.rejectedWith('request failed with status 404')
+      })
+    })
+
     describe('getChanges', function () {
       it('returns all changes when not given a limit', async function () {
         const response =

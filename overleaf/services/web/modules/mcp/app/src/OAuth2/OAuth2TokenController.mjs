@@ -13,17 +13,16 @@ import {
 } from './OAuth2Utils.mjs'
 import { OauthAuthorizationCode } from '../../../../../app/src/models/OauthAuthorizationCode.mjs'
 import { OauthAccessToken } from '../../../../../app/src/models/OauthAccessToken.mjs'
+import { db } from '../../../../../app/src/infrastructure/mongodb.mjs'
 
 const PKCE_VERIFIER_PATTERN = /^[A-Za-z0-9\-._~]{43,128}$/
 
 // Access tokens are short-lived JWTs (ACCESS_TOKEN_TTL_SECONDS). Clients renew
-// A refresh token stays valid until it has gone REFRESH_TOKEN_IDLE_MS without
-// use; each refresh resets that window. A grant that goes idle is dropped,
-// and the user must authorize again.
+// them with the refresh token. A refresh token stays valid until it has gone
+// REFRESH_TOKEN_IDLE_MS without use; each refresh resets that window. A grant
+// that goes idle is dropped, and the user must authorize again.
 //
-// The grant records no accessTokenExpiresAt: the JWT carries its own exp, and
-// upstream's TTL on that field would delete the grant, refresh token included,
-// a day after the first access token expired.
+// The grant records no accessTokenExpiresAt: the JWT carries its own exp.
 
 // Idle expiry of a refresh token issued or rotated now.
 function refreshExpiresAt(now = Date.now()) {
@@ -96,6 +95,53 @@ function findGrantByRefreshHash(hash) {
   return OauthAccessToken.findOne({ refreshToken: hash })
 }
 
+// Superseded refresh tokens kept per grant. Older ones are forgotten, so reuse
+// of a token this old is refused without revoking the grant.
+const SUPERSEDED_REFRESH_TOKENS_KEPT = 10
+
+// A refresh token superseded this recently may be presented by a concurrent
+// request that read the grant before the rotation. That is a race, not reuse,
+// so it is refused without revoking the grant.
+const REFRESH_TOKEN_RACE_WINDOW_MS = 10 * 1000
+
+/**
+ * Refuse a refresh token that is not the grant's current one. If it is a token
+ * the grant superseded, it was presented again after rotation: RFC 9700 §4.14.2
+ * asks for the whole grant to be revoked. Inside the race window the rotation
+ * was a concurrent request, so the grant is kept.
+ */
+async function rejectNonCurrentRefreshToken(res, presentedHash, clientId) {
+  // supersededRefreshTokens is not in the upstream schema, so the raw collection is used
+  const grant = await db.oauthAccessTokens.findOne({
+    'supersededRefreshTokens.hash': presentedHash,
+  })
+  const superseded = grant?.supersededRefreshTokens?.find(
+    token => token.hash === presentedHash
+  )
+  if (!superseded || grant.client_id !== clientId) {
+    return error(res, 400, 'invalid_grant', 'Invalid refresh token')
+  }
+
+  const rotatedAt = new Date(superseded.rotatedAt).getTime()
+  if (Date.now() - rotatedAt < REFRESH_TOKEN_RACE_WINDOW_MS) {
+    return error(
+      res,
+      400,
+      'invalid_grant',
+      'Refresh token was rotated by a concurrent request; retry with the latest refresh token'
+    )
+  }
+
+  // The grant holds every access token minted from it, so removing it revokes them all.
+  await OauthAccessToken.deleteOne({ _id: grant._id })
+  return error(
+    res,
+    400,
+    'invalid_grant',
+    'Refresh token has already been used; the grant has been revoked'
+  )
+}
+
 /**
  * Rotate `presentedHash` to `newHash` on the grant state that was read.
  * Atomic update pins the presented token to prevent race conditions.
@@ -109,7 +155,8 @@ function rotateRefreshToken(grant, presentedHash, newHash) {
   }
   const options = { projection: { _id: 1 } }
 
-  return OauthAccessToken.findOneAndUpdate(
+  // Written to the raw collection: Mongoose would strip supersededRefreshTokens
+  return db.oauthAccessTokens.findOneAndUpdate(
     {
       _id: grant._id,
       refreshToken: presentedHash,
@@ -119,8 +166,13 @@ function rotateRefreshToken(grant, presentedHash, newHash) {
         ...expiry,
         refreshToken: newHash,
       },
-      // Grants written before accessTokenExpiresAt was dropped lose it here
-      $unset: { accessTokenExpiresAt: '' },
+      // Keeps the superseded hash so its reuse can be detected
+      $push: {
+        supersededRefreshTokens: {
+          $each: [{ hash: presentedHash, rotatedAt: new Date(now) }],
+          $slice: -SUPERSEDED_REFRESH_TOKENS_KEPT,
+        },
+      },
     },
     options
   )
@@ -318,7 +370,7 @@ const OAuth2TokenController = {
     const presentedHash = hashToken(refresh_token)
     const grant = await findGrantByRefreshHash(presentedHash)
     if (!grant) {
-      return error(res, 400, 'invalid_grant', 'Invalid refresh token')
+      return rejectNonCurrentRefreshToken(res, presentedHash, client_id)
     }
 
     // client_id is required for public clients per RFC 6749 §6. Omitting it
@@ -372,12 +424,8 @@ const OAuth2TokenController = {
     const newHash = hashToken(refreshTokenValue)
     const rotated = await rotateRefreshToken(grant, presentedHash, newHash)
     if (!rotated) {
-      return error(
-        res,
-        400,
-        'invalid_grant',
-        'Refresh token has already been used; the grant has been revoked'
-      )
+      // Another request rotated this token after it was read.
+      return rejectNonCurrentRefreshToken(res, presentedHash, client_id)
     }
 
     return res.json(

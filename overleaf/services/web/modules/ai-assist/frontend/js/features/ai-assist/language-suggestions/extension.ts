@@ -9,6 +9,7 @@ import {
   LANGUAGE_SUGGESTIONS_CHANGED_EVENT,
   loadComposerPreferences,
 } from '../provider-store'
+import { floatingCardTheme } from '../floating/editor-card'
 import { isLanguageSuggestionsAvailable } from './availability'
 import { resolveModel } from './model-choice'
 import { readLanguageSuggestionsPreferences, wantsStyle } from './preferences'
@@ -221,10 +222,6 @@ const languageSuggestionsTheme = EditorView.baseTheme({
   '&dark .ol-language-suggestion-style.ol-language-suggestion-active': {
     backgroundColor: 'rgba(96, 165, 250, 0.2)',
   },
-  '.ol-language-suggestion-card-container.cm-tooltip': {
-    backgroundColor: 'transparent',
-    border: 'none',
-  },
 })
 
 export function languageSuggestionsExtension(): Extension {
@@ -233,6 +230,7 @@ export function languageSuggestionsExtension(): Extension {
     languageSuggestionsPlugin,
     openOnClick,
     languageSuggestionsTheme,
+    floatingCardTheme,
     Prec.high(
       keymap.of([
         {

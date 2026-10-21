@@ -40,6 +40,11 @@ const GitBridgeRouter = {
         GitBridgeApiController.adaptFileParams,
         FileStoreController.getFile
       )
+      r.get(
+        '/api/v0/docs/:projectId/blob/:hash',
+        GitBridgeApiController.requireBlobAccess,
+        GitBridgeApiController.getBlob
+      )
       r.post(
         '/api/v0/docs/:projectId/snapshots',
         GitBridgeApiController.requireGitBridgeAuth,

@@ -8,6 +8,7 @@ import OAuth2TokenController from '../../../../app/src/OAuth2/OAuth2TokenControl
 import OAuth2KeyManager from '../../../../app/src/OAuth2/OAuth2KeyManager.mjs'
 import { OauthAuthorizationCode } from '../../../../../../app/src/models/OauthAuthorizationCode.mjs'
 import { OauthAccessToken } from '../../../../../../app/src/models/OauthAccessToken.mjs'
+import { db } from '../../../../../../app/src/infrastructure/mongodb.mjs'
 import Settings from '@overleaf/settings'
 
 const HOUR_MS = 60 * 60 * 1000
@@ -523,6 +524,7 @@ describe('OAuth2TokenController', () => {
 
     it('rejects invalid or unknown refresh token', async () => {
       vi.spyOn(OauthAccessToken, 'findOne').mockResolvedValue(null)
+      vi.spyOn(db.oauthAccessTokens, 'findOne').mockResolvedValue(null)
 
       const req = {
         body: {
@@ -613,7 +615,6 @@ describe('OAuth2TokenController', () => {
         refreshToken: sha256('oar_old_token'),
         refreshTokenExpiresAt: new Date(Date.now() + 60 * DAY_MS),
         createdAt: new Date(Date.now() - DAY_MS),
-        rotatedRefreshTokens: [],
         user_id: 'user_rotation_123',
         client_id: 'claude',
         audience: 'http://localhost:3050/mcp',
@@ -629,8 +630,10 @@ describe('OAuth2TokenController', () => {
       const store = { ...initial }
       const matchesField = (key, value) => {
         if (key === '$or') return value.some(sub => matches(sub))
-        if (key === 'rotatedRefreshTokens') {
-          return (store.rotatedRefreshTokens || []).includes(value)
+        if (key === 'supersededRefreshTokens.hash') {
+          return (store.supersededRefreshTokens || []).some(
+            t => t.hash === value
+          )
         }
         if (value === null) return store[key] === undefined || store[key] === null
         return String(store[key]) === String(value)
@@ -641,7 +644,10 @@ describe('OAuth2TokenController', () => {
       vi.spyOn(OauthAccessToken, 'findOne').mockImplementation(async filter =>
         matches(filter) ? { ...store } : null
       )
-      vi.spyOn(OauthAccessToken, 'findOneAndUpdate').mockImplementation(
+      vi.spyOn(db.oauthAccessTokens, 'findOne').mockImplementation(async filter =>
+        matches(filter) ? { ...store } : null
+      )
+      vi.spyOn(db.oauthAccessTokens, 'findOneAndUpdate').mockImplementation(
         async (filter, update) => {
           if (!matches(filter)) return null
           Object.assign(store, update.$set)
@@ -665,7 +671,7 @@ describe('OAuth2TokenController', () => {
       const grant = baseGrant()
       vi.spyOn(OauthAccessToken, 'findOne').mockResolvedValue(grant)
       const findOneAndUpdate = vi
-        .spyOn(OauthAccessToken, 'findOneAndUpdate')
+        .spyOn(db.oauthAccessTokens, 'findOneAndUpdate')
         .mockResolvedValue({ _id: grant._id })
 
       const res = createMockRes()
@@ -698,7 +704,7 @@ describe('OAuth2TokenController', () => {
       vi.spyOn(OauthAccessToken, 'findOne').mockResolvedValue(
         baseGrant({ client_id: 'claude-desktop' })
       )
-      const findOneAndUpdate = vi.spyOn(OauthAccessToken, 'findOneAndUpdate')
+      const findOneAndUpdate = vi.spyOn(db.oauthAccessTokens, 'findOneAndUpdate')
 
       const res = createMockRes()
       await OAuth2TokenController.token(refreshRequest(), res)
@@ -710,7 +716,7 @@ describe('OAuth2TokenController', () => {
 
     it('does not rotate when the requested resource does not match the audience', async () => {
       vi.spyOn(OauthAccessToken, 'findOne').mockResolvedValue(baseGrant())
-      const findOneAndUpdate = vi.spyOn(OauthAccessToken, 'findOneAndUpdate')
+      const findOneAndUpdate = vi.spyOn(db.oauthAccessTokens, 'findOneAndUpdate')
 
       const res = createMockRes()
       await OAuth2TokenController.token(
@@ -724,7 +730,8 @@ describe('OAuth2TokenController', () => {
 
     it('rejects a refresh token that is unknown', async () => {
       vi.spyOn(OauthAccessToken, 'findOne').mockResolvedValue(null)
-      const findOneAndUpdate = vi.spyOn(OauthAccessToken, 'findOneAndUpdate')
+      vi.spyOn(db.oauthAccessTokens, 'findOne').mockResolvedValue(null)
+      const findOneAndUpdate = vi.spyOn(db.oauthAccessTokens, 'findOneAndUpdate')
 
       const res = createMockRes()
       await OAuth2TokenController.token(refreshRequest('oar_nonexistent'), res)
@@ -738,8 +745,9 @@ describe('OAuth2TokenController', () => {
 
     it('rejects an already rotated refresh token', async () => {
       vi.spyOn(OauthAccessToken, 'findOne').mockResolvedValue(baseGrant())
+      vi.spyOn(db.oauthAccessTokens, 'findOne').mockResolvedValue(null)
       // Another request won the race and changed the stored hash first
-      vi.spyOn(OauthAccessToken, 'findOneAndUpdate').mockResolvedValue(null)
+      vi.spyOn(db.oauthAccessTokens, 'findOneAndUpdate').mockResolvedValue(null)
 
       const res = createMockRes()
       await OAuth2TokenController.token(refreshRequest(), res)
@@ -747,24 +755,108 @@ describe('OAuth2TokenController', () => {
       expect(res.responseData.error).to.equal('invalid_grant')
     })
 
+    describe('refresh token reuse', () => {
+      const HOUR = 60 * 60 * 1000
+
+      it('keeps the hash and rotation time of the token it superseded', async () => {
+        const store = fakeGrantStore(baseGrant({ refreshToken: sha256('oar_old_token') }))
+        const before = Date.now()
+        const res = createMockRes()
+        await OAuth2TokenController.token(refreshRequest(), res)
+        expect(res.statusCode).to.equal(200)
+        expect(store.supersededRefreshTokens).to.have.lengthOf(1)
+        expect(store.supersededRefreshTokens[0].hash).to.equal(sha256('oar_old_token'))
+        expect(store.supersededRefreshTokens[0].rotatedAt.getTime()).to.be.within(
+          before,
+          Date.now()
+        )
+      })
+
+      it('revokes the whole grant when a superseded refresh token is presented later', async () => {
+        const store = fakeGrantStore(
+          baseGrant({
+            refreshToken: sha256('oar_current_token'),
+            supersededRefreshTokens: [
+              { hash: sha256('oar_old_token'), rotatedAt: new Date(Date.now() - HOUR) },
+            ],
+          })
+        )
+        const res = createMockRes()
+        await OAuth2TokenController.token(refreshRequest('oar_old_token'), res)
+        expect(res.statusCode).to.equal(400)
+        expect(res.responseData.error).to.equal('invalid_grant')
+        expect(res.responseData.error_description).to.match(/revoked/)
+        expect(store.deleted).to.equal(true)
+      })
+
+      it('does not revoke the grant when the superseded token is reused inside the race window', async () => {
+        const store = fakeGrantStore(
+          baseGrant({
+            refreshToken: sha256('oar_current_token'),
+            supersededRefreshTokens: [
+              { hash: sha256('oar_old_token'), rotatedAt: new Date(Date.now() - 1000) },
+            ],
+          })
+        )
+        const res = createMockRes()
+        await OAuth2TokenController.token(refreshRequest('oar_old_token'), res)
+        expect(res.statusCode).to.equal(400)
+        expect(res.responseData.error).to.equal('invalid_grant')
+        expect(res.responseData.error_description).to.not.match(/revoked/)
+        expect(store.deleted).to.not.equal(true)
+      })
+
+      it('does not revoke when a superseded token from another client is presented', async () => {
+        const store = fakeGrantStore(
+          baseGrant({
+            refreshToken: sha256('oar_current_token'),
+            client_id: 'claude-desktop',
+            supersededRefreshTokens: [
+              { hash: sha256('oar_old_token'), rotatedAt: new Date(Date.now() - HOUR) },
+            ],
+          })
+        )
+        const res = createMockRes()
+        await OAuth2TokenController.token(refreshRequest('oar_old_token'), res)
+        expect(res.statusCode).to.equal(400)
+        expect(res.responseData.error).to.equal('invalid_grant')
+        expect(store.deleted).to.not.equal(true)
+      })
+
+      it('lets a legitimate concurrent refresh lose the race without revoking the grant', async () => {
+        const store = fakeGrantStore(baseGrant({ refreshToken: sha256('oar_old_token') }))
+        const resA = createMockRes()
+        const resB = createMockRes()
+        await Promise.all([
+          OAuth2TokenController.token(refreshRequest(), resA),
+          OAuth2TokenController.token(refreshRequest(), resB),
+        ])
+        const statuses = [resA.statusCode, resB.statusCode].sort()
+        expect(statuses).to.deep.equal([200, 400])
+        const loser = resA.statusCode === 400 ? resA : resB
+        expect(loser.responseData.error).to.equal('invalid_grant')
+        expect(store.deleted).to.not.equal(true)
+        expect(store.refreshToken).to.not.equal(sha256('oar_old_token'))
+      })
+    })
+
     it('resets the 90-day idle window on rotation and records no access expiry', async () => {
       const grant = baseGrant()
       vi.spyOn(OauthAccessToken, 'findOne').mockResolvedValue(grant)
       const findOneAndUpdate = vi
-        .spyOn(OauthAccessToken, 'findOneAndUpdate')
+        .spyOn(db.oauthAccessTokens, 'findOneAndUpdate')
         .mockResolvedValue({ _id: grant._id })
 
       const before = Date.now()
       const res = createMockRes()
       await OAuth2TokenController.token(refreshRequest(), res)
       expect(res.statusCode).to.equal(200)
-      const { $set, $unset } = findOneAndUpdate.mock.calls[0][1]
+      const { $set } = findOneAndUpdate.mock.calls[0][1]
       expect($set.refreshTokenExpiresAt.getTime()).to.be.within(
         before + 90 * DAY_MS,
         Date.now() + 90 * DAY_MS
       )
       expect($set).to.not.have.property('accessTokenExpiresAt')
-      expect($unset).to.deep.equal({ accessTokenExpiresAt: '' })
       expect($set.expiresAt).to.be.null
     })
 
@@ -773,7 +865,7 @@ describe('OAuth2TokenController', () => {
         refreshTokenExpiresAt: new Date(Date.now() - 1000),
       })
       vi.spyOn(OauthAccessToken, 'findOne').mockResolvedValue(grant)
-      const findOneAndUpdate = vi.spyOn(OauthAccessToken, 'findOneAndUpdate')
+      const findOneAndUpdate = vi.spyOn(db.oauthAccessTokens, 'findOneAndUpdate')
 
       const res = createMockRes()
       await OAuth2TokenController.token(refreshRequest(), res)
@@ -798,7 +890,7 @@ describe('OAuth2TokenController', () => {
     it('accepts scope=mcp on refresh and rejects any other scope', async () => {
       const grant = baseGrant()
       vi.spyOn(OauthAccessToken, 'findOne').mockResolvedValue(grant)
-      vi.spyOn(OauthAccessToken, 'findOneAndUpdate').mockResolvedValue({ _id: grant._id })
+      vi.spyOn(db.oauthAccessTokens, 'findOneAndUpdate').mockResolvedValue({ _id: grant._id })
 
       const ok = createMockRes()
       await OAuth2TokenController.token(refreshRequest('oar_old_token', { scope: 'mcp' }), ok)

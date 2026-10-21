@@ -21,7 +21,10 @@ export class AiAssistant {
 
   constructor(settings: ProviderSettings) {
     this.settings = settings
-    this.client = new ServerProviderClient(settings)
+    // The user watches this run, so its retries are shown, not hidden
+    this.client = new ServerProviderClient(settings, {
+      retryPolicy: 'interactive',
+    })
   }
 
   /** Builds an assistant from the provider saved in this browser, if any. */

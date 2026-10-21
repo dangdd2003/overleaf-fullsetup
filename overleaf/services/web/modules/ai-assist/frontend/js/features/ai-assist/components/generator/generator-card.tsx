@@ -7,6 +7,7 @@ import OLIconButton from '@/shared/components/ol/ol-icon-button'
 import { GeneratorPhase } from '../../generator/types'
 import { useStickToBottom } from '../../hooks/use-stick-to-bottom'
 import { TexGptPromptBar } from '../texgpt/texgpt-prompt-bar'
+import type { RetryingState } from '../../agent/agent-state'
 import { PopupStatusLine } from './streaming-text'
 import { RevealBox } from '../reveal-box'
 
@@ -41,6 +42,8 @@ export type GeneratorCardProps = {
   copyText: string | null
   /** While streaming: shown instead of "Writing…" once there is something to show. */
   streamingPreview?: ReactNode
+  /** A provider retry while streaming; shown in the status line. */
+  retry?: RetryingState | null
   /** The current version, shown when ready: previews, changes. */
   children?: ReactNode
   notes: string | null
@@ -185,6 +188,7 @@ export function GeneratorCard(props: GeneratorCardProps) {
           <>
             {props.streamingPreview}
             <PopupStatusLine
+              retry={props.retry}
               text={
                 phase.repairing
                   ? text.repairing

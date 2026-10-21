@@ -11,10 +11,14 @@ import {
   keymap,
   showTooltip,
   Tooltip,
-  TooltipView,
 } from '@codemirror/view'
 import { WritingActionId } from './actions'
 import { isWritingToolsAvailable } from './availability'
+import {
+  floatingCard,
+  floatingCardTheme,
+  floatingTooltip,
+} from '../floating/editor-card'
 
 export type WritingSession = {
   /** New for every session; the card keys its state on it. */
@@ -23,6 +27,8 @@ export type WritingSession = {
   to: number
   /** The selected text when the session opened, for the stale check. */
   original: string
+  /** The selection was made from its end back to its start. */
+  backward: boolean
   action: WritingActionId
   targetLanguage?: string
   tooltip: Tooltip
@@ -31,6 +37,8 @@ export type WritingSession = {
 export type OpenWritingSession = {
   from: number
   to: number
+  /** The selection's head was at `from`; restored by the card's back button. */
+  backward?: boolean
   action: WritingActionId
   targetLanguage?: string
 }
@@ -44,13 +52,19 @@ let nextSessionId = 0
  * One function for every card tooltip. CodeMirror reuses a tooltip's DOM
  * while the new tooltip has the same `create`, so the card (portalled into
  * that DOM) keeps its React state when the session is re-anchored after an
- * edit.
+ * edit. The card flips around the whole selection.
  */
-const createCardContainer = (): TooltipView => {
-  const dom = document.createElement('div')
-  dom.className = 'ai-writing-tools-card-container'
-  return { dom, overlap: true, offset: { x: 0, y: 6 } }
-}
+const createCardContainer = floatingCard({
+  className: 'ai-writing-tools-card-container',
+  // The footer of buttons keeps to one line however narrow the pane
+  oneLine: '.ai-card-footer',
+  // Centred on its text, like the language suggestion cards
+  align: 'center',
+  range: state => {
+    const session = state.field(writingSessionField, false)
+    return session ? { from: session.from, to: session.to } : null
+  },
+})
 
 /** Below the selection's last line, even when it ends at a line start. */
 function anchorFor(state: EditorState, from: number, to: number): number {
@@ -59,13 +73,7 @@ function anchorFor(state: EditorState, from: number, to: number): number {
 }
 
 function cardTooltip(state: EditorState, from: number, to: number): Tooltip {
-  return {
-    pos: anchorFor(state, from, to),
-    above: false,
-    strictSide: true,
-    arrow: false,
-    create: createCardContainer,
-  }
+  return floatingTooltip(anchorFor(state, from, to), createCardContainer)
 }
 
 const targetMark = Decoration.mark({ class: 'ai-writing-tools-target' })
@@ -82,6 +90,7 @@ export const writingSessionField = StateField.define<WritingSession | null>({
           from,
           to,
           original: tr.state.sliceDoc(from, to),
+          backward: effect.value.backward ?? false,
           action,
           targetLanguage,
           tooltip: cardTooltip(tr.state, from, to),
@@ -106,10 +115,6 @@ export const writingSessionField = StateField.define<WritingSession | null>({
 })
 
 const writingToolsTheme = EditorView.baseTheme({
-  '.ai-writing-tools-card-container.cm-tooltip': {
-    backgroundColor: 'transparent',
-    border: 'none',
-  },
   '&light .ai-writing-tools-target': {
     backgroundColor: 'rgba(56, 126, 245, 0.18)',
   },
@@ -121,6 +126,7 @@ const writingToolsTheme = EditorView.baseTheme({
 export function writingToolsExtension(): Extension {
   return [
     writingSessionField,
+    floatingCardTheme,
     writingToolsTheme,
     Prec.high(
       keymap.of([

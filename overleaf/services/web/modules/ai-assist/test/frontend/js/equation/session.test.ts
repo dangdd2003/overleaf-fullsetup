@@ -58,7 +58,7 @@ describe('equation: session', function () {
     expect(session.id).to.equal(id)
     expect(session.phase).to.equal('review')
     expect(session.passage).to.deep.equal({ from: 4, to: 18, original: 'energy is here' })
-    expect(session.tooltip).to.include({ above: false, strictSide: true })
+    expect(session.tooltip).to.include({ above: false, strictSide: false })
   })
 
   it('gives every opening a new id and keeps the draft flag', function () {

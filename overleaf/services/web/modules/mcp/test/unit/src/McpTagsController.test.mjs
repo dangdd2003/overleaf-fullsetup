@@ -134,8 +134,8 @@ describe('McpTagsController.createTag', () => {
     expect(err.message).toBe('mongo down')
   })
 
-  it('accepts a name longer than 50 characters', async () => {
-    const name = 'x'.repeat(120)
+  it('accepts a name of exactly 50 characters', async () => {
+    const name = 'x'.repeat(50)
     TagsHandler.promises.getAllTags.mockResolvedValue([])
     TagsHandler.promises.createTag.mockResolvedValue(
       tag({ name, project_ids: [] })
@@ -144,6 +144,18 @@ describe('McpTagsController.createTag', () => {
     await McpTagsController.createTag(req({ body: { name } }), r)
     expect(r.statusCode).toBe(200)
     expect(TagsHandler.promises.createTag).toHaveBeenCalledWith('u1', name, undefined)
+  })
+
+  it('rejects a name over 50 characters as a validation error, before the upstream call', async () => {
+    TagsHandler.promises.getAllTags.mockResolvedValue([])
+    const r = res()
+    await McpTagsController.createTag(
+      req({ body: { name: 'x'.repeat(51) } }),
+      r
+    )
+    expect(r.statusCode).toBe(400)
+    expect(r.body.code).toBe('validation_error')
+    expect(TagsHandler.promises.createTag).not.toHaveBeenCalled()
   })
 
   it.each([
@@ -175,6 +187,17 @@ describe('McpTagsController.updateTag', () => {
     )
     expect(r.body.tag.name).toBe('diss')
     expect(r.body.before).toEqual({ name: 'thesis', color: '#3366CC' })
+  })
+
+  it('rejects a rename to more than 50 characters as a validation error', async () => {
+    const r = res()
+    await McpTagsController.updateTag(
+      req({ params: { tagId: TAG_ID }, body: { name: 'x'.repeat(51) } }),
+      r
+    )
+    expect(r.statusCode).toBe(400)
+    expect(r.body.code).toBe('validation_error')
+    expect(TagsHandler.promises.editTag).not.toHaveBeenCalled()
   })
 
   it('requires name or color', async () => {

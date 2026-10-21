@@ -7,6 +7,7 @@ import OAuth2AuthorizeController from '../../../../app/src/OAuth2/OAuth2Authoriz
 import OAuth2TokenController from '../../../../app/src/OAuth2/OAuth2TokenController.mjs'
 import OAuth2RevocationController from '../../../../app/src/OAuth2/OAuth2RevocationController.mjs'
 import Settings from '@overleaf/settings'
+import { RateLimiter } from '../../../../../../app/src/infrastructure/RateLimiter.mjs'
 
 function createMockRouter() {
   const routes = {
@@ -122,5 +123,34 @@ describe('OAuth2Router authorize rate limits', () => {
       expect(route.handlers[0]).to.be.a('function')
       expect(route.handlers[1]).to.be.a('function')
     }
+  })
+
+  it('answers an exceeded authorize limit with a JSON 429 instead of hanging', async () => {
+    vi.spyOn(RateLimiter.prototype, 'consume').mockRejectedValue({
+      msBeforeNext: 5000,
+    })
+    const webRouter = createMockRouter()
+    OAuth2Router.apply(webRouter, createMockRouter(), createMockRouter())
+    const route = webRouter.routes.get.find(r => r.path === '/oauth/authorize')
+    const res = {
+      headers: {},
+      setHeader(k, v) {
+        this.headers[k] = v
+      },
+      status(code) {
+        this.statusCode = code
+        return this
+      },
+      json: vi.fn(),
+    }
+    const next = vi.fn()
+    await new Promise(resolve => {
+      res.json.mockImplementation(resolve)
+      route.handlers[0]({ ip: '1.2.3.4', session: {} }, res, next)
+    })
+    expect(next.mock.calls).to.have.length(0)
+    expect(res.statusCode).to.equal(429)
+    expect(res.headers['Retry-After']).to.equal('5')
+    expect(res.json.mock.calls[0][0].error).to.equal('temporarily_unavailable')
   })
 })

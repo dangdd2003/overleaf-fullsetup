@@ -3,7 +3,7 @@ import http from 'node:http'
 import https from 'node:https'
 import net from 'node:net'
 import zlib from 'node:zlib'
-import { ProviderError } from '../AiAssistProviders.mjs'
+import { ProviderError } from '../AiAssistErrors.mjs'
 import { describeStatus, webError } from './util.mjs'
 import { curlFetch, isCurlImpersonateAvailable } from './curl.mjs'
 

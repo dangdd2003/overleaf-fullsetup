@@ -2,12 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 import { Globe } from "@phosphor-icons/react";
 import OLButton from "@/shared/components/ol/ol-button";
 import LinkingStatus from "@/features/settings/components/linking/status";
-import WebSearchForm, { WEB_SEARCH_LABELS } from "./web-search-form";
-import {
-  MultiWebSearchSettings,
-  WEB_SEARCH_DEFAULTS,
-  WebSearchPreferences,
-} from "../providers/types";
+import WebSearchForm from "./web-search-form";
+import { MultiWebSearchSettings } from "../providers/types";
 import {
   clearWebSearchSettings,
   isServerWebSearchAvailable,

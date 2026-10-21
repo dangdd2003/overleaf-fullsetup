@@ -79,7 +79,8 @@ import {
 import { Expect } from '../../texgpt/parse-output'
 import { generateTexGpt } from '../../texgpt/generate'
 import { documentClassOf } from '../../texgpt/latex-text'
-import { AI_CARD_MARGIN, AI_CARD_WIDTH } from '../card-width'
+import { AI_CARD_WIDTH } from '../card-width'
+import { placementSide, useFloatingBox } from '../../floating/use-floating-box'
 import { TexGptPromptBar } from './texgpt-prompt-bar'
 import {
   GENERATOR_ICONS,
@@ -88,11 +89,12 @@ import {
 } from './texgpt-menu'
 import MaterialIcon from '@/shared/components/material-icon'
 import { TexGptPhase, TexGptResult, TexGptVersion } from './texgpt-result'
+import type { RetryingState } from '../../agent/agent-state'
+import { retryingState } from '../retry-status'
 import { aiEdit } from '../../ai-edit-glow/extension'
 import { openAiChat } from '../../hooks/use-ai-dock'
 
 const POPUP_MAX_WIDTH = AI_CARD_WIDTH
-const VIEWPORT_MARGIN = AI_CARD_MARGIN
 
 /** A Writing tool running inside the popup, on the TeXGPT selection. */
 type Writing = {
@@ -168,6 +170,7 @@ export function TexGptPopup({ anchorRef }: { anchorRef: RefObject<HTMLElement> }
     }
     return null
   })
+  const [providerRetry, setProviderRetry] = useState<RetryingState | null>(null)
   const [phase, setPhase] = useState<TexGptPhase>(() => {
     if (cachedHistory?.kind === 'texgpt') {
       return { name: 'ready' }
@@ -214,22 +217,20 @@ export function TexGptPopup({ anchorRef }: { anchorRef: RefObject<HTMLElement> }
     return null
   })
   const startTimeRef = useRef<number>(Date.now())
-  const [position, setPosition] = useState<{
-    top: number
-    left: number
-    width: number
-  } | null>(() => {
-    const rect = anchorRef.current?.getBoundingClientRect()
-    if (!rect) return null
-    const width = Math.min(POPUP_MAX_WIDTH, window.innerWidth - 2 * VIEWPORT_MARGIN)
-    const left = Math.max(
-      VIEWPORT_MARGIN,
-      Math.min(rect.left, window.innerWidth - width - VIEWPORT_MARGIN)
-    )
-    return { top: rect.bottom + 6, left, width }
+  // Under the button, flipped above when there is no room below
+  const { refs, floatingStyles, isPositioned, placement } = useFloatingBox({
+    placement: 'bottom-start',
+    fallbackPlacements: ['top-start'],
   })
   const abortRef = useRef<AbortController | null>(null)
-  const popupRef = useRef<HTMLDivElement>(null)
+  const popupRef = useRef<HTMLDivElement | null>(null)
+  const setPopup = useCallback(
+    (node: HTMLDivElement | null) => {
+      popupRef.current = node
+      refs.setFloating(node)
+    },
+    [refs]
+  )
   const promptInputRef = useRef<HTMLTextAreaElement>(null)
   const projectRef = useRef<{ loaded: Set<string>; docClass: string | null }>({
     loaded: new Set(),
@@ -249,31 +250,9 @@ export function TexGptPopup({ anchorRef }: { anchorRef: RefObject<HTMLElement> }
     [selectionText, selectionFrom, view]
   )
 
-  // Under the button, kept inside the viewport
   useLayoutEffect(() => {
-    const place = () => {
-      const rect = anchorRef.current?.getBoundingClientRect()
-      if (!rect) return
-      const width = Math.min(POPUP_MAX_WIDTH, window.innerWidth - 2 * VIEWPORT_MARGIN)
-      const left = Math.max(
-        VIEWPORT_MARGIN,
-        Math.min(rect.left, window.innerWidth - width - VIEWPORT_MARGIN)
-      )
-      setPosition({ top: rect.bottom + 6, left, width })
-    }
-    place()
-    window.addEventListener('resize', place)
-    const toolbar = anchorRef.current?.closest('.ol-cm-toolbar')
-    const observer =
-      toolbar && typeof ResizeObserver !== 'undefined'
-        ? new ResizeObserver(place)
-        : null
-    if (toolbar && observer) observer.observe(toolbar)
-    return () => {
-      window.removeEventListener('resize', place)
-      observer?.disconnect()
-    }
-  }, [anchorRef])
+    refs.setReference(anchorRef.current)
+  }, [refs, anchorRef])
 
   const close = useCallback(() => {
     abortRef.current?.abort()
@@ -336,6 +315,7 @@ export function TexGptPopup({ anchorRef }: { anchorRef: RefObject<HTMLElement> }
     abortRef.current = controller
     startTimeRef.current = Date.now()
     setPhase({ name: 'streaming', reply: null, repairing: false })
+    setProviderRetry(null)
 
     try {
       let messages: AgentMessage[]
@@ -424,6 +404,7 @@ export function TexGptPopup({ anchorRef }: { anchorRef: RefObject<HTMLElement> }
         docClass: projectRef.current.docClass,
         settings: writingToolsSettings(base, readReasoningEffort(base.type)),
         signal: controller.signal,
+        onRetry: next => setProviderRetry(retryingState(next)),
         onProgress: progress => {
           if (controller.signal.aborted) return
           if (progress.stage === 'repairing') {
@@ -436,6 +417,7 @@ export function TexGptPopup({ anchorRef }: { anchorRef: RefObject<HTMLElement> }
         },
       })
       if (controller.signal.aborted) return
+      setProviderRetry(null)
 
       let version: TexGptVersion | null = null
       switch (outcome.kind) {
@@ -783,22 +765,23 @@ export function TexGptPopup({ anchorRef }: { anchorRef: RefObject<HTMLElement> }
 
   return createPortal(
     <div
-      ref={popupRef}
+      ref={setPopup}
+      data-placement={placementSide(placement)}
       className={classNames('ai-texgpt-popup', {
         'has-result': Boolean(run || writing),
       })}
       role="dialog"
       aria-label="TeXGPT"
-      style={
-        position
-          ? {
-              top: position.top,
-              left: position.left,
-              width: run || writing ? position.width : undefined,
-              maxHeight: `calc(100vh - ${position.top + VIEWPORT_MARGIN}px)`,
-            }
-          : { visibility: 'hidden' }
-      }
+      style={{
+        ...floatingStyles,
+        width:
+          run || writing
+            ? `min(${POPUP_MAX_WIDTH}px, var(--ai-floating-max-width))`
+            : undefined,
+        maxHeight: 'var(--ai-floating-max-height)',
+        // Transparent, not hidden, until placed: it must take focus at once
+        opacity: isPositioned ? undefined : 0,
+      }}
       onKeyDown={onKeyDown}
     >
       {writing && field.target.mode === 'replace' ? (
@@ -809,11 +792,12 @@ export function TexGptPopup({ anchorRef }: { anchorRef: RefObject<HTMLElement> }
             from: field.target.from,
             to: field.target.to,
             original: field.target.original,
+            // Back returns to the TeXGPT menu, not to a selection
+            backward: false,
             action: writing.action,
             targetLanguage: writing.targetLanguage,
           }}
           embedded={{
-            width: position?.width ?? POPUP_MAX_WIDTH,
             onBack: () => setWriting(null),
             onClose: close,
             onRestart: restartWriting,
@@ -823,6 +807,7 @@ export function TexGptPopup({ anchorRef }: { anchorRef: RefObject<HTMLElement> }
         <TexGptResult
           title={run.title}
           phase={phase}
+          retry={providerRetry}
           versions={versions}
           index={index}
           onIndex={next => {

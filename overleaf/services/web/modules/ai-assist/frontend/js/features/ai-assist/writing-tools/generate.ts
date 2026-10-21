@@ -1,4 +1,4 @@
-import { AgentMessage, ProviderSettings } from '../providers/types'
+import { AgentMessage, ProviderRetry, ProviderSettings } from '../providers/types'
 import {
   buildRepairMessage,
   buildUserMessage,
@@ -117,6 +117,7 @@ export async function generate({
   signal,
   onProgress,
   client,
+  onRetry,
 }: {
   request: WritingRequest
   original: string
@@ -126,6 +127,8 @@ export async function generate({
   signal?: AbortSignal
   onProgress: (progress: WritingProgress) => void
   client?: StreamingClient
+  /** Each scheduled retry of the model call, and null once output flows again. */
+  onRetry?: (retry: ProviderRetry | null) => void
 }): Promise<WritingOutcome> {
   const user: AgentMessage = {
     role: 'user',
@@ -139,7 +142,9 @@ export async function generate({
       maxTokens: maxTokensFor(request.selection),
       signal,
       onText,
+      onRetry,
       client,
+      retryPolicy: 'interactive',
     })
 
   if (request.action === 'synonyms') {

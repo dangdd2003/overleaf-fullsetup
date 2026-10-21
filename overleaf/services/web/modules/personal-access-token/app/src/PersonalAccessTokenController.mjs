@@ -2,6 +2,7 @@ import PersonalAccessTokenManager, {
   ALLOWED_SCOPES,
 } from '../../../../app/src/Features/PersonalAccessToken/PersonalAccessTokenManager.mjs'
 import SessionManager from '../../../../app/src/Features/Authentication/SessionManager.mjs'
+import { PersonalAccessToken } from '../../../../app/src/models/PersonalAccessToken.mjs'
 import crypto from 'node:crypto'
 import logger from '@overleaf/logger'
 
@@ -15,6 +16,15 @@ function internalError(res, err) {
 }
 
 const MAX_TOKEN_NAME_LENGTH = 100
+// Active means not expired. Revoking deletes the record, so it is not counted.
+const MAX_ACTIVE_TOKENS_PER_USER = 20
+
+async function countActiveTokens(userId) {
+  return await PersonalAccessToken.countDocuments({
+    user_id: userId,
+    $or: [{ expiresAt: null }, { expiresAt: { $gt: new Date() } }],
+  })
+}
 
 const PersonalAccessTokenController = {
   async createToken(req, res) {
@@ -38,6 +48,7 @@ const PersonalAccessTokenController = {
     if (!Array.isArray(scopes) || scopes.length === 0) {
       scopes = ['git_bridge']
     }
+    scopes = [...new Set(scopes)]
     const invalidScope = scopes.find(s => !ALLOWED_SCOPES.includes(s))
     if (invalidScope) {
       return res.status(400).json({
@@ -47,16 +58,28 @@ const PersonalAccessTokenController = {
     }
 
     try {
+      // Create first, then count, so concurrent requests cannot both pass the
+      // check. If the new token pushed the user over the cap, it is revoked.
       const result = await PersonalAccessTokenManager.createToken(
         userId,
         name,
         scopes
       )
-      return res.json({
+      if ((await countActiveTokens(userId)) > MAX_ACTIVE_TOKENS_PER_USER) {
+        await PersonalAccessTokenManager.revokeToken(userId, result.record._id)
+        return res.status(409).json({
+          code: 'token_limit_reached',
+          message: `you can have at most ${MAX_ACTIVE_TOKENS_PER_USER} active personal access tokens; revoke one before creating another`,
+        })
+      }
+
+      return res.status(201).json({
+        _id: result.record._id,
         token: result.token,
         tokenPrefix: result.tokenPrefix,
         name: result.record.name,
         createdAt: result.record.createdAt,
+        expiresAt: result.record.expiresAt,
         scopes: result.record.scopes,
       })
     } catch (err) {

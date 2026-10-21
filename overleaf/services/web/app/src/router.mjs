@@ -1176,10 +1176,12 @@ async function initialize(webRouter, privateApiRouter, publicApiRouter) {
     plainTextResponse(res, 'web is alive (api)')
   })
 
-  // used by kubernetes health-check and acceptance tests
-  webRouter.get('/dev/csrf', (req, res) => {
-    plainTextResponse(res, res.locals.csrfToken)
-  })
+  // used by acceptance tests and the dev environment only
+  if (Settings.isCI || Settings.isDevEnv) {
+    webRouter.get('/dev/csrf', (req, res) => {
+      plainTextResponse(res, res.locals.csrfToken)
+    })
+  }
 
   privateApiRouter.get(
     '/health_check',

@@ -7,6 +7,7 @@ import {
   ProviderErrorCode,
   ProviderModel,
   ProviderSettings,
+  RetryPolicy,
   WebSearchProviderType,
   WebSearchSettings,
 } from "./types";
@@ -135,9 +136,18 @@ async function* bodyChunks(
  */
 export class ServerProviderClient implements ProviderClient {
   private settings: ProviderSettings;
+  private retryPolicy?: RetryPolicy;
 
-  constructor(settings: ProviderSettings) {
+  /**
+   * `retryPolicy` is how the server retries a failed request before it fails.
+   * Its `retrying` chunks reach the caller, which shows them.
+   */
+  constructor(
+    settings: ProviderSettings,
+    options: { retryPolicy?: RetryPolicy } = {},
+  ) {
     this.settings = settings;
+    this.retryPolicy = options.retryPolicy;
   }
 
   async listModels({ signal }: { signal?: AbortSignal } = {}): Promise<
@@ -163,7 +173,11 @@ export class ServerProviderClient implements ProviderClient {
     const { signal, ...rest } = request;
     yield* this.streamNdjson(
       "/ai-assist/providers/chat",
-      { providerSettings: this.settings, request: rest },
+      {
+        providerSettings: this.settings,
+        request: rest,
+        ...(this.retryPolicy ? { retryPolicy: this.retryPolicy } : {}),
+      },
       signal,
     );
   }
@@ -242,8 +256,13 @@ export class ServerProviderClient implements ProviderClient {
   }
 }
 
-/** A model call from the AI inside the editor: text in, text out, never tools. */
-export type EditorTextRequest = Omit<ChatRequest, "tools">;
+/**
+ * A model call from the AI inside the editor: text in, text out, never tools.
+ * `retryPolicy` is how the server retries it; the relay defaults to background.
+ */
+export type EditorTextRequest = Omit<ChatRequest, "tools"> & {
+  retryPolicy?: RetryPolicy;
+};
 
 /**
  * The only client the AI inside the editor (completion, language
@@ -265,7 +284,12 @@ export class EditorTextClient {
 
   async *streamChat(request: EditorTextRequest): AsyncGenerator<ChatChunk> {
     // Whatever the caller's object holds, no tools leave this client
-    const { signal, tools: _tools, ...text } = request as ChatRequest;
+    const {
+      signal,
+      tools: _tools,
+      retryPolicy,
+      ...text
+    } = request as ChatRequest & EditorTextRequest;
     yield* this.relay.streamNdjson(
       "/ai-assist/providers/editor",
       {
@@ -274,6 +298,7 @@ export class EditorTextClient {
           ? { fallbackProviderSettings: this.fallbackSettings }
           : {}),
         request: text,
+        ...(retryPolicy ? { retryPolicy } : {}),
       },
       signal,
     );

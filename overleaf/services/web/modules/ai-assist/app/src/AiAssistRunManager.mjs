@@ -11,6 +11,17 @@ import defaultCheckpointStore from "./AiAssistCheckpointStore.mjs";
 import { generateChatTitle } from "./AiAssistChatTitler.mjs";
 import { createProviderClient } from "./AiAssistProviders.mjs";
 import {
+  compactConversation,
+  renderCompactionMessage,
+} from "./AiAssistCompaction.mjs";
+import { compactEntryProblem } from "./AiAssistChatHistoryStore.mjs";
+import {
+  abortableSleep,
+  planRetry,
+  resolveRetryPolicy,
+  retryingEvent,
+} from "./AiAssistRetry.mjs";
+import {
   connectorOutcome,
   renderToolResult,
   withNotice,
@@ -18,7 +29,6 @@ import {
 import {
   detachToolImages,
   hasImages,
-  IMAGE_TOKEN_ESTIMATE,
   isImageRejection,
   limitContextImages,
   limitUserImages,
@@ -31,6 +41,18 @@ import {
   systemPromptFor,
 } from "./AiAssistSystemPrompt.mjs";
 import { coerceToolArgs } from "./AiAssistToolSchema.mjs";
+import {
+  contextBreakdownFor,
+  contextState,
+  contextThresholds,
+  createExactCounter,
+  estimateMessageTokens,
+  estimateRequestTokens,
+  estimateTokens,
+  MARGIN_FRACTION,
+  messageFramingTokens,
+  withExactFixed,
+} from "./AiAssistContextUsage.mjs";
 import {
   AiAssistWebTools,
   PREFETCH_RESULTS,
@@ -109,7 +131,7 @@ export function userTurnContent(entry) {
  * order, so the entry splits back into what was sent. Entries stored before
  * calls carried a step rebuild as one message, the same bytes as before.
  */
-export function modelSteps(entry) {
+function modelSteps(entry) {
   const calls = Array.isArray(entry.toolCalls) ? entry.toolCalls : [];
   const whole = [{ text: entry.text || entry.content || "", calls }];
   const blocks = Array.isArray(entry.blocks) ? entry.blocks : [];
@@ -159,10 +181,46 @@ export function modelSteps(entry) {
  * it and its first request reads the whole conversation from the cache.
  */
 export function toAgentMessages(transcript) {
-  const messages = [];
-  if (!Array.isArray(transcript)) return messages;
+  if (!Array.isArray(transcript)) return [];
+  const boundary = compactBoundary(transcript);
+  if (boundary === -1) return messagesFor(transcript);
 
+  // A compacted chat: the summary stands for everything before the kept
+  // tail, the tail is sent verbatim, and what came after the compaction
+  // follows. Entries before the tail are not sent again.
+  const compact = transcript[boundary];
+  const tailIndex = compact.tailFromId
+    ? transcript.findIndex(
+        (entry, index) => index < boundary && entry?.id === compact.tailFromId,
+      )
+    : -1;
+  return [
+    { role: "user", content: renderCompactionMessage(compact) },
+    ...(tailIndex === -1
+      ? []
+      : messagesFor(transcript.slice(tailIndex, boundary))),
+    ...messagesFor(transcript.slice(boundary + 1)),
+  ];
+}
+
+/** The index of the newest compact entry of a transcript, or -1. */
+function compactBoundary(transcript) {
+  if (!Array.isArray(transcript)) return -1;
+  for (let i = transcript.length - 1; i >= 0; i--) {
+    if (transcript[i]?.role === "compact") return i;
+  }
+  return -1;
+}
+
+/**
+ * The messages of plain transcript entries. A compact entry met here (an
+ * older boundary inside a kept tail) adds nothing: the newest summary already
+ * stands for what it summarized.
+ */
+function messagesFor(transcript) {
+  const messages = [];
   transcript.forEach((entry) => {
+    if (!entry || entry.role === "compact") return;
     if (entry.role === "user") {
       const msg = { role: "user", content: userTurnContent(entry) };
       if (Array.isArray(entry.images) && entry.images.length > 0) {
@@ -247,7 +305,10 @@ function messageFingerprint(message) {
 /** The trim the chat's runs last recorded (see applyContextTrim). */
 export function latestContextTrim(transcript) {
   if (!Array.isArray(transcript)) return null;
-  for (let i = transcript.length - 1; i >= 0; i--) {
+  // Positions are on the conversation as rebuilt, which starts at the newest
+  // compaction: a trim recorded before it describes other messages
+  const boundary = compactBoundary(transcript);
+  for (let i = transcript.length - 1; i > boundary; i--) {
     const trim = transcript[i]?.contextTrim;
     if (trim && typeof trim === "object") return trim;
   }
@@ -346,7 +407,7 @@ const MAX_MODEL_STEPS = 200;
 const MAX_QUEUED_MESSAGES = 10;
 
 /** Keeps only the fields a compile outcome has; it arrives from the browser. */
-export function sanitizeCompileOutcome(outcome) {
+function sanitizeCompileOutcome(outcome) {
   const entries = (list) =>
     (Array.isArray(list) ? list : []).slice(0, MAX_COMPILE_ENTRIES).map((e) => {
       const entry = {
@@ -380,12 +441,13 @@ export function sanitizeCompileOutcome(outcome) {
 
 export const KEEP_RECENT_TOOL_RESULTS = 3;
 export const KEEP_RECENT_ASSISTANT_TURNS = 3;
-export const CHARS_PER_TOKEN = 4;
-export const MARGIN_FRACTION = 0.1;
 export const ASSISTANT_ELISION_MARKER = "[earlier reply elided]";
 // Once trimming is needed, trim to this fraction of the budget instead of to
 // just under it. See applyContextBudget.
 export const TRIM_TARGET_FRACTION = 0.7;
+
+// The estimator lives with the context breakdown; re-exported for its callers
+export { estimateMessageTokens, estimateRequestTokens, estimateTokens, MARGIN_FRACTION };
 
 // Re-export mode policy constants for backward compatibility
 export { FILE_EDIT_TOOLS, READ_ONLY_TOOLS };
@@ -455,38 +517,6 @@ function fetchedPageKey(args) {
   return cacheKeyFor(/^[a-z][a-z0-9+.-]*:/i.test(raw) ? raw : `https://${raw}`);
 }
 
-export function estimateTokens(text) {
-  return Math.ceil(
-    (text && typeof text === "string" ? text : "").length / CHARS_PER_TOKEN,
-  );
-}
-
-export function estimateMessageTokens(message) {
-  let count = estimateTokens(message.content);
-  if (message.role === "assistant" && message.toolCalls?.length) {
-    count += estimateTokens(JSON.stringify(message.toolCalls));
-  }
-  if (Array.isArray(message.images)) {
-    // Each image is priced by the provider it was prepared for (see
-    // detachToolImages); an image without a size takes the flat estimate.
-    for (const image of message.images) {
-      count += Number.isFinite(image?.tokens) ? image.tokens : IMAGE_TOKEN_ESTIMATE;
-    }
-  }
-  return count;
-}
-
-export function estimateMessagesTokens(system, messages, tools = []) {
-  let total = estimateTokens(system);
-  for (const m of messages) {
-    total += estimateMessageTokens(m);
-  }
-  if (tools.length) {
-    total += estimateTokens(JSON.stringify(tools));
-  }
-  return total;
-}
-
 /**
  * Whether a tool message tells the provider the call failed. The live run and
  * a transcript rebuilt on the next run both use this, so the same call gives
@@ -514,6 +544,21 @@ function connectorNotLoaded(session, name) {
   );
 }
 
+// The connector runtime's two meta tools. They are counted as helpers, not as
+// connector tools (ConnectorRuntime READ_RESULT_TOOL, CONNECTOR_SEARCH_TOOL).
+const CONNECTOR_HELPER_TOOLS = ["search_connector_tools", "read_connector_result"];
+
+/** Every connector tool the session offers, sent or deferred (ConnectorSession.catalog). */
+function connectorCatalogOf(session) {
+  return typeof session?.catalog === "function" ? session.catalog() : [];
+}
+
+/** The breakdown of a request, with the provider's counts of its fixed parts when there are some. */
+function contextBreakdownWith(input, counts) {
+  const breakdown = contextBreakdownFor(input);
+  return counts ? withExactFixed(breakdown, counts) : breakdown;
+}
+
 /** The connector session's tool specs as they are now (see ConnectorSession). */
 function connectorToolSpecs(session) {
   if (!session) return [];
@@ -521,6 +566,144 @@ function connectorToolSpecs(session) {
   return typeof session.getToolSpecs === "function"
     ? session.getToolSpecs()
     : [];
+}
+
+/** Automatic compactions in one run: at least this many steps apart... */
+export const AUTO_COMPACT_MIN_STEPS = 2;
+/** ...and none once this many have failed in a row. */
+export const AUTO_COMPACT_FAILURE_LIMIT = 3;
+
+/** The tokens a usage report counts for one request: input, cache and output. */
+export function usageTokens(usage) {
+  return [
+    "inputTokens",
+    "cacheReadTokens",
+    "cacheCreationTokens",
+    "outputTokens",
+  ].reduce(
+    (sum, key) => sum + (Number.isFinite(usage?.[key]) ? usage[key] : 0),
+    0,
+  );
+}
+
+/**
+ * The anchor a response leaves: its usage, and the index of the first message
+ * after it. Null when the provider reported no usage, or only part of it
+ * (Ollama's partial prompt counts).
+ */
+export function anchorAt(usage, index) {
+  if (!usage || usage.partialInput) return null;
+  return { tokens: usageTokens(usage), index };
+}
+
+/**
+ * The count of the request about to be sent. With an anchor, the response's
+ * own usage plus the estimate of the messages appended after it; without one,
+ * the full local estimate. `estimatedTokens` is the estimated part alone.
+ */
+export function anchoredRequestCount({
+  system,
+  tools = [],
+  messages,
+  provider,
+  model,
+  anchor = null,
+}) {
+  if (!anchor) {
+    const estimatedTokens = estimateRequestTokens({
+      system,
+      tools,
+      messages,
+      provider,
+      model,
+    });
+    return {
+      tokens: estimatedTokens,
+      anchoredTokens: 0,
+      estimatedTokens,
+      exact: false,
+    };
+  }
+  const pricing = { provider, model };
+  const framing = messageFramingTokens(provider);
+  let estimatedTokens = 0;
+  for (const message of messages.slice(anchor.index)) {
+    estimatedTokens += estimateMessageTokens(message, pricing) + framing;
+  }
+  return {
+    tokens: anchor.tokens + estimatedTokens,
+    anchoredTokens: anchor.tokens,
+    estimatedTokens,
+    exact: true,
+  };
+}
+
+/** Whether an automatic compaction may run at this step (see the constants above). */
+export function autoCompactionAllowed(state, step) {
+  if (state.disabled) return false;
+  return (
+    state.lastStep === null || step - state.lastStep >= AUTO_COMPACT_MIN_STEPS
+  );
+}
+
+/** The stored entry of a turn sent during a run, as the panel records its userMessage event. */
+export function queuedEntry(queued) {
+  return {
+    id: queued.id,
+    role: "user",
+    text: queued.text,
+    ...(queued.contextText ? { contextText: queued.contextText } : {}),
+    ...(queued.commandText
+      ? { commandText: queued.commandText, command: queued.command }
+      : {}),
+    ...(Array.isArray(queued.images) && queued.images.length > 0
+      ? { images: queued.images }
+      : {}),
+  };
+}
+
+/**
+ * Records one request's reply in the run's stored-shape transcript, as the
+ * panel keeps a turn: text and calls in order in one assistant entry, with each
+ * call's step and its result once it has one (see modelSteps). A reply that
+ * follows an assistant entry of this run extends it; otherwise it is a new entry.
+ */
+export function recordRunStep(
+  entries,
+  { runId, step, text = "", calls = [], results = new Map() },
+) {
+  if (!text && calls.length === 0) return entries;
+  const toolCalls = calls.map((call) => {
+    const done = results.get(call);
+    return {
+      id: call.id,
+      name: call.name,
+      args: call.args,
+      step,
+      ...(done ? { result: done.result, isError: done.isError } : {}),
+    };
+  });
+  const blocks = [];
+  if (text) blocks.push({ type: "text", text });
+  for (const call of toolCalls) blocks.push({ type: "tool_call", call });
+  const last = entries.at(-1);
+  if (last?.role === "assistant" && Array.isArray(last.blocks)) {
+    entries[entries.length - 1] = {
+      ...last,
+      text: `${last.text || ""}${text}`,
+      toolCalls: [...(last.toolCalls ?? []), ...toolCalls],
+      blocks: [...last.blocks, ...blocks],
+    };
+  } else {
+    entries.push({
+      id: `${runId}-${step}`,
+      role: "assistant",
+      text,
+      toolCalls,
+      blocks,
+    });
+  }
+  return entries;
 }
 
 export function isElided(message) {
@@ -532,7 +715,7 @@ export function isElided(message) {
   }
 }
 
-export const KNOWN_TOOLS = new Set([
+const KNOWN_TOOLS = new Set([
   "edit_file",
   "create_file",
   "read_file",
@@ -655,7 +838,7 @@ export function extractTextToolCall(text, toolSpecs = []) {
   return null;
 }
 
-export function stubToolMessage(message) {
+function stubToolMessage(message) {
   const rest = { ...message };
   delete rest.images;
   return {
@@ -667,25 +850,32 @@ export function stubToolMessage(message) {
   };
 }
 
-export function applyContextBudget({ system, messages, limits, tools = [] }) {
+export function applyContextBudget({
+  system,
+  messages,
+  limits,
+  tools = [],
+  provider,
+  model,
+}) {
   const contextWindow = limits?.contextWindow ?? 200000;
   const maxOutputTokens = limits?.maxOutputTokens ?? 32000;
-  const rawBudget =
-    contextWindow -
-    maxOutputTokens -
-    Math.ceil(contextWindow * MARGIN_FRACTION);
+  const rawBudget = contextThresholds({ contextWindow, maxOutputTokens }).blockAt;
 
   if (rawBudget <= 0) {
     return { messages: [...messages], exhausted: true };
   }
 
   const working = [...messages];
-  // Per-message estimates kept in step with `working`, so a trim updates the
-  // total instead of re-serialising the whole conversation.
-  const sizes = working.map(estimateMessageTokens);
+  // Per-message sizes, framing included, kept in step with `working`, so a
+  // trim updates the total instead of re-serialising the whole conversation.
+  // The same estimate the context breakdown uses (estimateRequestTokens).
+  const pricing = { provider, model };
+  const framing = messageFramingTokens(provider);
+  const sizeOf = (message) => estimateMessageTokens(message, pricing) + framing;
+  const sizes = working.map(sizeOf);
   let total =
-    estimateTokens(system) +
-    (tools.length ? estimateTokens(JSON.stringify(tools)) : 0) +
+    estimateRequestTokens({ system, tools, provider, model }) +
     sizes.reduce((sum, size) => sum + size, 0);
 
   if (total <= rawBudget) {
@@ -699,7 +889,7 @@ export function applyContextBudget({ system, messages, limits, tools = [] }) {
   const target = Math.floor(rawBudget * TRIM_TARGET_FRACTION);
 
   const replace = (index, message) => {
-    const size = estimateMessageTokens(message);
+    const size = sizeOf(message);
     total += size - sizes[index];
     sizes[index] = size;
     working[index] = message;
@@ -720,7 +910,7 @@ export function applyContextBudget({ system, messages, limits, tools = [] }) {
     const msg = working[idx];
     if (isElided(msg)) continue;
     const stub = stubToolMessage(msg);
-    if (estimateTokens(stub.content) >= sizes[idx]) continue;
+    if (sizeOf(stub) >= sizes[idx]) continue;
     replace(idx, stub);
     if (total <= target) return { messages: working, exhausted: false };
   }
@@ -818,6 +1008,11 @@ export function incompleteCallError(call, reason, maxTokens) {
     : `The arguments of this ${call.name} call were not valid JSON, so it was not run. Send the call again with complete arguments.`;
 }
 
+/** The error an aborted compaction is reported with. */
+function abortedError() {
+  return Object.assign(new Error("Compaction stopped"), { code: "aborted" });
+}
+
 // Used when the provider settings do not set a context window or output limit
 const DEFAULT_LIMITS = {
   openai: { contextWindow: 200000, maxOutputTokens: 32000 },
@@ -825,18 +1020,6 @@ const DEFAULT_LIMITS = {
   google: { contextWindow: 1000000, maxOutputTokens: 65536 },
   ollama: { contextWindow: 256000, maxOutputTokens: 65536 },
 };
-
-// Hosted providers shed load with 5xx errors and dropped streams for tens of
-// seconds at a time, so a step keeps retrying for about a minute (2s, 4s, 8s,
-// 16s, 20s) before the run gives up.
-const MAX_STREAM_ATTEMPTS = 6;
-const NON_RETRYABLE_STATUSES = new Set([400, 401, 403, 404]);
-const NON_RETRYABLE_CODES = new Set([
-  "providerAuth",
-  "invalidProviderUrl",
-  "restrictedProviderUrl",
-  "contextExhausted",
-]);
 
 // Cycle detection compares the last four calls, so no more are kept
 const CYCLE_WINDOW = 4;
@@ -856,6 +1039,8 @@ export class AiAssistRunManager {
         contextWindow,
         prefetch: PREFETCH_RESULTS,
       }),
+    // Summarizes a chat for /compact (AiAssistCompaction.mjs); injected in tests
+    compactor = compactConversation,
     connectorSessionFactory = async ({
       userId,
       connectorIds,
@@ -881,6 +1066,7 @@ export class AiAssistRunManager {
     this.webToolsFactory = webToolsFactory;
     this.connectorSessionFactory = connectorSessionFactory;
     this.clientFactory = clientFactory;
+    this.compactor = compactor;
     this.chatHistoryStore = chatHistoryStore;
     this.checkpointStore = checkpointStore;
     this.activeRuns = new Map();
@@ -1096,6 +1282,20 @@ export class AiAssistRunManager {
     }
   }
 
+  /** True while a run of this process is going for the chat. */
+  hasActiveRunForChat(projectId, userId, chatId) {
+    for (const run of this.activeRuns.values()) {
+      if (
+        run.chatId === chatId &&
+        run.projectId === projectId &&
+        run.userId === userId
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   async _startRun({
     runId,
     projectId,
@@ -1106,6 +1306,8 @@ export class AiAssistRunManager {
     chatId = null,
     webSearchSettings = null,
     connectorIds = null,
+    kind = "chat",
+    compaction = null,
   }) {
     const controller = new AbortController();
     const approvalPromiseResolvers = { resolve: null };
@@ -1139,6 +1341,9 @@ export class AiAssistRunManager {
       compileResolvers,
       queuedMessages,
       acceptsMessages: true,
+      // Set only while a reply is streaming: cuts it short for a queued
+      // message the user wants answered now (see sendQueuedNow)
+      interruptStep: null,
     };
     this.activeRuns.set(runId, activeRun);
     // Called, with no await before it, once the loop has looked at the queue
@@ -1169,18 +1374,19 @@ export class AiAssistRunManager {
     };
     // Only runs whose user configured web search get the web tools, and the
     // prompt section describing them. Fetched pages are cut to fit the model.
-    const webTools = webSearchSettings
-      ? this.webToolsFactory(webSearchSettings, {
-          userId,
-          contextWindow: resolvedLimits.contextWindow,
-        })
-      : null;
+    const webTools =
+      webSearchSettings && kind !== "compact"
+        ? this.webToolsFactory(webSearchSettings, {
+            userId,
+            contextWindow: resolvedLimits.contextWindow,
+          })
+        : null;
 
     let connectorSession = null;
     // Told to the model in the system prompt: a user who connected tools
     // should not get an answer that silently ignores them
     let connectorsFailed = false;
-    if (Settings.aiAssist?.enabled && userId) {
+    if (Settings.aiAssist?.enabled && userId && kind !== "compact") {
       try {
         connectorSession = await this.connectorSessionFactory({
           userId,
@@ -1288,7 +1494,7 @@ export class AiAssistRunManager {
     // Asynchronously auto-generate the chat title directly from the first prompt (like Claude AI).
     // The first prompt shows the full scheme of the chat; this reorganizes it into a concise title
     // and emits it immediately so the session name updates right away.
-    if (chatId && userId && projectId) {
+    if (kind !== "compact" && chatId && userId && projectId) {
       const firstUser = transcript.find(
         (e) =>
           e?.role === "user" && typeof e.text === "string" && e.text.trim(),
@@ -1460,7 +1666,31 @@ export class AiAssistRunManager {
       return decision;
     };
 
+    // Set once the loop is over: an exact count that lands later has no
+    // breakdown left to correct. currentBreakdown is the last one emitted.
+    let breakdownLive = true;
+    let currentBreakdown = null;
     try {
+      if (kind === "compact") {
+        // A compaction reads the chat and writes one entry: no tools, no
+        // checkpoints, no title. Its own terminal events (see _runCompaction).
+        await this._runCompaction({
+          runId,
+          projectId,
+          userId,
+          chatId,
+          mode: initialMode,
+          transcript,
+          providerSettings,
+          limits: resolvedLimits,
+          controller,
+          closeQueue,
+          emitEvent,
+          instructions: compaction?.instructions || "",
+          trigger: compaction?.trigger === "auto" ? "auto" : "manual",
+        });
+        return;
+      }
       let steps = 0;
       let failedTurns = 0;
       const failedCallSignatures = new Map();
@@ -1496,6 +1726,10 @@ export class AiAssistRunManager {
           ...connectorToolSpecs(connectorSession),
         ]);
       let modeToolSpecs = currentToolSpecs();
+      // Named once: the web tools do not change within a run
+      const webToolNames = (webTools ? webTools.getToolSpecs() : []).map(
+        (spec) => spec.name,
+      );
       const systemBlocks = systemBlocksFor(initialMode, {
         // Named in the prompt only when the tool is actually offered
         pdfTools: modeToolSpecs.some(
@@ -1525,6 +1759,30 @@ export class AiAssistRunManager {
       // Which provider request a tool call came from, so the stored
       // transcript can be split back into the messages sent (modelSteps)
       let modelStep = 0;
+      // The run's stored-shape transcript (see recordRunStep): what an automatic
+      // compaction summarizes, and what the messages are rebuilt from after one
+      let runEntries = [...transcript];
+      // The usage the last response reported, and where its messages end (see anchoredRequestCount)
+      let anchor = null;
+      const autoCompaction = { lastStep: null, failures: 0, disabled: false };
+      // The provider's own counts of the fixed parts, where its count API
+      // answers. They arrive in the background: when they land, the breakdown
+      // of the request they were asked for is emitted again with them.
+      const exactCounter = createExactCounter({
+        client,
+        type: providerSettings?.type,
+        onReady: (counts, key) => {
+          const current = currentBreakdown;
+          if (!breakdownLive || current?.key !== key) return;
+          void emitEvent({
+            type: "contextBreakdown",
+            breakdown: contextBreakdownWith(current.input, counts),
+            step: current.step,
+          }).catch(() => {});
+        },
+        onError: (err) =>
+          logger.debug({ err }, "[AiAssist] exact token count unavailable"),
+      });
 
       const finishWithError = async (code, message) => {
         closeQueue();
@@ -1562,6 +1820,7 @@ export class AiAssistRunManager {
               msg.images = queued.images;
             }
             messages.push(msg);
+            runEntries.push(queuedEntry(queued));
             activeUserMessageId = queued.id;
             if (activeRun) activeRun.activeUserMessageId = queued.id;
             // The scope of the turn that is now being answered
@@ -1597,10 +1856,92 @@ export class AiAssistRunManager {
         const calls = [];
         let text = "";
         let truncated = false;
+        // The provider's usage for this request, and each call's result by call
+        let stepUsage = null;
+        const stepResults = new Map();
 
         // The tools offered this step: connector tools loaded since the last
         // step are callable now
         modeToolSpecs = currentToolSpecs();
+
+        // Automatic compaction: once the anchored count reaches autoCompactAt,
+        // the chat is compacted and the run goes on with the compacted
+        // messages (see _compactMidRun). It runs before the budget, so the
+        // budget trims only what the compaction did not remove.
+        const compactAt = contextThresholds(resolvedLimits).autoCompactAt;
+        const countedBefore = anchoredRequestCount({
+          system: currentSystemPrompt,
+          tools: modeToolSpecs,
+          messages,
+          provider: providerSettings?.type,
+          model: providerSettings?.model,
+          anchor,
+        });
+        const attemptStep = modelStep + 1;
+        if (
+          countedBefore.tokens >= compactAt &&
+          autoCompactionAllowed(autoCompaction, attemptStep)
+        ) {
+          autoCompaction.lastStep = attemptStep;
+          const sizeBefore = estimateRequestTokens({
+            system: currentSystemPrompt,
+            tools: modeToolSpecs,
+            messages,
+            provider: providerSettings?.type,
+            model: providerSettings?.model,
+          });
+          try {
+            runEntries = await this._compactMidRun({
+              runId,
+              projectId,
+              userId,
+              chatId,
+              mode: initialMode,
+              transcript: runEntries,
+              providerSettings,
+              limits: resolvedLimits,
+              controller,
+              emitEvent,
+              fits: (entries) =>
+                estimateRequestTokens({
+                  system: currentSystemPrompt,
+                  tools: modeToolSpecs,
+                  messages: toAgentMessages(entries),
+                  provider: providerSettings?.type,
+                  model: providerSettings?.model,
+                }) < sizeBefore,
+            });
+            messages = toAgentMessages(runEntries);
+            contextTrim = null;
+            anchor = null;
+            autoCompaction.failures = 0;
+          } catch (err) {
+            if (
+              controller.signal.aborted ||
+              err.code === "aborted" ||
+              err.name === "AbortError"
+            ) {
+              throw err;
+            }
+            autoCompaction.failures += 1;
+            if (autoCompaction.failures >= AUTO_COMPACT_FAILURE_LIMIT) {
+              autoCompaction.disabled = true;
+            }
+            logger.warn(
+              { err, runId, projectId, chatId },
+              "[AiAssist] automatic compaction failed; the run continues",
+            );
+            await emitEvent({
+              type: "compactFailed",
+              trigger: "auto",
+              code: err.code || "compactFailed",
+              message:
+                err.code === "compactNothing"
+                  ? "Nothing to compact yet, so the run continues with the full conversation."
+                  : "The conversation could not be compacted, so the run continues with the full conversation.",
+            });
+          }
+        }
 
         // Before the budget, so a dropped image never reads as an elided
         // message in the recorded trim
@@ -1610,6 +1951,8 @@ export class AiAssistRunManager {
           messages,
           limits: resolvedLimits,
           tools: modeToolSpecs,
+          provider: providerSettings?.type,
+          model: providerSettings?.model,
         });
 
         if (budgeted.exhausted) {
@@ -1629,9 +1972,76 @@ export class AiAssistRunManager {
         );
         if (trimmed !== contextTrim) {
           contextTrim = trimmed;
+          // The trim moved positions, so the anchor's index no longer holds
+          anchor = null;
           await emitEvent({ type: "contextTrimmed", trim: contextTrim });
         }
         messages = budgeted.messages;
+
+        // What this request holds, for the context meter. The request's step
+        // is counted up here, and the usage the provider reports for it
+        // carries the same number.
+        const requestStep = ++modelStep;
+        const catalog = connectorCatalogOf(connectorSession);
+        const breakdownInput = {
+          system: systemBlocks,
+          messages,
+          tools: modeToolSpecs,
+          webToolNames,
+          connectorToolNames: catalog.map((row) => row.name),
+          helperToolNames: CONNECTOR_HELPER_TOOLS,
+          connectorCatalog: catalog,
+          trim: contextTrim,
+          limits: resolvedLimits,
+          model: providerSettings?.model,
+          provider: providerSettings?.type,
+          step: requestStep,
+        };
+        const exact =
+          exactCounter?.lookup({
+            system: currentSystemPrompt,
+            tools: modeToolSpecs,
+          }) ?? null;
+        currentBreakdown = {
+          input: breakdownInput,
+          key: exact?.key ?? null,
+          step: requestStep,
+        };
+        await emitEvent({
+          type: "contextBreakdown",
+          breakdown: contextBreakdownWith(breakdownInput, exact?.counts),
+          step: requestStep,
+        });
+
+        // The context meter's count for this request, before it is sent
+        const counted = anchoredRequestCount({
+          system: currentSystemPrompt,
+          tools: modeToolSpecs,
+          messages,
+          provider: providerSettings?.type,
+          model: providerSettings?.model,
+          anchor,
+        });
+        const thresholds = contextThresholds(resolvedLimits);
+        const state = contextState(counted.tokens, thresholds);
+        await emitEvent({
+          type: "contextUsage",
+          step: requestStep,
+          tokens: counted.tokens,
+          anchoredTokens: counted.anchoredTokens,
+          estimatedTokens: counted.estimatedTokens,
+          exact: counted.exact,
+          contextWindow: resolvedLimits.contextWindow,
+          thresholds,
+          state,
+        });
+        if (state === "blocked") {
+          await finishWithError(
+            "contextExhausted",
+            "This conversation no longer fits in the model context window. Start a new chat to continue.",
+          );
+          break;
+        }
 
         const cacheHints = {
           cacheSystem: true,
@@ -1644,15 +2054,30 @@ export class AiAssistRunManager {
           systemPrefix: systemBlocks.shared,
         };
 
+        // Interactive: the user is watching the run, so a transient failure is
+        // retried with a visible countdown (see AiAssistRetry.mjs)
+        const retryPolicy = resolveRetryPolicy("interactive");
         let streamSucceeded = false;
         let streamAttempts = 0;
-        modelStep++;
 
-        while (!streamSucceeded && streamAttempts < MAX_STREAM_ATTEMPTS) {
-          if (controller.signal.aborted || shouldStop) break;
+        // "Send now" on a queued message ends this request where it is, not
+        // the run: the request has a signal of its own, aborted with the run's
+        let interrupted = false;
+        const stepController = new AbortController();
+        const abortStep = () => stepController.abort();
+        controller.signal.addEventListener("abort", abortStep, { once: true });
+        activeRun.interruptStep = () => {
+          if (queuedMessages.length === 0) return;
+          interrupted = true;
+          stepController.abort();
+        };
+
+        while (!streamSucceeded) {
+          if (controller.signal.aborted || shouldStop || interrupted) break;
           streamAttempts++;
           text = "";
           calls.length = 0;
+          stepUsage = null;
           truncated = false;
 
           try {
@@ -1663,9 +2088,9 @@ export class AiAssistRunManager {
               contextWindow: resolvedLimits.contextWindow,
               tools: modeToolSpecs,
               cacheHints,
-              signal: controller.signal,
+              signal: stepController.signal,
             })) {
-              if (controller.signal.aborted) break;
+              if (controller.signal.aborted || interrupted) break;
               if (chunk.type === "thinking") {
                 await emitChunk("thinking", chunk.text);
               } else if (chunk.type === "text") {
@@ -1673,6 +2098,13 @@ export class AiAssistRunManager {
                 await emitChunk("text", chunk.text);
               } else if (chunk.type === "tool_call") {
                 calls.push(chunk);
+              } else if (chunk.type === "usage") {
+                stepUsage = chunk.usage;
+                await emitEvent({
+                  type: "usage",
+                  usage: { ...chunk.usage, step: requestStep },
+                  step: requestStep,
+                });
               } else if (
                 chunk.type === "stop" &&
                 chunk.reason === "max_tokens"
@@ -1682,8 +2114,10 @@ export class AiAssistRunManager {
             }
             streamSucceeded = true;
           } catch (streamErr) {
+            if (interrupted && !controller.signal.aborted) break;
             // A text-only model refusing a page image is not a failed run:
             // send the step again without images, and render no more of them.
+            // It does not use up a retry.
             if (
               !controller.signal.aborted &&
               !imagesUnsupported &&
@@ -1696,6 +2130,7 @@ export class AiAssistRunManager {
               );
               imagesUnsupported = true;
               messages = stripToolImages(messages);
+              anchor = null;
               if (text) {
                 await emitEvent({ type: "stepText", text: "" }).catch(() => {});
               }
@@ -1705,23 +2140,22 @@ export class AiAssistRunManager {
             if (
               controller.signal.aborted ||
               streamErr.code === "aborted" ||
-              streamErr.name === "AbortError" ||
-              streamAttempts >= MAX_STREAM_ATTEMPTS
+              streamErr.name === "AbortError"
             ) {
               throw streamErr;
             }
 
-            if (
-              NON_RETRYABLE_STATUSES.has(streamErr.status) ||
-              NON_RETRYABLE_CODES.has(streamErr.code)
-            ) {
-              throw streamErr;
-            }
+            // Retries so far: the attempts made before this one
+            const plan = planRetry(streamErr, {
+              attempt: streamAttempts - 1,
+              policy: retryPolicy,
+            });
+            if (!plan.retry) throw plan.error;
 
             logger.warn(
               {
                 runId,
-                attempt: streamAttempts,
+                attempt: plan.attempt,
                 status: streamErr.status,
                 message: streamErr.message,
               },
@@ -1733,27 +2167,31 @@ export class AiAssistRunManager {
             if (text) {
               await emitEvent({ type: "stepText", text: "" }).catch(() => {});
             }
-            const delay = Math.min(
-              2000 * Math.pow(2, streamAttempts - 1) + Math.random() * 300,
-              20000,
+            await emitEvent(retryingEvent(plan, retryPolicy));
+            await abortableSleep(plan.retryInMs, stepController.signal).catch(
+              () => {},
             );
-            await new Promise((resolve) => {
-              const onAbort = () => {
-                clearTimeout(timer);
-                resolve();
-              };
-              const timer = setTimeout(() => {
-                controller.signal.removeEventListener("abort", onAbort);
-                resolve();
-              }, delay);
-              controller.signal.addEventListener("abort", onAbort, {
-                once: true,
-              });
-            });
           }
         }
 
+        activeRun.interruptStep = null;
+        controller.signal.removeEventListener("abort", abortStep);
+
         if (controller.signal.aborted) break;
+
+        // Cut short for a message the user wants answered now: what the reply
+        // said so far stays, as Claude Code keeps it, and the calls it was
+        // still writing are dropped unrun. The top of the loop then reads the
+        // message in, straight after it.
+        if (interrupted) {
+          await flushText().catch(() => {});
+          if (text) {
+            messages.push({ role: "assistant", content: text });
+            anchor = anchorAt(stepUsage, messages.length);
+            recordRunStep(runEntries, { runId, step: requestStep, text });
+          }
+          continue;
+        }
 
         if (calls.length === 0 && text) {
           const rescued = extractTextToolCall(text, modeToolSpecs);
@@ -1792,10 +2230,17 @@ export class AiAssistRunManager {
           // Answer it in this run rather than ending and making them resend.
           if (queuedMessages.length > 0) {
             await flushText().catch(() => {});
-            if (text) messages.push({ role: "assistant", content: text });
+            if (text) {
+              messages.push({ role: "assistant", content: text });
+              anchor = anchorAt(stepUsage, messages.length);
+              recordRunStep(runEntries, { runId, step: requestStep, text });
+            }
             continue;
           }
-          if (text) messages.push({ role: "assistant", content: text });
+          if (text) {
+            messages.push({ role: "assistant", content: text });
+            recordRunStep(runEntries, { runId, step: requestStep, text });
+          }
           closeQueue();
           await emitEvent({ type: "turnFinished", reason: "stop" });
           await this.store.updateStatus(runId, "done");
@@ -1811,6 +2256,7 @@ export class AiAssistRunManager {
 
         toolsRanThisRun = true;
         messages.push({ role: "assistant", content: text, toolCalls: calls });
+        anchor = anchorAt(stepUsage, messages.length);
 
         // The reads a model asks for together are independent, so run the ones
         // at the start of the turn at the same time. Stop at the first call
@@ -2211,6 +2657,7 @@ export class AiAssistRunManager {
             isError: isFailed,
             mode: currentMode,
           });
+          stepResults.set(call, { result, isError: isFailed });
 
           if (isFailed) {
             turnFailed = true;
@@ -2263,6 +2710,13 @@ export class AiAssistRunManager {
           });
         }
 
+        recordRunStep(runEntries, {
+          runId,
+          step: requestStep,
+          text,
+          calls,
+          results: stepResults,
+        });
         if (shouldStop || controller.signal.aborted) break;
 
         if (turnSucceeded) {
@@ -2296,8 +2750,7 @@ export class AiAssistRunManager {
         controller.signal.aborted ||
         err.name === "AbortError" ||
         err.code === "aborted" ||
-        err.code === "ERR_ABORTED" ||
-        err.message?.includes("aborted")
+        err.code === "ERR_ABORTED"
       ) {
         await emitEvent({ type: "turnFinished", reason: "aborted" });
         await this.store.updateStatus(runId, "stopped");
@@ -2331,8 +2784,194 @@ export class AiAssistRunManager {
       if (connectorSession) {
         await connectorSession.close().catch(() => {});
       }
+      breakdownLive = false;
       this.activeRuns.delete(runId);
     }
+  }
+
+  /**
+   * A compaction run (kind 'compact'): summarizes the chat with the chat's own
+   * provider and model, and appends the result to the transcript as a compact
+   * entry, which is persisted. Events: compactStarted, compactProgress,
+   * compactFinished, then turnFinished; a failure is an error event instead.
+   * Errors not raised by the compactor propagate to _startRun's handler.
+   */
+  async _runCompaction({
+    runId,
+    projectId,
+    userId,
+    chatId,
+    mode,
+    transcript,
+    providerSettings,
+    limits,
+    controller,
+    closeQueue,
+    emitEvent,
+    instructions,
+    trigger,
+  }) {
+    closeQueue();
+    await emitEvent({ type: "compactStarted", trigger });
+
+    try {
+      const entry = await this._compactEntry({
+        projectId,
+        transcript,
+        providerSettings,
+        limits,
+        controller,
+        emitEvent,
+        instructions,
+        trigger,
+      });
+      const next = [...transcript, entry];
+      await this._persistChat(projectId, userId, chatId, next, mode);
+      await emitEvent({ type: "compactFinished", entry });
+      await emitEvent({ type: "turnFinished", reason: "stop" });
+      await this.store.updateStatus(runId, "done");
+    } catch (err) {
+      if (
+        controller.signal.aborted ||
+        err.name === "AbortError" ||
+        err.code === "aborted"
+      ) {
+        await emitEvent({ type: "turnFinished", reason: "aborted" });
+        await this.store.updateStatus(runId, "stopped");
+        return;
+      }
+      if (err.code !== "compactFailed" && err.code !== "compactNothing") {
+        throw err;
+      }
+      logger.warn({ err, projectId, chatId }, "[AiAssist] compaction failed");
+      const message =
+        err.code === "compactNothing"
+          ? "Nothing to compact yet. Compaction needs at least two of your messages, or new messages since the last compaction."
+          : "The conversation could not be compacted. Try again, or start a new chat.";
+      await emitEvent({ type: "error", code: err.code, message });
+      await this.store.updateStatus(runId, "error", { message });
+    }
+  }
+
+  /**
+   * An automatic compaction inside a run (trigger 'auto'): the compact entry a
+   * /compact run would write (see _compactEntry), appended to the run's
+   * stored-shape transcript and persisted the same way (_persistChat), so the
+   * next run rebuilds the same messages (toAgentMessages). `fits` says whether
+   * the compacted transcript is smaller than the one it replaces; a compaction
+   * that does not shrink is refused before anything is written. Returns the
+   * new transcript. Throws the compactor's errors, or 'compactNoProgress'.
+   * Events: compactStarted and compactFinished, or the caller's compactFailed.
+   */
+  async _compactMidRun({
+    runId,
+    projectId,
+    userId,
+    chatId,
+    mode,
+    transcript,
+    providerSettings,
+    limits,
+    controller,
+    emitEvent,
+    fits,
+  }) {
+    await emitEvent({ type: "compactStarted", trigger: "auto" });
+    const entry = await this._compactEntry({
+      projectId,
+      transcript,
+      providerSettings,
+      limits,
+      controller,
+      emitEvent,
+      instructions: "",
+      trigger: "auto",
+    });
+    const next = [...transcript, entry];
+    if (!fits(next)) {
+      throw Object.assign(new Error("The compaction did not shrink the context"), {
+        code: "compactNoProgress",
+      });
+    }
+    // A snapshot: the run appends to the transcript it returns
+    await this._persistChat(projectId, userId, chatId, [...next], mode);
+    await emitEvent({ type: "compactFinished", entry });
+    return next;
+  }
+
+  /**
+   * The compact entry the compactor writes for a transcript, not yet
+   * persisted: the summary and ledger from the compactor, with the id, role
+   * and trigger a compact entry carries. Throws the compactor's errors and
+   * 'compactFailed' for an entry the history cannot take.
+   */
+  async _compactEntry({
+    projectId,
+    transcript,
+    providerSettings,
+    limits,
+    controller,
+    emitEvent,
+    instructions,
+    trigger,
+  }) {
+    // Like the titler: the provider and model of the chat, at its default effort
+    const compactClient = this.clientFactory({
+      ...providerSettings,
+      reasoningEffort: undefined,
+      thinking: undefined,
+    });
+    const readExcerpt =
+      typeof this.tools?._resolveDoc === "function"
+        ? async ({ path, from, to }) => {
+            // Read-only: the live text of a file, as read_file gives it
+            try {
+              const doc = await this.tools._resolveDoc(projectId, path);
+              if (!doc) return null;
+              let lines = doc.lines || [];
+              const fetched = await this.tools.docUpdater
+                ?.getDocument(projectId, doc._id, -1)
+                .catch(() => null);
+              if (fetched?.lines) lines = fetched.lines;
+              return lines.slice(Math.max(0, from - 1), to).join("\n");
+            } catch {
+              return null;
+            }
+          }
+        : undefined;
+
+    const result = await this.compactor({
+      client: compactClient,
+      transcript,
+      instructions,
+      trigger,
+      limits,
+      providerType: providerSettings?.type,
+      model: providerSettings?.model,
+      signal: controller.signal,
+      readExcerpt,
+      onProgress: async (progress) => {
+        await emitEvent({ type: "compactProgress", ...progress });
+      },
+      onRetry: async (event) => {
+        await emitEvent(event);
+      },
+    });
+    if (controller.signal.aborted) throw abortedError();
+
+    const entry = {
+      ...result,
+      id: `c${transcript.length}`,
+      role: "compact",
+      createdAt: Date.now(),
+      trigger,
+      ...(instructions ? { instructions } : {}),
+    };
+    const problem = compactEntryProblem(entry);
+    if (problem) {
+      throw Object.assign(new Error(problem), { code: "compactFailed" });
+    }
+    return entry;
   }
 
   /** Aborts a run this process owns. Never publishes. Idempotent. */
@@ -2440,6 +3079,32 @@ export class AiAssistRunManager {
     return false;
   }
 
+  /**
+   * Has the run answer a queued message now, as Claude Code's "send now"
+   * does: a reply streaming at this moment is cut short and the message goes
+   * in straight after it. A run busy with tools reads it once they finish,
+   * the soonest it can without cutting an edit in half. Messages queued ahead
+   * of it go in with it, in the order they were sent.
+   *
+   * True when the run holds the message, false when it has read it already,
+   * null when another instance owns the run and was asked.
+   */
+  async sendQueuedNow(runId, messageId) {
+    const active = this.activeRuns.get(runId);
+    if (active?.queuedMessages) {
+      if (!active.queuedMessages.some((m) => m.id === messageId)) return false;
+      active.interruptStep?.();
+      return true;
+    }
+    if (this.control) {
+      await this.control
+        .publish(runId, { action: "sendNow", id: messageId })
+        .catch(() => {});
+      return null;
+    }
+    return false;
+  }
+
   async setMode(runId, mode) {
     const normalized = normalizeMode(mode);
     const active = this.activeRuns.get(runId);
@@ -2497,6 +3162,13 @@ export class AiAssistRunManager {
         active.queuedMessages.push(
           toQueuedMessage(message, active.queuedMessages.length),
         );
+      }
+      return;
+    }
+    if (action === "sendNow") {
+      const active = this.activeRuns.get(runId);
+      if (active?.queuedMessages?.some((m) => m.id === id)) {
+        active.interruptStep?.();
       }
       return;
     }

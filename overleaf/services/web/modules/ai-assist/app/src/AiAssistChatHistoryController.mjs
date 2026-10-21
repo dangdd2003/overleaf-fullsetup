@@ -3,6 +3,7 @@ import Settings from '@overleaf/settings'
 import './ModuleSettings.mjs'
 import defaultStore, {
   MAX_CHATS_PER_USER,
+  compactEntriesProblem,
   isValidChatCursor,
   isValidChatId,
 } from './AiAssistChatHistoryStore.mjs'
@@ -100,6 +101,10 @@ export class AiAssistChatHistoryController {
     const stats = req.body?.stats
     if (!Array.isArray(transcript)) {
       return res.status(400).json({ error: 'transcript must be an array' })
+    }
+    const compactProblem = compactEntriesProblem(transcript)
+    if (compactProblem) {
+      return res.status(400).json({ error: compactProblem })
     }
     const maxBytes = Settings.aiAssist?.maxTranscriptBytes ?? 32 * 1024 * 1024
     if (Buffer.byteLength(JSON.stringify(transcript)) > maxBytes) {

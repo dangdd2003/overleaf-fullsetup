@@ -1,9 +1,9 @@
 import Settings from "@overleaf/settings";
 import {
-  ProviderError,
   resolveDockerHostUrl,
   validateSafeProviderBaseUrl,
 } from "./AiAssistProviders.mjs";
+import { ProviderError } from "./AiAssistErrors.mjs";
 import {
   HOUR_MS,
   clampInt,
@@ -13,6 +13,12 @@ import {
   webError,
 } from "./web-fetch/util.mjs";
 import { apiRequest } from "./web-fetch/api.mjs";
+import {
+  isNotMcpError,
+  mcpTarget,
+  probeMcpSearch,
+  searchViaMcp,
+} from "./web-fetch/mcp.mjs";
 import { connectorFetch } from "./connectors/ConnectorFetch.mjs";
 import { pageCharsFor, pageText } from "./web-fetch/document.mjs";
 import { documentIndex } from "./web-fetch/doc-index.mjs";
@@ -172,10 +178,10 @@ const WEBSEARCHAPI_MAX_RESULTS = 20;
  */
 const MCP_SEARCH_TIMEOUT_MS = 15_000;
 const MCP_MAX_RESULTS = 10;
-// Endpoints saved when SSE and JSON-RPC MCP servers were accepted fail the
-// contract, so its errors say what changed
+// An endpoint that is neither an MCP server nor this contract fails both, so
+// the errors say what the URL must answer
 const MCP_CONTRACT_HINT =
-  " MCP JSON-RPC and SSE servers are no longer called directly; put an HTTP endpoint that follows this contract in front of them.";
+  " An MCP search server must answer the MCP handshake at this URL, or a plain JSON endpoint must answer this contract.";
 
 /** Whether a custom search response body follows the 3P contract. */
 function isMcpSearchBody(body) {
@@ -3003,11 +3009,32 @@ export class AiAssistWebTools {
   }
 
   /**
-   * Claude Desktop 3P custom web search: POST {"q": query} as JSON to the
-   * URL as written, expecting {"results": [{title, url, snippet}]} back.
-   * Results without a URL are dropped. Search only, no fetch.
+   * An MCP search server, called over MCP (Streamable HTTP, or legacy SSE)
+   * through its search tool. An endpoint that does not speak MCP falls back
+   * to Claude Desktop 3P custom web search: POST {"q": query} as JSON,
+   * expecting {"results": [{title, url, snippet}]} back.
    */
   async _mcpSearch(query, signal, endpoint) {
+    try {
+      const entries = await searchViaMcp(
+        mcpTarget(endpoint, {
+          fetchFn: this.fetchFn,
+          signal,
+          timeoutMs: MCP_SEARCH_TIMEOUT_MS,
+        }),
+        query,
+      );
+      return {
+        results: normalizeResults(entries, MCP_MAX_RESULTS, query),
+      };
+    } catch (err) {
+      if (!isNotMcpError(err)) throw err;
+    }
+    return this._mcpContractSearch(query, signal, endpoint);
+  }
+
+  /** The Claude Desktop 3P custom web search contract, POST {"q": query}. */
+  async _mcpContractSearch(query, signal, endpoint) {
     const res = await this._request(
       resolveDockerHostUrl(endpoint?.baseUrl),
       {
@@ -3315,8 +3342,24 @@ export async function checkApiKeyAlive(
           { authorized: AUTHORIZED_OR_REJECTED_BODY },
         );
       case "mcp": {
-        // The body is read, not dropped: a 2xx that breaks the contract would
-        // pass the check and fail every search
+        // An MCP server is checked by its handshake and tool list
+        try {
+          const { hasSearch } = await probeMcpSearch(
+            mcpTarget(endpoint, {
+              fetchFn: fetcher,
+              signal: combinedSignal,
+              timeoutMs: 5000,
+            }),
+          );
+          return hasSearch
+            ? { alive: true, message: "Instance alive" }
+            : { alive: false, message: "MCP server offers no search tool" };
+        } catch (err) {
+          if (!isNotMcpError(err)) throw err;
+        }
+        // Otherwise the plain JSON contract. Its body is read, not dropped:
+        // a 2xx that breaks the contract would pass the check and fail every
+        // search
         const res = await fetcher(resolveDockerHostUrl(endpoint.baseUrl), {
           method: "POST",
           headers: buildMcpHeaders(endpoint),

@@ -1,5 +1,7 @@
+import { isIP } from 'node:net'
 import { sharedBrowserRoute } from './web-fetch/routes/browser.mjs'
 import { fetchPublicUrl } from './web-fetch/transport.mjs'
+import { connectorFetch as defaultConnectorFetch } from './connectors/ConnectorFetch.mjs'
 
 /**
  * Site icons for the web result rows. The browser cannot find most of them on
@@ -121,17 +123,122 @@ export function iconLinksIn(html, baseUrl) {
 }
 
 /**
+ * Reads a stream up to maxBytes and stops there, so a large file is cut off
+ * rather than buffered whole. Leaving the loop destroys the stream.
+ */
+async function readCapped(stream, maxBytes) {
+  const chunks = []
+  let size = 0
+  let truncated = false
+  for await (const chunk of stream) {
+    const bytes = typeof chunk === 'string' ? Buffer.from(chunk) : chunk
+    if (size + bytes.length > maxBytes) {
+      chunks.push(bytes.subarray(0, maxBytes - size))
+      size = maxBytes
+      truncated = true
+      break
+    }
+    chunks.push(bytes)
+    size += bytes.length
+  }
+  return { body: Buffer.concat(chunks, size), truncated }
+}
+
+/** A refusal for the address itself, not a network or HTTP failure. */
+function isBlockedAddress(err) {
+  return (
+    err?.code === 'EADDRBLOCKED' ||
+    err?.message?.includes('blocked') ||
+    err?.message?.includes('private') ||
+    err?.message?.includes('not a public address')
+  )
+}
+
+/**
+ * The connector's answer for a private address the admin named, or null.
+ * The connector refuses every other private host itself.
+ */
+async function viaConnector(
+  url,
+  { headers, timeoutMs, signal, maxBytes = ICON_BYTES },
+  connectorFetch
+) {
+  const res = await connectorFetch(url, {
+    method: 'GET',
+    headers,
+    timeoutMs,
+    signal,
+  })
+  if (!res || res.status < 200 || res.status >= 400 || !res.body) return null
+  const { body, truncated } = await readCapped(res.body, maxBytes)
+  const contentType = res.headers?.get?.('content-type') || ''
+  return { body, url: res.url || url, contentType, truncated }
+}
+
+/**
  * An icon request: through the browser sidecar's small-file route when it is
  * configured (plain HTTP through its egress, Chrome for a file a bot check
- * refuses, never queued behind page reads), else directly. Never directly
- * while the browser is configured, even when it fails. `head` asks for a
- * page only up to its </head>; directly, the page's size cap stands in.
+ * refuses, never queued behind page reads). Never directly while the browser
+ * is configured: a failed sidecar request throws. Without it, the request
+ * goes through the public-address guard; `allowPrivate` lets a request the
+ * guard refused for its address retry through the connector, which still
+ * refuses private hosts the admin did not name. `head` asks for a page only
+ * up to its </head>; directly, the page's size cap stands in.
  */
-export function fetchIcon(url, { head = false, ...options } = {}) {
+export async function fetchIcon(
+  url,
+  {
+    head = false,
+    allowPrivate = false,
+    fetchPublic = fetchPublicUrl,
+    connectorFetch = defaultConnectorFetch,
+    ...options
+  } = {}
+) {
   const browser = sharedBrowserRoute()
-  return browser
-    ? browser.fetchFile(url, { ...options, head })
-    : fetchPublicUrl(url, options)
+  if (browser) return browser.fetchFile(url, { ...options, head })
+  try {
+    return await fetchPublic(url, options)
+  } catch (err) {
+    if (allowPrivate && isBlockedAddress(err)) {
+      const found = await viaConnector(url, options, connectorFetch).catch(
+        () => null
+      )
+      if (found) return found
+    }
+    throw err
+  }
+}
+
+/** The labels a country code registry sells names under, as in "co.uk". */
+const SECOND_LEVEL_LABELS = new Set([
+  'ac', 'co', 'com', 'edu', 'gov', 'net', 'org', 'ne', 'or', 'go', 'gob', 'mil',
+])
+
+/**
+ * The registrable parent of an origin, on the same scheme:
+ * https://mcp.notion.com -> https://notion.com. Country pairs such as
+ * bbc.co.uk count as one domain, the way siteName() reads them. IP addresses,
+ * localhost and a domain that is already registrable have no parent.
+ */
+export function parentOrigin(origin) {
+  let parsed
+  try {
+    parsed = new URL(String(origin))
+  } catch {
+    return null
+  }
+  const host = parsed.hostname
+  if (isIP(host) || host.startsWith('[') || !host.includes('.')) return null
+  const parts = host.split('.').filter(Boolean)
+  const last = parts[parts.length - 1]
+  const second = parts[parts.length - 2]
+  // "bbc.co.uk" is one site, but "foo.de" and "mcp.foo.de" are not a pair
+  const countryPair =
+    last.length === 2 && SECOND_LEVEL_LABELS.has(second) && parts.length >= 3
+  const size = countryPair ? 3 : 2
+  if (parts.length <= size) return null
+  return `${parsed.protocol}//${parts.slice(-size).join('.')}`
 }
 
 export class FaviconResolver {
@@ -254,7 +361,97 @@ export class FaviconResolver {
   }
 }
 
-const resolver = new FaviconResolver()
+// One resolver, and so one cache, per allowPrivate: a result that reached a
+// private address never answers a public lookup.
+const resolvers = {
+  public: new FaviconResolver(),
+  private: new FaviconResolver({
+    fetch: (url, options) => fetchIcon(url, { ...options, allowPrivate: true }),
+  }),
+}
+
+/**
+ * The icon an origin shows, as { icon, sure }. `allowPrivate` lets the
+ * connector reach a private host the admin named. `parentFallback` tries the
+ * registrable parent when the origin has no icon, sure or not; it is off for
+ * web results, which want the site's own icon.
+ */
+export async function resolveOriginIcon(
+  origin,
+  { allowPrivate = false, parentFallback = false } = {}
+) {
+  const site = normalizeOrigin(origin)
+  if (!site) return { icon: null, sure: false }
+  const resolver = allowPrivate ? resolvers.private : resolvers.public
+  const found = await resolver.find(site)
+  if (found.icon || !parentFallback) return found
+  const parent = parentOrigin(site)
+  if (!parent) return found
+  const parentFound = await resolver.find(parent)
+  if (parentFound.icon) return parentFound
+  return { icon: null, sure: found.sure && parentFound.sure }
+}
+
+function iconFrom(body) {
+  const type = sniffImageType(body)
+  return type ? { type, body } : null
+}
+
+/**
+ * One explicit icon URL, as { type, body } or null when it is not a real
+ * image. Accepts http(s) and base64 image data: URIs, under the same byte cap.
+ */
+export async function fetchIconBytes(url, { allowPrivate = false } = {}) {
+  const text = String(url)
+  const data = /^data:image\/[^;,]+;base64,([a-z0-9+/=]*)$/i.exec(text)
+  if (data) {
+    // Four base64 characters carry three bytes: refusing a longer string
+    // before decoding keeps the decoded image under the cap
+    if (data[1].length > (ICON_BYTES / 3) * 4) return null
+    return iconFrom(Buffer.from(data[1], 'base64'))
+  }
+  let parsed
+  try {
+    parsed = new URL(text)
+  } catch {
+    return null
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null
+  let res
+  try {
+    res = await fetchIcon(parsed.toString(), {
+      allowPrivate,
+      maxBytes: ICON_BYTES,
+      timeoutMs: TIMEOUT_MS,
+      headers: HEADERS,
+    })
+  } catch {
+    return null
+  }
+  return res.truncated ? null : iconFrom(res.body)
+}
+
+/**
+ * Writes an icon response: the image, or a 404 that says whether the site
+ * has no icon (cached for an hour) or the lookup failed (not cached).
+ */
+export function sendIcon(res, { icon = null, sure = false } = {}) {
+  // An SVG opened directly must not run as a page on Overleaf's origin.
+  res.set({
+    'X-Content-Type-Options': 'nosniff',
+    'Content-Security-Policy':
+      "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+  })
+  if (!icon) {
+    res.set('Cache-Control', sure ? 'private, max-age=3600' : 'no-store')
+    return res.sendStatus(404)
+  }
+  res.set({
+    'Content-Type': icon.type,
+    'Cache-Control': 'private, max-age=86400',
+  })
+  res.send(icon.body)
+}
 
 export default {
   /** GET /ai-assist/favicon?origin=https://example.com */
@@ -263,26 +460,8 @@ export default {
     if (!origin) return res.sendStatus(400)
     let found = { icon: null, sure: false }
     try {
-      found = await resolver.find(origin)
+      found = await resolveOriginIcon(origin)
     } catch {}
-    const { icon } = found
-    // An SVG opened directly must not run as a page on Overleaf's origin.
-    res.set({
-      'X-Content-Type-Options': 'nosniff',
-      'Content-Security-Policy':
-        "default-src 'none'; style-src 'unsafe-inline'; sandbox",
-    })
-    if (!icon) {
-      res.set(
-        'Cache-Control',
-        found.sure ? 'private, max-age=3600' : 'no-store'
-      )
-      return res.sendStatus(404)
-    }
-    res.set({
-      'Content-Type': icon.type,
-      'Cache-Control': 'private, max-age=86400',
-    })
-    res.send(icon.body)
+    sendIcon(res, found)
   },
 }

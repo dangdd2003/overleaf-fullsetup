@@ -11,6 +11,7 @@ import { DiffText } from '../writing-tools/diff-text'
 import { RevealBox } from '../reveal-box'
 import { InlineNotice } from './texgpt-notices'
 import { renderMarkdown } from '../agent/markdown-content'
+import type { RetryingState } from '../../agent/agent-state'
 import {
   PopupStatusLine,
   StreamingCodeBlock,
@@ -52,6 +53,8 @@ export type TexGptResultProps = {
   /** The author's words or the generator's name. */
   title: string
   phase: TexGptPhase
+  /** A provider retry while streaming, shown in the status line. */
+  retry?: RetryingState | null
   versions: TexGptVersion[]
   index: number
   onIndex: (index: number) => void
@@ -125,9 +128,11 @@ function Answer({ text }: { text: string }) {
 function Streaming({
   reply,
   repairing,
+  retry,
 }: {
   reply: ParsedReply | null
   repairing: boolean
+  retry: RetryingState | null
 }) {
   const { t } = useTranslation()
   let preview: ReactNode = null
@@ -150,7 +155,7 @@ function Streaming({
   return (
     <>
       {preview}
-      <PopupStatusLine text={statusText} />
+      <PopupStatusLine text={statusText} retry={retry} />
     </>
   )
 }
@@ -264,7 +269,11 @@ export function TexGptResult(props: TexGptResultProps) {
         )}
 
         {phase.name === 'streaming' && (
-          <Streaming reply={phase.reply} repairing={phase.repairing} />
+          <Streaming
+            reply={phase.reply}
+            repairing={phase.repairing}
+            retry={props.retry ?? null}
+          />
         )}
 
         {phase.name === 'ready' && current && (

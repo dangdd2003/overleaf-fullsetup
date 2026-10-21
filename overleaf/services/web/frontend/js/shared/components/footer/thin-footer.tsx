@@ -5,6 +5,7 @@ import type {
 import OLRow from '@/shared/components/ol/ol-row'
 import LanguagePicker from '@/shared/components/language-picker'
 import React from 'react'
+import { useTranslation } from 'react-i18next'
 
 function FooterItemLi({
   text,
@@ -42,14 +43,18 @@ function Separator() {
 
 function ThinFooter({
   showPoweredBy,
+  showLegal,
   subdomainLang,
   leftItems,
   rightItems,
 }: FooterMetadata) {
+  const { t } = useTranslation()
   const showLanguagePicker = Boolean(
     subdomainLang && Object.keys(subdomainLang).length > 1
   )
 
+  const hasCustomLegal = Boolean(leftItems?.some(item => item.url === '/legal'))
+  const shouldShowLegal = Boolean(showLegal && !hasCustomLegal)
   const hasCustomLeftNav = Boolean(leftItems && leftItems.length > 0)
 
   return (
@@ -65,13 +70,23 @@ function ThinFooter({
                     Powered by Overleaf
                   </a>
                 </li>
-                {showLanguagePicker || hasCustomLeftNav ? <Separator /> : null}
+                {showLanguagePicker || shouldShowLegal || hasCustomLeftNav ? (
+                  <Separator />
+                ) : null}
               </>
             ) : null}
             {showLanguagePicker ? (
               <>
                 <li>
                   <LanguagePicker showHeader />
+                </li>
+                {shouldShowLegal || hasCustomLeftNav ? <Separator /> : null}
+              </>
+            ) : null}
+            {shouldShowLegal ? (
+              <>
+                <li>
+                  <a href="/legal">{t('privacy_and_terms')}</a>
                 </li>
                 {hasCustomLeftNav ? <Separator /> : null}
               </>

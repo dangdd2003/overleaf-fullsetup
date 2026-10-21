@@ -88,6 +88,8 @@ export async function checkBatch({
     signal,
     client,
     cacheKey: LANGUAGE_CHECK_CACHE_KEY,
+    // Ghost-style marks with no status line: a retry is shown as nothing
+    retryPolicy: 'inline',
     onText: text => reportReady(parseReply(text, false).sentences, false),
   })
 

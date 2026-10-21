@@ -10,6 +10,12 @@ import { ACTION_ICONS, useActionLabel } from './action-labels'
 import { TranslateMenu } from './translate-menu'
 import { TexGptMenuItem, TexGptSparkleIcon } from '../texgpt/texgpt-menu'
 import { openAiChat } from '../../hooks/use-ai-dock'
+import { FLOATING_MARGIN } from '../../floating/editor-card'
+
+// The menu's offset from the button (4px in .ai-writing-tools-menu)
+const MENU_GAP = 4
+// The Translate flyout's offset from its row (--spacing-02 + --spacing-03)
+const SUBMENU_GAP = 20
 
 /**
  * The action list under the Writing tools button or the TeXGPT prompt bar.
@@ -34,8 +40,10 @@ export function WritingToolsMenu({
   const { t } = useTranslation()
   const label = useActionLabel()
   const menuRef = useRef<HTMLDivElement>(null)
+  const translateRef = useRef<HTMLDivElement>(null)
   const [translateOpen, setTranslateOpen] = useState(false)
   const [above, setAbove] = useState(false)
+  const [submenuLeft, setSubmenuLeft] = useState(false)
   const closeTimerRef = useRef<number | null>(null)
 
   const cancelClose = () => {
@@ -51,12 +59,43 @@ export function WritingToolsMenu({
     }, 150)
   }
 
-  // Open upward when there is no room below
+  // Open upward when there is no room below the button, and back down when
+  // there is room again
   useLayoutEffect(() => {
-    if (inline) return
-    const rect = menuRef.current?.getBoundingClientRect()
-    if (rect && rect.bottom > window.innerHeight - 8) setAbove(true)
+    const menu = menuRef.current
+    const anchor = menu?.parentElement
+    if (inline || !menu || !anchor) return
+    const measure = () => {
+      const box = anchor.getBoundingClientRect()
+      const height = menu.offsetHeight + MENU_GAP
+      const fitsBelow = box.bottom + height <= window.innerHeight - FLOATING_MARGIN / 2
+      const fitsAbove = box.top - height >= FLOATING_MARGIN / 2
+      setAbove(!fitsBelow && fitsAbove)
+    }
+    measure()
+    // The editor scrolls, and the window resizes, under the button
+    window.addEventListener('resize', measure)
+    document.addEventListener('scroll', measure, true)
+    return () => {
+      window.removeEventListener('resize', measure)
+      document.removeEventListener('scroll', measure, true)
+    }
   }, [inline])
+
+  // The Translate flyout opens to the right of its row, or to the left when
+  // the window has no room on the right
+  useLayoutEffect(() => {
+    const wrapper = translateRef.current
+    const submenu = wrapper?.querySelector<HTMLElement>('.ai-texgpt-submenu')
+    if (!wrapper || !submenu) return
+    const measure = () => {
+      const room = window.innerWidth - wrapper.getBoundingClientRect().right
+      setSubmenuLeft(room < SUBMENU_GAP + submenu.offsetWidth + FLOATING_MARGIN)
+    }
+    measure()
+    window.addEventListener('resize', measure)
+    return () => window.removeEventListener('resize', measure)
+  }, [translateOpen])
 
   useEffect(() => {
     if (inline) return
@@ -124,7 +163,10 @@ export function WritingToolsMenu({
             return (
               <div
                 key={action}
-                className="ai-writing-tools-translate-wrapper"
+                ref={translateRef}
+                className={classNames('ai-writing-tools-translate-wrapper', {
+                  'ai-writing-tools-submenu-left': submenuLeft,
+                })}
                 onMouseEnter={() => {
                   cancelClose()
                   setTranslateOpen(true)

@@ -1,7 +1,7 @@
 import { describe, it } from 'vitest'
 import { expect } from 'chai'
 import { OauthApplicationSchema } from '../../../../../../app/src/models/OauthApplication.mjs'
-import { OauthAccessTokenSchema } from '../../../../../../app/src/models/OauthAccessToken.mjs'
+import { GRANT_INDEXES } from '../../../../app/src/OAuth2/OAuth2GrantExpiry.mjs'
 
 // Dynamic Client Registration made these collections hot: every /oauth/authorize
 // looks a client up by `id`, and every refresh looks a token up by
@@ -28,7 +28,7 @@ describe('OAuth2 collection indexes', () => {
   })
 
   it('indexes oauthAccessTokens by refreshToken used at refresh time', () => {
-    expect(indexKeys(OauthAccessTokenSchema)).to.deep.include({
+    expect(GRANT_INDEXES.map(({ key }) => key)).to.deep.include({
       refreshToken: 1,
     })
   })

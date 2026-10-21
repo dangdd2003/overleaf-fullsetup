@@ -16,17 +16,23 @@ import {
  * carries the connector's name sanitised, so the real name comes from the
  * connectors list, matched the way the backend builds the name.
  */
+export function connectorFor(
+  connectors: ConnectorView[],
+  segment: string
+): ConnectorView | undefined {
+  const exact = connectors.find((c) => sanitizeIdentifier(c.name) === segment)
+  if (exact) return exact
+  const suffixed = connectors.find(
+    (c) => segment === `${sanitizeIdentifier(c.name)}_${c.id.slice(-6)}`
+  )
+  return suffixed
+}
+
 export function connectorNameFor(
   connectors: ConnectorView[],
   segment: string
 ): string | undefined {
-  const exact = connectors.find((c) => sanitizeIdentifier(c.name) === segment)
-  if (exact) return exact.name
-  // A second connector with the same name is named with the end of its id
-  const suffixed = connectors.find(
-    (c) => segment === `${sanitizeIdentifier(c.name)}_${c.id.slice(-6)}`
-  )
-  return suffixed?.name
+  return connectorFor(connectors, segment)?.name
 }
 
 // One request serves every card on the page; a change to the connectors
@@ -66,9 +72,9 @@ function listenForChanges() {
  * when it is not a connector call or the name is not known. Falls back to
  * the humanised name, so the card reads well before the list arrives.
  */
-export function useMcpConnectorName(
+export function useMcpConnector(
   name: string | undefined
-): string | undefined {
+): ConnectorView | undefined {
   const segment = isMcpToolName(name) ? mcpServerSegment(name) : undefined
   const [connectors, setConnectors] = useState<ConnectorView[] | null>(
     () => loaded
@@ -92,6 +98,13 @@ export function useMcpConnectorName(
   }, [segment])
 
   return segment && connectors
-    ? connectorNameFor(connectors, segment)
+    ? connectorFor(connectors, segment)
     : undefined
+}
+
+export function useMcpConnectorName(
+  name: string | undefined
+): string | undefined {
+  const connector = useMcpConnector(name)
+  return connector?.name
 }

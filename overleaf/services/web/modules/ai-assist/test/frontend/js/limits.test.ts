@@ -13,7 +13,7 @@ describe('resolveLimits', function () {
       apiKey: '',
       model: 'claude-opus-5',
     })
-    expect(limits).to.deep.equal(DEFAULT_LIMITS.anthropic)
+    expect(limits).to.deep.include(DEFAULT_LIMITS.anthropic)
   })
 
   it('falls back to ollama defaults with full 256k window and 64k output', function () {
@@ -23,7 +23,7 @@ describe('resolveLimits', function () {
       apiKey: '',
       model: 'gemma4:cloud',
     })
-    expect(limits).to.deep.equal({ contextWindow: 256000, maxOutputTokens: 65536 })
+    expect(limits).to.deep.include({ contextWindow: 256000, maxOutputTokens: 65536 })
   })
 
   it('prefers explicit settings over the default', function () {
@@ -35,7 +35,7 @@ describe('resolveLimits', function () {
       contextWindow: 32000,
       maxOutputTokens: 2048,
     })
-    expect(limits).to.deep.equal({ contextWindow: 32000, maxOutputTokens: 2048 })
+    expect(limits).to.deep.include({ contextWindow: 32000, maxOutputTokens: 2048 })
   })
 
   it('ignores nonsense values rather than sending a request that cannot work', function () {
@@ -47,7 +47,7 @@ describe('resolveLimits', function () {
       contextWindow: 0,
       maxOutputTokens: -5,
     })
-    expect(limits).to.deep.equal(DEFAULT_LIMITS.openai)
+    expect(limits).to.deep.include(DEFAULT_LIMITS.openai)
   })
 
   it('falls back to openai defaults when the provider type is unknown', function () {
@@ -57,6 +57,17 @@ describe('resolveLimits', function () {
       apiKey: '',
       model: 'some-model',
     })
-    expect(limits).to.deep.equal(DEFAULT_LIMITS.openai)
+    expect(limits).to.deep.include(DEFAULT_LIMITS.openai)
+  })
+
+  it('carries the provider and model the window belongs to', function () {
+    const limits = resolveLimits({
+      type: 'anthropic',
+      baseUrl: '',
+      apiKey: '',
+      model: 'claude-sonnet-4-5',
+    })
+    expect(limits.provider).to.equal('anthropic')
+    expect(limits.model).to.equal('claude-sonnet-4-5')
   })
 })

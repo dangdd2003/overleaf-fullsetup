@@ -489,4 +489,246 @@ describe('McpClient', function () {
       expect(thrown.message).to.equal('Invalid Request')
     })
   })
+
+  describe('Protocol details', function () {
+    const jsonRes = (id, result, headers = []) => ({
+      status: 200,
+      ok: true,
+      headers: new Map([['content-type', 'application/json'], ...headers]),
+      json: async () => ({ jsonrpc: '2.0', id, result }),
+      text: async () => '',
+    })
+    const notFound = () => ({
+      status: 404,
+      ok: false,
+      headers: new Map(),
+      text: async () => 'Not Found',
+    })
+    const rejectionOf = async promise => {
+      try {
+        await promise
+      } catch (err) {
+        return err
+      }
+      return null
+    }
+
+    it('sends the per-request _meta on modern requests and reads serverInfo from _meta', async function () {
+      const sent = []
+      const fakeFetch = async (url, opts) => {
+        const body = JSON.parse(opts.body)
+        sent.push(body)
+        if (body.method === 'server/discover') {
+          return jsonRes(body.id, {
+            supportedVersions: [MODERN_PROTOCOL_VERSION],
+            capabilities: { tools: {} },
+            _meta: {
+              'io.modelcontextprotocol/serverInfo': {
+                name: 'cloud',
+                version: '0.4',
+              },
+            },
+          })
+        }
+        return jsonRes(body.id, { tools: [] })
+      }
+
+      const client = new McpClient({
+        url: 'https://mcp.example.com/mcp',
+        fetch: fakeFetch,
+      })
+      await client.listTools()
+
+      expect(client.era).to.equal(MODERN_ERA)
+      expect(client.serverInfo).to.deep.equal({ name: 'cloud', version: '0.4' })
+      const list = sent.find(m => m.method === 'tools/list')
+      expect(
+        list.params._meta['io.modelcontextprotocol/protocolVersion']
+      ).to.equal(MODERN_PROTOCOL_VERSION)
+      expect(
+        list.params._meta['io.modelcontextprotocol/clientInfo'].name
+      ).to.equal('overleaf-ai-assist')
+    })
+
+    it('refuses a legacy server that speaks a protocol version the client does not', async function () {
+      const fakeFetch = async (url, opts) => {
+        const body = JSON.parse(opts.body)
+        if (body.method === 'initialize') {
+          return jsonRes(body.id, { protocolVersion: '2019-01-01' })
+        }
+        return notFound()
+      }
+      const client = new McpClient({
+        url: 'https://mcp.example.com/mcp',
+        fetch: fakeFetch,
+      })
+      const err = await rejectionOf(client.connect())
+      expect(err.message).to.match(/does not support/)
+    })
+
+    it('starts a new session when the server drops the old one, and ends the session on close', async function () {
+      const initCount = { n: 0 }
+      const listSessions = []
+      let deleted = null
+      const fakeFetch = async (url, opts) => {
+        if (opts.method === 'DELETE') {
+          deleted = opts.headers['Mcp-Session-Id']
+          return { status: 200, ok: true, headers: new Map() }
+        }
+        const body = JSON.parse(opts.body)
+        if (body.method === 'notifications/initialized') {
+          return { status: 202, ok: true, headers: new Map() }
+        }
+        if (body.method === 'server/discover') return notFound()
+        if (body.method === 'initialize') {
+          initCount.n++
+          return jsonRes(
+            body.id,
+            {
+              protocolVersion: LEGACY_PROTOCOL_VERSION,
+              serverInfo: { name: 'legacy' },
+            },
+            [['mcp-session-id', `s${initCount.n}`]]
+          )
+        }
+        if (body.method === 'tools/list') {
+          listSessions.push(opts.headers['Mcp-Session-Id'])
+          if (listSessions.length === 1) return notFound()
+          return jsonRes(body.id, { tools: [] })
+        }
+        return notFound()
+      }
+
+      const client = new McpClient({
+        url: 'https://mcp.example.com/mcp',
+        fetch: fakeFetch,
+      })
+      await client.listTools()
+      expect(initCount.n).to.equal(2)
+      expect(listSessions).to.deep.equal(['s1', 's2'])
+
+      await client.close()
+      await new Promise(resolve => setImmediate(resolve))
+      expect(deleted).to.equal('s2')
+    })
+
+    it('mirrors x-mcp-header parameters, and leaves out tools whose annotations break the spec', async function () {
+      let callHeaders = null
+      const schema = {
+        type: 'object',
+        properties: {
+          region: { type: 'string', 'x-mcp-header': 'Region' },
+          count: { type: 'integer', 'x-mcp-header': 'Count' },
+          query: { type: 'string' },
+        },
+      }
+      const badSchema = {
+        type: 'object',
+        properties: { a: { type: 'number', 'x-mcp-header': 'A' } },
+      }
+      const fakeFetch = async (url, opts) => {
+        const body = JSON.parse(opts.body)
+        if (body.method === 'server/discover') {
+          return jsonRes(body.id, { capabilities: {} })
+        }
+        if (body.method === 'tools/list') {
+          return jsonRes(body.id, {
+            tools: [
+              { name: 'run', inputSchema: schema },
+              { name: 'bad', inputSchema: badSchema },
+            ],
+          })
+        }
+        callHeaders = opts.headers
+        return jsonRes(body.id, { content: [{ type: 'text', text: 'ok' }] })
+      }
+
+      const client = new McpClient({
+        url: 'https://mcp.example.com/mcp',
+        fetch: fakeFetch,
+      })
+      const tools = await client.listTools()
+      expect(tools.map(t => t.name)).to.deep.equal(['run'])
+
+      await client.callTool('run', { region: 'us-west1', count: 3, query: 'q' })
+      expect(callHeaders['Mcp-Param-Region']).to.equal('us-west1')
+      expect(callHeaders['Mcp-Param-Count']).to.equal('3')
+      expect(callHeaders['Mcp-Param-Query']).to.be.undefined
+
+      // Without a listing, the schema the caller passes is used
+      const fresh = new McpClient({
+        url: 'https://mcp.example.com/mcp',
+        fetch: fakeFetch,
+      })
+      await fresh.callTool(
+        'run',
+        { region: 'Hà Nội' },
+        { inputSchema: schema }
+      )
+      expect(callHeaders['Mcp-Param-Region']).to.equal(
+        `=?base64?${Buffer.from('Hà Nội', 'utf8').toString('base64')}?=`
+      )
+    })
+
+    it('does not put an idle timeout on the legacy SSE stream', async function () {
+      let streamOpts = null
+      const fakeFetch = async (url, opts) => {
+        if (opts.method === 'GET') {
+          streamOpts = opts
+          async function* generateSse() {
+            yield Buffer.from('event: endpoint\ndata: /mcp/messages\n\n')
+          }
+          return {
+            status: 200,
+            ok: true,
+            headers: new Map([['content-type', 'text/event-stream']]),
+            body: generateSse(),
+          }
+        }
+        const body = JSON.parse(opts.body)
+        if (body.method === 'initialize') {
+          return jsonRes(body.id, { protocolVersion: LEGACY_PROTOCOL_VERSION })
+        }
+        return { status: 202, ok: true, headers: new Map() }
+      }
+      const client = new McpClient({
+        url: 'https://mcp.example.com/sse',
+        transport: 'sse',
+        fetch: fakeFetch,
+      })
+      await client.connect({ timeoutMs: 30_000 })
+      expect(streamOpts.timeoutMs).to.be.undefined
+      await client.close()
+    })
+
+    it('fails a call whose answer can only come on an SSE stream that has closed', async function () {
+      const fakeFetch = async (url, opts) => {
+        if (opts.method === 'GET') {
+          async function* generateSse() {
+            yield Buffer.from('event: endpoint\ndata: /mcp/messages\n\n')
+          }
+          return {
+            status: 200,
+            ok: true,
+            headers: new Map([['content-type', 'text/event-stream']]),
+            body: generateSse(),
+          }
+        }
+        const body = JSON.parse(opts.body)
+        if (body.method === 'initialize') {
+          return jsonRes(body.id, { protocolVersion: LEGACY_PROTOCOL_VERSION })
+        }
+        return { status: 202, ok: true, headers: new Map() }
+      }
+      const client = new McpClient({
+        url: 'https://mcp.example.com/sse',
+        transport: 'sse',
+        fetch: fakeFetch,
+      })
+      await client.connect()
+      await new Promise(resolve => setImmediate(resolve))
+      const err = await rejectionOf(client.callTool('run', {}))
+      expect(err.message).to.match(/SSE connection failed/)
+    })
+  })
 })

@@ -1,14 +1,16 @@
 import { FC, useCallback, useLayoutEffect, useMemo, useRef } from 'react'
 import { marked } from 'marked'
+import { computePosition, flip, shift, size } from '@floating-ui/react'
 import DOMPurify from 'dompurify'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
+import { FLOATING_MARGIN } from '../../floating/editor-card'
+import { placementSide } from '../../floating/use-floating-box'
 import { useOpenFileInEditor } from '../../hooks/use-open-file'
 import { useRevealLive, useStreamReveal } from '../../hooks/use-stream-reveal'
 import { applyChunkFades, createFadeState, FadeState } from './stream-fade'
 import {
   canHighlightCode,
-  highlightCodeHtml,
   highlightCodeLines,
   useEditorHighlightStyle,
   EDITOR_CODE_CLASS,
@@ -445,13 +447,8 @@ let activeIsThinking = false
 // Token-colour scope for highlighted code: the editor's, or the system theme's on popups
 let activeCodeClass = EDITOR_CODE_CLASS
 
-/** The nearest ancestor that clips its content, which a card must stay inside. */
-function clippingAncestor(el: HTMLElement): HTMLElement | null {
-  for (let node = el.parentElement; node; node = node.parentElement) {
-    if (getComputedStyle(node).overflowY !== 'visible') return node
-  }
-  return null
-}
+/** The card's padding above (or below) its pill, which bridges the pointer. */
+const CITATION_CARD_BRIDGE_PX = 4
 
 function renderCitation(sources: WebSource[]): string {
   const [first] = sources
@@ -1007,8 +1004,22 @@ function renderPreparedMarkdown(
 }
 
 /**
+ * The HTML of an element without what a hover card sets on itself when it
+ * opens (its position and side), so an open card is not mistaken for new
+ * content.
+ */
+function staticHtml(el: HTMLElement): string {
+  const copy = el.cloneNode(true) as HTMLElement
+  copy.querySelectorAll('.ai-assist-citation-card').forEach(card => {
+    card.removeAttribute('style')
+    card.removeAttribute('data-placement')
+  })
+  return copy.innerHTML.replace(/\b(is-inserted|is-copied)\b/g, '').trim()
+}
+
+/**
  * Checks if two DOM nodes represent the same static content, ignoring
- * transient interactive classes like is-flipped / is-above on hover cards.
+ * transient state like the position of an open citation card.
  */
 function nodesMatch(a: Node, b: Node): boolean {
   if (a.isEqualNode(b)) return true
@@ -1016,9 +1027,7 @@ function nodesMatch(a: Node, b: Node): boolean {
   if (a instanceof HTMLElement && b instanceof HTMLElement) {
     if (a.tagName !== b.tagName) return false
     if (a.textContent === b.textContent && a.children.length === b.children.length) {
-      const cleanA = a.innerHTML.replace(/\b(is-flipped|is-above|is-inserted|is-copied)\b/g, '').trim()
-      const cleanB = b.innerHTML.replace(/\b(is-flipped|is-above|is-inserted|is-copied)\b/g, '').trim()
-      if (cleanA === cleanB) return true
+      if (staticHtml(a) === staticHtml(b)) return true
     }
   }
   return false
@@ -1298,9 +1307,9 @@ export const MarkdownContent: FC<{
     []
   )
 
-  // A citation card stays inside the panel: it opens leftwards when it would
-  // run past the right edge, and upwards when the scrolling area it sits in
-  // (the transcript, above the composer) has more room there than below
+  // A citation card opens under its pill, or above it when there is no room
+  // below, and slides in from the edges of the panel and transcript. It is
+  // fixed to the viewport, so it is placed on each hover.
   const handleMouseOver = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     const citation = (e.target as HTMLElement).closest<HTMLElement>(
       '.ai-assist-citation'
@@ -1308,20 +1317,29 @@ export const MarkdownContent: FC<{
     const card = citation?.querySelector<HTMLElement>(
       '.ai-assist-citation-card'
     )
-    const bounds = containerRef.current?.getBoundingClientRect()
-    if (!citation || !card || !bounds) return
-    const chip = citation.getBoundingClientRect()
-    card.classList.toggle(
-      'is-flipped',
-      chip.left + card.offsetWidth > bounds.right
-    )
-    const view = clippingAncestor(citation)?.getBoundingClientRect()
-    const roomBelow = (view ? view.bottom : window.innerHeight) - chip.bottom
-    const roomAbove = chip.top - (view ? view.top : 0)
-    card.classList.toggle(
-      'is-above',
-      card.offsetHeight > roomBelow && roomAbove > roomBelow
-    )
+    if (!citation || !card) return
+    void computePosition(citation, card, {
+      strategy: 'fixed',
+      placement: 'bottom-start',
+      middleware: [
+        flip({ padding: FLOATING_MARGIN }),
+        shift({ padding: FLOATING_MARGIN, crossAxis: true }),
+        size({
+          padding: FLOATING_MARGIN,
+          apply({ availableHeight }) {
+            // The card's top padding bridges the pointer; the list is the rest
+            card.style.setProperty(
+              '--ai-floating-max-height',
+              `${Math.max(0, availableHeight - CITATION_CARD_BRIDGE_PX)}px`
+            )
+          },
+        }),
+      ],
+    }).then(({ x, y, placement }) => {
+      card.style.left = `${x}px`
+      card.style.top = `${y}px`
+      card.dataset.placement = placementSide(placement)
+    })
   }, [])
 
   if (!html) return null

@@ -26,6 +26,8 @@ describe('inline suggestions: popup field', function () {
     const popup = state.field(inlinePopupField)!
     expect(popup).to.include({ pos: 6, mode: 'prompt', notice: null, prompt: 'a table' })
     expect(popup.tooltip.pos).to.equal(6)
+    // Flips above the line when there is more room there
+    expect(popup.tooltip).to.include({ above: false, strictSide: false })
   })
 
   it('closes the prompt bar once its line is no longer empty', function () {

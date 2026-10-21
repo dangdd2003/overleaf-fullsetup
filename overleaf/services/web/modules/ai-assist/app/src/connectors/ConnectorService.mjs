@@ -25,6 +25,7 @@ import {
   presetView,
   parseConnectorConfig,
 } from './ConnectorPresets.mjs'
+import { sanitizeServerIcons } from './ConnectorIcons.mjs'
 
 /**
  * MCP tool annotations are `…Hint`; older servers sent the bare names, and
@@ -134,6 +135,7 @@ export function toView(doc) {
       hasRefreshToken: Boolean(oauth.hasRefreshToken),
     },
     preset: presetView(presetFor(doc.url)),
+    iconUrl: `/ai-assist/connectors/${doc._id.toString()}/icon`,
     server:
       doc.server && (doc.server.name || doc.server.protocolVersion)
         ? {
@@ -215,6 +217,12 @@ export class ConnectorService {
       .exec()
     await Promise.all(docs.map(withSecretFlags))
     return { connectors: docs.map(toView), meta: getMeta() }
+  }
+
+  /** What the icon route needs: the URL and the icons the server declared. */
+  static async iconSource(id, userId) {
+    const doc = await this._find(id, userId)
+    return { url: doc.url, serverIcons: doc.serverIcons }
   }
 
   static async _find(id, userId) {
@@ -427,6 +435,7 @@ export class ConnectorService {
         instructions: client.instructions,
         capabilities: client.capabilities,
       }
+      connector.serverIcons = sanitizeServerIcons(client.serverInfo?.icons)
       connector.tools = tools
       connector.toolsUpdatedAt = new Date()
       connector.lastConnectedAt = new Date()
@@ -485,7 +494,8 @@ export class ConnectorService {
         requiresAuth: false,
         transport: client.era === 'sse' ? 'sse' : 'streamable-http',
         era: client.era,
-        server: client.serverInfo,
+        // Icons are fetched through the icon route once the connector is saved
+        server: withoutIcons(client.serverInfo),
         toolCount: tools.length,
         preset,
       }
@@ -598,6 +608,14 @@ export class ConnectorService {
   static async pendingConnectorId({ state, userId }) {
     return pendingConnectorId({ state, userId })
   }
+}
+
+/** A server's initialize info without its icons, for a response to the page. */
+function withoutIcons(serverInfo) {
+  if (!serverInfo) return serverInfo
+  const info = { ...serverInfo }
+  delete info.icons
+  return info
 }
 
 function originOf(url) {

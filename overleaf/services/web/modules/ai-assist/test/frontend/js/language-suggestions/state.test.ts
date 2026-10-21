@@ -120,6 +120,9 @@ describe('language suggestions: editor state', function () {
     const card = state.field(languageSuggestionsField).card!
     expect(card.edit).to.equal(1)
     expect(card.tooltip.pos).to.equal(SENTENCE.indexOf('improve'))
+    // Flips to whichever side has room, with its own container
+    expect(card.tooltip).to.include({ above: false, strictSide: false })
+    expect(card.tooltip.create).to.equal(card.create)
 
     const moved = state.update({
       changes: { from: SENTENCE.length, insert: ' More.' },

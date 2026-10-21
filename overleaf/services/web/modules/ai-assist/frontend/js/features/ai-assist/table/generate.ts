@@ -1,4 +1,4 @@
-import { AgentMessage, ProviderSettings } from '../providers/types'
+import { AgentMessage, ProviderRetry, ProviderSettings } from '../providers/types'
 import { runWritingTool, StreamingClient } from '../writing-tools/run-writing-tool'
 import { packageWarning } from '../texgpt/checks'
 import { uniqueLabel } from '../generator/labels'
@@ -226,6 +226,7 @@ export async function generateTable({
   signal,
   onProgress,
   client,
+  onRetry,
 }: {
   messages: AgentMessage[]
   facts: TableFacts
@@ -233,6 +234,8 @@ export async function generateTable({
   signal?: AbortSignal
   onProgress: (progress: TableProgress) => void
   client?: StreamingClient
+  /** Each scheduled retry of the model call, and null once output flows again. */
+  onRetry?: (retry: ProviderRetry | null) => void
 }): Promise<TableOutcome> {
   const call = (conversation: AgentMessage[], onText: (text: string) => void) =>
     runWritingTool({
@@ -242,7 +245,9 @@ export async function generateTable({
       maxTokens: TABLE_MAX_TOKENS,
       signal,
       onText,
+      onRetry,
       client,
+      retryPolicy: 'interactive',
     })
 
   const raw = await call(messages, text =>

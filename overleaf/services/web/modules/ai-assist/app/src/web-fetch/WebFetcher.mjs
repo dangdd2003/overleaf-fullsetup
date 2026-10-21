@@ -1,4 +1,4 @@
-import { ProviderError } from '../AiAssistProviders.mjs'
+import { ProviderError } from '../AiAssistErrors.mjs'
 import { connectorFetch } from '../connectors/ConnectorFetch.mjs'
 import { adapterContext } from './adapters/common.mjs'
 import { ADAPTERS, matchAdapter } from './adapters/index.mjs'

@@ -260,21 +260,9 @@ The agent has access to 25 tools (15 project tools, 7 PDF tools, 2 web research 
 | `web_search` | Search the web for current information. Returns numbered cited sources with title, URL, date, and snippet. |
 | `web_fetch` | Read a web page, PDF, or text file as Markdown. Long documents are paginated; supports `find` for full-document passage search and `page` for section jumps. |
 
-**External MCP connectors**:
+**External MCP Connectors**:
 
-Users can configure remote Model Context Protocol (MCP) servers in **Account Settings → AI Features → Connectors**. Connectors are part of AI Assist and need no environment variables of their own.
-
-- **Transports**: Supports Streamable HTTP and HTTP+SSE with automatic discovery.
-- **Verified on add**: Saving a connector connects to the server straight away. The dialog closes once it connects; if the server cannot be reached it stays open with the error. Imported connectors are verified the same way.
-- **Authentication**: OAuth 2.1 (PKCE, token refresh, dynamic client registration) or custom HTTP headers with sensitive key masking. The server decides: a server that needs no sign-in connects directly, and **Sign in** is only offered after the server asks for it. The sign-in window opens centred on the user's window, only when they click. A server that rejects requests but offers no OAuth sign-in (for example, one that wants an API key) is reported as an error asking for the key as a header.
-- **OAuth redirect URL**: `${OVERLEAF_SITE_URL}/ai-assist/connectors/oauth/callback`. There is no separate setting; `OVERLEAF_SITE_URL` must be the public address users open, or the authorization server redirects them to the wrong host.
-- **Changing a connector's server**: Moving a connector to another origin clears everything issued for or typed for the old server (tokens, discovered endpoints, client secret, scopes), so none of it is sent to the new host.
-- **Card actions**: Connect / Reconnect, Sign in, Configure tools, an enable switch, and a menu with Test connection, Edit, Disconnect and Remove (with confirmation). Successful test and connect results disappear after a few seconds; failures stay until a later attempt succeeds.
-- **Config Import**: Import MCP servers directly from Claude Desktop, Cursor, VS Code, or Gemini CLI configs.
-- **Permissions**: Per-tool permission controls (Always allow, Needs approval, Blocked). A destructive tool asks every time, even when set to Always allow.
-- **Per-chat selection**: In the chat composer, **+ → Connectors** lists the connected servers with a switch for each chat, and **Manage connectors** opens these settings.
-- **Tool Integration**: Tools are offered to the model as `mcp__<connector>__<tool>` with the server's own descriptions. Each server's instructions, the available tools, and any connector that needs sign-in or is unreachable are described in the system prompt. When the connector tools would take more than 10% of the model's context window, only their names and summaries are sent and the model loads full definitions with `search_connector_tools`. Long results are paged with `read_connector_result`, and a tool error is reported to the model as an error.
-- **Results in chat**: Each call shows the connector, the tool and its arguments, and the output (formatted JSON or Markdown, clipped with Show more, with a copy button).
+Users can connect external Model Context Protocol (MCP) servers (HTTP / SSE) in **Account Settings → AI Features → Connectors** to supply custom tools to the assistant. Supports OAuth 2.1 and API key headers, config import (from Claude Desktop, Cursor, or VS Code), and per-chat tool toggles.
 
 **Mode tool** (1):
 
@@ -434,6 +422,31 @@ The feature runs across two containers:
 | `GIT_BRIDGE_API_BASE_URL` | `http://overleaf:3000/api/v0` | Overleaf API URL. Set if the service isn't named `overleaf`. |
 | `GIT_BRIDGE_POSTBACK_BASE_URL` | `http://git-bridge:8000` | This container's URL. Set if the service isn't named `git-bridge`. |
 | `GIT_BRIDGE_PORT` | `8000` | Listen port. Must match Overleaf's `GIT_BRIDGE_PORT`. |
+| `GIT_BRIDGE_ROOT_DIR` | `/data` | Directory storing local bare Git repos. Set if not using `/data`. |
+| `GIT_BRIDGE_OAUTH2_SERVER` | auto | Overleaf OAuth2 URL for token verification. Derived from `GIT_BRIDGE_API_BASE_URL`. |
+| `GIT_BRIDGE_BIND_IP` | `0.0.0.0` | IP address to bind the Git Bridge server to. |
+| `GIT_BRIDGE_IDLE_TIMEOUT` | `30000` | HTTP connection idle timeout in milliseconds. |
+| `GIT_BRIDGE_SERVICE_NAME` | `Overleaf` | Service name shown in HTTP headers and Git error messages. |
+| `GIT_BRIDGE_USER_PASSWORD_ENABLED` | `false` | Allow Git login with account password instead of Personal Access Tokens. |
+| `GIT_BRIDGE_REPOSTORE_MAX_FILE_NUM` | `2000` | Maximum number of files permitted in a repository. |
+| `GIT_BRIDGE_REPOSTORE_MAX_FILE_SIZE` | `52428800` | Maximum single file size allowed in bytes (50 MB). |
+| `GIT_BRIDGE_JVM_ARGS` | `-XX:+UseContainerSupport -XX:MaxRAMPercentage=50.0 -XX:+ExitOnOutOfMemoryError` | JVM runtime arguments for the Git Bridge process. |
+
+##### Optional S3 Cold Storage Swap Offload
+
+| Environment Variable | Default | Description |
+| :--- | :--- | :--- |
+| `GIT_BRIDGE_SWAPSTORE_TYPE` | `noop` | Storage swap backend (`noop` or `s3`) for offloading inactive repos. |
+| `GIT_BRIDGE_SWAPSTORE_AWS_ACCESS_KEY` | — | AWS access key for S3 swap store. |
+| `GIT_BRIDGE_SWAPSTORE_AWS_SECRET` | — | AWS secret key for S3 swap store. |
+| `GIT_BRIDGE_SWAPSTORE_S3_BUCKET_NAME` | — | S3 bucket name for offloading inactive Git repositories. |
+| `GIT_BRIDGE_SWAPSTORE_AWS_REGION` | `us-east-1` | AWS region for S3 swap store. |
+| `GIT_BRIDGE_SWAPSTORE_AWS_ENDPOINT` | — | Custom S3 endpoint URL (for MinIO, Ceph, or S3-compatible storage). |
+| `GIT_BRIDGE_SWAPJOB_LOW_GIB` | `128` | Low disk watermark in GiB to stop swapping out repos. |
+| `GIT_BRIDGE_SWAPJOB_HIGH_GIB` | `256` | High disk watermark in GiB to start swapping out inactive repos. |
+| `GIT_BRIDGE_SWAPJOB_INTERVAL_MILLIS` | `3600000` | Milliseconds between swap sweeps (1 hour). |
+| `GIT_BRIDGE_SWAPJOB_MIN_PROJECTS` | `50` | Minimum number of projects to keep locally before swapping. |
+| `GIT_BRIDGE_SWAPJOB_COMPRESSION_METHOD` | `gzip` | Compression format for swapped repos (`gzip` or `none`). |
 
 ---
 
@@ -501,3 +514,13 @@ Interactive Swagger UI and OpenAPI 3.0 specification viewer at `/api-docs` (and 
 | Environment Variable | Default | Description |
 | :--- | :--- | :--- |
 | `API_DOCS_ENABLED`* | `false` | Turn on API docs at `/api-docs`. |
+
+---
+
+### 10. Legal Page
+
+Serves a Privacy & Terms page at `/legal` and adds a "Privacy & Terms" link to the footer. Off by default.
+
+| Environment Variable | Default | Description |
+| :--- | :--- | :--- |
+| `LEGAL_PAGE_ENABLED`* | `false` | Turn on the legal page at `/legal`. |

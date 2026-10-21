@@ -1,13 +1,10 @@
 import { Fragment, useCallback, useMemo, useState } from "react";
 import { Plus } from "@phosphor-icons/react";
 import OLButton from "@/shared/components/ol/ol-button";
-import OLFormControl from "@/shared/components/ol/ol-form-control";
 import OLFormGroup from "@/shared/components/ol/ol-form-group";
 import OLFormLabel from "@/shared/components/ol/ol-form-label";
 import OLFormSelect from "@/shared/components/ol/ol-form-select";
 import DropdownSetting from "@/features/ide-settings/components/dropdown-setting";
-import OLRow from "@/shared/components/ol/ol-row";
-import OLCol from "@/shared/components/ol/ol-col";
 import MaterialIcon from "@/shared/components/material-icon";
 import Notification from "@/shared/components/notification";
 import { SiteIcon } from "./agent/site-icon";
@@ -67,8 +64,6 @@ import {
   SearxngProviderConfig,
   TavilyProviderConfig,
   TinyfishProviderConfig,
-  WEB_SEARCH_DEFAULTS,
-  WebSearchPreferences,
   WebSearchPrimaryProvider,
   WebSearchProviderType,
   WebSearchRotationStrategy,

@@ -1,17 +1,19 @@
-import { useEffect, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import { getPdfViewer } from '@/features/pdf-preview/util/viewer-bridge'
 import type { PdfSelectionContext } from '../agent/context/types'
+import { placementSide, useFloatingBox } from '../floating/use-floating-box'
 import { readPdfSelection } from './selection'
 import { addPdfSelection } from './turn-context'
 
 export const PDF_SELECTION_ACTION_CLASS = 'ai-assist-pdf-selection-action'
-
-/** The button's size, used to keep it inside the window. */
-const BUTTON_SIZE = { width: 104, height: 30 }
-/** Space between the selection and the button, in CSS pixels. */
-const GAP = 6
 
 type Rect = { left: number; top: number; right: number; bottom: number }
 
@@ -46,21 +48,20 @@ export function pdfSelectionTarget(
   }
 }
 
-/**
- * Where the button goes: just below the end of the selection and lined up with
- * it, or above when there is no room below. Kept inside the window.
- */
-export function selectionActionPosition(
-  end: Rect,
-  viewport: { width: number; height: number },
-  size: { width: number; height: number } = BUTTON_SIZE
-): { top: number; left: number } {
-  const fits = (value: number, max: number) =>
-    Math.max(0, Math.min(value, max - size.height))
-  let top = end.bottom + GAP
-  if (top + size.height > viewport.height) top = end.top - size.height - GAP
-  const left = Math.max(0, Math.min(end.right - size.width, viewport.width - size.width))
-  return { top: fits(top, viewport.height), left }
+/** The selection's last line, as the rect the button is placed from. */
+function endReference(end: Rect) {
+  return {
+    getBoundingClientRect: () => ({
+      x: end.left,
+      y: end.top,
+      width: end.right - end.left,
+      height: end.bottom - end.top,
+      top: end.top,
+      left: end.left,
+      right: end.right,
+      bottom: end.bottom,
+    }),
+  }
 }
 
 /** How long a keyboard selection must rest before the button shows. */
@@ -80,6 +81,24 @@ export function PdfSelectionAction() {
   const { t } = useTranslation()
   const [target, setTarget] = useState<PdfSelectionTarget | null>(null)
   const buttonRef = useRef<HTMLButtonElement | null>(null)
+  // Below the end of the selection, lined up with its right edge; above when
+  // there is no room below
+  const { refs, floatingStyles, isPositioned, placement } = useFloatingBox({
+    open: target !== null,
+    placement: 'bottom-end',
+    fallbackPlacements: ['top-end'],
+  })
+  const setButton = useCallback(
+    (node: HTMLButtonElement | null) => {
+      buttonRef.current = node
+      refs.setFloating(node)
+    },
+    [refs]
+  )
+
+  useLayoutEffect(() => {
+    if (target) refs.setPositionReference(endReference(target.end))
+  }, [refs, target])
 
   useEffect(() => {
     let selecting = false
@@ -151,18 +170,18 @@ export function PdfSelectionAction() {
   }, [])
 
   if (!target) return null
-  const position = selectionActionPosition(target.end, {
-    width: window.innerWidth,
-    height: window.innerHeight,
-  })
 
   // Pressing the button must not clear the selection before the click lands
   return createPortal(
     <button
-      ref={buttonRef}
+      ref={setButton}
       type="button"
       className={PDF_SELECTION_ACTION_CLASS}
-      style={{ top: position.top, left: position.left }}
+      data-placement={placementSide(placement)}
+      style={{
+        ...floatingStyles,
+        visibility: isPositioned ? undefined : 'hidden',
+      }}
       onMouseDown={event => event.preventDefault()}
       onClick={() => {
         addPdfSelection(target.context)

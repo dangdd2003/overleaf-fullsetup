@@ -3,6 +3,13 @@ import Settings from '@overleaf/settings'
 import './ModuleSettings.mjs'
 import { sanitizeToolSchema } from './AiAssistToolSchema.mjs'
 import { dockerHostGateway, isRunningInDocker } from './DockerHost.mjs'
+import {
+  abortableSleep,
+  planRetry,
+  resolveRetryPolicy,
+  retryHeaders,
+} from './AiAssistRetry.mjs'
+import { cancelledError, ProviderError } from './AiAssistErrors.mjs'
 // The connectors' guard against this server, its metadata and its internal
 // services, shared with the MCP connectors rather than copied
 import {
@@ -10,17 +17,20 @@ import {
   validateConnectorUrl,
 } from './connectors/ConnectorFetch.mjs'
 
-export class ProviderError extends Error {
-  constructor(
-    message,
-    { code = 'providerError', status = undefined, hint = '' } = {}
-  ) {
-    super(message)
-    this.name = 'ProviderError'
-    this.code = code
-    this.status = status
-    this.hint = hint
-  }
+/** The retry fields of a failed provider reply, read before its body is. */
+function httpRetryFields(res) {
+  return retryHeaders(res?.headers)
+}
+
+/**
+ * The HTTP-style status of a provider's error event sent inside a 200 stream,
+ * so the retry layer can tell a busy provider from a broken request.
+ */
+function streamErrorStatus(type) {
+  if (type === 'overloaded_error') return 529
+  if (type === 'rate_limit_error') return 429
+  if (type === 'api_error') return 500
+  return undefined
 }
 
 /** The most a provider's reply (or error reply) may be read to: far above any real one. */
@@ -60,7 +70,11 @@ async function openAiError(res) {
     if (body?.error?.message) msg = body.error.message
     if (body?.error?.code === 'invalid_api_key') code = 'providerAuth'
   } catch {}
-  return new ProviderError(msg, { status: res.status, code })
+  return new ProviderError(msg, {
+    status: res.status,
+    code,
+    ...httpRetryFields(res),
+  })
 }
 
 const BLOCKED_INTERNAL_HOSTS = new Set([
@@ -80,6 +94,72 @@ const BLOCKED_INTERNAL_HOSTS = new Set([
   'project-history',
   'metadata.google.internal',
 ])
+
+const DEFAULT_BASE_URLS = {
+  openai: 'https://api.openai.com/v1',
+  anthropic: 'https://api.anthropic.com',
+  google: 'https://generativelanguage.googleapis.com/v1beta',
+  ollama: 'http://localhost:11434',
+}
+
+export function normalizeProviderBaseUrl(
+  type,
+  rawUrl,
+  fallbackUrl = DEFAULT_BASE_URLS[type] || DEFAULT_BASE_URLS.openai
+) {
+  let url = typeof rawUrl === 'string' ? rawUrl.trim() : ''
+  if (!url) {
+    return fallbackUrl || ''
+  }
+
+  // Trim trailing slashes
+  url = url.replace(/\/+$/, '')
+
+  if (type === 'anthropic') {
+    // Anthropic official & compatible endpoints append /v1/messages and /v1/models.
+    // The base URL must NOT end in /v1, /messages, or /models.
+    url = url
+      .replace(/\/v1\/messages$/, '')
+      .replace(/\/messages$/, '')
+      .replace(/\/v1\/models$/, '')
+      .replace(/\/models$/, '')
+      .replace(/\/v1$/, '')
+      .replace(/\/+$/, '')
+    return url || fallbackUrl || DEFAULT_BASE_URLS.anthropic
+  }
+
+  if (type === 'google') {
+    // Google Gemini REST endpoints are ${baseURL}/models and ${baseURL}/models/{model}:streamGenerateContent
+    // Strip /openai or /models suffix if accidentally provided
+    url = url
+      .replace(/\/openai\/?$/, '')
+      .replace(/\/models\/?$/, '')
+      .replace(/\/+$/, '')
+    if (!url.endsWith('/v1beta') && !url.endsWith('/v1')) {
+      url = `${url}/v1beta`
+    }
+    return url
+  }
+
+  if (type === 'ollama') {
+    // Ollama REST endpoints are /api/tags and /api/chat.
+    // Strip /v1 or /api or /api/tags or /api/chat if provided
+    url = url
+      .replace(/\/v1(\/(chat\/completions|models))?$/, '')
+      .replace(/\/api(\/(tags|chat))?$/, '')
+      .replace(/\/+$/, '')
+    return url || fallbackUrl || DEFAULT_BASE_URLS.ollama
+  }
+
+  // Default is openai - hard fix the ending /v1
+  url = url
+    .replace(/\/(chat\/completions|models)$/, '')
+    .replace(/\/+$/, '')
+  if (!url.endsWith('/v1')) {
+    url = `${url}/v1`
+  }
+  return url
+}
 
 export function validateSafeProviderBaseUrl(rawUrl) {
   if (!rawUrl || typeof rawUrl !== 'string' || !rawUrl.trim()) {
@@ -149,47 +229,39 @@ function refusedDestination(err) {
   })
 }
 
-function cancelledError() {
-  return new ProviderError('Request was cancelled', { code: 'aborted' })
-}
-
-/** Waits `ms`, rejecting with a cancellation error if `signal` aborts first. */
-function abortableDelay(ms, signal) {
-  if (signal?.aborted) return Promise.reject(cancelledError())
-  return new Promise((resolve, reject) => {
-    const onAbort = () => {
-      clearTimeout(timer)
-      reject(cancelledError())
-    }
-    const timer = setTimeout(() => {
-      signal?.removeEventListener('abort', onAbort)
-      resolve()
-    }, ms)
-    signal?.addEventListener('abort', onAbort, { once: true })
-  })
-}
-
 /**
- * Automatically retries transient errors (429 Rate-Limit, 500, 502, 503, 504, connection drops)
- * with exponential backoff and jitter, matching official agent SDKs.
+ * Retries a fetch that fails with a transient status (429, 5xx) or a dropped
+ * connection, with the backoff of the retry layer. A reply that is still a
+ * failure once the retries are spent is returned as it is, for the caller to
+ * map. Stream calls pass maxRetries 0: their retries run one level up, around
+ * the whole attempt.
  */
 export async function fetchWithRetry(
   url,
   options,
   {
     maxRetries = 3,
-    initialDelayMs = 1000,
+    initialDelayMs = 500,
     maxDelayMs = 8000,
     fetchFn = providerFetch,
+    policy: explicitPolicy,
+    random = Math.random,
   } = {}
 ) {
+  const policy = explicitPolicy ?? {
+    maxRetries,
+    baseMs: initialDelayMs,
+    capMs: maxDelayMs,
+    maxRetryAfterMs: 30000,
+  }
   let attempt = 0
   while (true) {
     if (options?.signal?.aborted) throw cancelledError()
 
+    let res
     try {
       const { providerRequest, ...fetchOptions } = options ?? {}
-      const res = await fetchFn(url, {
+      res = await fetchFn(url, {
         ...fetchOptions,
         // Provider endpoints should not redirect an approved public URL to an
         // internal service. Other fetchWithRetry callers keep fetch defaults.
@@ -197,29 +269,6 @@ export async function fetchWithRetry(
           ? { redirect: 'error' }
           : {}),
       })
-
-      if (
-        (res.status === 429 || (res.status >= 500 && res.status < 600)) &&
-        attempt < maxRetries
-      ) {
-        if (typeof res.text === 'function') {
-          await res.text().catch(() => {})
-        }
-        attempt++
-        const retryAfter = res.headers.get('retry-after')
-        let delay =
-          initialDelayMs * Math.pow(2, attempt - 1) + Math.random() * 200
-        if (retryAfter) {
-          const parsed = parseInt(retryAfter, 10)
-          if (!isNaN(parsed) && parsed > 0 && parsed <= 30) {
-            delay = parsed * 1000
-          }
-        }
-        await abortableDelay(Math.min(delay, maxDelayMs), options?.signal)
-        continue
-      }
-
-      return res
     } catch (err) {
       if (options?.signal?.aborted || err?.code === 'aborted') {
         throw cancelledError()
@@ -229,33 +278,48 @@ export async function fetchWithRetry(
       }
       const refused = refusedDestination(err)
       if (refused) throw refused
-      const isTransientNetwork =
-        err.code === 'ECONNRESET' ||
-        err.code === 'ETIMEDOUT' ||
-        err.code === 'UND_ERR_SOCKET' ||
-        err.message?.includes('fetch failed') ||
-        err.message?.includes('socket hang up') ||
-        err.message?.includes('network timeout')
 
-      if (isTransientNetwork && attempt < maxRetries) {
-        attempt++
-        const delay = Math.min(
-          initialDelayMs * Math.pow(2, attempt - 1) + Math.random() * 200,
-          maxDelayMs
-        )
-        await abortableDelay(delay, options?.signal)
-        continue
-      }
-      throw err
+      const plan = planRetry(err, { attempt, policy, random })
+      if (!plan.retry) throw plan.error
+      attempt = plan.attempt
+      await abortableSleep(plan.retryInMs, options?.signal)
+      continue
     }
+
+    // A success goes back as it is, whatever retry headers it carries
+    if (res.ok) return res
+    const plan = planRetry(
+      {
+        status: res.status,
+        message: `HTTP ${res.status}`,
+        ...httpRetryFields(res),
+      },
+      { attempt, policy, random }
+    )
+    if (!plan.retry) return res
+
+    if (typeof res.text === 'function') {
+      await res.text().catch(() => {})
+    }
+    attempt = plan.attempt
+    await abortableSleep(plan.retryInMs, options?.signal)
   }
 }
 
-export function withRequestTimeouts(callerSignal, { connectMs, idleMs } = {}) {
+/** The connect and idle limits from the admin settings, read at each use. */
+function defaultConnectMs() {
+  return (Settings.aiAssist?.requestTimeoutSeconds ?? 180) * 1000
+}
+
+function defaultIdleMs() {
+  return (Settings.aiAssist?.streamIdleSeconds ?? 0) * 1000
+}
+
+function withRequestTimeouts(callerSignal, { connectMs, idleMs } = {}) {
   const resolvedConnectMs =
-    connectMs ?? (Settings.aiAssist?.requestTimeoutSeconds ?? 180) * 1000
+    connectMs ?? defaultConnectMs()
   const resolvedIdleMs =
-    idleMs ?? (Settings.aiAssist?.streamIdleSeconds ?? 0) * 1000
+    idleMs ?? defaultIdleMs()
 
   const connectController = new AbortController()
   const idleController = new AbortController()
@@ -308,14 +372,14 @@ export function withRequestTimeouts(callerSignal, { connectMs, idleMs } = {}) {
     }
     if (connectController.signal.aborted) {
       throw new ProviderError('Connection timed out', {
-        code: 'aborted',
+        code: 'providerTimeout',
         status: undefined,
       })
     }
     if (idleController.signal.aborted) {
       throw new ProviderError(
         `Stream stalled: no data received for ${Math.round(resolvedIdleMs / 1000)}s`,
-        { code: 'providerError', status: undefined }
+        { code: 'providerStalled', status: undefined }
       )
     }
   }
@@ -326,8 +390,6 @@ export function withRequestTimeouts(callerSignal, { connectMs, idleMs } = {}) {
     resetIdleTimer,
     clearAllTimeouts,
     checkAbortReason,
-    connectController,
-    idleController,
   }
 }
 
@@ -346,7 +408,7 @@ export function resolveDockerHostUrl(url) {
   return url
 }
 
-export class StreamingThinkParser {
+class StreamingThinkParser {
   constructor() {
     this.inThink = false
     this.pending = ''
@@ -448,7 +510,7 @@ async function* streamLines(stream, onActivity) {
   if (buffer) yield withoutCr(buffer)
 }
 
-export async function* parseNdjsonLines(stream, onActivity) {
+async function* parseNdjsonLines(stream, onActivity) {
   for await (const line of streamLines(stream, onActivity)) {
     const trimmed = line.trim()
     if (trimmed) yield trimmed
@@ -456,7 +518,7 @@ export async function* parseNdjsonLines(stream, onActivity) {
 }
 
 /** The images a tool message carries (view_compiled_pdf_page), if any. */
-export function toolImages(message) {
+function toolImages(message) {
   return Array.isArray(message?.images)
     ? message.images.filter(
         image =>
@@ -596,10 +658,41 @@ export async function* parseSseLines(stream, onActivity) {
 }
 
 /**
+ * The one usage chunk a request yields, whatever the provider called its
+ * counts. A count the provider did not report is 0; a request it reported
+ * nothing for yields no chunk, so the meter keeps its estimate instead of
+ * reading an exact zero.
+ */
+function* usageChunks({
+  inputTokens,
+  outputTokens,
+  cacheReadTokens,
+  cacheCreationTokens,
+  partialInput = false,
+}) {
+  const count = value => {
+    const n = Number(value)
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0
+  }
+  const usage = {
+    inputTokens: count(inputTokens),
+    outputTokens: count(outputTokens),
+    cacheReadTokens: count(cacheReadTokens),
+    cacheCreationTokens: count(cacheCreationTokens),
+  }
+  if (Object.values(usage).some(n => n > 0)) {
+    yield {
+      type: 'usage',
+      usage: partialInput ? { ...usage, partialInput: true } : usage,
+    }
+  }
+}
+
+/**
  * Mirrors the browser-side limit parsing: gateways that report per-model limits
  * on their models listing use these field names.
  */
-export function parseModelLimits(entry) {
+function parseModelLimits(entry) {
   const contextWindow =
     entry?.max_input_tokens ??
     entry?.context_window ??
@@ -626,7 +719,7 @@ export function parseModelLimits(entry) {
 }
 
 async function fetchModelList(fetchFn, url, headers, signal) {
-  const timeoutMs = (Settings.aiAssist?.requestTimeoutSeconds ?? 180) * 1000
+  const timeoutMs = defaultConnectMs()
   const combined = AbortSignal.any(
     [signal, AbortSignal.timeout(timeoutMs)].filter(Boolean)
   )
@@ -791,6 +884,89 @@ export function anthropicSystemField(system, cacheHints) {
   return [{ type: 'text', text: system, cache_control: ephemeral }]
 }
 
+/**
+ * One tool spec in the provider's wire shape. The clients send these, and the
+ * context meter prices the same objects (AiAssistContextUsage), so the two
+ * cannot drift apart.
+ */
+export function toolWireSpec(type, tool) {
+  if (type === 'anthropic') {
+    return {
+      name: tool.name,
+      description: tool.description,
+      input_schema: sanitizeToolSchema(tool.parameters),
+    }
+  }
+  if (type === 'google') {
+    // Gemini rejects an object schema with no properties, so a no-argument
+    // tool must omit `parameters` rather than send `{}`.
+    const parameters = sanitizeToolSchema(tool.parameters, {
+      emptyObject: 'omit',
+    })
+    return {
+      name: tool.name,
+      description: tool.description,
+      ...(parameters ? { parameters } : {}),
+    }
+  }
+  // OpenAI, OpenAI-compatible servers and Ollama
+  return {
+    type: 'function',
+    function: {
+      name: tool.name,
+      description: tool.description,
+      parameters: sanitizeToolSchema(tool.parameters),
+    },
+  }
+}
+
+/**
+ * The error of a count request that failed. The provider's own message is kept
+ * when its reply has one, since a 400 says whether the route is unsupported.
+ */
+async function countReplyError(label, res) {
+  let detail = ''
+  if (typeof res.text === 'function') {
+    const text = await res.text().catch(() => '')
+    try {
+      detail = JSON.parse(text)?.error?.message ?? ''
+    } catch {
+      detail = ''
+    }
+    if (!detail) detail = text
+  }
+  detail = String(detail).slice(0, 300)
+  return new ProviderError(
+    `${label} error (${res.status})${detail ? `: ${detail}` : ''}`,
+    {
+      status: res.status,
+      code: 'providerError',
+      ...httpRetryFields(res),
+    }
+  )
+}
+
+function isOfficialHost(url, host) {
+  try {
+    return new URL(url).hostname === host
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Ollama serves the Anthropic API (/v1/messages) without its count endpoint:
+ * ollama.com, or a local server on its default port.
+ */
+function isOllamaHost(url) {
+  try {
+    const { hostname, port } = new URL(url)
+    return hostname === 'ollama.com' || port === '11434'
+  } catch {
+    return false
+  }
+}
+
 class AnthropicServerClient {
   constructor({
     apiKey,
@@ -805,24 +981,80 @@ class AnthropicServerClient {
   } = {}) {
     this.apiKey = (apiKey || '').trim()
     this.model = (model || '').trim()
-    const url = baseURL || baseUrl || 'https://api.anthropic.com'
-    this.baseURL = resolveDockerHostUrl(url.trim().replace(/\/+$/, ''))
+    const url = normalizeProviderBaseUrl('anthropic', baseURL || baseUrl)
+    this.baseURL = resolveDockerHostUrl(url)
     this.fetch = fetchFn
     this.connectTimeoutMs =
       connectTimeoutMs ??
-      (Settings.aiAssist?.requestTimeoutSeconds ?? 180) * 1000
+      defaultConnectMs()
     this.streamIdleTimeoutMs =
       streamIdleTimeoutMs ??
-      (Settings.aiAssist?.streamIdleSeconds ?? 0) * 1000
+      defaultIdleMs()
     this.reasoningEffort = reasoningEffortFor('anthropic', reasoningEffort)
     this.thinking = thinkingFor(thinking)
   }
 
-  async listModels({ signal } = {}) {
+  /**
+   * api.anthropic.com takes x-api-key. Compatible endpoints such as Ollama
+   * cloud (https://ollama.com) reject it alone and want a bearer token, so
+   * any other host gets both.
+   */
+  headers(extra = {}) {
     const headers = {
       'x-api-key': this.apiKey,
       'anthropic-version': '2023-06-01',
+      ...extra,
     }
+    if (this.apiKey && !isOfficialHost(this.baseURL, 'api.anthropic.com')) {
+      headers.authorization = `Bearer ${this.apiKey}`
+    }
+    return headers
+  }
+
+  /**
+   * Exact counts are asked on any base URL of this type but Ollama's, which
+   * has no count endpoint and keeps the estimate: a gateway that routes the
+   * count endpoint answers, and one that does not is marked unsupported on
+   * first failure (see AiAssistContextUsage).
+   */
+  get exactCountsSupported() {
+    return !isOllamaHost(this.baseURL)
+  }
+
+  /**
+   * The input tokens the API counts for these parts, sent with a one-word user
+   * turn so the caller can take that base count away.
+   */
+  async countTokens({ system = '', tools = [], signal } = {}) {
+    const body = {
+      model: this.model,
+      messages: [{ role: 'user', content: 'x' }],
+    }
+    if (system) body.system = system
+    if (tools.length) body.tools = tools.map(t => toolWireSpec('anthropic', t))
+    const res = await fetchWithRetry(
+      `${this.baseURL}/v1/messages/count_tokens`,
+      {
+        method: 'POST',
+        headers: this.headers({ 'content-type': 'application/json' }),
+        body: JSON.stringify(body),
+        signal,
+        providerRequest: true,
+      },
+      { fetchFn: this.fetch, policy: resolveRetryPolicy('inline') }
+    )
+    if (!res.ok) throw await countReplyError('Anthropic count API', res)
+    const count = Number((await readJsonReply(res))?.input_tokens)
+    if (!Number.isFinite(count)) {
+      throw new ProviderError('Anthropic count API gave no count', {
+        code: 'providerError',
+      })
+    }
+    return count
+  }
+
+  async listModels({ signal } = {}) {
+    const headers = this.headers()
     const models = []
     let cursor = null
     for (let page = 0; page < 10; page++) {
@@ -1003,9 +1235,7 @@ class AnthropicServerClient {
     let wireTools = undefined
     if (tools?.length) {
       wireTools = tools.map((t, index) => ({
-        name: t.name,
-        description: t.description,
-        input_schema: sanitizeToolSchema(t.parameters),
+        ...toolWireSpec('anthropic', t),
         ...(cacheHints?.cacheTools && index === tools.length - 1
           ? { cache_control: ephemeral }
           : {}),
@@ -1031,16 +1261,12 @@ class AnthropicServerClient {
         `${this.baseURL}/v1/messages`,
         {
           method: 'POST',
-          headers: {
-            'x-api-key': this.apiKey,
-            'anthropic-version': '2023-06-01',
-            'content-type': 'application/json',
-          },
+          headers: this.headers({ 'content-type': 'application/json' }),
           body: JSON.stringify(payload),
           signal: timeouts.signal,
           providerRequest: true,
         },
-        { fetchFn: this.fetch }
+        { fetchFn: this.fetch, maxRetries: 0 }
       )
     } catch (err) {
       timeouts.checkAbortReason()
@@ -1055,16 +1281,23 @@ class AnthropicServerClient {
         res.status === 401 || res.status === 403
           ? 'providerAuth'
           : 'providerError'
+      const retry = httpRetryFields(res)
       try {
         const body = await readJsonReply(res)
         if (body?.error?.message) msg = body.error.message
         if (body?.error?.type === 'authentication_error') code = 'providerAuth'
       } catch {}
-      throw new ProviderError(msg, { status: res.status, code })
+      throw new ProviderError(msg, {
+        status: res.status,
+        code,
+        ...retry,
+      })
     }
 
     let activeTool = null
     let truncated = false
+    // message_start carries the input counts, message_delta the output count
+    let reported = null
     try {
       timeouts.resetIdleTimer()
       for await (const data of parseSseLines(res.body, () =>
@@ -1079,6 +1312,12 @@ class AnthropicServerClient {
           continue
         }
 
+        if (parsed.type === 'message_start') {
+          reported = { ...reported, ...parsed.message?.usage }
+        } else if (parsed.type === 'message_delta' && parsed.usage) {
+          reported = { ...reported, ...parsed.usage }
+        }
+
         if (parsed.type === 'error') {
           throw new ProviderError(
             parsed.error?.message || 'Anthropic stream error',
@@ -1087,7 +1326,7 @@ class AnthropicServerClient {
                 parsed.error?.type === 'authentication_error'
                   ? 'providerAuth'
                   : 'providerError',
-              status: parsed.error?.code ? 500 : undefined,
+              status: streamErrorStatus(parsed.error?.type),
             }
           )
         }
@@ -1151,6 +1390,15 @@ class AnthropicServerClient {
       }
     }
 
+    if (reported) {
+      yield* usageChunks({
+        inputTokens: reported.input_tokens,
+        outputTokens: reported.output_tokens,
+        cacheReadTokens: reported.cache_read_input_tokens,
+        cacheCreationTokens: reported.cache_creation_input_tokens,
+      })
+    }
+
     if (truncated) yield { type: 'stop', reason: 'max_tokens' }
   }
 }
@@ -1160,11 +1408,7 @@ class AnthropicServerClient {
  * and local servers reject or mishandle fields they do not know.
  */
 export function isOfficialOpenAiUrl(url) {
-  try {
-    return new URL(url).hostname === 'api.openai.com'
-  } catch {
-    return false
-  }
+  return isOfficialHost(url, 'api.openai.com')
 }
 
 /** Groups requests for OpenAI's cache routing without sending the raw key. */
@@ -1189,15 +1433,15 @@ export class OpenAiServerClient {
   } = {}) {
     this.apiKey = (apiKey || '').trim()
     this.model = (model || '').trim()
-    const url = baseURL || baseUrl || 'https://api.openai.com'
-    this.baseURL = resolveDockerHostUrl(url.trim().replace(/\/+$/, ''))
+    const url = normalizeProviderBaseUrl('openai', baseURL || baseUrl)
+    this.baseURL = resolveDockerHostUrl(url)
     this.fetch = fetchFn
     this.connectTimeoutMs =
       connectTimeoutMs ??
-      (Settings.aiAssist?.requestTimeoutSeconds ?? 180) * 1000
+      defaultConnectMs()
     this.streamIdleTimeoutMs =
       streamIdleTimeoutMs ??
-      (Settings.aiAssist?.streamIdleSeconds ?? 0) * 1000
+      defaultIdleMs()
     this.reasoningEffort = reasoningEffortFor('openai', reasoningEffort)
   }
 
@@ -1208,21 +1452,13 @@ export class OpenAiServerClient {
     }
   }
 
+  // baseURL is normalized in the constructor: it always ends in /v1
   _getChatEndpoint() {
-    const base = this.baseURL.replace(/\/+$/, '')
-    if (base.endsWith('/chat/completions')) return base
-    if (base.endsWith('/v1') || base.includes('/openai'))
-      return `${base}/chat/completions`
-    return `${base}/v1/chat/completions`
+    return `${this.baseURL}/chat/completions`
   }
 
   _getModelsEndpoint() {
-    const base = this.baseURL
-      .replace(/\/+$/, '')
-      .replace(/\/chat\/completions$/, '')
-    if (base.endsWith('/v1') || base.includes('/openai'))
-      return `${base}/models`
-    return `${base}/v1/models`
+    return `${this.baseURL}/models`
   }
 
   async listModels({ signal } = {}) {
@@ -1345,6 +1581,9 @@ export class OpenAiServerClient {
         ? { max_completion_tokens: maxTokens }
         : { max_tokens: maxTokens }),
       stream: true,
+      // The usage arrives in a chunk after the finish reason. Compatible
+      // servers may not know the field, so only OpenAI itself gets it.
+      ...(official ? { stream_options: { include_usage: true } } : {}),
       ...(this.reasoningEffort
         ? { reasoning_effort: this.reasoningEffort }
         : {}),
@@ -1354,14 +1593,7 @@ export class OpenAiServerClient {
     }
 
     if (tools?.length) {
-      payload.tools = tools.map(t => ({
-        type: 'function',
-        function: {
-          name: t.name,
-          description: t.description,
-          parameters: sanitizeToolSchema(t.parameters),
-        },
-      }))
+      payload.tools = tools.map(t => toolWireSpec('openai', t))
     }
 
     let res
@@ -1375,7 +1607,7 @@ export class OpenAiServerClient {
           signal: timeouts.signal,
           providerRequest: true,
         },
-        { fetchFn: this.fetch }
+        { fetchFn: this.fetch, maxRetries: 0 }
       )
     } catch (err) {
       timeouts.checkAbortReason()
@@ -1387,8 +1619,11 @@ export class OpenAiServerClient {
     if (!res.ok) throw await openAiError(res)
 
     const pendingToolCalls = new Map()
+    // wire index -> the call in pendingToolCalls open at that index
+    const openToolCalls = new Map()
     const thinkParser = new StreamingThinkParser()
     let truncated = false
+    let reported = null
 
     try {
       timeouts.resetIdleTimer()
@@ -1403,6 +1638,8 @@ export class OpenAiServerClient {
         } catch {
           continue
         }
+
+        if (parsed.usage) reported = parsed.usage
 
         const choice = parsed.choices?.[0]
         const delta = choice?.delta
@@ -1424,15 +1661,15 @@ export class OpenAiServerClient {
 
         if (delta?.tool_calls) {
           for (const tc of delta.tool_calls) {
+            // Ollama's /v1 gives every parallel call index 0, told apart only
+            // by id: a new id at a used index is a new call, not more of it
             const index = tc.index ?? 0
-            if (!pendingToolCalls.has(index)) {
-              pendingToolCalls.set(index, {
-                id: tc.id,
-                name: tc.function?.name || '',
-                rawArgs: '',
-              })
+            let curr = openToolCalls.get(index)
+            if (!curr || (tc.id && curr.id && tc.id !== curr.id)) {
+              curr = { id: tc.id, name: tc.function?.name || '', rawArgs: '' }
+              openToolCalls.set(index, curr)
+              pendingToolCalls.set(pendingToolCalls.size, curr)
             }
-            const curr = pendingToolCalls.get(index)
             if (tc.id) curr.id = tc.id
             if (tc.function?.name) curr.name = tc.function.name
             if (tc.function?.arguments) curr.rawArgs += tc.function.arguments
@@ -1441,7 +1678,8 @@ export class OpenAiServerClient {
 
         if (choice?.finish_reason) {
           if (choice.finish_reason === 'length') truncated = true
-          break
+          // Read on to [DONE] when usage was asked for: it follows this chunk
+          if (!official) break
         }
       }
     } catch (err) {
@@ -1465,6 +1703,17 @@ export class OpenAiServerClient {
       }
     }
 
+    if (reported) {
+      // prompt_tokens includes the cached part, which is reported on its own
+      const cached = Number(reported.prompt_tokens_details?.cached_tokens) || 0
+      yield* usageChunks({
+        inputTokens: Math.max(0, (Number(reported.prompt_tokens) || 0) - cached),
+        outputTokens: reported.completion_tokens,
+        cacheReadTokens: cached,
+        cacheCreationTokens: 0,
+      })
+    }
+
     if (truncated) yield { type: 'stop', reason: 'max_tokens' }
   }
 }
@@ -1474,7 +1723,7 @@ export class OpenAiServerClient {
  * resolution; the field name follows the generateContent REST shape and is not
  * yet confirmed against the live API (see AiAssistImagePolicy.mjs).
  */
-export function geminiImagePart(image) {
+function geminiImagePart(image) {
   const part = { inlineData: { mimeType: image.mediaType, data: image.data } }
   if (image.mediaResolution) {
     part.mediaResolution = { level: 'MEDIA_RESOLUTION_HIGH' }
@@ -1572,6 +1821,13 @@ export function toGeminiContents(messages) {
   return contents
 }
 
+/** A Gemini model id as a URL path segment, without its `models/` prefix. */
+function geminiModelSegment(model) {
+  return encodeURIComponent(model.replace(/^models\//, ''))
+    .replace(/\(/g, '%28')
+    .replace(/\)/g, '%29')
+}
+
 /**
  * Google Gemini native REST API (v1beta) client.
  * Calls `POST /models/{model}:streamGenerateContent?alt=sse` directly with native
@@ -1591,23 +1847,64 @@ export class GoogleServerClient {
   } = {}) {
     this.apiKey = (apiKey || '').trim()
     this.model = (model || 'gemini-2.0-flash').trim()
-    const defaultUrl = 'https://generativelanguage.googleapis.com/v1beta'
-    const url = baseURL || baseUrl || defaultUrl
-    this.baseURL = resolveDockerHostUrl(
-      url
-        .trim()
-        .replace(/\/+$/, '')
-        .replace(/\/openai\/?$/, '')
-    )
+    const url = normalizeProviderBaseUrl('google', baseURL || baseUrl)
+    this.baseURL = resolveDockerHostUrl(url)
     this.fetch = fetchFn
     this.connectTimeoutMs =
       connectTimeoutMs ??
-      (Settings.aiAssist?.requestTimeoutSeconds ?? 180) * 1000
+      defaultConnectMs()
     this.streamIdleTimeoutMs =
       streamIdleTimeoutMs ??
-      (Settings.aiAssist?.streamIdleSeconds ?? 0) * 1000
+      defaultIdleMs()
     this.reasoningEffort = reasoningEffortFor('google', reasoningEffort)
     this.thinking = thinkingFor(thinking)
+  }
+
+  /** Exact counts are asked on any base URL of this type (see the Anthropic client). */
+  get exactCountsSupported() {
+    return true
+  }
+
+  /**
+   * The total tokens the API counts for these parts, sent with a one-word user
+   * turn so the caller can take that base count away.
+   */
+  async countTokens({ system = '', tools = [], signal } = {}) {
+    const model = this.model.replace(/^models\//, '')
+    const generateContentRequest = {
+      model: `models/${model}`,
+      contents: [{ role: 'user', parts: [{ text: 'x' }] }],
+    }
+    if (system) {
+      generateContentRequest.systemInstruction = { parts: [{ text: system }] }
+    }
+    if (tools.length) {
+      generateContentRequest.tools = [
+        { functionDeclarations: tools.map(t => toolWireSpec('google', t)) },
+      ]
+    }
+    const res = await fetchWithRetry(
+      `${this.baseURL}/models/${geminiModelSegment(this.model)}:countTokens`,
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-goog-api-key': this.apiKey,
+        },
+        body: JSON.stringify({ generateContentRequest }),
+        signal,
+        providerRequest: true,
+      },
+      { fetchFn: this.fetch, policy: resolveRetryPolicy('inline') }
+    )
+    if (!res.ok) throw await countReplyError('Google count API', res)
+    const count = Number((await readJsonReply(res))?.totalTokens)
+    if (!Number.isFinite(count)) {
+      throw new ProviderError('Google count API gave no count', {
+        code: 'providerError',
+      })
+    }
+    return count
   }
 
   async listModels({ signal } = {}) {
@@ -1648,9 +1945,7 @@ export class GoogleServerClient {
       idleMs: this.streamIdleTimeoutMs,
     })
 
-    const cleanModel = encodeURIComponent(this.model.replace(/^models\//, ''))
-      .replace(/\(/g, '%28')
-      .replace(/\)/g, '%29')
+    const cleanModel = geminiModelSegment(this.model)
     const url = `${this.baseURL}/models/${cleanModel}:streamGenerateContent?alt=sse`
 
     const contents = toGeminiContents(messages)
@@ -1691,18 +1986,7 @@ export class GoogleServerClient {
     if (tools?.length) {
       payload.tools = [
         {
-          functionDeclarations: tools.map(t => {
-            // Gemini rejects an object schema with no properties, so a
-            // no-argument tool must omit `parameters` rather than send `{}`.
-            const parameters = sanitizeToolSchema(t.parameters, {
-              emptyObject: 'omit',
-            })
-            return {
-              name: t.name,
-              description: t.description,
-              ...(parameters ? { parameters } : {}),
-            }
-          }),
+          functionDeclarations: tools.map(t => toolWireSpec('google', t)),
         },
       ]
     }
@@ -1723,7 +2007,7 @@ export class GoogleServerClient {
           signal: timeouts.signal,
           providerRequest: true,
         },
-        { fetchFn: this.fetch }
+        { fetchFn: this.fetch, maxRetries: 0 }
       )
     } catch (err) {
       timeouts.checkAbortReason()
@@ -1738,6 +2022,7 @@ export class GoogleServerClient {
         res.status === 401 || res.status === 403
           ? 'providerAuth'
           : 'providerError'
+      const retry = httpRetryFields(res)
       try {
         const body = await readJsonReply(res)
         if (body?.error?.message) msg = body.error.message
@@ -1748,12 +2033,13 @@ export class GoogleServerClient {
           code = 'providerAuth'
         }
       } catch {}
-      throw new ProviderError(msg, { status: res.status, code })
+      throw new ProviderError(msg, { status: res.status, code, ...retry })
     }
 
     const thinkParser = new StreamingThinkParser()
     let toolCallIndex = 0
     let truncated = false
+    let reported = null
 
     try {
       timeouts.resetIdleTimer()
@@ -1774,9 +2060,19 @@ export class GoogleServerClient {
             typeof parsed.error === 'string'
               ? parsed.error
               : parsed.error.message || 'Gemini error',
-            { code: 'providerError' }
+            {
+              code: 'providerError',
+              // Google's error body carries the HTTP status as a number
+              status:
+                typeof parsed.error?.code === 'number'
+                  ? parsed.error.code
+                  : undefined,
+            }
           )
         }
+
+        // Counted on every chunk, the last one to carry it wins
+        if (parsed.usageMetadata) reported = parsed.usageMetadata
 
         const candidate = parsed.candidates?.[0]
         const parts = candidate?.content?.parts
@@ -1822,6 +2118,21 @@ export class GoogleServerClient {
       yield item
     }
 
+    if (reported) {
+      // promptTokenCount includes the cached part; thoughts bill as output
+      const cached = Number(reported.cachedContentTokenCount) || 0
+      yield* usageChunks({
+        inputTokens: Math.max(
+          0,
+          (Number(reported.promptTokenCount) || 0) - cached
+        ),
+        outputTokens:
+          (Number(reported.candidatesTokenCount) || 0) +
+          (Number(reported.thoughtsTokenCount) || 0),
+        cacheReadTokens: cached,
+      })
+    }
+
     if (truncated) yield { type: 'stop', reason: 'max_tokens' }
   }
 }
@@ -1858,20 +2169,15 @@ export class OllamaServerClient {
   } = {}) {
     this.apiKey = (apiKey || '').trim()
     this.model = (model || '').trim()
-    const rawUrl = baseURL || baseUrl || 'http://localhost:11434'
-    const url = rawUrl
-      .trim()
-      .replace(/\/+$/, '')
-      .replace(/\/v1$/, '')
-      .replace(/\/+$/, '')
+    const url = normalizeProviderBaseUrl('ollama', baseURL || baseUrl)
     this.baseURL = resolveDockerHostUrl(url)
     this.fetch = fetchFn
     this.connectTimeoutMs =
       connectTimeoutMs ??
-      (Settings.aiAssist?.requestTimeoutSeconds ?? 180) * 1000
+      defaultConnectMs()
     this.streamIdleTimeoutMs =
       streamIdleTimeoutMs ??
-      (Settings.aiAssist?.streamIdleSeconds ?? 0) * 1000
+      defaultIdleMs()
     this.reasoningEffort = reasoningEffortFor('ollama', reasoningEffort)
     this.thinking = thinkingFor(thinking)
   }
@@ -1919,14 +2225,7 @@ export class OllamaServerClient {
     })
 
     const wireMessages = toOllamaMessages(system, messages)
-    const wireTools = tools?.map(tool => ({
-      type: 'function',
-      function: {
-        name: tool.name,
-        description: tool.description,
-        parameters: sanitizeToolSchema(tool.parameters),
-      },
-    }))
+    const wireTools = tools?.map(tool => toolWireSpec('ollama', tool))
 
     const thinkKey = `${this.baseURL}|${this.model}`
     const numCtx =
@@ -1964,7 +2263,7 @@ export class OllamaServerClient {
             signal: timeouts.signal,
             providerRequest: true,
           },
-          { fetchFn: this.fetch }
+          { fetchFn: this.fetch, maxRetries: 0 }
         )
       } catch (err) {
         timeouts.checkAbortReason()
@@ -1982,11 +2281,13 @@ export class OllamaServerClient {
     try {
       res = await send()
       if (!res.ok && body.think !== undefined) {
+        const retry = httpRetryFields(res)
         const message = await ollamaErrorMessage(res)
         if (!/does not support thinking/i.test(message)) {
           throw new ProviderError(message, {
             status: res.status,
             code: 'providerError',
+            ...retry,
           })
         }
         ollamaThinkUnsupported.add(thinkKey)
@@ -1998,15 +2299,18 @@ export class OllamaServerClient {
     }
 
     if (!res.ok) {
+      const retry = httpRetryFields(res)
       throw new ProviderError(await ollamaErrorMessage(res), {
         status: res.status,
         code: 'providerError',
+        ...retry,
       })
     }
 
     const pendingToolCalls = new Map()
     const thinkParser = new StreamingThinkParser()
     let truncated = false
+    let reported = null
 
     try {
       timeouts.resetIdleTimer()
@@ -2030,6 +2334,9 @@ export class OllamaServerClient {
             { code: 'providerError' }
           )
         }
+
+        // The done chunk carries the counts, and may have no message
+        if (parsed.done) reported = parsed
 
         const msg = parsed.message
         if (!msg) continue
@@ -2087,26 +2394,40 @@ export class OllamaServerClient {
       }
     }
 
+    if (reported) {
+      // prompt_eval_count leaves out the prefix Ollama served from its
+      // KV cache, so the input count is a floor
+      yield* usageChunks({
+        inputTokens: reported.prompt_eval_count,
+        outputTokens: reported.eval_count,
+        partialInput: true,
+      })
+    }
+
     if (truncated) yield { type: 'stop', reason: 'max_tokens' }
   }
 }
 
 export function createProviderClient(settings) {
-  const url = settings?.baseUrl || settings?.baseURL
-  if (url) {
-    validateSafeProviderBaseUrl(url)
+  const type = settings?.type
+  const rawUrl = settings?.baseUrl || settings?.baseURL
+  const normalizedUrl = normalizeProviderBaseUrl(type, rawUrl)
+  if (normalizedUrl) {
+    validateSafeProviderBaseUrl(normalizedUrl)
+  }
+  const normalizedSettings = {
+    ...settings,
+    baseUrl: normalizedUrl,
+    baseURL: normalizedUrl,
   }
   if (settings.type === 'anthropic') {
-    return new AnthropicServerClient(settings)
+    return new AnthropicServerClient(normalizedSettings)
   }
   if (settings.type === 'ollama') {
-    return new OllamaServerClient(settings)
+    return new OllamaServerClient(normalizedSettings)
   }
   if (settings.type === 'google') {
-    return new GoogleServerClient(settings)
+    return new GoogleServerClient(normalizedSettings)
   }
-  return new OpenAiServerClient({
-    ...settings,
-    baseUrl: settings.baseUrl || settings.baseURL || 'https://api.openai.com',
-  })
+  return new OpenAiServerClient(normalizedSettings)
 }

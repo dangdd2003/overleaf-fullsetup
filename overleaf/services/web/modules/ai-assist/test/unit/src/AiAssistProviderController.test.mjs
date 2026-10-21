@@ -3,10 +3,8 @@ import { expect } from 'chai'
 import sinon from 'sinon'
 import { EventEmitter } from 'node:events'
 import { AiAssistProviderController } from '../../../app/src/AiAssistProviderController.mjs'
-import {
-  createProviderClient,
-  ProviderError,
-} from '../../../app/src/AiAssistProviders.mjs'
+import { createProviderClient } from '../../../app/src/AiAssistProviders.mjs'
+import { ProviderError } from '../../../app/src/AiAssistErrors.mjs'
 
 function fakeRes() {
   const res = new EventEmitter()
@@ -72,6 +70,27 @@ describe('AiAssistProviderController', function () {
     expect(res.body).to.deep.equal({
       models: [{ id: 'qwen3:8b', label: 'qwen3:8b' }],
     })
+  })
+
+  it('normalizes OpenAI baseUrl to end with /v1 when listing models', async function () {
+    const settings = {
+      type: 'openai',
+      baseUrl: 'https://api.openai.com',
+      apiKey: 'k',
+      model: 'gpt-4o',
+    }
+    const client = {
+      listModels: sinon.stub().resolves([{ id: 'gpt-4o', label: 'GPT-4o' }]),
+    }
+    const clientFactory = sinon.stub().returns(client)
+    const controller = new AiAssistProviderController({ clientFactory })
+    const res = fakeRes()
+
+    await controller.listModels({ body: { providerSettings: settings } }, res)
+
+    expect(clientFactory.firstCall.args[0].baseUrl).to.equal(
+      'https://api.openai.com/v1'
+    )
   })
 
   it('rejects requests without provider settings', async function () {
@@ -430,6 +449,87 @@ describe('AiAssistProviderController', function () {
     expect(lines.at(-1)).to.deep.equal({
       type: 'error',
       error: { code: 'network', message: 'Could not reach Ollama' },
+    })
+  })
+
+  describe('retries', function () {
+    const request = {
+      messages: [{ role: 'user', content: 'hi' }],
+      maxTokens: 10,
+    }
+
+    it('retries a failure before any content and shows a retrying line', async function () {
+      let calls = 0
+      const streamChat = async function* () {
+        calls++
+        if (calls === 1) {
+          throw new ProviderError('Service unavailable', { status: 503 })
+        }
+        yield { type: 'text', text: 'ok' }
+      }
+      const controller = new AiAssistProviderController({
+        clientFactory: () => ({ streamChat }),
+      })
+      const res = fakeRes()
+
+      await controller.chat({ body: { providerSettings: settings, request } }, res)
+
+      const lines = res.written.map(line => JSON.parse(line))
+      expect(calls).to.equal(2)
+      expect(lines[0]).to.include({
+        type: 'retrying',
+        attempt: 1,
+        maxRetries: 10,
+        message: 'Server error (503)',
+        status: 503,
+      })
+      expect(lines.slice(1)).to.deep.equal([
+        { type: 'text', text: 'ok' },
+        { type: 'done' },
+      ])
+    })
+
+    it('does not retry once content has reached the page', async function () {
+      let calls = 0
+      const streamChat = async function* () {
+        calls++
+        yield { type: 'text', text: 'partial' }
+        throw new ProviderError('Service unavailable', { status: 503 })
+      }
+      const controller = new AiAssistProviderController({
+        clientFactory: () => ({ streamChat }),
+      })
+      const res = fakeRes()
+
+      await controller.chat({ body: { providerSettings: settings, request } }, res)
+
+      const lines = res.written.map(line => JSON.parse(line))
+      expect(calls).to.equal(1)
+      expect(lines.map(line => line.type)).to.deep.equal(['text', 'error'])
+    })
+
+    it('uses the background policy for editor requests unless asked otherwise', async function () {
+      let calls = 0
+      const streamChat = async function* () {
+        calls++
+        if (calls <= 3) throw new ProviderError('busy', { status: 503 })
+        yield { type: 'text', text: 'ok' }
+      }
+      const controller = new AiAssistProviderController({
+        clientFactory: () => ({ streamChat }),
+      })
+      const res = fakeRes()
+
+      await controller.editorText(
+        { body: { providerSettings: settings, request } },
+        res
+      )
+
+      // Background allows three retries: four tries in all
+      expect(calls).to.equal(4)
+      expect(res.written.map(line => JSON.parse(line)).at(-1)).to.deep.equal({
+        type: 'done',
+      })
     })
   })
 

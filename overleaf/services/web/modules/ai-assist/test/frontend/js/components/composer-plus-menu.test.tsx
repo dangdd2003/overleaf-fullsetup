@@ -6,6 +6,7 @@ import fetchMock from 'fetch-mock'
 import {
   ComposerPlusMenu,
   ComposerPlusMenuProps,
+  submenuAnchor,
 } from '../../../../frontend/js/features/ai-assist/components/agent/composer-plus-menu'
 import {
   readDisabledConnectors,
@@ -48,6 +49,64 @@ function mockConnectors(connectors: ConnectorView[]) {
     meta: { redirectUri: 'https://overleaf.example.com/cb', clientMetadataUrl: null },
   })
 }
+
+describe('submenuAnchor', function () {
+  function rect(x: number, y: number, width: number, height: number) {
+    return {
+      x,
+      y,
+      width,
+      height,
+      top: y,
+      left: x,
+      right: x + width,
+      bottom: y + height,
+    } as DOMRect
+  }
+
+  it('spans the width and height of the menu it opens from, so it lines up with it', function () {
+    const menu = document.createElement('div')
+    menu.className = 'ai-assist-plus-menu'
+    const row = document.createElement('button')
+    menu.appendChild(row)
+    document.body.appendChild(menu)
+
+    // The menu is wider and taller than the row that opens the flyout
+    menu.getBoundingClientRect = () => rect(100, 500, 210, 104)
+    row.getBoundingClientRect = () => rect(108, 560, 120, 24)
+
+    const anchor = submenuAnchor(row)
+    const r = anchor.getBoundingClientRect()
+
+    // The menu's horizontal extent, so the flyout starts at the menu's edge
+    expect(r.x).to.equal(100)
+    expect(r.width).to.equal(210)
+    expect(r.left).to.equal(100)
+    expect(r.right).to.equal(310)
+
+    // The menu's vertical extent, so the flyout lines up with the whole menu
+    expect(r.y).to.equal(500)
+    expect(r.height).to.equal(104)
+    expect(r.top).to.equal(500)
+    expect(r.bottom).to.equal(604)
+
+    document.body.removeChild(menu)
+  })
+
+  it('falls back to the row when there is no menu around it', function () {
+    const row = document.createElement('button')
+    document.body.appendChild(row)
+    row.getBoundingClientRect = () => rect(108, 560, 120, 24)
+
+    const r = submenuAnchor(row).getBoundingClientRect()
+
+    expect(r.x).to.equal(108)
+    expect(r.width).to.equal(120)
+    expect(r.y).to.equal(560)
+
+    document.body.removeChild(row)
+  })
+})
 
 describe('ComposerPlusMenu', function () {
   const sandbox = sinon.createSandbox()
@@ -205,14 +264,24 @@ describe('ComposerPlusMenu', function () {
       ).to.be.true
     })
 
-    it('opens on hover after a short delay', async function () {
+    it('does not open on hover', async function () {
       renderMenu({ isOpen: true })
 
       fireEvent.mouseEnter(connectorsItem())
+      await new Promise(resolve => setTimeout(resolve, 250))
 
-      await waitFor(() =>
-        expect(connectorsItem().getAttribute('aria-expanded')).to.equal('true')
-      )
+      expect(connectorsItem().getAttribute('aria-expanded')).to.equal('false')
+      expect(screen.queryByRole('menu', { name: 'Connectors' })).to.be.null
+    })
+
+    it('closes on a second click of the Connectors item', function () {
+      renderMenu({ isOpen: true })
+      openWithClick()
+
+      fireEvent.click(connectorsItem())
+
+      expect(connectorsItem().getAttribute('aria-expanded')).to.equal('false')
+      expect(screen.queryByRole('menu', { name: 'Connectors' })).to.be.null
     })
 
     it('closes on ArrowLeft and returns focus to the Connectors item', function () {
@@ -320,7 +389,7 @@ describe('ComposerPlusMenu', function () {
       expect(rowFor('Zotero').getAttribute('aria-checked')).to.equal('false')
     })
 
-    it('shows a muted empty state when no connector is connected', async function () {
+    it('shows a muted empty state with a separator when no connector is connected', async function () {
       fetchMock.removeRoutes()
       mockConnectors([makeConnector('conn-3', 'Pending One', 'needs_auth')])
       renderMenu({ isOpen: true })
@@ -330,58 +399,75 @@ describe('ComposerPlusMenu', function () {
         screen.getByText('No connectors configured')
       )
       expect(screen.queryAllByRole('menuitemcheckbox')).to.have.lengthOf(0)
+      const separator = document.querySelector('.ai-assist-plus-submenu-separator')
+      expect(separator).to.exist
+    })
+
+    it('renders a separator between Manage connectors and the connector rows', async function () {
+      renderMenu({ isOpen: true })
+      openWithClick()
+
+      await waitFor(() => screen.getByText('GitHub Docs'))
+      const separator = document.querySelector('.ai-assist-plus-submenu-separator')
+      expect(separator).to.exist
+      // Verify separator is positioned after Manage connectors button
+      const manageBtn = screen.getByText('Manage connectors').closest('button')!
+      expect(manageBtn.nextElementSibling).to.equal(separator)
+    })
+
+    it('renders a fetched favicon for connectors that have a valid url', async function () {
+      renderMenu({ isOpen: true })
+      openWithClick()
+
+      await waitFor(() => screen.getByText('GitHub Docs'))
+      const githubRow = rowFor('GitHub Docs')
+      const img = githubRow.querySelector<HTMLImageElement>('img.ai-assist-plus-connector-icon')
+      expect(img).to.exist
+      expect(img?.src).to.include('/ai-assist/connectors/conn-1/icon')
+    })
+
+    it('falls back to the connector glyph when the icon fails to load', async function () {
+      renderMenu({ isOpen: true })
+      openWithClick()
+
+      await waitFor(() => screen.getByText('GitHub Docs'))
+      const githubRow = rowFor('GitHub Docs')
+      const img = githubRow.querySelector<HTMLImageElement>('img.ai-assist-plus-connector-icon')!
+      expect(img).to.exist
+
+      fireEvent.error(img)
+
+      await waitFor(() => {
+        expect(githubRow.querySelector('img.ai-assist-plus-connector-icon')).to.be.null
+        expect(githubRow.querySelector('.ai-assist-plus-menu-icon svg')).to.exist
+      })
+    })
+
+    it('scrolls Manage connectors and the rows as one body, with no height cap of its own', async function () {
+      renderMenu({ isOpen: true })
+      const submenu = openWithClick()
+      await waitFor(() => screen.getByText('GitHub Docs'))
+
+      expect(submenu.style.maxHeight).to.equal('')
+      const body = submenu.querySelector('.ai-assist-plus-submenu-body')!
+      expect(body.contains(screen.getByText('Manage connectors'))).to.be.true
+      expect(body.contains(rowFor('GitHub Docs'))).to.be.true
     })
 
     describe('placement', function () {
-      const originalRect = Element.prototype.getBoundingClientRect
-
-      function stubRects(
-        menu: { left: number; right: number },
-        submenu: { width: number; right: number }
-      ) {
-        sandbox
-          .stub(Element.prototype, 'getBoundingClientRect')
-          .callsFake(function (this: Element) {
-            if (this.classList.contains('ai-assist-plus-submenu')) {
-              const left = submenu.right - submenu.width
-              return { left, right: submenu.right, width: submenu.width } as DOMRect
-            }
-            if (this.classList.contains('ai-assist-plus-menu')) {
-              return {
-                left: menu.left,
-                right: menu.right,
-                width: menu.right - menu.left,
-              } as DOMRect
-            }
-            return originalRect.call(this)
-          })
-      }
-
-      it('opens to the right when there is room', function () {
-        stubRects({ left: 300, right: 500 }, { width: 200, right: 704 })
+      it('is a fixed box that reports the side it opened to', async function () {
         renderMenu({ isOpen: true })
-        openWithClick()
+        const submenu = openWithClick()
 
-        const submenu = screen.getByRole('menu', { name: 'Connectors' })
-        expect(submenu.className).not.to.include('ai-assist-plus-submenu--')
-      })
-
-      it('flips to the left when the right side overflows', function () {
-        stubRects({ left: 300, right: 500 }, { width: 200, right: 1100 })
-        renderMenu({ isOpen: true })
-        openWithClick()
-
-        const submenu = screen.getByRole('menu', { name: 'Connectors' })
-        expect(submenu.className).to.include('ai-assist-plus-submenu--left')
-      })
-
-      it('drops below when neither side fits', function () {
-        stubRects({ left: 100, right: 300 }, { width: 200, right: 1100 })
-        renderMenu({ isOpen: true })
-        openWithClick()
-
-        const submenu = screen.getByRole('menu', { name: 'Connectors' })
-        expect(submenu.className).to.include('ai-assist-plus-submenu--below')
+        expect(submenu.style.position).to.equal('fixed')
+        expect(submenu.className).to.equal('ai-assist-plus-submenu')
+        // Placed once the floating box has measured itself
+        await waitFor(() => expect(submenu.style.visibility).to.equal(''))
+        expect(submenu.getAttribute('data-placement')).to.be.oneOf([
+          'right',
+          'left',
+          'bottom',
+        ])
       })
     })
   })

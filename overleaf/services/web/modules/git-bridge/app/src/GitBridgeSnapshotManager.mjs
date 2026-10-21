@@ -4,10 +4,12 @@ import UserGetter from '../../../../app/src/Features/User/UserGetter.mjs'
 import DocstoreManager from '../../../../app/src/Features/Docstore/DocstoreManager.mjs'
 import DocumentUpdaterHandler from '../../../../app/src/Features/DocumentUpdater/DocumentUpdaterHandler.mjs'
 import EditorController from '../../../../app/src/Features/Editor/EditorController.mjs'
+import HistoryManager from '../../../../app/src/Features/History/HistoryManager.mjs'
 import GitBridgeFileTokenManager from './GitBridgeFileTokenManager.mjs'
 import Settings from '@overleaf/settings'
 import logger from '@overleaf/logger'
-import { fetchJson, fetchNothing } from '@overleaf/fetch-utils'
+import { fetchJson, fetchNothing, RequestFailedError } from '@overleaf/fetch-utils'
+import { Snapshot } from 'overleaf-editor-core'
 import { db, ObjectId } from '../../../../app/src/infrastructure/mongodb.mjs'
 import fsPromises from 'node:fs/promises'
 import path from 'node:path'
@@ -63,6 +65,103 @@ async function _getUser(userId, projection) {
     })
   }
   return null
+}
+
+/**
+ * Link git-bridge fetches for a current binary file. The token is minted per
+ * file and expires after an hour.
+ */
+function _fileLink(baseUrl, projectId, fileId) {
+  // Git Bridge binary file endpoint. git-bridge fetches this URL itself with an
+  // unauthenticated GET, so the URL carries a short-lived token scoped to this
+  // project + file. The parameter must be named `token` for git-bridge's
+  // resource cache to strip it from its cache keys.
+  let url = `${baseUrl}/api/v0/docs/${projectId}/file/${fileId}`
+  const token = GitBridgeFileTokenManager.createFileToken(projectId, fileId)
+  if (token) {
+    url += `?token=${encodeURIComponent(token)}`
+  }
+  return url
+}
+
+/**
+ * Link git-bridge fetches for a binary file by content hash, used for files in
+ * an older version that have no current copy. Same token rules as _fileLink.
+ */
+function _blobLink(baseUrl, projectId, hash) {
+  let url = `${baseUrl}/api/v0/docs/${projectId}/blob/${hash}`
+  const token = GitBridgeFileTokenManager.createBlobToken(projectId, hash)
+  if (token) {
+    url += `?token=${encodeURIComponent(token)}`
+  }
+  return url
+}
+
+/** Maps the content hash of each current binary file to its file id. */
+function _currentFileIdsByHash(folder, map = new Map()) {
+  for (const file of folder?.fileRefs || []) {
+    if (file?._id && file.hash && !map.has(file.hash)) {
+      map.set(file.hash, file._id.toString())
+    }
+  }
+  for (const subFolder of folder?.folders || []) {
+    _currentFileIdsByHash(subFolder, map)
+  }
+  return map
+}
+
+/**
+ * The project tree at an older version, read from history-v1. Text files are
+ * content in srcs. Binary files are atts: a current file with the same hash
+ * gives its existing link, otherwise the blob is served by hash.
+ *
+ * @returns {Promise<{srcs: Array, atts: Array}|null>} null if history has no
+ *   such version
+ */
+async function _getSnapshotFromHistory(projectId, versionId, baseUrl, project) {
+  let raw
+  try {
+    raw = await HistoryManager.promises.getContentAtVersion(
+      projectId,
+      versionId
+    )
+  } catch (err) {
+    if (
+      err.message?.includes('does not have a history id') ||
+      (err instanceof RequestFailedError &&
+        [400, 404, 422].includes(err.response?.status))
+    ) {
+      logger.debug(
+        { projectId, versionId },
+        'version not found in project-history for snapshot'
+      )
+      return null
+    }
+    throw err
+  }
+  const snapshot = Snapshot.fromRaw(raw)
+  const currentFileIds = _currentFileIdsByHash(project.rootFolder?.[0])
+
+  const srcs = []
+  const atts = []
+  for (const pathname of snapshot.getFilePathnames().sort()) {
+    const file = snapshot.getFile(pathname)
+    const content = file.getContent()
+    if (file.isEditable() && typeof content === 'string') {
+      srcs.push([content, pathname])
+      continue
+    }
+    const hash = file.getHash()
+    if (!hash) {
+      throw new Error(`${pathname} in version ${versionId} has no content hash`)
+    }
+    const fileId = currentFileIds.get(hash)
+    const url = fileId
+      ? _fileLink(baseUrl, projectId, fileId)
+      : _blobLink(baseUrl, projectId, hash)
+    atts.push([url, pathname])
+  }
+  return { srcs, atts }
 }
 
 const GitBridgeSnapshotManager = {
@@ -280,6 +379,10 @@ const GitBridgeSnapshotManager = {
   },
 
   /**
+   * The project tree at versionId. The latest version is read from the live
+   * project; an older one comes from project-history. Returns null if the
+   * project or the version does not exist.
+   *
    * @param {string} projectId
    * @param {number} versionId
    * @param {string} baseUrl the web origin git-bridge can reach this process at
@@ -289,6 +392,7 @@ const GitBridgeSnapshotManager = {
     if (!baseUrl) {
       throw new Error('getSnapshotForVersion needs the base URL for file links')
     }
+    if (!Number.isInteger(versionId) || versionId < 0) return null
     const docInfo = await this.getDoc(projectId)
     if (!docInfo) return null
 
@@ -315,6 +419,12 @@ const GitBridgeSnapshotManager = {
       rootFolder: 1,
     })
     if (!project) return null
+
+    // An older version that history cannot resolve returns null. Serving the
+    // current tree in its place would import today's content as that version.
+    if (versionId !== docInfo.latestVerId) {
+      return _getSnapshotFromHistory(projectId, versionId, baseUrl, project)
+    }
 
     const srcs = []
     const atts = []
@@ -384,20 +494,7 @@ const GitBridgeSnapshotManager = {
       for (const file of folder.fileRefs || []) {
         if (!file?._id) continue
         const filePath = currentPath ? `${currentPath}/${file.name}` : file.name
-        // Git Bridge binary file endpoint. git-bridge fetches this URL itself
-        // with an unauthenticated GET, so the URL carries a short-lived token
-        // scoped to this project + file. The parameter must be named `token`
-        // for git-bridge's resource cache to strip it from its cache keys.
-        const fileId = file._id.toString()
-        const token = GitBridgeFileTokenManager.createFileToken(
-          projectId.toString(),
-          fileId
-        )
-        let fileUrl = `${baseUrl}/api/v0/docs/${projectId}/file/${fileId}`
-        if (token) {
-          fileUrl += `?token=${encodeURIComponent(token)}`
-        }
-        atts.push([fileUrl, filePath])
+        atts.push([_fileLink(baseUrl, projectId, file._id.toString()), filePath])
       }
       for (const subFolder of folder.folders || []) {
         const subPath = currentPath
@@ -430,6 +527,32 @@ const GitBridgeSnapshotManager = {
     return { valid: true }
   },
 
+  /**
+   * Cheap checks on a push's file list, done before the push is accepted.
+   * Returns the reason the push is refused, or null.
+   *
+   * `files` must be an array: a missing list would be read as "no files", and
+   * every project entity would then be deleted as removed from git.
+   *
+   * @param {unknown} files
+   * @returns {string|null}
+   */
+  validatePushFiles(files) {
+    if (!Array.isArray(files)) {
+      return 'files must be an array'
+    }
+    for (const file of files) {
+      const rawPath = file && typeof file === 'object' ? file.name || file.path : ''
+      if (typeof rawPath !== 'string' || !rawPath) {
+        return 'every file needs a name'
+      }
+      if (file.url && !isGitBridgeUrl(file.url)) {
+        return `file ${rawPath} is not served by git-bridge`
+      }
+    }
+    return null
+  },
+
   async processPush(projectId, user, files, postbackUrl) {
     const userId = typeof user === 'object' && user !== null ? user._id : user
     // The postback is sent only to git-bridge. Any other URL is dropped.
@@ -448,14 +571,11 @@ const GitBridgeSnapshotManager = {
     const tmpDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'git-push-'))
 
     try {
-      // Refuse the whole push before any change is made if a file URL does not
-      // point at git-bridge.
-      for (const file of files || []) {
-        if (file.url && !isGitBridgeUrl(file.url)) {
-          throw new Error(
-            `file ${file.name || file.path} is not served by git-bridge`
-          )
-        }
+      // Refuse the whole push before any change is made if the file list is
+      // malformed or a file URL does not point at git-bridge.
+      const pushError = this.validatePushFiles(files)
+      if (pushError) {
+        throw new Error(pushError)
       }
 
       // Collect incoming file paths
@@ -605,10 +725,26 @@ const GitBridgeSnapshotManager = {
         )
       }
 
+      // git-bridge sends files only, never folders. A folder that holds a pushed
+      // file must stay, or deleting it would also delete that file.
+      const keptFolderPaths = new Set(['/'])
+      for (const filePath of incomingFilePaths) {
+        for (
+          let dir = path.dirname(filePath);
+          !keptFolderPaths.has(dir);
+          dir = path.dirname(dir)
+        ) {
+          keptFolderPaths.add(dir)
+        }
+      }
+
       // 3. Delete files/folders removed from git (deeper paths first)
       existingPaths.sort((a, b) => b.length - a.length)
       for (const existingPath of existingPaths) {
-        if (!incomingFilePaths.has(existingPath)) {
+        if (
+          !incomingFilePaths.has(existingPath) &&
+          !keptFolderPaths.has(existingPath)
+        ) {
           if (EditorController.promises?.deleteEntityWithPath) {
             await EditorController.promises
               .deleteEntityWithPath(projectId, existingPath, source, userId)

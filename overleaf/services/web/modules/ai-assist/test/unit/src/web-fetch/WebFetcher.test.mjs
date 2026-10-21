@@ -15,7 +15,7 @@ import {
   makeDocument,
 } from '../../../../app/src/web-fetch/document.mjs'
 import { webError } from '../../../../app/src/web-fetch/util.mjs'
-import { ProviderError } from '../../../../app/src/AiAssistProviders.mjs'
+import { ProviderError } from '../../../../app/src/AiAssistErrors.mjs'
 import { WebRouter } from '../../../../app/src/web-fetch/routing.mjs'
 import { clearHostMemory } from '../../../../app/src/web-fetch/host-memory.mjs'
 import {

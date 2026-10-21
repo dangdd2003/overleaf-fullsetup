@@ -10,6 +10,9 @@ import {
 // The editor's own colour picker only produces #RRGGBB values.
 const COLOR_REGEX = /^#[a-fA-F0-9]{6}$/
 const OBJECT_ID_REGEX = /^[0-9a-f]{24}$/i
+// The upstream TagsHandler rejects longer names with a plain Error (a 502), so
+// the limit is checked here first and reported as a validation error.
+const MAX_TAG_NAME_LENGTH = 50
 const PROJECT_IDS_PROBLEM =
   'projectIds must be a non-empty array of project id strings'
 
@@ -33,6 +36,11 @@ function parseName(value) {
   if (typeof value !== 'string') return { problem: 'name must be a string' }
   const name = value.trim()
   if (!name) return { problem: 'name must not be empty' }
+  if (name.length > MAX_TAG_NAME_LENGTH) {
+    return {
+      problem: `name must be at most ${MAX_TAG_NAME_LENGTH} characters`,
+    }
+  }
   return { name }
 }
 

@@ -1,4 +1,5 @@
 import Settings from '@overleaf/settings'
+import logger from '@overleaf/logger'
 import Errors from '../../../../app/src/Features/Errors/Errors.js'
 import ProjectGetter from '../../../../app/src/Features/Project/ProjectGetter.mjs'
 import ProjectCreationHandler from '../../../../app/src/Features/Project/ProjectCreationHandler.mjs'
@@ -303,6 +304,27 @@ async function listProjects(req, res) {
   })
 }
 
+/**
+ * Delete a project that failed part-way through creation. Returns false when
+ * the delete itself fails, so the caller can report the project id instead.
+ */
+async function discardHalfCreatedProject(projectId, userId, ipAddress) {
+  try {
+    await ProjectDeleter.promises.deleteProject(projectId, {
+      deleterUser: { _id: userId },
+      ipAddress,
+      deletedReason: DeletedProjectReasons.USER,
+    })
+    return true
+  } catch (err) {
+    logger.error(
+      { err, projectId, mcpUserId: userId },
+      'failed to remove half-created mcp project'
+    )
+    return false
+  }
+}
+
 async function createProject(req, res) {
   const { name, template = 'blank', mainTex, initialFiles } = req.body || {}
   if (!name || typeof name !== 'string') {
@@ -363,32 +385,55 @@ async function createProject(req, res) {
     )
   }
 
-  // mainTex is applied last, so it replaces a main.tex given in initialFiles
-  // or created by the template.
-  const files = [...(initialFiles || [])]
-  if (mainTex != null) files.push({ path: 'main.tex', content: mainTex })
   const filesCreated = []
-  for (const f of files) {
-    const path = normalisePath(f.path)
-    await EditorController.promises.upsertDocWithPath(
-      project._id,
-      path,
-      String(f.content ?? '').split('\n'),
-      'mcp',
-      userId
-    )
-    filesCreated.push(path)
-  }
-
-  // An empty project has no root document; adopt main.tex when it exists.
-  const tree = await loadTree(project._id)
-  let rootDoc = findDocById(tree, project.rootDoc_id)
-  if (!rootDoc) {
-    const mainTexDoc = tree.docs.find(d => d.path === '/main.tex')
-    if (mainTexDoc) {
-      await EditorController.promises.setRootDoc(project._id, mainTexDoc.id)
-      rootDoc = mainTexDoc
+  let rootDoc
+  try {
+    // mainTex is applied last, so it replaces a main.tex given in initialFiles
+    // or created by the template.
+    const files = [...(initialFiles || [])]
+    if (mainTex != null) files.push({ path: 'main.tex', content: mainTex })
+    for (const f of files) {
+      const path = normalisePath(f.path)
+      await EditorController.promises.upsertDocWithPath(
+        project._id,
+        path,
+        String(f.content ?? '').split('\n'),
+        'mcp',
+        userId
+      )
+      filesCreated.push(path)
     }
+
+    // An empty project has no root document; adopt main.tex when it exists.
+    const tree = await loadTree(project._id)
+    rootDoc = findDocById(tree, project.rootDoc_id)
+    if (!rootDoc) {
+      const mainTexDoc = tree.docs.find(d => d.path === '/main.tex')
+      if (mainTexDoc) {
+        await EditorController.promises.setRootDoc(project._id, mainTexDoc.id)
+        rootDoc = mainTexDoc
+      }
+    }
+  } catch (err) {
+    // Remove the partial project rather than leave it behind: the client gets
+    // a plain failure, and a retry does not create a second project.
+    const removed = await discardHalfCreatedProject(
+      project._id,
+      userId,
+      req.ip
+    )
+    if (!removed) {
+      return McpErrors.send(
+        res,
+        McpErrors.CODES.UPSTREAM,
+        'the project was created but could not be completed or removed',
+        {
+          hint: 'Delete the project with delete_project using details.projectId.',
+          details: { projectId: project._id.toString() },
+        }
+      )
+    }
+    throw err
   }
 
   res.json({

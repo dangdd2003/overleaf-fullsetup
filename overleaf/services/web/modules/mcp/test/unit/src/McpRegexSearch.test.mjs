@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { regexSearchLines } from '../../../app/src/McpRegexSearch.mjs'
+import { regexSearchLines, MAX_CONCURRENT_SEARCHES } from '../../../app/src/McpRegexSearch.mjs'
 
 describe('regexSearchLines', () => {
   it('returns zero-based document and line indexes of matching lines', async () => {
@@ -77,5 +77,37 @@ describe('regexSearchLines', () => {
       limit: 1,
     })
     expect(hits).toEqual([{ doc: 0, line: 199999 }])
+  })
+
+  it('refuses a search beyond the concurrent-search cap with SearchBusyError', async () => {
+    const controller = new AbortController()
+    // Catastrophic patterns keep their workers busy until the signal aborts.
+    const running = Array.from({ length: MAX_CONCURRENT_SEARCHES }, () =>
+      regexSearchLines({
+        query: '^(a+)+$',
+        caseSensitive: true,
+        docs: [[`${'a'.repeat(40)}!`]],
+        limit: 1,
+        signal: controller.signal,
+      }).catch(e => e)
+    )
+    const err = await regexSearchLines({
+      query: 'a',
+      caseSensitive: true,
+      docs: [['a']],
+      limit: 1,
+    }).catch(e => e)
+    expect(err.name).toBe('SearchBusyError')
+    controller.abort()
+    const outcomes = await Promise.all(running)
+    expect(outcomes.every(e => e.name === 'AbortError')).toBe(true)
+    // The slots are free again once the running searches have ended.
+    const hits = await regexSearchLines({
+      query: 'a',
+      caseSensitive: true,
+      docs: [['a']],
+      limit: 1,
+    })
+    expect(hits).toEqual([{ doc: 0, line: 0 }])
   })
 })

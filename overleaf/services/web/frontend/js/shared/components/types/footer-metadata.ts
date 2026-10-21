@@ -12,6 +12,7 @@ export type FooterMetadata = {
   showThinFooter: boolean
   translatedLanguages: { [key: string]: string }
   showPoweredBy?: boolean
+  showLegal?: boolean
   subdomainLang?: SubdomainLang
   leftItems?: FooterItem[]
   rightItems?: FooterItem[]

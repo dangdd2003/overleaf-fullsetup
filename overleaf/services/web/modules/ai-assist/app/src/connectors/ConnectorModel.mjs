@@ -93,6 +93,17 @@ export const ConnectorSchema = new Schema(
       instructions: String,
       capabilities: Schema.Types.Mixed,
     },
+    // Icons the server declared in its initialize result, sanitized by
+    // ConnectorIcons.mjs; the icon route reads them, the list does not.
+    serverIcons: [
+      {
+        _id: false,
+        src: String,
+        mimeType: String,
+        sizes: [String],
+        theme: String,
+      },
+    ],
     tools: [
       {
         _id: false,

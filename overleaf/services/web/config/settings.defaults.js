@@ -1262,6 +1262,7 @@ module.exports = {
     'collaboration',
     'ai-assist',
     'api-docs',
+    'legal',
   ],
   viewIncludes: {},
 

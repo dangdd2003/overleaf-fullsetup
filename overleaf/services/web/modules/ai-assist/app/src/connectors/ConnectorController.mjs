@@ -1,5 +1,10 @@
 import ConnectorService from './ConnectorService.mjs'
 import { clientMetadataUrl, redirectUri, siteUrl } from './McpOAuth.mjs'
+import { createConnectorIconHandler } from './ConnectorIcons.mjs'
+
+const connectorIcon = createConnectorIconHandler({
+  loadConnector: (id, userId) => ConnectorService.iconSource(id, userId),
+})
 
 function escapeHtml(text) {
   return String(text).replace(
@@ -229,6 +234,8 @@ export const ConnectorController = {
     res.setHeader('Content-Type', 'text/html; charset=utf-8')
     res.send(html)
   },
+
+  icon: connectorIcon,
 
   clientMetadata(req, res) {
     res.json({

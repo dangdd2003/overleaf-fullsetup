@@ -1,410 +1,383 @@
-import { useEffect, useState } from 'react'
+import {
+  type ReactNode,
+  type RefObject,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
+import classNames from 'classnames'
 import { getJSON } from '@/infrastructure/fetch-json'
-import OLPageContentCard from '@/shared/components/ol/ol-page-content-card'
-import OLRow from '@/shared/components/ol/ol-row'
-import OLCol from '@/shared/components/ol/ol-col'
-import OLBadge from '@/shared/components/ol/ol-badge'
-import OLCard from '@/shared/components/ol/ol-card'
-import OLTable from '@/shared/components/ol/ol-table'
+import { useTranslation } from 'react-i18next'
+import LoadingBranded from '@/shared/components/loading-branded'
+import Notification from '@/shared/components/notification'
+import OLButton from '@/shared/components/ol/ol-button'
+import OLIconButton from '@/shared/components/ol/ol-icon-button'
+import OLTooltip from '@/shared/components/ol/ol-tooltip'
+import MaterialIcon from '@/shared/components/material-icon'
+import DefaultNavbar from '@/shared/components/navbar/default-navbar'
+import Footer from '@/shared/components/footer/footer'
+import CookieBanner from '@/shared/components/cookie-banner'
+import SystemMessages from '@/shared/components/system-messages'
+import overleafLogo from '@/shared/svgs/overleaf-a-ds-solution-mallard.svg'
+import overleafLogoDark from '@/shared/svgs/overleaf-a-ds-solution-mallard-dark.svg'
+import { useActiveOverallTheme } from '@/shared/hooks/use-active-overall-theme'
+import getMeta from '@/utils/meta'
+import useWaitForI18n from '@/shared/hooks/use-wait-for-i18n'
+import useThemedPage from '@/shared/hooks/use-themed-page'
+import { SplitTestProvider } from '@/shared/context/split-test-context'
+import { UserSettingsProvider } from '@/shared/context/user-settings-context'
+import '../../stylesheets/api-docs.scss'
+import ApiDocsSidebar from './api-docs/sidebar'
+import {
+  ApiDocsIntro,
+  ApiDocsOverview,
+  AuthenticationSection,
+} from './api-docs/intro'
+import EndpointSection from './api-docs/endpoint'
+import Description from './api-docs/description'
+import type { OpenApiSpec } from './api-docs/types'
+import {
+  buildSections,
+  listEndpoints,
+  matchesQuery,
+} from './api-docs/spec-utils'
 
-type Schema = {
-  $ref?: string
-  type?: string
-  format?: string
-  description?: string
-  enum?: string[]
-  properties?: Record<string, Schema>
-  required?: string[]
-  items?: Schema
-  allOf?: Schema[]
-}
-
-type Parameter = {
-  name: string
-  in: string
-  required?: boolean
-  description?: string
-  schema?: Schema
-  example?: string
-}
-
-type MediaTypes = Record<string, { schema?: Schema }>
-
-type OpenApiOperation = {
-  summary?: string
-  description?: string
-  tags?: string[]
-  security?: Record<string, string[]>[]
-  parameters?: Parameter[]
-  requestBody?: { required?: boolean; content: MediaTypes }
-  responses?: Record<string, { description?: string; content?: MediaTypes }>
-}
-
-type SecurityScheme = { description?: string; name?: string }
-
-type OpenApiSpec = {
-  info: { title: string; version: string; description?: string }
-  tags?: { name: string; description?: string }[]
-  security?: Record<string, string[]>[]
-  paths: Record<string, Record<string, OpenApiOperation>>
-  components?: {
-    schemas?: Record<string, Schema>
-    securitySchemes?: Record<string, SecurityScheme>
+function scrollToHash() {
+  let id = ''
+  try {
+    id = decodeURIComponent(window.location.hash.slice(1))
+  } catch {
+    return
+  }
+  if (id) {
+    document.getElementById(id)?.scrollIntoView()
   }
 }
 
-type Endpoint = { path: string; method: string; operation: OpenApiOperation }
-
-const METHOD_BADGE_BG: Record<string, string> = {
-  get: 'info',
-  post: 'success',
-  put: 'warning',
-  patch: 'warning',
-  delete: 'danger',
-}
-
-function refName(schema?: Schema) {
-  return schema?.$ref?.split('/').pop()
-}
-
-function resolveSchema(spec: OpenApiSpec, schema?: Schema): Schema {
-  if (!schema) {
-    return {}
-  }
-  const name = refName(schema)
-  if (name) {
-    return resolveSchema(spec, spec.components?.schemas?.[name])
-  }
-  if (schema.allOf) {
-    return schema.allOf
-      .map(part => resolveSchema(spec, part))
-      .reduce<Schema>(
-        (merged, part) => ({
-          ...merged,
-          ...part,
-          properties: { ...merged.properties, ...part.properties },
-          required: [...(merged.required || []), ...(part.required || [])],
-        }),
-        {}
-      )
-  }
-  return schema
-}
-
-function typeLabel(spec: OpenApiSpec, schema?: Schema): string {
-  const name = refName(schema)
-  if (name) {
-    return name
-  }
-  const resolved = resolveSchema(spec, schema)
-  if (resolved.enum) {
-    return resolved.enum.map(value => `"${value}"`).join(' | ')
-  }
-  if (resolved.type === 'array') {
-    return `${typeLabel(spec, resolved.items)}[]`
-  }
-  if (resolved.type === 'string' && resolved.format) {
-    return `string (${resolved.format})`
-  }
-  return resolved.type || 'object'
-}
-
-function exampleValue(
-  spec: OpenApiSpec,
-  schema: Schema | undefined,
-  name: string
-): unknown {
-  const resolved = resolveSchema(spec, schema)
-  if (resolved.enum) {
-    return resolved.enum[0]
-  }
-  switch (resolved.type) {
-    case 'array':
-      return [exampleValue(spec, resolved.items, name)]
-    case 'boolean':
-      return false
-    case 'integer':
-    case 'number':
-      return 0
-    case 'object':
-      return {}
-    default:
-      return `<${name}>`
-  }
-}
-
-function operationSecurity(spec: OpenApiSpec, operation: OpenApiOperation) {
-  return operation.security ?? spec.security ?? []
-}
-
-function buildCurl(spec: OpenApiSpec, endpoint: Endpoint) {
-  const { path, method, operation } = endpoint
-  const args = ['curl']
-  if (method !== 'get') {
-    args.push(`-X ${method.toUpperCase()}`)
-  }
-
-  const query = (operation.parameters || [])
-    .filter(param => param.in === 'query' && param.required)
-    .map(param => `${param.name}=${param.example ?? `{${param.name}}`}`)
-  const url = `$OVERLEAF_URL${path}${query.length ? `?${query.join('&')}` : ''}`
-  args.push(`"${url}"`)
-
-  const [scheme] = Object.keys(operationSecurity(spec, operation)[0] || {})
-  if (scheme === 'sessionAuth') {
-    const cookie = spec.components?.securitySchemes?.sessionAuth?.name
-    args.push(`-H "Cookie: ${cookie}=$OVERLEAF_SESSION"`)
-    if (method !== 'get') {
-      args.push('-H "X-CSRF-Token: $OVERLEAF_CSRF_TOKEN"')
-    }
-  } else if (scheme) {
-    args.push('-H "Authorization: Bearer $OVERLEAF_TOKEN"')
-  }
-
-  const json = operation.requestBody?.content['application/json']?.schema
-  if (operation.requestBody?.required && json) {
-    const resolved = resolveSchema(spec, json)
-    const properties = resolved.properties || {}
-    const names = resolved.required?.length
-      ? resolved.required
-      : Object.keys(properties)
-    const body = Object.fromEntries(
-      names.map(name => [name, exampleValue(spec, properties[name], name)])
-    )
-    args.push('-H "Content-Type: application/json"')
-    args.push(`-d '${JSON.stringify(body)}'`)
-  }
-  return args.join(' \\\n  ')
-}
-
-function groupEndpoints(spec: OpenApiSpec) {
-  const groups = new Map<string, Endpoint[]>()
-  for (const [path, operations] of Object.entries(spec.paths)) {
-    for (const [method, operation] of Object.entries(operations)) {
-      const tag = operation.tags?.[0] || 'Other'
-      groups.set(tag, [...(groups.get(tag) || []), { path, method, operation }])
-    }
-  }
-  const order = (spec.tags || []).map(tag => tag.name)
-  const position = (tag: string) => {
-    const index = order.indexOf(tag)
-    return index === -1 ? order.length : index
-  }
-  return [...groups.entries()].sort(([a], [b]) => position(a) - position(b))
-}
-
-function PropertyTable({
-  spec,
-  schema,
-}: {
-  spec: OpenApiSpec
-  schema?: Schema
-}) {
-  const resolved = resolveSchema(spec, schema)
-  const properties = Object.entries(resolved.properties || {})
-  if (!properties.length) {
-    return <code>{typeLabel(spec, schema)}</code>
-  }
-  return (
-    <OLTable size="sm" responsive>
-      <thead>
-        <tr>
-          <th>Field</th>
-          <th>Type</th>
-          <th>Description</th>
-        </tr>
-      </thead>
-      <tbody>
-        {properties.map(([name, property]) => (
-          <tr key={name}>
-            <td>
-              <code>{name}</code>
-              {resolved.required?.includes(name) && (
-                <span className="text-danger"> *</span>
-              )}
-            </td>
-            <td>
-              <code>{typeLabel(spec, property)}</code>
-            </td>
-            <td>
-              {resolveSchema(spec, property).description ||
-                property.description}
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </OLTable>
-  )
-}
-
-function ParameterTable({
-  spec,
-  parameters,
-}: {
-  spec: OpenApiSpec
-  parameters: Parameter[]
-}) {
-  return (
-    <OLTable size="sm" responsive>
-      <thead>
-        <tr>
-          <th>Name</th>
-          <th>In</th>
-          <th>Type</th>
-          <th>Description</th>
-        </tr>
-      </thead>
-      <tbody>
-        {parameters.map(param => (
-          <tr key={`${param.in} ${param.name}`}>
-            <td>
-              <code>{param.name}</code>
-              {param.required && <span className="text-danger"> *</span>}
-            </td>
-            <td>{param.in}</td>
-            <td>
-              <code>{typeLabel(spec, param.schema)}</code>
-            </td>
-            <td>{param.description}</td>
-          </tr>
-        ))}
-      </tbody>
-    </OLTable>
-  )
-}
-
-function authenticationText(spec: OpenApiSpec, operation: OpenApiOperation) {
-  const [scheme] = Object.keys(operationSecurity(spec, operation)[0] || {})
-  if (!scheme) {
-    return 'None. This endpoint is public.'
-  }
-  return spec.components?.securitySchemes?.[scheme]?.description || scheme
-}
-
-function EndpointCard({
-  spec,
-  endpoint,
-}: {
-  spec: OpenApiSpec
-  endpoint: Endpoint
-}) {
-  const { path, method, operation } = endpoint
-  const requestSchema = Object.values(operation.requestBody?.content || {})[0]
-    ?.schema
-  const responses = Object.entries(operation.responses || {})
-
-  return (
-    <OLCard className="mb-3">
-      {Body => (
-        <Body>
-          <details>
-            <summary>
-              <span className="d-inline-flex align-items-center gap-2">
-                <OLBadge bg={METHOD_BADGE_BG[method] || 'secondary'}>
-                  {method.toUpperCase()}
-                </OLBadge>
-                <code>{path}</code>
-                {operation.summary && <span>{operation.summary}</span>}
-              </span>
-            </summary>
-            <div className="mt-3">
-              {operation.description && <p>{operation.description}</p>}
-              <h4 className="h6">Authentication</h4>
-              <p>{authenticationText(spec, operation)}</p>
-              {!!operation.parameters?.length && (
-                <>
-                  <h4 className="h6">Parameters</h4>
-                  <ParameterTable
-                    spec={spec}
-                    parameters={operation.parameters}
-                  />
-                </>
-              )}
-              {requestSchema && (
-                <>
-                  <h4 className="h6">
-                    Request body
-                    {operation.requestBody?.required ? '' : ' (optional)'}
-                  </h4>
-                  <PropertyTable spec={spec} schema={requestSchema} />
-                </>
-              )}
-              {!!responses.length && (
-                <>
-                  <h4 className="h6">Responses</h4>
-                  {responses.map(([status, response]) => {
-                    const schema = Object.values(response.content || {})[0]
-                      ?.schema
-                    return (
-                      <div key={status} className="mb-2">
-                        <OLBadge
-                          bg={status.startsWith('2') ? 'success' : 'secondary'}
-                        >
-                          {status}
-                        </OLBadge>{' '}
-                        {response.description}
-                        {schema && (
-                          <PropertyTable spec={spec} schema={schema} />
-                        )}
-                      </div>
-                    )
-                  })}
-                </>
-              )}
-              <h4 className="h6">Example</h4>
-              <pre className="mb-0">
-                <code>{buildCurl(spec, endpoint)}</code>
-              </pre>
-            </div>
-          </details>
-        </Body>
-      )}
-    </OLCard>
-  )
-}
-
-function ApiDocsPageRoot() {
-  const [spec, setSpec] = useState<OpenApiSpec | null>(null)
+/**
+ * Id of the anchored block nearest the top of the reading area, so the sidebar
+ * can highlight where the reader is. The reading area is the scroll container
+ * of the page, which sits below the site navbar.
+ */
+function useActiveAnchor(ids: string[], scrollRef: RefObject<HTMLElement>) {
+  const [active, setActive] = useState<string | null>(null)
 
   useEffect(() => {
-    getJSON<OpenApiSpec>('/api/v0/openapi.json').then(setSpec)
-  }, [])
+    const root = scrollRef.current
+    if (!ids.length || !root) {
+      return
+    }
+    // A block linked from the sidebar stays active while it is on screen,
+    // even when the one above it still reaches the top (short endpoints, or
+    // the end of the page where the target can't scroll up to the top)
+    let linked: string | null = null
 
-  if (!spec) {
+    const update = () => {
+      const rootRect = root.getBoundingClientRect()
+      // Just below the scroll-margin-top that anchors land at
+      const line = rootRect.top + 48
+      let current: string | null = null
+      for (const id of ids) {
+        const element = document.getElementById(id)
+        if (!element) {
+          continue
+        }
+        if (element.getBoundingClientRect().top <= line) {
+          current = id
+        } else {
+          break
+        }
+      }
+      if (linked) {
+        const rect = document.getElementById(linked)?.getBoundingClientRect()
+        if (rect && rect.bottom > rootRect.top && rect.top < rootRect.bottom) {
+          current = linked
+        } else {
+          linked = null
+        }
+      }
+      setActive(current ?? ids[0])
+    }
+
+    const onHashChange = () => {
+      let id = ''
+      try {
+        id = decodeURIComponent(window.location.hash.slice(1))
+      } catch {}
+      if (ids.includes(id)) {
+        linked = id
+        setActive(id)
+      }
+    }
+
+    let frame = 0
+    const onScroll = () => {
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(update)
+    }
+
+    onHashChange()
+    update()
+    root.addEventListener('scroll', onScroll, { passive: true })
+    window.addEventListener('hashchange', onHashChange)
+    return () => {
+      cancelAnimationFrame(frame)
+      root.removeEventListener('scroll', onScroll)
+      window.removeEventListener('hashchange', onHashChange)
+    }
+  }, [ids, scrollRef])
+
+  return active
+}
+
+/** Floating button that returns the reading area to the top */
+function BackToTop({ scrollRef }: { scrollRef: RefObject<HTMLElement> }) {
+  const [visible, setVisible] = useState(false)
+
+  useEffect(() => {
+    const root = scrollRef.current
+    if (!root) {
+      return
+    }
+    const onScroll = () => setVisible(root.scrollTop > root.clientHeight)
+    onScroll()
+    root.addEventListener('scroll', onScroll, { passive: true })
+    return () => root.removeEventListener('scroll', onScroll)
+  }, [scrollRef])
+
+  if (!visible) {
     return null
   }
 
-  const descriptions = new Map(
-    (spec.tags || []).map(tag => [tag.name, tag.description])
-  )
-
   return (
-    <div className="container">
-      <OLRow>
-        <OLCol xl={{ span: 10, offset: 1 }}>
-          <OLPageContentCard>
-            <div className="page-header">
-              <h1>{spec.info.title}</h1>
-              {spec.info.description && <p>{spec.info.description}</p>}
-            </div>
-            {groupEndpoints(spec).map(([tag, endpoints]) => (
-              <section key={tag} className="mb-4">
-                <h2 className="h4">{tag}</h2>
-                {descriptions.get(tag) && <p>{descriptions.get(tag)}</p>}
-                {endpoints.map(endpoint => (
-                  <EndpointCard
-                    key={`${endpoint.method} ${endpoint.path}`}
+    <OLTooltip
+      id="api-docs-back-to-top"
+      description="Back to top"
+      overlayProps={{ placement: 'left' }}
+    >
+      <OLIconButton
+        variant="secondary"
+        size="lg"
+        icon="arrow_upward"
+        accessibilityLabel="Back to top"
+        className="api-docs-back-to-top"
+        onClick={() => scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' })}
+      />
+    </OLTooltip>
+  )
+}
+
+export default function ApiDocsPageRoot() {
+  const { isReady } = useWaitForI18n()
+  if (!isReady) {
+    return null
+  }
+  return (
+    <SplitTestProvider>
+      <UserSettingsProvider>
+        <ApiDocsPage />
+      </UserSettingsProvider>
+    </SplitTestProvider>
+  )
+}
+
+function ApiDocsPage() {
+  useThemedPage()
+  const { t } = useTranslation()
+  const navbarProps = getMeta('ol-navbar')
+  const footerProps = getMeta('ol-footer')
+  const activeOverallTheme = useActiveOverallTheme()
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const [spec, setSpec] = useState<OpenApiSpec | null>(null)
+  const [loadFailed, setLoadFailed] = useState(false)
+  const [query, setQuery] = useState('')
+  const [navOpen, setNavOpen] = useState(false)
+  const origin = window.location.origin
+
+  useEffect(() => {
+    let active = true
+    getJSON<OpenApiSpec>('/api/v0/openapi.json')
+      .then(data => {
+        if (active) {
+          setSpec(data)
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setLoadFailed(true)
+        }
+      })
+    return () => {
+      active = false
+    }
+  }, [])
+
+  const endpoints = useMemo(() => (spec ? listEndpoints(spec) : []), [spec])
+  const matching = useMemo(
+    () => endpoints.filter(endpoint => matchesQuery(endpoint, query)),
+    [endpoints, query]
+  )
+  const sections = useMemo(
+    () => (spec ? buildSections(spec, matching) : []),
+    [spec, matching]
+  )
+  const anchorIds = useMemo(
+    () => [
+      'authentication',
+      ...sections.flatMap(section =>
+        section.tags.flatMap(tag => tag.endpoints.map(endpoint => endpoint.id))
+      ),
+    ],
+    [sections]
+  )
+  const activeAnchor = useActiveAnchor(anchorIds, scrollRef)
+
+  // The page renders after the browser has tried the fragment, so scroll again
+  useEffect(() => {
+    if (spec) {
+      scrollToHash()
+    }
+  }, [spec])
+
+  const schemeCount = Object.keys(spec?.components?.securitySchemes || {}).length
+  const hasAuth = schemeCount > 0
+
+  let body: ReactNode
+  if (loadFailed) {
+    body = (
+      <div className="api-docs-state">
+        <Notification
+          type="error"
+          content="The API reference could not be loaded. Try reloading the page."
+        />
+      </div>
+    )
+  } else if (spec) {
+    body = (
+      <>
+        <ApiDocsIntro spec={spec} origin={origin} />
+        {!query.trim() && (
+          <ApiDocsOverview
+            sections={sections}
+            hasAuth={hasAuth}
+            schemeCount={schemeCount}
+          />
+        )}
+        {hasAuth && <AuthenticationSection spec={spec} />}
+
+        {sections.length === 0 && (
+          <div className="api-docs-empty">
+            <MaterialIcon type="search_off" />
+            <p className="api-docs-empty-text">
+              No endpoints match &ldquo;{query.trim()}&rdquo;.
+            </p>
+            <OLButton
+              variant="secondary"
+              size="sm"
+              onClick={() => setQuery('')}
+            >
+              Clear filter
+            </OLButton>
+          </div>
+        )}
+
+        {sections.map(section => (
+          <div key={section.groupName ?? 'all'} className="api-docs-group">
+            {section.groupName && (
+              <p className="api-docs-group-title">{section.groupName}</p>
+            )}
+            {section.tags.map(tag => (
+              <section key={tag.anchor} id={tag.anchor} className="api-docs-tag">
+                <header className="api-docs-tag-header">
+                  <h2 className="api-docs-tag-title">{tag.name}</h2>
+                  <Description
+                    text={tag.description}
+                    className="api-docs-tag-description"
+                  />
+                </header>
+                {tag.endpoints.map(endpoint => (
+                  <EndpointSection
+                    key={endpoint.id}
                     spec={spec}
                     endpoint={endpoint}
+                    origin={origin}
                   />
                 ))}
               </section>
             ))}
-          </OLPageContentCard>
-        </OLCol>
-      </OLRow>
+          </div>
+        ))}
+      </>
+    )
+  }
+
+  // Same branded loading screen as the editor
+  if (!spec && !loadFailed) {
+    return (
+      <div className="loading-screen api-docs-loading-screen">
+        <LoadingBranded loadProgress={20} label={t('loading')} />
+      </div>
+    )
+  }
+
+  return (
+    <div
+      className={classNames(
+        'project-ds-nav-page',
+        'website-redesign',
+        'api-docs-page',
+        { 'is-nav-open': navOpen }
+      )}
+    >
+      <SystemMessages />
+      <DefaultNavbar
+        {...navbarProps}
+        customLogo={
+          activeOverallTheme === 'dark'
+            ? navbarProps.customLogoDark
+            : navbarProps.customLogo
+        }
+        overleafLogo={
+          activeOverallTheme === 'dark' ? overleafLogoDark : overleafLogo
+        }
+        showCloseIcon
+      />
+      <div className="project-list-wrapper">
+        {spec && (
+          <ApiDocsSidebar
+            sections={sections}
+            query={query}
+            onQueryChange={setQuery}
+            matchCount={matching.length}
+            totalCount={endpoints.length}
+            hasAuth={hasAuth}
+            activeAnchor={activeAnchor}
+            onNavigate={() => setNavOpen(false)}
+          />
+        )}
+        <div className="project-ds-nav-content-and-messages">
+          <div className="project-ds-nav-content" ref={scrollRef}>
+            {spec && <BackToTop scrollRef={scrollRef} />}
+            {spec && (
+              <button
+                type="button"
+                className="api-docs-nav-toggle"
+                aria-expanded={navOpen}
+                onClick={() => setNavOpen(open => !open)}
+              >
+                <MaterialIcon type={navOpen ? 'close' : 'menu'} />
+                Browse endpoints
+              </button>
+            )}
+            <main id="main-content" tabIndex={-1} className="api-docs api-docs-main">
+              {body}
+            </main>
+            <Footer {...footerProps} />
+          </div>
+          <CookieBanner />
+        </div>
+      </div>
     </div>
   )
 }
-
-export default ApiDocsPageRoot

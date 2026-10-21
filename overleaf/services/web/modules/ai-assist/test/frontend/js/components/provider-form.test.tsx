@@ -444,4 +444,44 @@ describe('ProviderForm', function () {
       baseUrl: 'https://gateway.example/v1',
     })
   })
+
+  it('hard fixes the ending /v1 when saving or testing OpenAI endpoints', function () {
+    const onSave = sinon.spy()
+    renderForm({
+      initial: { type: 'openai', baseUrl: 'https://api.openai.com', apiKey: 'k', model: 'gpt-4o' },
+      onSave,
+    })
+    fireEvent.submit(screen.getByRole('button', { name: 'Save' }).closest('form')!)
+    expect(onSave.firstCall.args[0].baseUrl).to.equal('https://api.openai.com/v1')
+  })
+
+  it('cleans /v1 from Anthropic compatible endpoint', function () {
+    const onSave = sinon.spy()
+    renderForm({
+      initial: { type: 'anthropic', baseUrl: 'https://api.deepseek.com/v1', apiKey: 'k', model: 'deepseek-chat' },
+      onSave,
+    })
+    fireEvent.submit(screen.getByRole('button', { name: 'Save' }).closest('form')!)
+    expect(onSave.firstCall.args[0].baseUrl).to.equal('https://api.deepseek.com')
+  })
+
+  it('normalizes Google Gemini endpoint to have /v1beta', function () {
+    const onSave = sinon.spy()
+    renderForm({
+      initial: { type: 'google', baseUrl: 'https://generativelanguage.googleapis.com', apiKey: 'k', model: 'gemini-2.0-flash' },
+      onSave,
+    })
+    fireEvent.submit(screen.getByRole('button', { name: 'Save' }).closest('form')!)
+    expect(onSave.firstCall.args[0].baseUrl).to.equal('https://generativelanguage.googleapis.com/v1beta')
+  })
+
+  it('strips /v1 or /api from Ollama endpoint', function () {
+    const onSave = sinon.spy()
+    renderForm({
+      initial: { type: 'ollama', baseUrl: 'http://localhost:11434/v1', apiKey: '', model: 'llama3.2' },
+      onSave,
+    })
+    fireEvent.submit(screen.getByRole('button', { name: 'Save' }).closest('form')!)
+    expect(onSave.firstCall.args[0].baseUrl).to.equal('http://localhost:11434')
+  })
 })

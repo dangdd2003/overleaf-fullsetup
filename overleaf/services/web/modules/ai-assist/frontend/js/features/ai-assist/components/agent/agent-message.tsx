@@ -7,11 +7,13 @@ import {
   Checks,
   ArrowClockwise,
   ArrowCounterClockwise,
+  ArrowUp,
   GitFork,
 } from '@phosphor-icons/react'
 import { TranscriptEntry, AssistantBlock, blocksForEntry } from '../../agent/agent-messages'
 import { WebSources } from '../../agent/web-sources'
 import { MarkdownContent } from './markdown-content'
+import { CompactBoundary } from './compact-boundary'
 import { SubresultGroup, SubresultItem } from './subresult-group'
 import { copyToClipboard } from '../../utils/copy-to-clipboard'
 import { EditedCodeBadge, getFileEditCalls } from './edited-code-badge'
@@ -93,6 +95,8 @@ export type AgentMessageViewProps = {
   webSources?: WebSources
   /** Takes a queued message back into the composer. */
   onTakeBack?: (id: string) => void
+  /** Has the run answer a queued message now, cutting short its reply. */
+  onSendNow?: (id: string) => void
   /** Handler when user prompt text is copied. */
   onCopyPrompt?: (text: string) => void
   /** Handler when assistant markdown response is copied. */
@@ -113,6 +117,11 @@ export type AgentMessageViewProps = {
   onDiffReview?: (entry: TranscriptEntry, path?: string) => void
   /** Callback to jump to edited file in editor. */
   onFileJump?: (path: string, line?: number) => void
+  /**
+   * Before the newest compact boundary: no longer sent to the model, so it
+   * is shown dimmed and offers only Rewind and Copy.
+   */
+  compacted?: boolean
 }
 
 export const AgentMessageView: FC<AgentMessageViewProps> = ({
@@ -123,6 +132,7 @@ export const AgentMessageView: FC<AgentMessageViewProps> = ({
   isRunning = false,
   webSources,
   onTakeBack,
+  onSendNow,
   onCopyPrompt,
   onCopyResponse,
   onRewindPrompt,
@@ -133,6 +143,7 @@ export const AgentMessageView: FC<AgentMessageViewProps> = ({
   isLatestAssistant,
   onDiffReview,
   onFileJump,
+  compacted = false,
 }) => {
   const { t } = useTranslation()
   const { copied, copy } = useCopyFeedback()
@@ -143,11 +154,17 @@ export const AgentMessageView: FC<AgentMessageViewProps> = ({
     <Copy size={14} aria-hidden="true" />
   )
 
+  if (entry.role === 'compact') {
+    return <CompactBoundary entry={entry} />
+  }
+
   if (entry.role === 'user') {
     const [previewImage, setPreviewImage] = useState<{
       src: string
       title: string
     } | null>(null)
+    // Asked to be answered now; stays until the run reads it
+    const [sendingNow, setSendingNow] = useState(false)
     const timeText = formatMessageTime(entry.createdAt, entry.id)
 
     const handleCopyPrompt = () => {
@@ -182,7 +199,9 @@ export const AgentMessageView: FC<AgentMessageViewProps> = ({
     }
 
     return (
-      <div className="ai-assist-user-turn-wrapper">
+      <div
+        className={`ai-assist-user-turn-wrapper${compacted ? ' is-compacted' : ''}`}
+      >
         <div
           className={`ai-assist-message ai-assist-message-user${entry.pending ? ' is-queued' : ''}`}
         >
@@ -256,9 +275,28 @@ export const AgentMessageView: FC<AgentMessageViewProps> = ({
           {entry.pending && (
             <div className="ai-assist-queued-row">
               <span className="ai-assist-queued-label">
-                {t('ai_assist_queued', 'Queued')}
+                {sendingNow
+                  ? t('ai_assist_queued_sending_now', 'Sending now…')
+                  : t('ai_assist_queued', 'Queued')}
               </span>
-              {onTakeBack && (
+              {onSendNow && !sendingNow && (
+                <button
+                  type="button"
+                  className="ai-assist-queued-send-now"
+                  onClick={() => {
+                    setSendingNow(true)
+                    onSendNow(entry.id)
+                  }}
+                  title={t(
+                    'ai_assist_queued_send_now_hint',
+                    'Stop the current reply and have the assistant read this message now'
+                  )}
+                >
+                  <ArrowUp size={12} weight="bold" aria-hidden="true" />
+                  {t('ai_assist_queued_send_now', 'Send now')}
+                </button>
+              )}
+              {onTakeBack && !sendingNow && (
                 <button
                   type="button"
                   className="ai-assist-queued-take-back"
@@ -288,13 +326,15 @@ export const AgentMessageView: FC<AgentMessageViewProps> = ({
               <Checks size={14} weight="bold" aria-hidden="true" />
             </span>
             <div className="ai-assist-msg-actions ai-assist-msg-actions-user">
-              <MessageActionButton
-                id={`fork-prompt-${entry.id}`}
-                label={t('ai_assist_fork_from_prompt', 'Fork conversation from here')}
-                icon={<GitFork size={14} aria-hidden="true" />}
-                onClick={handleFork}
-                disabled={actionsDisabled}
-              />
+              {!compacted && (
+                <MessageActionButton
+                  id={`fork-prompt-${entry.id}`}
+                  label={t('ai_assist_fork_from_prompt', 'Fork conversation from here')}
+                  icon={<GitFork size={14} aria-hidden="true" />}
+                  onClick={handleFork}
+                  disabled={actionsDisabled}
+                />
+              )}
               <MessageActionButton
                 id={`rewind-prompt-${entry.id}`}
                 label={t('ai_assist_rewind', 'Rewind')}
@@ -322,7 +362,7 @@ export const AgentMessageView: FC<AgentMessageViewProps> = ({
   const fileEditCalls = getFileEditCalls(entry)
   const hasEditedCode = fileEditCalls.length > 0
   const markdownText = getAssistantResponseText(entry)
-  const showRegenerate = isLatestAssistant !== false
+  const showRegenerate = isLatestAssistant !== false && !compacted
   const showActions = !isRunning && (!!markdownText || showRegenerate)
 
   const handleCopyResponse = () => {
@@ -344,7 +384,9 @@ export const AgentMessageView: FC<AgentMessageViewProps> = ({
   }
 
   return (
-    <div className="ai-assist-message ai-assist-message-assistant">
+    <div
+      className={`ai-assist-message ai-assist-message-assistant${compacted ? ' is-compacted' : ''}`}
+    >
       {segments.map((segment, idx) => {
         const isLastSegment = idx === segments.length - 1
         const isSegmentLive = isRunning && isLastSegment

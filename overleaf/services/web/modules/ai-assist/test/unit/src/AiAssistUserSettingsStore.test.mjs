@@ -202,4 +202,24 @@ describe('AiAssistUserSettingsStore', function () {
     expect(internal.webSearch.providers.firecrawl.apiKeys).to.deep.equal(['fc-secret-2'])
     expect(internal.webSearch.providers.mcp.bearerToken).to.equal('bearer-secret-3')
   })
+
+  it('normalizes provider baseUrl when sealing user settings', async function () {
+    await store.saveUserSettings(USER_ID, {
+      provider: {
+        type: 'openai',
+        baseUrl: 'https://api.openai.com',
+        apiKey: 'key',
+        model: 'gpt-4o',
+      },
+      fastProvider: {
+        type: 'anthropic',
+        baseUrl: 'https://api.anthropic.com/v1',
+        apiKey: 'key2',
+        model: 'claude-3-5-haiku-20241022',
+      },
+    })
+    const internal = await store.getInternalUserSettings(USER_ID)
+    expect(internal.provider.baseUrl).to.equal('https://api.openai.com/v1')
+    expect(internal.fastProvider.baseUrl).to.equal('https://api.anthropic.com')
+  })
 })
