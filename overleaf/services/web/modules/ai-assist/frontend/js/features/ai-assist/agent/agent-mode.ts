@@ -2,6 +2,10 @@ export type AgentMode = 'manual' | 'acceptEdits' | 'plan'
 
 export const AGENT_MODES: AgentMode[] = ['manual', 'acceptEdits', 'plan']
 
+export function isAgentMode(value: unknown): value is AgentMode {
+  return AGENT_MODES.includes(value as AgentMode)
+}
+
 export function nextMode(mode: AgentMode): AgentMode {
   const idx = AGENT_MODES.indexOf(mode)
   if (idx === -1) return 'manual'

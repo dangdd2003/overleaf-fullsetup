@@ -4,12 +4,7 @@ import { LanguageSupport } from '@codemirror/language'
 import { EditorState } from '@codemirror/state'
 import customLocalStorage from '@/infrastructure/local-storage'
 import { LaTeXLanguage } from '@/features/source-editor/languages/latex/latex-language'
-import {
-  autoSkipReason,
-  completionKind,
-  inComment,
-  trailingFits,
-} from '../../../../frontend/js/features/ai-assist/completion/detect'
+import { detectCompletion } from '../../../../frontend/js/features/ai-assist/completion/detect'
 import {
   forgetInlineSuggestionsPreferences,
   updateInlineSuggestionsPreferences,
@@ -27,13 +22,13 @@ function at(doc: string) {
 
 const kindAt = (doc: string) => {
   const { state, pos } = at(doc)
-  return completionKind(state, pos)
+  return detectCompletion(state, pos, { automatic: false }).kind
 }
 
 /** The reason at the `|`, or null where Automatic may ask. */
 const reasonAt = (doc: string) => {
   const { state, pos } = at(doc)
-  return autoSkipReason(state, pos)
+  return detectCompletion(state, pos, { automatic: true }).reason
 }
 
 describe('completion: detection', function () {
@@ -53,13 +48,13 @@ describe('completion: detection', function () {
   describe('what may follow the cursor on its line', function () {
     it('nothing, closers, the punctuation that ends a clause, a row end or a comment', function () {
       for (const rest of ['', '   ', '}', '} $', ')]', '\\)', '\\]', '} % note', '% note', '.', '$.', '}.', ' \\\\', '} \\\\[2pt]']) {
-        expect(trailingFits(rest), JSON.stringify(rest)).to.equal(true)
+        expect(reasonAt(`${BODY}|${rest}`), JSON.stringify(rest)).to.equal(null)
       }
     })
 
     it('never words: a chat model cannot fill a gap in the middle of the text', function () {
       for (const rest of ['word', ' and more', '\\% of it', '}{x}', ' & b \\\\', '. Next sentence']) {
-        expect(trailingFits(rest), JSON.stringify(rest)).to.equal(false)
+        expect(reasonAt(`${BODY}|${rest}`), JSON.stringify(rest)).to.equal('text after the cursor')
       }
       expect(kindAt('Our |method works')).to.equal(null)
       expect(reasonAt(`${BODY} and | results`)).to.equal('text after the cursor')
@@ -67,11 +62,9 @@ describe('completion: detection', function () {
     })
   })
 
-  it('inComment: after an unescaped %', function () {
-    let { state, pos } = at('Text % note|')
-    expect(inComment(state, pos)).to.equal(true)
-    ;({ state, pos } = at('Cost 5\\% of|'))
-    expect(inComment(state, pos)).to.equal(false)
+  it('a comment: after an unescaped %, where nothing runs', function () {
+    expect(reasonAt('Text % note|')).to.equal('comment')
+    expect(reasonAt('Cost 5\\% of|')).to.not.equal('comment')
     expect(kindAt('Text % note|')).to.equal(null)
   })
 

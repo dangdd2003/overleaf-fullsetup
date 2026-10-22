@@ -26,8 +26,7 @@ describe('language suggestions: cache', function () {
     cache.set('b', { edits: [], rejected: [] })
     cache.get('a')
     cache.set('c', { edits: [], rejected: [] })
-    expect([cache.has('a'), cache.has('b'), cache.has('c')]).to.deep.equal([true, false, true])
-    expect(cache.size).to.equal(2)
+    expect([cache.get('a') !== undefined, cache.get('b') !== undefined, cache.get('c') !== undefined]).to.deep.equal([true, false, true])
   })
 
   it('leaves rejected edits out of what it shows', function () {
@@ -37,7 +36,7 @@ describe('language suggestions: cache', function () {
     expect(cache.visible('k')).to.deep.equal([OTHER])
     expect(cache.visible('missing')).to.equal(undefined)
     cache.reject('missing', [EDIT])
-    expect(cache.has('missing')).to.equal(false)
+    expect(cache.get('missing')).to.equal(undefined)
   })
 
   it('keeps checked sentences in the browser, with the edits dismissed on them', function () {
@@ -54,7 +53,7 @@ describe('language suggestions: cache', function () {
     expect(store.get(PERSIST_KEY).entries).to.have.length(2)
 
     const reloaded = new SuggestionCache(10, storage)
-    expect(reloaded.has('clean')).to.equal(true)
+    expect(reloaded.get('clean') !== undefined).to.equal(true)
     expect(reloaded.get('k')!.edits).to.deep.equal([EDIT])
     expect(reloaded.visible('k')).to.deep.equal([])
   })
@@ -75,6 +74,6 @@ describe('language suggestions: cache', function () {
 
   it('ignores a stored copy it cannot read', function () {
     const cache = new SuggestionCache(10, { getItem: () => ({ v: 9 }), setItem: () => {} })
-    expect(cache.size).to.equal(0)
+    expect(cache.get('k')).to.equal(undefined)
   })
 })

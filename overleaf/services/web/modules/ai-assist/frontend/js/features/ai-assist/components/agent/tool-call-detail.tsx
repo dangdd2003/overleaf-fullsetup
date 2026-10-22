@@ -1,4 +1,4 @@
-import { FC, useState } from 'react'
+import { FC, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ToolCallRecord } from '../../agent/agent-messages'
 import { cleanStoredResult } from '../../agent/conversation-store'
@@ -18,12 +18,11 @@ import {
   FileLink,
   PdfDetailHeader,
   getPdfImages,
+  type TranslateFn,
 } from './pdf-tool-shared'
 import { PdfDiffDetail } from './pdf-diff-detail'
 import { PdfStyleDetail } from './pdf-style-detail'
 import { PdfBlockDetail, PdfHighlightDetail } from './pdf-locate-detail'
-
-export { SiteIcon }
 
 /** The file an edit touched, as Claude Code shows it above the diff. */
 function DiffFileHeader({
@@ -72,6 +71,56 @@ function DiffFileHeader({
           tooltipId={`ai-assist-copy-path-${call.id}`}
           unfilled
         />
+      )}
+    </div>
+  )
+}
+
+function DiffResultView({
+  call,
+  result,
+  args,
+  oldText,
+  newText,
+  startLine,
+}: {
+  call: ToolCallRecord
+  result: any
+  args: any
+  oldText: string
+  newText: string
+  startLine: number
+}) {
+  const { t } = useTranslation()
+  const openFile = useOpenFileInEditor()
+  const isRejected = result?.status === 'rejected'
+  const isCancelled = result?.status === 'stopped'
+
+  return (
+    <div
+      className={`ai-assist-tool-detail-diff ${isRejected ? 'is-rejected' : ''} ${isCancelled ? 'is-cancelled' : ''}`}
+    >
+      <DiffFileHeader
+        call={call}
+        line={startLine}
+        isRejected={isRejected}
+        isCancelled={isCancelled}
+      />
+      <DiffView
+        oldText={oldText}
+        newText={newText}
+        startLine={startLine}
+        path={args.path}
+        onLineClick={line => args.path && openFile(args.path, line)}
+      />
+      {result?.note && (
+        <div className="ai-assist-tool-detail-note ai-assist-tool-detail-rejection">
+          <strong>{t('ai_assist_user_reason', 'User note:')}</strong>{' '}
+          {result.note}
+        </div>
+      )}
+      {result?.message && (
+        <div className="ai-assist-tool-detail-note">{result.message}</div>
       )}
     </div>
   )
@@ -200,25 +249,28 @@ function WebToolError({ call, result }: { call: ToolCallRecord; result: any }) {
           </summary>
           {failure.attempts.length > 0 ? (
             <ul className="ai-assist-web-attempts">
-              {failure.attempts.map(attempt => (
-                <li
-                  key={attempt.route}
-                  className={`ai-assist-web-attempt is-${attempt.kind}`}
-                >
-                  <span className="ai-assist-web-attempt-route">
-                    {attempt.label}
-                  </span>
-                  <span
-                    className="ai-assist-web-attempt-why"
-                    title={attempt.raw}
+              {failure.attempts.map(attempt => {
+                const httpCode = attempt.raw
+                  ? /HTTP \d{3}/.exec(attempt.raw)?.[0]
+                  : undefined
+                return (
+                  <li
+                    key={attempt.route}
+                    className={`ai-assist-web-attempt is-${attempt.kind}`}
                   >
-                    {attempt.summary}
-                    {attempt.raw && /HTTP \d{3}/.test(attempt.raw) && (
-                      <code>{/HTTP \d{3}/.exec(attempt.raw)?.[0]}</code>
-                    )}
-                  </span>
-                </li>
-              ))}
+                    <span className="ai-assist-web-attempt-route">
+                      {attempt.label}
+                    </span>
+                    <span
+                      className="ai-assist-web-attempt-why"
+                      title={attempt.raw}
+                    >
+                      {attempt.summary}
+                      {httpCode && <code>{httpCode}</code>}
+                    </span>
+                  </li>
+                )
+              })}
             </ul>
           ) : (
             <pre className="ai-assist-tool-detail-text">{failure.raw}</pre>
@@ -246,7 +298,7 @@ const ARCHIVE_LABELS: Record<string, [string, string]> = {
   'archive.today': ['archive.today', 'archive.today'],
 }
 
-export type WebFetchNote = { label: string; title: string }
+type WebFetchNote = { label: string; title: string }
 
 /**
  * The notes beside a fetched page: which part, when, and how it was read.
@@ -309,8 +361,6 @@ export function webFetchNotes(result: any): WebFetchNote[] {
   }
   return notes
 }
-
-type TranslateFn = (key: string, opts?: any) => string
 
 export function badBoxesLabel(count: number, t: TranslateFn): string {
   return t('ai_assist_tool_view_pdf_page_bad_boxes', {
@@ -455,22 +505,73 @@ function PdfOverviewPage({
   )
 }
 
-function PdfPageDetail({
-  call,
-  result,
-  args,
-  openFile,
+function PdfPreviewThumbs({
+  images,
+  title,
+  downloadName,
 }: {
-  call: ToolCallRecord
-  result: any
-  args: any
-  openFile: (path: string, line?: number) => void
+  images: Array<{ src: string }>
+  title: string
+  downloadName: string
 }) {
   const { t } = useTranslation()
   const [previewImage, setPreviewImage] = useState<{
     src: string
     title: string
   } | null>(null)
+
+  if (images.length === 0) return null
+
+  return (
+    <>
+      <div className="ai-assist-pdf-image-container">
+        {images.map((img, idx) => (
+          <div
+            key={idx}
+            className="ai-assist-pdf-image-thumb"
+            role="button"
+            tabIndex={0}
+            title={t('ai_assist_click_to_zoom', 'Click to enlarge preview')}
+            onClick={() => setPreviewImage({ src: img.src, title })}
+            onKeyDown={e => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                setPreviewImage({ src: img.src, title })
+              }
+            }}
+          >
+            <img
+              src={img.src}
+              alt={t('ai_assist_tool_pdf_preview_alt', {
+                count: idx + 1,
+                defaultValue: `PDF preview ${idx + 1}`,
+              })}
+            />
+          </div>
+        ))}
+      </div>
+      {previewImage && (
+        <ImageLightbox
+          src={previewImage.src}
+          title={previewImage.title}
+          downloadName={downloadName}
+          isOpen={Boolean(previewImage)}
+          onClose={() => setPreviewImage(null)}
+        />
+      )}
+    </>
+  )
+}
+
+function PdfPageDetail({
+  result,
+  args,
+  openFile,
+}: {
+  result: any
+  args: any
+  openFile: (path: string, line?: number) => void
+}) {
+  const { t } = useTranslation()
 
   const page =
     typeof result?.page === 'number'
@@ -556,35 +657,11 @@ function PdfPageDetail({
         <div className="ai-assist-tool-detail-note">{result.note}</div>
       )}
 
-      {pdfImages.length > 0 && (
-        <div className="ai-assist-pdf-image-container">
-          {pdfImages.map((img, idx) => (
-            <div
-              key={idx}
-              className="ai-assist-pdf-image-thumb"
-              role="button"
-              tabIndex={0}
-              title={t('ai_assist_click_to_zoom', 'Click to enlarge preview')}
-              onClick={() =>
-                setPreviewImage({ src: img.src, title: pageLabel })
-              }
-              onKeyDown={e => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  setPreviewImage({ src: img.src, title: pageLabel })
-                }
-              }}
-            >
-              <img
-                src={img.src}
-                alt={t('ai_assist_tool_pdf_preview_alt', {
-                  count: idx + 1,
-                  defaultValue: `PDF preview ${idx + 1}`,
-                })}
-              />
-            </div>
-          ))}
-        </div>
-      )}
+      <PdfPreviewThumbs
+        images={pdfImages}
+        title={pageLabel}
+        downloadName={`pdf-page-${page}.png`}
+      />
 
       {sourceRanges.length > 0 && (
         <div className="ai-assist-pdf-sources">
@@ -659,49 +736,27 @@ function PdfPageDetail({
         </>
       )}
 
-      {isClean &&
-        boxes.length === 0 &&
-        rows.length === 0 &&
-        !zoomed &&
-        !result?.note && (
-          <div className="ai-assist-tool-detail-success">
-            ✓{' '}
-            {t('ai_assist_tool_pdf_clean_page', {
-              page,
-              defaultValue: `Page ${page} rendered cleanly with no layout issues.`,
-            })}
-          </div>
-        )}
-
-      {previewImage && (
-        <ImageLightbox
-          src={previewImage.src}
-          title={previewImage.title}
-          downloadName={`pdf-page-${page}.png`}
-          isOpen={Boolean(previewImage)}
-          onClose={() => setPreviewImage(null)}
-        />
+      {isClean && rows.length === 0 && !zoomed && !result?.note && (
+        <div className="ai-assist-tool-detail-success">
+          ✓{' '}
+          {t('ai_assist_tool_pdf_clean_page', {
+            page,
+            defaultValue: `Page ${page} rendered cleanly with no layout issues.`,
+          })}
+        </div>
       )}
     </div>
   )
 }
 
 function PdfOverviewDetail({
-  call,
   result,
-  args,
   openFile,
 }: {
-  call: ToolCallRecord
   result: any
-  args: any
   openFile: (path: string, line?: number) => void
 }) {
   const { t } = useTranslation()
-  const [previewImage, setPreviewImage] = useState<{
-    src: string
-    title: string
-  } | null>(null)
 
   const paper = result?.paper ?? {}
   const fonts = result?.fonts ?? {}
@@ -737,35 +792,11 @@ function PdfOverviewDetail({
         parts={headerParts.length > 0 ? headerParts : [overviewTitle]}
       />
 
-      {overviewImages.length > 0 && (
-        <div className="ai-assist-pdf-image-container">
-          {overviewImages.map((img, idx) => (
-            <div
-              key={idx}
-              className="ai-assist-pdf-image-thumb"
-              role="button"
-              tabIndex={0}
-              title={t('ai_assist_click_to_zoom', 'Click to enlarge preview')}
-              onClick={() =>
-                setPreviewImage({ src: img.src, title: overviewTitle })
-              }
-              onKeyDown={e => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  setPreviewImage({ src: img.src, title: overviewTitle })
-                }
-              }}
-            >
-              <img
-                src={img.src}
-                alt={t('ai_assist_tool_pdf_preview_alt', {
-                  count: idx + 1,
-                  defaultValue: `PDF preview ${idx + 1}`,
-                })}
-              />
-            </div>
-          ))}
-        </div>
-      )}
+      <PdfPreviewThumbs
+        images={overviewImages}
+        title={overviewTitle}
+        downloadName="pdf-overview.png"
+      />
 
       {notEmbedded.length > 0 && (
         <div className="ai-assist-pdf-warning">
@@ -801,16 +832,6 @@ function PdfOverviewDetail({
           )}
         </div>
       )}
-
-      {previewImage && (
-        <ImageLightbox
-          src={previewImage.src}
-          title={previewImage.title}
-          downloadName="pdf-overview.png"
-          isOpen={Boolean(previewImage)}
-          onClose={() => setPreviewImage(null)}
-        />
-      )}
     </div>
   )
 }
@@ -818,7 +839,7 @@ function PdfOverviewDetail({
 export const ToolCallDetailView: FC<{ call: ToolCallRecord }> = ({ call }) => {
   const { t } = useTranslation()
   const args = (call.args ?? {}) as any
-  const rawResult = cleanStoredResult(call.result)
+  const rawResult = useMemo(() => cleanStoredResult(call.result), [call.result])
   const result = rawResult as any
   const openFile = useOpenFileInEditor()
 
@@ -905,74 +926,33 @@ export const ToolCallDetailView: FC<{ call: ToolCallRecord }> = ({ call }) => {
     const oldText = args.oldText ?? args.old_text ?? args.old_string ?? ''
     const newText = args.newText ?? args.new_text ?? args.new_string ?? ''
     const startLine =
-      (result as any)?.startLine ?? args?.from ?? args?.startLine ?? 1
-    const isRejected = result?.status === 'rejected'
-    const isCancelled = result?.status === 'stopped'
+      result?.startLine ?? args?.from ?? args?.startLine ?? 1
 
     if (oldText || newText) {
       return (
-        <div
-          className={`ai-assist-tool-detail-diff ${isRejected ? 'is-rejected' : ''} ${isCancelled ? 'is-cancelled' : ''}`}
-        >
-          <DiffFileHeader
-            call={call}
-            line={startLine}
-            isRejected={isRejected}
-            isCancelled={isCancelled}
-          />
-          <DiffView
-            oldText={oldText}
-            newText={newText}
-            startLine={startLine}
-            path={args.path}
-            onLineClick={line => args.path && openFile(args.path, line)}
-          />
-          {result?.note && (
-            <div className="ai-assist-tool-detail-note ai-assist-tool-detail-rejection">
-              <strong>{t('ai_assist_user_reason', 'User note:')}</strong>{' '}
-              {result.note}
-            </div>
-          )}
-          {result?.message && (
-            <div className="ai-assist-tool-detail-note">{result.message}</div>
-          )}
-        </div>
+        <DiffResultView
+          call={call}
+          result={result}
+          args={args}
+          oldText={oldText}
+          newText={newText}
+          startLine={startLine}
+        />
       )
     }
   }
 
   // 3. create_file
   if (call.name === 'create_file') {
-    const content = args.content ?? ''
-    const isRejected = result?.status === 'rejected'
-    const isCancelled = result?.status === 'stopped'
     return (
-      <div
-        className={`ai-assist-tool-detail-diff ${isRejected ? 'is-rejected' : ''} ${isCancelled ? 'is-cancelled' : ''}`}
-      >
-        <DiffFileHeader
-          call={call}
-          line={1}
-          isRejected={isRejected}
-          isCancelled={isCancelled}
-        />
-        <DiffView
-          oldText=""
-          newText={content}
-          startLine={1}
-          path={args.path}
-          onLineClick={line => args.path && openFile(args.path, line)}
-        />
-        {result?.note && (
-          <div className="ai-assist-tool-detail-note ai-assist-tool-detail-rejection">
-            <strong>{t('ai_assist_user_reason', 'User note:')}</strong>{' '}
-            {result.note}
-          </div>
-        )}
-        {result?.message && (
-          <div className="ai-assist-tool-detail-note">{result.message}</div>
-        )}
-      </div>
+      <DiffResultView
+        call={call}
+        result={result}
+        args={args}
+        oldText=""
+        newText={args.content ?? ''}
+        startLine={1}
+      />
     )
   }
 
@@ -989,15 +969,9 @@ export const ToolCallDetailView: FC<{ call: ToolCallRecord }> = ({ call }) => {
         <div className="ai-assist-tool-detail-files">
           {files.map((file: any, idx: number) => (
             <div key={file.path || idx} className="ai-assist-file-row">
-              <span
-                role="button"
-                tabIndex={0}
-                className="ai-assist-file-link"
-                onClick={() => openFile(file.path)}
-                onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && openFile(file.path)}
-              >
+              <FileLink path={file.path} openFile={openFile}>
                 {file.path}
-              </span>
+              </FileLink>
               <span className="ai-assist-file-meta">
                 {file.lines != null
                   ? `${file.lines} lines`
@@ -1123,7 +1097,6 @@ export const ToolCallDetailView: FC<{ call: ToolCallRecord }> = ({ call }) => {
   ) {
     return (
       <PdfPageDetail
-        call={call}
         result={result}
         args={args}
         openFile={openFile}
@@ -1141,9 +1114,7 @@ export const ToolCallDetailView: FC<{ call: ToolCallRecord }> = ({ call }) => {
   ) {
     return (
       <PdfOverviewDetail
-        call={call}
         result={result}
-        args={args}
         openFile={openFile}
       />
     )
@@ -1175,13 +1146,18 @@ export const ToolCallDetailView: FC<{ call: ToolCallRecord }> = ({ call }) => {
     const total =
       typeof result.matchCount === 'number' ? result.matchCount : matches.length
     // The pages the shown matches fall on, as one range
-    const shownPages: number[] = matches
-      .map((match: any) => match?.page)
-      .filter((page: unknown): page is number => typeof page === 'number')
-    const firstPage = Math.min(...shownPages)
-    const lastPage = Math.max(...shownPages)
+    let firstPage = Infinity
+    let lastPage = -Infinity
+    let n = 0
+    for (const match of matches) {
+      if (typeof match?.page === 'number') {
+        if (match.page < firstPage) firstPage = match.page
+        if (match.page > lastPage) lastPage = match.page
+        n++
+      }
+    }
     const pagesLabel =
-      shownPages.length === 0
+      n === 0
         ? undefined
         : firstPage === lastPage
           ? t('ai_assist_tool_pdf_search_page', {
@@ -1260,7 +1236,7 @@ export const ToolCallDetailView: FC<{ call: ToolCallRecord }> = ({ call }) => {
 
   // 6f. diff_compiled_pdf: what each page changed since the build before
   if (call.name === 'diff_compiled_pdf') {
-    return <PdfDiffDetail result={result} args={args} openFile={openFile} />
+    return <PdfDiffDetail result={result} />
   }
 
   // 6g. inspect_compiled_style: the measured style, and how it differs
@@ -1269,7 +1245,7 @@ export const ToolCallDetailView: FC<{ call: ToolCallRecord }> = ({ call }) => {
     result?.style &&
     typeof result.style === 'object'
   ) {
-    return <PdfStyleDetail result={result} openFile={openFile} />
+    return <PdfStyleDetail result={result} />
   }
 
   // 6h. highlight_in_pdf: what was highlighted in the user's viewer
@@ -1427,14 +1403,13 @@ export const ToolCallDetailView: FC<{ call: ToolCallRecord }> = ({ call }) => {
                 </div>
               ))}
             </div>
-          ) : typeof result?.find === 'string' &&
-            (result?.totalMatches === 0 || !hasMatches) ? (
+          ) : typeof result?.find === 'string' ? (
             <div className="ai-assist-web-note">
               No passages found mentioning &quot;{result.find}&quot;.
             </div>
           ) : outputText ? (
             <div className="ai-assist-web-fetch-content">
-              <MarkdownContent content={String(outputText)} baseUrl={url} />
+              <MarkdownContent content={outputText} baseUrl={url} />
             </div>
           ) : (
             <div className="ai-assist-web-note">No content available.</div>
@@ -1678,20 +1653,24 @@ const SETTING_LABELS: Record<string, string> = {
   spellCheckLanguage: 'Spell-check Language',
 }
 
+function list<T = any>(val: unknown): T[] {
+  return Array.isArray(val) ? (val as T[]) : []
+}
+
 function ListAvailableSettingsDetail({ options }: { options: any }) {
   if (!options || typeof options !== 'object') return null
-  const compilers: string[] = options.compilers || []
-  const imageNames: any[] = options.imageNames || []
-  const overallThemes: string[] = options.overallThemes || []
+  const compilers: string[] = list(options.compilers)
+  const imageNames: any[] = list(options.imageNames)
+  const overallThemes: string[] = list(options.overallThemes)
   const editorThemes: string[] = Array.isArray(options.editorThemes)
     ? options.editorThemes.map((t: any) =>
         typeof t === 'string' ? t : t.name
       )
     : []
-  const fontFamilies: any[] = options.fontFamilies || []
-  const editorModes: string[] = options.editorModes || []
-  const lineHeights: string[] = options.lineHeights || []
-  const spellCheckLanguages: any[] = options.spellCheckLanguages || []
+  const fontFamilies: any[] = list(options.fontFamilies)
+  const editorModes: string[] = list(options.editorModes)
+  const lineHeights: string[] = list(options.lineHeights)
+  const spellCheckLanguages: any[] = list(options.spellCheckLanguages)
   const pdfViewers: string[] = options.pdfViewers || ['pdfjs', 'native']
 
   return (

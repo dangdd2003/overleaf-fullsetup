@@ -29,6 +29,25 @@ export function describeStatus(status) {
   return ''
 }
 
+/** The HTTP error for a page that answered with `status`. */
+export function httpStatusError(url, status) {
+  const reason = describeStatus(status)
+  return webError(
+    `${url} returned HTTP ${status}${reason ? `: ${reason}` : ''}.`,
+    { status, kind: 'http' }
+  )
+}
+
+/** Statuses a provider answers with when a key is refused or out of credit. */
+export const KEY_REFUSED_STATUSES = Object.freeze([401, 402, 403])
+/** Tavily adds its key, plan and pay-as-you-go limits, 432 and 433. */
+export const TAVILY_KEY_STATUSES = Object.freeze([401, 402, 403, 432, 433])
+
+/** Whether a content type is a PDF, `application/pdf` or `application/x-pdf`. */
+export function isPdfType(contentType) {
+  return /application\/(?:x-)?pdf/i.test(contentType)
+}
+
 export function collapse(text) {
   return String(text ?? '')
     .replace(/\s+/g, ' ')

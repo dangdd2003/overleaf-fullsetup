@@ -6,26 +6,33 @@ export const PDF_RESULT_HIGHLIGHTS_EVENT = 'aiAssist:pdfResultHighlights'
 /** The colour of a region the AI changed, distinct from the sync highlight. */
 export const CHANGED_BY_AI_COLOR = 'rgba(255, 140, 0, 0.55)'
 
+export type PdfResultHighlightsDetail = {
+  highlights: HighlightData[]
+}
+
+export function isFiniteBox(value: unknown): value is HighlightData {
+  if (!value || typeof value !== 'object') return false
+  const { page, h, v, width, height } = value as Record<string, unknown>
+  return [page, h, v, width, height].every(
+    n => typeof n === 'number' && Number.isFinite(n)
+  )
+}
+
 /** Keeps only well-formed boxes; anything else from a result is ignored. */
 export function parseHighlights(value: unknown): HighlightData[] {
   if (!Array.isArray(value)) return []
   return value.flatMap((item): HighlightData[] => {
-    if (!item || typeof item !== 'object') return []
-    const { page, h, v, width, height } = item as Record<string, unknown>
-    const numbers = [page, h, v, width, height]
-    if (!numbers.every(n => typeof n === 'number' && Number.isFinite(n))) {
-      return []
-    }
-    if ((page as number) < 1 || (width as number) < 0 || (height as number) < 0) {
+    if (!isFiniteBox(item)) return []
+    if (item.page < 1 || item.width < 0 || item.height < 0) {
       return []
     }
     return [
       {
-        page: page as number,
-        h: h as number,
-        v: v as number,
-        width: width as number,
-        height: height as number,
+        page: item.page,
+        h: item.h,
+        v: item.v,
+        width: item.width,
+        height: item.height,
       },
     ]
   })
@@ -42,7 +49,7 @@ export function dispatchPdfResultHighlights(result: unknown): void {
   const highlights = parseHighlights((result as { highlights?: unknown })?.highlights)
   if (highlights.length === 0) return
   window.dispatchEvent(
-    new CustomEvent(PDF_RESULT_HIGHLIGHTS_EVENT, {
+    new CustomEvent<PdfResultHighlightsDetail>(PDF_RESULT_HIGHLIGHTS_EVENT, {
       detail: {
         highlights: highlights.map(box => ({ ...box, color: CHANGED_BY_AI_COLOR })),
       },

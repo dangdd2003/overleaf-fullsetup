@@ -384,11 +384,13 @@ const OPENAPI_SPEC = {
   },
 }
 
+const OPENAPI_JSON = JSON.stringify(OPENAPI_SPEC, null, 2)
+
 const McpOpenApiController = {
   getSpec(req, res) {
     res.setHeader('Cache-Control', 'public, max-age=3600')
     res.setHeader('Content-Type', 'application/json; charset=utf-8')
-    res.send(JSON.stringify(OPENAPI_SPEC, null, 2))
+    res.send(OPENAPI_JSON)
   },
 }
 

@@ -1,4 +1,4 @@
-import { FC, useState } from 'react'
+import { FC, memo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import moment from 'moment'
 import {
@@ -12,7 +12,7 @@ import {
 } from '@phosphor-icons/react'
 import { TranscriptEntry, AssistantBlock, blocksForEntry } from '../../agent/agent-messages'
 import { WebSources } from '../../agent/web-sources'
-import { ApprovalContext } from '../../agent/agent-events'
+import { ApprovalContext, ApprovalDecision } from '../../agent/agent-events'
 import { MarkdownContent } from './markdown-content'
 import { CompactBoundary } from './compact-boundary'
 import { SubresultGroup, SubresultItem } from './subresult-group'
@@ -23,23 +23,19 @@ import OLTooltip from '@/shared/components/ol/ol-tooltip'
 import { ImageLightbox } from './image-lightbox'
 import { suggestCaptureTitle } from '../../pdf/crop'
 
-export { copyToClipboard, EditedCodeBadge }
+export { EditedCodeBadge }
 
-export function formatMessageTime(createdAt?: number, id?: string): string {
+function formatMessageTime(createdAt?: number, id?: string): string {
   let ts = createdAt
   if (!ts && id && id.startsWith('q')) {
     const match = id.match(/^q(\d+)_/)
     if (match) ts = Number(match[1])
   }
   if (!ts) return ''
-  try {
-    return moment(ts).fromNow()
-  } catch {
-    return ''
-  }
+  return moment(ts).fromNow()
 }
 
-export type MessageSegment =
+type MessageSegment =
   | { type: 'subresults'; items: SubresultItem[] }
   | { type: 'text'; text: string }
 
@@ -73,7 +69,7 @@ export function partitionBlocks(blocks?: AssistantBlock[]): MessageSegment[] {
 /**
  * Extracts complete response markdown text from an assistant turn.
  */
-export function getAssistantResponseText(
+function getAssistantResponseText(
   entry: Extract<TranscriptEntry, { role: 'assistant' }>
 ): string {
   if (entry.text && /\S/.test(entry.text)) {
@@ -91,11 +87,7 @@ export type AgentMessageViewProps = {
   entry: TranscriptEntry
   pendingApprovalId: string | null
   approvalContext?: ApprovalContext | null
-  onDecision: (decision: {
-    accepted: boolean
-    always?: boolean
-    note?: string
-  }) => void
+  onDecision: (decision: ApprovalDecision) => void
   isRunning?: boolean
   /** Web pages cited anywhere in the conversation, by source number. */
   webSources?: WebSources
@@ -119,10 +111,6 @@ export type AgentMessageViewProps = {
   actionsDisabled?: boolean
   /** Whether this is the latest assistant reply. Regenerate shows only for it; shown when omitted. */
   isLatestAssistant?: boolean
-  /** Callback on diff review request. */
-  onDiffReview?: (entry: TranscriptEntry, path?: string) => void
-  /** Callback to jump to edited file in editor. */
-  onFileJump?: (path: string, line?: number) => void
   /**
    * Before the newest compact boundary: no longer sent to the model, so it
    * is shown dimmed and offers only Rewind and Copy.
@@ -135,28 +123,27 @@ export type AgentMessageViewProps = {
   read?: boolean
 }
 
-export const AgentMessageView: FC<AgentMessageViewProps> = ({
-  entry,
-  pendingApprovalId,
-  approvalContext,
-  onDecision,
-  isRunning = false,
-  webSources,
-  onTakeBack,
-  onSendNow,
-  onCopyPrompt,
-  onCopyResponse,
-  onRewindPrompt,
-  onForkFromPrompt,
-  onRewindCode,
-  onRegenerate,
-  actionsDisabled = false,
-  isLatestAssistant,
-  onDiffReview,
-  onFileJump,
-  compacted = false,
-  read = false,
-}) => {
+export const AgentMessageView: FC<AgentMessageViewProps> = memo(
+  function AgentMessageView({
+    entry,
+    pendingApprovalId,
+    approvalContext,
+    onDecision,
+    isRunning = false,
+    webSources,
+    onTakeBack,
+    onSendNow,
+    onCopyPrompt,
+    onCopyResponse,
+    onRewindPrompt,
+    onForkFromPrompt,
+    onRewindCode,
+    onRegenerate,
+    actionsDisabled = false,
+    isLatestAssistant,
+    compacted = false,
+    read = false,
+  }) {
   const { t } = useTranslation()
   const { copied, copy } = useCopyFeedback()
   const copyLabel = copied ? t('copied', 'Copied') : t('copy', 'Copy')
@@ -270,7 +257,7 @@ export const AgentMessageView: FC<AgentMessageViewProps> = ({
               src={previewImage.src}
               title={previewImage.title}
               downloadName={previewImage.title}
-              isOpen={Boolean(previewImage)}
+              isOpen={true}
               onClose={() => setPreviewImage(null)}
             />
           )}
@@ -456,8 +443,6 @@ export const AgentMessageView: FC<AgentMessageViewProps> = ({
           <EditedCodeBadge
             entry={entry}
             toolCalls={fileEditCalls}
-            onDiffReview={onDiffReview}
-            onFileJump={onFileJump}
           />
         </div>
       )}
@@ -487,4 +472,4 @@ export const AgentMessageView: FC<AgentMessageViewProps> = ({
       )}
     </div>
   )
-}
+})

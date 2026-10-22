@@ -65,6 +65,9 @@ for (const [name, ...codes] of [
   for (const code of codes) LANGUAGES[code] = name
 }
 
+const own = <T>(record: Record<string, T>, key: string): T | undefined =>
+  Object.prototype.hasOwnProperty.call(record, key) ? record[key] : undefined
+
 type Match = { values: string[]; length: number }
 
 /** The first word of `rest`, without a trailing comma. */
@@ -89,7 +92,7 @@ function matchParam(
   switch (spec.kind) {
     case 'choice': {
       const first = firstWord(rest)
-      const value = first && spec.choices?.[first.word.toLowerCase()]
+      const value = first ? own(spec.choices, first.word.toLowerCase()) : undefined
       if (!first || !value) return null
       return { values: [value], length: first.length }
     }
@@ -130,15 +133,16 @@ function matchParam(
       const words = rest.slice(lead)
       // Two words first, so "Brazilian Portuguese" is not read as one word
       const two = /^(\S+\s+\S+?),?(?=\s|$)/.exec(words)
-      if (two && LANGUAGES[two[1].toLowerCase()]) {
+      const twoKnown = two ? own(LANGUAGES, two[1].toLowerCase()) : undefined
+      if (two && twoKnown) {
         return {
-          values: [LANGUAGES[two[1].toLowerCase()]],
+          values: [twoKnown],
           length: lead + two[0].length,
         }
       }
       const first = firstWord(words)
       if (!first) return null
-      const known = LANGUAGES[first.word.toLowerCase()]
+      const known = own(LANGUAGES, first.word.toLowerCase())
       if (known) return { values: [known], length: lead + first.length }
       // A language the list lacks, written as a name: "Tagalog", "Swahili"
       if (spec.required && /^\p{Lu}\p{Ll}{2,}$/u.test(first.word)) {
@@ -147,7 +151,7 @@ function matchParam(
       return null
     }
     case 'package': {
-      if (!spec.after || previous !== spec.after || !values[spec.after]) {
+      if (previous !== spec.after || !values[spec.after]) {
         return null
       }
       const pkg = /^([a-zA-Z][a-zA-Z0-9-]*[a-zA-Z0-9])(?=\s|,|$)/.exec(rest)

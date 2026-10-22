@@ -1,8 +1,7 @@
 import { collapse, webError } from '../util.mjs'
 
-/** PDFs are parsed in full without page limit. */
 /** PDF pages read: past this the text would pass MAX_DOCUMENT_CHARS anyway */
-export const MAX_PDF_PAGES = 10_000
+const MAX_PDF_PAGES = 10_000
 /** Less text than this in the whole file means it has no text layer. */
 const MIN_PDF_TEXT = 100
 /** A line this much taller than body text is a ## heading; the second, a ### heading. */
@@ -24,7 +23,7 @@ function loadPdfjs() {
 }
 
 /** One page's text items grouped into lines, each with its baseline and height. */
-export function layoutLines(items) {
+function layoutLines(items) {
   const lines = []
   let line = null
   let lastY = null

@@ -630,3 +630,108 @@ describe('protected resource metadata routes', function () {
     }
   })
 })
+
+describe('pre-body rate limit behind nginx', function () {
+  // nginx reaches the service over loopback and passes the client address in
+  // X-Forwarded-For. The limit must count each of those clients on its own, not
+  // one bucket for nginx's socket.
+  const config = {
+    host: '127.0.0.1',
+    port: 0,
+    endpointPath: '/mcp',
+    internalUrl: '',
+    resourceUri: 'https://overleaf.example.com/mcp',
+    authServerUrl: 'https://overleaf.example.com',
+    allowedHosts: [],
+    allowedOrigins: [],
+  }
+
+  let server
+  let baseUrl
+
+  before(async function () {
+    const { app } = createHttpApp({ config, client: null })
+    server = http.createServer(app)
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+    baseUrl = `http://127.0.0.1:${server.address().port}`
+  })
+
+  after(async function () {
+    if (server) await new Promise(resolve => server.close(resolve))
+  })
+
+  it('counts each forwarded client separately', async function () {
+    const send = ip =>
+      fetch(`${baseUrl}/mcp`, { method: 'POST', headers: { 'x-forwarded-for': ip } })
+    const first = await Promise.all(
+      Array.from({ length: 600 }, () => send('198.51.100.1'))
+    )
+    expect(first.every(res => res.status === 401)).to.be.true
+    expect((await send('198.51.100.2')).status).to.equal(401)
+    expect((await send('198.51.100.1')).status).to.equal(429)
+  })
+})
+
+describe('proxyToInternalUrl path and size limits', function () {
+  let originalFetch
+
+  beforeEach(function () {
+    originalFetch = globalThis.fetch
+  })
+
+  afterEach(function () {
+    globalThis.fetch = originalFetch
+  })
+
+  function proxyRes() {
+    return {
+      status: sinon.stub().returnsThis(),
+      setHeader: sinon.stub().returnsThis(),
+      send: sinon.stub(),
+      end: sinon.stub(),
+      json: sinon.stub(),
+    }
+  }
+
+  const escapingPaths = [
+    '/js/../../admin',
+    '/js/%2e%2e/admin',
+    '/js/./../admin',
+    '/js/..\\..\\admin',
+  ]
+  for (const url of escapingPaths) {
+    it(`refuses ${url} instead of forwarding the path it resolves to`, async function () {
+      globalThis.fetch = sinon.stub().resolves({
+        status: 200,
+        headers: new Headers(),
+        arrayBuffer: async () => Buffer.alloc(0),
+      })
+      const res = proxyRes()
+      await proxyToInternalUrl(
+        { method: 'GET', url, originalUrl: url, headers: {} },
+        res,
+        'http://web:3000'
+      )
+      expect(globalThis.fetch.called).to.be.false
+      expect(res.status.calledWith(404)).to.be.true
+    })
+  }
+
+  it('refuses a declared body over the cap with a 502', async function () {
+    globalThis.fetch = sinon.stub().resolves({
+      status: 200,
+      headers: new Headers({ 'content-length': String(65 * 1024 * 1024) }),
+      body: null,
+      arrayBuffer: async () => Buffer.alloc(0),
+    })
+    const res = proxyRes()
+    const url = '/js/big.js'
+    await proxyToInternalUrl(
+      { method: 'GET', url, originalUrl: url, headers: {} },
+      res,
+      'http://web:3000'
+    )
+    expect(res.status.calledWith(502)).to.be.true
+    expect(res.send.called).to.be.false
+  })
+})

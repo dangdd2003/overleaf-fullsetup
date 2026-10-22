@@ -5,12 +5,6 @@ import { deriveStarters, Starter } from './derive-starters'
 
 const keyFor = (projectId: string) => `ai-assist:starters:${projectId}`
 
-export function clearStartersCache(projectId: string): void {
-  try {
-    customLocalStorage.removeItem(keyFor(projectId))
-  } catch {}
-}
-
 /**
  * Project-derived starters for the empty chat state.
  *

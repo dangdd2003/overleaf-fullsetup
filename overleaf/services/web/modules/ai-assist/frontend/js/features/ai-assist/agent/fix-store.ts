@@ -32,13 +32,12 @@ export interface LastFixSummary {
 
 const MAX_STORED_FIXES = 30
 const inMemoryFixes = new Map<string, Map<string, StoredFix>>()
-const listeners = new Map<string, Set<() => void>>()
 
-// Deliberately a plain in-memory map, never written to localStorage: once the
-// log entry that triggered a fix disappears from the compile log (because
+// Kept in memory and mirrored to sessionStorage, never to localStorage: once
+// the log entry that triggered a fix disappears from the compile log (because
 // recompiling after the fix found nothing left to report), there is no entry
 // left to reopen it from. This keeps a pointer to the last one for the rest
-// of the browser tab's life so the log pane can still offer it, but a reload
+// of the browser tab's life so the log pane can still offer it, but a new tab
 // starts clean rather than resurrecting a banner for a page that has moved on.
 const lastCompletedFixByProject = new Map<string, LastFixSummary>()
 
@@ -81,7 +80,6 @@ const keyFor = (projectId: string) => `ai-assist:fixes:${projectId}`
 
 export function clearFixStore(projectId?: string): void {
   inMemoryFixes.clear()
-  listeners.clear()
   lastCompletedFixByProject.clear()
   if (typeof window !== 'undefined' && window.sessionStorage && projectId) {
     try {
@@ -101,16 +99,6 @@ export function buildLogEntryFingerprint(logEntry?: any): string {
   const line = logEntry.line != null ? String(logEntry.line) : ''
   const msg = logEntry.message || ''
   return `${file}:${line}:${msg}`
-}
-
-function notify(projectId: string, entryId: string): void {
-  const k = `${projectId}:${entryId}`
-  const entryListeners = listeners.get(k)
-  if (entryListeners) {
-    for (const listener of entryListeners) {
-      listener()
-    }
-  }
 }
 
 function ensureProjectLoaded(projectId: string): Map<string, StoredFix> {
@@ -166,7 +154,7 @@ function ensureProjectLoaded(projectId: string): Map<string, StoredFix> {
   return projectMap
 }
 
-export function commitFixesToStorage(projectId: string): void {
+function commitFixesToStorage(projectId: string): void {
   const projectMap = inMemoryFixes.get(projectId)
   if (!projectMap) return
 
@@ -234,34 +222,4 @@ export function saveStoredFix(projectId: string, fix: StoredFix): void {
     }
   }
   commitFixesToStorage(projectId)
-  notify(projectId, fix.entryId)
-}
-
-export function setFixFeedback(
-  projectId: string,
-  entryId: string,
-  feedback: 'up' | 'down' | null
-): void {
-  const map = ensureProjectLoaded(projectId)
-  const fix = map.get(entryId)
-  if (fix) {
-    fix.feedback = feedback
-    fix.updatedAt = Date.now()
-    commitFixesToStorage(projectId)
-    notify(projectId, entryId)
-  }
-}
-
-export function setFixOpen(
-  projectId: string,
-  entryId: string,
-  open: boolean
-): void {
-  const map = ensureProjectLoaded(projectId)
-  const fix = map.get(entryId)
-  if (fix) {
-    fix.open = open
-    fix.updatedAt = Date.now()
-    notify(projectId, entryId)
-  }
 }

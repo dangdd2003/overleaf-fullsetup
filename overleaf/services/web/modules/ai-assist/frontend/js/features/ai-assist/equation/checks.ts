@@ -54,7 +54,7 @@ export type GuardResult =
   | { ok: true; editCount: number; changedWords: number }
   | { ok: false; problems: string[] }
 
-export const MAX_CHANGED_WORDS = 12
+const MAX_CHANGED_WORDS = 12
 
 function blankLines(text: string): number {
   return (text.match(/\n[ \t]*\n/g) ?? []).length

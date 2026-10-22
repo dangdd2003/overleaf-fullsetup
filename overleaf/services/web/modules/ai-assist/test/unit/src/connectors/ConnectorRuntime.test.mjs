@@ -13,8 +13,6 @@ import {
   connectorToolSearchMode,
   contentText,
   createConnectorSession,
-  deferredToolCatalog,
-  isConnectorToolName,
   resultPageChars,
   toolSummary,
   uniqueName,
@@ -102,7 +100,6 @@ describe('ConnectorRuntime', function () {
 
       expect(specs[0].name).to.equal('mcp__My-Docs__Files_read-text')
       expect(session.connectors[0].prefix).to.equal('mcp__My-Docs__')
-      expect(isConnectorToolName(specs[0].name)).to.be.true
     })
 
     it('replaces other characters with underscores and drops the underscores at the ends of a server name', function () {
@@ -190,14 +187,6 @@ describe('ConnectorRuntime', function () {
       const first = uniqueName(long, new Set())
       expect(first.length).to.be.at.most(64)
       expect(uniqueName(long, new Set([first]), ['h']).length).to.be.at.most(64)
-    })
-
-    it('recognises connector tool names, and the two helpers', function () {
-      expect(isConnectorToolName('mcp__docs__search')).to.be.true
-      expect(isConnectorToolName(READ_RESULT_TOOL)).to.be.true
-      expect(isConnectorToolName(CONNECTOR_SEARCH_TOOL)).to.be.true
-      expect(isConnectorToolName('edit_file')).to.be.false
-      expect(isConnectorToolName(undefined)).to.be.false
     })
 
     it('leaves out blocked tools, and a connector-wide block with a per-tool allow keeps one', function () {
@@ -341,21 +330,6 @@ describe('ConnectorRuntime', function () {
 
       expect(session.describe('mcp__docs__a').readOnly).to.be.true
       expect(session.describe('mcp__docs__b')).to.include({ readOnly: true, destructive: true })
-    })
-
-    it('lists each tool by its full name and summary, grouped by connector', function () {
-      const session = sessionOf(
-        [
-          connectorWith({
-            tools: [{ name: 'search', description: 'Search the docs.' }, { name: 'write' }],
-          }),
-        ],
-        { toolSearch: 'always' }
-      )
-
-      expect(deferredToolCatalog(session)).to.equal(
-        'docs:\n- mcp__docs__search — Search the docs.\n- mcp__docs__write — write'
-      )
     })
   })
 
@@ -582,20 +556,6 @@ describe('ConnectorRuntime', function () {
       await session.allowAlways('mcp__docs__write')
 
       expect(session.connectors[0].tools[0].permission).to.equal('allow')
-    })
-  })
-
-  describe('deferredToolCatalog', function () {
-    it('lists only the tools not yet loaded, and nothing when the tools are not deferred', async function () {
-      const session = sessionOf(
-        [connectorWith({ tools: [{ name: 'search', description: 'Search.' }, { name: 'write', description: 'Write.' }] })],
-        { toolSearch: 'always' }
-      )
-      await session.execute(CONNECTOR_SEARCH_TOOL, { query: 'select:mcp__docs__write' })
-
-      expect(deferredToolCatalog(session)).to.equal('docs:\n- mcp__docs__search — Search.')
-      expect(deferredToolCatalog(sessionOf([connectorWith({ tools: [{ name: 'a' }] })], { toolSearch: 'off' }))).to.equal('')
-      expect(deferredToolCatalog(null)).to.equal('')
     })
   })
 

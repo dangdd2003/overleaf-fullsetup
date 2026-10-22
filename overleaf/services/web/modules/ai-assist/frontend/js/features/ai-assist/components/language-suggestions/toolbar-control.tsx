@@ -1,4 +1,4 @@
-import { ReactNode } from 'react'
+import { MouseEvent, ReactNode } from 'react'
 import classNames from 'classnames'
 import { EditorView } from '@codemirror/view'
 import { CaretLeft, CaretRight, Check, Warning } from '@phosphor-icons/react'
@@ -35,7 +35,7 @@ function openSettings() {
 }
 
 /** Keeps the editor's selection when a toolbar button is pressed. */
-const keepSelection = (event: React.MouseEvent) => event.preventDefault()
+const keepSelection = (event: MouseEvent) => event.preventDefault()
 
 function ToolbarControl() {
   const view = useCodeMirrorViewContext()
@@ -82,7 +82,7 @@ function ToolbarControl() {
     icon = <Warning size={15} weight="bold" aria-hidden="true" />
     onClick = openSettings
   } else if (isChecking) {
-    const progress = status.kind === 'checking' ? status.progress : undefined
+    const progress = status.progress
     const done = progress ? `Checking ${progress.checked} / ${progress.total} sentences` : null
     label =
       count > 0

@@ -1,9 +1,7 @@
 import { expect } from 'chai'
 import {
-  docToProjectFile,
   ensureFolderPath,
   findUniqueSpan,
-  folderIdForPath,
   resolveCompileOutcome,
   spanToLineRange,
   toCompileOutcome,
@@ -99,42 +97,6 @@ describe('spanToLineRange', function () {
       from: 2,
       to: 3,
     })
-  })
-})
-
-describe('docToProjectFile', function () {
-  it('counts the lines of a document, which is what the model ranges over', function () {
-    expect(docToProjectFile('main.tex', 'one\ntwo\nthree')).to.deep.equal({
-      path: 'main.tex',
-      type: 'doc',
-      size: 13,
-      lines: 3,
-    })
-  })
-
-  it('counts a trailing newline as opening a further line', function () {
-    expect(docToProjectFile('main.tex', 'one\ntwo\n').lines).to.equal(3)
-  })
-
-  // Every readable document has a line, even when that line is empty, so 0 is
-  // reserved for "contents unavailable".
-  it('reports one line for an empty document', function () {
-    expect(docToProjectFile('empty.tex', '')).to.deep.equal({
-      path: 'empty.tex',
-      type: 'doc',
-      size: 0,
-      lines: 1,
-    })
-  })
-
-  it('reports no lines when the contents are unavailable', function () {
-    expect(docToProjectFile('gone.tex', null)).to.deep.equal({
-      path: 'gone.tex',
-      type: 'doc',
-      size: 0,
-      lines: 0,
-    })
-    expect(docToProjectFile('gone.tex', undefined).lines).to.equal(0)
   })
 })
 
@@ -365,53 +327,6 @@ describe('waitFor', function () {
       expect(error.message).to.match(/cancelled/i)
       expect(Date.now() - started).to.be.lessThan(2000)
     }
-  })
-})
-
-describe('folderIdForPath', function () {
-  const ROOT_FOLDER: any = {
-    _id: 'root-1',
-    name: 'root',
-    docs: [],
-    fileRefs: [],
-    folders: [
-      {
-        _id: 'folder-sections',
-        name: 'sections',
-        docs: [],
-        fileRefs: [],
-        folders: [
-          {
-            _id: 'folder-sub',
-            name: 'sub',
-            docs: [],
-            fileRefs: [],
-            folders: [],
-          },
-        ],
-      },
-    ],
-  }
-
-  it('returns the root folder id when segments is empty', function () {
-    expect(folderIdForPath(ROOT_FOLDER, [])).to.equal('root-1')
-  })
-
-  it('resolves a single segment to the child folder id', function () {
-    expect(folderIdForPath(ROOT_FOLDER, ['sections'])).to.equal(
-      'folder-sections'
-    )
-  })
-
-  it('resolves nested segments through the folder tree', function () {
-    expect(folderIdForPath(ROOT_FOLDER, ['sections', 'sub'])).to.equal(
-      'folder-sub'
-    )
-  })
-
-  it('returns null when a folder segment is missing', function () {
-    expect(folderIdForPath(ROOT_FOLDER, ['missing'])).to.equal(null)
-    expect(folderIdForPath(ROOT_FOLDER, ['sections', 'missing'])).to.equal(null)
   })
 })
 

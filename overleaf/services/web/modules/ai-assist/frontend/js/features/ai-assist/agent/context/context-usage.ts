@@ -58,17 +58,25 @@ const FIXED_PARTS: Part[] = [
 
 type AssistantEntry = Extract<TranscriptEntry, { role: 'assistant' }>
 
+const FORMATTER_THOUSANDS = new Intl.NumberFormat('en-US', {
+  notation: 'compact',
+  minimumFractionDigits: 1,
+  maximumFractionDigits: 1,
+})
+
+const FORMATTER_UNITS = new Intl.NumberFormat('en-US', {
+  notation: 'compact',
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 1,
+})
+
 /**
  * Formats a token count the way Claude Code's context panel does: compact
  * notation, `1.2k` and `1M`. Thousands always show one decimal and then lose
  * a trailing `.0`, so 1000 is `1k` and 12345 is `12.3k`.
  */
 export function formatTokens(n: number): string {
-  const compact = new Intl.NumberFormat('en-US', {
-    notation: 'compact',
-    minimumFractionDigits: n >= 1000 ? 1 : 0,
-    maximumFractionDigits: 1,
-  })
+  const compact = (n >= 1000 ? FORMATTER_THOUSANDS : FORMATTER_UNITS)
     .format(n)
     .toLowerCase()
   // Only the `.0` right before a suffix or the end: `1.05` never occurs here,
@@ -206,6 +214,24 @@ function entriesMessages(
 }
 
 /** Usage a provider actually reported; an all-zero record says nothing. */
+/** The assistant entry at `index`, if that is one. */
+function assistantAt(
+  transcript: TranscriptEntry[],
+  index: number
+): AssistantEntry | undefined {
+  const entry = transcript[index]
+  return entry?.role === 'assistant' ? entry : undefined
+}
+
+/** The compact entry at `index`, if that is one. */
+function compactAt(
+  transcript: TranscriptEntry[],
+  index: number
+): Extract<TranscriptEntry, { role: 'compact' }> | undefined {
+  const entry = transcript[index]
+  return entry?.role === 'compact' ? entry : undefined
+}
+
 function hasUsage(usage: ProviderUsage | undefined): boolean {
   return (
     usage !== undefined &&
@@ -297,45 +323,26 @@ export function computeContextUsage({
       entry => entry.role === 'assistant' && entry.contextUsage !== undefined
     )
   )
-  const breakdownIndex = onlyAfterBoundary(
-    lastIndexWhere(
-      transcript,
-      entry => entry.role === 'assistant' && entry.contextBreakdown !== undefined
-    )
+  const lastBreakdown = lastIndexWhere(
+    transcript,
+    entry => entry.role === 'assistant' && entry.contextBreakdown !== undefined
   )
-  const boundaryEntry =
-    boundary === -1
-      ? undefined
-      : (transcript[boundary] as Extract<TranscriptEntry, { role: 'compact' }>)
+  const breakdownIndex = onlyAfterBoundary(lastBreakdown)
+  const boundaryEntry = compactAt(transcript, boundary)
   const compactionTokens = boundaryEntry
     ? estimateTokens(renderCompactionMessage(boundaryEntry), ref)
     : 0
-  const usageEntry =
-    usageIndex === -1 ? undefined : (transcript[usageIndex] as AssistantEntry)
-  const contextEntry =
-    contextIndex === -1 ? undefined : (transcript[contextIndex] as AssistantEntry)
-  const breakdownEntry =
-    breakdownIndex === -1
-      ? undefined
-      : (transcript[breakdownIndex] as AssistantEntry)
+  const usageEntry = assistantAt(transcript, usageIndex)
+  const contextEntry = assistantAt(transcript, contextIndex)
+  const breakdownEntry = assistantAt(transcript, breakdownIndex)
   const usage: ProviderUsage | undefined = usageEntry?.usage
   const contextRecord: ContextUsageRecord | undefined = contextEntry?.contextUsage
   const breakdown: ContextBreakdown | undefined =
     breakdownEntry?.contextBreakdown
   // Before the first request after a boundary: the system prompt and tools
   // of the last request still hold, its messages do not
-  const staleIndex =
-    boundary !== -1 && breakdownIndex === -1
-      ? lastIndexWhere(
-          transcript,
-          entry =>
-            entry.role === 'assistant' && entry.contextBreakdown !== undefined
-        )
-      : -1
-  const staleBreakdown =
-    staleIndex === -1
-      ? undefined
-      : (transcript[staleIndex] as AssistantEntry).contextBreakdown
+  const staleIndex = boundary !== -1 && breakdownIndex === -1 ? lastBreakdown : -1
+  const staleBreakdown = assistantAt(transcript, staleIndex)?.contextBreakdown
 
   // The record is newer than the usage when its request is later; a step
   // tie is the usage (it reports the request after the record was sent).
@@ -392,7 +399,7 @@ export function computeContextUsage({
     }
     parts.sinceLastUpdate = trailing
     used = inputSide + outputSide + trailing
-  } else if (breakdownIndex !== -1 && breakdown) {
+  } else if (breakdown) {
     const trailing = entriesMessages(transcript.slice(breakdownIndex + 1), ref)
     parts = fixedRows(breakdown)
     parts.messages = breakdownMessages(breakdown)

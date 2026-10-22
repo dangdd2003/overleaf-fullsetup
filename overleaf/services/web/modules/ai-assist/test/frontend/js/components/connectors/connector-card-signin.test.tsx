@@ -77,7 +77,6 @@ function renderCard(status: ConnectorView['status']) {
     connector: connectorView(status),
     onEdit: () => {},
     onConfigureTools: () => {},
-    onRefresh: () => {},
   }
   return render(createElement(ConnectorCard, props))
 }
@@ -132,7 +131,6 @@ describe('ConnectorCard sign-in', function () {
         connector: connectorView('connected'),
         onEdit: () => {},
         onConfigureTools: () => {},
-        onRefresh: () => {},
       })
     )
 

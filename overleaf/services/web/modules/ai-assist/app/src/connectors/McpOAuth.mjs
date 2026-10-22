@@ -68,12 +68,15 @@ export class OAuthClientRequiredError extends Error {
   }
 }
 
+const hashState = state =>
+  crypto.createHash('sha256').update(state).digest('hex')
+
 /**
  * An endpoint the server named, or the user typed, that is an http(s) address.
  * The authorization one is sent to the browser, where any other scheme would
  * run script in this origin.
  */
-export function isHttpUrl(value) {
+function isHttpUrl(value) {
   if (typeof value !== 'string' || !value) return false
   try {
     const { protocol } = new URL(value)
@@ -380,7 +383,7 @@ export async function signInOffered({ connector, fetch = connectorFetch }) {
 /** The connector a sign-in state belongs to, read without consuming it. */
 export async function pendingConnectorId({ state, userId }) {
   if (typeof state !== 'string' || !state || !userId) return ''
-  const stateHash = crypto.createHash('sha256').update(state).digest('hex')
+  const stateHash = hashState(state)
   const pending = await OAuthStateModel.findOne({ stateHash, user_id: userId })
     .lean()
     .exec()
@@ -438,10 +441,7 @@ export async function startAuthorization({
     stepUpScope
   )
   // A refresh token keeps the connector signed in (claude.ai asks the same)
-  if (
-    as?.scopes_supported?.includes('offline_access') &&
-    !scope.split(' ').includes('offline_access')
-  ) {
+  if (as?.scopes_supported?.includes('offline_access')) {
     scope = joinScopes(scope, 'offline_access')
   }
 
@@ -451,7 +451,7 @@ export async function startAuthorization({
     .update(verifier)
     .digest('base64url')
   const state = crypto.randomBytes(32).toString('base64url')
-  const stateHash = crypto.createHash('sha256').update(state).digest('hex')
+  const stateHash = hashState(state)
 
   await OAuthStateModel.create({
     stateHash,
@@ -576,7 +576,7 @@ export async function handleCallback({
     throw new Error('Sign in to Overleaf, then connect the connector again.')
   }
 
-  const stateHash = crypto.createHash('sha256').update(state).digest('hex')
+  const stateHash = hashState(state)
   // One use only, and only by the account that started it: a replayed or
   // foreign callback finds nothing to consume
   const pending = await OAuthStateModel.findOneAndDelete({
@@ -624,7 +624,7 @@ export async function handleCallback({
         `Issuer mismatch: expected ${pending.issuer}, got ${as.issuer}`
       )
     }
-    tokenUrl = as?.token_endpoint || preset?.oauth.tokenUrl || ''
+    tokenUrl = endpointsFor({ connector, as, preset }).tokenEndpoint
   }
   if (!tokenUrl) {
     throw new Error(
@@ -822,12 +822,6 @@ export async function currentAccessToken({ connector, credentials, fetch }) {
 }
 
 export default {
-  discover,
-  discoverProtectedResourceMetadata,
-  discoverAuthorizationServerMetadata,
-  resolveClient,
-  startAuthorization,
-  handleCallback,
   refreshTokens,
   currentAccessToken,
 }

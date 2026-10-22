@@ -48,7 +48,7 @@ const CJK_ORDERED = new RegExp(
 const TASK_LIST = new RegExp(
   `^(${LEAD}(?:[*+-]|\\d{1,9}[.)])[ \\t${ODD_SPACE}]+)\\[([ xXvV✓]?)\\][ \\t${ODD_SPACE}]*`
 )
-// Lines containing solely a list marker, number, or heading hash with no text
+// Lines containing solely a list marker or number with no text
 const EMPTY_MARKER_LINE = new RegExp(
   `^${LEAD}(?:[*+-]|\\d{1,9}[.)])[ \\t${ODD_SPACE}]*$`
 )
@@ -99,11 +99,13 @@ export function normalizeMarkdown(text: string): string {
  */
 export function ensureTableSeparation(text: string): string {
   const lines = text.split('\n')
+  const out: string[] = []
   let fence: string | null = null
   for (let i = 0; i < lines.length; i++) {
-    const open = lines[i].match(FENCE_OPEN)
+    const line = lines[i]
+    const open = line.match(FENCE_OPEN)
     if (fence) {
-      const close = lines[i].trim()
+      const close = line.trim()
       if (
         close[0] === fence[0] &&
         close.length >= fence.length &&
@@ -111,25 +113,27 @@ export function ensureTableSeparation(text: string): string {
       ) {
         fence = null
       }
+      out.push(line)
       continue
     }
     if (open) {
       fence = open[1]
+      out.push(line)
       continue
     }
     // Check if line i is a table header and line i+1 is a delimiter row
     if (
       i > 0 &&
       lines[i - 1].trim() !== '' &&
-      lines[i].trim().startsWith('|') &&
+      line.trim().startsWith('|') &&
       i + 1 < lines.length &&
       /^[ \t]*\|?[ \t]*:?-+:?[ \t]*(\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$/.test(lines[i + 1])
     ) {
-      lines.splice(i, 0, '')
-      i++
+      out.push('')
     }
+    out.push(line)
   }
-  return lines.join('\n')
+  return out.join('\n')
 }
 
 const FOOTNOTE_DEFINITION = /^\[\^([^\]\s]+)\]:[ \t]*(.*)$/
@@ -151,8 +155,12 @@ export function extractFootnotes(text: string): {
 }
 
 const FENCE_CLOSE = /^ {0,3}(`{3,}|~{3,})[ \t]*$/
-const DISPLAY_MATH_OPEN =
-  /\$\$|\\\[|\\begin\{((?:equation|align|alignat|gather|multline|matrix|pmatrix|bmatrix|vmatrix|Vmatrix|cases|aligned|gathered)\*?)\}/g
+export const MATH_ENVIRONMENTS =
+  '(?:equation|align|alignat|gather|multline|matrix|pmatrix|bmatrix|vmatrix|Vmatrix|cases|aligned|gathered)'
+const DISPLAY_MATH_OPEN = new RegExp(
+  String.raw`\$\$|\\\[|\\begin\{(${MATH_ENVIRONMENTS}\*?)\}`,
+  'g'
+)
 // Markup marked reads across blank lines, or a definition that other blocks
 // may refer to. A reply holding any of these is kept as one block.
 const WHOLE_DOCUMENT =

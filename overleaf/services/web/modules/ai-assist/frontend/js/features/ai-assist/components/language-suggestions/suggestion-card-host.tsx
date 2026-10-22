@@ -13,7 +13,6 @@ import {
   CardState,
   closeCard,
   languageSuggestionsField,
-  openCard,
   togglePinCard,
   UnitSuggestions,
 } from '../../language-suggestions/state'
@@ -97,7 +96,6 @@ function CardPanel({
   active: number
   container: HTMLElement
 }) {
-  const target = { hash: unit.hash, from: unit.from }
   const layer = CARD_LAYER + (card.pinned ? Math.min(card.pinOrder, 900) : 1000)
 
   useLayoutEffect(() => {
@@ -105,12 +103,12 @@ function CardPanel({
   }, [container, layer])
 
   const onActivateCard = useCallback(() => {
-    view.dispatch({ effects: bringCardToFront.of(target) })
-  }, [view, target])
+    view.dispatch({ effects: bringCardToFront.of({ hash: unit.hash, from: unit.from }) })
+  }, [view, unit.hash, unit.from])
 
   const onTogglePin = useCallback(() => {
-    view.dispatch({ effects: togglePinCard.of(target) })
-  }, [view, target])
+    view.dispatch({ effects: togglePinCard.of({ hash: unit.hash, from: unit.from }) })
+  }, [view, unit.hash, unit.from])
 
   const close = useCallback(() => {
     view.dispatch({ effects: closeCard.of({ hash: unit.hash, from: unit.from }) })
@@ -136,9 +134,6 @@ function CardPanel({
           blockEdit(view, unit.hash, unit.from, index)
           close()
         }}
-        onActivate={index =>
-          view.dispatch({ effects: openCard.of({ ...target, edit: index }) })
-        }
         onClose={close}
       />
     </div>

@@ -1,5 +1,6 @@
 import { getJSON } from '@/infrastructure/fetch-json'
 import type { HighlightData } from '@/features/pdf-preview/util/types'
+import { isFiniteBox } from './result-highlights'
 
 /** What synctex needs to find the build the user is looking at. */
 export type SynctexContext = {
@@ -70,14 +71,7 @@ export async function sourceAtPdfPoint(
   }
 }
 
-function isBox(value: any): value is HighlightData {
-  return (
-    value &&
-    [value.page, value.h, value.v, value.width, value.height].every(
-      n => typeof n === 'number' && Number.isFinite(n)
-    )
-  )
-}
+const isBox = isFiniteBox
 
 /**
  * Where a source line lands in the PDF, as highlight boxes. For a range the
@@ -108,7 +102,7 @@ export async function pdfBoxesForSource(
       }).catch(() => null)
     })
   )
-  return results.flatMap(data =>
+  return results.flatMap((data: { pdf?: unknown } | null) =>
     Array.isArray(data?.pdf) ? data.pdf.filter(isBox) : []
   )
 }

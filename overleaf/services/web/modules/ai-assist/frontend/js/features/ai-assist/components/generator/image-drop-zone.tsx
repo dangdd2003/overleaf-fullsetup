@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import classNames from 'classnames'
 import { X } from '@phosphor-icons/react'
@@ -8,6 +8,8 @@ import {
   GeneratorImage,
   ImageError,
 } from '../../generator/image'
+
+const ACCEPT_ATTRIBUTE = ACCEPTED_IMAGE_TYPES.join(',')
 
 /** The right half of a generator dialog: drop, paste (handled by the dialog) or browse an image. */
 export function ImageDropZone({
@@ -33,6 +35,10 @@ export function ImageDropZone({
   const { t } = useTranslation()
   const inputRef = useRef<HTMLInputElement>(null)
   const [over, setOver] = useState(false)
+  const imageSrc = useMemo(
+    () => image && `data:${image.mediaType};base64,${image.data}`,
+    [image?.mediaType, image?.data]
+  )
 
   const errorText =
     error === 'type'
@@ -47,7 +53,7 @@ export function ImageDropZone({
     <div className="ai-generator-image-column">
       {image ? (
         <div className="ai-generator-image has-image">
-          <img src={`data:${image.mediaType};base64,${image.data}`} alt={imageAlt} />
+          <img src={imageSrc ?? undefined} alt={imageAlt} />
           <div className="ai-generator-image-meta">
             <span className="ai-generator-image-name" title={image.name}>
               {image.name}
@@ -104,7 +110,7 @@ export function ImageDropZone({
             ref={inputRef}
             type="file"
             hidden
-            accept={ACCEPTED_IMAGE_TYPES.join(',')}
+            accept={ACCEPT_ATTRIBUTE}
             onChange={event => {
               const file = event.target.files?.[0]
               event.target.value = ''

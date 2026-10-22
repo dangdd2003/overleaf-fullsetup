@@ -1,4 +1,5 @@
 import { matchingBrace } from '../texgpt/latex-text'
+import { braceBalance } from '../writing-tools/latex-check'
 
 /** How many columns a column spec makes, and what in it is wrong. */
 export type SpecColumns = { count: number; problems: string[] }
@@ -217,16 +218,6 @@ function outsideMath(cell: string): string | null {
   return inMath ? null : out
 }
 
-function braceDepth(text: string): number {
-  let depth = 0
-  for (let i = 0; i < text.length; i++) {
-    if (text[i] === '\\') i++
-    else if (text[i] === '{') depth++
-    else if (text[i] === '}') depth--
-  }
-  return depth
-}
-
 function rowProblems(row: TableRow, columns: number): string[] {
   const problems: string[] = []
   const name = `Row ${row.number}`
@@ -242,7 +233,7 @@ function rowProblems(row: TableRow, columns: number): string[] {
   const text = row.cells.join(' & ')
   if (/(?<!\\)%/.test(text)) problems.push(`${name}: unescaped % (write \\%).`)
   if (/(?<!\\)#/.test(text)) problems.push(`${name}: unescaped # (write \\#).`)
-  if (braceDepth(text) !== 0) problems.push(`${name}: braces { } do not balance.`)
+  if (braceBalance(text) !== 0) problems.push(`${name}: braces { } do not balance.`)
   for (const cell of row.cells) {
     const outside = outsideMath(cell)
     if (outside === null) {
@@ -268,6 +259,7 @@ export function bodyProblems(body: string, columns: number): string[] {
   return problems
 }
 
+export const TABULAR_START = /\\begin\s*\{(?:tabular\*?|tabularx|longtable)\}/
 const TABULAR_BEGIN = /\\begin\s*\{(tabular\*?|tabularx|longtable)\}/g
 
 /** Every `tabular`-like environment in the text, in order. Unclosed ones are skipped. */

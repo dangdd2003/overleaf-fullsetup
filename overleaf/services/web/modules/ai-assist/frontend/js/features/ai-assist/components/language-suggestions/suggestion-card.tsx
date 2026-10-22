@@ -43,7 +43,6 @@ type CardActions = {
   onAccept: (accept: number[], keep: number[]) => void
   onReject: (indexes: number[]) => void
   onBlock: (index: number) => void
-  onActivate: (index: number) => void
   onClose: () => void
 }
 
@@ -57,14 +56,12 @@ function Change({
   edit,
   taken,
   active,
-  inert,
   onToggle,
   onHover,
 }: {
   edit: MaskedEdit
   taken: boolean
   active: boolean
-  inert: boolean
   onToggle: () => void
   onHover: () => void
 }) {
@@ -84,7 +81,7 @@ function Change({
     )
   ) : null
   const onKeyDown = (event: KeyboardEvent) => {
-    if (inert || (event.key !== 'Enter' && event.key !== ' ')) return
+    if (event.key !== 'Enter' && event.key !== ' ') return
     event.preventDefault()
     onToggle()
   }
@@ -93,17 +90,16 @@ function Change({
   return (
     <span
       role="button"
-      tabIndex={inert ? -1 : 0}
+      tabIndex={0}
       className={classNames('ai-language-suggestion-change', `ai-language-suggestion-change-${editKind(edit)}`, {
         active,
         'ai-language-suggestion-change-taken': taken,
         'ai-language-suggestion-change-kept': !taken,
       })}
       aria-pressed={taken}
-      aria-disabled={inert || undefined}
       aria-label={`${editLabel(edit)}: ${label.toLowerCase()}`}
       title={label}
-      onClick={inert ? undefined : onToggle}
+      onClick={onToggle}
       onKeyDown={onKeyDown}
       onMouseEnter={onHover}
       onFocus={onHover}
@@ -117,25 +113,22 @@ function Change({
 /** The sentence: plain text, the author's LaTeX shortened, each change inline. */
 function Sentence({
   unit,
+  edits,
   activeIndex,
   showDiff,
-  inert,
   kept,
   onToggle,
   onHover,
 }: {
   unit: UnitSuggestions
+  edits: ReturnType<typeof visibleEdits>
   activeIndex: number | undefined
   showDiff: boolean
-  inert: boolean
   kept: Set<number>
   onToggle: (index: number) => void
   onHover: (index: number) => void
 }) {
   const { masked } = unit
-  const edits = visibleEdits(unit).sort(
-    (a, b) => a.edit.from - b.edit.from || a.edit.to - b.edit.to
-  )
   const parts: ReactNode[] = []
 
   const pushPlain = (from: number, to: number) => {
@@ -166,7 +159,10 @@ function Sentence({
   edits.forEach(({ index, edit: raw }, k) => {
     if (raw.from < position) return
     // Punctuation is shown with its word: a lone comma is too small to read
-    const next = edits.slice(k + 1).find(other => other.edit.from >= raw.to)
+    let next: (typeof edits)[number] | undefined
+    for (let n = k + 1; n < edits.length && !next; n++) {
+      if (edits[n].edit.from >= raw.to) next = edits[n]
+    }
     const edit = displayEdit(masked, raw, position, next?.edit.from)
     pushPlain(position, edit.from)
     position = edit.to
@@ -196,7 +192,6 @@ function Sentence({
         edit={edit}
         taken={taken}
         active={index === activeIndex}
-        inert={inert}
         onToggle={() => onToggle(index)}
         onHover={() => onHover(index)}
       />
@@ -236,7 +231,11 @@ export function SuggestionCard({
   /** Changes the author switched back to their own text. */
   const [kept, setKept] = useState<Set<number>>(() => new Set())
   const cardRef = useRef<HTMLDivElement>(null)
-  const indexes = visibleEdits(unit).map(visible => visible.index)
+  const visible = visibleEdits(unit)
+  const sortedEdits = [...visible].sort(
+    (a, b) => a.edit.from - b.edit.from || a.edit.to - b.edit.to
+  )
+  const indexes = visible.map(item => item.index)
   const current = hovered ?? active
   const activeIndex =
     current !== null && indexes.includes(current) ? current : indexes[0]
@@ -300,9 +299,9 @@ export function SuggestionCard({
       >
         <Sentence
           unit={unit}
+          edits={sortedEdits}
           activeIndex={activeIndex}
           showDiff={showDiff}
-          inert={false}
           kept={kept}
           onToggle={toggle}
           onHover={setHovered}

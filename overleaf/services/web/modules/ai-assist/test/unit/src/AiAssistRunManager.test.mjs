@@ -49,9 +49,6 @@ describe('AiAssistRunManager', function () {
       updateStatus: sinon.stub().resolves(),
       setPendingApproval: sinon.stub().resolves(),
       clearPendingApproval: sinon.stub().resolves(),
-      getPendingApproval: sinon
-        .stub()
-        .resolves({ id: 'c1', edit: { path: 'a.tex' } }),
       getRun: sinon.stub().resolves({ status: 'running' }),
       touchHeartbeat: sinon.stub().resolves(),
     }
@@ -1862,8 +1859,7 @@ describe('AiAssistRunManager', function () {
         updateStatus: sinon.stub().resolves(),
         setPendingApproval: sinon.stub().resolves(),
         clearPendingApproval: sinon.stub().resolves(),
-        getPendingApproval: sinon.stub().resolves(null),
-        getRun: sinon.stub().resolves({ status: 'running' }),
+                getRun: sinon.stub().resolves({ status: 'running' }),
         touchHeartbeat: sinon.stub().resolves(),
         setMode: sinon.stub().resolves(),
       }
@@ -4590,8 +4586,7 @@ describe('AiAssistRunManager connector tools', function () {
       updateStatus: sinon.stub().resolves(),
       setPendingApproval: sinon.stub().resolves(),
       clearPendingApproval: sinon.stub().resolves(),
-      getPendingApproval: sinon.stub().resolves(null),
-      getRun: sinon.stub().resolves({ status: 'running' }),
+            getRun: sinon.stub().resolves({ status: 'running' }),
       touchHeartbeat: sinon.stub().resolves(),
       setMode: sinon.stub().resolves(),
     }
@@ -5106,8 +5101,7 @@ describe('AiAssistRunManager context meter and automatic compaction', function (
       updateStatus: sinon.stub().resolves(),
       setPendingApproval: sinon.stub().resolves(),
       clearPendingApproval: sinon.stub().resolves(),
-      getPendingApproval: sinon.stub().resolves(null),
-      getRun: sinon.stub().resolves({ status: 'running' }),
+            getRun: sinon.stub().resolves({ status: 'running' }),
       touchHeartbeat: sinon.stub().resolves(),
       setMode: sinon.stub().resolves(),
     }

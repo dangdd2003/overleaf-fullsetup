@@ -114,6 +114,17 @@ describe('slash command params', function () {
       expect(parseSlashParams(translate, 'Tagalog').language).to.deep.equal(['Tagalog'])
       expect(parseSlashParams(translate, 'it please').language).to.equal(undefined)
     })
+
+    it('ignores prototype-key words as choices or languages', function () {
+      expect(parseSlashParams(command('rewrite'), 'constructor please')).to.deep.equal({
+        notes: ['constructor please'],
+      })
+      expect(parseSlashParams(command('rewrite'), 'toString please')).to.deep.equal({
+        notes: ['toString please'],
+      })
+      expect(parseSlashParams(command('translate'), 'toString please').language).to.equal(undefined)
+      expect(parseSlashParams(command('translate'), 'constructor please').language).to.equal(undefined)
+    })
   })
 
   describe('missingSlashParams', function () {

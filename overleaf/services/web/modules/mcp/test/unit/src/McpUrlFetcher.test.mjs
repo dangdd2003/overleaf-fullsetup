@@ -212,20 +212,23 @@ describe('McpUrlFetcher SSRF guard', () => {
 })
 
 describe('McpUrlFetcher.parseIpLiteral and isBlockedIp', () => {
-  it('correctly normalises octal and hex IP literals and blocks loopback', () => {
-    const octalLoopback = McpUrlFetcher.parseIpLiteral('0177.0.0.1')
-    expect(octalLoopback).toBe('127.0.0.1')
-    expect(McpUrlFetcher.isBlockedIp(octalLoopback)).toBe(true)
-
-    const hexLoopback = McpUrlFetcher.parseIpLiteral('0x7f.0.0.1')
-    expect(hexLoopback).toBe('127.0.0.1')
-    expect(McpUrlFetcher.isBlockedIp(hexLoopback)).toBe(true)
-
-    const bareHex = McpUrlFetcher.parseIpLiteral('0x7f000001')
-    expect(bareHex).toBe('127.0.0.1')
-    expect(McpUrlFetcher.isBlockedIp(bareHex)).toBe(true)
-
+  it('parses bracketed IPv6 and blocks loopback', () => {
+    const bracketed = McpUrlFetcher.parseIpLiteral('[::1]')
+    expect(bracketed).toBe('::1')
+    expect(McpUrlFetcher.isBlockedIp(bracketed)).toBe(true)
     expect(McpUrlFetcher.parseIpLiteral('0178.0.0.1')).toBeNull()
+  })
+
+  it('blocks additional IPv6 ranges (6to4, Teredo, documentation, IPv4-translated, site-local)', () => {
+    expect(McpUrlFetcher.isBlockedIp('fec0::1')).toBe(true)
+    expect(McpUrlFetcher.isBlockedIp('fe80::1')).toBe(true)
+    expect(McpUrlFetcher.isBlockedIp('::ffff:0:127.0.0.1')).toBe(true)
+    expect(McpUrlFetcher.isBlockedIp('2002:7f00:1::')).toBe(true)
+    expect(McpUrlFetcher.isBlockedIp('2001::1')).toBe(true)
+    expect(McpUrlFetcher.isBlockedIp('2001:0000:4136:e378:8000:63bf:3fff:fdd2')).toBe(true)
+    expect(McpUrlFetcher.isBlockedIp('2001:db8::1')).toBe(true)
+    expect(McpUrlFetcher.isBlockedIp('3fff:ffff::1')).toBe(true)
+    expect(McpUrlFetcher.isBlockedIp('100::1')).toBe(true)
   })
 
   it('blocks IPv4-mapped IPv6 private addresses and unspecified', () => {

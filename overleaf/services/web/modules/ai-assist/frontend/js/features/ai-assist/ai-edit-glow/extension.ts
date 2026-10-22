@@ -11,7 +11,7 @@ import { Decoration, DecorationSet, EditorView, ViewPlugin } from '@codemirror/v
 import { isWritingToolsAvailable } from '../writing-tools/availability'
 
 /** How long the glow plays; keep in step with `ai-edit-glow` in ai-assist.scss. */
-export const GLOW_DURATION_MS = 2600
+const GLOW_DURATION_MS = 2600
 
 /**
  * Put on every transaction the AI writes into the editor. Whatever it
@@ -29,7 +29,7 @@ type Glow = {
 
 const playGlows = StateEffect.define<number[]>()
 const endGlows = StateEffect.define<number[]>()
-export const addGlows = StateEffect.define<Array<{ from: number; to: number }>>()
+const addGlows = StateEffect.define<Array<{ from: number; to: number }>>()
 
 /**
  * Manually marks one or more text ranges in the editor to glow with the
@@ -50,7 +50,7 @@ let nextId = 0
  * The ranges the new document holds in place of what a change set touched.
  * A pure deletion has no text left, so its neighbouring character stands in.
  */
-export function changedRanges(
+function changedRanges(
   changes: ChangeSet,
   docLength: number
 ): Array<{ from: number; to: number }> {
@@ -111,7 +111,7 @@ export const aiEditGlowField = StateField.define<Glow[]>({
 })
 
 /** Whether a transaction is an AI edit or an automated insert (table, figure, generator, agent). */
-export function isAiTransaction(tr: Transaction): boolean {
+function isAiTransaction(tr: Transaction): boolean {
   if (!tr.docChanged) return false
   if (tr.annotation(aiEdit)) return true
   const userEvent = tr.annotation(Transaction.userEvent)
@@ -171,7 +171,7 @@ export function smoothScrollToEdit(
   padding = 16
 ): boolean {
   const scroller = view.scrollDOM
-  if (!scroller || scroller.clientHeight === 0) return false
+  if (scroller.clientHeight === 0) return false
 
   const docLen = view.state.doc.length
   const safeFrom = Math.max(0, Math.min(docLen, Math.min(from, to)))
@@ -302,7 +302,7 @@ const glowDriver = ViewPlugin.fromClass(
   }
 )
 
-export const aiEditGlowExtension = (): Extension => [
+const aiEditGlowExtension = (): Extension => [
   aiEditGlowField,
   collectGlows,
   glowDriver,

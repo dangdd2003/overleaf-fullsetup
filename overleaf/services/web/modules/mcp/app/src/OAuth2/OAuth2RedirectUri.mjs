@@ -25,7 +25,7 @@ function parse(uri) {
   return parsed
 }
 
-function isLoopback(url) {
+export function isLoopback(url) {
   return url.protocol === 'http:' && LOOPBACK_HOSTS.includes(url.hostname)
 }
 

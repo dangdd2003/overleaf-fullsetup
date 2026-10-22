@@ -3,15 +3,15 @@ import sinon from 'sinon'
 import { fireEvent, render, screen } from '@testing-library/react'
 import {
   ToolCallCard,
-  toolCallExpansionStore,
 } from '../../../../../frontend/js/features/ai-assist/components/agent/tool-call-card'
+import { subresultExpansionStore } from '../../../../../frontend/js/features/ai-assist/components/agent/subresult-expansion-store'
 import { EditApprovalCard } from '../../../../../frontend/js/features/ai-assist/components/agent/edit-approval-card'
 import { AgentMessageView } from '../../../../../frontend/js/features/ai-assist/components/agent/agent-message'
 import { ThinkingBlock } from '../../../../../frontend/js/features/ai-assist/components/agent/thinking-block'
 
 describe('ToolCallCard', function () {
   beforeEach(function () {
-    toolCallExpansionStore.clear()
+    subresultExpansionStore.clear()
   })
   it('summarises a read without showing the arguments until expanded', function () {
     const { container } = render(
@@ -124,8 +124,10 @@ describe('ToolCallCard', function () {
     expect(card.classList.contains('is-active')).to.be.true
     const icon = container.querySelector('.ai-assist-tool-call-icon')!
     expect(icon.classList.contains('is-active')).to.be.true
-    expect(icon.querySelector('.ai-assist-tool-spinner')).to.exist
-    const action = container.querySelector('.ai-assist-tool-call-action')!
+    expect(icon.querySelector('.ai-assist-activity-dot, .ai-assist-tool-spinner')).to.exist
+    const action = container.querySelector(
+      '.ai-assist-tool-call-label, .ai-assist-tool-call-action'
+    )!
     expect(action.classList.contains('is-active')).to.be.true
   })
 

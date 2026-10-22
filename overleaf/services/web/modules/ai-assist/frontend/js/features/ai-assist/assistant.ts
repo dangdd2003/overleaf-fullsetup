@@ -1,9 +1,5 @@
 import { ServerProviderClient } from './providers/server-client'
-import {
-  ProviderError,
-  ProviderModel,
-  ProviderSettings,
-} from './providers/types'
+import { ProviderModel, ProviderSettings } from './providers/types'
 import {
   readReasoningEffort,
   readSettings,
@@ -50,5 +46,3 @@ export class AiAssistant {
     return this.client.test()
   }
 }
-
-export { ProviderError }

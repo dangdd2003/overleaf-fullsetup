@@ -82,5 +82,5 @@ function sendInternal(res, err, context = {}) {
   return send(res, CODES.UPSTREAM, undefined, extra)
 }
 
-export default { CODES, STATUS, send, sendInternal }
-export { CODES, STATUS, send, sendInternal }
+export default { CODES, send, sendInternal }
+export { CODES, send, sendInternal }

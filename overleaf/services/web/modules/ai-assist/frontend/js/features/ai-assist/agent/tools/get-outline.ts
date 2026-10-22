@@ -52,9 +52,6 @@ export const getOutlineTool: AgentTool = {
     const target = match.section
     const siblings = index.outline.sections
     const startIndex = siblings.indexOf(target)
-    const nextPeer = siblings
-      .slice(startIndex + 1)
-      .find(candidate => candidate.level <= target.level)
     const nextPeerInFile = siblings
       .slice(startIndex + 1)
       .find(
@@ -74,7 +71,10 @@ export const getOutlineTool: AgentTool = {
       ? nextPeerInFile.line - 1
       : fileLines
 
-    const nextIndex = nextPeer ? siblings.indexOf(nextPeer) : siblings.length
+    const nextPeerIndex = siblings.findIndex(
+      (candidate, index) => index > startIndex && candidate.level <= target.level
+    )
+    const nextIndex = nextPeerIndex === -1 ? siblings.length : nextPeerIndex
     const hint = end !== undefined
       ? `read_file with path=${target.path} from=${target.line} to=${end} for the body`
       : `read_file with path=${target.path} from=${target.line} for the body`

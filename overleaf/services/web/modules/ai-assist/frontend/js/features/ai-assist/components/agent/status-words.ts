@@ -171,7 +171,7 @@ export const STATUS_WORDS = [
   'Frolicking',
 ] as const
 
-export type StatusWord = (typeof STATUS_WORDS)[number]
+type StatusWord = (typeof STATUS_WORDS)[number]
 
 /**
  * A different word from the one on screen.
@@ -207,7 +207,7 @@ export function formatDuration(elapsedMs: number): string {
   return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`
 }
 
-export const PAST_TENSE_WORDS: Record<string, string> = {
+const PAST_TENSE_WORDS: Record<string, string> = {
   // Overleaf and LaTeX flavour
   Overleafing: 'Overleafed',
   Typesetting: 'Typeset',
@@ -371,11 +371,9 @@ export const PAST_TENSE_WORDS: Record<string, string> = {
   Thinking: 'Thought',
 }
 
-export function toPastTense(word: string): string {
-  if (!word) return 'Worked'
-  const trimmed = word.replace(/…$/, '').trim()
-  if (PAST_TENSE_WORDS[trimmed]) return PAST_TENSE_WORDS[trimmed]
-  if (Object.values(PAST_TENSE_WORDS).includes(trimmed)) return trimmed
+const PAST_TENSE_FORMS = new Set(Object.values(PAST_TENSE_WORDS))
+
+export function regularPastTense(trimmed: string): string {
   if (trimmed.endsWith('ed')) return trimmed
   if (trimmed.endsWith('ing')) {
     const base = trimmed.slice(0, -3)
@@ -383,6 +381,16 @@ export function toPastTense(word: string): string {
     return `${base}ed`
   }
   return `${trimmed}ed`
+}
+
+export function toPastTense(word: string): string {
+  if (!word) return 'Worked'
+  const trimmed = word.replace(/…$/, '').trim()
+  if (Object.prototype.hasOwnProperty.call(PAST_TENSE_WORDS, trimmed)) {
+    return PAST_TENSE_WORDS[trimmed]
+  }
+  if (PAST_TENSE_FORMS.has(trimmed)) return trimmed
+  return regularPastTense(trimmed)
 }
 
 /**
@@ -404,7 +412,7 @@ export function formatCompletedStatus(word: string, elapsedMs: number): string {
  * - responding: reply text is streaming
  * - tool: a tool call has no result yet
  */
-export type LiveStatusMode = 'requesting' | 'thinking' | 'responding' | 'tool'
+type LiveStatusMode = 'requesting' | 'thinking' | 'responding' | 'tool'
 
 export function deriveStatusMode(blocks: AssistantBlock[]): LiveStatusMode {
   const last = blocks.at(-1)
@@ -418,6 +426,18 @@ export function deriveStatusMode(blocks: AssistantBlock[]): LiveStatusMode {
   return 'responding'
 }
 
+const blockTokenCache = new WeakMap<AssistantBlock, number>()
+
+function estimateBlockTokens(block: AssistantBlock): number {
+  if (block.type === 'thinking') {
+    return estimateTokens(block.thinking ?? '')
+  }
+  if (block.type === 'text') {
+    return estimateTokens(block.text ?? '')
+  }
+  return estimateTokens(JSON.stringify(block.call.args ?? ''))
+}
+
 /**
  * Tokens the model has streamed back this run: thinking, reply text and tool
  * arguments. An estimate, like every other count in the panel.
@@ -425,13 +445,12 @@ export function deriveStatusMode(blocks: AssistantBlock[]): LiveStatusMode {
 export function countOutputTokens(blocks: AssistantBlock[]): number {
   let total = 0
   for (const block of blocks) {
-    if (block.type === 'thinking') {
-      total += estimateTokens(block.thinking ?? '')
-    } else if (block.type === 'text') {
-      total += estimateTokens(block.text ?? '')
-    } else {
-      total += estimateTokens(JSON.stringify(block.call.args ?? ''))
+    let count = blockTokenCache.get(block)
+    if (count === undefined) {
+      count = estimateBlockTokens(block)
+      blockTokenCache.set(block, count)
     }
+    total += count
   }
   return total
 }

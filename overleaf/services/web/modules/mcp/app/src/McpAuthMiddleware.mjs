@@ -39,6 +39,7 @@ async function requireMcpAuth(req, res, next) {
   }
 
   let info
+  let grantId
   const isJwt = token.split('.').length === 3
 
   if (isJwt) {
@@ -49,6 +50,7 @@ async function requireMcpAuth(req, res, next) {
       // though a non-expiring JWT would still verify. Tokens without grant_id
       // predate grants and still carry exp, so they age out on their own.
       if (payload && payload.grant_id) {
+        grantId = payload.grant_id
         const grantActive = await OauthAccessToken.exists({
           _id: payload.grant_id,
           user_id: payload.sub,
@@ -100,7 +102,10 @@ async function requireMcpAuth(req, res, next) {
   // Four characters: enough to tell tokens apart in logs, too few to leak the secret.
   req.mcpTokenPrefix = token.slice(0, 4)
   // Keep a stable, non-secret identifier for per-token rate limiting.
-  req.mcpTokenId = createHash('sha256').update(token).digest('hex')
+  // For JWTs issued under a grant, key on grant_id so refreshed access tokens
+  // cannot bypass the per-token rate limiter with new buckets.
+  req.mcpTokenId =
+    grantId || createHash('sha256').update(token).digest('hex')
   req.headers.authorization = `Bearer ${req.mcpTokenPrefix}...`
 
   logger.info(

@@ -1,8 +1,9 @@
 import { KeyboardEvent, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import MaterialIcon from '@/shared/components/material-icon'
+import { ApprovalDecision } from '../../agent/agent-events'
 
-type Decision = { accepted: boolean; always?: boolean; note?: string }
+export type ConnectorDecision = ApprovalDecision
 
 const YES = 0
 const ALWAYS = 1
@@ -34,7 +35,7 @@ export function ConnectorApprovalCard({
   toolName: string
   toolTitle?: string
   args?: Record<string, unknown>
-  onDecision: (decision: Decision) => void
+  onDecision: (decision: ConnectorDecision) => void
 }) {
   const { t } = useTranslation()
   const [selected, setSelected] = useState(YES)

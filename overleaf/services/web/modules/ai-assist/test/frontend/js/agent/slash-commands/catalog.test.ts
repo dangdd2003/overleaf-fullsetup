@@ -6,6 +6,8 @@ import {
   parseSlashInput,
 } from '../../../../../frontend/js/features/ai-assist/agent/slash-commands/catalog'
 import {
+  getTopUsedCommandIds,
+  readSlashCommandUsage,
   recordSlashCommandUsage,
 } from '../../../../../frontend/js/features/ai-assist/agent/slash-commands/usage-store'
 
@@ -121,6 +123,47 @@ describe('slash command catalog', function () {
         if (typeof window !== 'undefined' && window.localStorage) {
           window.localStorage.clear()
         }
+      }
+    })
+  })
+
+  describe('usage-store resilience', function () {
+    it('readSlashCommandUsage tolerates corrupted or non-object localStorage', function () {
+      if (typeof window === 'undefined' || !window.localStorage) return
+      try {
+        window.localStorage.setItem('ol_ai_assist_slash_usage', 'not-json')
+        expect(readSlashCommandUsage()).to.deep.equal({})
+        window.localStorage.setItem('ol_ai_assist_slash_usage', JSON.stringify([1, 2, 3]))
+        expect(readSlashCommandUsage()).to.deep.equal({})
+        window.localStorage.setItem(
+          'ol_ai_assist_slash_usage',
+          JSON.stringify({
+            fix: { count: 'invalid', lastUsed: 123 },
+            table: { count: 5, lastUsed: 456 },
+          })
+        )
+        const usage = readSlashCommandUsage()
+        expect(usage.fix).to.equal(undefined)
+        expect(usage.table).to.deep.equal({ count: 5, lastUsed: 456 })
+      } finally {
+        window.localStorage.clear()
+      }
+    })
+
+    it('getTopUsedCommandIds filters out unknown IDs when known set is passed', function () {
+      if (typeof window === 'undefined' || !window.localStorage) return
+      try {
+        window.localStorage.setItem(
+          'ol_ai_assist_slash_usage',
+          JSON.stringify({
+            staleCommand: { count: 50, lastUsed: Date.now() },
+            table: { count: 5, lastUsed: Date.now() },
+          })
+        )
+        const top = getTopUsedCommandIds(3, new Set(['table', 'fix']))
+        expect(top).to.deep.equal(['table'])
+      } finally {
+        window.localStorage.clear()
       }
     })
   })

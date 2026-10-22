@@ -1,5 +1,5 @@
 import { diffWordsWithSpace } from 'diff'
-import type { MaskedText } from './masked-text'
+import { type MaskedText, wordCount } from './masked-text'
 
 /**
  * What a suggestion is, by the result it came from (prompt.ts):
@@ -18,6 +18,20 @@ export type MaskedEdit = {
   original: string
   /** Unset in results stored before kinds existed: those are corrections. */
   kind?: SuggestionKind
+}
+
+export function isMaskedEdit(value: unknown): value is MaskedEdit {
+  if (!value || typeof value !== 'object') return false
+  const candidate = value as Record<string, unknown>
+  return (
+    typeof candidate.from === 'number' &&
+    Number.isFinite(candidate.from) &&
+    typeof candidate.to === 'number' &&
+    Number.isFinite(candidate.to) &&
+    typeof candidate.insert === 'string' &&
+    typeof candidate.original === 'string' &&
+    (candidate.kind === undefined || candidate.kind === 'grammar' || candidate.kind === 'style')
+  )
 }
 
 export function editKind(edit: MaskedEdit): SuggestionKind {
@@ -203,7 +217,7 @@ export const MAX_STYLE_CHANGED_SHARE = 0.6
 const overlaps = (a: MaskedEdit, b: MaskedEdit) =>
   a.from === b.from || (a.from < b.to && b.from < a.to)
 
-const sameEdit = (a: MaskedEdit, b: MaskedEdit) =>
+export const sameEdit = (a: MaskedEdit, b: MaskedEdit): boolean =>
   a.from === b.from && a.to === b.to && a.insert === b.insert
 
 /** Whether `inner` lies inside `outer`: an insertion strictly inside, a replacement within it. */

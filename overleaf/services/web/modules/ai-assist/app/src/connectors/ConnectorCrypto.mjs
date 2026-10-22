@@ -51,6 +51,10 @@ function keys() {
   if (secrets.length === 0) {
     throw new Error('The instance has no session secret to seal credentials')
   }
+  // Forget the keys of secrets the instance has rotated out of its settings
+  for (const secret of keyCache.keys()) {
+    if (!secrets.includes(secret)) keyCache.delete(secret)
+  }
   return secrets.map(secret => {
     if (!keyCache.has(secret)) keyCache.set(secret, keyFor(secret))
     return keyCache.get(secret)

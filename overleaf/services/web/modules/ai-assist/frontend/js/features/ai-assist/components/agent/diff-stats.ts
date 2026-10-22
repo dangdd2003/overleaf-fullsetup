@@ -20,6 +20,39 @@ function withTrailingNewline(text: unknown): string {
  * or null when the call isn't a successful file write (still running, failed,
  * rejected, or a different tool entirely).
  */
+function toArgs(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {}
+}
+
+/** The old and new text a file-edit call carries, under any of its argument names. */
+export function editTextsOf(call: ToolCallRecord): {
+  oldText: string
+  newText: string
+} {
+  const args = toArgs(call.args)
+  const oldVal = args.oldText ?? args.old_text ?? args.old_string
+  const newVal = args.newText ?? args.new_text ?? args.new_string
+  const contentVal = args.content
+  return {
+    oldText:
+      call.name === 'create_file'
+        ? ''
+        : typeof oldVal === 'string'
+          ? oldVal
+          : '',
+    newText:
+      call.name === 'create_file'
+        ? typeof contentVal === 'string'
+          ? contentVal
+          : ''
+        : typeof newVal === 'string'
+          ? newVal
+          : '',
+  }
+}
+
 export function diffStatsForCall(call: ToolCallRecord): DiffStats | null {
   if (!call || !call.name) return null
   if (call.name !== 'edit_file' && call.name !== 'create_file') return null
@@ -28,24 +61,7 @@ export function diffStatsForCall(call: ToolCallRecord): DiffStats | null {
   const result = call.result as { status?: string } | undefined
   if (result?.status !== 'applied') return null
 
-  const args = (call.args ?? {}) as {
-    oldText?: string
-    newText?: string
-    content?: string
-    old_text?: string
-    new_text?: string
-    old_string?: string
-    new_string?: string
-  }
-
-  const oldText =
-    call.name === 'create_file'
-      ? ''
-      : (args.oldText ?? args.old_text ?? args.old_string ?? '')
-  const newText =
-    call.name === 'create_file'
-      ? (args.content ?? '')
-      : (args.newText ?? args.new_text ?? args.new_string ?? '')
+  const { oldText, newText } = editTextsOf(call)
 
   try {
     const changes = diffLines(

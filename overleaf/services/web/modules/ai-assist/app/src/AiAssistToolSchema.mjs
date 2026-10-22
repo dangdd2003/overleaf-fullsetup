@@ -64,8 +64,9 @@ export function flattenJsonSchema(schema) {
 
     let current = node
     if (typeof current.$ref === 'string') {
-      const name = current.$ref.split('/').pop()
-      const target = defs[name]
+      const match = /^#\/(?:\$defs|definitions)\/([^/]+)$/.exec(current.$ref)
+      const target =
+        match && Object.hasOwn(defs, match[1]) ? defs[match[1]] : undefined
       const { $ref: _ref, ...rest } = current
       current =
         target && depth < MAX_REF_DEPTH

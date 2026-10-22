@@ -19,7 +19,7 @@ import { classifySelectionText } from '../../agent/starters/classify-selection'
  * Each `t()` call is a string literal so the static translation extractor
  * (`yarn extract-translations`) indexes every key.
  */
-export function useSelectionActionLabel(): (id: SelectionActionId) => string {
+function useSelectionActionLabel(): (id: SelectionActionId) => string {
   const { t } = useTranslation()
 
   return (id: SelectionActionId): string => {
@@ -141,7 +141,7 @@ export function useSelectionActionLabel(): (id: SelectionActionId) => string {
 }
 
 /** Human-readable badge label for the classified selection structure. */
-export function useSelectionKindLabel(): (kind: SelectionKind) => string {
+function useSelectionKindLabel(): (kind: SelectionKind) => string {
   const { t } = useTranslation()
 
   return (kind: SelectionKind): string => {
@@ -192,25 +192,22 @@ export function SelectionQuickActions({
   const kindLabelFor = useSelectionKindLabel()
 
   const max = variant === 'list' ? MAX_SELECTION_ACTIONS : MAX_SELECTION_CHIPS
+
+  const scope = useMemo(
+    () => selection.scope ?? classifySelectionText(selection.text, selection.path),
+    [selection.scope, selection.text, selection.path]
+  )
+
   const actions = useMemo(
-    () => deriveSelectionActions(selection, max),
+    () => deriveSelectionActions({ ...selection, scope }, max),
     [
       selection.path,
       selection.from,
       selection.to,
       selection.text,
-      selection.scope?.kind,
-      selection.scope?.inline,
-      selection.scope?.numeric,
-      selection.scope?.lines,
-      selection.scope?.cues?.join(','),
+      scope,
       max,
     ]
-  )
-
-  const scope = useMemo(
-    () => selection.scope ?? classifySelectionText(selection.text, selection.path),
-    [selection.scope, selection.text, selection.path]
   )
 
   const kindLabel = kindLabelFor(scope.kind)

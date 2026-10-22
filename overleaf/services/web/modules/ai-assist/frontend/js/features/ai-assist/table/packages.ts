@@ -55,5 +55,5 @@ export function tablePackages(
   }
   for (const name of specPackages(spec)) needed.add(name)
   if (colors && !colorReady) needed.add('colortbl')
-  return [...needed].filter(name => missingPackages('', [name], loaded, docClass).length > 0)
+  return missingPackages('', [...needed], loaded, docClass)
 }

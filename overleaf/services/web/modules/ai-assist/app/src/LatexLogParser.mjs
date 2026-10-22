@@ -6,13 +6,14 @@
 
 import { parseLatexLog } from '../../../../app/src/Features/PdfInspection/LatexLogParser.mjs'
 
-const DEFAULT_FILE_BASE_NAMES = [/compiles/, /\/usr\/local/]
+// Anchored entries strip a prefix; unanchored ones cut the name at the match
+const DEFAULT_FILE_BASE_NAMES = [/^compiles\/[^/]+\//, /\/usr\/local/]
 
 /**
  * Strip the compile directory and leading "./" from a log file name, and the
  * TeX install prefix from a system file name.
  */
-export function normalizeFilePath(
+function normalizeFilePath(
   filePath,
   fileBaseNames = DEFAULT_FILE_BASE_NAMES
 ) {
@@ -24,29 +25,17 @@ export function normalizeFilePath(
   cleaned = cleaned.replace(/^\/compiles\/[^/]+\//, '')
   cleaned = cleaned.replace(/^\/tmp\/[^/]+\//, '')
   for (const regex of fileBaseNames) {
-    if (regex.test(cleaned)) {
+    if (regex.source.startsWith('^')) {
+      cleaned = cleaned.replace(regex, '')
+    } else if (regex.test(cleaned)) {
       const parts = cleaned.split(regex)
-      const remainder = parts[parts.length - 1].replace(/^\/+/, '')
-      if (regex.source.includes('compiles') || regex.source.includes('tmp')) {
-        cleaned = remainder.replace(/^[^/]+\//, '')
-      } else {
-        cleaned = remainder
-      }
+      cleaned = parts[parts.length - 1].replace(/^\/+/, '')
     }
   }
   return cleaned.replace(/^\/+/, '')
 }
 
 export class LatexLogParser {
-  constructor(text, options = {}) {
-    this.text = text
-    this.options = options
-  }
-
-  parse() {
-    return LatexLogParser.parse(this.text, this.options)
-  }
-
   static parse(text, options = {}) {
     const fileBaseNames = options.fileBaseNames || DEFAULT_FILE_BASE_NAMES
     return parseLatexLog(text, {
@@ -55,5 +44,3 @@ export class LatexLogParser {
     })
   }
 }
-
-export default LatexLogParser

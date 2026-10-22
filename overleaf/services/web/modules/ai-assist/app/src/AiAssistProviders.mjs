@@ -428,7 +428,7 @@ class StreamingThinkParser {
           this.inThink = true
           input = input.slice(startIdx + 7)
         } else {
-          const match = input.match(/<t(?:h(?:i(?:n(?:k)?)?)?)?$/)
+          const match = input.match(/<(?:t(?:h(?:i(?:n(?:k)?)?)?)?)?$/)
           if (match) {
             const before = input.slice(0, match.index)
             if (before) yield { type: 'text', text: before }
@@ -447,7 +447,7 @@ class StreamingThinkParser {
           this.inThink = false
           input = input.slice(endIdx + 8)
         } else {
-          const match = input.match(/<\/t(?:h(?:i(?:n(?:k)?)?)?)?$/)
+          const match = input.match(/<(?:\/(?:t(?:h(?:i(?:n(?:k)?)?)?)?)?)?$/)
           if (match) {
             const thinking = input.slice(0, match.index)
             if (thinking) yield { type: 'thinking', text: thinking }
@@ -529,6 +529,59 @@ function toolImages(message) {
     : []
 }
 
+/** The Anthropic image block for one image, base64 inline. */
+function anthropicImageBlock(image) {
+  return {
+    type: 'image',
+    source: {
+      type: 'base64',
+      media_type: image.mediaType,
+      data: image.data,
+    },
+  }
+}
+
+/** The chat-completions image part for one image, as a data URL. */
+function openAiImagePart(image) {
+  return {
+    type: 'image_url',
+    image_url: {
+      url: `data:${image.mediaType};base64,${image.data}`,
+      detail: image.detail ?? 'high',
+    },
+  }
+}
+
+/** A tool result as sent to the provider: an empty one is marked, not sent bare. */
+function toolResultText(content) {
+  return typeof content === 'string' && content.trim().length > 0
+    ? content
+    : '(empty result)'
+}
+
+/** A tool call's arguments as an object, from the object or JSON text a turn kept. */
+function parseCallArgs(args) {
+  let parsed = args ?? {}
+  if (typeof parsed === 'string') {
+    try {
+      parsed = JSON.parse(parsed)
+    } catch {
+      parsed = {}
+    }
+  }
+  return parsed
+}
+
+/** The tool_call event for a streamed Anthropic tool_use block. */
+function anthropicToolCall(tool) {
+  return {
+    type: 'tool_call',
+    id: tool.id,
+    name: tool.name,
+    args: safeParseToolArgs(tool.rawArgs),
+  }
+}
+
 /**
  * Chat-completions APIs (OpenAI and compatible servers, Ollama) only take
  * text in a tool message, so a tool's images follow its results as a user
@@ -566,10 +619,7 @@ export function toOllamaMessages(system, messages) {
   const imageTurns = toolImageTurns(messages)
   for (const [index, message] of messages.entries()) {
     if (message.role === 'tool') {
-      const safeContent =
-        typeof message.content === 'string' && message.content.trim().length > 0
-          ? message.content
-          : '(empty result)'
+      const safeContent = toolResultText(message.content)
       wire.push({
         role: 'tool',
         content: safeContent,
@@ -588,24 +638,14 @@ export function toOllamaMessages(system, messages) {
       wire.push({
         role: 'assistant',
         content: message.content || '',
-        tool_calls: message.toolCalls.map(call => {
-          let args = call.args ?? {}
-          if (typeof args === 'string') {
-            try {
-              args = JSON.parse(args)
-            } catch {
-              args = {}
-            }
-          }
-          return {
-            id: call.id,
-            type: 'function',
-            function: {
-              name: call.name,
-              arguments: args,
-            },
-          }
-        }),
+        tool_calls: message.toolCalls.map(call => ({
+          id: call.id,
+          type: 'function',
+          function: {
+            name: call.name,
+            arguments: parseCallArgs(call.args),
+          },
+        })),
       })
     } else {
       const images =
@@ -1104,11 +1144,7 @@ class AnthropicServerClient {
 
     for (const message of messages) {
       if (message.role === 'tool') {
-        const safeContent =
-          typeof message.content === 'string' &&
-          message.content.trim().length > 0
-            ? message.content
-            : '(empty result)'
+        const safeContent = toolResultText(message.content)
         // Anthropic takes images inside the tool result itself
         const images = toolImages(message)
         const block = {
@@ -1118,14 +1154,7 @@ class AnthropicServerClient {
             images.length > 0
               ? [
                   { type: 'text', text: safeContent },
-                  ...images.map(image => ({
-                    type: 'image',
-                    source: {
-                      type: 'base64',
-                      media_type: image.mediaType,
-                      data: image.data,
-                    },
-                  })),
+                  ...images.map(anthropicImageBlock),
                 ]
               : safeContent,
           is_error: Boolean(message.isError),
@@ -1148,19 +1177,11 @@ class AnthropicServerClient {
         if (message.content)
           content.push({ type: 'text', text: message.content })
         for (const call of message.toolCalls) {
-          let input = call.args ?? {}
-          if (typeof input === 'string') {
-            try {
-              input = JSON.parse(input)
-            } catch {
-              input = {}
-            }
-          }
           content.push({
             type: 'tool_use',
             id: call.id,
             name: call.name,
-            input,
+            input: parseCallArgs(call.args),
           })
         }
         wire.push({ role: 'assistant', content })
@@ -1172,14 +1193,7 @@ class AnthropicServerClient {
       // consecutive user turns anyway; some gateways reject them instead.
       const imageBlocks =
         message.role === 'user' && Array.isArray(message.images)
-          ? message.images.map(image => ({
-              type: 'image',
-              source: {
-                type: 'base64',
-                media_type: image.mediaType,
-                data: image.data,
-              },
-            }))
+          ? message.images.map(anthropicImageBlock)
           : []
       const lastTurn = wire.at(-1)
       if (message.role === 'user' && lastTurn?.role === 'user') {
@@ -1349,25 +1363,13 @@ class AnthropicServerClient {
             activeTool.rawArgs += delta.partial_json
           }
         } else if (parsed.type === 'content_block_stop' && activeTool) {
-          const args = safeParseToolArgs(activeTool.rawArgs)
-          yield {
-            type: 'tool_call',
-            id: activeTool.id,
-            name: activeTool.name,
-            args,
-          }
+          yield anthropicToolCall(activeTool)
           activeTool = null
         } else if (parsed.type === 'message_delta') {
           if (parsed.delta?.stop_reason === 'max_tokens') truncated = true
         } else if (parsed.type === 'message_stop') {
           if (activeTool) {
-            const args = safeParseToolArgs(activeTool.rawArgs)
-            yield {
-              type: 'tool_call',
-              id: activeTool.id,
-              name: activeTool.name,
-              args,
-            }
+            yield anthropicToolCall(activeTool)
             activeTool = null
           }
           break
@@ -1381,13 +1383,7 @@ class AnthropicServerClient {
     }
 
     if (activeTool) {
-      const args = safeParseToolArgs(activeTool.rawArgs)
-      yield {
-        type: 'tool_call',
-        id: activeTool.id,
-        name: activeTool.name,
-        args,
-      }
+      yield anthropicToolCall(activeTool)
     }
 
     if (reported) {
@@ -1517,13 +1513,7 @@ export class OpenAiServerClient {
               role: 'user',
               content: [
                 { type: 'text', text: imageTurnLabel(shown) },
-                ...shown.map(({ image }) => ({
-                  type: 'image_url',
-                  image_url: {
-                    url: `data:${image.mediaType};base64,${image.data}`,
-                    detail: image.detail ?? 'high',
-                  },
-                })),
+                ...shown.map(({ image }) => openAiImagePart(image)),
               ],
             },
           ]
@@ -1556,13 +1546,7 @@ export class OpenAiServerClient {
           return {
             role: 'user',
             content: [
-              ...m.images.map(image => ({
-                type: 'image_url',
-                image_url: {
-                  url: `data:${image.mediaType};base64,${image.data}`,
-                  detail: image.detail ?? 'high',
-                },
-              })),
+              ...m.images.map(openAiImagePart),
               { type: 'text', text: m.content || '' },
             ],
           }
@@ -1618,7 +1602,7 @@ export class OpenAiServerClient {
 
     if (!res.ok) throw await openAiError(res)
 
-    const pendingToolCalls = new Map()
+    const pendingToolCalls = []
     // wire index -> the call in pendingToolCalls open at that index
     const openToolCalls = new Map()
     const thinkParser = new StreamingThinkParser()
@@ -1668,7 +1652,7 @@ export class OpenAiServerClient {
             if (!curr || (tc.id && curr.id && tc.id !== curr.id)) {
               curr = { id: tc.id, name: tc.function?.name || '', rawArgs: '' }
               openToolCalls.set(index, curr)
-              pendingToolCalls.set(pendingToolCalls.size, curr)
+              pendingToolCalls.push(curr)
             }
             if (tc.id) curr.id = tc.id
             if (tc.function?.name) curr.name = tc.function.name
@@ -1693,7 +1677,7 @@ export class OpenAiServerClient {
       yield item
     }
 
-    for (const tool of pendingToolCalls.values()) {
+    for (const tool of pendingToolCalls) {
       const args = safeParseToolArgs(tool.rawArgs)
       yield {
         type: 'tool_call',
@@ -1781,18 +1765,10 @@ export function toGeminiContents(messages) {
       }
       if (message.toolCalls?.length) {
         for (const tc of message.toolCalls) {
-          let args = tc.args ?? {}
-          if (typeof args === 'string') {
-            try {
-              args = JSON.parse(args)
-            } catch {
-              args = {}
-            }
-          }
           parts.push({
             functionCall: {
               name: tc.name,
-              args,
+              args: parseCallArgs(tc.args),
             },
           })
         }
@@ -2143,6 +2119,8 @@ export class GoogleServerClient {
  * flag is left out for that model.
  */
 const ollamaThinkUnsupported = new Set()
+// Cleared past this many, so user-chosen model names cannot grow it forever
+const OLLAMA_THINK_UNSUPPORTED_MAX = 500
 
 async function ollamaErrorMessage(res) {
   let msg = `Ollama error (${res.status})`
@@ -2289,6 +2267,9 @@ export class OllamaServerClient {
             code: 'providerError',
             ...retry,
           })
+        }
+        if (ollamaThinkUnsupported.size >= OLLAMA_THINK_UNSUPPORTED_MAX) {
+          ollamaThinkUnsupported.clear()
         }
         ollamaThinkUnsupported.add(thinkKey)
         delete body.think

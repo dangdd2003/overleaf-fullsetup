@@ -1,4 +1,3 @@
-import getMeta from "@/utils/meta";
 import {
   ChatChunk,
   ChatRequest,
@@ -11,16 +10,11 @@ import {
   WebSearchProviderType,
   WebSearchSettings,
 } from "./types";
+import { csrfHeaders } from "../utils/csrf";
+
+type WireChunk = ChatChunk | { type: "error"; error?: ErrorBody };
 
 type ErrorBody = { code?: string; message?: string; hint?: string };
-
-function csrfHeaders(): Record<string, string> {
-  const token =
-    (typeof window !== "undefined" && (window as any).csrfToken) ||
-    getMeta("ol-csrfToken") ||
-    "";
-  return token ? { "X-Csrf-Token": token } : {};
-}
 
 function toError(body: ErrorBody | undefined, status?: number): ProviderError {
   return new ProviderError(
@@ -44,8 +38,8 @@ async function post(
       body: JSON.stringify(body),
       signal,
     });
-  } catch (error: any) {
-    if (signal?.aborted || error?.name === "AbortError") {
+  } catch (error) {
+    if (signal?.aborted || (error as { name?: string })?.name === "AbortError") {
       throw new ProviderError("aborted", "The request was cancelled.");
     }
     throw new ProviderError("network", "Could not reach the Overleaf server.");
@@ -199,9 +193,9 @@ export class ServerProviderClient implements ProviderClient {
 
     const parse = function* (line: string): Generator<ChatChunk> {
       if (!line.trim()) return;
-      let chunk: any;
+      let chunk: WireChunk;
       try {
-        chunk = JSON.parse(line);
+        chunk = JSON.parse(line) as WireChunk;
       } catch {
         throw new ProviderError(
           "network",
@@ -210,10 +204,10 @@ export class ServerProviderClient implements ProviderClient {
       }
       if (chunk.type === "error") throw toError(chunk.error);
       if (chunk.type === "done") finished = true;
-      yield chunk as ChatChunk;
+      yield chunk;
     };
 
-    const chunks = bodyChunks(response.body as any);
+    const chunks = bodyChunks(response.body);
     try {
       while (true) {
         let result: IteratorResult<Uint8Array>;
@@ -230,13 +224,14 @@ export class ServerProviderClient implements ProviderClient {
         }
         if (result.done) break;
         buffer += decoder.decode(result.value, { stream: true });
-        let newline = buffer.indexOf("\n");
+        let start = 0;
+        let newline = buffer.indexOf("\n", start);
         while (newline !== -1) {
-          const line = buffer.slice(0, newline);
-          buffer = buffer.slice(newline + 1);
-          yield* parse(line);
-          newline = buffer.indexOf("\n");
+          yield* parse(buffer.slice(start, newline));
+          start = newline + 1;
+          newline = buffer.indexOf("\n", start);
         }
+        buffer = buffer.slice(start);
       }
       yield* parse(buffer + decoder.decode());
     } finally {

@@ -6,7 +6,7 @@ import {
 } from '@/infrastructure/fetch-json'
 import customLocalStorage from '@/infrastructure/local-storage'
 import { TranscriptEntry } from './agent-messages'
-import { AgentMode } from './agent-mode'
+import { AgentMode, isAgentMode } from './agent-mode'
 
 export type ChatStats = {
   totalSteps?: number
@@ -41,10 +41,7 @@ export function getStoredChatMode(
   chatId: string
 ): AgentMode | null {
   const stored = customLocalStorage.getItem(modeKeyFor(projectId, chatId))
-  if (stored === 'manual' || stored === 'acceptEdits' || stored === 'plan') {
-    return stored
-  }
-  return null
+  return isAgentMode(stored) ? stored : null
 }
 
 export function setStoredChatMode(
@@ -55,7 +52,7 @@ export function setStoredChatMode(
   customLocalStorage.setItem(modeKeyFor(projectId, chatId), mode)
 }
 
-export function clearStoredChatMode(projectId: string, chatId: string) {
+function clearStoredChatMode(projectId: string, chatId: string) {
   customLocalStorage.removeItem(modeKeyFor(projectId, chatId))
 }
 

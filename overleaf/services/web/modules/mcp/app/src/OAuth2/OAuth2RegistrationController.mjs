@@ -1,6 +1,7 @@
 import crypto from 'node:crypto'
 import { OauthApplication } from '../../../../../app/src/models/OauthApplication.mjs'
-import { MCP_SCOPE, normalizeScope } from './OAuth2Utils.mjs'
+import { isLoopback } from './OAuth2RedirectUri.mjs'
+import { MCP_SCOPE, normalizeScope, oauthError } from './OAuth2Utils.mjs'
 
 // Registration is unauthenticated, so every field is bounded. The limits are
 // well above what any real client sends.
@@ -13,73 +14,91 @@ const OAuth2RegistrationController = {
   async register(req, res) {
     const { client_name, redirect_uris, grant_types, scope } = req.body || {}
     if (!client_name || typeof client_name !== 'string') {
-      return res.status(400).json({
-        error: 'invalid_client_metadata',
-        error_description: 'client_name is required',
-      })
+      return oauthError(
+        res,
+        400,
+        'invalid_client_metadata',
+        'client_name is required'
+      )
     }
     if (client_name.length > MAX_CLIENT_NAME_LENGTH) {
-      return res.status(400).json({
-        error: 'invalid_client_metadata',
-        error_description: `client_name must be at most ${MAX_CLIENT_NAME_LENGTH} characters`,
-      })
+      return oauthError(
+        res,
+        400,
+        'invalid_client_metadata',
+        `client_name must be at most ${MAX_CLIENT_NAME_LENGTH} characters`
+      )
     }
     if (!Array.isArray(redirect_uris) || redirect_uris.length === 0) {
-      return res.status(400).json({
-        error: 'invalid_redirect_uri',
-        error_description: 'redirect_uris array is required',
-      })
+      return oauthError(
+        res,
+        400,
+        'invalid_redirect_uri',
+        'redirect_uris array is required'
+      )
     }
     if (redirect_uris.length > MAX_REDIRECT_URIS) {
-      return res.status(400).json({
-        error: 'invalid_redirect_uri',
-        error_description: `redirect_uris may hold at most ${MAX_REDIRECT_URIS} entries`,
-      })
+      return oauthError(
+        res,
+        400,
+        'invalid_redirect_uri',
+        `redirect_uris may hold at most ${MAX_REDIRECT_URIS} entries`
+      )
     }
     if (
       grant_types !== undefined &&
       (!Array.isArray(grant_types) ||
         grant_types.some(grant => !SUPPORTED_GRANT_TYPES.includes(grant)))
     ) {
-      return res.status(400).json({
-        error: 'invalid_client_metadata',
-        error_description: `grant_types must be a subset of ${SUPPORTED_GRANT_TYPES.join(', ')}`,
-      })
+      return oauthError(
+        res,
+        400,
+        'invalid_client_metadata',
+        `grant_types must be a subset of ${SUPPORTED_GRANT_TYPES.join(', ')}`
+      )
     }
     if (scope !== undefined && normalizeScope(scope) !== MCP_SCOPE) {
-      return res.status(400).json({
-        error: 'invalid_client_metadata',
-        error_description: 'Only scope=mcp is supported',
-      })
+      return oauthError(
+        res,
+        400,
+        'invalid_client_metadata',
+        'Only scope=mcp is supported'
+      )
     }
 
     for (const uri of redirect_uris) {
       if (typeof uri !== 'string' || uri.length > MAX_REDIRECT_URI_LENGTH) {
-        return res.status(400).json({
-          error: 'invalid_redirect_uri',
-          error_description: `each redirect_uri must be a string of at most ${MAX_REDIRECT_URI_LENGTH} characters`,
-        })
+        return oauthError(
+          res,
+          400,
+          'invalid_redirect_uri',
+          `each redirect_uri must be a string of at most ${MAX_REDIRECT_URI_LENGTH} characters`
+        )
       }
       try {
         const parsed = new URL(uri)
         const isHttps = parsed.protocol === 'https:'
         // RFC 8252 §7.3 allows the IPv6 loopback literal, which the redirect
         // matcher already accepts.
-        const isLoopback =
-          parsed.protocol === 'http:' &&
-          ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname)
-        if ((!isHttps && !isLoopback) || parsed.username || parsed.password) {
-          return res.status(400).json({
-            error: 'invalid_redirect_uri',
-            error_description:
-              'redirect_uris must be valid HTTPS URLs or loopback HTTP URLs without userinfo',
-          })
+        if (
+          (!isHttps && !isLoopback(parsed)) ||
+          parsed.username ||
+          parsed.password
+        ) {
+          return oauthError(
+            res,
+            400,
+            'invalid_redirect_uri',
+            'redirect_uris must be valid HTTPS URLs or loopback HTTP URLs without userinfo'
+          )
         }
       } catch {
-        return res.status(400).json({
-          error: 'invalid_redirect_uri',
-          error_description: 'Invalid redirect_uri format',
-        })
+        return oauthError(
+          res,
+          400,
+          'invalid_redirect_uri',
+          'Invalid redirect_uri format'
+        )
       }
     }
 

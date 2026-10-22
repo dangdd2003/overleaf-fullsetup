@@ -11,12 +11,21 @@ import OLTooltip from "@/shared/components/ol/ol-tooltip";
 import { useFloatingBox } from "../../floating/use-floating-box";
 import { ChatSummary, listChats } from "../../agent/chat-history-client";
 
+const TIME_FORMAT = new Intl.DateTimeFormat([], {
+  hour: "2-digit",
+  minute: "2-digit",
+});
+const DATE_FORMAT = new Intl.DateTimeFormat([], {
+  month: "short",
+  day: "numeric",
+});
+
 function formatWhen(timestamp: number) {
   const date = new Date(timestamp);
   const now = new Date();
   return date.toDateString() === now.toDateString()
-    ? date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-    : date.toLocaleDateString([], { month: "short", day: "numeric" });
+    ? TIME_FORMAT.format(date)
+    : DATE_FORMAT.format(date);
 }
 
 /**

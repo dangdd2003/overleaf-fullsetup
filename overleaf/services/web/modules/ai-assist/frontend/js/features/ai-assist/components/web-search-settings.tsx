@@ -1,4 +1,4 @@
-import { Fragment, ReactNode, useEffect, useState } from "react";
+import { Fragment, ReactNode, useEffect, useMemo, useState } from "react";
 import classNames from "classnames";
 import OLButton from "@/shared/components/ol/ol-button";
 import OLIconButton from "@/shared/components/ol/ol-icon-button";
@@ -451,7 +451,11 @@ export function DateSetting({
     );
   };
 
-  const monthName = new Intl.DateTimeFormat(undefined, { month: "short" });
+  const order = useMemo(localeDateOrder, []);
+  const monthName = useMemo(
+    () => new Intl.DateTimeFormat(undefined, { month: "short" }),
+    [],
+  );
   const thisYear = new Date().getFullYear();
   const choices: Record<DatePart, { value: string; label: string }[]> = {
     day: Array.from({ length: daysIn(parts) }, (_, i) => ({
@@ -475,12 +479,12 @@ export function DateSetting({
 
   return (
     <Setting
-      controlId={`${id}-${localeDateOrder()[0]}`}
+      controlId={`${id}-${order[0]}`}
       label={label}
       description={description}
     >
       <div className="web-search-date-setting">
-        {localeDateOrder().map((part) => (
+        {order.map((part) => (
           <OLFormSelect
             key={part}
             id={`${id}-${part}`}

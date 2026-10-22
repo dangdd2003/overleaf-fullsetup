@@ -11,7 +11,7 @@ import {
 } from './working-set.mjs'
 import { archiveTodayRoute, waybackRoute } from './routes/archives.mjs'
 import { directRoute } from './routes/direct.mjs'
-import { READERS, READER_ORDER, readerTimeoutMs } from './routes/readers.mjs'
+import { READERS, readerTimeoutMs } from './routes/readers.mjs'
 import { parseFetchUrl } from './transport.mjs'
 import { HOUR_MS, clip, webError } from './util.mjs'
 import { cacheKeyFor } from './urls.mjs'
@@ -38,7 +38,7 @@ import {
  */
 
 /** The whole ladder for one URL, however many routes it climbs. */
-export const READ_BUDGET_MS = 90_000
+const READ_BUDGET_MS = 90_000
 const STEP_TIMEOUT_MS = {
   adapter: 45_000,
   raw: 25_000,
@@ -63,7 +63,7 @@ const failureCache = new Map()
  * How long a reader has before the next one is started alongside it. Most
  * readers answer well inside this; a slow one no longer holds up the read.
  */
-export const READER_HEDGE_MS = 4000
+const READER_HEDGE_MS = 4000
 // owner + cacheKey -> the read in flight, shared by every reader of the page
 // in this process: parallel calls, a prefetch, and the browser's fix runs,
 // which get a new WebFetcher per request
@@ -71,11 +71,6 @@ const inFlight = new Map()
 
 export function clearFailureCache() {
   failureCache.clear()
-}
-
-/** How many reads are in flight in this process: for tests. */
-export function readsInFlight() {
-  return inFlight.size
 }
 
 function cancelled() {
@@ -427,15 +422,7 @@ export class WebFetcher {
 
     // 1. Paid provider readers run first if configured
     if (!gone && this.rotator) {
-      const readerPlan =
-        typeof this.rotator.plan === 'function'
-          ? this.rotator.plan('read')
-          : READER_ORDER.filter(name =>
-              this.rotator.pool.some(e => e.provider === name)
-            ).map(name => ({
-              provider: name,
-              endpoints: this.rotator.pool.filter(e => e.provider === name),
-            }))
+      const readerPlan = this.rotator.plan('read')
 
       if (readerPlan.length > 0) {
         const firstTimeout = readerTimeoutMs(

@@ -1,4 +1,5 @@
 import { builtinRole } from './structure'
+import type { EnvRole } from './structure'
 
 /**
  * Puts the LaTeX in a reply on the lines it belongs on. Models glue
@@ -40,16 +41,12 @@ const INLINE_ENVS = new Set([
   'split', 'split*', 'multlined',
 ])
 
-export function isInlineEnv(name: string): boolean {
-  return INLINE_ENVS.has(name)
-}
-
 /** Environments whose `{…}` arguments belong on their `\begin` line. */
 const TAKES_ARGUMENTS =
   /^(?:tabular\*?|tabularx|tabulary|xltabular|longtable\*?|supertabular\*?|xtabular|tabu|longtabu|tblr|longtblr|talltblr|NiceTabular\*?|NiceTabularX|alignat\*?|flalign\*?|IEEEeqnarray\*?|minipage|multicols\*?|subfigure|subtable|wrapfigure|wraptable|minted|tcolorbox|adjustbox|threeparttable|columns|column|frame|block|alertblock|exampleblock|theorem|lemma|definition|proof)$/
 
 /** Separated from a full sentence before the cursor by a blank line. */
-const PARAGRAPH_BLOCKS = new Set(['float', 'section'])
+const PARAGRAPH_BLOCKS: ReadonlySet<BlockRole> = new Set<BlockRole>(['float'])
 
 const SECTIONING = new Set([
   'part', 'chapter', 'section', 'subsection', 'subsubsection',
@@ -64,8 +61,11 @@ const RULE_NAMES = new Set(['hline', 'midrule', 'toprule', 'bottomrule', 'addlin
 
 const SENTENCE_END = /[.?!]['")\]}]*[ \t]*$/
 
+/** What a layout gives an environment: its role, or inline. */
+type BlockRole = EnvRole | 'inline'
+
 /** The role a layout gives an environment. */
-function blockRole(name: string): string {
+function blockRole(name: string): BlockRole {
   if (INLINE_ENVS.has(name)) return 'inline'
   return builtinRole(name) ?? 'prose'
 }

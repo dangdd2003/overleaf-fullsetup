@@ -16,7 +16,6 @@ export interface ImageLightboxProps {
   downloadName?: string
   isOpen: boolean
   onClose: () => void
-  triggerRef?: React.RefObject<HTMLElement | null>
 }
 
 /**
@@ -50,6 +49,16 @@ export function calculatePanBounds(
   return { minX, maxX, minY, maxY }
 }
 
+export function clampPan(
+  pan: { x: number; y: number },
+  bounds: { minX: number; maxX: number; minY: number; maxY: number }
+): { x: number; y: number } {
+  return {
+    x: Math.min(Math.max(pan.x, bounds.minX), bounds.maxX),
+    y: Math.min(Math.max(pan.y, bounds.minY), bounds.maxY),
+  }
+}
+
 export const ImageLightbox: React.FC<ImageLightboxProps> = ({
   src,
   alt = 'Image preview',
@@ -57,7 +66,6 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
   downloadName,
   isOpen,
   onClose,
-  triggerRef,
 }) => {
   const [isRendered, setIsRendered] = useState(isOpen)
   const [isClosing, setIsClosing] = useState(false)
@@ -132,13 +140,7 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
       if (nextScale === 1) {
         setPan({ x: 0, y: 0 })
       } else {
-        setPan(prevPan => {
-          const { minX, maxX, minY, maxY } = getBounds(nextScale)
-          return {
-            x: Math.min(Math.max(prevPan.x, minX), maxX),
-            y: Math.min(Math.max(prevPan.y, minY), maxY),
-          }
-        })
+        setPan(prevPan => clampPan(prevPan, getBounds(nextScale)))
       }
     },
     [getBounds]
@@ -160,13 +162,7 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
         if (nextScale === 1) {
           setPan({ x: 0, y: 0 })
         } else {
-          setPan(prevPan => {
-            const { minX, maxX, minY, maxY } = getBounds(nextScale)
-            return {
-              x: Math.min(Math.max(prevPan.x, minX), maxX),
-              y: Math.min(Math.max(prevPan.y, minY), maxY),
-            }
-          })
+          setPan(prevPan => clampPan(prevPan, getBounds(nextScale)))
         }
         return nextScale
       })
@@ -209,11 +205,7 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
     const targetY = dragStartRef.current.panY + dy
 
     // Strictly enforce edge limits so the image cannot be dragged off screen
-    const { minX, maxX, minY, maxY } = getBounds(scale)
-    setPan({
-      x: Math.min(Math.max(targetX, minX), maxX),
-      y: Math.min(Math.max(targetY, minY), maxY),
-    })
+    setPan(clampPan({ x: targetX, y: targetY }, getBounds(scale)))
   }
 
   const handlePointerUp = (e: React.PointerEvent) => {
@@ -241,13 +233,7 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
   const handleZoomIn = () => {
     setScale(prev => {
       const next = Math.min(Number((prev + 0.25).toFixed(2)), 5)
-      setPan(prevPan => {
-        const { minX, maxX, minY, maxY } = getBounds(next)
-        return {
-          x: Math.min(Math.max(prevPan.x, minX), maxX),
-          y: Math.min(Math.max(prevPan.y, minY), maxY),
-        }
-      })
+      setPan(prevPan => clampPan(prevPan, getBounds(next)))
       return next
     })
   }
@@ -258,13 +244,7 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
       if (next === 1) {
         setPan({ x: 0, y: 0 })
       } else {
-        setPan(prevPan => {
-          const { minX, maxX, minY, maxY } = getBounds(next)
-          return {
-            x: Math.min(Math.max(prevPan.x, minX), maxX),
-            y: Math.min(Math.max(prevPan.y, minY), maxY),
-          }
-        })
+        setPan(prevPan => clampPan(prevPan, getBounds(next)))
       }
       return next
     })
@@ -336,9 +316,7 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
       if (e.key === 'Escape') {
         e.preventDefault()
         e.stopPropagation()
-        if (typeof (e as any).stopImmediatePropagation === 'function') {
-          ;(e as any).stopImmediatePropagation()
-        }
+        e.stopImmediatePropagation()
         if (isZoomMenuOpen) {
           setIsZoomMenuOpen(false)
           return
@@ -355,9 +333,8 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
     return () => {
       document.body.style.overflow = prevOverflow
       document.removeEventListener('keydown', handleKeyDown, true)
-      triggerRef?.current?.focus?.({ preventScroll: true })
     }
-  }, [isRendered, isClosing, isZoomMenuOpen, onClose, triggerRef])
+  }, [isRendered, isClosing, isZoomMenuOpen, onClose])
 
   if (!isRendered) return null
 

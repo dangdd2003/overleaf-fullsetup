@@ -2,7 +2,7 @@ import { AiAssistUserSettingsModel } from './AiAssistUserSettingsModel.mjs'
 import { seal, open } from './connectors/ConnectorCrypto.mjs'
 import { normalizeProviderBaseUrl } from './AiAssistProviders.mjs'
 
-export const MASKED_SECRET = '••••••••'
+const MASKED_SECRET = '••••••••'
 
 function providerContext(userId, slot, field) {
   return `aiAssistUserSettings:${userId}:${slot}:${field}`
@@ -174,15 +174,19 @@ function openWebSearch(userId, stored) {
   return opened
 }
 
+function emptySettings() {
+  return { provider: null, fastProvider: null, webSearch: null }
+}
+
 export class AiAssistUserSettingsStore {
+  async _loadDoc(userId) {
+    return AiAssistUserSettingsModel.findOne({ user_id: userId }).lean().exec()
+  }
+
   async getUserSettings(userId) {
-    if (!userId) return { provider: null, fastProvider: null, webSearch: null }
-    const doc = await AiAssistUserSettingsModel.findOne({ user_id: userId })
-      .lean()
-      .exec()
-    if (!doc) {
-      return { provider: null, fastProvider: null, webSearch: null }
-    }
+    if (!userId) return emptySettings()
+    const doc = await this._loadDoc(userId)
+    if (!doc) return emptySettings()
     return {
       provider: maskProvider(doc.provider),
       fastProvider: maskProvider(doc.fastProvider),
@@ -191,13 +195,9 @@ export class AiAssistUserSettingsStore {
   }
 
   async getInternalUserSettings(userId) {
-    if (!userId) return { provider: null, fastProvider: null, webSearch: null }
-    const doc = await AiAssistUserSettingsModel.findOne({ user_id: userId })
-      .lean()
-      .exec()
-    if (!doc) {
-      return { provider: null, fastProvider: null, webSearch: null }
-    }
+    if (!userId) return emptySettings()
+    const doc = await this._loadDoc(userId)
+    if (!doc) return emptySettings()
     return {
       provider: openProvider(userId, 'provider', doc.provider),
       fastProvider: openProvider(userId, 'fastProvider', doc.fastProvider),
@@ -207,9 +207,7 @@ export class AiAssistUserSettingsStore {
 
   async saveUserSettings(userId, { provider, fastProvider, webSearch } = {}) {
     if (!userId) throw new Error('user_id is required')
-    const existing = await AiAssistUserSettingsModel.findOne({ user_id: userId })
-      .lean()
-      .exec()
+    const existing = await this._loadDoc(userId)
 
     const updateSet = {
       updatedAt: new Date(),

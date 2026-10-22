@@ -214,6 +214,18 @@ export function estimateRequestTokens(
   )
 }
 
+/** Indexes of the messages that pass `test`, in order. */
+function indexesWhere(
+  messages: AgentMessage[],
+  test: (message: AgentMessage) => boolean
+): number[] {
+  const indexes: number[] = []
+  messages.forEach((message, index) => {
+    if (test(message)) indexes.push(index)
+  })
+  return indexes
+}
+
 function isElided(message: AgentMessage): boolean {
   if (message.role !== 'tool') return false
   try {
@@ -306,10 +318,7 @@ export function applyBudget({
   }
 
   // Pass one: tool results, oldest first, keeping the newest few intact.
-  const toolIndexes = working
-    .map((message, index) => ({ message, index }))
-    .filter(entry => entry.message.role === 'tool')
-    .map(entry => entry.index)
+  const toolIndexes = indexesWhere(working, message => message.role === 'tool')
 
   const elidable = toolIndexes.slice(
     0,
@@ -335,18 +344,17 @@ export function applyBudget({
   // every provider — and content is replaced with a short marker rather than
   // blanked, since an assistant message with no tool calls and empty content
   // is itself invalid and would be rejected the same way.
-  const assistantIndexes = working
-    .map((message, index) => ({ message, index }))
-    .filter(
-      entry => entry.message.role === 'assistant' && entry.message.content
-    )
-    .map(entry => entry.index)
+  const assistantIndexes = indexesWhere(
+    working,
+    message => message.role === 'assistant' && Boolean(message.content)
+  )
 
   const elidableAssistants = assistantIndexes.slice(
     0,
     Math.max(0, assistantIndexes.length - KEEP_RECENT_ASSISTANT_TURNS)
   )
 
+  const markerTokens = estimateTokens(ASSISTANT_ELISION_MARKER, ref)
   for (const index of elidableAssistants) {
     const message = working[index] as Extract<
       AgentMessage,
@@ -355,10 +363,7 @@ export function applyBudget({
     // Symmetric to the pass-one guard above: a short reply (`'ok'`) is
     // already smaller than the marker that would replace it, so rewriting it
     // would grow the request instead of shrinking it.
-    if (
-      estimateTokens(ASSISTANT_ELISION_MARKER, ref) >=
-      estimateTokens(message.content, ref)
-    ) {
+    if (markerTokens >= estimateTokens(message.content, ref)) {
       continue
     }
     replace(index, { ...message, content: ASSISTANT_ELISION_MARKER })

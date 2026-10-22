@@ -2,6 +2,7 @@ import { escapeAttribute, neutraliseClosingTags } from '../context/escape'
 import { renderCompileEntry } from '../context/compile-error'
 import {
   PREAMBLE_MAX_LINES,
+  numbered,
   renderPreamble,
   renderSourceWindow,
   windowFor,
@@ -46,7 +47,7 @@ const MAX_BIB_KEYS = 100
 const MAX_PACKAGE_LINES = 60
 
 /** The selection as the handle reports it: 1-based inclusive line range. */
-export type GatherSelection = {
+type GatherSelection = {
   path: string
   from: number
   to: number
@@ -135,7 +136,8 @@ async function renderLogEntries(
   handle: ProjectHandle,
   tag: string,
   entries: LogEntry[],
-  omittedNote: (count: number) => string
+  omittedNote: (count: number) => string,
+  trailer: string | null = null
 ): Promise<string | null> {
   if (entries.length === 0) return null
   const locations = entries.map(({ entry }) =>
@@ -144,7 +146,16 @@ async function renderLogEntries(
   const blocks = [
     `${entries.length} in all: ${listed(locations, MAX_LABEL_NAMES)}`,
   ]
-  for (const { level, entry } of entries.slice(0, MAX_LOG_ENTRIES)) {
+  const shown = entries.slice(0, MAX_LOG_ENTRIES)
+  const windows = await Promise.all(
+    shown.map(({ entry }) =>
+      entry.file && entry.line !== null
+        ? sourceWindow(handle, entry.file, entry.line)
+        : Promise.resolve(null)
+    )
+  )
+  for (let i = 0; i < shown.length; i++) {
+    const { level, entry } = shown[i]
     blocks.push(
       renderCompileEntry({
         level,
@@ -154,14 +165,13 @@ async function renderLogEntries(
         line: entry.line,
       })
     )
-    if (entry.file && entry.line !== null) {
-      const block = await sourceWindow(handle, entry.file, entry.line)
-      if (block) blocks.push(block)
-    }
+    const block = windows[i]
+    if (block) blocks.push(block)
   }
 
   const omitted = entries.length - MAX_LOG_ENTRIES
   if (omitted > 0) blocks.push(omittedNote(omitted))
+  if (trailer) blocks.push(trailer)
   return wrap(tag, blocks.join('\n'))
 }
 
@@ -169,16 +179,16 @@ async function renderLogEntries(
 async function compileErrors(handle: ProjectHandle): Promise<string | null> {
   const last = handle.lastCompile()
   if (!last || last.errors.length === 0) return null
-  const block = await renderLogEntries(
+  const trailer =
+    last.warnings.length > 0
+      ? `(${last.warnings.length} warnings not shown)`
+      : null
+  return renderLogEntries(
     handle,
     'compile-errors',
     last.errors.map(entry => ({ level: 'error', entry })),
-    count => `(${count} more errors not shown; get_compile_result lists them all)`
-  )
-  if (!block || last.warnings.length === 0) return block
-  return block.replace(
-    /<\/compile-errors>$/,
-    `(${last.warnings.length} warnings not shown)\n</compile-errors>`
+    count => `(${count} more errors not shown; get_compile_result lists them all)`,
+    trailer
   )
 }
 
@@ -221,11 +231,11 @@ async function currentSection(
   selection: GatherSelection
 ): Promise<string | null> {
   const target = selection
-    ? { path: selection.path, line: selection.from }
+    ? { path: selection.path.replace(/^\//, ''), line: selection.from }
     : cursorTarget(handle)
   if (!target) return null
 
-  const path = target.path.replace(/^\//, '')
+  const path = target.path
   const outline = (await handle.index()).outline
   const headings = outline.sections
     .filter(section => section.path === path)
@@ -244,7 +254,6 @@ async function currentSection(
 
   if (
     selection &&
-    selection.path.replace(/^\//, '') === path &&
     selection.from <= start.line &&
     selection.to >= lastLine
   ) {
@@ -255,16 +264,13 @@ async function currentSection(
   const { lines } = await handle.readFile(path, { from: start.line, to })
   if (lines.length === 0) return null
 
-  const numbered = lines
-    .map((text, index) => `${start.line + index}: ${neutraliseClosingTags(text)}`)
-    .join('\n')
   const entry =
     target.line >= start.line && target.line <= to
       ? ` entry-line="${target.line}"`
       : ''
   const body = [
     `<section path="${escapeAttribute(path)}" lines="${start.line}-${to}"${entry}>`,
-    numbered,
+    numbered(lines, start.line),
     '</section>',
   ]
   if (to < lastLine) {
@@ -278,7 +284,7 @@ function cursorTarget(
 ): { path: string; line: number } | null {
   const open = handle.openFile()
   if (!open?.path || open.cursorLine === null) return null
-  return { path: open.path, line: open.cursorLine }
+  return { path: open.path.replace(/^\//, ''), line: open.cursorLine }
 }
 
 /**
@@ -290,10 +296,14 @@ async function cursorWindow(
   selection: GatherSelection
 ): Promise<string | null> {
   const target = selection
-    ? { path: selection.path, line: selection.from, to: selection.to }
+    ? {
+        path: selection.path.replace(/^\//, ''),
+        line: selection.from,
+        to: selection.to,
+      }
     : cursorTarget(handle)
   if (!target) return null
-  const path = target.path.replace(/^\//, '')
+  const path = target.path
   const around = windowFor(target.line)
   const end = 'to' in target ? Math.max(around.to, target.to + 6) : around.to
   const range = {
@@ -441,15 +451,22 @@ async function macros(handle: ProjectHandle): Promise<string | null> {
     .filter(file => file.type === 'doc' && /\.(tex|sty|cls)$/i.test(file.path))
     .slice(0, MAX_MACRO_FILES)
 
+  const fileContents = await Promise.all(
+    files.map(async file => {
+      try {
+        const { lines } = await handle.readFile(file.path)
+        return { file, lines }
+      } catch {
+        return null
+      }
+    })
+  )
+
   const found: string[] = []
   let total = 0
-  for (const file of files) {
-    let lines: string[]
-    try {
-      ;({ lines } = await handle.readFile(file.path))
-    } catch {
-      continue
-    }
+  for (const item of fileContents) {
+    if (!item) continue
+    const { file, lines } = item
     lines.forEach((text, index) => {
       const code = text.replace(/(?<!\\)%.*$/, '').trim()
       if (!MACRO_DEFINITION.test(code)) return

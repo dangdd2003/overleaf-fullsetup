@@ -3,10 +3,10 @@ import getMeta from '@/utils/meta'
 import { TranscriptEntry, ToolCallRecord } from './agent-messages'
 import { ContextBreakdown } from './context/context-usage-types'
 
-export const MAX_STORED_BYTES = 500000
+const MAX_STORED_BYTES = 500000
 const MAX_RESULT_CHARS = 4000
 
-export const keyFor = (projectId: string, chatId?: string) =>
+const keyFor = (projectId: string, chatId?: string) =>
   chatId ? `ai-assist:chat:${projectId}:${chatId}` : `ai-assist:chat:${projectId}`
 
 /**
@@ -47,8 +47,6 @@ export function cleanStoredResult(res: unknown): unknown {
   }
   return curr
 }
-
-export const unwrapCallResult = cleanStoredResult
 
 export function shrinkCall(call: ToolCallRecord): ToolCallRecord {
   if (!('result' in call) || !call.result) return call
@@ -552,7 +550,7 @@ export function loadConversation(
         ...(cleanBlocks ? { blocks: cleanBlocks } : {}),
       }
     })
-  } catch (err) {
+  } catch {
     return []
   }
 }
@@ -571,7 +569,7 @@ export function saveConversation(
     // Each chat under its own key only: one copy shared by every chat is what
     // let a new chat open showing the last one's turns
     customLocalStorage.setItem(keyFor(projectId, chatId), fit(transcript))
-  } catch (err) {}
+  } catch {}
 }
 
 export function clearConversation(projectId: string, chatId?: string) {

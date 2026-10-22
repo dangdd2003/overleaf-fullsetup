@@ -4,7 +4,7 @@ import https from 'node:https'
 import net from 'node:net'
 import zlib from 'node:zlib'
 import { ProviderError } from '../AiAssistErrors.mjs'
-import { describeStatus, webError } from './util.mjs'
+import { httpStatusError, isPdfType, webError } from './util.mjs'
 import { curlFetch, isCurlImpersonateAvailable } from './curl.mjs'
 
 /**
@@ -238,23 +238,12 @@ function requestOnce(
         }
         if (status >= 400) {
           res.resume()
-          const reason = describeStatus(status)
-          reject(
-            webError(
-              `${url} returned HTTP ${status}${reason ? `: ${reason}` : ''}.`,
-              {
-                status,
-                kind: 'http',
-              }
-            )
-          )
+          reject(httpStatusError(url, status))
           return
         }
 
         let stream = res
-        const limit = /application\/(?:x-)?pdf/i.test(
-          String(res.headers['content-type'] || '')
-        )
+        const limit = isPdfType(String(res.headers['content-type'] || ''))
           ? Math.max(maxBytes, pdfMaxBytes)
           : maxBytes
         const encoding = String(res.headers['content-encoding'] || '')

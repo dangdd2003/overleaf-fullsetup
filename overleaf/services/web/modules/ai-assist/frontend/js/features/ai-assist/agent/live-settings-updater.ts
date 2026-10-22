@@ -44,6 +44,32 @@ export const LIGHT_EDITOR_THEMES = new Set([
   'xcode',
 ])
 
+const EDITOR_USER_KEYS = [
+  'mode',
+  'autoComplete',
+  'autoPairDelimiters',
+  'syntaxValidation',
+  'pdfViewer',
+  'mathPreview',
+  'breadcrumbs',
+  'editorTabs',
+  'spellCheckLanguage',
+] as const
+
+export function editorThemeSlots(themeName: string): {
+  isDark: boolean
+  isLight: boolean
+} {
+  return {
+    isDark:
+      DARK_EDITOR_THEMES.has(themeName) ||
+      !LIGHT_EDITOR_THEMES.has(themeName),
+    isLight:
+      LIGHT_EDITOR_THEMES.has(themeName) ||
+      !DARK_EDITOR_THEMES.has(themeName),
+  }
+}
+
 export function normalizeOverallTheme(theme?: string): string {
   if (!theme) return ''
   const lower = String(theme).toLowerCase().trim()
@@ -51,6 +77,34 @@ export function normalizeOverallTheme(theme?: string): string {
   if (lower === 'light' || lower === 'light-') return 'light-'
   if (lower === 'system') return 'system'
   return theme
+}
+
+// True when there is no current value to compare against, or it differs
+function differs(
+  current: Record<string, any> | undefined,
+  key: string,
+  value: unknown
+): boolean {
+  return !current || current[key] !== value
+}
+
+// Mirrors a boolean setting into localStorage and tells other tabs/listeners
+function persistFlag(name: string, value: unknown, projectId?: string) {
+  try {
+    const val = JSON.stringify(Boolean(value))
+    const key = projectId ? `${name}:${projectId}` : name
+    if (projectId && typeof localStorage !== 'undefined') {
+      localStorage.setItem(`${name}:${projectId}`, val)
+    }
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new StorageEvent('storage', {
+          key,
+          newValue: val,
+        })
+      )
+    }
+  } catch {}
 }
 
 export function applyLiveSettingsUpdate(
@@ -83,7 +137,7 @@ export function applyLiveSettingsUpdate(
     const userPayload: any = {}
     if (settings.overallTheme !== undefined) {
       const norm = normalizeOverallTheme(settings.overallTheme)
-      if (!currentUserSettings || currentUserSettings.overallTheme !== norm) {
+      if (differs(currentUserSettings, 'overallTheme', norm)) {
         userPayload.overallTheme = norm
       }
       if (typeof document !== 'undefined' && document.body) {
@@ -92,70 +146,58 @@ export function applyLiveSettingsUpdate(
     }
     if (settings.editorTheme !== undefined) {
       const themeName = String(settings.editorTheme)
-      if (
-        !currentUserSettings ||
-        currentUserSettings.editorTheme !== themeName
-      ) {
+      if (differs(currentUserSettings, 'editorTheme', themeName)) {
         userPayload.editorTheme = themeName
       }
+      const slots = editorThemeSlots(themeName)
       if (
         settings.editorDarkTheme === undefined &&
-        (DARK_EDITOR_THEMES.has(themeName) ||
-          !LIGHT_EDITOR_THEMES.has(themeName))
+        slots.isDark &&
+        differs(currentUserSettings, 'editorDarkTheme', themeName)
       ) {
-        if (
-          !currentUserSettings ||
-          currentUserSettings.editorDarkTheme !== themeName
-        ) {
-          userPayload.editorDarkTheme = themeName
-        }
+        userPayload.editorDarkTheme = themeName
       }
       if (
         settings.editorLightTheme === undefined &&
-        (LIGHT_EDITOR_THEMES.has(themeName) ||
-          !DARK_EDITOR_THEMES.has(themeName))
+        slots.isLight &&
+        differs(currentUserSettings, 'editorLightTheme', themeName)
       ) {
-        if (
-          !currentUserSettings ||
-          currentUserSettings.editorLightTheme !== themeName
-        ) {
-          userPayload.editorLightTheme = themeName
-        }
+        userPayload.editorLightTheme = themeName
       }
     }
     if (
       settings.editorLightTheme !== undefined &&
-      (!currentUserSettings || currentUserSettings.editorLightTheme !== settings.editorLightTheme)
+      differs(currentUserSettings, 'editorLightTheme', settings.editorLightTheme)
     ) {
       userPayload.editorLightTheme = settings.editorLightTheme
     }
     if (
       settings.editorDarkTheme !== undefined &&
-      (!currentUserSettings || currentUserSettings.editorDarkTheme !== settings.editorDarkTheme)
+      differs(currentUserSettings, 'editorDarkTheme', settings.editorDarkTheme)
     ) {
       userPayload.editorDarkTheme = settings.editorDarkTheme
     }
     if (settings.fontSize !== undefined) {
       const val = Number(settings.fontSize)
-      if (!currentUserSettings || currentUserSettings.fontSize !== val) {
+      if (differs(currentUserSettings, 'fontSize', val)) {
         userPayload.fontSize = val
       }
     }
     if (
       settings.fontFamily !== undefined &&
-      (!currentUserSettings || currentUserSettings.fontFamily !== settings.fontFamily)
+      differs(currentUserSettings, 'fontFamily', settings.fontFamily)
     ) {
       userPayload.fontFamily = settings.fontFamily
     }
     if (
       settings.lineHeight !== undefined &&
-      (!currentUserSettings || currentUserSettings.lineHeight !== settings.lineHeight)
+      differs(currentUserSettings, 'lineHeight', settings.lineHeight)
     ) {
       userPayload.lineHeight = settings.lineHeight
     }
     if (settings.darkModePdf !== undefined) {
       const val = Boolean(settings.darkModePdf)
-      if (!currentUserSettings || currentUserSettings.darkModePdf !== val) {
+      if (differs(currentUserSettings, 'darkModePdf', val)) {
         userPayload.darkModePdf = val
       }
       if (projectId && typeof localStorage !== 'undefined') {
@@ -185,25 +227,25 @@ export function applyLiveSettingsUpdate(
     const projectPayload: any = {}
     if (
       settings.compiler !== undefined &&
-      (!currentProject || currentProject.compiler !== settings.compiler)
+      differs(currentProject, 'compiler', settings.compiler)
     ) {
       projectPayload.compiler = settings.compiler
     }
     if (
       settings.imageName !== undefined &&
-      (!currentProject || currentProject.imageName !== settings.imageName)
+      differs(currentProject, 'imageName', settings.imageName)
     ) {
       projectPayload.imageName = settings.imageName
     }
     if (
       settings.rootDocId !== undefined &&
-      (!currentProject || currentProject.rootDocId !== settings.rootDocId)
+      differs(currentProject, 'rootDocId', settings.rootDocId)
     ) {
       projectPayload.rootDocId = settings.rootDocId
     }
     if (
       settings.rootDocPath !== undefined &&
-      (!currentProject || currentProject.rootDocPath !== settings.rootDocPath)
+      differs(currentProject, 'rootDocPath', settings.rootDocPath)
     ) {
       projectPayload.rootDocPath = settings.rootDocPath
     }
@@ -214,78 +256,22 @@ export function applyLiveSettingsUpdate(
       } catch {}
     }
 
-    if (typeof localStorage !== 'undefined' || typeof window !== 'undefined') {
-      if (settings.draft !== undefined) {
-        try {
-          const val = JSON.stringify(Boolean(settings.draft))
-          if (projectId && typeof localStorage !== 'undefined') {
-            localStorage.setItem(`draft:${projectId}`, val)
-          }
-          if (typeof window !== 'undefined') {
-            window.dispatchEvent(
-              new StorageEvent('storage', {
-                key: projectId ? `draft:${projectId}` : 'draft',
-                newValue: val,
-              })
-            )
-          }
-        } catch {}
-      }
-      if (settings.stopOnFirstError !== undefined) {
-        try {
-          const val = JSON.stringify(Boolean(settings.stopOnFirstError))
-          if (projectId && typeof localStorage !== 'undefined') {
-            localStorage.setItem(`stop_on_first_error:${projectId}`, val)
-          }
-          if (typeof window !== 'undefined') {
-            window.dispatchEvent(
-              new StorageEvent('storage', {
-                key: projectId ? `stop_on_first_error:${projectId}` : 'stop_on_first_error',
-                newValue: val,
-              })
-            )
-          }
-        } catch {}
-      }
+    if (settings.draft !== undefined) {
+      persistFlag('draft', settings.draft, projectId)
+    }
+    if (settings.stopOnFirstError !== undefined) {
+      persistFlag('stop_on_first_error', settings.stopOnFirstError, projectId)
     }
   }
 
   const isEditor =
     toolName === 'configure_editor_settings' ||
-    'mode' in settings ||
-    'autoComplete' in settings ||
-    'autoPairDelimiters' in settings ||
-    'syntaxValidation' in settings ||
-    'previewTabs' in settings ||
-    'pdfViewer' in settings ||
-    'mathPreview' in settings ||
-    'breadcrumbs' in settings ||
-    'editorTabs' in settings ||
-    'nonBlinkingCursor' in settings ||
-    'floatingMenu' in settings ||
-    'spellCheckLanguage' in settings
+    EDITOR_USER_KEYS.some(k => k in settings)
 
   if (isEditor) {
     const userPayload: any = {}
-    const userKeys = [
-      'mode',
-      'autoComplete',
-      'autoPairDelimiters',
-      'syntaxValidation',
-      'previewTabs',
-      'pdfViewer',
-      'mathPreview',
-      'breadcrumbs',
-      'editorTabs',
-      'nonBlinkingCursor',
-      'floatingMenu',
-      'spellCheckLanguage',
-    ]
-    for (const k of userKeys) {
-      if (
-        settings[k] !== undefined &&
-        (!currentUserSettings || currentUserSettings[k] !== settings[k])
-      ) {
+    for (const k of EDITOR_USER_KEYS) {
+      if (settings[k] !== undefined && differs(currentUserSettings, k, settings[k])) {
         userPayload[k] = settings[k]
       }
     }

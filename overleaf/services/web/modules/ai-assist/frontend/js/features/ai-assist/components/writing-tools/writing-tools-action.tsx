@@ -37,15 +37,16 @@ export default function WritingToolsAction() {
   const { from, to } = state.selection.main
 
   // Measured when the menu opens: the container needs the whole document
+  const doc = state.doc
   const menu = useMemo(
     () =>
       open
         ? writingMenu(
-            state.sliceDoc(from, to),
-            cursorContext(state.doc.toString(), from).container
+            doc.sliceString(from, to),
+            cursorContext(doc.toString(), from).container
           )
         : null,
-    [open, state, from, to]
+    [open, doc, from, to]
   )
 
   const start = useCallback(

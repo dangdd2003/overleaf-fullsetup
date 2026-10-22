@@ -7,7 +7,6 @@ import {
   parseJsonOutput,
   splitConnectorText,
 } from '../../../../frontend/js/features/ai-assist/agent/mcp-tool-output'
-import { connectorNameFor } from '../../../../frontend/js/features/ai-assist/agent/mcp-connector-names'
 
 const PAGE_1 =
   '[Result r1: 12,345 characters]\n\nfirst page text\n\n[Page 1 of 3 of result r1. Call read_connector_result with id "r1" and page 2 to continue.]'
@@ -114,17 +113,5 @@ describe('connector names', function () {
       `${'a'.repeat(39)}…`
     )
     expect(mcpArgSummary({ limit: 3 })).to.be.undefined
-  })
-
-  it('matches a sanitised name to the connector it belongs to', function () {
-    const connectors = [
-      { id: 'abcd1234', name: 'GitHub Tools' },
-      { id: 'efgh5678', name: 'Notes' },
-    ] as any[]
-    expect(connectorNameFor(connectors, 'GitHub_Tools')).to.equal(
-      'GitHub Tools'
-    )
-    expect(connectorNameFor(connectors, 'Notes_gh5678')).to.equal('Notes')
-    expect(connectorNameFor(connectors, 'unknown')).to.be.undefined
   })
 })

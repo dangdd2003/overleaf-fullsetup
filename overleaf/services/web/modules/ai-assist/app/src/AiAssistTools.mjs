@@ -77,6 +77,17 @@ const FORBIDDEN_ACCOUNT_KEYS = new Set([
   'admin',
 ])
 
+/** Keys the AI tools may never change, whatever case the model sent them in. */
+function forbiddenAccountKeysIn(keys) {
+  return keys.filter(k => FORBIDDEN_ACCOUNT_KEYS.has(k.toLowerCase()))
+}
+
+async function saveUser(user) {
+  if (typeof user.save === 'function') {
+    await user.save()
+  }
+}
+
 const ALLOWED_APPEARANCE_KEYS = new Set([
   'overallTheme',
   'editorTheme',
@@ -159,11 +170,11 @@ function normalizeLines(str) {
   return (str || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n')
 }
 
-export function cleanLineNumbers(text) {
+function cleanLineNumbers(text) {
   return (text || '').replace(/^\s*\d+[:|]\s?/gm, '')
 }
 
-export function cleanLineNumberPrefixes(text, oldTextWasStripped = false) {
+function cleanLineNumberPrefixes(text, oldTextWasStripped = false) {
   if (!text) return ''
   const lines = text.split('\n')
   const nonEmptyLines = lines.filter(l => l.trim().length > 0)
@@ -180,11 +191,11 @@ export function cleanLineNumberPrefixes(text, oldTextWasStripped = false) {
   return text
 }
 
-export function errorSignature(e) {
+function errorSignature(e) {
   return `${e.file || ''}::${(e.message || '').trim()}`
 }
 
-export function computeErrorDelta(currentErrors = [], previousErrors = []) {
+function computeErrorDelta(currentErrors = [], previousErrors = []) {
   const prevMap = new Map()
   const currMap = new Map()
   for (const e of previousErrors) {
@@ -219,7 +230,7 @@ export function computeErrorDelta(currentErrors = [], previousErrors = []) {
   }
 }
 
-export function countOccurrences(haystack, needle) {
+function countOccurrences(haystack, needle) {
   if (!needle) return 0
   const normH = normalizeLines(haystack)
   const normN = normalizeLines(needle)
@@ -249,7 +260,7 @@ export function countOccurrences(haystack, needle) {
   return count
 }
 
-export function cleanOldText(text) {
+function cleanOldText(text) {
   if (!text) return ''
   let cleaned = cleanLineNumbers(text)
   // Normalize double-escaped LaTeX backslashes e.g. \\centering -> \centering
@@ -257,7 +268,7 @@ export function cleanOldText(text) {
   return cleaned
 }
 
-export function tokenizeCode(str) {
+function tokenizeCode(str) {
   const tokens = []
   const re =
     /\\[a-zA-Z@]+|\\end\{[^}]*\}|\\begin\{[^}]*\}|\{[^}]*\}|[^\s\\{}]+|\\/g
@@ -272,7 +283,7 @@ export function tokenizeCode(str) {
   return tokens
 }
 
-export function findWhitespaceAgnosticAnchor(haystack, needle) {
+function findWhitespaceAgnosticAnchor(haystack, needle) {
   if (!needle || !haystack) return null
   const cleanedNeedle = cleanOldText(needle)
   const hTokens = tokenizeCode(haystack)
@@ -314,7 +325,7 @@ export function findWhitespaceAgnosticAnchor(haystack, needle) {
   return null
 }
 
-export function locateAnchorInText(docText, anchor) {
+function locateAnchorInText(docText, anchor) {
   if (!docText || !anchor) return null
 
   // 1. Exact match
@@ -364,11 +375,11 @@ export function locateAnchorInText(docText, anchor) {
   return null
 }
 
-export function cleanWord(w) {
+function cleanWord(w) {
   return (w || '').toLowerCase().replace(/[^a-z0-9\\]/g, '')
 }
 
-export function findFuzzyWordWindow(docText, needleText, threshold = 0.75) {
+function findFuzzyWordWindow(docText, needleText, threshold = 0.75) {
   if (!docText || !needleText) return null
   const docWords = []
   const wordRe = /\S+/g
@@ -462,7 +473,7 @@ export function findFuzzyWordWindow(docText, needleText, threshold = 0.75) {
   return null
 }
 
-export function formatAmbiguousOccurrences(
+function formatAmbiguousOccurrences(
   docText,
   lineNumbers,
   maxOccurrences = 4
@@ -483,7 +494,7 @@ export function formatAmbiguousOccurrences(
   return previews.join('\n\n')
 }
 
-export function findMatchingLines(haystack, needle) {
+function findMatchingLines(haystack, needle) {
   if (!needle || !haystack) return []
   const normH = normalizeLines(haystack)
   const normN = cleanOldText(normalizeLines(needle))
@@ -509,7 +520,7 @@ export function findMatchingLines(haystack, needle) {
   return results.slice(0, 5)
 }
 
-export function findFuzzyUniqueAnchor(haystack, needle) {
+function findFuzzyUniqueAnchor(haystack, needle) {
   if (!needle) return null
   const normH = normalizeLines(haystack)
   const normN = normalizeLines(needle)
@@ -546,12 +557,13 @@ export function findFuzzyUniqueAnchor(haystack, needle) {
   const trimmedN = nLines.map(l => l.trim())
   if (trimmedN.length === 0 || trimmedN.every(l => l === '')) return null
 
+  const hTrim = hLines.map(l => l.trim())
   const matchIndices = []
 
   for (let i = 0; i <= hLines.length - trimmedN.length; i++) {
     let matches = true
     for (let j = 0; j < trimmedN.length; j++) {
-      if (hLines[i + j].trim() !== trimmedN[j]) {
+      if (hTrim[i + j] !== trimmedN[j]) {
         matches = false
         break
       }
@@ -569,7 +581,7 @@ export function findFuzzyUniqueAnchor(haystack, needle) {
   return null
 }
 
-export function nearestLines(text, oldText, limit = 5) {
+function nearestLines(text, oldText, limit = 5) {
   const cleaned = cleanOldText(oldText || '')
   const probes = cleaned
     .split('\n')
@@ -614,7 +626,7 @@ const MAX_EXCERPT_LINES = 8
  * two errors with the same message each keep their own context. The first raw
  * line is the message, which the caller already shows.
  */
-export function errorExcerpt(entry) {
+function errorExcerpt(entry) {
   if (!entry || typeof entry.raw !== 'string') return null
   const lines = entry.raw
     .split('\n')
@@ -633,7 +645,7 @@ const MAX_EDIT_EXCERPT_LINES = 40
  * the numbered lines around the change let it chain further edits without
  * reading the file again.
  */
-export function describeAppliedEdit(plan) {
+function describeAppliedEdit(plan) {
   const startLine = Math.max(1, plan.startLine || 1)
   const newSpan = plan.newText ? plan.newText.split('\n').length : 0
   const endLine = newSpan > 0 ? startLine + newSpan - 1 : null
@@ -671,15 +683,6 @@ export function endDocumentLine(docText) {
 }
 
 /**
- * Reads the clean flag out of whatever the model actually sent.
- *
- * Mirrors compile-args.ts on the frontend, which serves the in-editor run; this
- * copy serves the background run, where the same tool call executes here
- * instead. Providers vary in how faithfully they honour a boolean schema and
- * local models routinely send `"true"` for `true`, so both sides coerce rather
- * than trusting the declared type.
- */
-/**
  * The build a compile left behind, when it wrote a PDF: what
  * view_compiled_pdf_page renders. Anything malformed is dropped rather than
  * passed on to CLSI.
@@ -698,7 +701,16 @@ export function compiledBuild(outcome) {
   return { buildId, clsiServerId }
 }
 
-export function wantsCleanCompile(args) {
+/**
+ * Reads the clean flag out of whatever the model actually sent.
+ *
+ * Mirrors compile-args.ts on the frontend, which serves the in-editor run; this
+ * copy serves the background run, where the same tool call executes here
+ * instead. Providers vary in how faithfully they honour a boolean schema and
+ * local models routinely send `"true"` for `true`, so both sides coerce rather
+ * than trusting the declared type.
+ */
+function wantsCleanCompile(args) {
   if (!args || typeof args !== 'object') return false
   // `clean` is the documented name. The others are the ways models phrase the
   // same idea when they have not read the schema closely.
@@ -738,6 +750,15 @@ function remember(map, key, value) {
   }
 }
 
+// A parsed LaTeX log entry as the compile tool reports it.
+function logEntry(e) {
+  return {
+    file: e.file || null,
+    line: typeof e.line === 'number' ? e.line : parseInt(e.line, 10) || null,
+    message: e.message || '',
+  }
+}
+
 // Some gateways send numeric arguments as strings. Anything that is not a
 // number is absent (null), so a caller can tell what the model gave.
 function optionalNumber(value) {
@@ -755,7 +776,7 @@ function isWholeNumberFrom(value, min) {
  * Returns `{ error }` for arguments the model should correct, and otherwise
  * the parsed values with null for each one it did not give.
  */
-export function parsePdfPageArgs(args = {}) {
+function parsePdfPageArgs(args = {}) {
   const page = optionalNumber(args.page)
   const line = optionalNumber(args.line)
   const endLine = optionalNumber(args.endLine)
@@ -823,7 +844,7 @@ export function parsePdfPageArgs(args = {}) {
  * for. Each end is null when not given, and the inspector applies its own
  * default. The range is checked from fromPage, which is 1 when not given.
  */
-export function parsePdfPageRange(args = {}) {
+function parsePdfPageRange(args = {}) {
   const fromPage = optionalNumber(args.fromPage)
   const toPage = optionalNumber(args.toPage)
   if (fromPage !== null && !isWholeNumberFrom(fromPage, 1)) {
@@ -843,7 +864,7 @@ export function parsePdfPageRange(args = {}) {
  * with an optional endLine that defaults to line. `{ error }` for arguments
  * the model should correct.
  */
-export function parsePdfSourceRange(args = {}) {
+function parsePdfSourceRange(args = {}) {
   const path =
     typeof args.path === 'string' ? args.path.trim().replace(/^\/+/, '') : ''
   const line = optionalNumber(args.line)
@@ -905,7 +926,7 @@ function highlightResult(highlights) {
 }
 
 /** Mirrors the in-browser tool's spec. */
-export const PDF_HIGHLIGHT_SPEC = {
+const PDF_HIGHLIGHT_SPEC = {
   name: 'highlight_in_pdf',
   description:
     "Show a place in the user's PDF viewer: it highlights the place and scrolls to it. Give path and line (and endLine for a range) to show where a source line lands in the PDF, or boxes in PDF points measured from the top-left of each page. Use it after an edit so the user can see what changed, or to show the passage you are talking about. It changes only the viewer, never the project.",
@@ -1003,11 +1024,19 @@ export class AiAssistTools {
     return null
   }
 
-  async _resolveValidUserId(projectId, userId) {
-    if (userId && /^[0-9a-f]{24}$/i.test(String(userId))) {
+  async _resolveValidUserId(userId) {
+    if (userId && OBJECT_ID_RE.test(String(userId))) {
       return String(userId)
     }
     return null
+  }
+
+  async _loadUserForAce(userId) {
+    try {
+      return (await this.userModel.findById(userId).exec()) || null
+    } catch {
+      return null
+    }
   }
 
   async _getDocsList(projectId) {
@@ -1194,51 +1223,6 @@ export class AiAssistTools {
     }
   }
 
-  async resolveEditTarget(args, { projectId }) {
-    if (
-      !args ||
-      !args.oldText ||
-      typeof args.oldText !== 'string' ||
-      !args.oldText.trim()
-    ) {
-      return null
-    }
-    const doc = await this._resolveDoc(projectId, args.path)
-    if (doc) {
-      let docText = (doc.lines || []).join('\n')
-      try {
-        const fetched = await this.docUpdater.getDocument(
-          projectId,
-          doc._id,
-          -1
-        )
-        if (fetched?.lines) docText = fetched.lines.join('\n')
-      } catch {}
-      const match = locateAnchorInText(docText, args.oldText)
-      if (match) return { path: doc.path, doc }
-    }
-
-    // Search other project files
-    const allDocs = await this._getDocsList(projectId)
-    for (const other of allDocs) {
-      if (doc && String(other._id) === String(doc._id)) continue
-      let otherText = (other.lines || []).join('\n')
-      try {
-        const fetched = await this.docUpdater.getDocument(
-          projectId,
-          other._id,
-          -1
-        )
-        if (fetched?.lines) otherText = fetched.lines.join('\n')
-      } catch {}
-      const match = locateAnchorInText(otherText, args.oldText)
-      if (match) {
-        return { path: other.path, doc: other }
-      }
-    }
-    return null
-  }
-
   async _resolveDoc(projectId, targetPath) {
     if (!targetPath || typeof targetPath !== 'string' || !targetPath.trim()) {
       return null
@@ -1273,11 +1257,6 @@ export class AiAssistTools {
     // document fits: taking the first of several reads or edits the wrong file.
     const bySegments = docs.filter(d => d.path.endsWith(`/${normalized}`))
     return bySegments.length === 1 ? bySegments[0] : null
-  }
-
-  async _resolveDocId(projectId, path) {
-    const doc = await this._resolveDoc(projectId, path)
-    return doc?._id ?? null
   }
 
   /**
@@ -1332,12 +1311,8 @@ export class AiAssistTools {
     // the wire (gateways cut the stream) and rarely matches exactly. The run
     // loop re-executes with the resolved oldText, which equals the range text.
     // Some gateways send numeric arguments as strings.
-    const lineArg = v =>
-      typeof v === 'number' || (typeof v === 'string' && v.trim() !== '')
-        ? Number(v)
-        : NaN
-    const from = lineArg(args.startLine)
-    const until = lineArg(args.endLine)
+    const from = optionalNumber(args.startLine) ?? NaN
+    const until = optionalNumber(args.endLine) ?? NaN
     if (Number.isInteger(from) && Number.isInteger(until)) {
       const docLines = docText.split('\n')
       const to = Math.min(until, docLines.length)
@@ -1454,7 +1429,7 @@ export class AiAssistTools {
     // Constrain the search if startLine is given. Always the live text
     // (`docText`), never `doc.lines`: that is the stored copy, which lags
     // behind unsaved typing, while the match offset is applied to the live
-    // text. `from`/`until` come from lineArg above, which accepts numbers sent
+    // text. `from`/`until` come from optionalNumber above, which accepts numbers sent
     // as strings.
     if (Number.isInteger(from) && from >= 1 && doc) {
       const docLines = docText.split('\n')
@@ -1899,7 +1874,7 @@ export class AiAssistTools {
       // zooms on that block unless a region says otherwise.
       // Text pages go grayscale and small enough for the provider's own limit;
       // a figure or colour in the source keeps colour (AiAssistImagePolicy).
-      const color = await this._pageNeedsColor(projectId, target, edit, where)
+      const color = await this._pageNeedsColor(projectId, edit, where)
       const imageChoice = imagePolicyFor({
         type: imageProvider?.provider,
         model: imageProvider?.model,
@@ -1946,7 +1921,7 @@ export class AiAssistTools {
    * Whether the source a page view shows is a figure, TikZ or coloured text:
    * the lines of a zoom, or else the start of the block the page is at.
    */
-  async _pageNeedsColor(projectId, target, edit, where) {
+  async _pageNeedsColor(projectId, edit, where) {
     const path = where.path ?? edit?.path ?? null
     const line = where.line ?? edit?.line ?? null
     if (!path || !line) return false
@@ -2215,7 +2190,7 @@ export class AiAssistTools {
       imageProvider = null,
     }
   ) {
-    const userId = await this._resolveValidUserId(projectId, rawUserId)
+    const userId = await this._resolveValidUserId(rawUserId)
     if (!userId) {
       return {
         error:
@@ -2377,6 +2352,7 @@ export class AiAssistTools {
       case 'list_files':
       case 'project_map': {
         const snapshot = await this._getSnapshot(projectId)
+        const collator = new Intl.Collator()
         const all = [
           ...snapshot.docs.map(doc => ({
             path: doc.path,
@@ -2384,7 +2360,7 @@ export class AiAssistTools {
             lines: (doc.lines || []).length,
           })),
           ...snapshot.files.map(file => ({ path: file.path, type: 'binary' })),
-        ].sort((a, b) => a.path.localeCompare(b.path))
+        ].sort((a, b) => collator.compare(a.path, b.path))
         const listed =
           typeof args.glob === 'string' && args.glob
             ? all.filter(file => matchesGlob(file.path, args.glob))
@@ -2451,7 +2427,7 @@ export class AiAssistTools {
             )
             this.invalidateSnapshot(projectId)
             return created(doc?._id)
-          } catch (err) {
+          } catch {
             // fall through to addDoc
           }
         }
@@ -2487,11 +2463,12 @@ export class AiAssistTools {
           ? await compileInEditor({ id: callId, clean })
           : null
         if (editorOutcome) {
+          const editorBuild = compiledBuild(editorOutcome)
           this._rememberBuildForDiff(
             projectId,
             userId,
-            compiledBuild(editorOutcome).buildId,
-            compiledBuild(editorOutcome).clsiServerId
+            editorBuild.buildId,
+            editorBuild.clsiServerId
           )
           return await this._compileToolResult(projectId, editorOutcome, clean)
         }
@@ -2536,27 +2513,13 @@ export class AiAssistTools {
               ignoreDuplicates: true,
             })
             errors = (parsed.errors || []).map(e => {
-              const summary = {
-                file: e.file || null,
-                line:
-                  typeof e.line === 'number'
-                    ? e.line
-                    : parseInt(e.line, 10) || null,
-                message: e.message || '',
-              }
+              const summary = logEntry(e)
               const excerpt = errorExcerpt(e)
               if (excerpt) summary.excerpt = excerpt
               return summary
             })
-            warnings = (parsed.warnings || []).map(w => ({
-              file: w.file || null,
-              line:
-                typeof w.line === 'number'
-                  ? w.line
-                  : parseInt(w.line, 10) || null,
-              message: w.message || '',
-            }))
-          } catch (err) {
+            warnings = (parsed.warnings || []).map(logEntry)
+          } catch {
             // Log fetch failure is non-fatal
           }
         }
@@ -2700,21 +2663,22 @@ export class AiAssistTools {
         const target = match.section
         const siblings = index.outline.sections
         const startIndex = siblings.indexOf(target)
-        const nextPeer = siblings
-          .slice(startIndex + 1)
-          .find(candidate => candidate.level <= target.level)
-        const nextPeerInFile = siblings
-          .slice(startIndex + 1)
-          .find(
-            candidate =>
-              candidate.path === target.path && candidate.level <= target.level
-          )
+        // One pass: the next section at this level or higher ends the subtree,
+        // and the next one in the same file ends the range to read.
+        let nextIndex = siblings.length
+        let nextPeerInFile = null
+        for (let i = startIndex + 1; i < siblings.length; i++) {
+          const candidate = siblings[i]
+          if (candidate.level > target.level) continue
+          if (nextIndex === siblings.length) nextIndex = i
+          if (candidate.path === target.path) {
+            nextPeerInFile = candidate
+            break
+          }
+        }
         const end = nextPeerInFile
           ? nextPeerInFile.line - 1
           : Number.MAX_SAFE_INTEGER
-        const nextIndex = nextPeer
-          ? siblings.indexOf(nextPeer)
-          : siblings.length
         return {
           range: { from: target.line, to: end },
           sections: siblings.slice(startIndex, nextIndex),
@@ -2848,9 +2812,7 @@ export class AiAssistTools {
 
         // Security guardrail: explicitly block account credentials and settings
         const providedKeys = Object.keys(args || {})
-        const forbiddenFound = providedKeys.filter(k =>
-          FORBIDDEN_ACCOUNT_KEYS.has(k.toLowerCase())
-        )
+        const forbiddenFound = forbiddenAccountKeysIn(providedKeys)
         if (forbiddenFound.length > 0) {
           return {
             error: `Cannot modify account settings (${forbiddenFound.join(', ')}). Only appearance preferences may be changed.`,
@@ -2866,10 +2828,7 @@ export class AiAssistTools {
           }
         }
 
-        let user = null
-        try {
-          user = await this.userModel.findById(userId).exec()
-        } catch {}
+        const user = await this._loadUserForAce(userId)
         if (!user) return { error: 'User not found' }
 
         user.ace = user.ace || {}
@@ -2933,9 +2892,7 @@ export class AiAssistTools {
           updated.lineHeight = user.ace.lineHeight
         }
 
-        if (typeof user.save === 'function') {
-          await user.save()
-        }
+        await saveUser(user)
 
         return {
           status: 'applied',
@@ -3050,9 +3007,7 @@ export class AiAssistTools {
 
         // Security guardrail: explicitly block account credentials and settings
         const providedKeys = Object.keys(args || {})
-        const forbiddenFound = providedKeys.filter(k =>
-          FORBIDDEN_ACCOUNT_KEYS.has(k.toLowerCase())
-        )
+        const forbiddenFound = forbiddenAccountKeysIn(providedKeys)
         if (forbiddenFound.length > 0) {
           return {
             error: `Cannot modify account settings (${forbiddenFound.join(', ')}). Only editor preferences may be changed by AI tools.`,
@@ -3066,10 +3021,7 @@ export class AiAssistTools {
           }
         }
 
-        let user = null
-        try {
-          user = await this.userModel.findById(userId).exec()
-        } catch {}
+        const user = await this._loadUserForAce(userId)
         if (!user) return { error: 'User not found' }
 
         user.ace = user.ace || {}
@@ -3112,9 +3064,7 @@ export class AiAssistTools {
           updated.spellCheckLanguage = user.ace.spellCheckLanguage
         }
 
-        if (typeof user.save === 'function') {
-          await user.save()
-        }
+        await saveUser(user)
 
         return {
           status: 'applied',
@@ -3231,7 +3181,7 @@ export class AiAssistTools {
   }
 
   getToolSpecs() {
-    const specs = [
+    return [
       {
         name: 'get_outline',
         description:
@@ -3709,8 +3659,8 @@ export class AiAssistTools {
           properties: {},
         },
       },
+      PDF_HIGHLIGHT_SPEC,
     ]
-    return [...specs, PDF_HIGHLIGHT_SPEC]
   }
 }
 

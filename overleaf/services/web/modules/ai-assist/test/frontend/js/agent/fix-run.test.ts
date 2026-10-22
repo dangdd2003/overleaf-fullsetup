@@ -2,7 +2,6 @@ import { expect } from 'chai'
 import { TranscriptEntry } from '../../../../frontend/js/features/ai-assist/agent/agent-messages'
 import {
   FIX_TOOLS,
-  FIX_TASK_BLOCK,
   buildFixTaskBlock,
   buildFixTranscript,
 } from '../../../../frontend/js/features/ai-assist/agent/fix-run'
@@ -36,25 +35,25 @@ describe('fix-run', function () {
   // to investigate is a dead end, and narration between tool calls is what
   // turns one click into three assistant turns.
   it('tells the model nobody can reply, so it must not ask or narrate', function () {
-    expect(FIX_TASK_BLOCK).to.include('no reply box')
-    expect(FIX_TASK_BLOCK).to.match(/never end with a question/)
-    expect(FIX_TASK_BLOCK).to.match(/no text between/)
+    expect(buildFixTaskBlock('error')).to.include('no reply box')
+    expect(buildFixTaskBlock('error')).to.match(/never end with a question/)
+    expect(buildFixTaskBlock('error')).to.match(/no text between/)
   })
 
   it('demands an edit, never an explanation in its place', function () {
-    expect(FIX_TASK_BLOCK).to.include('Call edit_file')
-    expect(FIX_TASK_BLOCK).to.match(/being unsure is not a reason to withhold it/)
-    expect(FIX_TASK_BLOCK).to.match(/never replace\s+the edit with instructions/)
-    expect(FIX_TASK_BLOCK).to.not.match(/make no edit/)
+    expect(buildFixTaskBlock('error')).to.include('Call edit_file')
+    expect(buildFixTaskBlock('error')).to.match(/being unsure is not a reason to withhold it/)
+    expect(buildFixTaskBlock('error')).to.match(/never replace\s+the edit with instructions/)
+    expect(buildFixTaskBlock('error')).to.not.match(/make no edit/)
   })
 
   it('still proposes a safe change for a warning the author could live with', function () {
-    expect(FIX_TASK_BLOCK).to.match(/still propose the safe change/)
+    expect(buildFixTaskBlock('error')).to.match(/still propose the safe change/)
   })
 
   it('ranks fixes by how invasive they are', function () {
-    expect(FIX_TASK_BLOCK).to.match(/least invasive/)
-    expect(FIX_TASK_BLOCK).to.match(/argument before you add a package/)
+    expect(buildFixTaskBlock('error')).to.match(/least invasive/)
+    expect(buildFixTaskBlock('error')).to.match(/argument before you add a package/)
   })
 
   it('calls a warning a warning, so the model does not "fix" a remark', function () {
@@ -97,7 +96,7 @@ describe('fix-run', function () {
     expect(entry.contextText).to.contain('<compile-error')
     // The project-wide envelope is gone on purpose.
     expect(entry.contextText).to.not.contain('<project-context')
-    expect(entry.text).to.equal(FIX_TASK_BLOCK)
+    expect(entry.text).to.equal(buildFixTaskBlock('error'))
     expect(entry.attachments).to.deep.equal([])
   })
 

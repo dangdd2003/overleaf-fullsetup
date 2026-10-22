@@ -6,7 +6,6 @@ import {
   clearExactCountCache,
   contextBreakdownFor,
   charsPerToken,
-  contextBudget,
   contextState,
   contextThresholds,
   createExactCounter,
@@ -230,13 +229,6 @@ describe('AiAssistContextUsage', function () {
           images: [{ tokens: 300, data: pngBase64(10, 10) }],
         })
       ).to.equal(300)
-    })
-  })
-
-  describe('contextBudget', function () {
-    it('is the blockAt threshold: the window less the reserve and the block buffer', function () {
-      expect(contextBudget(LIMITS)).to.equal(contextThresholds(LIMITS).blockAt)
-      expect(contextBudget(LIMITS)).to.equal(873)
     })
   })
 

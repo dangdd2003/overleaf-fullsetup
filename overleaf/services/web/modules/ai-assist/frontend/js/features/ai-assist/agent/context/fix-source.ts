@@ -27,7 +27,7 @@ export const PREAMBLE_MAX_LINES = 40
  * Note: Line number prefixes (e.g. "14: ") are for display and reference only.
  * They must not be included in edit_file oldText or newText.
  */
-function numbered(lines: string[], from: number): string {
+export function numbered(lines: string[], from: number): string {
   return lines
     .map((text, index) => `${from + index}: ${neutraliseClosingTags(text)}`)
     .join('\n')

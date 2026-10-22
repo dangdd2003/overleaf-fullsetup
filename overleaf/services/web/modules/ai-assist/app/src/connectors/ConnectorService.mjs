@@ -26,6 +26,7 @@ import {
   parseConnectorConfig,
 } from './ConnectorPresets.mjs'
 import { sanitizeServerIcons } from './ConnectorIcons.mjs'
+import { originOf } from './ConnectorFetch.mjs'
 
 /**
  * MCP tool annotations are `…Hint`; older servers sent the bare names, and
@@ -59,7 +60,7 @@ export function permissionKeyFor(toolName) {
 }
 
 /** A permission map as it is stored: keys from permissionKeyFor, levels checked. */
-export function storedPermissions(map) {
+function storedPermissions(map) {
   if (!map || typeof map !== 'object') return {}
   return Object.fromEntries(
     Object.entries(map)
@@ -94,6 +95,15 @@ function notFound() {
 
 function iso(date) {
   return date ? new Date(date).toISOString() : null
+}
+
+/** The last error a connector keeps: the error's own, else the fallbacks. */
+function lastErrorFrom(err, fallbackMessage, fallbackCode) {
+  return {
+    message: err.message || fallbackMessage,
+    code: err.code || fallbackCode,
+    at: new Date(),
+  }
 }
 
 export function toView(doc) {
@@ -231,10 +241,6 @@ export class ConnectorService {
     return doc
   }
 
-  static async get(id, userId) {
-    return toView(await withSecretFlags(await this._find(id, userId)))
-  }
-
   static async create(userId, input) {
     const headers = headerMap(input.headers)
     const connector = new ConnectorModel({
@@ -265,11 +271,11 @@ export class ConnectorService {
       next = await this.connect(connector)
     } catch (err) {
       connector.status = 'error'
-      connector.lastError = {
-        message: err.message || 'Connection failed',
-        code: err.code || 'CONNECT_ERROR',
-        at: new Date(),
-      }
+      connector.lastError = lastErrorFrom(
+        err,
+        'Connection failed',
+        'CONNECT_ERROR'
+      )
       await connector.save()
       next = 'error'
     }
@@ -396,7 +402,7 @@ export class ConnectorService {
     return { ok: true }
   }
 
-  /** Connects with what is saved, refreshing the tool list on success. */
+  /** Whether the server offers sign-in; a failed check counts as not offered. */
   static async _signInOffered(connector) {
     try {
       return await signInOffered({ connector })
@@ -405,6 +411,7 @@ export class ConnectorService {
     }
   }
 
+  /** Connects with what is saved, refreshing the tool list on success. */
   static async connect(connector, credentials = null) {
     let client = null
     try {
@@ -466,11 +473,11 @@ export class ConnectorService {
         return 'error'
       }
       connector.status = 'error'
-      connector.lastError = {
-        message: err.message || 'Connection failed',
-        code: err.code || 'CONNECT_ERROR',
-        at: new Date(),
-      }
+      connector.lastError = lastErrorFrom(
+        err,
+        'Connection failed',
+        'CONNECT_ERROR'
+      )
       await connector.save()
       return 'error'
     } finally {
@@ -561,11 +568,11 @@ export class ConnectorService {
       // A connected connector keeps its status: only the step-up failed
       if (connector.status !== 'connected') {
         connector.status = 'error'
-        connector.lastError = {
-          message: err.message || 'Sign-in could not start',
-          code: err.code || 'SIGN_IN_ERROR',
-          at: new Date(),
-        }
+        connector.lastError = lastErrorFrom(
+          err,
+          'Sign-in could not start',
+          'SIGN_IN_ERROR'
+        )
         await connector.save()
       }
       throw err
@@ -616,14 +623,6 @@ function withoutIcons(serverInfo) {
   const info = { ...serverInfo }
   delete info.icons
   return info
-}
-
-function originOf(url) {
-  try {
-    return new URL(String(url)).origin
-  } catch {
-    return null
-  }
 }
 
 export default ConnectorService

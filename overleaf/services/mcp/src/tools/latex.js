@@ -82,6 +82,13 @@ function acrossDocs(docs, parse) {
   return docs.flatMap(doc => parse(doc.content).map(item => ({ ...item, path: doc.path })))
 }
 
+/** Every normalised doc and file path in a project tree, for existence checks. */
+function knownProjectPaths(tree) {
+  return new Set(
+    [...(tree?.docs ?? []), ...(tree?.files ?? [])].map(entry => normalisePath(entry.path))
+  )
+}
+
 /** Collapse whitespace so a value spanning several source lines stays on one line. */
 function oneLine(text) {
   return String(text ?? '')
@@ -166,10 +173,7 @@ async function collectOutline(client, token, id, rootPath, followIncludes) {
         readTexDocs(client, token, id),
       ])
     : [null, []]
-  const known = new Set([
-    ...(tree?.docs ?? []).map(doc => normalisePath(doc.path)),
-    ...(tree?.files ?? []).map(file => normalisePath(file.path)),
-  ])
+  const known = knownProjectPaths(tree)
   const prefetched = new Map(batch.map(doc => [doc.path, doc.content]))
   const contentOf = docPath =>
     prefetched.has(docPath) ? prefetched.get(docPath) : readDoc(client, token, id, docPath)
@@ -486,16 +490,23 @@ export function registerLatexTools(server, { client, staticToken }) {
           return respond(items, renderCitations(items))
         }
         case 'labels_refs': {
-          const labels = acrossDocs(docs, text => parseLabelsAndRefs(text).labels).map(
-            label => ({ kind: 'label', path: label.path, line: label.line, name: label.name })
-          )
-          const refs = acrossDocs(docs, text => parseLabelsAndRefs(text).refs).map(ref => ({
-            kind: 'ref',
-            path: ref.path,
-            line: ref.line,
-            name: ref.name,
-            command: ref.command,
-          }))
+          const labels = []
+          const refs = []
+          for (const doc of docs) {
+            const parsed = parseLabelsAndRefs(doc.content)
+            for (const label of parsed.labels) {
+              labels.push({ kind: 'label', path: doc.path, line: label.line, name: label.name })
+            }
+            for (const ref of parsed.refs) {
+              refs.push({
+                kind: 'ref',
+                path: doc.path,
+                line: ref.line,
+                name: ref.name,
+                command: ref.command,
+              })
+            }
+          }
           const labelNames = new Set(labels.map(label => label.name))
           const refNames = new Set(refs.map(ref => ref.name))
           const issues = [
@@ -547,10 +558,7 @@ export function registerLatexTools(server, { client, staticToken }) {
         }
         case 'includes': {
           const tree = await client.get(token, `/projects/${id}/tree`)
-          const known = new Set([
-            ...(tree.docs ?? []).map(doc => normalisePath(doc.path)),
-            ...(tree.files ?? []).map(file => normalisePath(file.path)),
-          ])
+          const known = knownProjectPaths(tree)
           const items = docs
             .flatMap(doc =>
               parseIncludes(doc.content).map(include => ({

@@ -2,8 +2,8 @@ import { expect } from 'chai'
 import { render, screen } from '@testing-library/react'
 import {
   ToolCallCard,
-  toolCallExpansionStore,
 } from '../../../../../frontend/js/features/ai-assist/components/agent/tool-call-card'
+import { subresultExpansionStore } from '../../../../../frontend/js/features/ai-assist/components/agent/subresult-expansion-store'
 
 const LEGACY = {
   id: 'c1',
@@ -17,7 +17,7 @@ describe('a stored call naming a tool that no longer exists', function () {
   // the summary below persists 'c1' as expanded, which would leak into any
   // later test that renders a call with the same id.
   afterEach(function () {
-    toolCallExpansionStore.clear()
+    subresultExpansionStore.clear()
   })
 
   it('renders without throwing', function () {

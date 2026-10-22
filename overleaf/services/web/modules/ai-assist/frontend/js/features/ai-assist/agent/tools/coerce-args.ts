@@ -18,7 +18,7 @@ export type JsonSchema = {
 }
 
 /** Strings a model uses for `true`, in the casings they actually arrive in. */
-const TRUTHY = new Set(['true', 'yes', 'y', '1', 'on'])
+export const TRUTHY = new Set(['true', 'yes', 'y', '1', 'on'])
 /** Strings a model uses for `false`. */
 const FALSY = new Set(['false', 'no', 'n', '0', 'off', 'none', 'null'])
 

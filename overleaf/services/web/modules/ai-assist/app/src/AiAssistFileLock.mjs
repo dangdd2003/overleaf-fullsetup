@@ -5,15 +5,9 @@
 // write. LockManager is imported on first use, not at import time: an instance
 // with the feature off never opens a Redis connection.
 
-export const AI_ASSIST_FILE_LOCK_NAMESPACE = 'aiAssistFile'
+const AI_ASSIST_FILE_LOCK_NAMESPACE = 'aiAssistFile'
 
-const localLocks = new Map()
 let lockManagerPromise = null
-let customLockManager = null
-
-export function setLockManagerForTesting(manager) {
-  customLockManager = manager
-}
 
 function lockManager() {
   lockManagerPromise ??= import(
@@ -22,27 +16,30 @@ function lockManager() {
   return lockManagerPromise
 }
 
-function withLocalLock(key, task) {
-  const previous = localLocks.get(key) || Promise.resolve()
-  const next = previous.catch(() => {}).then(task)
-  const tail = next.catch(() => {})
-  localLocks.set(key, tail)
-  tail.then(() => {
-    if (localLocks.get(key) === tail) localLocks.delete(key)
-  })
-  return next
+/**
+ * A lock for this process only: tasks for one key run one after another. Each
+ * store makes its own, so its keys do not share a queue with another store's.
+ */
+export function createLocalLock() {
+  const locks = new Map()
+  return function withLocalLock(key, task) {
+    // Every stored tail never rejects, so the chain can run on it directly
+    const previous = locks.get(key) || Promise.resolve()
+    const next = previous.then(task)
+    const tail = next.catch(() => {})
+    locks.set(key, tail)
+    tail.then(() => {
+      if (locks.get(key) === tail) locks.delete(key)
+    })
+    return next
+  }
 }
+
+const withLocalLock = createLocalLock()
 
 /** Runs `task` while holding the lock for `key`, in this process and across processes. */
 export function withAiAssistFileLock(key, task) {
   return withLocalLock(key, async () => {
-    if (customLockManager) {
-      return customLockManager.promises.runWithLock(
-        AI_ASSIST_FILE_LOCK_NAMESPACE,
-        key,
-        task
-      )
-    }
     if (process.env.NODE_ENV === 'test') {
       return task()
     }

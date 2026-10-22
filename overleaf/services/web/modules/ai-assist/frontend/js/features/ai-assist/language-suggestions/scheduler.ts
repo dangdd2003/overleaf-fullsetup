@@ -84,7 +84,7 @@ const MAX_CONTEXTS = 4
 const CONCURRENCY: Record<'fast' | 'main', number> = { fast: 2, main: 1 }
 const SENTENCE_END = /[.?!:]$/
 
-type Resolved = { model: ResolvedModel; variant: EnglishVariant; style: boolean }
+export type Resolved = { model: ResolvedModel; variant: EnglishVariant; style: boolean }
 
 /** Where the last edits were made, kept in step with the text by the editor. */
 export type EditPositions = {

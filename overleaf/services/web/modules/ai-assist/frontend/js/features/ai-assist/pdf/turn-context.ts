@@ -71,7 +71,7 @@ export function addPdfArea(area: PdfAreaContext) {
   updatePdfTurnContext({ areas: newest([...current.areas, area]) })
 }
 
-/** Updates the resolved source code lines for an existing area in place without replacing it. */
+/** Updates the resolved source code lines for an existing area immutably with its id kept, so chips keep their keys. */
 export function updatePdfAreaSource(
   id: string,
   source: { path: string; line: number; endLine: number } | null

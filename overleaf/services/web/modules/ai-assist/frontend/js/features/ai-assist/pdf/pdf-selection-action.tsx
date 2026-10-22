@@ -13,12 +13,12 @@ import { placementSide, useFloatingBox } from '../floating/use-floating-box'
 import { readPdfSelection } from './selection'
 import { addPdfSelection } from './turn-context'
 
-export const PDF_SELECTION_ACTION_CLASS = 'ai-assist-pdf-selection-action'
+const PDF_SELECTION_ACTION_CLASS = 'ai-assist-pdf-selection-action'
 
 type Rect = { left: number; top: number; right: number; bottom: number }
 
 /** The text selected in the PDF, and where its last line sits on screen. */
-export type PdfSelectionTarget = {
+type PdfSelectionTarget = {
   context: PdfSelectionContext
   end: Rect
 }
@@ -33,7 +33,7 @@ export function pdfSelectionTarget(
   selection: Selection | null
 ): PdfSelectionTarget | null {
   const context = readPdfSelection(root, selection)
-  if (!context || !selection || selection.rangeCount === 0) return null
+  if (!context || !selection) return null
   const rects = selection.getRangeAt(0).getClientRects()
   const last = rects[rects.length - 1]
   if (!last) return null
@@ -143,8 +143,7 @@ export function PdfSelectionAction() {
       settle = window.setTimeout(show, KEYBOARD_SETTLE_MS)
     }
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') hide()
-      else if (event.shiftKey) hide()
+      if (event.key === 'Escape' || event.shiftKey) hide()
     }
 
     document.addEventListener('pointerdown', onPointerDown, true)

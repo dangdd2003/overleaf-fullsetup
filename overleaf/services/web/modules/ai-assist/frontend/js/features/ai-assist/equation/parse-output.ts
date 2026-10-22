@@ -17,6 +17,10 @@ export const EQUATION_FORMS = [
 
 export type EquationForm = (typeof EQUATION_FORMS)[number]
 
+function isEquationForm(value: string): value is EquationForm {
+  return (EQUATION_FORMS as readonly string[]).includes(value)
+}
+
 export type ParsedEquation =
   | {
       kind: 'equation'
@@ -60,9 +64,7 @@ function fallbackOf(raw: string): { body: string; form: EquationForm | null } | 
     .trim()
   if (!text) return null
   const environment = /^\\begin\s*\{([a-zA-Z]+\*?)\}/.exec(text)?.[1] ?? ''
-  const form = (EQUATION_FORMS as readonly string[]).includes(environment)
-    ? (environment as EquationForm)
-    : null
+  const form = isEquationForm(environment) ? environment : null
   return { body: text, form }
 }
 
@@ -100,9 +102,7 @@ export function parseEquationReply(reply: string, done: boolean): ParsedEquation
   }
 
   const formValue = FORM_ATTRIBUTE.exec(open[1])?.[1].trim() ?? ''
-  const form = (EQUATION_FORMS as readonly string[]).includes(formValue)
-    ? (formValue as EquationForm)
-    : null
+  const form = isEquationForm(formValue) ? formValue : null
   const label = (LABEL_ATTRIBUTE.exec(open[1])?.[1] ?? '').replace(/[^A-Za-z0-9:_.\-]/g, '')
 
   const found = tagSection(raw, open.index, open[0].length, '</equation>', done)

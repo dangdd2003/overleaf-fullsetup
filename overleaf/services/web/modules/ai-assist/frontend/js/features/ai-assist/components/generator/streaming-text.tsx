@@ -21,6 +21,9 @@ import {
   useSystemHighlightStyle,
 } from '../../hooks/use-editor-code-highlight'
 import { renderMarkdown } from '../agent/markdown-content'
+import { formatDuration, regularPastTense } from '../agent/status-words'
+
+export { formatDuration }
 
 /**
  * The Overleaf "O" mark, taken verbatim from `public/img/ol-brand/overleaf-o.svg`.
@@ -67,28 +70,16 @@ const PAST_TENSE_WORDS: Record<string, string> = {
   Simplifying: 'Simplified',
 }
 
+const PAST_TENSE_FORMS = new Set(Object.values(PAST_TENSE_WORDS))
+
 export function toPastTense(word: string): string {
   if (!word) return 'Written'
   const trimmed = word.replace(/…$/, '').trim()
-  if (PAST_TENSE_WORDS[trimmed]) return PAST_TENSE_WORDS[trimmed]
-  if (Object.values(PAST_TENSE_WORDS).includes(trimmed)) return trimmed
-  if (trimmed.endsWith('ed')) return trimmed
-  if (trimmed.endsWith('ing')) {
-    const base = trimmed.slice(0, -3)
-    if (base.endsWith('e')) return `${base}d`
-    return `${base}ed`
+  if (Object.prototype.hasOwnProperty.call(PAST_TENSE_WORDS, trimmed)) {
+    return PAST_TENSE_WORDS[trimmed]
   }
-  return `${trimmed}ed`
-}
-
-export function formatDuration(elapsedMs: number): string {
-  const totalSeconds = Math.round(elapsedMs / 1000)
-  if (totalSeconds <= 1) return '1s'
-  if (totalSeconds < 60) return `${totalSeconds}s`
-  const minutes = Math.floor(totalSeconds / 60)
-  const remainingSeconds = totalSeconds % 60
-  if (remainingSeconds === 0) return `${minutes}m`
-  return `${minutes}m ${remainingSeconds}s`
+  if (PAST_TENSE_FORMS.has(trimmed)) return trimmed
+  return regularPastTense(trimmed)
 }
 
 export function formatCompletedStatus(word: string, elapsedMs: number): string {
@@ -180,7 +171,7 @@ export const PopupStatusLine: FC<{
 }
 
 type FadeChunk = { start: number; at: number }
-export type PopupFadeState = {
+type PopupFadeState = {
   text: string
   chunks: FadeChunk[]
   rules: number[]
@@ -204,7 +195,7 @@ const FADE_UNIT_SELECTOR = [
 
 const ATOMIC_SELECTOR = '.katex, button, svg, .ai-assist-citation'
 
-export function createPopupFadeState(
+function createPopupFadeState(
   container?: HTMLElement | null
 ): PopupFadeState {
   return {
@@ -233,7 +224,7 @@ function fadeRules(
   })
 }
 
-export function applyPopupChunkFades(
+function applyPopupChunkFades(
   container: HTMLElement,
   state: PopupFadeState
 ) {
@@ -345,7 +336,7 @@ function nodesMatch(a: Node, b: Node): boolean {
   return false
 }
 
-export function reconcilePopupContainerHtml(
+function reconcilePopupContainerHtml(
   container: HTMLElement,
   newHtml: string
 ) {

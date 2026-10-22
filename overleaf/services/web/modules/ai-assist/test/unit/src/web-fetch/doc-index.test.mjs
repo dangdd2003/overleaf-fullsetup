@@ -1,8 +1,7 @@
-import { afterAll, describe, it } from 'vitest'
+import { describe, it } from 'vitest'
 import { expect } from 'chai'
 import {
   INDEXED_DOCUMENT_CHARS,
-  closeDocumentIndexes,
   documentIndex,
 } from '../../../../app/src/web-fetch/doc-index.mjs'
 import { runJobInline } from '../../../../app/src/web-fetch/extract/jobs.mjs'
@@ -44,10 +43,6 @@ function longManual() {
 }
 
 describe('document index', function () {
-  afterAll(function () {
-    closeDocumentIndexes()
-  })
-
   const doc = longManual()
 
   it('pages a long document the same way as the text itself', async function () {

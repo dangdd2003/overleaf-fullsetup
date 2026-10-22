@@ -515,30 +515,15 @@ async function staleFor(projectId, buildId) {
   }
 }
 
-/**
- * Parsed view of a build: errors, warnings, bad boxes and rerun advice, read
- * from output.log and output.blg. The LaTeX and BibTeX parsing lives in
- * CompileLogSummary.mjs.
- */
 // The diagnostics view of a build, read from its output.log and output.blg,
 // with `root` as the main file the paths are judged against. Returns
 // `{ tooLarge: true }` when a log is over the cap. Throws when a log cannot be
 // read at all.
 async function buildDiagnostics(projectId, userId, clsiServerId, buildId, root) {
-  const log = await readOutputText(
-    projectId,
-    userId,
-    clsiServerId,
-    buildId,
-    'output.log'
-  )
-  const blg = await readOutputText(
-    projectId,
-    userId,
-    clsiServerId,
-    buildId,
-    'output.blg'
-  )
+  const [log, blg] = await Promise.all([
+    readOutputText(projectId, userId, clsiServerId, buildId, 'output.log'),
+    readOutputText(projectId, userId, clsiServerId, buildId, 'output.blg'),
+  ])
   if (log?.tooLarge || blg?.tooLarge) {
     return { tooLarge: true }
   }

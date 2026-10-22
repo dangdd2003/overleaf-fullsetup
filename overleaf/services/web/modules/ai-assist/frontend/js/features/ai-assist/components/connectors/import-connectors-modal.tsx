@@ -44,6 +44,8 @@ export function ImportConnectorsModal({
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<ImportResult | null>(null)
 
+  const needsSignIn = result?.created.filter(c => c.next === 'authorize') ?? []
+
   const handleImport = async () => {
     setSaving(true)
     setError(null)
@@ -91,17 +93,14 @@ export function ImportConnectorsModal({
                 })}
               />
             ) : null}
-            {result.created.some(c => c.next === 'authorize') ? (
+            {needsSignIn.length ? (
               <Notification
                 type="info"
                 content={t(
                   'connector_import_sign_in',
                   'Sign in from the connector card: __names__.',
                   {
-                    names: result.created
-                      .filter(c => c.next === 'authorize')
-                      .map(c => c.connector.name)
-                      .join(', '),
+                    names: needsSignIn.map(c => c.connector.name).join(', '),
                   }
                 )}
               />

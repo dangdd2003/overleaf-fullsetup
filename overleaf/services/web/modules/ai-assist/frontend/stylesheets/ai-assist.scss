@@ -5,6 +5,39 @@
 $font-family-monospace: "DM Mono", monospace !default;
 $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
 
+// Floating-card shadow literals
+$ai-floating-shadow:
+  0 4px 12px 0 rgba(0, 0, 0, 0.16),
+  0 1px 2px 0 rgba(0, 0, 0, 0.08);
+$ai-card-shadow:
+  0 8px 24px 0 rgba(0, 0, 0, 0.12),
+  0 2px 6px 0 rgba(0, 0, 0, 0.04);
+
+// Popup menus (mode menu, chat history) share the same floating-box setup
+@mixin ai-assist-popup-menu {
+  @include ai-assist-floating-box(true);
+  z-index: 1070;
+  margin: 0 !important;
+  animation: ai-assist-fade-in 0.15s ease-out both;
+}
+
+// Truly shared card surface declarations across AI cards
+@mixin ai-card-surface {
+  box-sizing: border-box;
+  border: 1px solid var(--border-divider-themed);
+  border-radius: var(--border-radius-medium);
+  background-color: var(--bg-primary-themed);
+  box-shadow: $ai-card-shadow;
+  color: var(--content-primary-themed);
+  font-family: inherit;
+  font-size: var(--font-size-02);
+  line-height: var(--line-height-03);
+
+  &:focus {
+    outline: none;
+  }
+}
+
 // Every floating box in the panel (the mode menu, chat history, @-mentions,
 // citation cards) shares the mode menu's look. Dropdown menus pass
 // $important to win over Bootstrap's .dropdown-menu rules.
@@ -18,9 +51,7 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
   background-color: var(--bg-primary-themed) $imp;
   color: var(--content-primary-themed) $imp;
   border: 1px solid var(--border-divider-themed) $imp;
-  box-shadow:
-    0 4px 12px 0 rgba(0, 0, 0, 0.16),
-    0 1px 2px 0 rgba(0, 0, 0, 0.08) $imp;
+  box-shadow: $ai-floating-shadow $imp;
   animation: ai-assist-dropdown-in 0.18s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
@@ -283,18 +314,6 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
   border-top: 1px solid var(--border-divider);
 }
 
-.web-search-cache-details {
-  summary {
-    cursor: pointer;
-    user-select: none;
-    padding: var(--spacing-01) 0;
-
-    &:hover {
-      color: var(--content-primary);
-    }
-  }
-}
-
 .web-search-api-heading {
   margin-top: var(--spacing-08);
 
@@ -447,7 +466,6 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
 }
 
 .web-search-probe-target {
-  font-family: var(--font-family-monospace);
   font-size: 12px;
   color: var(--content-primary) !important;
   background-color: var(--bg-light-secondary) !important;
@@ -505,7 +523,6 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
   overflow-y: auto;
   white-space: pre-wrap;
   word-break: break-word;
-  font-family: var(--font-family-monospace);
   font-size: 11px;
   line-height: 1.45;
   color: var(--content-primary);
@@ -710,7 +727,6 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
     margin-bottom: var(--spacing-02);
   }
 
-  .ai-assist-message-selection-chip,
   .ai-assist-selection-chip {
     display: inline-flex;
     align-items: center;
@@ -1035,7 +1051,8 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
   width: 100%;
 }
 
-.ai-assist-subresult-group-header {
+.ai-assist-subresult-group-header,
+.ai-assist-thinking-header {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -1053,19 +1070,6 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
   max-width: 100%;
   text-align: left;
 
-  &:hover {
-    color: var(--content-primary-themed);
-    background: transparent;
-    border: none;
-
-    .ai-assist-subresult-group-title,
-    .ai-assist-subresult-group-chevron,
-    .ai-assist-subresult-group-icon {
-      color: var(--content-primary-themed);
-      opacity: 1;
-    }
-  }
-
   &[aria-expanded="true"] {
     background: transparent;
     border: none;
@@ -1077,15 +1081,18 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
   }
 }
 
-.ai-assist-subresult-group-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--content-secondary-themed);
-  opacity: 0.72;
-  transition:
-    opacity 0.15s ease,
-    color 0.15s ease;
+.ai-assist-subresult-group-header {
+  &:hover {
+    color: var(--content-primary-themed);
+    background: transparent;
+    border: none;
+
+    .ai-assist-subresult-group-title,
+    .ai-assist-subresult-group-chevron {
+      color: var(--content-primary-themed);
+      opacity: 1;
+    }
+  }
 }
 
 .ai-assist-subresult-group-title {
@@ -1469,31 +1476,6 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
 
   &.is-expanded {
     transform: rotate(90deg);
-  }
-}
-
-// Single-tool subresult groups: the summary line is shown statically (no
-// button/chevron) with its detail always visible underneath, instead of
-// nesting another collapsible row inside the already-expanded dropdown.
-.ai-assist-tool-call-summary-static {
-  cursor: default;
-}
-
-.ai-assist-tool-call-detail-standalone {
-  max-height: 350px;
-  overflow-y: auto;
-
-  &.is-web {
-    max-height: 33.333vh;
-    max-height: calc(100cqh / 3);
-    overflow-y: auto;
-    scrollbar-width: thin;
-  }
-
-  &.is-web-fetch,
-  &:has(.ai-assist-web-fetch-box) {
-    max-height: none;
-    overflow: visible;
   }
 }
 
@@ -2441,34 +2423,17 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
     }
   }
 
-  .ai-assist-tool-call-raw,
-  .ai-assist-tool-detail-raw {
-    margin: 0;
-    padding: 6px 8px;
-    background: var(--bg-secondary-themed);
-    border-radius: 4px;
-    font-family: $font-family-monospace;
-    font-size: 0.6875rem;
-    line-height: 1.4;
-    color: var(--content-primary-themed);
-    white-space: pre-wrap;
-    word-break: break-all;
-    border: 1px solid var(--border-divider-themed);
-  }
-
   .ai-assist-tool-detail-generic {
     display: flex;
     flex-direction: column;
     gap: 3px;
     font-size: 0.71875rem;
 
-    .ai-assist-generic-row,
     .ai-assist-settings-row {
       display: flex;
       align-items: baseline;
       gap: 6px;
 
-      .ai-assist-generic-key,
       .ai-assist-settings-key {
         color: var(--content-secondary-themed);
         font-weight: 500;
@@ -2476,7 +2441,6 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
         flex-shrink: 0;
       }
 
-      .ai-assist-generic-val,
       .ai-assist-settings-val {
         color: var(--content-primary-themed);
         font-family: $font-family-monospace;
@@ -2596,8 +2560,7 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
     line-height: 1.45;
   }
 
-  .ai-assist-tool-detail-error,
-  .ai-assist-tool-detail-rejected {
+  .ai-assist-tool-detail-error {
     color: var(--content-danger-themed);
     font-weight: 500;
     font-size: var(--font-size-01);
@@ -2756,15 +2719,12 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
 }
 
 .ai-assist-mode-menu {
-  @include ai-assist-floating-box(true);
+  @include ai-assist-popup-menu;
   // The popups' layer: above the chat content, so a resize of the panel
   // can never bury a menu under it
-  z-index: 1070;
   width: max-content;
   min-width: 320px;
   max-width: 380px;
-  margin: 0 !important;
-  animation: ai-assist-fade-in 0.15s ease-out both;
 
   // Rows with a title only, such as the reasoning effort levels
   &.is-compact {
@@ -2864,13 +2824,6 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
     min-width: 0;
   }
 
-  .ai-assist-mode-item-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    width: 100%;
-  }
-
   .ai-assist-mode-item-title {
     font-size: 0.8125rem;
     font-weight: 600;
@@ -2956,16 +2909,6 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
   }
 }
 
-.ai-assist-thinking-title {
-  color: var(--content-secondary-themed);
-  font-weight: 400;
-  font-size: var(--font-size-01);
-  opacity: 0.72;
-  transition:
-    opacity 0.15s ease,
-    color 0.15s ease;
-}
-
 .ai-assist-subresult-item .ai-assist-thinking-content {
   margin: 0 12px 10px;
 }
@@ -2979,23 +2922,6 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
 }
 
 .ai-assist-thinking-header {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 2px 0;
-  margin: 0;
-  background: transparent;
-  border: none;
-  border-radius: 0;
-  color: var(--content-secondary-themed);
-  font-size: var(--font-size-01);
-  line-height: 1.4;
-  cursor: pointer;
-  transition: color 0.15s ease;
-  width: fit-content;
-  max-width: 100%;
-  text-align: left;
-
   &:hover {
     color: var(--content-primary-themed);
     background: transparent;
@@ -3008,16 +2934,6 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
       opacity: 1;
     }
   }
-
-  &[aria-expanded="true"] {
-    background: transparent;
-    border: none;
-  }
-
-  &:focus-visible {
-    outline: none;
-    color: var(--content-primary-themed);
-  }
 }
 
 .ai-assist-thinking-icon {
@@ -3029,21 +2945,6 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
   transition:
     opacity 0.15s ease,
     color 0.15s ease;
-}
-
-.ai-assist-thinking-chevron {
-  flex-shrink: 0;
-  color: var(--content-secondary-themed);
-  opacity: 0.55;
-  transition:
-    transform 0.2s cubic-bezier(0.4, 0, 0.2, 1),
-    opacity 0.15s ease,
-    color 0.15s ease;
-  transform: rotate(0deg);
-
-  &.is-expanded {
-    transform: rotate(90deg);
-  }
 }
 
 .ai-assist-thinking-title {
@@ -3999,7 +3900,7 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
     }
   }
 
-  // The mode menu's box and rows: icon, then title over a detail line
+  // The citation card's box and rows: icon, then title over a site line
   .ai-assist-citation-card-inner {
     @include ai-assist-floating-box;
     display: flex;
@@ -4438,8 +4339,7 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
   }
 
   // Task lists
-  ul:has(input[type="checkbox"]),
-  ul.contains-task-list {
+  ul:has(input[type="checkbox"]) {
     list-style: none;
     padding-left: 2px;
 
@@ -4455,15 +4355,6 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
         cursor: default;
       }
     }
-  }
-
-  // Streaming: newly revealed words (and new rows, code blocks and formulas as
-  // a whole) fade in. The duration must match STREAM_FADE_MS in
-  // use-stream-reveal.ts. No forwards fill: an opacity animation that stays
-  // applied keeps every faded span its own stacking context, and later text
-  // then paints over an open citation card.
-  .ai-assist-stream-fade {
-    animation: ai-assist-stream-fade 400ms ease-out backwards;
   }
 }
 
@@ -5538,16 +5429,6 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
   }
 }
 
-.ai-assist-composer-attach-btn {
-  @include ai-assist-composer-button;
-  width: 28px;
-
-  &.is-active {
-    color: var(--content-primary-themed);
-    background-color: var(--bg-tertiary-themed) !important;
-  }
-}
-
 .ai-assist-composer-plus-btn {
   @include ai-assist-composer-button;
   width: 24px;
@@ -6049,15 +5930,16 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
 .ai-assist-connector-approval {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-03);
+  gap: var(--spacing-02);
   margin: var(--spacing-02) 0;
-  padding: var(--spacing-04);
+  padding: var(--spacing-03);
   border: 1px solid var(--border-divider-themed);
-  border-left: 3px solid var(--link-ui-themed);
   border-radius: var(--border-radius-base);
   background: var(--bg-secondary-themed);
   color: var(--content-primary-themed);
   font-size: var(--font-size-02);
+  min-width: 0;
+  overflow: hidden;
   outline: none;
 
   &:focus-visible {
@@ -6069,11 +5951,15 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
     display: flex;
     align-items: center;
     gap: var(--spacing-02);
+    min-height: 24px;
+    margin-bottom: 2px;
+    font-size: var(--font-size-01);
     font-weight: 600;
-    color: var(--link-ui-themed);
+    color: var(--content-primary-themed);
 
     .material-symbols {
-      font-size: var(--font-size-03);
+      font-size: var(--font-size-02);
+      color: var(--content-secondary-themed);
     }
   }
 
@@ -6081,7 +5967,10 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
     display: flex;
     flex-direction: column;
     gap: var(--spacing-01);
-    padding-left: var(--spacing-04);
+    padding: var(--spacing-02) var(--spacing-03);
+    border: 1px solid var(--border-divider-themed);
+    border-radius: var(--border-radius-base);
+    background: var(--bg-primary-themed);
     min-width: 0;
   }
 
@@ -6092,6 +5981,7 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
     gap: var(--spacing-02);
     font-family: $code-font-family;
     font-size: var(--font-size-01);
+    line-height: var(--line-height-01);
     font-weight: 600;
     overflow-wrap: anywhere;
   }
@@ -6103,11 +5993,6 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
     font-family: inherit;
     font-size: 0.6875rem;
     font-weight: 500;
-    color: var(--content-secondary-themed);
-  }
-
-  .ai-assist-connector-approval-desc {
-    font-size: var(--font-size-01);
     color: var(--content-secondary-themed);
   }
 
@@ -6144,30 +6029,60 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
   }
 
   .ai-assist-connector-approval-question {
+    font-size: var(--font-size-01);
     font-weight: 600;
+    margin-top: var(--spacing-01);
   }
 
   .ai-assist-connector-approval-options {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: var(--spacing-01);
     margin: 0;
     padding: 0;
     list-style: none;
 
     li {
       display: flex;
-      align-items: baseline;
+      align-items: flex-start;
       gap: var(--spacing-02);
-      padding: var(--spacing-01) var(--spacing-02);
+      padding: var(--spacing-02) var(--spacing-03);
       border-radius: var(--border-radius-base);
+      border: 1px solid transparent;
       cursor: pointer;
       color: var(--content-secondary-themed);
+      font-size: var(--font-size-02);
+      font-weight: 400;
+      transition:
+        color 0.15s ease,
+        background-color 0.15s ease,
+        border-color 0.15s ease;
+
+      &:hover {
+        background: var(--bg-tertiary-themed);
+        color: var(--content-primary-themed);
+      }
+
+      &:hover,
+      &:active {
+        transform: none !important;
+        scale: none !important;
+      }
 
       &.is-selected {
-        background: color-mix(in srgb, var(--link-ui-themed) 12%, transparent);
-        color: var(--link-ui-themed);
-        font-weight: 600;
+        background: color-mix(
+          in srgb,
+          var(--link-ui-themed) 10%,
+          var(--bg-primary-themed)
+        );
+        border-color: color-mix(
+          in srgb,
+          var(--link-ui-themed) 35%,
+          var(--border-divider-themed)
+        );
+        color: var(--content-primary-themed);
+        font-size: var(--font-size-02);
+        font-weight: 400;
       }
     }
   }
@@ -6175,6 +6090,7 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
   .ai-assist-connector-approval-cursor {
     width: 1ch;
     flex-shrink: 0;
+    color: var(--link-ui-themed);
   }
 
   .ai-assist-connector-approval-index {
@@ -6188,6 +6104,9 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
   }
 
   .ai-assist-connector-approval-note {
+    width: 100%;
+    min-width: 0;
+    margin-top: var(--spacing-01);
     background-color: var(--bg-primary-themed);
     color: var(--content-primary-themed);
     border-color: var(--border-divider-themed);
@@ -6205,6 +6124,8 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
   .ai-assist-connector-approval-hint {
     font-size: var(--font-size-01);
     color: var(--content-secondary-themed);
+    padding-top: var(--spacing-01);
+    border-top: 1px solid var(--border-divider-themed);
   }
 }
 
@@ -6216,43 +6137,6 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
   &:hover {
     color: var(--link-ui-themed) !important;
     text-decoration: underline;
-  }
-}
-
-.ai-assist-diff {
-  margin: 0;
-  padding: var(--spacing-02);
-  background: var(--bg-primary-themed);
-  border: 1px solid var(--border-divider-themed);
-  border-radius: var(--border-radius-base);
-  font-family: $code-font-family;
-  font-size: var(--font-size-01);
-  white-space: pre-wrap;
-  word-break: break-all;
-
-  del,
-  ins {
-    display: block;
-    text-decoration: none;
-    padding: 2px 6px;
-    border-radius: 2px;
-    font-weight: 500;
-  }
-
-  del {
-    background: var(
-      --diff-del-tint,
-      color-mix(in srgb, var(--content-danger-themed) 20%, transparent)
-    );
-    color: var(--content-danger-themed);
-  }
-
-  ins {
-    background: var(
-      --diff-ins-tint,
-      color-mix(in srgb, var(--content-positive-themed) 20%, transparent)
-    );
-    color: var(--content-positive-themed);
   }
 }
 
@@ -6407,18 +6291,6 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
   50% {
     transform: scale(1.15);
     opacity: 0.7;
-  }
-}
-
-@keyframes ai-pulse {
-  0%,
-  100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.4;
-    transform: scale(0.85);
   }
 }
 
@@ -6689,139 +6561,6 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
   }
 }
 
-// Thinking State UI — matches side panel chat thinking block
-.ai-thinking-section {
-  margin-bottom: var(--spacing-02);
-}
-
-.ai-thinking-toggle-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background: transparent;
-  border: none;
-  padding: 3px 0;
-  color: var(--content-secondary-themed);
-  font-size: var(--font-size-01);
-  cursor: pointer;
-  transition: color 0.15s ease;
-  width: fit-content;
-  max-width: 100%;
-  text-align: left;
-
-  &:hover,
-  &:focus-visible {
-    color: var(--content-primary-themed);
-
-    .ai-thinking-icon,
-    .ai-thinking-label,
-    .ai-thinking-chevron {
-      color: var(--content-primary-themed);
-    }
-  }
-
-  &[aria-expanded="true"] {
-    color: var(--content-primary-themed);
-
-    .ai-thinking-icon,
-    .ai-thinking-label,
-    .ai-thinking-chevron {
-      color: var(--content-primary-themed);
-    }
-  }
-}
-
-.ai-thinking-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  width: 14px;
-  height: 14px;
-  color: var(--content-secondary-themed);
-}
-
-.ai-thinking-label {
-  flex-shrink: 0;
-  font-weight: 500;
-  font-size: var(--font-size-01);
-  color: var(--content-secondary-themed);
-  transition: color 0.15s ease;
-}
-
-.ai-thinking-chevron {
-  flex-shrink: 0;
-  width: 13px;
-  height: 13px;
-  transform-origin: center center;
-  transition:
-    transform 0.2s cubic-bezier(0.4, 0, 0.2, 1),
-    color 0.15s ease;
-  transform: rotate(0deg);
-  color: var(--content-secondary-themed);
-
-  &.is-expanded {
-    transform: rotate(90deg);
-  }
-}
-
-.ai-thinking-drawer {
-  max-height: 0;
-  opacity: 0;
-  overflow: hidden;
-  margin-top: 0;
-  padding: 0 var(--spacing-03);
-  background-color: var(--bg-tertiary-themed);
-  border-left: 2px solid var(--border-divider-themed);
-  border-radius: 0 var(--border-radius-base) var(--border-radius-base) 0;
-  font-size: var(--font-size-01);
-  line-height: 1.5;
-  color: var(--content-secondary-themed);
-  transition:
-    max-height 0.25s cubic-bezier(0.4, 0, 0.2, 1),
-    opacity 0.2s ease,
-    padding 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-
-  &.is-expanded {
-    max-height: 220px;
-    opacity: 1;
-    overflow-y: auto;
-    margin-top: var(--spacing-01);
-    padding: var(--spacing-02) var(--spacing-03);
-  }
-
-  pre {
-    margin: 0;
-    padding: 0;
-    background: transparent;
-    border: none;
-    font-family: inherit;
-    font-size: inherit;
-    color: inherit;
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
-}
-
-.ai-finding-fix-status {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-02);
-  font-size: var(--font-size-01);
-  color: var(--content-secondary-themed);
-  margin-bottom: var(--spacing-02);
-}
-
-.ai-finding-fix-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background-color: var(--link-ui-themed);
-  animation: ai-pulse 1.2s infinite ease-in-out;
-  display: inline-block;
-  flex-shrink: 0;
-}
-
 // Explanation prose
 // One assistant turn's rendered output inside the log-entry card. Vertical
 // rhythm only — the segments inside carry their own spacing.
@@ -6851,56 +6590,6 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
     &:last-child {
       margin-bottom: 0;
     }
-  }
-}
-
-// Suggested Code Box with diff
-.ai-suggest-code-box {
-  margin: var(--spacing-02) 0;
-  border: 1px solid var(--border-divider-themed);
-  border-radius: var(--border-radius-base);
-  overflow: hidden;
-  background-color: var(--bg-primary-themed);
-}
-
-.ai-suggest-code-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: var(--spacing-01) var(--spacing-02);
-  border-bottom: 1px solid var(--border-divider-themed);
-  font-size: var(--font-size-01);
-  color: var(--content-primary-themed);
-}
-
-.ai-suggest-sparkle-icon {
-  font-size: var(--font-size-02);
-  color: var(--link-ui-themed);
-  flex-shrink: 0;
-}
-
-.ai-copy-btn {
-  background: transparent;
-  border: none;
-  color: var(--content-secondary-themed);
-  font-size: var(--font-size-01);
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 8px;
-  border-radius: var(--border-radius-base);
-  cursor: pointer;
-  transition:
-    color 0.15s ease,
-    background-color 0.15s ease;
-
-  .material-symbols {
-    font-size: var(--font-size-02);
-  }
-
-  &:hover {
-    color: var(--content-primary-themed);
-    background-color: var(--bg-secondary-themed);
   }
 }
 
@@ -7192,7 +6881,6 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
   }
 }
 
-.ai-apply-suggestion-btn,
 .ai-suggest-stop-btn {
   display: inline-flex;
   align-items: center;
@@ -7249,37 +6937,16 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
   flex-shrink: 0;
 }
 
-.ai-suggestion-applied-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--content-positive-themed);
-  font-size: var(--font-size-01);
-  font-weight: 500;
-
-  .material-symbols {
-    font-size: 0.9375rem;
-  }
-}
-
-.ai-suggest-apply-error {
-  font-size: 0.6875rem;
-  color: var(--content-danger-themed);
-}
-
 // Chat history dropdown in the panel header.
 .ai-assist-history-toggle::after {
   display: none;
 }
 
 .ai-assist-history-menu {
-  @include ai-assist-floating-box(true);
-  z-index: 1070;
+  @include ai-assist-popup-menu;
   width: 340px;
   max-height: 380px;
   overflow-y: auto;
-  margin: 0 !important;
-  animation: ai-assist-fade-in 0.15s ease-out both;
 }
 
 .ai-assist-history-row {
@@ -7605,16 +7272,12 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
   }
 }
 
-.ai-assist-header-edit-save,
-.ai-assist-header-edit-cancel {
+.ai-assist-header-edit-save {
   width: 24px !important;
   height: 24px !important;
   min-width: 24px !important;
   min-height: 24px !important;
   padding: 0 !important;
-}
-
-.ai-assist-header-edit-save {
   color: var(--content-positive-themed) !important;
   &:hover {
     background-color: color-mix(
@@ -7626,6 +7289,11 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
 }
 
 .ai-assist-header-edit-cancel {
+  width: 24px !important;
+  height: 24px !important;
+  min-width: 24px !important;
+  min-height: 24px !important;
+  padding: 0 !important;
   color: var(--content-secondary-themed) !important;
   &:hover {
     background-color: color-mix(
@@ -7805,6 +7473,7 @@ $code-font-family: var(--ai-editor-font-family, var(--source-font-family));
 $ai-card-width: 600px;
 
 .ai-writing-tools-card {
+  @include ai-card-surface;
   display: flex;
   flex-direction: column;
   gap: var(--spacing-03);
@@ -7818,21 +7487,6 @@ $ai-card-width: 600px;
   min-width: var(--ai-floating-min-width, 0px);
   max-height: min(480px, var(--ai-floating-max-height, 480px));
   padding: var(--spacing-03) var(--spacing-04) var(--spacing-04);
-  box-sizing: border-box;
-  border: 1px solid var(--border-divider-themed);
-  border-radius: var(--border-radius-medium);
-  background-color: var(--bg-primary-themed);
-  box-shadow:
-    0 8px 24px 0 rgba(0, 0, 0, 0.12),
-    0 2px 6px 0 rgba(0, 0, 0, 0.04);
-  color: var(--content-primary-themed);
-  font-family: inherit;
-  font-size: var(--font-size-02);
-  line-height: var(--line-height-03);
-
-  &:focus {
-    outline: none;
-  }
 }
 
 @keyframes ai-writing-tools-settings-zoom-in {
@@ -8111,9 +7765,7 @@ $ai-card-width: 600px;
   border-radius: var(--border-radius-medium);
   background-color: var(--bg-primary-themed);
   color: var(--content-primary-themed);
-  box-shadow:
-    0 4px 12px 0 rgba(0, 0, 0, 0.16),
-    0 1px 2px 0 rgba(0, 0, 0, 0.08);
+  box-shadow: $ai-floating-shadow;
   pointer-events: auto;
 }
 
@@ -8447,25 +8099,6 @@ $ai-card-width: 600px;
   padding: var(--spacing-03) var(--spacing-05) var(--spacing-05);
 }
 
-.ai-texgpt-result-header {
-  display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  gap: var(--spacing-03);
-  min-height: 32px;
-}
-
-.ai-texgpt-result-title {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--content-primary-themed);
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.ai-texgpt-result-tools,
 .ai-texgpt-versions {
   display: inline-flex;
   flex-shrink: 0;
@@ -8603,22 +8236,6 @@ $ai-card-width: 600px;
 .ai-texgpt-result .ai-popup-status-line {
   margin: 0;
   color: var(--content-secondary-themed);
-}
-
-.ai-texgpt-result-footer {
-  display: flex;
-  flex-shrink: 0;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--spacing-03);
-}
-
-.ai-texgpt-result-actions {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--spacing-02);
 }
 
 // Shared with the equation and table cards: highlighted LaTeX, answers,
@@ -8837,8 +8454,7 @@ $ai-card-width: 600px;
   }
 }
 
-.ai-generator-image-error,
-.ai-generator-dialog-error {
+.ai-generator-image-error {
   margin: var(--spacing-02) 0 0;
   color: var(--content-danger);
   font-size: 13px;
@@ -9090,10 +8706,6 @@ $ai-card-width: 600px;
   gap: var(--spacing-01);
 }
 
-.ai-language-suggestions-select {
-  width: 200px;
-}
-
 .ai-language-suggestions-select-wide {
   width: 240px;
 }
@@ -9106,6 +8718,7 @@ $ai-card-width: 600px;
 }
 
 .ai-language-suggestion-card {
+  @include ai-card-surface;
   display: flex;
   flex-direction: column;
   gap: var(--spacing-03);
@@ -9115,21 +8728,6 @@ $ai-card-width: 600px;
   max-height: var(--ai-floating-max-height, calc(100vh - 32px));
   min-height: 0;
   padding: var(--spacing-03) var(--spacing-04) var(--spacing-04);
-  box-sizing: border-box;
-  border: 1px solid var(--border-divider-themed);
-  border-radius: var(--border-radius-medium);
-  background-color: var(--bg-primary-themed);
-  box-shadow:
-    0 8px 24px 0 rgba(0, 0, 0, 0.12),
-    0 2px 6px 0 rgba(0, 0, 0, 0.04);
-  color: var(--content-primary-themed);
-  font-family: inherit;
-  font-size: var(--font-size-02);
-  line-height: var(--line-height-03);
-
-  &:focus {
-    outline: none;
-  }
 }
 
 // Grows from the text when it flips above the line
@@ -9295,13 +8893,6 @@ $cursor-tool-failed-cross: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.o
   justify-content: space-between;
   gap: var(--spacing-02);
   padding-top: var(--spacing-02);
-
-  .ai-language-suggestion-card-tools,
-  .ai-language-suggestion-card-actions {
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-02);
-  }
 
   // Circular icon buttons matching Overleaf official (Image 1)
   .icon-button {
@@ -9796,17 +9387,6 @@ $cursor-tool-failed-cross: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.o
   }
 }
 
-@keyframes aiAssistLightboxContentLeave {
-  from {
-    opacity: 1;
-    transform: scale(1);
-  }
-  to {
-    opacity: 0;
-    transform: scale(0.95);
-  }
-}
-
 .ai-assist-lightbox-overlay {
   position: fixed;
   inset: 0;
@@ -9849,17 +9429,6 @@ $cursor-tool-failed-cross: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.o
   justify-content: center;
   overflow: hidden;
   cursor: zoom-out;
-}
-
-.ai-assist-lightbox-image-anchor {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  max-width: 100vw;
-  max-height: 100vh;
-  text-decoration: none;
-  outline: none;
-  cursor: default;
 }
 
 .ai-assist-lightbox-image {
@@ -10062,7 +9631,6 @@ $cursor-tool-failed-cross: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.o
 
 @import './ai-assist-connectors.scss';
 @import './ai-assist-tool-output.scss';
-
 
 // ---------------------------------------------------------------------------
 // Context usage: the composer's meter and the /context popover

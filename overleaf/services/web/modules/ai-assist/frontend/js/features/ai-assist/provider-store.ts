@@ -49,7 +49,7 @@ export function _resetCachedSettings() {
   syncPromise = null;
 }
 
-export function normalizeProviderSettings(parsed: any): ProviderSettings | null {
+function normalizeProviderSettings(parsed: any): ProviderSettings | null {
   if (!parsed?.type) return null;
 
   let type = parsed.type as ProviderType;
@@ -107,7 +107,7 @@ export async function initServerSettings(): Promise<void> {
       if (localProvider || localFast || localWeb) {
         const toSave: any = {};
         if (localProvider) toSave.provider = normalizeProviderSettings(localProvider);
-        if (localFast) toSave.fastProvider = normalizeFastSettings(localFast);
+        if (localFast) toSave.fastProvider = normalizeProviderSettings(localFast);
         if (localWeb) toSave.webSearch = migrateLegacyWebSearchSettings(localWeb);
 
         await putJSON("/ai-assist/settings", { body: toSave }).catch(() => {});
@@ -127,7 +127,7 @@ export async function initServerSettings(): Promise<void> {
 
       if (res) {
         if (res.provider) cachedProvider = normalizeProviderSettings(res.provider);
-        if (res.fastProvider) cachedFastProvider = normalizeFastSettings(res.fastProvider);
+        if (res.fastProvider) cachedFastProvider = normalizeProviderSettings(res.fastProvider);
         if (res.webSearch) cachedWebSearch = res.webSearch;
       }
     } catch {
@@ -166,18 +166,23 @@ function notify(eventName: string) {
   }
 }
 
+/** Fire-and-forget save of part of the server settings. */
+function saveServerSettings(body: Record<string, unknown>) {
+  putJSON("/ai-assist/settings", { body }).catch(() => {});
+}
+
 export function writeSettings(settings: ProviderSettings) {
   cachedProvider = settings;
   origRemoveItem(SETTINGS_KEY);
   notify("aiAssist:providerChanged");
-  putJSON("/ai-assist/settings", { body: { provider: settings } }).catch(() => {});
+  saveServerSettings({ provider: settings });
 }
 
 export function clearSettings() {
   cachedProvider = null;
   origRemoveItem(SETTINGS_KEY);
   notify("aiAssist:providerChanged");
-  putJSON("/ai-assist/settings", { body: { provider: null } }).catch(() => {});
+  saveServerSettings({ provider: null });
 }
 
 function positiveNumber(value: unknown): number | undefined {
@@ -186,39 +191,13 @@ function positiveNumber(value: unknown): number | undefined {
     : undefined;
 }
 
-export function normalizeFastSettings(parsed: any): ProviderSettings | null {
-  if (!parsed?.type) return null;
-
-  let type = parsed.type as ProviderType;
-  if ((type as string) === "openai-compatible") type = "openai";
-  if ((type as string) === "anthropic-compatible") type = "anthropic";
-
-  if (!Object.prototype.hasOwnProperty.call(DEFAULT_BASE_URLS, type)) {
-    return null;
-  }
-
-  const baseUrl = normalizeProviderBaseUrl(type, parsed.baseUrl);
-  const result: ProviderSettings = {
-    type,
-    baseUrl,
-    apiKey: (parsed.apiKey ?? "").trim(),
-    model: (parsed.model ?? "").trim(),
-  };
-  if (parsed.modelName) result.modelName = parsed.modelName;
-  const contextWindow = positiveNumber(parsed.contextWindow);
-  if (contextWindow) result.contextWindow = contextWindow;
-  const maxOutputTokens = positiveNumber(parsed.maxOutputTokens);
-  if (maxOutputTokens) result.maxOutputTokens = maxOutputTokens;
-  return result;
-}
-
 /**
  * The fast model, stored like the main provider on the server.
  */
 export function readFastSettings(): ProviderSettings | null {
   const legacy = customLocalStorage.getItem(FAST_SETTINGS_KEY);
   if (legacy) {
-    return normalizeFastSettings(legacy);
+    return normalizeProviderSettings(legacy);
   }
   return cachedFastProvider;
 }
@@ -227,14 +206,14 @@ export function writeFastSettings(settings: ProviderSettings) {
   cachedFastProvider = settings;
   origRemoveItem(FAST_SETTINGS_KEY);
   notify("aiAssist:fastProviderChanged");
-  putJSON("/ai-assist/settings", { body: { fastProvider: settings } }).catch(() => {});
+  saveServerSettings({ fastProvider: settings });
 }
 
 export function clearFastSettings() {
   cachedFastProvider = null;
   origRemoveItem(FAST_SETTINGS_KEY);
   notify("aiAssist:fastProviderChanged");
-  putJSON("/ai-assist/settings", { body: { fastProvider: null } }).catch(() => {});
+  saveServerSettings({ fastProvider: null });
 }
 
 /** Whether this instance offers web_search and web_fetch at all. */
@@ -723,14 +702,14 @@ export function writeWebSearchSettings(settings: MultiWebSearchSettings) {
   cachedWebSearch = settings;
   origRemoveItem(WEB_SEARCH_KEY);
   notify("aiAssist:webSearchChanged");
-  putJSON("/ai-assist/settings", { body: { webSearch: settings } }).catch(() => {});
+  saveServerSettings({ webSearch: settings });
 }
 
 export function clearWebSearchSettings() {
   cachedWebSearch = null;
   origRemoveItem(WEB_SEARCH_KEY);
   notify("aiAssist:webSearchChanged");
-  putJSON("/ai-assist/settings", { body: { webSearch: null } }).catch(() => {});
+  saveServerSettings({ webSearch: null });
 }
 
 /**

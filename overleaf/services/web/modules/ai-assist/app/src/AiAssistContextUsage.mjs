@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { IMAGE_TOKEN_ESTIMATE, imageDimensions } from './AiAssistImages.mjs'
-import { estimateImageTokens, imagePolicyFor } from './AiAssistImagePolicy.mjs'
+import { imageTokenCost } from './AiAssistImagePolicy.mjs'
 import { toolWireSpec } from './AiAssistProviders.mjs'
 import { slashCommandsSection } from './AiAssistSystemPrompt.mjs'
 
@@ -31,7 +31,7 @@ export const PROSE_CHARS_PER_TOKEN = 4
 export const JSON_CHARS_PER_TOKEN = 3
 export const LATEX_CHARS_PER_TOKEN = 3.5
 /** Share of syntax characters (\ { } $ & ^ _ %) that marks LaTeX or code. */
-export const SYNTAX_DENSITY = 0.02
+const SYNTAX_DENSITY = 0.02
 // Only the head of a long text is scanned for its density
 const DENSITY_SAMPLE_CHARS = 4096
 const SYNTAX_CHARS = /[\\{}$&^_%]/g
@@ -49,12 +49,12 @@ const SYNTAX_CHARS = /[\\{}$&^_%]/g
  * - Ollama: 0. Its chat templates differ per model and are not counted.
  */
 export const ANTHROPIC_TOOL_PREAMBLE_TOKENS = 346
-export const ANTHROPIC_MESSAGE_FRAMING_TOKENS = 4
-export const OPENAI_MESSAGE_FRAMING_TOKENS = 3
-export const OPENAI_REPLY_PRIMING_TOKENS = 3
-export const OPENAI_TOOLS_FRAMING_TOKENS = 8
-export const GOOGLE_MESSAGE_FRAMING_TOKENS = 2
-export const OLLAMA_MESSAGE_FRAMING_TOKENS = 0
+const ANTHROPIC_MESSAGE_FRAMING_TOKENS = 4
+const OPENAI_MESSAGE_FRAMING_TOKENS = 3
+const OPENAI_REPLY_PRIMING_TOKENS = 3
+const OPENAI_TOOLS_FRAMING_TOKENS = 8
+const GOOGLE_MESSAGE_FRAMING_TOKENS = 2
+const OLLAMA_MESSAGE_FRAMING_TOKENS = 0
 
 function syntaxDenseText(text) {
   const sample =
@@ -70,7 +70,7 @@ function syntaxDenseText(text) {
  * this list use the newer tokenizer, which packs about a quarter more tokens
  * into the same characters.
  */
-export const LEGACY_TOKENIZER_MODELS = new Set([
+const LEGACY_TOKENIZER_MODELS = new Set([
   'claude-3-opus',
   'claude-3-sonnet',
   'claude-3-haiku',
@@ -87,7 +87,7 @@ export const LEGACY_TOKENIZER_MODELS = new Set([
   'claude-haiku-4-5',
 ])
 /** Chars per token scale for the newer Claude tokenizer (see charsPerToken). */
-export const NEWER_TOKENIZER_SCALE = 0.75
+const NEWER_TOKENIZER_SCALE = 0.75
 
 /**
  * A model id as the legacy list spells it: lower case, no provider prefix,
@@ -177,16 +177,11 @@ function imageTokens(image, pricing) {
   if (!pricing?.provider) return IMAGE_TOKEN_ESTIMATE
   const size = sizeOfImage(image)
   if (!size) return IMAGE_TOKEN_ESTIMATE
-  const choice = imagePolicyFor({
-    type: pricing.provider,
-    model: pricing.model,
-  })
-  return estimateImageTokens({
+  return imageTokenCost({
     width: size.width,
     height: size.height,
     provider: pricing.provider,
     model: pricing.model,
-    detail: choice.mediaResolution ?? choice.detail,
   })
 }
 
@@ -230,7 +225,7 @@ export function estimateToolTokens(tool, provider, model) {
   return estimateJsonTokens(toolWireSpec(provider, tool), { provider, model })
 }
 
-export function estimateToolsTokens(tools = [], provider, model) {
+function estimateToolsTokens(tools = [], provider, model) {
   let total = 0
   for (const tool of tools) total += estimateToolTokens(tool, provider, model)
   return total
@@ -319,7 +314,7 @@ export function estimateRequestTokens({
  * small windows of local models usable (an 8k window gets a 900-token buffer
  * for compaction, not 13,000).
  */
-export const RESERVE_CAP_TOKENS = 20000
+const RESERVE_CAP_TOKENS = 20000
 export const AUTO_COMPACT_BUFFER_CAP = 13000
 export const AUTO_COMPACT_BUFFER_SHARE = 0.15
 export const WARN_BUFFER_CAP = 20000
@@ -358,14 +353,6 @@ export function contextState(tokens, thresholds) {
   return 'ok'
 }
 
-/**
- * The tokens a request may hold before it is trimmed: the blockAt threshold.
- * Kept for callers that want the single figure; contextThresholds has the rest.
- */
-export function contextBudget(limits) {
-  return contextThresholds(limits).blockAt
-}
-
 // The leading <project-context> envelope of a user turn (see userTurnContent),
 // or 0 when the turn has none
 const CONTEXT_OPEN = '<project-context'
@@ -385,7 +372,7 @@ const MAX_RESULT_DETAILS = 20
  * Framing the request holds beyond its parts: the fixed part per provider and
  * the per-message framing. The budget and the breakdown both use it.
  */
-export function requestOverheadTokens(provider, { hasTools, messageCount }) {
+function requestOverheadTokens(provider, { hasTools, messageCount }) {
   return (
     fixedOverheadTokens(provider, { hasTools }) +
     messageCount * messageFramingTokens(provider)
@@ -505,10 +492,10 @@ export function contextBreakdownFor({
   }
 
   const byTokens = (a, b) => b.tokens - a.tokens
-  const budget = contextBudget({
+  const budget = contextThresholds({
     contextWindow: limits.contextWindow,
     maxOutputTokens: limits.maxOutputTokens,
-  })
+  }).blockAt
   const modelName = typeof model === 'string' ? model.trim() : ''
   // The slash commands catalogue is in the shared block, so it is measured
   // apart and taken out of the system prompt
@@ -623,7 +610,7 @@ export function withExactFixed(
 
 // Exact counts: the provider's own count of the system prompt and the tool
 // specs, measured in the background and kept in a small LRU.
-export const EXACT_COUNT_TIMEOUT_MS = 5000
+const EXACT_COUNT_TIMEOUT_MS = 5000
 const EXACT_CACHE_LIMIT = 16
 const exactCache = new Map()
 
@@ -642,9 +629,9 @@ function knownExact(key) {
 }
 
 /** A count API this long unsupported on its endpoint stays so (see rememberCountFailure). */
-export const COUNT_UNSUPPORTED_TTL_MS = 24 * 60 * 60 * 1000
+const COUNT_UNSUPPORTED_TTL_MS = 24 * 60 * 60 * 1000
 /** A failed count is not asked again for this long, so a busy step is not made slower. */
-export const COUNT_FAILURE_TTL_MS = 10 * 60 * 1000
+const COUNT_FAILURE_TTL_MS = 10 * 60 * 1000
 const BASE_COUNT_LIMIT = 32
 // (type, baseURL) -> the time until which its count API is not asked
 const unsupportedUntil = new Map()
@@ -731,7 +718,7 @@ function rememberCountFailure({ type, baseUrl, key, err, now }) {
  *
  * Throws on any failure or after EXACT_COUNT_TIMEOUT_MS.
  */
-export async function countFixedTokens(
+async function countFixedTokens(
   client,
   { type, system = '', tools = [] }
 ) {

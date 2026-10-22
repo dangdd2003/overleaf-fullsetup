@@ -33,6 +33,11 @@ function numeric(value: string): number | undefined {
     : undefined
 }
 
+/** Case-insensitive match of a typed model against a listed model's label. */
+function labelMatches(entry: ProviderModel, value: string): boolean {
+  return entry.label.trim().toLowerCase() === value.trim().toLowerCase()
+}
+
 const TYPES: { value: ProviderType; label: string }[] = [
   { value: 'openai', label: 'OpenAI' },
   { value: 'anthropic', label: 'Anthropic' },
@@ -46,7 +51,6 @@ type Probe =
   | { state: 'idle' }
   | { state: 'busy' }
   | { state: 'ok'; message: string }
-  | { state: 'failed'; message: string }
 
 export default function ProviderForm({
   initial,
@@ -55,6 +59,7 @@ export default function ProviderForm({
   types = ALL_TYPES,
   defaultBaseUrls = DEFAULT_BASE_URLS,
   idPrefix = 'ai-provider',
+  slot,
 }: {
   initial?: ProviderSettings
   onSave: (values: ProviderSettings) => void
@@ -65,6 +70,8 @@ export default function ProviderForm({
   defaultBaseUrls?: Record<ProviderType, string>
   /** Prefix of the controls' ids, so two forms can be open at once. */
   idPrefix?: string
+  /** The model slot this form saves into; unset for the main model. */
+  slot?: 'fastProvider'
 }) {
   const { t } = useTranslation()
   const [type, setType] = useState<ProviderType>(initial?.type ?? types[0])
@@ -121,8 +128,8 @@ export default function ProviderForm({
     // Only an exact label match maps to a listed id: a suffix such as
     // "(auto)" is part of the model name the provider expects, not decoration
     if (!selected && trimmedModel && models.length > 0) {
-      const matchedByLabel = models.find(
-        entry => entry.label.trim().toLowerCase() === trimmedModel.toLowerCase()
+      const matchedByLabel = models.find(entry =>
+        labelMatches(entry, trimmedModel)
       )
       if (matchedByLabel) {
         selected = matchedByLabel
@@ -157,8 +164,8 @@ export default function ProviderForm({
         ? { maxOutputTokens: parsedMaxOutputTokens }
         : {}),
     }
-    if (idPrefix === 'ai-fast-provider') {
-      out.slot = 'fastProvider'
+    if (slot) {
+      out.slot = slot
     }
     return out
   }
@@ -173,9 +180,7 @@ export default function ProviderForm({
       if (loaded.length > 0) {
         setManualModel(false)
         const selected = loaded.find(
-          entry =>
-            entry.id === model ||
-            entry.label.trim().toLowerCase() === model.trim().toLowerCase()
+          entry => entry.id === model || labelMatches(entry, model)
         )
         if (selected) {
           setModel(selected.id)
@@ -211,7 +216,7 @@ export default function ProviderForm({
       const providerError = error as ProviderError
       const message = providerError?.message || 'The connection test failed.'
       setLastFailure(message)
-      setProbe({ state: 'failed', message })
+      setProbe({ state: 'idle' })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [type, baseUrl, apiKey, model])

@@ -92,6 +92,11 @@ export class SidecarGate {
   }
 }
 
+/** A Buffer over the bytes of `bytes` itself, without copying them. */
+function bufferView(bytes) {
+  return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+}
+
 /**
  * A response body of at most `limit` bytes, read as it streams in, so a huge
  * page is cut on arrival instead of after it fills memory.
@@ -110,11 +115,11 @@ async function readCapped(res, limit) {
     const { done, value } = await reader.read()
     if (done) break
     if (size + value.length > limit) {
-      chunks.push(Buffer.from(value.subarray(0, limit - size)))
+      chunks.push(bufferView(value.subarray(0, limit - size)))
       await reader.cancel().catch(() => {})
       return { body: Buffer.concat(chunks), cut: true }
     }
-    chunks.push(Buffer.from(value))
+    chunks.push(bufferView(value))
     size += value.length
   }
   return { body: Buffer.concat(chunks), cut: false }
@@ -319,12 +324,6 @@ export class BrowserRoute {
     } finally {
       release()
     }
-  }
-
-  /** Like fetchPage: the address is checked here before the sidecar is asked. */
-  async raw(url, { signal } = {}) {
-    const target = parseFetchUrl(url).toString()
-    return this._request('/v1/raw', target, { timeoutMs: RAW_TIMEOUT_MS, signal })
   }
 
   async render(url, { signal } = {}) {

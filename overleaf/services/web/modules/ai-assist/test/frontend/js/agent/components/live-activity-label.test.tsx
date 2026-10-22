@@ -5,11 +5,8 @@ import {
   formatSubresultsSummary,
 } from '../../../../../frontend/js/features/ai-assist/components/agent/subresult-group'
 
-const fakeT = (_key: string, opts?: any) =>
-  typeof opts === 'string' ? opts : opts?.defaultValue || _key
-
 function live(items: any[]) {
-  return formatSubresultsSummary(items, true, fakeT).title
+  return formatSubresultsSummary(items, true).title
 }
 
 const thinking = (text = 'weighing the preamble') => ({
@@ -89,8 +86,7 @@ describe('the activity line is a tally, not a live status', function () {
       [
         finished('read_file', { path: 'a.tex' }),
       ] as any,
-      false,
-      fakeT
+      false
     )
 
     expect(title).to.equal('Read 1 file')

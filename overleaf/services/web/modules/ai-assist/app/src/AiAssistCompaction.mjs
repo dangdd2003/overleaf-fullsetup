@@ -858,7 +858,8 @@ function maskAssistant(entry, keepFull) {
   return [`[assistant ${entry.id}]`, ...parts].join('\n')
 }
 
-function maskBlocks(entries) {
+/** The span rendered for the summary model: tool results as one-line stubs, images and envelopes reduced. */
+export function maskBlocks(entries) {
   const finished = []
   for (const entry of entries ?? []) {
     if (entry?.role !== 'assistant' || !Array.isArray(entry.toolCalls)) continue
@@ -876,11 +877,6 @@ function maskBlocks(entries) {
     }
   }
   return blocks
-}
-
-/** The span rendered for the summary model: tool results as one-line stubs, images and envelopes reduced. */
-export function maskSpan(entries) {
-  return maskBlocks(entries).join('\n\n')
 }
 
 // ---------------------------------------------------------------- full messages
@@ -935,28 +931,6 @@ export function transcriptMessages(entries) {
     }
   }
   return messages
-}
-
-/**
- * The messages the next request sends for a transcript that has compactions
- * (section 1): the newest compaction message, the verbatim tail, then the
- * entries after the compaction. Older entries are not sent.
- */
-export function compactedContextMessages(transcript) {
-  const list = Array.isArray(transcript) ? transcript : []
-  const c = lastCompactIndex(list)
-  if (c < 0) return transcriptMessages(list)
-  const compact = list[c]
-  const tailIndex = compact.tailFromId
-    ? list.findIndex(e => e?.id === compact.tailFromId)
-    : -1
-  return [
-    { role: 'user', content: renderCompactionMessage(compact) },
-    ...(tailIndex >= 0 && tailIndex < c
-      ? transcriptMessages(list.slice(tailIndex, c))
-      : []),
-    ...transcriptMessages(list.slice(c + 1)),
-  ]
 }
 
 function messagesTokens(messages, provider, model) {

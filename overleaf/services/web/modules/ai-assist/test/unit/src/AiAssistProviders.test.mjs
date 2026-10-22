@@ -1162,6 +1162,74 @@ describe('AiAssistProviders', function () {
       })
       expect(chunks).to.deep.include({ type: 'text', text: 'Final response' })
     })
+
+    it('holds back a think tag split at a bare < or </ across chunks', async function () {
+      const sseBody = [
+        'data: {"choices":[{"delta":{"content":"<think>plan</"}}]}\n\n',
+        'data: {"choices":[{"delta":{"content":"think>answer"}}]}\n\n',
+        'data: [DONE]\n\n',
+      ].join('')
+
+      const client = createProviderClient({
+        type: 'openai',
+        apiKey: 'key',
+        model: 'deepseek-r1',
+        fetchFn: sinon.stub().resolves({
+          ok: true,
+          status: 200,
+          body: (async function* () {
+            yield new TextEncoder().encode(sseBody)
+          })(),
+        }),
+      })
+
+      const chunks = []
+      for await (const chunk of client.streamChat({
+        system: 'test',
+        messages: [{ role: 'user', content: 'test' }],
+      })) {
+        chunks.push(chunk)
+      }
+
+      expect(chunks).to.deep.include({ type: 'thinking', text: 'plan' })
+      expect(chunks).to.deep.include({ type: 'text', text: 'answer' })
+    })
+
+    it('recognises an opening think tag split at a bare <', async function () {
+      const sseBody = [
+        'data: {"choices":[{"delta":{"content":"Hi <"}}]}\n\n',
+        'data: {"choices":[{"delta":{"content":"think>secret</think>answer"}}]}\n\n',
+        'data: [DONE]\n\n',
+      ].join('')
+
+      const client = createProviderClient({
+        type: 'openai',
+        apiKey: 'key',
+        model: 'deepseek-r1',
+        fetchFn: sinon.stub().resolves({
+          ok: true,
+          status: 200,
+          body: (async function* () {
+            yield new TextEncoder().encode(sseBody)
+          })(),
+        }),
+      })
+
+      const chunks = []
+      for await (const chunk of client.streamChat({
+        system: 'test',
+        messages: [{ role: 'user', content: 'test' }],
+      })) {
+        chunks.push(chunk)
+      }
+
+      expect(chunks).to.deep.include({ type: 'thinking', text: 'secret' })
+      const text = chunks
+        .filter(c => c.type === 'text')
+        .map(c => c.text)
+        .join('')
+      expect(text).to.equal('Hi answer')
+    })
   })
 
   describe('Google Gemini Native Provider Client', function () {

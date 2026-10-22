@@ -27,6 +27,7 @@ const registration = {
 describe('OAuth2RegistrationController deduplication', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
+    vi.spyOn(OauthApplication, 'countDocuments').mockResolvedValue(0)
   })
 
   it('reuses the existing registration for an identical client', async () => {

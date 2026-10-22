@@ -29,7 +29,7 @@ const MIN_DRAIN_CHARS_PER_SEC = 300
  */
 const RATE_RISE_SEC = 0.3
 /** A run of text without whitespace longer than this is revealed mid-word. */
-const MAX_WORD_CHARS = 24
+export const MAX_WORD_CHARS = 24
 /** Must match the duration of the `ai-assist-stream-fade` animation. */
 export const STREAM_FADE_MS = 400
 /**
@@ -147,16 +147,16 @@ function unclosedInlineStart(line: string) {
  * isn't complete, or -1. Until then marked would draw it as a paragraph of
  * pipes.
  */
-function unrenderedTableStart(head: string) {
-  const complete = head.endsWith('\n')
+function unrenderedTableStart(text: string, endPos: number) {
+  const complete = endPos > 0 && text[endPos - 1] === '\n'
   // Walks back from the end: three trailing table lines settle the answer, so
   // the head is never split whole on every reveal step
-  let end = complete ? head.length - 1 : head.length
+  let end = complete ? endPos - 1 : endPos
   let count = 0
   let start = end
   while (count < 3 && end >= 0) {
-    const begin = head.lastIndexOf('\n', end - 1) + 1
-    if (!TABLE_LINE.test(head.slice(begin, end))) break
+    const begin = text.lastIndexOf('\n', end - 1) + 1
+    if (!TABLE_LINE.test(text.slice(begin, end))) break
     count++
     start = begin
     end = begin - 1
@@ -173,9 +173,10 @@ function unrenderedTableStart(head: string) {
  * `` ` `` or `$`.
  */
 export function holdBackIncomplete(text: string, end: number) {
-  const fenced = fencedRanges(text.slice(0, end))
+  const head = text.slice(0, end)
+  const fenced = fencedRanges(head)
 
-  const mathStart = openDisplayMathStart(text.slice(0, end), fenced)
+  const mathStart = openDisplayMathStart(head, fenced)
   if (mathStart !== -1) end = mathStart
 
   const lineStart = lineStartBefore(text, end)
@@ -191,7 +192,7 @@ export function holdBackIncomplete(text: string, end: number) {
     }
   }
 
-  const tableStart = unrenderedTableStart(text.slice(0, end))
+  const tableStart = unrenderedTableStart(text, end)
   if (tableStart !== -1) end = tableStart
 
   return end
@@ -208,7 +209,7 @@ export function lastWordBreak(text: string, from: number, limit: number) {
   return -1
 }
 
-function commonPrefixLength(a: string, b: string) {
+export function commonPrefixLength(a: string, b: string) {
   const max = Math.min(a.length, b.length)
   let i = 0
   while (i < max && a.charCodeAt(i) === b.charCodeAt(i)) i++
@@ -234,7 +235,6 @@ export function useStreamReveal(content: string, isLive: boolean) {
   const liveRef = useRef(isLive)
   liveRef.current = isLive
   const shownRef = useRef(shown)
-  // Current reveal speed in chars/sec, used to pace the per-word fades
   const rateRef = useRef(MIN_LIVE_CHARS_PER_SEC)
 
   // A finished message that starts streaming again only animates what's new
@@ -318,6 +318,6 @@ export function useStreamReveal(content: string, isLive: boolean) {
   }, [settled, isLive])
 
   return settled
-    ? { text: content, animating: false, rateRef }
-    : { text: shown, animating: true, rateRef }
+    ? { text: content, animating: false }
+    : { text: shown, animating: true }
 }

@@ -4,7 +4,6 @@ import sinon from 'sinon'
 import {
   WebFetcher,
   clearFailureCache,
-  readsInFlight,
 } from '../../../../app/src/web-fetch/WebFetcher.mjs'
 import {
   clearWorkingSet,
@@ -16,13 +15,13 @@ import {
 } from '../../../../app/src/web-fetch/document.mjs'
 import { webError } from '../../../../app/src/web-fetch/util.mjs'
 import { ProviderError } from '../../../../app/src/AiAssistErrors.mjs'
-import { WebRouter } from '../../../../app/src/web-fetch/routing.mjs'
-import { clearHostMemory } from '../../../../app/src/web-fetch/host-memory.mjs'
 import {
-  EndpointRotator,
+  WebRouter,
+  WebRouter as EndpointRotator,
   clearEndpointHealth,
-  normalizeWebSearchSettings,
-} from '../../../../app/src/AiAssistWebTools.mjs'
+} from '../../../../app/src/web-fetch/routing.mjs'
+import { clearHostMemory } from '../../../../app/src/web-fetch/host-memory.mjs'
+import { normalizeWebSearchSettings } from '../../../../app/src/AiAssistWebTools.mjs'
 import {
   ARTICLE_TEXT,
   CLOUDFLARE_CHALLENGE,
@@ -111,7 +110,6 @@ describe('WebFetcher', function () {
 
     expect(fetchPage.callCount).to.equal(1)
     expect(second).to.equal(first)
-    expect(readsInFlight()).to.equal(0)
   })
 
   it('hands the failure of a shared read to every caller', async function () {
@@ -134,7 +132,6 @@ describe('WebFetcher', function () {
     ])
     expect(outcomes[1].reason).to.equal(outcomes[0].reason)
     expect(fetchPage.callCount).to.equal(alone.callCount)
-    expect(readsInFlight()).to.equal(0)
   })
 
   it("moves past the browser's refused raw read to its render", async function () {

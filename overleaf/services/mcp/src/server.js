@@ -57,22 +57,17 @@ export const OVERLEAF_INSTRUCTIONS = [
 ].join('\n')
 
 /**
- * Register every authoring-core tool on a server instance.
- *
- * Tasks 6-9 extend this function; it is the single place tools are wired so a
- * reviewer can see the whole surface at once.
+ * Register every tool on a server instance. This is the single place tools are
+ * wired, so a reviewer can see the whole surface at once.
  *
  * @param {McpServer} server
  * @param {{ client: import('./OverleafClient.js').OverleafClient, staticToken: string }} deps
  */
 export function registerAllTools(server, deps) {
   const target = withPortableSchemas(server)
-  registerProjectTools(target, deps)
-  registerFileTools(target, deps)
-  registerCompileTools(target, deps)
-  registerLatexTools(target, deps)
-  registerHistoryTools(target, deps)
-  registerTagTools(target, deps)
+  for (const { register } of TOOL_CATEGORIES) {
+    register(target, deps)
+  }
 }
 
 /**

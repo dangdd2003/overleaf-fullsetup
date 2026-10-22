@@ -89,12 +89,12 @@ export const compileProjectTool: AgentTool = {
         message = describe(outcome, clean)
       } else if (currentErrors.length === 0) {
         message = currentWarnings.length > 0
-          ? `${clean ? 'The cache was cleared and the project was rebuilt' : 'The project compiled'} with 0 errors and ${currentWarnings.length} warning(s).`
-          : `${clean ? 'The cache was cleared and the project was rebuilt' : 'The project compiled'} without errors.`
+          ? `${rebuiltPhrase(clean)} with 0 errors and ${currentWarnings.length} warning(s).`
+          : `${rebuiltPhrase(clean)} without errors.`
       } else if (previous && delta.regressed) {
         message = `WARNING: Compilation worsened. Error count changed by ${delta.countDelta >= 0 ? `+${delta.countDelta}` : delta.countDelta} (${delta.newErrorsCount} new error(s) introduced, ${delta.resolvedErrorsCount} resolved). Recent edits likely introduced invalid LaTeX syntax. Focus on fixing the primary error first.`
       } else if (previous && delta.resolvedErrorsCount > 0) {
-        message = `${clean ? 'The cache was cleared and the project was rebuilt' : 'The project compiled'} with ${currentErrors.length} error(s) (${delta.resolvedErrorsCount} error(s) resolved).`
+        message = `${rebuiltPhrase(clean)} with ${currentErrors.length} error(s) (${delta.resolvedErrorsCount} error(s) resolved).`
       } else {
         message = describe(outcome, clean)
       }
@@ -133,11 +133,17 @@ export const compileProjectTool: AgentTool = {
  * "compiled without errors", because that reading is exactly what sends a model
  * on to claim a fix works.
  */
+function rebuiltPhrase(clean: boolean): string {
+  return clean
+    ? 'The cache was cleared and the project was rebuilt'
+    : 'The project compiled'
+}
+
 function describe(
   outcome: { status: string; errors: unknown[]; warnings: unknown[] },
   clean: boolean
 ): string {
-  const rebuilt = clean ? 'The cache was cleared and the project was rebuilt' : 'The project compiled'
+  const rebuilt = rebuiltPhrase(clean)
 
   switch (outcome.status) {
     case 'no-output':

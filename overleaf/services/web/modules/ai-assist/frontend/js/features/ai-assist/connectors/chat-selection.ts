@@ -46,18 +46,6 @@ export function adoptNewChatSelection(chatId: string) {
   if (pending.length > 0) customLocalStorage.setItem(keyFor(chatId), pending)
 }
 
-/**
- * The connector ids a run in this chat may use, out of those enabled in the
- * settings.
- */
-export function connectorIdsForRun(
-  chatId: string | null | undefined,
-  enabledConnectorIds: string[]
-): string[] {
-  const disabled = new Set(readDisabledConnectors(chatId))
-  return enabledConnectorIds.filter(id => !disabled.has(id))
-}
-
 const KNOWN_CONNECTORS_KEY = 'ai-assist:known-connectors'
 
 export function updateKnownConnectors(ids: string[]) {

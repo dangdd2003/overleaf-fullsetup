@@ -44,9 +44,11 @@ export type GeneratorSession = {
   tooltip: Tooltip | null
 }
 
+export type OpenDialogPayload = { from: number; to: number; keepDraft?: boolean }
+
 export type GeneratorSessionKit = {
   field: StateField<GeneratorSession | null>
-  openDialog: StateEffectType<{ from: number; to: number; keepDraft?: boolean }>
+  openDialog: StateEffectType<OpenDialogPayload>
   startReview: StateEffectType<{ from: number; to: number }>
   close: StateEffectType<null>
   /** Opens the dialog on the main selection (or on `anchor`); every other AI surface closes. */
@@ -58,17 +60,22 @@ export type GeneratorSessionKit = {
 }
 
 /** Closes every generator: one AI surface at a time. */
-export const closeGenerators = StateEffect.define<null>()
+const closeGenerators = StateEffect.define<null>()
 
 let nextSessionId = 0
+
+function mapRange(from: number, to: number, changes: ChangeDesc): { from: number; to: number } {
+  const mappedFrom = changes.mapPos(from, 1)
+  const mappedTo = Math.max(mappedFrom, changes.mapPos(to, -1))
+  return { from: mappedFrom, to: mappedTo }
+}
 
 /**
  * Text typed at either edge stays outside the passage; a deleted passage
  * stays as an empty range, which no longer equals its original: stale.
  */
 function mapPassage(passage: GeneratorPassage, changes: ChangeDesc): GeneratorPassage {
-  const from = changes.mapPos(passage.from, 1)
-  const to = Math.max(from, changes.mapPos(passage.to, -1))
+  const { from, to } = mapRange(passage.from, passage.to, changes)
   return { from, to, original: passage.original }
 }
 
@@ -77,8 +84,7 @@ function mapAnchor(anchor: GeneratorAnchor, changes: ChangeDesc): GeneratorAncho
     const pos = changes.mapPos(anchor.from, 1)
     return { from: pos, to: pos }
   }
-  const from = changes.mapPos(anchor.from, 1)
-  return { from, to: Math.max(from, changes.mapPos(anchor.to, -1)) }
+  return mapRange(anchor.from, anchor.to, changes)
 }
 
 /** The passage changed since Generate: applying would clobber that edit. */
@@ -133,7 +139,7 @@ const generatorTheme = EditorView.baseTheme({
  * tooltip. Class names derive from `name`.
  */
 export function defineGeneratorSession(name: string): GeneratorSessionKit {
-  const openDialog = StateEffect.define<{ from: number; to: number; keepDraft?: boolean }>()
+  const openDialog = StateEffect.define<OpenDialogPayload>()
   const startReview = StateEffect.define<{ from: number; to: number }>()
   const close = StateEffect.define<null>()
 

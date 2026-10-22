@@ -48,6 +48,10 @@ type FlagKey = {
   [K in keyof FirecrawlDraft]: FirecrawlDraft[K] extends boolean ? K : never
 }[keyof FirecrawlDraft]
 
+type StringKey<T> = {
+  [K in keyof T]: T[K] extends string ? K : never
+}[keyof T]
+
 export function draftFromFirecrawl(config?: {
   search?: FirecrawlSearchOptions
   scrape?: FirecrawlScrapeOptions
@@ -183,10 +187,10 @@ export default function FirecrawlOptions({
   draft: FirecrawlDraft
   onChange: (next: FirecrawlDraft) => void
 }) {
-  const set = <K extends keyof FirecrawlDraft>(
-    key: K,
-    value: FirecrawlDraft[K]
-  ) => onChange({ ...draft, [key]: value })
+  const setFlag = (key: FlagKey, value: boolean) =>
+    onChange({ ...draft, [key]: value })
+  const setText = (key: StringKey<FirecrawlDraft>, value: string) =>
+    onChange({ ...draft, [key]: value })
 
   const id = (key: keyof FirecrawlDraft) => `${idPrefix}-${key}`
 
@@ -196,12 +200,12 @@ export default function FirecrawlOptions({
       label={label}
       description={description}
       checked={draft[key]}
-      onChange={value => set(key, value)}
+      onChange={value => setFlag(key, value)}
     />
   )
 
   const dropdown = (
-    key: Exclude<keyof FirecrawlDraft, FlagKey>,
+    key: StringKey<FirecrawlDraft>,
     label: string,
     description: string,
     options: Choice[]
@@ -212,13 +216,13 @@ export default function FirecrawlOptions({
       description={description}
       width="wide"
       options={options}
-      value={draft[key] as string}
-      onChange={value => set(key, value as FirecrawlDraft[typeof key])}
+      value={draft[key]}
+      onChange={value => setText(key, value)}
     />
   )
 
   const text = (
-    key: Exclude<keyof FirecrawlDraft, FlagKey>,
+    key: StringKey<FirecrawlDraft>,
     label: string,
     description: string,
     placeholder: string,
@@ -234,8 +238,8 @@ export default function FirecrawlOptions({
       label={label}
       description={description}
       placeholder={placeholder}
-      value={draft[key] as string}
-      onChange={value => set(key, value as FirecrawlDraft[typeof key])}
+      value={draft[key]}
+      onChange={value => setText(key, value)}
       {...extra}
     />
   )

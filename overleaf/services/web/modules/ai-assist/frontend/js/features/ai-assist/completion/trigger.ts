@@ -123,14 +123,19 @@ export function requestCompletion(
       ? current.typed + current.text
       : completionCache.get(key)
     : undefined
+  if (!manual) {
+    // Automatic waited for its pause in typing already: no gap, sent now
+    const cached = completionCache.get(key)
+    if (cached !== undefined) {
+      showCached(view, pos, cached, 'auto')
+      return true
+    }
+  }
   const inMath = kind === 'math' || Boolean(mathAncestorNode(state, pos))
   const situation = describeCursor(text, pos, kind, inMath)
   const run = { pos, kind, model: primaryModel, fallbackModel, window, text, key, manual, rejected, situation }
   if (!manual) {
-    // Automatic waited for its pause in typing already: no gap, sent now
-    const cached = completionCache.get(key)
-    if (cached !== undefined) showCached(view, pos, cached, 'auto')
-    else runCompletion(view, run)
+    runCompletion(view, run)
     return true
   }
   // A regeneration: the suggestion on screen goes now, its request with it
@@ -199,13 +204,14 @@ function runCompletion(view: EditorView, run: CompletionRun) {
     .then(outcome => {
       if (outcome.status === 'shown' && final) completionCache.set(key, final)
     })
-    .catch((error: any) => {
+    .catch((error: unknown) => {
       // Automatic suggestions fail silently; a manual one says why, unless the author moved on
       if (!manual || view.state.selection.main.head !== pos) return
+      const { message, hint } = (error ?? {}) as { message?: string; hint?: string }
       showNotice(view, pos, {
         name: 'error',
-        message: error?.message || 'The request failed.',
-        hint: error?.hint,
+        message: message || 'The request failed.',
+        hint,
       })
     })
     .finally(release)

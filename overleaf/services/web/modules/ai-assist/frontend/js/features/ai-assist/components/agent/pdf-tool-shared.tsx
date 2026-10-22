@@ -1,5 +1,28 @@
 import { FC, ReactNode, useState } from 'react'
 
+export type TranslateFn = (key: string, opts?: any) => string
+
+/** Page numbers as ranges: [1, 2, 3, 5] reads as "1–3, 5" */
+export function formatPageRanges(pages: number[]): string {
+  const sorted = Array.from(new Set(pages)).sort((a, b) => a - b)
+  const ranges: string[] = []
+  let start = sorted[0]
+  let end = sorted[0]
+  for (const page of sorted.slice(1)) {
+    if (page === end + 1) {
+      end = page
+    } else {
+      ranges.push(start === end ? `${start}` : `${start}–${end}`)
+      start = page
+      end = page
+    }
+  }
+  if (sorted.length > 0) {
+    ranges.push(start === end ? `${start}` : `${start}–${end}`)
+  }
+  return ranges.join(', ')
+}
+
 // Pieces the PDF tools' result views share, so every one of them has the same
 // header, file links, warnings and page pictures as view_compiled_pdf_page.
 

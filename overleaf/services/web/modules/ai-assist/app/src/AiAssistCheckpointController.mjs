@@ -55,6 +55,8 @@ export class AiAssistCheckpointController {
 
   async #fetchCurrentFiles(projectId, checkpointFiles) {
     const currentFiles = {}
+    // The project's docs are read at most once, and only if a file needs them
+    let allDocs = null
     for (const [filePath, fileInfo] of Object.entries(checkpointFiles || {})) {
       const normalizedPath = filePath.replace(/^\//, '')
       let docId = fileInfo.docId
@@ -80,14 +82,9 @@ export class AiAssistCheckpointController {
 
       if (content === null && this.entityHandler?.getAllDocs) {
         try {
-          const all = await this.entityHandler.getAllDocs(projectId)
-          // getAllDocs returns docs keyed by '/path'; arrays are tolerated too
-          const doc = Array.isArray(all)
-            ? all.find(
-                d =>
-                  (d.path || d.name || '').replace(/^\//, '') === normalizedPath
-              )
-            : all?.[`/${normalizedPath}`] || null
+          allDocs ??= this.entityHandler.getAllDocs(projectId)
+          // getAllDocs returns docs keyed by '/path'
+          const doc = (await allDocs)?.[`/${normalizedPath}`]
           if (doc) {
             content = (doc.lines || []).join('\n')
           }
@@ -146,18 +143,6 @@ export class AiAssistCheckpointController {
             'ai-assist',
             ids.userId
           )
-          deleted = true
-        } else if (typeof this.editorController?.deleteEntity === 'function') {
-          await new Promise((resolve, reject) => {
-            this.editorController.deleteEntity(
-              ids.projectId,
-              docId,
-              'doc',
-              'ai-assist',
-              ids.userId,
-              err => (err ? reject(err) : resolve())
-            )
-          })
           deleted = true
         }
       }
@@ -245,7 +230,7 @@ export class AiAssistCheckpointController {
         ids.chatId,
         userMessageId,
         currentFiles,
-        { userMessageIds }
+        { userMessageIds, checkpoint }
       )
 
       res.json(result)

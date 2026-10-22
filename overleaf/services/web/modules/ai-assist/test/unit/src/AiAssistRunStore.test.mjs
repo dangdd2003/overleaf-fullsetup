@@ -19,6 +19,7 @@ describe('AiAssistRunStore mode support', () => {
         data.set(key, entry)
       },
       hgetall: async key => data.get(key) || {},
+      hget: async (key, field) => (data.get(key) || {})[field] ?? null,
       hincrby: async (key, field, by) => {
         const entry = data.get(key) || {}
         entry[field] = String(Number(entry[field] || 0) + by)
@@ -28,6 +29,14 @@ describe('AiAssistRunStore mode support', () => {
       sadd: async () => {},
       srem: async () => {},
       expire: async () => {},
+      eval: async (_lua, _numKeys, key, status, heartbeat) => {
+        const entry = data.get(key) || {}
+        if (entry.status === 'awaitingApproval') entry.status = status
+        entry.pendingApproval = ''
+        entry.heartbeat = heartbeat
+        data.set(key, entry)
+        return 1
+      },
     }
     store = new AiAssistRunStore(mockRedis)
   })

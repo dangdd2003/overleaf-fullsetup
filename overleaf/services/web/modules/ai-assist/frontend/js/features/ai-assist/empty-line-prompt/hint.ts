@@ -12,7 +12,7 @@ import { readInlineSuggestionsPreferences } from '../inline-suggestion/preferenc
 import { inlinePopupField } from '../inline-suggestion/popup-field'
 import { suggestionField } from '../inline-suggestion/engine'
 
-export const EMPTY_LINE_HINT = "Press 'Space' for help writing"
+const EMPTY_LINE_HINT = "Press 'Space' for help writing"
 
 /** Redraws the hint after the switch changes in Settings. */
 const refreshHint = StateEffect.define<null>()

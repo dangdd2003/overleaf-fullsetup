@@ -8,43 +8,14 @@ import Settings from '@overleaf/settings'
 const TIMEOUT_MS = 10000
 
 /**
- * Try to interpret a URL hostname as an IP address literal, including the
- * non-dotted decimal (`2130706433`), hex (`0x7f.0.0.1`) and bracketed IPv6
- * (`[::1]`) forms that `new URL().hostname` does NOT normalise. Returns a
- * canonical dotted-quad / IPv6 string, or null when the host is a real name.
+ * Try to interpret a URL hostname as an IP address literal, handling bracketed
+ * IPv6 (`[::1]`) forms. WHATWG URL already canonicalises IPv4 representations.
+ * Returns a canonical dotted-quad / IPv6 string, or null when the host is a real name.
  */
 function parseIpLiteral(host) {
   if (!host) return null
   const h = String(host).replace(/^\[/, '').replace(/\]$/, '')
   if (net.isIP(h)) return h
-
-  // bare integer, e.g. 2130706433 or 0x7f000001 -> 127.0.0.1
-  if (/^(\d+|0x[0-9a-f]+)$/i.test(h)) {
-    const n = Number(h)
-    if (Number.isInteger(n) && n >= 0 && n <= 0xffffffff) {
-      return [
-        (n >>> 24) & 255,
-        (n >>> 16) & 255,
-        (n >>> 8) & 255,
-        n & 255,
-      ].join('.')
-    }
-    return null
-  }
-
-  // dotted form with hex / octal / decimal octets, e.g. 0x7f.0.0.1 or 0177.0.0.1
-  const parts = h.split('.')
-  if (parts.length === 4 && parts.every(p => /^(0x[0-9a-f]+|\d+)$/i.test(p))) {
-    const nums = parts.map(p => {
-      if (/^0x/i.test(p)) return parseInt(p, 16)
-      if (/^0[0-7]+$/i.test(p) && p.length > 1) return parseInt(p, 8)
-      if (/^0\d+$/i.test(p) && p.length > 1) return NaN // invalid octal
-      return parseInt(p, 10)
-    })
-    if (nums.every(x => Number.isInteger(x) && x >= 0 && x <= 255)) {
-      return nums.join('.')
-    }
-  }
   return null
 }
 
@@ -91,8 +62,11 @@ function isBlockedIp(ip) {
     if (addr === '::' || addr === '::1') return true
     if (addr.startsWith('fc') || addr.startsWith('fd')) return true // ULA fc00::/7
     if (addr.startsWith('ff')) return true // multicast ff00::/8
-    // link-local fe80::/10 -> fe80..febf
-    if (/^fe[89ab]/.test(addr)) return true
+    if (/^fe[89a-f]/.test(addr)) return true // fe80::/10 and deprecated fec0::/10
+    if (addr.startsWith('::ffff:0:')) return true // IPv4-translated ::ffff:0:0:0/96
+    if (addr.startsWith('2002:')) return true // 6to4 embeds an IPv4 address
+    if (/^2001:(0{1,4})?:/.test(addr) || addr.startsWith('2001:db8:')) return true // Teredo, documentation
+    if (addr.startsWith('3fff:') || addr.startsWith('100:')) return true // documentation and discard-only 100::/64
     // IPv4-compatible ::/96 (deprecated, never routable). WHATWG URL writes
     // `[::127.0.0.1]` as `::7f00:1`, so both forms are caught here.
     if (/^::(\d{1,3}(\.\d{1,3}){3}|([0-9a-f]{1,4}:)?[0-9a-f]{1,4})$/.test(addr))

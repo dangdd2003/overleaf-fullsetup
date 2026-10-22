@@ -8,9 +8,23 @@ export const MAX_PROJECTS = 200
 export const MAX_BUILDS_PER_PROJECT = 20
 // Each record keeps one entry per doc and file of its project, so the count of
 // projects and builds alone does not bound memory for large projects.
-export const MAX_TOTAL_FINGERPRINT_ENTRIES = 100000
+const MAX_TOTAL_FINGERPRINT_ENTRIES = 100000
 
-/** @type {Map<string, Array<object>>} projectId -> records, oldest first */
+/**
+ * @typedef {{
+ *   buildId: string,
+ *   clsiServerId: string|null,
+ *   fromOverride: boolean,
+ *   fingerprint: {
+ *     rootDocPath: string|null,
+ *     compiler: string|null,
+ *     imageName: string|null,
+ *     entries: Array<{path: string, digest: string}>
+ *   }
+ * }} BuildRecord
+ */
+
+/** @type {Map<string, Array<BuildRecord>>} projectId -> records, oldest first */
 let byProject = new Map()
 
 function totalFingerprintEntries() {
@@ -62,7 +76,7 @@ export function rememberBuild(projectId, record) {
 }
 
 /**
- * @returns {object|null} the record of a build this process compiled, or null
+ * @returns {BuildRecord|null} the record of a build this process compiled, or null
  */
 export function findBuild(projectId, buildId) {
   return (
@@ -74,6 +88,8 @@ export function findBuild(projectId, buildId) {
 
 /**
  * The newest build compiled for a project, or null when none is recorded.
+ *
+ * @returns {BuildRecord|null}
  */
 export function latestBuild(projectId) {
   const builds = byProject.get(String(projectId)) ?? []
@@ -83,6 +99,8 @@ export function latestBuild(projectId) {
 /**
  * The build compiled before `buildId` for the same project, or null when this
  * process has no earlier one.
+ *
+ * @returns {BuildRecord|null}
  */
 export function previousBuild(projectId, buildId) {
   const builds = byProject.get(String(projectId)) ?? []

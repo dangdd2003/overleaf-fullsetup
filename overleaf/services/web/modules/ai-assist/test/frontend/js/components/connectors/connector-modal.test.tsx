@@ -8,7 +8,6 @@ import {
   isSensitiveHeaderKey,
 } from '../../../../../frontend/js/features/ai-assist/components/connectors/connector-modal'
 import {
-  ConnectNext,
   ConnectorInput,
   ConnectorView,
   ConnectorsMeta,
@@ -92,7 +91,7 @@ function ModalHarness({
   onHide,
 }: {
   connector?: ConnectorView | null
-  onSaved: (connector: ConnectorView, next: ConnectNext) => void
+  onSaved: (connector: ConnectorView) => void
   onHide: () => void
 }) {
   const [show, setShow] = useState(true)
@@ -444,7 +443,6 @@ describe('ConnectorModal', function () {
         expect(onSaved.calledOnce).to.be.true
       })
       expect(onSaved.firstCall.args[0].id).to.equal('conn-ok')
-      expect(onSaved.firstCall.args[1]).to.equal('connected')
       expect(onHide.calledOnce).to.be.true
       await waitFor(() => {
         expect(screen.queryByRole('dialog')).to.be.null
@@ -466,7 +464,6 @@ describe('ConnectorModal', function () {
       await waitFor(() => {
         expect(onSaved.calledOnce).to.be.true
       })
-      expect(onSaved.firstCall.args[1]).to.equal('connected')
       expect(onHide.calledOnce).to.be.true
       await waitFor(() => {
         expect(screen.queryByRole('dialog')).to.be.null
@@ -534,7 +531,6 @@ describe('ConnectorModal', function () {
       await waitFor(() => {
         expect(onSaved.calledOnce).to.be.true
       })
-      expect(onSaved.firstCall.args[1]).to.equal('connected')
       expect(onHide.calledOnce).to.be.true
     })
 

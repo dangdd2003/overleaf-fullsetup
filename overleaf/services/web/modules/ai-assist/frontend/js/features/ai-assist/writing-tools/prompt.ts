@@ -35,7 +35,7 @@ export type WritingRequest = {
 }
 
 export const CONTEXT_BEFORE_CHARS = 1200
-export const CONTEXT_AFTER_CHARS = 600
+const CONTEXT_AFTER_CHARS = 600
 export const MAX_MACROS = 40
 
 /**
@@ -199,6 +199,10 @@ export function buildTask(request: WritingRequest): string {
         'Reply with <synonyms><s>alternative</s><s>alternative</s></synonyms> only, or <cannot>…</cannot> when no alternative fits.',
       ]
       break
+    default: {
+      const unreachable: never = request.action
+      throw new Error(`Unknown writing action: ${unreachable}`)
+    }
   }
   const unit = editUnit(request.action, request.rephrase)
   if (

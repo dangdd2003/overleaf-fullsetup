@@ -65,7 +65,7 @@ function shortHash(text) {
  * Tool and server names keep their case and may contain `-`: the characters
  * MCP names are made of and providers accept. Anything else becomes `_`.
  */
-export function sanitizeName(value, fallback) {
+function sanitizeName(value, fallback) {
   const cleaned = String(value ?? '').replace(/[^a-zA-Z0-9_-]/g, '_')
   return /[a-zA-Z0-9]/.test(cleaned) ? cleaned : fallback
 }
@@ -126,10 +126,11 @@ function providerSafeParameters(schema) {
     }
     properties[safe] = child
   }
+  const safeOf = new Map(
+    Object.entries(renamed).map(([safe, original]) => [original, safe])
+  )
   const required = Array.isArray(schema.required)
-    ? schema.required.map(
-        name => Object.keys(renamed).find(k => renamed[k] === name) || name
-      )
+    ? schema.required.map(name => safeOf.get(name) || name)
     : schema.required
   return { schema: { ...schema, properties, required }, renamed }
 }
@@ -141,7 +142,7 @@ function providerSafeParameters(schema) {
  */
 export function resultPageChars(contextWindow) {
   const tokens = Number(contextWindow)
-  return Math.max(8_000, Math.round((tokens > 0 ? tokens : 200_000) * 4 * 0.25))
+  return Math.max(8_000, Math.round((tokens > 0 ? tokens : DEFAULT_CONTEXT_TOKENS) * 4 * 0.25))
 }
 
 /**
@@ -282,7 +283,7 @@ const READ_RESULT_SPEC = {
   },
 }
 
-export const CONNECTOR_SEARCH_SPEC = {
+const CONNECTOR_SEARCH_SPEC = {
   name: CONNECTOR_SEARCH_TOOL,
   description:
     'Loads connector tools so you can call them. Connector tools (names starting with mcp__) are listed by name only: their parameters are not loaded, and calling one before it is loaded fails. Query forms: "select:<name>[,<name>...]" loads exact tools by their full names; keywords search the tool names, titles and descriptions, and a term prefixed with + must match (for example "+calendar create"). max_results caps how many keyword matches load (default 5). Loaded tools stay callable for the rest of this run.',
@@ -301,16 +302,6 @@ export const CONNECTOR_SEARCH_SPEC = {
     },
     required: ['query'],
   },
-}
-
-/** Whether a tool name belongs to connectors: an MCP tool, or one of the two helpers. */
-export function isConnectorToolName(name) {
-  return (
-    typeof name === 'string' &&
-    (name === READ_RESULT_TOOL ||
-      name === CONNECTOR_SEARCH_TOOL ||
-      /^mcp__[A-Za-z0-9_-]+__[A-Za-z0-9_-]+$/.test(name))
-  )
 }
 
 function notLoadedMessage(name) {
@@ -790,7 +781,7 @@ export class ConnectorSession {
       ...(entry.connector.toolPermissions || {}),
       [key]: 'allow',
     }
-    if (entry.view) entry.view.permission = 'allow'
+    entry.view.permission = 'allow'
     await ConnectorModel.updateOne(
       { _id: entry.connector._id },
       { $set: { [`toolPermissions.${key}`]: 'allow' } }
@@ -807,30 +798,6 @@ export class ConnectorSession {
     this.results.clear()
     this.deferred = false
   }
-}
-
-/**
- * The connectors' tools the model has not loaded yet, one line each, grouped
- * by connector, for the system prompt. Empty when nothing is deferred.
- */
-export function deferredToolCatalog(session) {
-  if (!session?.deferred) return ''
-  const blocks = []
-  for (const connector of session.connectors) {
-    const pending = connector.tools.filter(
-      tool => !session.loadedTools.has(tool.name)
-    )
-    if (pending.length === 0) continue
-    blocks.push(
-      [
-        `${connector.name}:`,
-        ...pending.map(tool =>
-          tool.summary ? `- ${tool.name} — ${tool.summary}` : `- ${tool.name}`
-        ),
-      ].join('\n')
-    )
-  }
-  return blocks.join('\n')
 }
 
 async function sessionEntry(connector) {

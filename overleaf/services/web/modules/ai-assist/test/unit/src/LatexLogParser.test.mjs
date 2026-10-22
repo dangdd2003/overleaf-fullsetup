@@ -127,11 +127,13 @@ describe('LatexLogParser adapter over the shared parser', () => {
     expect(result.errors[0].file).to.equal('chapters/a.tex')
   })
 
-  it('has an instance parse() that returns what the static parse returns', () => {
-    const log = '(./main.tex\n! Oops.\nl.1 x\n'
+  it('does not mangle file paths containing "compiles" when using custom fileBaseNames', () => {
+    const log = '/srv/compiles/abc/chapters/compiles-notes.tex:2: Boom.'
 
-    expect(new LatexLogParser(log).parse()).to.deep.equal(
-      LatexLogParser.parse(log)
-    )
+    const result = LatexLogParser.parse(log, {
+      fileBaseNames: [/srv\/compiles\/abc/],
+    })
+
+    expect(result.errors[0].file).to.equal('chapters/compiles-notes.tex')
   })
 })

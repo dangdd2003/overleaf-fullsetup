@@ -10,7 +10,7 @@ import { withProviderRetry } from './AiAssistRetry.mjs'
 const ATTEMPT_TIMEOUT_MS = 5000
 const TOTAL_TIMEOUT_MS = 30000
 
-export const CHAT_TITLING_SYSTEM_PROMPT =
+const CHAT_TITLING_SYSTEM_PROMPT =
   'You are an expert conversation titler, exactly like Claude AI.\n' +
   "Your job is to read the user's first prompt, reorganize it, and create a concise, informative, 2 to 5 word title for the chat session that captures the core scheme and intent.\n" +
   'Rules:\n' +
@@ -21,15 +21,6 @@ export const CHAT_TITLING_SYSTEM_PROMPT =
   '- Do NOT use trailing punctuation (no periods, colons, or commas).\n' +
   '- Do NOT use conversational filler words (e.g. "Chat about...", "Help with...", "A conversation on...", "Task:").\n' +
   '- Output ONLY the title text and nothing else.'
-
-/** An AbortSignal that fires after `ms`, or null where the runtime has none. */
-function timeoutSignal(ms) {
-  try {
-    return AbortSignal.timeout(ms)
-  } catch {
-    return null
-  }
-}
 
 /**
  * Generates a concise 2-5 word chat title by reorganizing the user's first prompt,
@@ -48,16 +39,13 @@ export async function generateChatTitle({ client, firstMessageText, signal }) {
 
   let raw = ''
   try {
-    const totalSignal = timeoutSignal(TOTAL_TIMEOUT_MS)
-    const outerSignal = totalSignal
-      ? AbortSignal.any([signal, totalSignal].filter(Boolean))
-      : signal
+    const outerSignal = AbortSignal.any(
+      [signal, AbortSignal.timeout(TOTAL_TIMEOUT_MS)].filter(Boolean)
+    )
     raw = await withProviderRetry(
       async () => {
-        const attemptSignal = timeoutSignal(ATTEMPT_TIMEOUT_MS)
-        const combinedSignal = attemptSignal
-          ? AbortSignal.any([outerSignal, attemptSignal])
-          : outerSignal
+        const attemptSignal = AbortSignal.timeout(ATTEMPT_TIMEOUT_MS)
+        const combinedSignal = AbortSignal.any([outerSignal, attemptSignal])
         let text = ''
         try {
           for await (const chunk of client.streamChat({
@@ -77,7 +65,7 @@ export async function generateChatTitle({ client, firstMessageText, signal }) {
           }
         } catch (err) {
           // Only this try ran out of time: a timeout to retry, not a cancel
-          if (attemptSignal?.aborted && !outerSignal.aborted) {
+          if (attemptSignal.aborted && !outerSignal.aborted) {
             throw new ProviderError('Connection timed out', {
               code: 'providerTimeout',
             })

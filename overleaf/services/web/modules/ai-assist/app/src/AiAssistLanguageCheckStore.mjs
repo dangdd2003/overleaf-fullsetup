@@ -2,6 +2,7 @@ import fs from 'node:fs/promises'
 import Path from 'node:path'
 import crypto from 'node:crypto'
 import { baseDir } from './AiAssistChatHistoryStore.mjs'
+import { createLocalLock } from './AiAssistFileLock.mjs'
 
 // Language-check results shared by everyone working on a project, so a
 // sentence one collaborator's model checked is not sent again for another
@@ -83,18 +84,7 @@ export function normalizeEntry(raw) {
 }
 
 // Writes to one project's file wait their turn (within this process)
-const fileLocks = new Map()
-
-function withFileLock(file, task) {
-  const previous = fileLocks.get(file) || Promise.resolve()
-  const next = previous.catch(() => {}).then(task)
-  const tail = next.catch(() => {})
-  fileLocks.set(file, tail)
-  tail.then(() => {
-    if (fileLocks.get(file) === tail) fileLocks.delete(file)
-  })
-  return next
-}
+const withFileLock = createLocalLock()
 
 /** Keys are stored as own properties only: a key such as `__proto__` must not reach a prototype. */
 function ownMap(source) {
@@ -128,12 +118,28 @@ async function mtimeOf(file) {
 
 /** Saves arriving together (one check's batches) are written once. */
 export const FLUSH_DELAY_MS = 2000
-/** Projects whose results stay parsed in memory. */
+/** Projects whose results stay parsed in memory: a count, and the text they hold once parsed. */
 const MAX_OPEN_PROJECTS = 20
+const MAX_OPEN_CHARS = 64 * 1024 * 1024
+
+/**
+ * Each entry's serialized size and their total, kept with the project so a
+ * store does not serialize the whole project again.
+ */
+function measure(entries) {
+  const sizes = new Map()
+  let chars = 0
+  for (const key of Object.keys(entries)) {
+    const size = JSON.stringify(entries[key]).length
+    sizes.set(key, size)
+    chars += size
+  }
+  return { sizes, chars }
+}
 
 export class AiAssistLanguageCheckStore {
   constructor() {
-    /** projectId → { entries, mtimeMs, dirty, timer } */
+    /** projectId → { entries, sizes, chars, mtimeMs, dirty, timer } */
     this.open = new Map()
   }
 
@@ -155,19 +161,36 @@ export class AiAssistLanguageCheckStore {
       if (!existing.dirty) {
         existing.entries = entries
         existing.mtimeMs = mtimeMs
+        Object.assign(existing, measure(entries))
       }
       this.open.delete(projectId)
       this.open.set(projectId, existing)
       return existing
     }
-    const loaded = { entries, mtimeMs, dirty: false, timer: null }
+    const loaded = {
+      entries,
+      mtimeMs,
+      dirty: false,
+      timer: null,
+      ...measure(entries),
+    }
     this.open.set(projectId, loaded)
     await this.evict()
     return loaded
   }
 
+  /** Characters the open projects hold in all, as parsed. */
+  openChars() {
+    let chars = 0
+    for (const project of this.open.values()) chars += project.chars
+    return chars
+  }
+
   async evict() {
-    while (this.open.size > MAX_OPEN_PROJECTS) {
+    while (
+      this.open.size > MAX_OPEN_PROJECTS ||
+      this.openChars() > MAX_OPEN_CHARS
+    ) {
       const [oldest] = this.open.keys()
       await this.flush(oldest)
       const current = this.open.get(oldest)
@@ -200,15 +223,27 @@ export class AiAssistLanguageCheckStore {
       // Re-inserted last: insertion order is the age order
       delete project.entries[key]
       project.entries[key] = entry
+      const size = JSON.stringify(entry).length
+      project.chars += size - (project.sizes.get(key) ?? 0)
+      project.sizes.set(key, size)
     }
     // Oldest first out, until the project is within its count and size budget
-    const keys = Object.keys(project.entries)
-    const sizes = keys.map(key => JSON.stringify(project.entries[key]).length)
-    let total = sizes.reduce((sum, size) => sum + size, 0)
-    for (let drop = 0; drop < keys.length - 1; drop++) {
-      if (keys.length - drop <= MAX_ENTRIES && total <= MAX_PROJECT_CHARS) break
-      total -= sizes[drop]
-      delete project.entries[keys[drop]]
+    if (
+      project.sizes.size > MAX_ENTRIES ||
+      project.chars > MAX_PROJECT_CHARS
+    ) {
+      const keys = Object.keys(project.entries)
+      for (let drop = 0; drop < keys.length - 1; drop++) {
+        if (
+          keys.length - drop <= MAX_ENTRIES &&
+          project.chars <= MAX_PROJECT_CHARS
+        ) {
+          break
+        }
+        project.chars -= project.sizes.get(keys[drop])
+        project.sizes.delete(keys[drop])
+        delete project.entries[keys[drop]]
+      }
     }
     project.dirty = true
     if (!project.timer) {
@@ -240,6 +275,7 @@ export class AiAssistLanguageCheckStore {
         await fs.rename(tmp, file)
       } catch (err) {
         project.dirty = true
+        await fs.rm(tmp, { force: true }).catch(() => {})
         throw err
       }
       project.mtimeMs = await mtimeOf(file)

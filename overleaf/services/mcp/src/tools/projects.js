@@ -560,7 +560,7 @@ export function registerProjectTools(server, { client, staticToken }) {
             method: 'POST',
             body: { projectIds },
           })
-        : await client.requestBinary(token, `/projects/${projectIds[0]}/zip`)
+        : await client.requestBinary(token, `${projectPath(projectIds[0])}/zip`)
 
       const sizeBytes = Buffer.byteLength(base64, 'base64')
       const sizeKb = Math.round((sizeBytes / 1024) * 10) / 10

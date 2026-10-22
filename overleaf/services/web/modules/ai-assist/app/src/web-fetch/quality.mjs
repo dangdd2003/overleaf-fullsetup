@@ -32,8 +32,8 @@ const SHELL_PATTERNS = [
 ]
 
 /** True when the page is a bot check rather than the content asked for. */
-export function isChallenge(html = '', text = '') {
-  if (collapse(text).length >= CONTENT_CHARS) return false
+export function isChallenge(html = '', text = '', visible = collapse(text).length) {
+  if (visible >= CONTENT_CHARS) return false
   return CHALLENGE_PATTERNS.some(
     pattern => pattern.test(html) || pattern.test(text)
   )
@@ -44,10 +44,11 @@ export function isChallenge(html = '', text = '') {
  * `text` is what was extracted from it, or what a reader API returned.
  */
 export function assessContent({ html = '', text = '' } = {}) {
-  if (isChallenge(html, text)) return 'challenge'
+  const visible = collapse(text).length
+  if (isChallenge(html, text, visible)) return 'challenge'
   if (
     html &&
-    collapse(text).length < THIN_CHARS &&
+    visible < THIN_CHARS &&
     (html.length > 20_000 || SHELL_PATTERNS.some(pattern => pattern.test(html)))
   ) {
     return 'thin'

@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { TextT } from '@phosphor-icons/react'
 import { ContextChip } from '../components/agent/context-chip'
@@ -33,6 +34,12 @@ export function PdfContextChips() {
   const page = (number: number) =>
     t('ai_assist_pdf_page_chip', { defaultValue: 'PDF p.__page__', page: number })
 
+  const thumbnails = useMemo(() => {
+    return areas.map(area =>
+      area.image ? `data:${area.image.mediaType};base64,${area.image.data}` : undefined
+    )
+  }, [areas])
+
   return (
     <>
       {selections.map((selection, index) => (
@@ -64,11 +71,7 @@ export function PdfContextChips() {
           <ContextChip
             key={area.id || `pdf-area-${index}-${area.page}`}
             className="ai-assist-pdf-area-chip"
-            thumbnail={
-              area.image
-                ? `data:${area.image.mediaType};base64,${area.image.data}`
-                : undefined
-            }
+            thumbnail={thumbnails[index]}
             icon={<CropMark />}
             source={label}
             detail={source}

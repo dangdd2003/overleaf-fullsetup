@@ -4,6 +4,7 @@ import { LaTeXLanguage } from '@/features/source-editor/languages/latex/latex-la
 import { classHighlighter } from '@/features/source-editor/extensions/class-highlighter'
 import {
   EDITOR_THEME_PALETTES,
+  isEditorThemeName,
   useEditorThemeStyles,
 } from './use-editor-theme-styles'
 
@@ -38,32 +39,51 @@ function escapeHtml(str: string) {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
-// A streaming reply re-renders its code on every frame
+// A streaming reply re-renders its code on every frame.
+// Skip caching code larger than 64 KB to avoid excessive memory retention.
+const MAX_CACHE_CODE_BYTES = 64 * 1024
 const highlightCache = new Map<string, string>()
+
+interface HighlightSpan {
+  from: number
+  to: number
+  className?: string
+}
+
+function highlightSpans(code: string): HighlightSpan[] {
+  const tree = LaTeXLanguage.parser.parse(code)
+  const spans: HighlightSpan[] = []
+  highlightTree(tree, classHighlighter, (from, to, classes) => {
+    spans.push({ from, to, className: classes })
+  })
+  return spans
+}
 
 /**
  * Highlights LaTeX with the editor's own parser and `tok-*` classes, so the
  * editor theme's token colours apply to it. Returns null for other languages.
  */
 export function highlightCodeHtml(code: string, lang: string): string | null {
-  if (!LATEX_LANGS.has(lang.toLowerCase())) return null
+  if (!canHighlightCode(lang)) return null
 
   let html = highlightCache.get(code)
   if (html !== undefined) return html
 
-  const tree = LaTeXLanguage.parser.parse(code)
+  const spans = highlightSpans(code)
   let out = ''
   let pos = 0
-  highlightTree(tree, classHighlighter, (from, to, classes) => {
-    if (from > pos) out += escapeHtml(code.slice(pos, from))
-    out += `<span class="${classes}">${escapeHtml(code.slice(from, to))}</span>`
-    pos = to
-  })
+  for (const span of spans) {
+    if (span.from > pos) out += escapeHtml(code.slice(pos, span.from))
+    out += `<span class="${span.className}">${escapeHtml(code.slice(span.from, span.to))}</span>`
+    pos = span.to
+  }
   out += escapeHtml(code.slice(pos))
   html = out
 
-  if (highlightCache.size >= 200) highlightCache.clear()
-  highlightCache.set(code, html)
+  if (code.length <= MAX_CACHE_CODE_BYTES) {
+    if (highlightCache.size >= 200) highlightCache.clear()
+    highlightCache.set(code, html)
+  }
   return html
 }
 
@@ -80,7 +100,7 @@ export function highlightCodeLines(
   code: string,
   lang: string
 ): CodeSegment[][] | null {
-  if (!LATEX_LANGS.has(lang.toLowerCase())) return null
+  if (!canHighlightCode(lang)) return null
   const cached = linesCache.get(code)
   if (cached) return cached
 
@@ -92,17 +112,19 @@ export function highlightCodeLines(
     })
   }
 
-  const tree = LaTeXLanguage.parser.parse(code)
+  const spans = highlightSpans(code)
   let pos = 0
-  highlightTree(tree, classHighlighter, (from, to, classes) => {
-    if (from > pos) push(code.slice(pos, from))
-    push(code.slice(from, to), classes)
-    pos = to
-  })
+  for (const span of spans) {
+    if (span.from > pos) push(code.slice(pos, span.from))
+    push(code.slice(span.from, span.to), span.className)
+    pos = span.to
+  }
   push(code.slice(pos))
 
-  if (linesCache.size >= 200) linesCache.clear()
-  linesCache.set(code, lines)
+  if (code.length <= MAX_CACHE_CODE_BYTES) {
+    if (linesCache.size >= 200) linesCache.clear()
+    linesCache.set(code, lines)
+  }
   return lines
 }
 
@@ -165,7 +187,9 @@ export function useEditorHighlightStyle(editorTheme: string) {
  */
 export function useSystemHighlightStyle() {
   const { editorTheme, activeOverallTheme } = useEditorThemeStyles()
-  const editorDark = EDITOR_THEME_PALETTES[editorTheme]?.dark
+  const editorDark = isEditorThemeName(editorTheme)
+    ? EDITOR_THEME_PALETTES[editorTheme]?.dark
+    : undefined
   const editorMatches =
     editorDark !== undefined && editorDark === (activeOverallTheme === 'dark')
   const theme = editorMatches

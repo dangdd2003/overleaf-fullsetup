@@ -5,15 +5,7 @@ import { prepareTranscriptForRun } from '../conversation-store'
 import { AgentMode } from '../agent-mode'
 import { SlashCommandInvocation } from '../slash-commands/types'
 import customLocalStorage from '@/infrastructure/local-storage'
-import getMeta from '@/utils/meta'
-
-function getCsrfHeaders(): Record<string, string> {
-  const token =
-    (typeof window !== 'undefined' && (window as any).csrfToken) ||
-    getMeta('ol-csrfToken') ||
-    ''
-  return token ? { 'X-Csrf-Token': token } : {}
-}
+import { getCsrfHeaders } from '../../utils/csrf'
 
 const ACTIVE_RUN_KEY = (projectId: string) =>
   `ai-assist:active-run:${projectId}`
@@ -81,6 +73,13 @@ export function getDetachedRuns(
   return { ...readDetachedRuns(projectId) }
 }
 
+function writeDetachedRuns(
+  projectId: string,
+  runs: Record<string, DetachedRun>
+) {
+  customLocalStorage.setItem(DETACHED_RUNS_KEY(projectId), runs)
+}
+
 export function setDetachedRun(
   projectId: string,
   chatId: string,
@@ -92,7 +91,7 @@ export function setDetachedRun(
   } else {
     delete runs[chatId]
   }
-  customLocalStorage.setItem(DETACHED_RUNS_KEY(projectId), runs)
+  writeDetachedRuns(projectId, runs)
 }
 
 /** The chat's detached run, forgotten here since its chat now follows it. */
@@ -100,8 +99,12 @@ export function takeDetachedRun(
   projectId: string,
   chatId: string
 ): DetachedRun | null {
-  const run = readDetachedRuns(projectId)[chatId] ?? null
-  if (run) setDetachedRun(projectId, chatId, null)
+  const runs = readDetachedRuns(projectId)
+  const run = runs[chatId] ?? null
+  if (run) {
+    delete runs[chatId]
+    writeDetachedRuns(projectId, runs)
+  }
   return run
 }
 
@@ -137,7 +140,7 @@ export async function startBackgroundRun({
   trackActive?: boolean
 }): Promise<string> {
   const preparedTranscript = prepareTranscriptForRun(transcript)
-  const res = await fetch(`/ai-assist/projects/${projectId}/runs`, {
+  const res = await fetch(`/ai-assist/projects/${encodeURIComponent(projectId)}/runs`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -200,7 +203,7 @@ export function connectRunStream({
   /** Every event the run sent before this stream opened has arrived. */
   onCaughtUp?: () => void
   onDone: () => void
-  onError: (err: any) => void
+  onError: (err: unknown) => void
   maxReconnects?: number
   reconnectDelayMs?: number
   /**
@@ -232,7 +235,7 @@ export function connectRunStream({
 
   const open = () => {
     const eventSource = new EventSource(
-      `/ai-assist/projects/${projectId}/runs/${runId}/stream?since=${lastSeq}${passive ? '&watch=0' : ''}`
+      `/ai-assist/projects/${encodeURIComponent(projectId)}/runs/${encodeURIComponent(runId)}/stream?since=${lastSeq}${passive ? '&watch=0' : ''}`
     )
     current = eventSource
 
@@ -293,7 +296,7 @@ export function connectRunStream({
 }
 
 export async function stopBackgroundRun(runId: string): Promise<void> {
-  await fetch(`/ai-assist/runs/${runId}/stop`, {
+  await fetch(`/ai-assist/runs/${encodeURIComponent(runId)}/stop`, {
     method: 'POST',
     headers: {
       ...getCsrfHeaders(),
@@ -319,7 +322,7 @@ export async function submitBackgroundCompile(
   const rawLog = outcome.rawLog
     ? outcome.rawLog.slice(-MAX_REPORTED_LOG_CHARS)
     : ''
-  await fetch(`/ai-assist/projects/${projectId}/runs/${runId}/compile`, {
+  await fetch(`/ai-assist/projects/${encodeURIComponent(projectId)}/runs/${encodeURIComponent(runId)}/compile`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -332,13 +335,14 @@ export async function submitBackgroundCompile(
 export async function approveBackgroundEdit(
   runId: string,
   decision: {
+    id?: string
     accepted: boolean
     always?: boolean
     note?: string
     nextMode?: AgentMode
   }
 ): Promise<void> {
-  await fetch(`/ai-assist/runs/${runId}/approve`, {
+  const res = await fetch(`/ai-assist/runs/${encodeURIComponent(runId)}/approve`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -346,6 +350,9 @@ export async function approveBackgroundEdit(
     },
     body: JSON.stringify(decision),
   })
+  if (!res.ok) {
+    throw new Error(`Failed to approve edit: ${res.status}`)
+  }
 }
 
 export async function setBackgroundRunMode(
@@ -354,7 +361,7 @@ export async function setBackgroundRunMode(
   mode: AgentMode
 ): Promise<void> {
   const res = await fetch(
-    `/ai-assist/projects/${projectId}/runs/${runId}/mode`,
+    `/ai-assist/projects/${encodeURIComponent(projectId)}/runs/${encodeURIComponent(runId)}/mode`,
     {
       method: 'POST',
       headers: {
@@ -388,7 +395,7 @@ export async function sendBackgroundRunMessage(
   }
 ): Promise<boolean> {
   const res = await fetch(
-    `/ai-assist/projects/${projectId}/runs/${runId}/message`,
+    `/ai-assist/projects/${encodeURIComponent(projectId)}/runs/${encodeURIComponent(runId)}/message`,
     {
       method: 'POST',
       headers: {
@@ -405,6 +412,12 @@ export async function sendBackgroundRunMessage(
   return true
 }
 
+/** The 409 of a message route: 'ended' when the run is over, else 'read'. */
+async function conflictOutcome(res: Response): Promise<'ended' | 'read'> {
+  const data = await res.json().catch(() => null)
+  return data?.reason === 'ended' ? 'ended' : 'read'
+}
+
 /**
  * Has the run answer a message sent into it now, cutting short the reply it
  * is streaming, as Claude Code's "send now" does.
@@ -418,7 +431,7 @@ export async function sendRunMessageNow(
   messageId: string
 ): Promise<'sent' | 'read' | 'ended'> {
   const res = await fetch(
-    `/ai-assist/projects/${projectId}/runs/${runId}/message/${encodeURIComponent(messageId)}/now`,
+    `/ai-assist/projects/${encodeURIComponent(projectId)}/runs/${encodeURIComponent(runId)}/message/${encodeURIComponent(messageId)}/now`,
     {
       method: 'POST',
       headers: { ...getCsrfHeaders() },
@@ -426,10 +439,7 @@ export async function sendRunMessageNow(
   )
   if (res.ok) return 'sent'
   if (res.status === 404) return 'ended'
-  if (res.status === 409) {
-    const data = await res.json().catch(() => null)
-    return data?.reason === 'ended' ? 'ended' : 'read'
-  }
+  if (res.status === 409) return conflictOutcome(res)
   throw new Error(`Failed to send the message now: ${res.status}`)
 }
 
@@ -446,7 +456,7 @@ export async function takeBackRunMessage(
   messageId: string
 ): Promise<'removed' | 'read' | 'ended'> {
   const res = await fetch(
-    `/ai-assist/projects/${projectId}/runs/${runId}/message/${encodeURIComponent(messageId)}`,
+    `/ai-assist/projects/${encodeURIComponent(projectId)}/runs/${encodeURIComponent(runId)}/message/${encodeURIComponent(messageId)}`,
     {
       method: 'DELETE',
       headers: { ...getCsrfHeaders() },
@@ -454,9 +464,6 @@ export async function takeBackRunMessage(
   )
   if (res.ok) return 'removed'
   if (res.status === 404) return 'ended'
-  if (res.status === 409) {
-    const data = await res.json().catch(() => null)
-    return data?.reason === 'ended' ? 'ended' : 'read'
-  }
+  if (res.status === 409) return conflictOutcome(res)
   throw new Error(`Failed to take the message back: ${res.status}`)
 }

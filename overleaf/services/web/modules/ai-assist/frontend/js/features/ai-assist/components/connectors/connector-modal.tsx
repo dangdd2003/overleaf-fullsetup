@@ -20,14 +20,18 @@ import OLTooltip from '@/shared/components/ol/ol-tooltip'
 import MaterialIcon from '@/shared/components/material-icon'
 import Notification from '@/shared/components/notification'
 import {
-  ConnectNext,
+  CONNECTOR_AUTH_MODES,
+  CONNECTOR_TRANSPORTS,
   ConnectorAuthMode,
   ConnectorInput,
   ConnectorsMeta,
   ConnectorTransport,
   ConnectorView,
+  isOneOf,
+  OAUTH_CLIENT_MODES,
   OAuthClientMode,
   ProbeResult,
+  TOKEN_ENDPOINT_AUTH_METHODS,
   TokenEndpointAuthMethod,
 } from '../../connectors/types'
 import {
@@ -39,13 +43,9 @@ import {
 } from '../../connectors/api'
 import { connectWithPopup } from '../../connectors/oauth-popup'
 import { TEST_RESULT_MS, useAutoDismiss } from '../../hooks/use-auto-dismiss'
+import { isSensitiveHeaderKey } from '../mcp-options'
 
-export function isSensitiveHeaderKey(key: string): boolean {
-  if (!key || typeof key !== 'string') return false
-  return /^(proxy-)?authorization$|api-?key|token|secret|bearer|password/i.test(
-    key.trim()
-  )
-}
+export { isSensitiveHeaderKey }
 
 type HeaderDraft = {
   name: string
@@ -54,11 +54,11 @@ type HeaderDraft = {
   isRevealed?: boolean
 }
 
-export type ConnectorModalProps = {
+type ConnectorModalProps = {
   show: boolean
   onHide: () => void
   connector?: ConnectorView | null
-  onSaved: (connector: ConnectorView, next: ConnectNext) => void
+  onSaved?: (connector: ConnectorView) => void
   meta?: ConnectorsMeta | null
 }
 
@@ -314,7 +314,7 @@ export function ConnectorModal({
             t('connector_test_unreachable', 'Could not reach the server.')
         )
       } else {
-        onSaved(res.connector, 'connected')
+        onSaved?.(res.connector)
         onHide()
       }
     } catch (err) {
@@ -339,7 +339,7 @@ export function ConnectorModal({
       const outcome = await connectWithPopup(signInFor.id)
       if (outcome.status === 'connected') {
         notifyConnectorsChanged()
-        onSaved(signInFor, 'connected')
+        onSaved?.(signInFor)
         onHide()
       } else if (outcome.status === 'error') {
         setError(outcome.error)
@@ -605,7 +605,11 @@ export function ConnectorModal({
             <OLFormSelect
               id="connector-auth-mode"
               value={authMode}
-              onChange={e => setAuthMode(e.target.value as ConnectorAuthMode)}
+              onChange={e => {
+                if (isOneOf(CONNECTOR_AUTH_MODES, e.target.value)) {
+                  setAuthMode(e.target.value)
+                }
+              }}
             >
               <option value="auto">
                 {t(
@@ -667,9 +671,11 @@ export function ConnectorModal({
                   <OLFormSelect
                     id="connector-transport"
                     value={transport}
-                    onChange={e =>
-                      setTransport(e.target.value as ConnectorTransport)
-                    }
+                    onChange={e => {
+                      if (isOneOf(CONNECTOR_TRANSPORTS, e.target.value)) {
+                        setTransport(e.target.value)
+                      }
+                    }}
                   >
                     <option value="auto">
                       {t(
@@ -728,9 +734,11 @@ export function ConnectorModal({
                       <OLFormSelect
                         id="connector-oauth-mode"
                         value={oauthClientMode}
-                        onChange={e =>
-                          setOAuthClientMode(e.target.value as OAuthClientMode)
-                        }
+                        onChange={e => {
+                          if (isOneOf(OAUTH_CLIENT_MODES, e.target.value)) {
+                            setOAuthClientMode(e.target.value)
+                          }
+                        }}
                       >
                         <option value="auto">
                           {t('connector_oauth_auto', 'Automatic (Recommended)')}
@@ -923,11 +931,16 @@ export function ConnectorModal({
                           <OLFormSelect
                             id="connector-oauth-auth-method"
                             value={oauthAuthMethod}
-                            onChange={e =>
-                              setOAuthAuthMethod(
-                                e.target.value as TokenEndpointAuthMethod
-                              )
-                            }
+                            onChange={e => {
+                              if (
+                                isOneOf(
+                                  TOKEN_ENDPOINT_AUTH_METHODS,
+                                  e.target.value
+                                )
+                              ) {
+                                setOAuthAuthMethod(e.target.value)
+                              }
+                            }}
                           >
                             <option value="auto">
                               {t('connector_token_auth_auto', 'Auto-detect')}

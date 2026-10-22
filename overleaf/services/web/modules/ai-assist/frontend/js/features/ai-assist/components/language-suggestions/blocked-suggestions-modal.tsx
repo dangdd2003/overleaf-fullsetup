@@ -22,7 +22,7 @@ const PREVIEW_TEXT =
 const PREVIEW_AT = PREVIEW_TEXT.indexOf('plans,')
 
 /** The example card of the empty list (upstream image): blurred, inert. */
-export const PREVIEW_UNIT: UnitSuggestions = {
+const PREVIEW_UNIT: UnitSuggestions = {
   hash: 'preview',
   from: 0,
   to: PREVIEW_TEXT.length,
@@ -75,7 +75,6 @@ export function BlockedSuggestionsModal({
                 onAccept={noop}
                 onReject={noop}
                 onBlock={noop}
-                onActivate={noop}
                 onClose={noop}
               />
             </>

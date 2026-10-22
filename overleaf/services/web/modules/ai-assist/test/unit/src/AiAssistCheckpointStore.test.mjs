@@ -7,7 +7,6 @@ import Settings from '@overleaf/settings'
 import store, {
   saveCheckpoint,
   getCheckpoint,
-  listCheckpoints,
   checkRewind,
   deleteChatCheckpoints,
   getRewindCheckpoint,
@@ -186,13 +185,12 @@ describe('AiAssistCheckpointStore', function () {
     })
   })
 
-  describe('listCheckpoints', function () {
-    it('returns empty array when no checkpoints exist', async function () {
-      const list = await listCheckpoints(PROJECT, USER, CHAT_ID)
-      expect(list).to.deep.equal([])
+  describe('checkpoint order', function () {
+    it('returns null when no checkpoint exists', async function () {
+      expect(await getCheckpoint(PROJECT, USER, CHAT_ID, MSG_ID_1)).to.be.null
     })
 
-    it('returns userMessageIds sorted chronologically', async function () {
+    it('rewinds over the checkpoints from M onward, in chronological order', async function () {
       await saveCheckpoint(PROJECT, USER, CHAT_ID, MSG_ID_1, {
         files: { 'a.tex': { originalContent: 'A' } },
       })
@@ -201,8 +199,10 @@ describe('AiAssistCheckpointStore', function () {
         files: { 'b.tex': { originalContent: 'B' } },
       })
 
-      const list = await listCheckpoints(PROJECT, USER, CHAT_ID)
-      expect(list).to.deep.equal([MSG_ID_1, MSG_ID_2])
+      const fromFirst = await getRewindCheckpoint(PROJECT, USER, CHAT_ID, MSG_ID_1)
+      expect(Object.keys(fromFirst.files).sort()).to.deep.equal(['a.tex', 'b.tex'])
+      const fromSecond = await getRewindCheckpoint(PROJECT, USER, CHAT_ID, MSG_ID_2)
+      expect(Object.keys(fromSecond.files)).to.deep.equal(['b.tex'])
     })
   })
 
@@ -339,11 +339,11 @@ describe('AiAssistCheckpointStore', function () {
         files: { 'b.tex': { originalContent: 'B' } },
       })
 
-      expect(await listCheckpoints(PROJECT, USER, CHAT_ID)).to.have.length(2)
+      expect(await getCheckpoint(PROJECT, USER, CHAT_ID, MSG_ID_2)).to.not.be.null
 
       await deleteChatCheckpoints(PROJECT, USER, CHAT_ID)
 
-      expect(await listCheckpoints(PROJECT, USER, CHAT_ID)).to.deep.equal([])
+      expect(await getCheckpoint(PROJECT, USER, CHAT_ID, MSG_ID_2)).to.be.null
       expect(await getCheckpoint(PROJECT, USER, CHAT_ID, MSG_ID_1)).to.be.null
     })
 
@@ -522,10 +522,7 @@ describe('AiAssistCheckpointStore', function () {
       const copy = await getCheckpoint(PROJECT, USER, FORK_CHAT, MSG_ID_1)
       expect(copy.chatId).to.equal(FORK_CHAT)
       expect(copy.files['a.tex'].originalContent).to.equal('A0')
-      expect(await listCheckpoints(PROJECT, USER, FORK_CHAT)).to.deep.equal([
-        MSG_ID_1,
-        MSG_ID_2,
-      ])
+      expect(await getCheckpoint(PROJECT, USER, FORK_CHAT, MSG_ID_2)).to.not.be.null
 
       const source = await getCheckpoint(PROJECT, USER, CHAT_ID, MSG_ID_1)
       expect(source.chatId).to.equal(CHAT_ID)
@@ -543,7 +540,7 @@ describe('AiAssistCheckpointStore', function () {
       expect(await copyCheckpoints(PROJECT, USER, CHAT_ID, CHAT_ID, [MSG_ID_1])).to.deep.equal([])
       expect(await copyCheckpoints(PROJECT, USER, CHAT_ID, '../bad', [MSG_ID_1])).to.deep.equal([])
       expect(await copyCheckpoints(PROJECT, USER, CHAT_ID, FORK_CHAT, 'nope')).to.deep.equal([])
-      expect(await listCheckpoints(PROJECT, USER, FORK_CHAT)).to.deep.equal([])
+      expect(await getCheckpoint(PROJECT, USER, FORK_CHAT, MSG_ID_1)).to.be.null
     })
   })
 })

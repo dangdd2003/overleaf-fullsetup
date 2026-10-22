@@ -25,6 +25,12 @@ export type NonResult =
 export type Versioned<Result> = Result & { messages: AgentMessage[] }
 
 export function isNonResult<R>(outcome: R | NonResult): outcome is NonResult {
-  const kind = (outcome as { kind?: string }).kind
-  return kind === 'cannot' || kind === 'imageUnsupported' || kind === 'empty'
+  return (
+    typeof outcome === 'object' &&
+    outcome !== null &&
+    'kind' in outcome &&
+    (outcome.kind === 'cannot' ||
+      outcome.kind === 'imageUnsupported' ||
+      outcome.kind === 'empty')
+  )
 }

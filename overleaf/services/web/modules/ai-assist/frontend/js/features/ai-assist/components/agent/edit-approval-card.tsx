@@ -23,32 +23,15 @@ export function EditApprovalCard({
   const [note, setNote] = useState('')
   const locked = Boolean(decided)
 
-  const raw = (edit || {}) as any
-  const path = typeof raw.path === 'string' ? raw.path : ''
-  const oldText =
-    typeof raw.oldText === 'string'
-      ? raw.oldText
-      : typeof raw.old_text === 'string'
-        ? raw.old_text
-        : typeof raw.old_string === 'string'
-          ? raw.old_string
-          : ''
-  const newText =
-    typeof raw.newText === 'string'
-      ? raw.newText
-      : typeof raw.new_text === 'string'
-        ? raw.new_text
-        : typeof raw.new_string === 'string'
-          ? raw.new_string
-          : typeof raw.content === 'string'
-            ? raw.content
-            : ''
+  const path = typeof edit?.path === 'string' ? edit.path : ''
+  const oldText = typeof edit?.oldText === 'string' ? edit.oldText : ''
+  const newText = typeof edit?.newText === 'string' ? edit.newText : ''
 
   const action: 'create' | 'append' | 'delete' | 'edit' =
-    raw.action ??
-    (raw.toolName === 'create_file'
+    edit?.action ??
+    (edit?.toolName === 'create_file'
       ? 'create'
-      : raw.toolName === 'edit_file'
+      : edit?.toolName === 'edit_file'
         ? !oldText
           ? 'append'
           : !newText
@@ -63,8 +46,8 @@ export function EditApprovalCard({
   const safeStartLine =
     typeof startLine === 'number' && Number.isFinite(startLine) && startLine > 0
       ? startLine
-      : typeof raw.startLine === 'number' && raw.startLine > 0
-        ? raw.startLine
+      : typeof edit?.startLine === 'number' && edit.startLine > 0
+        ? edit.startLine
         : 1
 
   const handleOpen = () => {

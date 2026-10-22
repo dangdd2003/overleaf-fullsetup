@@ -74,7 +74,5 @@ Object.defineProperty(TOOLS, 'get_compile_log', {
 })
 
 export function toolSpecs(): ToolSpec[] {
-  // Deduplicate tools so aliases pointing to the same AgentTool do not emit duplicate tool specs to LLM APIs
-  const uniqueTools = Array.from(new Set(Object.values(TOOLS)))
-  return uniqueTools.map(tool => tool.spec)
+  return Object.values(TOOLS).map(tool => tool.spec)
 }

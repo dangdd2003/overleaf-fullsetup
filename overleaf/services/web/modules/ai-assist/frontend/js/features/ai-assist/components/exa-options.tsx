@@ -59,6 +59,10 @@ type FlagKey = {
   [K in keyof ExaDraft]: ExaDraft[K] extends boolean ? K : never
 }[keyof ExaDraft]
 
+type StringKey<T> = {
+  [K in keyof T]: T[K] extends string ? K : never
+}[keyof T]
+
 export function draftFromExa(config?: ExaProviderConfig): ExaDraft {
   const search = config?.search ?? {}
   const read = config?.read ?? {}
@@ -206,6 +210,13 @@ export function exaOptionsFromDraft(draft: ExaDraft): {
 
 type Choice = { value: string; label: string }
 
+const LIVECRAWL_OPTIONS: Choice[] = [
+  { value: '', label: 'Auto (default)' },
+  { value: 'always', label: 'Always crawl live' },
+  { value: 'fallback', label: 'Fallback to live crawl' },
+  { value: 'never', label: 'Never crawl live (cache only)' },
+]
+
 export default function ExaOptions({
   draft,
   onChange,
@@ -213,7 +224,9 @@ export default function ExaOptions({
   draft: ExaDraft
   onChange: (next: ExaDraft) => void
 }) {
-  const set = <K extends keyof ExaDraft>(key: K, value: ExaDraft[K]) =>
+  const setFlag = (key: FlagKey, value: boolean) =>
+    onChange({ ...draft, [key]: value })
+  const setText = (key: StringKey<ExaDraft>, value: string) =>
     onChange({ ...draft, [key]: value })
 
   const id = (key: keyof ExaDraft) => `ai-web-search-exa-${key}`
@@ -224,12 +237,12 @@ export default function ExaOptions({
       label={label}
       description={description}
       checked={draft[key]}
-      onChange={value => set(key, value)}
+      onChange={value => setFlag(key, value)}
     />
   )
 
   const dropdown = (
-    key: Exclude<keyof ExaDraft, FlagKey>,
+    key: StringKey<ExaDraft>,
     label: string,
     description: string,
     options: Choice[]
@@ -240,13 +253,13 @@ export default function ExaOptions({
       description={description}
       width="wide"
       options={options}
-      value={draft[key] as string}
-      onChange={value => set(key, value as ExaDraft[typeof key])}
+      value={draft[key]}
+      onChange={value => setText(key, value)}
     />
   )
 
   const text = (
-    key: Exclude<keyof ExaDraft, FlagKey>,
+    key: StringKey<ExaDraft>,
     label: string,
     description: string,
     placeholder: string,
@@ -262,8 +275,8 @@ export default function ExaOptions({
       label={label}
       description={description}
       placeholder={placeholder}
-      value={draft[key] as string}
-      onChange={value => set(key, value as ExaDraft[typeof key])}
+      value={draft[key]}
+      onChange={value => setText(key, value)}
       {...extra}
     />
   )
@@ -432,12 +445,7 @@ export default function ExaOptions({
           'livecrawl',
           'Livecrawl mode',
           'Fetch live web pages rather than Exa cache.',
-          [
-            { value: '', label: 'Auto (default)' },
-            { value: 'always', label: 'Always crawl live' },
-            { value: 'fallback', label: 'Fallback to live crawl' },
-            { value: 'never', label: 'Never crawl live (cache only)' },
-          ]
+          LIVECRAWL_OPTIONS
         )}
         {draft.livecrawl &&
           text(
@@ -527,12 +535,7 @@ export default function ExaOptions({
           'readLivecrawl',
           'Livecrawl mode',
           'Fetch live web pages rather than Exa cache.',
-          [
-            { value: '', label: 'Auto (default)' },
-            { value: 'always', label: 'Always crawl live' },
-            { value: 'fallback', label: 'Fallback to live crawl' },
-            { value: 'never', label: 'Never crawl live (cache only)' },
-          ]
+          LIVECRAWL_OPTIONS
         )}
         {draft.readLivecrawl &&
           text(

@@ -14,7 +14,7 @@ import { useCallback, useEffect, useState } from 'react'
  */
 const busyProjects = new Set<string>()
 
-export const CHAT_BUSY_EVENT = 'aiAssist:chatBusyChange'
+const CHAT_BUSY_EVENT = 'aiAssist:chatBusyChange'
 
 export function isChatBusy(projectId: string): boolean {
   return busyProjects.has(projectId)

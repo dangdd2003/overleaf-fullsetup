@@ -125,11 +125,6 @@ export const projectId = z
   .regex(/^[A-Za-z0-9_-]{1,64}$/, 'project id must be letters, digits, "-" or "_"')
   .describe('The Overleaf project id')
 
-/** The `{ status: 'ok' }` acknowledgement web returns from a mutation. */
-export const okStatus = z
-  .literal('ok')
-  .describe('"ok" when the change was applied')
-
 /**
  * Fields describing a binary `resource` content block.
  *

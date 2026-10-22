@@ -71,7 +71,10 @@ import {
   isSameSelection,
 } from "./agent-composer";
 import { AgentStatusLine } from "./agent-status-line";
-import { takePendingHandoff } from "../../agent/chat-handoff";
+import {
+  takePendingHandoff,
+  CHAT_HANDOFF_EVENT,
+} from "../../agent/chat-handoff";
 import { setChatBusy } from "../../agent/chat-activity";
 import { useStickToBottom } from "../../hooks/use-stick-to-bottom";
 import { useAgentRun } from "../../hooks/use-agent-run";
@@ -129,6 +132,17 @@ function pdfEnvelopeFields(
 }
 
 type UserEntry = Extract<TranscriptEntry, { role: "user" }>;
+
+function usableChatTitle(title?: string | null): title is string {
+  return Boolean(title && title !== "New chat" && title !== "Untitled chat");
+}
+
+function hasFailedFiles(
+  err: unknown,
+): err is { data: { failedFiles: { path: string }[] } } {
+  const files = (err as { data?: { failedFiles?: unknown } })?.data?.failedFiles;
+  return Array.isArray(files) && files.length > 0;
+}
 
 export async function buildUserEntry({
   handle,
@@ -411,17 +425,36 @@ function AgentPanelInner({
   // The PDF viewer's contributions (selection, double-click, boxes, highlights)
   usePdfContext();
 
+  const liveTranscriptRef = useRef(state.transcript);
+  liveTranscriptRef.current = state.transcript;
+  // All the panel holds for the chat, handed on with its run when it is left
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const lastSavedRef = useRef({
+    transcript: state.transcript,
+    mode: state.mode,
+  });
+
+  const persistChat = useCallback(
+    (transcript: TranscriptEntry[], mode: AgentMode) => {
+      saveChat(
+        projectId,
+        chatId,
+        transcript,
+        mode,
+        chatTitle || undefined,
+      ).catch(() => {});
+    },
+    [projectId, chatId, chatTitle],
+  );
+
   useEffect(() => {
     if (!chatId || unsavedChatIdsRef.current.has(chatId)) return;
     let active = true;
     fetchChat(projectId, chatId)
       .then((chat) => {
         if (!active || !chat) return;
-        if (
-          chat.title &&
-          chat.title !== "New chat" &&
-          chat.title !== "Untitled chat"
-        ) {
+        if (usableChatTitle(chat.title)) {
           setChatTitle(chat.title);
         }
         if (chat.mode) {
@@ -429,28 +462,23 @@ function AgentPanelInner({
           setStoredChatMode(projectId, chatId, chat.mode);
         }
         if (Array.isArray(chat.transcript) && chat.transcript.length > 0) {
-          setState((curr) => {
-            // Lined up by id with what is shown. While a run is followed it
-            // writes the reply, so the server's copy only puts back the top
-            // turns this browser dropped: never the reply again, nor the
-            // question it answers a second time.
-            const merged = mergeStoredTranscript(
-              curr.transcript,
-              chat.transcript,
-              { live: curr.running },
-            );
-            if (merged === curr.transcript) return curr;
-            lastSavedRef.current = {
-              transcript: merged,
-              mode: chat.mode || curr.mode,
-            };
-            saveConversation(projectId, chatId, merged);
-            return {
-              ...curr,
-              transcript: merged,
-              chatTitle: chat.title || curr.chatTitle,
-            };
-          });
+          const currentTranscript = liveTranscriptRef.current;
+          const merged = mergeStoredTranscript(
+            currentTranscript,
+            chat.transcript,
+            { live: stateRef.current.running },
+          );
+          if (merged === currentTranscript) return;
+          setState((curr) => ({
+            ...curr,
+            transcript: merged,
+            chatTitle: chat.title || curr.chatTitle,
+          }));
+          lastSavedRef.current = {
+            transcript: merged,
+            mode: chat.mode || stateRef.current.mode,
+          };
+          saveConversation(projectId, chatId, merged);
         }
       })
       .catch(() => {});
@@ -487,13 +515,6 @@ function AgentPanelInner({
   }, [state.transcript]);
 
   const prevRunningRef = useRef(state.running);
-  // Read by sendPrompt, which is memoised and would otherwise see the
-  // transcript as it was when the callback was last built.
-  const liveTranscriptRef = useRef(state.transcript);
-  liveTranscriptRef.current = state.transcript;
-  // All the panel holds for the chat, handed on with its run when it is left
-  const stateRef = useRef(state);
-  stateRef.current = state;
   // Ids this session handed to a live run. A `pending` entry restored from
   // storage is not in here, so reopening the project never resends an old
   // message — only one this tab queued and watched fail can be revived.
@@ -644,10 +665,6 @@ function AgentPanelInner({
   // Mirror the conversation to a JSON file on the server once a run settles or mode changes.
   // The ref skips re-saving a chat that was just opened from history, which
   // would otherwise bump its timestamp without any change.
-  const lastSavedRef = useRef({
-    transcript: state.transcript,
-    mode: state.mode,
-  });
   useEffect(() => {
     if (state.running || state.transcript.length === 0) return;
     if (
@@ -660,22 +677,14 @@ function AgentPanelInner({
     const mode = state.mode;
     const timer = window.setTimeout(() => {
       lastSavedRef.current = { transcript, mode };
-      saveChat(
-        projectId,
-        chatId,
-        transcript,
-        mode,
-        chatTitle || undefined,
-      ).catch(() => {});
+      persistChat(transcript, mode);
     }, 800);
     return () => window.clearTimeout(timer);
   }, [
-    projectId,
-    chatId,
+    persistChat,
     state.running,
     state.transcript,
     state.mode,
-    chatTitle,
   ]);
 
   useEffect(() => {
@@ -717,7 +726,7 @@ function AgentPanelInner({
     [],
   );
 
-  useEventListener("aiAssist:selectionChanged", (event: Event) => {
+  const handleSelectionChanged = useCallback((event: Event) => {
     const detail = (event as CustomEvent<AttachedSelection | null>).detail;
     if (detail && detail.text) {
       if (
@@ -732,7 +741,9 @@ function AgentPanelInner({
       dismissedSelectionRef.current = null;
       setAttachedSelection(null);
     }
-  });
+  }, []);
+
+  useEventListener("aiAssist:selectionChanged", handleSelectionChanged);
 
   // Esc cancels a PDF box being drawn (in the composer) before it stops a run
   const { boxSelecting } = usePdfTurnContext();
@@ -1165,14 +1176,15 @@ function AgentPanelInner({
             if (abandoned()) return;
           }
           await startRunWith([entryId]);
-        } catch (err: any) {
+        } catch (err: unknown) {
           if (chatEpochRef.current !== epoch) return;
           setState((current) => ({
             ...current,
             running: false,
             error: {
               code: "runFailed",
-              message: err?.message || "Failed to prepare prompt",
+              message:
+                err instanceof Error ? err.message : "Failed to prepare prompt",
             },
           }));
         } finally {
@@ -1448,7 +1460,7 @@ function AgentPanelInner({
   }, [collectHandoff]);
 
   useEventListener(
-    "aiAssist:chatHandoff",
+    CHAT_HANDOFF_EVENT,
     useCallback(
       (event: Event) => {
         const detail = (event as CustomEvent<{ projectId?: string }>).detail;
@@ -1494,16 +1506,10 @@ function AgentPanelInner({
       setMode(newMode);
       setStoredChatMode(projectId, chatId, newMode);
       if (state.transcript.length > 0) {
-        saveChat(
-          projectId,
-          chatId,
-          state.transcript,
-          newMode,
-          chatTitle || undefined,
-        ).catch(() => {});
+        persistChat(state.transcript, newMode);
       }
     },
-    [chatId, chatTitle, projectId, setMode, state.transcript],
+    [chatId, persistChat, projectId, setMode, state.transcript],
   );
 
   /**
@@ -1560,13 +1566,7 @@ function AgentPanelInner({
           lastSavedRef.current.mode !== mode
         ) {
           lastSavedRef.current = { transcript, mode };
-          saveChat(
-            projectId,
-            chatId,
-            transcript,
-            mode,
-            chatTitle || undefined,
-          ).catch(() => {});
+          persistChat(transcript, mode);
         }
       }
       if (live) {
@@ -1642,12 +1642,7 @@ function AgentPanelInner({
     (id: string, summary?: ChatSummary) => {
       if (id === chatId) return;
       leaveChat();
-      const title =
-        summary?.title &&
-        summary.title !== "New chat" &&
-        summary.title !== "Untitled chat"
-          ? summary.title
-          : "";
+      const title = usableChatTitle(summary?.title) ? summary.title : "";
       const followed = takeFollowedRun(projectId, id);
       // A run left going when this chat was last open carries on from here
       const detached = takeDetachedRun(projectId, id);
@@ -1721,19 +1716,24 @@ function AgentPanelInner({
       .map((e) => e.id);
   }, []);
 
-  const [rewindDialogState, setRewindDialogState] = useState<{
+  type RewindDialogState = {
     isOpen: boolean;
     entry: TranscriptEntry | null;
     userMessageIds: string[];
     willFork: boolean;
     initialChoice: RewindChoice;
-  }>({
+  };
+
+  const createClosedRewindDialogState = (): RewindDialogState => ({
     isOpen: false,
     entry: null,
     userMessageIds: [],
     willFork: false,
     initialChoice: "code",
   });
+
+  const [rewindDialogState, setRewindDialogState] =
+    useState<RewindDialogState>(createClosedRewindDialogState);
 
   // The ids are taken now, so the check and the rewind agree while it is open
   const onRewindCode = useCallback(
@@ -1841,10 +1841,11 @@ function AgentPanelInner({
         }).then(
           (result) => result.failedFiles ?? [],
           // A 500 when every file failed carries the same list in its body
-          (err) => {
-            const files = err?.data?.failedFiles;
-            if (!files?.length) throw err;
-            return files as { path: string }[];
+          (err: unknown) => {
+            if (hasFailedFiles(err)) {
+              return err.data.failedFiles;
+            }
+            throw err;
           },
         );
         // Files already restored are shown even when some were not
@@ -1863,13 +1864,7 @@ function AgentPanelInner({
       if (restoreConversation) {
         forkChat(entry);
       }
-      setRewindDialogState({
-        isOpen: false,
-        entry: null,
-        userMessageIds: [],
-        willFork: false,
-        initialChoice: "code",
-      });
+      setRewindDialogState(createClosedRewindDialogState());
     },
     [
       rewindDialogState.entry,
@@ -2163,11 +2158,6 @@ function AgentPanelInner({
                                   )
                                 : "AI Provider Error"}
                     </span>
-                    {state.error.upstreamCode && (
-                      <span className="ai-assist-error-badge">
-                        {state.error.upstreamCode}
-                      </span>
-                    )}
                   </div>
                   <div className="ai-assist-error-body">
                     <p className="ai-assist-error-message">
@@ -2257,15 +2247,7 @@ function AgentPanelInner({
           userMessageIds={rewindDialogState.userMessageIds}
           willFork={rewindDialogState.willFork}
           initialChoice={rewindDialogState.initialChoice}
-          onClose={() =>
-            setRewindDialogState({
-              isOpen: false,
-              entry: null,
-              userMessageIds: [],
-              willFork: false,
-              initialChoice: "code",
-            })
-          }
+          onClose={() => setRewindDialogState(createClosedRewindDialogState())}
           onConfirm={handleRewindConfirm}
         />
       )}
@@ -2273,9 +2255,7 @@ function AgentPanelInner({
   );
 }
 
-export const AgentPanelFallback: React.FC<FallbackProps> = ({
-  // debug
-
+const AgentPanelFallback: React.FC<FallbackProps> = ({
   error,
   resetErrorBoundary,
 }) => {

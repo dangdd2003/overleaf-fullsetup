@@ -4,27 +4,11 @@ import {
   cleanOldText,
   cleanLineNumberPrefixes,
   countOccurrences,
-  findFuzzyUniqueAnchor,
-  findFuzzyWordWindow,
   findMatchingLines,
   formatAmbiguousOccurrences,
   locateAnchorInText,
   nearestLines,
 } from '../latex-matcher'
-
-// Re-export matching utilities for external callers and backwards compatibility
-export {
-  cleanLineNumbers,
-  cleanOldText,
-  cleanLineNumberPrefixes,
-  countOccurrences,
-  findFuzzyUniqueAnchor,
-  findFuzzyWordWindow,
-  findMatchingLines,
-  formatAmbiguousOccurrences,
-  locateAnchorInText,
-  nearestLines,
-}
 
 /**
  * The 1-based line of the last uncommented `\end{document}`, or null. Text

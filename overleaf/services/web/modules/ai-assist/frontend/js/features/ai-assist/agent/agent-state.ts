@@ -63,8 +63,6 @@ export type AgentState = {
     message: string
     status?: number
     hint?: string
-    upstreamCode?: string
-    upstreamType?: string
   } | null
 }
 
@@ -125,45 +123,29 @@ export function withoutLiveReply(
   return [...transcript.slice(0, at), ...transcript.slice(at + 1)]
 }
 
-export function openAssistantTurn(
+function openAssistantTurn(transcript: TranscriptEntry[]): {
   transcript: TranscriptEntry[]
-): { transcript: TranscriptEntry[]; targetIndex: number } {
-  const pendingCount = countTrailingPendingUserEntries(transcript)
-  if (pendingCount > 0) {
-    const insertIdx = transcript.length - pendingCount
-    const prev = insertIdx > 0 ? transcript[insertIdx - 1] : null
-    if (prev && prev.role === 'assistant') {
-      return { transcript, targetIndex: insertIdx - 1 }
-    }
-    const newEntry: TranscriptEntry = {
-      id: `a${insertIdx}`,
-      role: 'assistant',
-      text: '',
-      toolCalls: [],
-      blocks: [],
-    }
-    const updated = [
-      ...transcript.slice(0, insertIdx),
-      newEntry,
-      ...transcript.slice(insertIdx),
-    ]
-    return { transcript: updated, targetIndex: insertIdx }
-  }
-
-  const last = transcript.at(-1)
-  if (last && last.role === 'assistant') {
-    return { transcript, targetIndex: transcript.length - 1 }
+  targetIndex: number
+} {
+  const insertIdx =
+    transcript.length - countTrailingPendingUserEntries(transcript)
+  if (transcript[insertIdx - 1]?.role === 'assistant') {
+    return { transcript, targetIndex: insertIdx - 1 }
   }
   const newEntry: TranscriptEntry = {
-    id: `a${transcript.length}`,
+    id: `a${insertIdx}`,
     role: 'assistant',
     text: '',
     toolCalls: [],
     blocks: [],
   }
   return {
-    transcript: [...transcript, newEntry],
-    targetIndex: transcript.length,
+    transcript: [
+      ...transcript.slice(0, insertIdx),
+      newEntry,
+      ...transcript.slice(insertIdx),
+    ],
+    targetIndex: insertIdx,
   }
 }
 
@@ -706,12 +688,6 @@ export function reduceAgentEvent(
           message: event.message,
           ...(event.status != null ? { status: event.status } : {}),
           ...(event.hint != null ? { hint: event.hint } : {}),
-          ...(event.upstreamCode != null
-            ? { upstreamCode: event.upstreamCode }
-            : {}),
-          ...(event.upstreamType != null
-            ? { upstreamType: event.upstreamType }
-            : {}),
         },
       }
     default:

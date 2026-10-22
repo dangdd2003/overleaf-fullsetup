@@ -23,7 +23,6 @@ import {
 import {
   autoCompletion,
   autoDelay,
-  resetAutoCompletion,
 } from '../../../../frontend/js/features/ai-assist/completion/auto'
 import { resetCompletionRate } from '../../../../frontend/js/features/ai-assist/completion/rate'
 
@@ -74,7 +73,6 @@ describe('completion: Automatic', function () {
     customLocalStorage.clear()
     forgetInlineSuggestionsPreferences()
     resetCompletionRate()
-    resetAutoCompletion()
     customLocalStorage.setItem('ai-assist:provider', {
       type: 'anthropic',
       baseUrl: 'https://api.anthropic.com',

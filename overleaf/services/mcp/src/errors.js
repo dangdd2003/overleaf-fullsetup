@@ -3,15 +3,19 @@ import { compactJson, lines } from './format.js'
 export const CODES = Object.freeze({
   UNAUTHORIZED: 'unauthorized',
   INSUFFICIENT_SCOPE: 'insufficient_scope',
+  INVALID_TOKEN: 'invalid_token',
   FORBIDDEN: 'forbidden',
   NOT_FOUND: 'not_found',
   VALIDATION_ERROR: 'validation_error',
   RATE_LIMITED: 'rate_limited',
+  TEMPORARILY_UNAVAILABLE: 'temporarily_unavailable',
   UPSTREAM_ERROR: 'upstream_error',
   CONFLICT: 'conflict',
   COMPILE_FAILED: 'compile_failed',
   OUTPUT_TOO_LARGE: 'output_too_large',
 })
+
+/** @typedef {typeof CODES[keyof typeof CODES]} ErrorCode one of the CODES values */
 
 /**
  * Recovery guidance attached to every error of a given code.
@@ -61,7 +65,7 @@ const JWT_PATTERN = /eyJ[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{2,}/
 /** An error carrying a `web` error envelope through to the model. */
 export class OverleafApiError extends Error {
   /**
-   * @param {string} code one of CODES
+   * @param {ErrorCode} code
    * @param {string} message safe, already-sanitised text
    * @param {number} status the upstream HTTP status
    * @param {{ hint?: string, details?: object }} [extra] tool-specific recovery
@@ -116,11 +120,11 @@ export function sanitiseMessage(message, internalUrl) {
  * Every tool failure reads the same way to the model:
  * `{ ok: false, error: { code, message, hint, retryable, details? } }`.
  *
- * @param {string} code one of CODES
+ * @param {ErrorCode} code
  * @param {string} message
  * @param {{ hint?: string, details?: object }} [extra]
  */
-export function errorEnvelope(code, message, extra = {}) {
+function errorEnvelope(code, message, extra = {}) {
   const error = {
     code,
     message,

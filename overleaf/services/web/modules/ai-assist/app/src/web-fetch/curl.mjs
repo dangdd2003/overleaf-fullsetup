@@ -1,6 +1,10 @@
 import fs from 'node:fs'
 import { spawn } from 'node:child_process'
-import { describeStatus, webError } from './util.mjs'
+import {
+  httpStatusError,
+  isPdfType,
+  webError,
+} from './util.mjs'
 import {
   guardedLookup,
   parseFetchUrl,
@@ -55,11 +59,6 @@ export function isCurlImpersonateAvailable(binaryPath = DEFAULT_CURL_PATH) {
     if (binaryPath === DEFAULT_CURL_PATH) curlAvailabilityCache = false
     return false
   }
-}
-
-/** Resets cached availability (for testing). */
-export function _resetCurlAvailabilityCache() {
-  curlAvailabilityCache = null
 }
 
 /** Resolves addresses through the provided guarded lookup function. */
@@ -279,15 +278,8 @@ export async function curlFetch(
         // Killed at the size cap: no timing line, but the headers were dumped.
         // The page is kept up to the cap and marked truncated, not failed.
         const { status, contentType } = parseDumpedHeaders(stderrHead)
-        if (status >= 400) {
-          return reject(
-            webError(
-              `${parsed} returned HTTP ${status}${describeStatus(status) ? `: ${describeStatus(status)}` : ''}.`,
-              { status, kind: 'http' }
-            )
-          )
-        }
-        const allowed = /application\/(?:x-)?pdf/i.test(contentType)
+        if (status >= 400) return reject(httpStatusError(parsed, status))
+        const allowed = isPdfType(contentType)
           ? Math.max(maxBytes, pdfMaxBytes)
           : maxBytes
         let body = Buffer.concat(chunks)
@@ -310,7 +302,7 @@ export async function curlFetch(
 
       const status = meta.http_code ?? 0
       const contentType = meta.content_type || ''
-      const isPdf = /application\/(?:x-)?pdf/i.test(contentType)
+      const isPdf = isPdfType(contentType)
       const allowedLimit = isPdf ? Math.max(maxBytes, pdfMaxBytes) : maxBytes
 
       if (status >= 300 && status < 400 && meta.redirect_url) {
@@ -318,16 +310,7 @@ export async function curlFetch(
       }
 
       if (status >= 400) {
-        const reason = describeStatus(status)
-        return reject(
-          webError(
-            `${parsed} returned HTTP ${status}${reason ? `: ${reason}` : ''}.`,
-            {
-              status,
-              kind: 'http',
-            }
-          )
-        )
+        return reject(httpStatusError(parsed, status))
       }
 
       if (code !== 0 && !truncated && status === 0) {

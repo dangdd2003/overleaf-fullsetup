@@ -1,4 +1,5 @@
 import crypto from 'node:crypto'
+import { DEFAULT_RESOURCE_URI } from './config.js'
 
 const JWKS_TIMEOUT_MS = 10000
 // Forced JWKS refreshes (an unknown kid) run at most once per window, so an
@@ -52,7 +53,7 @@ export function buildProtectedResourceMetadataUrl(resourceUri) {
  * @returns {string}
  */
 export function buildWwwAuthenticateHeader(config, error, description) {
-  let resourceUri = config?.resourceUri || 'http://localhost:3050/mcp'
+  let resourceUri = config?.resourceUri || DEFAULT_RESOURCE_URI
   if (!resourceUri.startsWith('http://') && !resourceUri.startsWith('https://')) {
     resourceUri = `http://${resourceUri}`
   }
@@ -109,10 +110,23 @@ function findKey(jwks, kid) {
   )
 }
 
+// Parsed KeyObjects, keyed by the JWK object they came from. A refreshed JWKS
+// holds new objects, so entries for retired keys are collected with them.
+const publicKeys = new WeakMap()
+
+function publicKeyOf(jwk) {
+  let publicKey = publicKeys.get(jwk)
+  if (!publicKey) {
+    publicKey = crypto.createPublicKey({ key: jwk, format: 'jwk' })
+    publicKeys.set(jwk, publicKey)
+  }
+  return publicKey
+}
+
 function verifyRs256(jwk, signingInput, signature) {
   // A kid can name a key of another type; only an RSA key may verify RS256.
   if (jwk.kty !== 'RSA') return false
-  const publicKey = crypto.createPublicKey({ key: jwk, format: 'jwk' })
+  const publicKey = publicKeyOf(jwk)
   const verifier = crypto.createVerify('SHA256')
   verifier.update(signingInput)
   verifier.end()

@@ -40,8 +40,11 @@ export async function highlightInPdf({
   let boxes: HighlightData[]
 
   if (request.boxes !== undefined) {
+    if (!Array.isArray(request.boxes)) {
+      return { error: 'boxes must be a non-empty list of {page, h, v, width, height}.' }
+    }
     const parsed = parseHighlights(request.boxes)
-    if (!Array.isArray(request.boxes) || parsed.length === 0) {
+    if (parsed.length === 0) {
       return { error: 'boxes must be a non-empty list of {page, h, v, width, height}.' }
     }
     if (
@@ -53,11 +56,17 @@ export async function highlightInPdf({
     boxes = parsed
   } else {
     const { path, line, endLine } = request
-    if (typeof path !== 'string' || !path || !Number.isInteger(line) || (line as number) < 1) {
+    if (
+      typeof path !== 'string' ||
+      !path ||
+      typeof line !== 'number' ||
+      !Number.isInteger(line) ||
+      line < 1
+    ) {
       return { error: 'Give either boxes, or a path and a line.' }
     }
-    const start = line as number
-    const end = Number.isInteger(endLine) ? (endLine as number) : start
+    const start = line
+    const end = typeof endLine === 'number' && Number.isInteger(endLine) ? endLine : start
     if (end < start) {
       return { error: 'endLine must not be before line.' }
     }

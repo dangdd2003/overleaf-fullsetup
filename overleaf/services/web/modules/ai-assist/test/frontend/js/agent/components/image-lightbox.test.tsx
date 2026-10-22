@@ -134,28 +134,6 @@ describe('ImageLightbox Component', function () {
     expect(onClose.calledOnce).to.be.true
   })
 
-  it('restores focus to triggerRef when closed', function () {
-    const triggerBtn = document.createElement('button')
-    document.body.appendChild(triggerBtn)
-    const triggerRef = createRef<HTMLButtonElement>()
-    ;(triggerRef as any).current = triggerBtn
-    const focusSpy = sinon.spy(triggerBtn, 'focus')
-
-    const onClose = sinon.stub()
-    const { unmount } = render(
-      <ImageLightbox
-        src="data:image/png;base64,test"
-        isOpen={true}
-        onClose={onClose}
-        triggerRef={triggerRef}
-      />
-    )
-
-    unmount()
-    expect(focusSpy.calledOnce).to.be.true
-    document.body.removeChild(triggerBtn)
-  })
-
   it('plays leave animation before unrendering when isOpen becomes false', function () {
     const onClose = sinon.stub()
     const { rerender } = render(

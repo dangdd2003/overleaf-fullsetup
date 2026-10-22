@@ -53,8 +53,8 @@ describe('language suggestions: reply parser', function () {
       true
     )
     expect(sentences).to.deep.equal([
-      { id: 's1', kind: 'grammar', text: 'It work well.', why: 'agreement' },
-      { id: 's1', kind: 'style', text: 'It converges well.', why: 'precision' },
+      { id: 's1', kind: 'grammar', text: 'It work well.' },
+      { id: 's1', kind: 'style', text: 'It converges well.' },
     ])
   })
 
@@ -64,8 +64,8 @@ describe('language suggestions: reply parser', function () {
       true
     )
     expect(sentences).to.deep.equal([
-      { id: 's1', kind: 'grammar', text: 'The results show it.', why: 'agreement' },
-      { id: 's2', kind: 'grammar', text: 'A test.', why: 'typo' },
+      { id: 's1', kind: 'grammar', text: 'The results show it.' },
+      { id: 's2', kind: 'grammar', text: 'A test.' },
       { id: 's3', kind: 'grammar', text: 'Plain one.' },
     ])
   })

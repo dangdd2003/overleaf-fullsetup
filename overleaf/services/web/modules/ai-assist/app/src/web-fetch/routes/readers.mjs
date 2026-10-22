@@ -110,9 +110,14 @@ export function firecrawlTimeoutMs(timeoutMs = FIRECRAWL_DEFAULT_TIMEOUT_MS) {
   return Math.max(REQUEST_TIMEOUT_MS, timeoutMs + 10_000);
 }
 
+/** A provider's own timeout in seconds, plus slack, in ms, at least the request timeout. */
+function withSlack(seconds) {
+  return Math.max(REQUEST_TIMEOUT_MS, (seconds + 10) * 1000);
+}
+
 /** Long enough for Jina to hit its own timeout and say so. */
 export function jinaTimeoutMs(seconds = JINA_DEFAULT_TIMEOUT_S) {
-  return Math.max(REQUEST_TIMEOUT_MS, (seconds + 10) * 1000);
+  return withSlack(seconds);
 }
 
 /** Long enough for Exa to hit its livecrawl timeout. */
@@ -126,7 +131,7 @@ export function exaTimeoutMs(timeoutMs) {
 /** Long enough for Parallel to hit its extract timeout. */
 export function parallelTimeoutMs(timeoutSeconds) {
   if (Number.isInteger(timeoutSeconds) && timeoutSeconds > 0) {
-    return Math.max(REQUEST_TIMEOUT_MS, (timeoutSeconds + 10) * 1000);
+    return withSlack(timeoutSeconds);
   }
   return READER_TIMEOUT_MS;
 }
@@ -169,14 +174,11 @@ export function jinaHeaders(apiKey, read = {}, { fresh = false } = {}) {
 function extractTimeoutMs(extract = {}) {
   const seconds =
     extract.timeout ?? (extract.extractDepth === "advanced" ? 30 : 10);
-  return Math.max(REQUEST_TIMEOUT_MS, (seconds + 10) * 1000);
+  return withSlack(seconds);
 }
 
 function scrapeTimeoutMs(scrape = {}) {
-  return Math.max(
-    REQUEST_TIMEOUT_MS,
-    ((scrape.timeout ?? WEBSEARCHAPI_DEFAULT_SCRAPE_TIMEOUT_S) + 10) * 1000,
-  );
+  return withSlack(scrape.timeout ?? WEBSEARCHAPI_DEFAULT_SCRAPE_TIMEOUT_S);
 }
 
 /** How long the ladder gives one reader, across all of its keys. */
@@ -246,12 +248,18 @@ async function withEndpoints(provider, endpoints = [], router, readOne) {
   throw lastErr;
 }
 
+/** The endpoints a reader tries: the ones given, else the router's pool for it. */
+function endpointsFor(provider, { endpoints, router }) {
+  return (
+    endpoints || router?.pool?.filter((e) => e.provider === provider) || []
+  );
+}
+
 export function ollamaReader(
   url,
   { signal, endpoints, rotator, router = rotator, fetchFn },
 ) {
-  const targetEndpoints =
-    endpoints || router?.pool?.filter((e) => e.provider === "ollama") || [];
+  const targetEndpoints = endpointsFor("ollama", { endpoints, router });
   return withEndpoints("ollama", targetEndpoints, router, async (endpoint) => {
     const body = await apiJson(
       `${OLLAMA_API_BASE}/web_fetch`,
@@ -274,10 +282,7 @@ export function websearchapiReader(
   url,
   { signal, endpoints, rotator, router = rotator, fetchFn, fresh },
 ) {
-  const targetEndpoints =
-    endpoints ||
-    router?.pool?.filter((e) => e.provider === "websearchapi") ||
-    [];
+  const targetEndpoints = endpointsFor("websearchapi", { endpoints, router });
   return withEndpoints(
     "websearchapi",
     targetEndpoints,
@@ -319,8 +324,7 @@ export function tavilyReader(
   url,
   { signal, endpoints, rotator, router = rotator, fetchFn },
 ) {
-  const targetEndpoints =
-    endpoints || router?.pool?.filter((e) => e.provider === "tavily") || [];
+  const targetEndpoints = endpointsFor("tavily", { endpoints, router });
   return withEndpoints("tavily", targetEndpoints, router, async (endpoint) => {
     const extract = endpoint.extract ?? {};
     const body = await apiJson(
@@ -372,8 +376,7 @@ function firecrawlReaderFor(provider) {
     url,
     { signal, endpoints, rotator, router = rotator, fetchFn, fresh },
   ) => {
-    const targetEndpoints =
-      endpoints || router?.pool?.filter((e) => e.provider === provider) || [];
+    const targetEndpoints = endpointsFor(provider, { endpoints, router });
     return withEndpoints(
       provider,
       targetEndpoints,
@@ -442,8 +445,7 @@ export function jinaReader(
   url,
   { signal, endpoints, rotator, router = rotator, fetchFn, fresh },
 ) {
-  const targetEndpoints =
-    endpoints || router?.pool?.filter((e) => e.provider === "jina") || [];
+  const targetEndpoints = endpointsFor("jina", { endpoints, router });
   return withEndpoints("jina", targetEndpoints, router, async (endpoint) => {
     const read = endpoint.read ?? {};
     const body = await apiJson(
@@ -487,8 +489,7 @@ export function exaReader(
   url,
   { signal, endpoints, rotator, router = rotator, fetchFn },
 ) {
-  const targetEndpoints =
-    endpoints || router?.pool?.filter((e) => e.provider === "exa") || [];
+  const targetEndpoints = endpointsFor("exa", { endpoints, router });
   return withEndpoints("exa", targetEndpoints, router, async (endpoint) => {
     const read = endpoint.read ?? {};
     const textOption = read.maxCharacters
@@ -590,8 +591,7 @@ export function parallelReader(
   url,
   { signal, endpoints, rotator, router = rotator, fetchFn },
 ) {
-  const targetEndpoints =
-    endpoints || router?.pool?.filter((e) => e.provider === "parallel") || [];
+  const targetEndpoints = endpointsFor("parallel", { endpoints, router });
   return withEndpoints(
     "parallel",
     targetEndpoints,
@@ -600,11 +600,7 @@ export function parallelReader(
       const read = endpoint.read ?? {};
 
       const advanced_settings = {};
-      if (read.fullContent !== false) {
-        advanced_settings.full_content = true;
-      } else {
-        advanced_settings.full_content = false;
-      }
+      advanced_settings.full_content = read.fullContent !== false;
 
       if (Number.isInteger(read.maxCharsPerResult)) {
         advanced_settings.excerpt_settings = {
@@ -699,8 +695,7 @@ export function mcpReader(
   url,
   { signal, endpoints, rotator, router = rotator, fetchFn },
 ) {
-  const targetEndpoints =
-    endpoints || router?.pool?.filter((e) => e.provider === "mcp") || [];
+  const targetEndpoints = endpointsFor("mcp", { endpoints, router });
   return withEndpoints("mcp", targetEndpoints, router, async (endpoint) => {
     const page = await readViaMcp(
       mcpTarget(endpoint, {

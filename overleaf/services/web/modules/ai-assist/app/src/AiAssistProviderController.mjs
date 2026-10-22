@@ -27,6 +27,10 @@ import {
  * reach: mixed content, Private Network Access and CORS all block it.
  */
 
+/** What the page shows in place of a stored API key it must not see again. */
+const MASKED_KEY = '••••••••'
+const isMaskedKey = key => key === MASKED_KEY
+
 function errorPayload(err) {
   return {
     code:
@@ -34,6 +38,17 @@ function errorPayload(err) {
     message: err?.message || 'The provider request failed.',
     ...(err?.hint ? { hint: err.hint } : {}),
   }
+}
+
+function sendMissingProviderSettings(res) {
+  return res.status(400).json({
+    error: errorPayload(
+      new ProviderError('Missing providerSettings', {
+        code: 'invalidProviderSettings',
+        status: 400,
+      })
+    ),
+  })
 }
 
 function httpStatusFor(err) {
@@ -46,18 +61,6 @@ function httpStatusFor(err) {
   }
   // Upstream auth failures must not surface as 401/403 from Overleaf itself.
   return 502
-}
-
-function readProviderSettings(req, field = 'providerSettings') {
-  const providerSettings = req.body?.[field]
-  if (
-    !providerSettings ||
-    typeof providerSettings !== 'object' ||
-    !providerSettings.type
-  ) {
-    return null
-  }
-  return providerSettings
 }
 
 function abortOnDisconnect(req, res) {
@@ -105,7 +108,7 @@ export class AiAssistProviderController {
       !providerSettings ||
       !providerSettings.type ||
       !providerSettings.apiKey ||
-      providerSettings.apiKey === '••••••••'
+      isMaskedKey(providerSettings.apiKey)
     if (userId && needsStored) {
       try {
         const internal = await this.userSettingsStore.getInternalUserSettings(userId)
@@ -116,7 +119,7 @@ export class AiAssistProviderController {
         if (stored?.type) {
           if (!providerSettings || !providerSettings.type) {
             providerSettings = stored
-          } else if (!providerSettings.apiKey || providerSettings.apiKey === '••••••••') {
+          } else if (!providerSettings.apiKey || isMaskedKey(providerSettings.apiKey)) {
             providerSettings = { ...providerSettings, apiKey: stored.apiKey }
           }
         }
@@ -149,8 +152,8 @@ export class AiAssistProviderController {
           Object.keys(clientSettings.providers).length === 0 ||
           Object.values(clientSettings.providers).some(
             p =>
-              (Array.isArray(p?.apiKeys) && p.apiKeys.includes('••••••••')) ||
-              p?.bearerToken === '••••••••'
+              (Array.isArray(p?.apiKeys) && p.apiKeys.includes(MASKED_KEY)) ||
+              isMaskedKey(p?.bearerToken)
           ))
       if (userId && needsStoredWebKeys) {
         try {
@@ -163,10 +166,10 @@ export class AiAssistProviderController {
                 const storedP = internal.webSearch.providers[name]
                 if (storedP) {
                   if (Array.isArray(p.apiKeys)) {
-                    p.apiKeys = p.apiKeys.map((k, idx) => k === '••••••••' ? (storedP.apiKeys?.[idx] || k) : k)
+                    p.apiKeys = p.apiKeys.map((k, idx) => isMaskedKey(k) ? (storedP.apiKeys?.[idx] || k) : k)
                     if (p.apiKeys.length === 0 && storedP.apiKeys?.length) p.apiKeys = storedP.apiKeys
                   }
-                  if (p.bearerToken === '••••••••' && storedP.bearerToken) {
+                  if (isMaskedKey(p.bearerToken) && storedP.bearerToken) {
                     p.bearerToken = storedP.bearerToken
                   }
                 }
@@ -222,16 +225,7 @@ export class AiAssistProviderController {
 
   listModels = async (req, res) => {
     const providerSettings = await this._resolveProviderSettings(req)
-    if (!providerSettings) {
-      return res.status(400).json({
-        error: errorPayload(
-          new ProviderError('Missing providerSettings', {
-            code: 'invalidProviderSettings',
-            status: 400,
-          })
-        ),
-      })
-    }
+    if (!providerSettings) return sendMissingProviderSettings(res)
     const controller = abortOnDisconnect(req, res)
     try {
       const client = this.clientFactory(providerSettings)
@@ -249,16 +243,7 @@ export class AiAssistProviderController {
 
   test = async (req, res) => {
     const providerSettings = await this._resolveProviderSettings(req)
-    if (!providerSettings) {
-      return res.status(400).json({
-        error: errorPayload(
-          new ProviderError('Missing providerSettings', {
-            code: 'invalidProviderSettings',
-            status: 400,
-          })
-        ),
-      })
-    }
+    if (!providerSettings) return sendMissingProviderSettings(res)
     const controller = abortOnDisconnect(req, res)
     const startedAt = Date.now()
     try {
@@ -300,17 +285,10 @@ export class AiAssistProviderController {
   editorText = (req, res) => this.relayChat(req, res, { tools: false })
 
   relayChat = async (req, res, { tools: toolsAllowed }) => {
-    let primarySettings = await this._resolveProviderSettings(req, 'providerSettings')
-    let fallbackSettings = await this._resolveProviderSettings(req, 'fallbackProviderSettings')
+    const primarySettings = await this._resolveProviderSettings(req, 'providerSettings')
+    const fallbackSettings = await this._resolveProviderSettings(req, 'fallbackProviderSettings')
     if (!primarySettings && !fallbackSettings) {
-      return res.status(400).json({
-        error: errorPayload(
-          new ProviderError('Missing providerSettings', {
-            code: 'invalidProviderSettings',
-            status: 400,
-          })
-        ),
-      })
+      return sendMissingProviderSettings(res)
     }
 
     const activePrimary = primarySettings || fallbackSettings
@@ -344,6 +322,8 @@ export class AiAssistProviderController {
     }
     const withImages = hasImages(request.messages)
     const tools = Array.isArray(request.tools) ? request.tools : []
+    const contextWindow =
+      Number(request.contextWindow) > 0 ? Number(request.contextWindow) : undefined
     if (!toolsAllowed && tools.length > 0) {
       return res.status(400).json({
         error: {
@@ -374,10 +354,7 @@ export class AiAssistProviderController {
             system: typeof request.system === 'string' ? request.system : '',
             messages: request.messages,
             maxTokens: request.maxTokens,
-            contextWindow:
-              Number(request.contextWindow) > 0
-                ? Number(request.contextWindow)
-                : undefined,
+            contextWindow,
             tools: toolsAllowed ? tools : [],
             cacheHints: request.cacheHints,
             signal: controller.signal,

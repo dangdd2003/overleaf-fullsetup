@@ -9,8 +9,7 @@ import {
 } from '@codemirror/view'
 import { learnedWords } from '@/features/source-editor/extensions/spelling/learned-words'
 import { floatingCard, floatingTooltip } from '../floating/editor-card'
-import { sameEdit } from './cache'
-import { containsEdit, displayEdit, editKind, type MaskedEdit } from './edits'
+import { containsEdit, displayEdit, editKind, type MaskedEdit, sameEdit } from './edits'
 import type { MaskedText } from './masked-text'
 import { isBlocked, readLanguageSuggestionsPreferences } from './preferences'
 import { dismissedOften, undoesAccepted } from './memory'
@@ -232,7 +231,7 @@ function cardRange(
 ): { from: number; to: number } | null {
   const value = state.field(languageSuggestionsField, false)
   if (!value) return null
-  const card = (value.cards ?? []).find(c => c.id === id)
+  const card = value.cards.find(c => c.id === id)
   if (!card) return null
   const unit = value.units.find(u => sameUnit(u, card))
   const edit = unit?.edits[card.edit]
@@ -275,7 +274,7 @@ function decorationsFor(
   docLength: number
 ): DecorationSet {
   const ranges = []
-  const activeCards = value.cards?.length ? value.cards : value.card ? [value.card] : []
+  const activeCards = value.cards
   for (const unit of value.units) {
     for (const { index, edit } of visibleEdits(unit)) {
       const { from, to } = displayRange(unit, edit)
@@ -312,7 +311,6 @@ export const languageSuggestionsField =
     }),
     update(value, tr) {
       let { units, cards, card, status, filters } = value
-      if (!cards) cards = card ? [card] : []
 
       if (tr.docChanged) {
         units = units
@@ -457,10 +455,8 @@ export const languageSuggestionsField =
       EditorView.decorations.compute([field], state =>
         decorationsFor(state.field(field), state.doc.length)
       ),
-      showTooltip.computeN([field], state => {
-        const { cards, card } = state.field(field)
-        const allCards = cards?.length ? cards : card ? [card] : []
-        return allCards.map(c => c.tooltip)
-      }),
+      showTooltip.computeN([field], state =>
+        state.field(field).cards.map(c => c.tooltip)
+      ),
     ],
   })

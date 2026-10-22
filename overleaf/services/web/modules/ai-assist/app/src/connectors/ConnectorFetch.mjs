@@ -250,7 +250,7 @@ function adminTrustedHosts() {
 }
 
 /** True when the admin named the hostname, or the address it resolved to. */
-export function isAdminTrustedPrivateDestination(hostname, address) {
+function isAdminTrustedPrivateDestination(hostname, address) {
   const trusted = adminTrustedHosts()
   const host = String(hostname ?? '')
     .replace(/^\[|\]$/g, '')
@@ -259,11 +259,20 @@ export function isAdminTrustedPrivateDestination(hostname, address) {
 }
 
 /** True when dialling `address` for `hostname` is a private destination the admin did not name. */
-export function privateDestinationRefused(hostname, address) {
+function privateDestinationRefused(hostname, address) {
   return (
     isPrivateAddress(address) &&
     !isAdminTrustedPrivateDestination(hostname, address)
   )
+}
+
+/** The origin of a URL, or null when it does not parse. */
+export function originOf(url) {
+  try {
+    return new URL(String(url)).origin
+  } catch {
+    return null
+  }
 }
 
 export function validateConnectorUrl(rawUrl) {
@@ -328,6 +337,8 @@ export function connectorLookup(hostname, options, callback) {
     }, callback)
   })
 }
+
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308])
 
 const CROSS_ORIGIN_SAFE_HEADERS = new Set([
   'accept',
@@ -411,7 +422,7 @@ export async function connectorFetch(url, options = {}) {
       const req = transport.request(currentUrl, reqOptions, res => {
         const status = res.statusCode ?? 0
         const isRedirect =
-          [301, 302, 303, 307, 308].includes(status) &&
+          REDIRECT_STATUSES.has(status) &&
           res.headers.location &&
           options.redirect !== 'manual'
 
@@ -563,7 +574,7 @@ export async function providerFetch(url, init = {}) {
   })
   if (
     redirect === 'error' &&
-    [301, 302, 303, 307, 308].includes(response.status) &&
+    REDIRECT_STATUSES.has(response.status) &&
     response.headers.has('location')
   ) {
     response.body?.destroy?.()

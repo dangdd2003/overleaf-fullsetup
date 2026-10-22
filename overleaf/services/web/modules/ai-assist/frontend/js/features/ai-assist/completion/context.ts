@@ -80,7 +80,7 @@ const LABEL = /\\label\s*\{([^}]+)\}/g
 const CITE =
   /\\(?:[A-Za-z]*cite[A-Za-z]*|nocite)\*?\s*(?:\[[^\]]*\]\s*){0,2}\{([^}]+)\}/g
 
-function oneLine(text: string, max: number): string {
+export function oneLine(text: string, max: number): string {
   const flat = text.replace(/\s+/g, ' ').trim()
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat
 }
@@ -97,7 +97,7 @@ function keysNear(masked: string, pattern: RegExp, pos: number, max: number): st
   for (const match of masked.matchAll(pattern)) {
     for (const key of match[1].split(',')) found.push({ key: key.trim(), at: match.index! })
   }
-  const keys = distinct(found.map(entry => entry.key), Infinity)
+  const keys = distinct(found.map(entry => entry.key))
   if (keys.length <= max) return keys
   const distance = new Map<string, number>()
   for (const { key, at } of found) {
@@ -107,10 +107,9 @@ function keysNear(masked: string, pattern: RegExp, pos: number, max: number): st
   return keys.filter(key => nearest.has(key))
 }
 
-function distinct(values: Iterable<string>, max: number): string[] {
+function distinct(values: Iterable<string>): string[] {
   const seen = new Set<string>()
   for (const value of values) {
-    if (seen.size >= max) break
     const key = value.trim()
     if (key) seen.add(key)
   }
@@ -145,10 +144,7 @@ export function completionFacts(doc: string, pos: number): CompletionFacts {
   return {
     docClass: documentClassOf(doc),
     language,
-    packages: distinct(
-      [...masked.matchAll(PACKAGE)].flatMap(match => match[1].split(',')),
-      Infinity
-    ),
+    packages: distinct([...masked.matchAll(PACKAGE)].flatMap(match => match[1].split(','))),
     macros,
     ...(title ? { title: oneLine(title, MAX_TITLE) } : {}),
     ...(abstract && abstract.trim() ? { abstract: oneLine(stripComments(abstract), MAX_ABSTRACT) } : {}),

@@ -30,14 +30,6 @@ export function connectorErrorMessage(error: unknown, fallback: string) {
   return fallback
 }
 
-export function connectorErrorCode(error: unknown): string | undefined {
-  if (error instanceof FetchError) {
-    const code = error.data?.code
-    if (typeof code === 'string') return code
-  }
-  return undefined
-}
-
 export function listConnectors() {
   return getJSON<{ connectors: ConnectorView[]; meta: ConnectorsMeta }>(
     '/ai-assist/connectors'

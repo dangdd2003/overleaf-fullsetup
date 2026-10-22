@@ -1,4 +1,5 @@
-import { maskComments, matchingBrace } from '../texgpt/latex-text'
+import { escapeRegExp, maskComments, matchingBrace } from '../texgpt/latex-text'
+import { oneLine } from './context'
 import type { CompletionKind } from './detect'
 import { ALL_FLOAT_ENVS, ALL_MATH_ENVS, ALL_TABLE_ENVS, EnvRole, envRole } from './structure'
 
@@ -183,7 +184,7 @@ function argumentAt(masked: string, doc: string, from: number): { text: string; 
   return close === -1 ? null : { text: doc.slice(i + 1, close), end: close + 1 }
 }
 
-export type SuffixStructure =
+type SuffixStructure =
   | { type: 'env'; name: string }
   | { type: 'section'; name: string }
   | { type: 'math' }
@@ -191,7 +192,7 @@ export type SuffixStructure =
   | null
 
 /** Detects the immediate next LaTeX structure in the suffix after the cursor. */
-export function nextStructureInSuffix(after: string): SuffixStructure {
+function nextStructureInSuffix(after: string): SuffixStructure {
   const cleaned = maskComments(after).trimStart()
   const envMatch = /^\\begin\s*\{([^}]+)\}/.exec(cleaned)
   if (envMatch) return { type: 'env', name: envMatch[1].trim() }
@@ -240,11 +241,6 @@ const RULES = /\\(?:hline|midrule|toprule|bottomrule|cline\{[^}]*\}|cmidrule(?:\
 
 function stripRules(row: string): string {
   return maskComments(row).replace(RULES, '').replace(/\s+/g, ' ').trim()
-}
-
-function oneLine(text: string, max: number): string {
-  const flat = text.replace(/\s+/g, ' ').trim()
-  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat
 }
 
 function rowsInfo(env: { name: string; at: number }, doc: string, masked: string, pos: number): RowsInfo {
@@ -372,7 +368,7 @@ export function describeCursor(
       name: env.name,
       role: envRole(env.name, doc),
       begin: doc.slice(env.at, lineEndAt === -1 ? undefined : Math.min(lineEndAt, env.at + 160)).trim(),
-      closedAfter: new RegExp(`\\\\end\\s*\\{${env.name.replace(/[*]/g, '\\*')}\\}`).test(maskedAfter),
+      closedAfter: new RegExp(`\\\\end\\s*\\{${escapeRegExp(env.name)}\\}`).test(maskedAfter),
     }
   })
   const innermost = envs[envs.length - 1] ?? null
@@ -432,7 +428,12 @@ export function describeCursor(
 
   const where = envs.length > 0 ? envs.map(env => env.name).join(' > ') : 'the body text'
   const parts: string[] = []
-  const textArgument = argumentOf ? TEXT_ARGUMENTS[argumentOf.replace(/\*$/, '')] : undefined
+  const argumentName = argumentOf?.replace(/\*$/, '')
+  // Own keys only: `\constructor{` must not find Object.prototype's
+  const textArgument =
+    argumentName !== undefined && Object.prototype.hasOwnProperty.call(TEXT_ARGUMENTS, argumentName)
+      ? TEXT_ARGUMENTS[argumentName]
+      : undefined
   const closeNote = argumentClosed
     ? ' Its closing brace is already after the cursor: stop before it.'
     : ' Close it with } once it is complete, and stop there.'

@@ -9,23 +9,39 @@ export type ConnectorStatus =
   | 'disconnected'
   | 'pending'
 
-export type ConnectorTransport = 'auto' | 'streamable-http' | 'sse'
+export const CONNECTOR_TRANSPORTS = ['auto', 'streamable-http', 'sse'] as const
+export type ConnectorTransport = (typeof CONNECTOR_TRANSPORTS)[number]
 
 /**
  * 'auto' signs in when the server asks (sign in when needed), 'oauth' signs
  * in before connecting (sign in now), 'none' never signs in.
  */
-export type ConnectorAuthMode = 'auto' | 'oauth' | 'none'
+export const CONNECTOR_AUTH_MODES = ['auto', 'oauth', 'none'] as const
+export type ConnectorAuthMode = (typeof CONNECTOR_AUTH_MODES)[number]
 
-export type OAuthClientMode = 'auto' | 'cimd' | 'dcr' | 'custom'
+export const OAUTH_CLIENT_MODES = ['auto', 'cimd', 'dcr', 'custom'] as const
+export type OAuthClientMode = (typeof OAUTH_CLIENT_MODES)[number]
 
+export const TOKEN_ENDPOINT_AUTH_METHODS = [
+  'auto',
+  'client_secret_basic',
+  'client_secret_post',
+  'none',
+] as const
 export type TokenEndpointAuthMethod =
-  | 'auto'
-  | 'client_secret_basic'
-  | 'client_secret_post'
-  | 'none'
+  (typeof TOKEN_ENDPOINT_AUTH_METHODS)[number]
 
-export type ToolPermission = 'allow' | 'ask' | 'block'
+export const TOOL_PERMISSIONS = ['allow', 'ask', 'block'] as const
+export type ToolPermission = (typeof TOOL_PERMISSIONS)[number]
+
+export function isOneOf<T extends string>(
+  values: readonly T[],
+  value: unknown
+): value is T {
+  return (
+    typeof value === 'string' && (values as readonly unknown[]).includes(value)
+  )
+}
 
 /** A known server's sign-in (Google's remote MCP servers). */
 export type ConnectorPreset = {
@@ -173,12 +189,4 @@ export type ConnectorOAuthMessage = {
   connectorId: string
   status: 'connected' | 'error'
   error?: string
-}
-
-/** The connector details the run attaches to a connector tool call. */
-export type ConnectorCallInfo = {
-  id: string
-  name: string
-  tool: string
-  title?: string
 }

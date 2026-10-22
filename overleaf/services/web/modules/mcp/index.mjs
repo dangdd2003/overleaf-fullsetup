@@ -1,4 +1,3 @@
-import './app/src/ModuleSettings.mjs'
 import Settings from '@overleaf/settings'
 import logger from '@overleaf/logger'
 import McpRouter from './app/src/McpRouter.mjs'

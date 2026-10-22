@@ -63,6 +63,7 @@ import { SelectionScope } from "../../agent/starters/selection-types";
 import { SelectionQuickActions } from "./selection-quick-actions";
 import { useChatConnectors } from "../../connectors/use-chat-connectors";
 import {
+  SLASH_COMMANDS,
   filterSlashCommands,
   findSlashCommand,
   parseSlashInput,
@@ -187,7 +188,7 @@ type SlashMenuItem =
   | { kind: "model"; command: SlashCommandDefinition }
   | { kind: "local"; command: LocalSlashCommand };
 
-export function getSlashCommandIcon(id: SlashCommandId) {
+function getSlashCommandIcon(id: SlashCommandId) {
   switch (id) {
     case "fix":
       return Wrench;
@@ -223,6 +224,10 @@ export function getSlashCommandIcon(id: SlashCommandId) {
       return ChatCircleText;
   }
 }
+
+const KNOWN_SLASH_COMMAND_IDS = new Set<string>(
+  SLASH_COMMANDS.map((c) => c.id),
+);
 
 export function AgentComposer({
   running,
@@ -330,9 +335,7 @@ export function AgentComposer({
         return;
       }
       const remaining = ranges.filter((_, i) => i !== index);
-      if (remaining.length === 0) {
-        setAttachedSelection(null);
-      } else if (remaining.length === 1) {
+      if (remaining.length === 1) {
         const single = remaining[0];
         setAttachedSelection({
           path: attachedSelection.path,
@@ -424,7 +427,6 @@ export function AgentComposer({
   }, []);
 
   useEffect(() => {
-    autoResize();
     const el = textareaRef.current;
     if (!el) return;
 
@@ -449,6 +451,10 @@ export function AgentComposer({
       window.removeEventListener("resize", handleResize);
       if (ro) ro.disconnect();
     };
+  }, [autoResize]);
+
+  useEffect(() => {
+    autoResize();
   }, [value, disabled, autoResize]);
 
   const modeConfig: Record<
@@ -577,9 +583,7 @@ export function AgentComposer({
     setValue((current) => (current.startsWith("/") ? current : `/${current}`));
     setSlashQuery("");
     setSlashIndex(0);
-    const nextLen = value.startsWith("/")
-      ? value.length
-      : value ? value.length + 1 : 1;
+    const nextLen = value.startsWith("/") ? value.length : value.length + 1;
     setCaretToEnd(nextLen);
     textareaRef.current?.focus();
   };
@@ -613,7 +617,7 @@ export function AgentComposer({
   const slashOpen = slashItems.length > 0;
   const activeSlash = Math.min(slashIndex, slashItems.length - 1);
   const topUsedIds = useMemo(
-    () => (slashOpen ? getTopUsedCommandIds(3) : []),
+    () => (slashOpen ? getTopUsedCommandIds(3, KNOWN_SLASH_COMMAND_IDS) : []),
     [slashOpen],
   );
 
@@ -730,12 +734,13 @@ export function AgentComposer({
     pdfTurn.selections.length > 0 || pdfTurn.areas.length > 0;
   const hasPdfChips = hasPdfContent || pdfTurn.pendingAreas > 0;
 
-  const hasContent =
-    Boolean(value.trim()) ||
+  const hasSendableContent = (text: string) =>
+    Boolean(text) ||
     attachments.length > 0 ||
     attachedSelection !== null ||
     images.length > 0 ||
     hasPdfContent;
+  const hasContent = hasSendableContent(value.trim());
 
   /**
    * A local command is run here and never sent: the input is cleared, the
@@ -796,15 +801,7 @@ export function AgentComposer({
       );
       return;
     }
-    if (
-      !trimmed &&
-      attachments.length === 0 &&
-      !attachedSelection &&
-      images.length === 0 &&
-      !hasPdfContent
-    ) {
-      return;
-    }
+    if (!hasSendableContent(trimmed)) return;
     const chatImages: ChatImage[] = images.map((img) => ({
       mediaType: img.mediaType,
       data: img.data,

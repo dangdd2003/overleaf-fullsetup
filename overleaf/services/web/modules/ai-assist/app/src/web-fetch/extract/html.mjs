@@ -482,6 +482,8 @@ function sanitizedHtmlToMarkdown(html, baseUrl) {
   // Open inline-code wraps, kept as a count: scanning `wraps` for each tag
   // would make deeply nested markup quadratic
   let codeDepth = 0
+  // Open wraps per tag name, so a closing tag with none open skips the scan
+  const openCounts = new Map()
 
   const inCell = () => table !== null && table.cellAt !== null
   const inInlineCode = () => codeDepth > 0
@@ -574,16 +576,18 @@ function sanitizedHtmlToMarkdown(html, baseUrl) {
         // Markup inside inline code is part of the code
         if (!inInlineCode()) {
           wraps.push({ name, at: out.length })
+          openCounts.set(name, (openCounts.get(name) ?? 0) + 1)
           if (INLINE_CODE_TAGS.has(name)) codeDepth++
         }
         continue
       }
+      if (!(openCounts.get(name) > 0)) continue
       const index = wraps.findLastIndex(wrap => wrap.name === name)
-      if (index === -1) continue
       // The wrap closes with any wraps opened inside it, which are closed with it
       const removed = wraps.splice(index)
       const wrap = removed[0]
       for (const each of removed) {
+        openCounts.set(each.name, openCounts.get(each.name) - 1)
         if (INLINE_CODE_TAGS.has(each.name)) codeDepth--
       }
       const inner = out.splice(wrap.at).join('')
@@ -810,16 +814,7 @@ export function extractPageDates(html) {
 /** Title and Markdown body of an HTML page, and its dates when it has them. */
 export function htmlToMarkdown(html, baseUrl) {
   const titleMatch = /<title\b[^<>]*>([^<]*)<\/title\s*>/i.exec(html)
-  const title = titleMatch
-    ? collapse(
-        unescapeHtml(
-          sanitizeHtml(titleMatch[1], {
-            allowedTags: [],
-            allowedAttributes: {},
-          })
-        )
-      )
-    : ''
+  const title = titleMatch ? htmlText(titleMatch[1]) : ''
   const chosen = withoutHiddenElements(
     semanticMainHtml(html) ?? readableHtml(html) ?? bodyHtml(html)
   )

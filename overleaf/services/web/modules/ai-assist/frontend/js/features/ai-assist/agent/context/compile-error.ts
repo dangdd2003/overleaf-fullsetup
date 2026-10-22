@@ -16,7 +16,7 @@ export type LogIndexEntry = {
 
 const MAX_LOCATIONS = 20
 
-function plural(count: number, noun: string) {
+export function plural(count: number, noun: string) {
   return `${count} ${noun}${count === 1 ? '' : 's'}`
 }
 

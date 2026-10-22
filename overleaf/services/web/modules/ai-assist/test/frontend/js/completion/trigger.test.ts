@@ -21,10 +21,12 @@ import {
   updateInlineSuggestionsPreferences,
 } from '../../../../frontend/js/features/ai-assist/inline-suggestion/preferences'
 import { completeAtCursor, THINKING_ALLOWANCE } from '../../../../frontend/js/features/ai-assist/completion/trigger'
-import { COMPLETION_SYSTEM, CURSOR } from '../../../../frontend/js/features/ai-assist/completion/prompt'
+import { COMPLETION_SYSTEM } from '../../../../frontend/js/features/ai-assist/completion/prompt'
 import { resetCompletionRate } from '../../../../frontend/js/features/ai-assist/completion/rate'
 
 const CHAT = '/ai-assist/providers/editor'
+/** The cursor marker the excerpt carries (prompt.ts). */
+const CURSOR = '<cursor/>'
 
 function ndjson(...chunks: object[]) {
   return {

@@ -19,8 +19,9 @@ const IMAGE_MEDIA_TYPES = new Set([
 ])
 
 import {
-  estimateImageTokens,
+  IMAGE_TOKEN_FALLBACK,
   imagePolicyFor,
+  imageTokenCost,
 } from './AiAssistImagePolicy.mjs'
 
 const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/
@@ -128,6 +129,23 @@ export function hasImages(messages) {
   )
 }
 
+/** Why one image is refused on its own (type, base64 and size); null when it is fine. */
+function imageItemProblem(image) {
+  if (!image || typeof image !== 'object') return 'Invalid image.'
+  if (!IMAGE_MEDIA_TYPES.has(image.mediaType)) return 'Unsupported image type.'
+  if (typeof image.data !== 'string' || image.data.length === 0) {
+    return 'Image data must be base64.'
+  }
+  if (image.data.length > Math.ceil((MAX_IMAGE_BYTES * 4) / 3) + 4) {
+    return 'Image is too large.'
+  }
+  if (image.data.length % 4 !== 0 || !BASE64.test(image.data)) {
+    return 'Image data must be base64.'
+  }
+  if (decodedBytes(image.data) > MAX_IMAGE_BYTES) return 'Image is too large.'
+  return null
+}
+
 /** Why the images of a chat request are refused; null when they are fine or absent. */
 export function imageProblem(messages) {
   if (!Array.isArray(messages)) return null
@@ -142,18 +160,8 @@ export function imageProblem(messages) {
       if (count > MAX_IMAGES_PER_REQUEST) {
         return `At most ${MAX_IMAGES_PER_REQUEST} images per request.`
       }
-      if (!image || typeof image !== 'object') return 'Invalid image.'
-      if (!IMAGE_MEDIA_TYPES.has(image.mediaType)) return 'Unsupported image type.'
-      if (typeof image.data !== 'string' || image.data.length === 0) {
-        return 'Image data must be base64.'
-      }
-      if (image.data.length > Math.ceil((MAX_IMAGE_BYTES * 4) / 3) + 4) {
-        return 'Image is too large.'
-      }
-      if (image.data.length % 4 !== 0 || !BASE64.test(image.data)) {
-        return 'Image data must be base64.'
-      }
-      if (decodedBytes(image.data) > MAX_IMAGE_BYTES) return 'Image is too large.'
+      const problem = imageItemProblem(image)
+      if (problem) return problem
     }
   }
   return null
@@ -191,7 +199,7 @@ const CONTEXT_IMAGE_SLACK = 4
  * What one image costs in context when its size is unknown. A known size is
  * priced by estimateImageTokens in AiAssistImagePolicy.mjs.
  */
-export const IMAGE_TOKEN_ESTIMATE = 1600
+export const IMAGE_TOKEN_ESTIMATE = IMAGE_TOKEN_FALLBACK
 
 /**
  * Splits the image off a tool result: `result` keeps the image's description
@@ -235,12 +243,11 @@ export function detachToolImages(result, policy = null) {
     if (choice) {
       if (choice.detail) out.detail = choice.detail
       if (choice.mediaResolution) out.mediaResolution = choice.mediaResolution
-      out.tokens = estimateImageTokens({
+      out.tokens = imageTokenCost({
         width: out.width,
         height: out.height,
         provider: policy.provider,
         model: policy.model,
-        detail: choice.mediaResolution ?? choice.detail,
       })
     }
     return out
@@ -345,7 +352,7 @@ export function messageImagesProblem(images) {
     return `At most ${MAX_MESSAGE_IMAGES} images per message.`
   }
   for (const image of images) {
-    const problem = imageProblem([{ role: 'user', images: [image] }])
+    const problem = imageItemProblem(image)
     if (problem) return problem
   }
   return null

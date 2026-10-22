@@ -13,9 +13,8 @@ export interface DraftMcpConfig {
 }
 
 export function isSensitiveHeaderKey(key: string): boolean {
-  if (!key || typeof key !== "string") return false;
   return /^(proxy-)?authorization$|api-?key|token|secret|bearer|password/.test(
-    key.trim().toLowerCase(),
+    key.trim().toLowerCase()
   );
 }
 

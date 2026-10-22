@@ -81,7 +81,9 @@ export function useFloatingBox({
   })
 }
 
+export type Side = 'top' | 'bottom' | 'left' | 'right'
+
 /** The side a placement opens to, for `data-placement`. */
-export function placementSide(placement: Placement): string {
-  return placement.split('-')[0]
+export function placementSide(placement: Placement): Side {
+  return placement.split('-')[0] as Side
 }

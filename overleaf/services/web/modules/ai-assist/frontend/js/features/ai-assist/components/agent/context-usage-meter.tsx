@@ -24,7 +24,7 @@ function tickPath(fraction: number): string {
   return `M${point(RING_RADIUS - TICK_HALF)}L${point(RING_RADIUS + TICK_HALF)}`;
 }
 
-export type ContextUsageMeterProps = {
+type ContextUsageMeterProps = {
   snapshot: ContextUsageSnapshot | null;
   /** Whether the popover is open; the button then shows its active state. */
   open?: boolean;

@@ -87,38 +87,6 @@ export function okResult({ summary, data = {}, text, warnings, nextSteps }) {
 }
 
 /**
- * Map items through an async function with at most `limit` calls in flight,
- * returning the results in input order. A project can hold far more documents
- * than it is sensible to request at once, so fan-out goes through this.
- *
- * The first failure stops the remaining items from starting and rejects.
- *
- * @template T, R
- * @param {T[]} items
- * @param {number} limit
- * @param {(item: T, index: number) => Promise<R>} fn
- * @returns {Promise<R[]>}
- */
-export async function mapLimit(items, limit, fn) {
-  const results = new Array(items.length)
-  let next = 0
-  const worker = async () => {
-    while (next < items.length) {
-      const index = next++
-      try {
-        results[index] = await fn(items[index], index)
-      } catch (err) {
-        next = items.length
-        throw err
-      }
-    }
-  }
-  const workers = Array.from({ length: Math.min(limit, items.length) }, worker)
-  await Promise.all(workers)
-  return results
-}
-
-/**
  * Attach extra content blocks (e.g. a binary `resource`) to an envelope.
  *
  * @param {ReturnType<typeof okResult>} result

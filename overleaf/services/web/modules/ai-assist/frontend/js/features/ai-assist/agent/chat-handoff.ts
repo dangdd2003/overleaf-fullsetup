@@ -75,7 +75,7 @@ export function takePendingHandoff(projectId: string): ChatHandoff | null {
   return stored
 }
 
-export function clearPendingHandoff(projectId: string): void {
+function clearPendingHandoff(projectId: string): void {
   try {
     customLocalStorage.removeItem(keyFor(projectId))
   } catch {}

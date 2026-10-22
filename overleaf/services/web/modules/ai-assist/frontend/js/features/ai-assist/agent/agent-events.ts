@@ -1,4 +1,4 @@
-import { EditRequest } from './project-handle'
+import { EditOutcome, EditRequest } from './project-handle'
 import { ChatImage, ProviderErrorCode, ProviderRetry } from '../providers/types'
 import { AgentMode } from './agent-mode'
 import { CompactEntry, ContextTrim } from './agent-messages'
@@ -26,6 +26,13 @@ export type ConnectorApproval = {
   toolName: string
   toolTitle?: string
   args?: Record<string, unknown>
+}
+
+export type ApprovalDecision = {
+  accepted: boolean
+  always?: boolean
+  note?: string
+  nextMode?: AgentMode
 }
 
 /** What the chat shows while an approval is pending, beyond the call itself. */
@@ -129,9 +136,20 @@ export type AgentEvent =
       message: string
       status?: number
       hint?: string
-      upstreamCode?: string
-      upstreamType?: string
     }
+
+export type AppliedEdit = Extract<EditOutcome, { status: 'applied' }> & {
+  mode?: AgentMode
+  detached?: boolean
+}
+
+export function isAppliedEdit(result: unknown): result is AppliedEdit {
+  return (
+    typeof result === 'object' &&
+    result !== null &&
+    (result as { status?: unknown }).status === 'applied'
+  )
+}
 
 /**
  * Tells the editor to glow the lines an applied `edit_file` / `create_file`
@@ -139,13 +157,13 @@ export type AgentEvent =
  */
 export function dispatchAiEditHighlight(
   name: string,
-  result: any,
+  result: unknown,
   mode: AgentMode = 'manual',
   detached?: boolean
 ) {
   if (
     (name !== 'edit_file' && name !== 'create_file') ||
-    result?.status !== 'applied'
+    !isAppliedEdit(result)
   ) {
     return
   }

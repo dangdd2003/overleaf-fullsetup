@@ -20,7 +20,7 @@ import {
 } from '../agent/context/fix-system-prompt'
 import { prepareFixWebTools } from '../agent/tools/fix-web-tools'
 import { collectWebSources } from '../agent/web-sources'
-import { resolveLimits } from '../providers/types'
+import { resolveLimits, ProviderErrorCode } from '../providers/types'
 import {
   getStoredFix,
   saveStoredFix,
@@ -32,6 +32,7 @@ import { EditRequest } from '../agent/project-handle'
 import {
   TranscriptEntry,
   AssistantBlock,
+  ToolCallRecord,
   blocksForEntry,
 } from '../agent/agent-messages'
 import { renderFixHandoff } from '../agent/context/fix-handoff'
@@ -58,18 +59,13 @@ function providerHost() {
   }
 }
 
-const ERROR_MESSAGES: Record<string, string> = {
+const ERROR_MESSAGES: Partial<Record<ProviderErrorCode | 'unknown' | 'noProvider', string>> = {
   providerAuth:
     'Your AI provider rejected the API key. Check it in Account Settings.',
   providerError:
     'The AI provider could not complete this request. Please try again.',
   providerTimeout: 'The AI provider did not respond in time. Please try again.',
-  consentRequired: 'You need to allow AI features before using this.',
   noProvider: 'No AI provider is configured. Add one in Account Settings.',
-  quotaExhausted: 'You have reached your AI usage limit for today.',
-  forbidden: 'You do not have access to this project.',
-  badRequest:
-    'This request could not be sent. Check your project and try again.',
   contextExhausted: 'The project is too large for the AI provider to process.',
   network: 'Could not reach the server.',
   unknown: 'Something went wrong.',
@@ -77,15 +73,27 @@ const ERROR_MESSAGES: Record<string, string> = {
 
 function errorMessage(code?: string | null, message?: string | null) {
   if (message && message !== 'The provider request failed.') return message
-  if (code && ERROR_MESSAGES[code]) return ERROR_MESSAGES[code]
-  return message || ERROR_MESSAGES.unknown
+  if (code && code in ERROR_MESSAGES) {
+    return ERROR_MESSAGES[code as keyof typeof ERROR_MESSAGES]
+  }
+  return message || ERROR_MESSAGES.unknown!
+}
+
+type FixLogEntry = {
+  id?: string
+  key?: string
+  file?: string
+  line?: number | string | null
+  message?: string
+  level?: string
+  raw?: string | null
 }
 
 export default function SuggestFixPanel({
   logEntry,
   forceCollapsed,
 }: {
-  logEntry?: any
+  logEntry?: FixLogEntry
   /**
    * Always start folded, ignoring whatever `collapsed` value the run last
    * persisted. The global "Last suggested fix" banner reopens a fix whose
@@ -107,6 +115,12 @@ export default function SuggestFixPanel({
   const fileName = logEntry?.file || 'main.tex'
   const cleanFileName = fileName.replace(/^\.?\//, '')
   const displayFileName = fileName.split('/').pop() || fileName
+  const lineNum =
+    typeof logEntry?.line === 'number'
+      ? logEntry.line
+      : typeof logEntry?.line === 'string'
+        ? parseInt(logEntry.line, 10) || null
+        : null
 
   const fingerprint = useMemo(
     () => buildLogEntryFingerprint(logEntry),
@@ -342,7 +356,7 @@ export default function SuggestFixPanel({
         message: logEntry?.message ?? '',
         raw: logEntry?.raw ?? null,
         file: logEntry?.file ?? null,
-        line: logEntry?.line ?? null,
+        line: lineNum,
       },
       others,
     })
@@ -412,43 +426,49 @@ export default function SuggestFixPanel({
       decision: { accepted: boolean; note?: string }
     ) => {
       const startLine = approvalContext?.startLine ?? 1
-      const nextDecided = {
-        ...decidedEdits,
+      setDecidedEdits(prev => ({
+        ...prev,
         [callId]: {
           path: edit.path,
           startLine,
           accepted: decision.accepted,
         },
-      }
-      setDecidedEdits(nextDecided)
-      if (entryId) {
-        saveStoredFix(projectId, {
-          entryId,
-          fingerprint,
-          open,
-          collapsed,
-          transcript: state.transcript,
-          running,
-          error,
-          feedback,
-          decidedEdits: nextDecided,
-          updatedAt: Date.now(),
-        })
-      }
+      }))
     },
-    [
-      approvalContext,
-      decidedEdits,
-      entryId,
-      fingerprint,
-      open,
-      collapsed,
-      projectId,
-      running,
-      error,
-      state.transcript,
-      feedback,
-    ]
+    [approvalContext]
+  )
+
+  // accepted / rejected once decided, null while undecided
+  const decisionOf = useCallback(
+    (call: ToolCallRecord | undefined): 'accepted' | 'rejected' | null => {
+      const result = call?.result as { status?: string } | undefined
+      const callId = call?.id
+      if (
+        result?.status === 'applied' ||
+        (callId ? decidedEdits[callId]?.accepted === true : false)
+      ) {
+        return 'accepted'
+      }
+      if (
+        result?.status === 'rejected' ||
+        (callId ? decidedEdits[callId]?.accepted === false : false)
+      ) {
+        return 'rejected'
+      }
+      return null
+    },
+    [decidedEdits]
+  )
+
+  // A decided edit collapses to its receipt below, so its diff
+  // is kept out of the activity group
+  const isDecidedEdit = useCallback(
+    (item: AssistantBlock) =>
+      item.type === 'tool_call' &&
+      (item.call.name === 'edit_file' || item.call.name === 'create_file') &&
+      item.call.id !== state.pendingApproval?.id &&
+      decisionOf(item.call) !== null,
+    [state.pendingApproval?.id, decisionOf]
   )
 
   const pendingEdit = state.pendingApproval?.edit
@@ -510,7 +530,7 @@ export default function SuggestFixPanel({
       entryId: entryId ?? fileName,
       level: entryKind,
       file: logEntry?.file ?? null,
-      line: logEntry?.line ?? null,
+      line: lineNum,
       message: logEntry?.message ?? '',
       text:
         `Let's keep working on the compile ${entryKind} in ${location}` +
@@ -590,7 +610,7 @@ export default function SuggestFixPanel({
           entryId,
           fingerprint,
           file: fileName,
-          line: logEntry?.line ?? null,
+          line: lineNum,
           message: logEntry?.message ?? '',
           level: entryKind,
         })
@@ -617,6 +637,8 @@ export default function SuggestFixPanel({
       )
     }
   }, [entryId, error, running])
+
+  const lastEntry = state.transcript.at(-1)
 
   // The title only tracks the coarse stage of the run — requesting, working,
   // done — not the granular activity ("Reading main.tex…", "Searching
@@ -659,11 +681,6 @@ export default function SuggestFixPanel({
                     ? 'Connection Error'
                     : 'AI Provider Error'}
             </span>
-            {error.upstreamCode && (
-              <span className="ai-assist-error-badge">
-                {error.upstreamCode}
-              </span>
-            )}
           </div>
           <div className="ai-assist-error-body">
             <p className="ai-assist-error-message">
@@ -816,32 +833,6 @@ export default function SuggestFixPanel({
                         item.call.name === 'create_file')
                   )
 
-                  // accepted / rejected once decided, null while undecided
-                  const decisionOf = (call: any): 'accepted' | 'rejected' | null => {
-                    const result = call?.result as any
-                    if (
-                      result?.status === 'applied' ||
-                      decidedEdits[call?.id]?.accepted === true
-                    ) {
-                      return 'accepted'
-                    }
-                    if (
-                      result?.status === 'rejected' ||
-                      decidedEdits[call?.id]?.accepted === false
-                    ) {
-                      return 'rejected'
-                    }
-                    return null
-                  }
-                  // A decided edit collapses to its receipt below, so its diff
-                  // is kept out of the activity group
-                  const isDecidedEdit = (item: AssistantBlock) =>
-                    item.type === 'tool_call' &&
-                    (item.call.name === 'edit_file' ||
-                      item.call.name === 'create_file') &&
-                    item.call.id !== state.pendingApproval?.id &&
-                    decisionOf(item.call) !== null
-
                   const firstItem = segment.items[0]
                   const firstItemId =
                     firstItem?.type === 'tool_call'
@@ -897,10 +888,12 @@ export default function SuggestFixPanel({
                         const isAccepted = decision === 'accepted'
 
                         if (decision) {
-                          const editPath =
-                            (editItem.call.args as any)?.path ?? fileName
+                          const args = editItem.call.args as
+                            | { path?: string; from?: number }
+                            | undefined
+                          const editPath = args?.path ?? fileName
                           const startLine =
-                            (editItem.call.args as any)?.from ??
+                            args?.from ??
                             approvalContext?.startLine ??
                             1
                           return (
@@ -960,17 +953,15 @@ export default function SuggestFixPanel({
               isRunning={true}
               isPaused={Boolean(state.pendingApproval)}
               onWordChange={handleWordChange}
-              blocks={(() => {
-                const last = isWorking ? state.transcript.at(-1) : null
-                return last?.role === 'assistant' ? (last.blocks ?? []) : []
-              })()}
+              blocks={
+                lastEntry?.role === 'assistant' ? (lastEntry.blocks ?? []) : []
+              }
             />
           ) : completedRun &&
             !isWorking &&
             !state.pendingApproval &&
             !error &&
-            state.transcript.length > 0 &&
-            state.transcript.at(-1)?.role === 'assistant' ? (
+            lastEntry?.role === 'assistant' ? (
             <AgentStatusLine
               startedAt={Date.now() - completedRun.durationMs}
               durationMs={completedRun.durationMs}

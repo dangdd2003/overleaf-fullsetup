@@ -110,4 +110,53 @@ describe('regexSearchLines', () => {
     })
     expect(hits).toEqual([{ doc: 0, line: 0 }])
   })
+
+  it('limits concurrent searches per owner while allowing searches from another owner', async () => {
+    const controller = new AbortController()
+    const ownerA = 'user_A'
+    const ownerB = 'user_B'
+
+    const running = [
+      regexSearchLines({
+        query: '^(a+)+$',
+        caseSensitive: true,
+        docs: [[`${'a'.repeat(40)}!`]],
+        limit: 1,
+        signal: controller.signal,
+        ownerId: ownerA,
+      }).catch(e => e),
+      regexSearchLines({
+        query: '^(a+)+$',
+        caseSensitive: true,
+        docs: [[`${'a'.repeat(40)}!`]],
+        limit: 1,
+        signal: controller.signal,
+        ownerId: ownerA,
+      }).catch(e => e),
+    ]
+
+    // Third search for ownerA should be rejected with SearchBusyError
+    const errOwnerA = await regexSearchLines({
+      query: 'a',
+      caseSensitive: true,
+      docs: [['a']],
+      limit: 1,
+      ownerId: ownerA,
+    }).catch(e => e)
+    expect(errOwnerA.name).toBe('SearchBusyError')
+
+    // But ownerB should still be able to search successfully
+    const hitsOwnerB = await regexSearchLines({
+      query: 'a',
+      caseSensitive: true,
+      docs: [['a']],
+      limit: 1,
+      ownerId: ownerB,
+    })
+    expect(hitsOwnerB).toEqual([{ doc: 0, line: 0 }])
+
+    controller.abort()
+    const outcomes = await Promise.all(running)
+    expect(outcomes.every(e => e.name === 'AbortError')).toBe(true)
+  })
 })

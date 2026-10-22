@@ -7,6 +7,8 @@ const ENDPOINT_PATH = '/mcp'
 const MAX_BODY_MB = 70
 /** Where the HTTP transport reaches web, inside the container. */
 export const WEB_INTERNAL_URL = 'http://127.0.0.1:4000'
+/** The MCP endpoint's own URL on the listen address, for when no config names one. */
+export const DEFAULT_RESOURCE_URI = `http://localhost:${LISTEN_PORT}${ENDPOINT_PATH}`
 // The loopback names the SDK itself trusts. The service also serves the site
 // hostname nginx forwards, and web calls it on loopback.
 const LOCAL_HOSTS = ['127.0.0.1', 'localhost', '[::1]']

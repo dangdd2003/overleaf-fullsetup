@@ -134,8 +134,8 @@ export class AiAssistRunStore {
     // Nobody at all is watching now: start the orphan clock. The reaper reads this.
     if (count === 0) {
       const other = this._watchField(!follower)
-      const run = await rclient.hgetall(this._key(runId))
-      if (!Number(run?.[other] || 0)) {
+      const otherCount = await rclient.hget(this._key(runId), other)
+      if (!Number(otherCount || 0)) {
         await rclient.hset(this._key(runId), 'zeroSince', String(Date.now()))
       }
     }
@@ -143,8 +143,9 @@ export class AiAssistRunStore {
   }
 
   async getWatcherCount(runId) {
-    const run = await this.getRun(runId)
-    return Number(run?.watchers || 0)
+    const rclient = this.getClient()
+    if (!rclient) return 0
+    return Number((await rclient.hget(this._key(runId), 'watchers')) || 0)
   }
 
   async setZeroSince(runId, ms) {
@@ -202,10 +203,10 @@ export class AiAssistRunStore {
     this._lastHeartbeats.delete(runId)
     // Sweep expired runs only when the map is full: a full scan on every touch is O(runs)
     if (this._lastHeartbeats.size >= MAX_HEARTBEAT_ENTRIES) {
+      // Map order is last-touch order, so the expired entries come first
       for (const [cachedRunId, timestamp] of this._lastHeartbeats) {
-        if (now - timestamp >= RUN_TTL_SECONDS * 1000) {
-          this._lastHeartbeats.delete(cachedRunId)
-        }
+        if (now - timestamp < RUN_TTL_SECONDS * 1000) break
+        this._lastHeartbeats.delete(cachedRunId)
       }
     }
     while (this._lastHeartbeats.size >= MAX_HEARTBEAT_ENTRIES) {
@@ -221,7 +222,9 @@ export class AiAssistRunStore {
     const seqKey = `${this._key(runId)}:seq`
     const seq = await rclient.incr(seqKey)
     const payload = JSON.stringify({ seq, event })
-    if (event?.type !== 'turnFinished') void this.touchHeartbeat(runId)
+    if (event?.type !== 'turnFinished') {
+      this.touchHeartbeat(runId).catch(() => {})
+    }
     await Promise.all([
       rclient.rpush(this._eventsKey(runId), payload),
       rclient.publish(this._channel(runId), payload),
@@ -254,22 +257,26 @@ export class AiAssistRunStore {
     })
   }
 
-  async getPendingApproval(runId) {
-    const run = await this.getRun(runId)
-    if (!run?.pendingApproval) return null
-    return typeof run.pendingApproval === 'string'
-      ? JSON.parse(run.pendingApproval)
-      : run.pendingApproval
-  }
-
   async clearPendingApproval(runId, nextStatus = 'running') {
     const rclient = this.getClient()
     if (!rclient) return
-    await rclient.hset(this._key(runId), {
-      status: nextStatus,
-      pendingApproval: '',
-      heartbeat: String(Date.now()),
-    })
+    const key = this._key(runId)
+    const heartbeat = String(Date.now())
+    // A local approval may resume and finish the run before this cleanup
+    // reaches Redis. Only change status while the approval is still pending,
+    // so a late cleanup cannot replace a terminal status with `running`.
+    await rclient.eval(
+      `if redis.call('HGET', KEYS[1], 'status') == 'awaitingApproval' then
+         redis.call('HSET', KEYS[1], 'status', ARGV[1], 'pendingApproval', '', 'heartbeat', ARGV[2])
+       else
+         redis.call('HSET', KEYS[1], 'pendingApproval', '', 'heartbeat', ARGV[2])
+       end
+       return 1`,
+      1,
+      key,
+      nextStatus,
+      heartbeat
+    )
   }
 }
 

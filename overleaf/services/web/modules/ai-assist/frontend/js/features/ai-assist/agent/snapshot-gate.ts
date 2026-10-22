@@ -14,7 +14,7 @@
  * AiAssistTools.mjs; edits invalidate the gate explicitly rather than waiting
  * the window out.
  */
-export const SNAPSHOT_TTL_MS = 5000
+const SNAPSHOT_TTL_MS = 5000
 
 /**
  * What a tool is told when the project files could not be loaded.

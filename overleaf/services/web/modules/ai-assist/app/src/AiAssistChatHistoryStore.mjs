@@ -4,7 +4,12 @@ import crypto from 'node:crypto'
 import Settings from '@overleaf/settings'
 import './ModuleSettings.mjs'
 import { normalizeMode } from './AiAssistModePolicy.mjs'
-import { deleteChatCheckpoints } from './AiAssistCheckpointStore.mjs'
+import {
+  OBJECT_ID,
+  deleteChatCheckpoints,
+  isValidChatId,
+  mapWithLimit,
+} from './AiAssistCheckpointStore.mjs'
 import { withAiAssistFileLock } from './AiAssistFileLock.mjs'
 import logger from '@overleaf/logger'
 
@@ -13,12 +18,7 @@ import logger from '@overleaf/logger'
 // The default dir lives under /var/lib/overleaf/data so a backup of the
 // data volume carries the chat history with it.
 
-const OBJECT_ID = /^[0-9a-f]{24}$/i
-const CHAT_ID = /^[A-Za-z0-9_-]{1,64}$/
-
-export function isValidChatId(chatId) {
-  return typeof chatId === 'string' && CHAT_ID.test(chatId)
-}
+export { isValidChatId }
 
 export function baseDir() {
   return Settings.aiAssist?.chatHistoryDir || '/var/lib/overleaf/data/ai-assist'
@@ -76,7 +76,7 @@ export function sanitizeChatTitle(raw) {
 function toTitleCase(str) {
   return str.replace(
     /\w\S*/g,
-    txt => txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase()
+    txt => txt.charAt(0).toUpperCase() + txt.slice(1).toLowerCase()
   )
 }
 
@@ -166,13 +166,6 @@ export function fallbackTitleFor(transcript) {
     : null
   if (!firstUser) return 'New chat'
   return reorganizePromptToTitle(firstUser.text)
-}
-
-export function titleFor(transcript, existingTitle = null) {
-  if (typeof existingTitle === 'string' && existingTitle.trim()) {
-    return sanitizeChatTitle(existingTitle)
-  }
-  return fallbackTitleFor(transcript)
 }
 
 /** A tool result the panel cut down to keep its local copy small. */
@@ -382,10 +375,14 @@ export function hydrateTranscript(transcript, stored) {
 
   // Check if hydrated starts at an offset within stored
   let matchedAt = -1
-  for (let at = 1; at < stored.length; at++) {
-    if (linesUpAt(at)) {
-      matchedAt = at
-      break
+  // Bound work against pathological inputs: if the product of lengths is large,
+  // skip prefix search and rely only on tail-suffix check
+  if (stored.length * hydrated.length <= 2e7) {
+    for (let at = 1; at < stored.length; at++) {
+      if (entriesMatch(hydrated[0], stored[at]) && linesUpAt(at)) {
+        matchedAt = at
+        break
+      }
     }
   }
 
@@ -497,25 +494,22 @@ async function readIndexFile(dir) {
   }
 }
 
+// Chat files read at once when the index is rebuilt
+const INDEX_READ_CONCURRENCY = 8
+
 /** Builds the index from the chat files: the only time a transcript is read. */
 async function rebuildIndex(dir) {
-  // Read a few at a time: a project with many chats must not open them all at once
+  // A few at a time: a project with many chats must not open them all at once
   const names = await chatFileNames(dir)
   const chats = {}
-  for (let i = 0; i < names.length; i += INDEX_READ_CONCURRENCY) {
-    const batch = await Promise.all(
-      names
-        .slice(i, i + INDEX_READ_CONCURRENCY)
-        .map(name => readChat(Path.join(dir, name)).catch(() => null))
-    )
-    for (const chat of batch) {
-      if (chat?.id) chats[chat.id] = summaryOf(chat)
-    }
+  const loaded = await mapWithLimit(names, INDEX_READ_CONCURRENCY, name =>
+    readChat(Path.join(dir, name)).catch(() => null)
+  )
+  for (const chat of loaded) {
+    if (chat?.id) chats[chat.id] = summaryOf(chat)
   }
   return { version: 1, chats }
 }
-
-const INDEX_READ_CONCURRENCY = 8
 
 /**
  * The index of a project directory. Read without a lock when it exists; when
@@ -600,6 +594,7 @@ async function userChatDirs(userId) {
     if (err.code === 'ENOENT') return []
     throw err
   }
+  if (!OBJECT_ID.test(String(userId))) return []
   const ownDir = new RegExp(`^([0-9a-f]{24})-${userId}$`, 'i')
   return names
     .map(name => ({ name, match: ownDir.exec(name) }))
@@ -843,9 +838,6 @@ export default {
   sanitizeChatTitle,
   reorganizePromptToTitle,
   fallbackTitleFor,
-  titleFor,
   hydrateTranscript,
   dropRepeatedEntries,
-  countSteps,
-  totalDuration,
 }

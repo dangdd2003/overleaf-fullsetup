@@ -58,7 +58,7 @@ export function flattenDocument(source: ProjectSource): string {
   const expand = (path: string, depth: number): string => {
     seen.add(path)
     return stripComments(source.docs[path] ?? '').replace(
-      new RegExp(INPUT.source, 'g'),
+      INPUT,
       (whole: string, name: string) => {
         const target =
           depth < MAX_DEPTH ? resolveInput(source.docs, name, path) : null

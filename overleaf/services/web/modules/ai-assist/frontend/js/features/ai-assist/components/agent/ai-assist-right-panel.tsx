@@ -63,10 +63,6 @@ export const AiAssistRightPanel: FC<{ order?: number }> = ({ order = 3 }) => {
     setIsRightOpen(true)
   }, [setIsRightOpen])
 
-  const handleCollapse = useCallback(() => {
-    setIsRightOpen(false)
-  }, [setIsRightOpen])
-
   const toggleRightOpen = useCallback(() => {
     setIsRightOpen(!isRightOpen)
   }, [isRightOpen, setIsRightOpen])
@@ -102,7 +98,7 @@ export const AiAssistRightPanel: FC<{ order?: number }> = ({ order = 3 }) => {
         collapsible
         ref={panelRef}
         onExpand={handleExpand}
-        onCollapse={handleCollapse}
+        onCollapse={handleClose}
         tagName="aside"
         aria-label={t('ai_assist_panel_title', 'AI assistant')}
       >

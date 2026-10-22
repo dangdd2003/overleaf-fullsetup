@@ -23,7 +23,6 @@ export function recordHostFailure(owner, host, stepName, reason) {
   if (NEVER_SKIPPED.has(stepName)) return
   const h = memoryKey(owner, host)
   if (!String(host || '')) return
-  if (!h) return
 
   if (hostMemory.has(h)) {
     const entry = hostMemory.get(h)

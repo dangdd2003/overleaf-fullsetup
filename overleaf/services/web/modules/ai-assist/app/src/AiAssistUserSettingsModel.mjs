@@ -3,7 +3,7 @@ import mongoose from 'mongoose'
 const { Schema } = mongoose
 const { ObjectId } = Schema
 
-export const AiAssistUserSettingsSchema = new Schema(
+const AiAssistUserSettingsSchema = new Schema(
   {
     user_id: { type: ObjectId, ref: 'User', required: true, unique: true },
     provider: {
@@ -42,8 +42,3 @@ export const AiAssistUserSettingsModel = mongoose.model(
   'AiAssistUserSettings',
   AiAssistUserSettingsSchema
 )
-
-export default {
-  AiAssistUserSettingsSchema,
-  AiAssistUserSettingsModel,
-}

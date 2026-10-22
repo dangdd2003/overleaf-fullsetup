@@ -20,21 +20,21 @@
  *   Gemini 3 and 4. Older models tile 768 px at 258 tokens per tile (the
  *   image-understanding page). The request field could not be confirmed for
  *   generateContent: the docs show a per-media `resolution` in the Interactions
- *   API. The Gemini 3+ part field used here is `mediaResolution`, marked
- *   unverified in the report.
+ *   API. The Gemini 3+ part field used here is `mediaResolution`, and its
+ *   generateContent name is unverified: check it against the current Gemini docs.
  */
 
 /** Largest image a provider takes without downscaling it further. */
 export const CLAUDE_HIGH_RES_EDGE_PX = 2576
 export const CLAUDE_STANDARD_EDGE_PX = 1568
 /** Visual tokens an image may take on each Claude tier (28 px patches). */
-export const CLAUDE_HIGH_RES_TOKENS = 4784
-export const CLAUDE_STANDARD_TOKENS = 1568
+const CLAUDE_HIGH_RES_TOKENS = 4784
+const CLAUDE_STANDARD_TOKENS = 1568
 /** Fallback for providers and models the table does not know. */
-export const FALLBACK_EDGE_PX = 1568
-export const OPENAI_FIT_PX = 2048
-export const OPENAI_SHORT_SIDE_PX = 768
-export const GEMINI_ENGINE_EDGE_PX = 2048
+const FALLBACK_EDGE_PX = 1568
+const OPENAI_FIT_PX = 2048
+const OPENAI_SHORT_SIDE_PX = 768
+const GEMINI_ENGINE_EDGE_PX = 2048
 export const IMAGE_TOKEN_FALLBACK = 1600
 
 const CLAUDE_MODEL = /^claude-(opus|sonnet|haiku|fable)-(\d+)(?:-(\d{1,2})(?!\d))?/
@@ -183,11 +183,6 @@ export function estimateImageTokens({
     return Math.ceil(patches * 1.2)
   }
   if (/^gpt-/.test(String(model ?? ''))) {
-    if (isOpenAiOriginalModel(model)) {
-      // 32 px patches, shrunk to fit the patch budget, times the model's multiplier.
-      const patches = Math.ceil(w / 32) * Math.ceil(h / 32)
-      return Math.ceil(patches * 1.2)
-    }
     const gpt5 = /^gpt-5(\.1)?(?![\d.])/.test(String(model))
     if (detail === 'low') return gpt5 ? 70 : 85
     // Fit 2048, then shrink the short side to 768, then count 512 px tiles.
@@ -204,4 +199,20 @@ export function estimateImageTokens({
     return gpt5 ? 70 + 140 * tiles : 85 + 170 * tiles
   }
   return IMAGE_TOKEN_FALLBACK
+}
+
+/**
+ * The token cost of one image for the provider and model it goes to: the
+ * policy's detail setting, then estimateImageTokens. Shared by everything that
+ * counts an image's cost.
+ */
+export function imageTokenCost({ width, height, provider, model }) {
+  const choice = imagePolicyFor({ type: provider, model })
+  return estimateImageTokens({
+    width,
+    height,
+    provider,
+    model,
+    detail: choice.mediaResolution ?? choice.detail,
+  })
 }

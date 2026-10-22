@@ -14,7 +14,11 @@ import {
   WidgetType,
 } from '@codemirror/view'
 import { aiEdit } from '../ai-edit-glow/extension'
-import { lastWordBreak } from '../hooks/use-stream-reveal'
+import {
+  commonPrefixLength,
+  lastWordBreak,
+  MAX_WORD_CHARS,
+} from '../hooks/use-stream-reveal'
 
 /** Who asked: the prompt bar, Shift+Space, or a pause in typing (Automatic). */
 export type SuggestionSource = 'prompt' | 'completion' | 'auto'
@@ -56,7 +60,7 @@ export type SuggestionOutcome = {
 }
 
 /** After the ghost text once it is complete, as in Writefull's Supercomplete. */
-export const TAB_HINT = '⇥ Tab'
+const TAB_HINT = '⇥ Tab'
 
 const showSuggestion = StateEffect.define<{
   id: number
@@ -66,7 +70,7 @@ const showSuggestion = StateEffect.define<{
 const updateSuggestionText = StateEffect.define<{ id: number; text: string }>()
 const markReady = StateEffect.define<{ id: number; text: string }>()
 const revealTo = StateEffect.define<{ id: number; shown: number }>()
-export const clearSuggestion = StateEffect.define<null>()
+const clearSuggestion = StateEffect.define<null>()
 
 /** Matches the popups' `ai-assist-stream-fade`. */
 const FADE_MS = 400
@@ -83,13 +87,6 @@ const FADE_TOKEN = /\s*\S+\s*|\s+/g
  * typing through trims the ghost; text already painted must not fade again.
  */
 let painted: { id: number; full: string } = { id: -1, full: '' }
-
-function commonPrefixLength(a: string, b: string) {
-  const max = Math.min(a.length, b.length)
-  let i = 0
-  while (i < max && a.charCodeAt(i) === b.charCodeAt(i)) i++
-  return i
-}
 
 /** Appends `text` to the ghost, each word fading in after the one before. */
 function appendFading(ghost: HTMLElement, text: string) {
@@ -296,11 +293,13 @@ const MIN_LIVE_CHARS_PER_SEC = 30
 const MIN_DRAIN_CHARS_PER_SEC = 220
 /** How long the reveal takes to speed up to a burst; slowing is immediate. */
 const RATE_RISE_SEC = 0.3
-/** A run without spaces longer than this is revealed mid-word. */
-const MAX_WORD_CHARS = 24
+
+let reducedMotion: MediaQueryList | null | undefined
 
 function prefersReducedMotion() {
-  return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+  reducedMotion ??=
+    window.matchMedia?.('(prefers-reduced-motion: reduce)') ?? null
+  return reducedMotion?.matches ?? false
 }
 
 /**
@@ -489,9 +488,12 @@ export async function startSuggestion(
   return { status: 'shown', raw }
 }
 
-export function cancelSuggestion(view: EditorView) {
+export function cancelSuggestion(view: EditorView, userEvent?: string) {
   if (view.state.field(suggestionField, false)) {
-    view.dispatch({ effects: clearSuggestion.of(null) })
+    view.dispatch({
+      effects: clearSuggestion.of(null),
+      ...(userEvent ? { userEvent } : {}),
+    })
   }
 }
 
@@ -500,9 +502,7 @@ export const REGENERATE_EVENT = 'regenerate'
 
 /** Clears the suggestion for a new one; not counted as the author ignoring it. */
 export function regenerateSuggestion(view: EditorView) {
-  if (view.state.field(suggestionField, false)) {
-    view.dispatch({ effects: clearSuggestion.of(null), userEvent: REGENERATE_EVENT })
-  }
+  cancelSuggestion(view, REGENERATE_EVENT)
 }
 
 /** Tab. While the text still streams, Tab is swallowed rather than indenting. */
@@ -525,7 +525,7 @@ export function acceptSuggestion(view: EditorView): boolean {
 const NEXT_WORD = /^\s*(?:\\[A-Za-z@]+|[\p{L}\p{N}_]+|\S)/u
 
 /** Ctrl/Cmd+→: inserts the next word of a ready suggestion; the rest stays. */
-export function acceptWord(view: EditorView): boolean {
+function acceptWord(view: EditorView): boolean {
   const value = view.state.field(suggestionField, false)
   if (!value || value.status !== 'ready') return false
   const word = NEXT_WORD.exec(value.text)?.[0]

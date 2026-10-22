@@ -1,8 +1,10 @@
 import type { TextContainer } from '../inline-context/cursor-context'
-import { MaskedText, sliceMasked } from './masked-text'
+import { MaskedText, sliceMasked, wordCount } from './masked-text'
 import { scanProse } from './prose'
 import { normalizeForCheck } from './semantic'
 import { foreignParagraphs, inRanges, switchedOffRanges } from './skip'
+
+export { wordCount }
 
 /** One sentence to check: its masked text and where it was. */
 export type Unit = {
@@ -39,11 +41,10 @@ const ALWAYS_JOIN = [
   'Prof.',
 ]
 
-const PLACEHOLDER = /\[\[[MCRX]\d+\]\]/g
-
-export function wordCount(text: string): number {
-  return (text.replace(PLACEHOLDER, ' ').match(/[\p{L}\p{N}]+/gu) ?? []).length
-}
+const sentenceSegmenter: { segment: (text: string) => Iterable<{ index: number; segment: string }> } | null =
+  typeof (Intl as any).Segmenter === 'function'
+    ? new (Intl as any).Segmenter(undefined, { granularity: 'sentence' })
+    : null
 
 function endsWithAbbreviation(text: string): boolean {
   const end = text.trimEnd()
@@ -61,11 +62,9 @@ function falseBreak(before: string, after: string): boolean {
 }
 
 function rawSentences(text: string): Array<[number, number]> {
-  const Segmenter = (Intl as any).Segmenter
-  if (typeof Segmenter === 'function') {
-    const segmenter = new Segmenter(undefined, { granularity: 'sentence' })
+  if (sentenceSegmenter) {
     return Array.from(
-      segmenter.segment(text) as Iterable<{ index: number; segment: string }>,
+      sentenceSegmenter.segment(text),
       ({ index, segment }) => [index, index + segment.length]
     )
   }

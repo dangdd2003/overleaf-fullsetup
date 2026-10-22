@@ -42,6 +42,10 @@ type FlagKey = {
   [K in keyof JinaDraft]: JinaDraft[K] extends boolean ? K : never
 }[keyof JinaDraft]
 
+type StringKey<T> = {
+  [K in keyof T]: T[K] extends string ? K : never
+}[keyof T]
+
 export function draftFromJina(config?: JinaProviderConfig): JinaDraft {
   const search = config?.search ?? {}
   const read = config?.read ?? {}
@@ -152,7 +156,9 @@ export default function JinaOptions({
   draft: JinaDraft
   onChange: (next: JinaDraft) => void
 }) {
-  const set = <K extends keyof JinaDraft>(key: K, value: JinaDraft[K]) =>
+  const setFlag = (key: FlagKey, value: boolean) =>
+    onChange({ ...draft, [key]: value })
+  const setText = (key: StringKey<JinaDraft>, value: string) =>
     onChange({ ...draft, [key]: value })
 
   const id = (key: keyof JinaDraft) => `ai-web-search-jina-${key}`
@@ -163,12 +169,12 @@ export default function JinaOptions({
       label={label}
       description={description}
       checked={draft[key]}
-      onChange={value => set(key, value)}
+      onChange={value => setFlag(key, value)}
     />
   )
 
   const dropdown = (
-    key: Exclude<keyof JinaDraft, FlagKey>,
+    key: StringKey<JinaDraft>,
     label: string,
     description: string,
     options: Choice[]
@@ -179,13 +185,13 @@ export default function JinaOptions({
       description={description}
       width="wide"
       options={options}
-      value={draft[key] as string}
-      onChange={value => set(key, value as JinaDraft[typeof key])}
+      value={draft[key]}
+      onChange={value => setText(key, value)}
     />
   )
 
   const text = (
-    key: Exclude<keyof JinaDraft, FlagKey>,
+    key: StringKey<JinaDraft>,
     label: string,
     description: string,
     placeholder: string,
@@ -196,8 +202,8 @@ export default function JinaOptions({
       label={label}
       description={description}
       placeholder={placeholder}
-      value={draft[key] as string}
-      onChange={value => set(key, value as JinaDraft[typeof key])}
+      value={draft[key]}
+      onChange={value => setText(key, value)}
       {...extra}
     />
   )

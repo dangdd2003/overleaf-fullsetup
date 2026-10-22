@@ -86,7 +86,6 @@ describe('AiAssistRunControl', function () {
       updateStatus: sinon.stub().resolves(),
       setPendingApproval: sinon.stub().resolves(),
       clearPendingApproval: sinon.stub().resolves(),
-      getPendingApproval: sinon.stub().resolves(),
       getRun: sinon.stub().resolves({ status: 'running' }),
       touchHeartbeat: sinon.stub().resolves(),
     }
@@ -156,7 +155,6 @@ describe('AiAssistRunControl', function () {
       updateStatus: sinon.stub().resolves(),
       setPendingApproval: sinon.stub().resolves(),
       clearPendingApproval: sinon.stub().resolves(),
-      getPendingApproval: sinon.stub().resolves(),
       getRun: sinon.stub().resolves({ status: 'running' }),
       touchHeartbeat: sinon.stub().resolves(),
     }

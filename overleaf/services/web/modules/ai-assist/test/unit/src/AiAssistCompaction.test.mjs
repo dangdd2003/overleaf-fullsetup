@@ -12,14 +12,13 @@ import {
   clipText,
   collectEntities,
   compactConversation,
-  compactedContextMessages,
   deterministicSummary,
   detectChatLanguage,
   emptyLedger,
   excerptRanges,
   extractLedger,
   isPromptTooLong,
-  maskSpan,
+  maskBlocks,
   mergeLedgers,
   parseSummary,
   planChunks,
@@ -474,7 +473,7 @@ describe('AiAssistCompaction ledger', () => {
 describe('AiAssistCompaction masking', () => {
   it('turns tool results into one-line stubs, keeping the last two in part', () => {
     const readContent = Array.from({ length: 80 }, (_, i) => `line ${i + 1}`).join('\n')
-    const text = maskSpan([
+    const text = maskBlocks([
       user('u1', 'Look and fix'),
       assistant('a1', 'Reading.', [
         call('c1', 'read_file', { path: 'main.tex' }, { path: 'main.tex', from: 1, to: 80, totalLines: 80, content: readContent }),
@@ -496,7 +495,7 @@ describe('AiAssistCompaction masking', () => {
         call('c4', 'web_fetch', { url: 'https://x.org' }, { url: 'https://x.org', title: 'X', content: 'c' }),
         call('c5', 'web_fetch', { url: 'https://y.org' }, { url: 'https://y.org', title: 'Y', content: 'd' }),
       ]),
-    ])
+    ]).join('\n\n')
     expect(text).to.include('[read_file main.tex 1-80: 80 lines]')
     expect(text).to.include('[edit_file sec2.tex 40-44 applied]')
     expect(text).to.include(
@@ -507,13 +506,13 @@ describe('AiAssistCompaction masking', () => {
 
   it('keeps the last two tool results in part and truncates long ones', () => {
     const big = 'z'.repeat(9000)
-    const text = maskSpan([
+    const text = maskBlocks([
       assistant('a1', '', [
         call('c1', 'read_file', { path: 'a.tex' }, { path: 'a.tex', from: 1, to: 2, totalLines: 2, content: 'x' }),
         call('c2', 'read_file', { path: 'b.tex' }, { path: 'b.tex', from: 1, to: 2, totalLines: 2, content: 'y' }),
         call('c3', 'read_file', { path: 'c.tex' }, { path: 'c.tex', from: 1, to: 1, totalLines: 1, content: big }),
       ]),
-    ])
+    ]).join('\n\n')
     expect(text).to.include('[read_file a.tex 1-2: 1 lines]')
     expect(text).to.include('b.tex lines 1-2 of 2')
     expect(text).to.include('c.tex lines 1-1 of 1')
@@ -522,14 +521,14 @@ describe('AiAssistCompaction masking', () => {
   })
 
   it('reduces images, envelopes and command blocks', () => {
-    const text = maskSpan([
+    const text = maskBlocks([
       user('u1', 'Look at this', {
         command: { id: 'compact', args: 'focus on tables' },
         contextText:
           '<project-context>\n<selection file="main.tex">\n\\section{Intro}\n</selection>\n<attachment name="a.png"/>\n<git>secret</git>\n</project-context>',
         images: [{ mime: 'image/png' }, { mime: 'image/png' }],
       }),
-    ])
+    ]).join('\n\n')
     expect(text).to.include('[user u1]')
     expect(text).to.include('<selection file="main.tex">')
     expect(text).to.not.include('<project-context>')
@@ -540,7 +539,7 @@ describe('AiAssistCompaction masking', () => {
   })
 
   it('stubs connector, web and unfinished calls', () => {
-    const text = maskSpan([
+    const text = maskBlocks([
       assistant('a1', '', [
         call('c1', 'web_fetch', { url: 'https://x.org' }, { url: 'https://x.org', title: 'X', content: 'c' }),
         pendingCall('c2', 'edit_file', { path: 'z.tex' }),
@@ -548,7 +547,7 @@ describe('AiAssistCompaction masking', () => {
         call('c4', 'web_fetch', { url: 'https://y.org' }, { url: 'https://y.org', title: 'Y', content: 'd' }),
         call('c5', 'web_fetch', { url: 'https://z.org' }, { url: 'https://z.org', title: 'Z', content: 'e' }),
       ]),
-    ])
+    ]).join('\n\n')
     expect(text).to.include('[web_fetch https://x.org: X]')
     expect(text).to.include('[edit_file did not complete]')
     expect(text).to.include('[mcp__db__query: 4 chars]')
@@ -869,32 +868,14 @@ describe('AiAssistCompaction rendering', () => {
     expect(text).to.include('trigger="manual" turns="0">')
   })
 
-  it('rebuilds the context after a boundary: the message, the tail, then the newer entries', () => {
-    const transcript = [
-      user('u1', 'old one'),
-      assistant('a1', 'old reply'),
-      user('u2', 'tail ask'),
-      assistant('a2', 'tail reply'),
-      { id: 'c4', role: 'compact', trigger: 'manual', summary: 'S', ledger: emptyLedger(), tailFromId: 'u2' },
-      user('u3', 'new ask'),
-    ]
-    const messages = compactedContextMessages(transcript)
-    expect(messages.map(m => m.role)).to.deep.equal(['user', 'user', 'assistant', 'user'])
-    expect(messages[0].content.startsWith('<compacted-conversation')).to.equal(true)
-    expect(messages[1].content).to.equal('tail ask')
-    expect(messages[2].content).to.equal('tail reply')
-    expect(messages[3].content).to.equal('new ask')
-    expect(JSON.stringify(messages)).to.not.include('old one')
-  })
-
   it('sends the whole transcript when there is no compaction, with tool results rendered', () => {
-    const messages = compactedContextMessages([
+    expect(transcriptMessages([user('u9', 'x')])).to.deep.equal([{ role: 'user', content: 'x' }])
+    const messages = transcriptMessages([
       user('u1', 'Hi'),
       assistant('a1', '', [call('c1', 'read_file', { path: 'a.tex' }, { path: 'a.tex', from: 1, to: 1, totalLines: 1, content: 'x' })]),
     ])
     expect(messages.map(m => m.role)).to.deep.equal(['user', 'assistant', 'tool'])
     expect(messages[2].content).to.include('a.tex lines 1-1 of 1')
-    expect(transcriptMessages([user('u9', 'x')])).to.deep.equal([{ role: 'user', content: 'x' }])
   })
 
   it('clips text head and tail with an ellipsis', () => {

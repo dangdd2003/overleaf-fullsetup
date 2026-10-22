@@ -141,7 +141,7 @@ export function TableHostView({
     retryMessage: versions => buildTableRetry(versions.map(version => version.latex)),
     onVersion: () => setAddPackages(true),
     errorPhase: error =>
-      error?.code === 'outputTruncated'
+      (error as { code?: string })?.code === 'outputTruncated'
         ? {
             name: 'error',
             message: t(

@@ -19,21 +19,28 @@ const MAX_DISMISSED = 500
 type Stored = { v: 1; accepted: string[]; dismissed: Array<[string, number]> }
 
 let accepted: string[] | null = null
+let acceptedSet: Set<string> | null = null
 let dismissed: Map<string, number> | null = null
+
+function readStored(): Stored | null {
+  try {
+    const v = customLocalStorage.getItem(MEMORY_KEY) as Stored | null
+    return v?.v === 1 ? v : null
+  } catch {
+    return null
+  }
+}
 
 function load() {
   if (accepted && dismissed) return
-  let stored: Stored | null = null
-  try {
-    stored = customLocalStorage.getItem(MEMORY_KEY)
-  } catch {}
-  const valid = stored?.v === 1
-  accepted = valid && Array.isArray(stored!.accepted)
-    ? stored!.accepted.filter(key => typeof key === 'string')
+  const stored = readStored()
+  accepted = stored && Array.isArray(stored.accepted)
+    ? stored.accepted.filter(key => typeof key === 'string')
     : []
+  acceptedSet = new Set(accepted)
   dismissed = new Map(
-    valid && Array.isArray(stored!.dismissed)
-      ? stored!.dismissed.filter(
+    stored && Array.isArray(stored.dismissed)
+      ? stored.dismissed.filter(
           entry => Array.isArray(entry) && typeof entry[0] === 'string' && typeof entry[1] === 'number'
         )
       : []
@@ -53,6 +60,7 @@ function save() {
 /** For tests, and when another tab changed it. */
 export function forgetAnswers() {
   accepted = null
+  acceptedSet = null
   dismissed = null
 }
 
@@ -70,6 +78,7 @@ export function noteAccepted(edits: MaskedEdit[]) {
     accepted = accepted!.filter(other => other !== key)
     accepted.push(key)
   }
+  acceptedSet = new Set(accepted)
   save()
 }
 
@@ -88,7 +97,7 @@ export function noteDismissed(edits: MaskedEdit[]) {
 /** It would undo a change the author accepted. */
 export function undoesAccepted(edit: MaskedEdit): boolean {
   load()
-  return accepted!.includes(blockKey(edit.insert, edit.original))
+  return Boolean(acceptedSet?.has(blockKey(edit.insert, edit.original)))
 }
 
 /** The author keeps dismissing this exact change. */

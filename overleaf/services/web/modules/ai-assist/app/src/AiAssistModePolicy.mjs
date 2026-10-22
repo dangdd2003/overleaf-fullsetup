@@ -77,6 +77,12 @@ export const SETTINGS_TOOLS = new Set([
 
 export const PLAN_TOOL = 'present_plan'
 
+export function isInstructionPath(path) {
+  if (typeof path !== 'string') return false
+  const normalized = path.replace(/^\/+/, '').trim().toLowerCase()
+  return normalized === 'agents.md'
+}
+
 export function isConnectorTool(name) {
   return typeof name === 'string' && name.startsWith('mcp__')
 }
@@ -110,6 +116,16 @@ export const PRESENT_PLAN_SPEC = {
   },
 }
 
+/** @typedef {'manual'|'acceptEdits'|'plan'} Mode */
+/** @typedef {'allow'|'ask'|'deny'} Decision */
+/** @typedef {'allow'|'block'} ToolPermission */
+
+/**
+ * @param {Mode} mode
+ * @param {string} toolName
+ * @param {{ permission?: ToolPermission, readOnly?: boolean, destructive?: boolean }} [options]
+ * @returns {Decision}
+ */
 export function decide(mode, toolName, options = {}) {
   const normMode = normalizeMode(mode)
 
@@ -134,14 +150,9 @@ export function decide(mode, toolName, options = {}) {
     return 'allow'
   }
 
-  if (FILE_EDIT_TOOLS.has(toolName)) {
+  if (FILE_EDIT_TOOLS.has(toolName) || PROJECT_SETTINGS_TOOLS.has(toolName)) {
     if (normMode === 'plan') return 'deny'
-    if (normMode === 'acceptEdits') return 'allow'
-    return 'ask' // manual
-  }
-
-  if (PROJECT_SETTINGS_TOOLS.has(toolName)) {
-    if (normMode === 'plan') return 'deny'
+    if (FILE_EDIT_TOOLS.has(toolName) && isInstructionPath(options?.path)) return 'ask'
     if (normMode === 'acceptEdits') return 'allow'
     return 'ask' // manual
   }

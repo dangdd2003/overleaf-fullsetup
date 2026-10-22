@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react'
+import { useState, useMemo, useCallback, memo } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   OLModal,
@@ -25,18 +25,16 @@ import {
   updateConnector,
 } from '../../connectors/api'
 
-export type ToolPermissionsModalProps = {
+type ToolPermissionsModalProps = {
   show: boolean
   onHide: () => void
   connector: ConnectorView
-  onSaved: (connector: ConnectorView) => void
 }
 
 export function ToolPermissionsModal({
   show,
   onHide,
   connector,
-  onSaved,
 }: ToolPermissionsModalProps) {
   const { t } = useTranslation()
 
@@ -122,11 +120,10 @@ export function ToolPermissionsModal({
     setSaving(true)
     setError(null)
     try {
-      const res = await updateConnector(connector.id, {
+      await updateConnector(connector.id, {
         toolPermissions: permissions,
       })
       notifyConnectorsChanged()
-      onSaved(res.connector)
       onHide()
     } catch (err) {
       setError(
@@ -141,28 +138,37 @@ export function ToolPermissionsModal({
     } finally {
       setSaving(false)
     }
-  }, [connector.id, permissions, onSaved, onHide, t])
+  }, [connector.id, permissions, onHide, t])
+
+  // Lowercased once per tool list, so each search keystroke only scans it
+  const searchableTools = useMemo(
+    () =>
+      tools.map(tool => ({
+        tool,
+        fields: [tool.name, tool.title, tool.description]
+          .filter((field): field is string => Boolean(field))
+          .map(field => field.toLowerCase()),
+      })),
+    [tools]
+  )
 
   const filteredTools = useMemo(() => {
     const q = searchQuery.trim().toLowerCase()
     if (!q) return tools
-    return tools.filter(
-      tool =>
-        tool.name.toLowerCase().includes(q) ||
-        (tool.title && tool.title.toLowerCase().includes(q)) ||
-        (tool.description && tool.description.toLowerCase().includes(q))
-    )
-  }, [tools, searchQuery])
+    return searchableTools
+      .filter(({ fields }) => fields.some(field => field.includes(q)))
+      .map(({ tool }) => tool)
+  }, [tools, searchableTools, searchQuery])
 
-  const readOnlyTools = useMemo(
-    () => filteredTools.filter(t => t.readOnly),
-    [filteredTools]
-  )
-
-  const writeTools = useMemo(
-    () => filteredTools.filter(t => !t.readOnly),
-    [filteredTools]
-  )
+  const { readOnlyTools, writeTools } = useMemo(() => {
+    const readOnly: ConnectorTool[] = []
+    const write: ConnectorTool[] = []
+    for (const tool of filteredTools) {
+      if (tool.readOnly) readOnly.push(tool)
+      else write.push(tool)
+    }
+    return { readOnlyTools: readOnly, writeTools: write }
+  }, [filteredTools])
 
   return (
     <OLModal
@@ -266,7 +272,7 @@ export function ToolPermissionsModal({
                       key={tool.name}
                       tool={tool}
                       permission={permissions[tool.name] || 'ask'}
-                      onChange={p => handlePermissionChange(tool.name, p)}
+                      onChange={handlePermissionChange}
                     />
                   ))}
                 </ul>
@@ -290,7 +296,7 @@ export function ToolPermissionsModal({
                       key={tool.name}
                       tool={tool}
                       permission={permissions[tool.name] || 'ask'}
-                      onChange={p => handlePermissionChange(tool.name, p)}
+                      onChange={handlePermissionChange}
                     />
                   ))}
                 </ul>
@@ -344,14 +350,14 @@ export function ToolPermissionsModal({
   )
 }
 
-function ToolRow({
+const ToolRow = memo(function ToolRow({
   tool,
   permission,
   onChange,
 }: {
   tool: ConnectorTool
   permission: ToolPermission
-  onChange: (permission: ToolPermission) => void
+  onChange: (toolName: string, permission: ToolPermission) => void
 }) {
   const { t } = useTranslation()
 
@@ -389,7 +395,7 @@ function ToolRow({
         <OLFormSelect
           size="sm"
           value={permission}
-          onChange={e => onChange(e.target.value as ToolPermission)}
+          onChange={e => onChange(tool.name, e.target.value as ToolPermission)}
           aria-label={t('connector_permission_for', 'Permission for __name__', {
             name: tool.name,
           })}
@@ -407,4 +413,4 @@ function ToolRow({
       </div>
     </li>
   )
-}
+})

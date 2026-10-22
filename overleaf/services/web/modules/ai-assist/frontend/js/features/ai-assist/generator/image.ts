@@ -13,18 +13,22 @@ export type GeneratorImage = {
 
 export type ImageError = 'type' | 'size' | 'read'
 
-export const ACCEPTED_IMAGE_TYPES: ImageMediaType[] = [
+export const ACCEPTED_IMAGE_TYPES: readonly ImageMediaType[] = [
   'image/png',
   'image/jpeg',
   'image/webp',
   'image/gif',
 ]
 
+export function isImageMediaType(type: string): type is ImageMediaType {
+  return (ACCEPTED_IMAGE_TYPES as readonly string[]).includes(type)
+}
+
 export const MAX_IMAGE_FILE_BYTES = 20 * 1024 * 1024
 
 /** Why a file cannot be used, or null. */
 export function imageFileProblem(file: { type: string; size: number }): ImageError | null {
-  if (!(ACCEPTED_IMAGE_TYPES as string[]).includes(file.type)) return 'type'
+  if (!isImageMediaType(file.type)) return 'type'
   if (file.size > MAX_IMAGE_FILE_BYTES) return 'size'
   return null
 }
@@ -127,11 +131,17 @@ export async function normalizeImage(file: File): Promise<GeneratorImage> {
   canvas.width = size.width
   canvas.height = size.height
   const context = canvas.getContext('2d')
-  if (!context) throw new ImageReadError('read')
-  context.imageSmoothingEnabled = true
-  context.imageSmoothingQuality = 'high'
-  context.drawImage(bitmap, 0, 0, size.width, size.height)
-  bitmap.close?.()
+  if (!context) {
+    bitmap.close()
+    throw new ImageReadError('read')
+  }
+  try {
+    context.imageSmoothingEnabled = true
+    context.imageSmoothingQuality = 'high'
+    context.drawImage(bitmap, 0, 0, size.width, size.height)
+  } finally {
+    bitmap.close()
+  }
 
   const background = backgroundFor(
     inkStats(context.getImageData(0, 0, size.width, size.height).data)
@@ -146,13 +156,15 @@ export async function normalizeImage(file: File): Promise<GeneratorImage> {
 
   let mediaType: ImageMediaType = 'image/png'
   let dataUrl = canvas.toDataURL('image/png')
-  if (base64Bytes(dataUrl.slice(dataUrl.indexOf(',') + 1)) > PNG_LIMIT_BYTES) {
+  let base64 = dataUrl.slice(dataUrl.indexOf(',') + 1)
+  if (base64Bytes(base64) > PNG_LIMIT_BYTES) {
     mediaType = 'image/jpeg'
     dataUrl = canvas.toDataURL('image/jpeg', JPEG_QUALITY)
+    base64 = dataUrl.slice(dataUrl.indexOf(',') + 1)
   }
   return {
     mediaType,
-    data: dataUrl.slice(dataUrl.indexOf(',') + 1),
+    data: base64,
     name: file.name || 'pasted-image.png',
     size: file.size,
     width: size.width,

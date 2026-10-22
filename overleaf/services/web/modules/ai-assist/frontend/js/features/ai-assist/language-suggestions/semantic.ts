@@ -34,15 +34,17 @@ export function normalizeForCheck(raw: string): Normalized {
   const toRaw: number[] = []
   let i = 0
   while (i < raw.length) {
-    const placeholder = PLACEHOLDER.exec(raw.slice(i, i + 12))
-    if (placeholder) {
-      const token = `[[${placeholder[1]}]]`
-      // Each kept character maps to the start of the token, its end to the end
-      for (let k = 0; k < token.length; k++) toRaw.push(i)
-      text += token
-      i += placeholder[0].length
-      toRaw[toRaw.length - 1] = i - 1
-      continue
+    if (raw.charCodeAt(i) === 91) {
+      const placeholder = PLACEHOLDER.exec(raw.slice(i, i + 12))
+      if (placeholder) {
+        const token = `[[${placeholder[1]}]]`
+        // Each kept character maps to the start of the token, its end to the end
+        for (let k = 0; k < token.length; k++) toRaw.push(i)
+        text += token
+        i += placeholder[0].length
+        toRaw[toRaw.length - 1] = i - 1
+        continue
+      }
     }
     const ch = raw[i]
     if (/\s/.test(ch)) {

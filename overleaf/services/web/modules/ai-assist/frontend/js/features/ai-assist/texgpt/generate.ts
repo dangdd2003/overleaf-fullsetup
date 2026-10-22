@@ -110,7 +110,7 @@ export async function generateTexGpt({
   let text = shape(reply.text)
   let declared = reply.packages
   let finalRaw = raw
-  const problems = structureProblems(original, text)
+  let problems = structureProblems(original, text)
   if (problems.length > 0) {
     onProgress({ stage: 'repairing' })
     try {
@@ -125,10 +125,12 @@ export async function generateTexGpt({
       const repaired = parseReply(repairedRaw, true, 'latex')
       if (repaired.kind === 'latex' && repaired.text.trim()) {
         const repairedText = shape(repaired.text)
-        if (structureProblems(original, repairedText).length < problems.length) {
+        const repairedProblems = structureProblems(original, repairedText)
+        if (repairedProblems.length < problems.length) {
           text = repairedText
           declared = repaired.packages.length ? repaired.packages : declared
           finalRaw = repairedRaw
+          problems = repairedProblems
         }
       }
     } catch (error) {
@@ -138,7 +140,7 @@ export async function generateTexGpt({
   }
 
   const warnings: TexGptWarning[] = [
-    ...structureProblems(original, text).map(message => ({
+    ...problems.map(message => ({
       kind: 'structure' as const,
       message,
     })),

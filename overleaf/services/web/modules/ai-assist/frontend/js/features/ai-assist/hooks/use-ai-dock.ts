@@ -5,7 +5,7 @@ export type DockPosition = 'left' | 'right'
 const DOCK_STORAGE_KEY = 'ai-assist:dock-position'
 const RIGHT_OPEN_STORAGE_KEY = 'ai-assist:right-open'
 
-export function readStoredDock(): DockPosition {
+function readStoredDock(): DockPosition {
   try {
     const val = localStorage.getItem(DOCK_STORAGE_KEY)
     return val === 'right' ? 'right' : 'left'

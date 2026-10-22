@@ -1,7 +1,7 @@
 import { FC, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AssistantBlock, ToolCallRecord } from '../../agent/agent-messages'
-import { ApprovalContext, ConnectorApproval } from '../../agent/agent-events'
+import { ApprovalContext, ApprovalDecision, ConnectorApproval } from '../../agent/agent-events'
 import { EditRequest } from '../../agent/project-handle'
 import { ToolCallCard, summarise } from './tool-call-card'
 import { ThinkingBlock } from './thinking-block'
@@ -12,7 +12,11 @@ import { ConnectorApprovalCard } from './connector-approval-card'
 import { ConnectorAuthCard } from './connector-auth-card'
 import { DiffStats, sumDiffStats } from './diff-stats'
 import { DiffStatBadge } from './diff-stat-badge'
-import { subresultExpansionStore } from './subresult-expansion-store'
+import {
+  subresultExpansionStore,
+  thinkingSignature,
+  toolCallSignature,
+} from './subresult-expansion-store'
 
 export { subresultExpansionStore }
 
@@ -37,11 +41,7 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value !== ''
 }
 
-type DecisionHandler = (decision: {
-  accepted: boolean
-  always?: boolean
-  note?: string
-}) => void
+type DecisionHandler = (decision: ApprovalDecision) => void
 
 function renderApprovalCard(
   pendingCall: ToolCallRecord | null | undefined,
@@ -111,6 +111,17 @@ export type SubresultItem =
   | Extract<AssistantBlock, { type: 'thinking' }>
   | Extract<AssistantBlock, { type: 'tool_call' }>
 
+/** The trailing "s" of a noun counted more than once. */
+const plural = (n: number) => (n > 1 ? 's' : '')
+
+/** "1 edit rejected", "2 edits rejected": the noun takes an "s" by count. */
+const outcomePhrase = (n: number, noun: string, outcome: string) =>
+  `${n === 1 ? `1 ${noun}` : `${n} ${noun}s`} ${outcome}`
+
+/** Calls whose result has come back; the rest are still in flight. */
+const settledCalls = (calls: ToolCallRecord[]) =>
+  calls.filter(call => call.result !== undefined)
+
 /**
  * A short natural-language recap of what a batch of tool calls did — "Read 2
  * files, searched project" rather than a bare "5 tools" — so the collapsed
@@ -124,10 +135,10 @@ export function summariseToolCallActions(
   if (!Array.isArray(toolCalls) || toolCalls.length === 0) return ''
 
   const counts: Record<string, number> = {}
-  let rejectedEdits = 0
-  let rejectedCreations = 0
-  let cancelledEdits = 0
-  let cancelledCreations = 0
+  const writes = {
+    edit_file: { rejected: 0, cancelled: 0 },
+    create_file: { rejected: 0, cancelled: 0 },
+  }
   let cancelledTools = 0
   let validCount = 0
   for (const call of toolCalls) {
@@ -136,23 +147,14 @@ export function summariseToolCallActions(
     const status = isRecord(call.result) ? call.result.status : undefined
     const isRejected = status === 'rejected'
     const isCancelled = status === 'stopped'
-    if (call.name === 'edit_file') {
+    if (call.name === 'edit_file' || call.name === 'create_file') {
+      const tally = writes[call.name]
       if (isRejected) {
-        rejectedEdits++
+        tally.rejected++
         continue
       }
       if (isCancelled || !call.result || (status && status !== 'applied')) {
-        cancelledEdits++
-        continue
-      }
-    }
-    if (call.name === 'create_file') {
-      if (isRejected) {
-        rejectedCreations++
-        continue
-      }
-      if (isCancelled || !call.result || (status && status !== 'applied')) {
-        cancelledCreations++
+        tally.cancelled++
         continue
       }
     }
@@ -168,7 +170,7 @@ export function summariseToolCallActions(
   const parts: string[] = []
   if (counts['read_file']) {
     const n = counts['read_file']
-    parts.push(`Read ${n} file${n > 1 ? 's' : ''}`)
+    parts.push(`Read ${n} file${plural(n)}`)
   }
   if (counts['get_references'] || counts['list_references']) {
     parts.push('checked references')
@@ -192,7 +194,7 @@ export function summariseToolCallActions(
   }
   if (counts['web_fetch']) {
     const n = counts['web_fetch']
-    parts.push(`fetched ${n} page${n > 1 ? 's' : ''}`)
+    parts.push(`fetched ${n} page${plural(n)}`)
   }
   const compileCount =
     (counts['compile_project'] ?? 0) +
@@ -203,26 +205,26 @@ export function summariseToolCallActions(
   }
   if (counts['edit_file']) {
     const n = counts['edit_file']
-    parts.push(`edited ${n} file${n > 1 ? 's' : ''}`)
+    parts.push(`edited ${n} file${plural(n)}`)
   }
   if (counts['create_file']) {
     const n = counts['create_file']
-    parts.push(`created ${n} file${n > 1 ? 's' : ''}`)
+    parts.push(`created ${n} file${plural(n)}`)
   }
   if (counts['present_plan']) {
     parts.push('presented plan')
   }
-  if (rejectedEdits > 0) {
-    parts.push(rejectedEdits === 1 ? '1 edit rejected' : `${rejectedEdits} edits rejected`)
-  }
-  if (cancelledEdits > 0) {
-    parts.push(cancelledEdits === 1 ? '1 edit cancelled' : `${cancelledEdits} edits cancelled`)
-  }
-  if (rejectedCreations > 0) {
-    parts.push(rejectedCreations === 1 ? '1 file creation rejected' : `${rejectedCreations} file creations rejected`)
-  }
-  if (cancelledCreations > 0) {
-    parts.push(cancelledCreations === 1 ? '1 file creation cancelled' : `${cancelledCreations} file creations cancelled`)
+  for (const [tool, noun] of [
+    ['edit_file', 'edit'],
+    ['create_file', 'file creation'],
+  ] as const) {
+    const tally = writes[tool]
+    if (tally.rejected > 0) {
+      parts.push(outcomePhrase(tally.rejected, noun, 'rejected'))
+    }
+    if (tally.cancelled > 0) {
+      parts.push(outcomePhrase(tally.cancelled, noun, 'cancelled'))
+    }
   }
   if (cancelledTools > 0 && parts.length === 0) {
     parts.push(cancelledTools === 1 ? '1 tool cancelled' : `${cancelledTools} tools cancelled`)
@@ -253,8 +255,7 @@ export function summariseToolCallActions(
 
 export function formatSubresultsSummary(
   items: SubresultItem[],
-  isLive: boolean,
-  _t?: unknown
+  isLive: boolean
 ): { title: string; isOnlyThinking: boolean; diffStats: DiffStats | null } {
   const toolCalls = items
     .filter(
@@ -263,9 +264,7 @@ export function formatSubresultsSummary(
     )
     .map(i => i.call)
 
-  const callsToTally = isLive
-    ? toolCalls.filter(call => 'result' in call && call.result !== undefined)
-    : toolCalls
+  const callsToTally = isLive ? settledCalls(toolCalls) : toolCalls
 
   const diffStats = sumDiffStats(callsToTally)
 
@@ -362,45 +361,25 @@ export const SubresultGroup: FC<{
 }) => {
   const { t } = useTranslation()
 
-  const entryPrefix = groupId?.split('-subresults-')[0]
+  // A new activity line starts folded. Only the user's click on this line's
+  // own header folds or unfolds it; nothing the run does afterwards does.
+  const firstItem = items[0]
+  const signature = !firstItem
+    ? ''
+    : firstItem.type === 'tool_call'
+      ? toolCallSignature(firstItem.call)
+      : thinkingSignature(firstItem.thinking)
 
-  const getStoredExpanded = () => {
-    if (groupId && subresultExpansionStore.has(groupId)) {
-      return subresultExpansionStore.get(groupId)!
-    }
-    if (entryPrefix && subresultExpansionStore.has(`${entryPrefix}-activity`)) {
-      return subresultExpansionStore.get(`${entryPrefix}-activity`)!
-    }
-    return false
-  }
-
-  const [userToggled, setUserToggled] = useState<boolean | null>(() => {
-    if (groupId && subresultExpansionStore.has(groupId)) {
-      return subresultExpansionStore.get(groupId)!
-    }
-    if (entryPrefix && subresultExpansionStore.has(`${entryPrefix}-activity`)) {
-      return subresultExpansionStore.get(`${entryPrefix}-activity`)!
-    }
-    return null
-  })
-
-  // Folding/unfolding is strictly user purpose:
-  // whatever AI action happens, keep the activity state the same.
-  const expanded =
-    userToggled !== null
-      ? userToggled
-      : groupId && subresultExpansionStore.has(groupId)
-        ? subresultExpansionStore.get(groupId)!
-        : getStoredExpanded()
+  const [expanded, setExpanded] = useState<boolean>(
+    () =>
+      (groupId && subresultExpansionStore.read(groupId, signature)) || false
+  )
 
   const handleToggle = () => {
     const next = !expanded
-    setUserToggled(next)
+    setExpanded(next)
     if (groupId) {
-      subresultExpansionStore.set(groupId, next)
-      if (entryPrefix) {
-        subresultExpansionStore.set(`${entryPrefix}-activity`, next)
-      }
+      subresultExpansionStore.write(groupId, next, signature)
     }
     if (next) {
       window.dispatchEvent(new CustomEvent('aiAssist:stickToBottom'))
@@ -408,16 +387,16 @@ export const SubresultGroup: FC<{
   }
 
   const pendingCallItem = items.find(
-    i =>
+    (i): i is Extract<AssistantBlock, { type: 'tool_call' }> =>
       i.type === 'tool_call' &&
-      i.call &&
+      Boolean(i.call) &&
       i.call.id === pendingApprovalId &&
       (i.call.name === 'edit_file' ||
         i.call.name === 'create_file' ||
         i.call.name.startsWith('configure_') ||
         i.call.name.startsWith('mcp__') ||
         i.call.name === 'present_plan')
-  ) as Extract<AssistantBlock, { type: 'tool_call' }> | undefined
+  )
 
   const pastItems = pendingCallItem
     ? items.filter(i => i !== pendingCallItem)
@@ -461,9 +440,7 @@ export const SubresultGroup: FC<{
   const { title: rawTitle, diffStats } = formatSubresultsSummary(pastItems, isLive)
 
   const callsForSummary = isLive
-    ? toolCalls
-        .map(i => i.call)
-        .filter(call => 'result' in call && call.result !== undefined)
+    ? settledCalls(toolCalls.map(i => i.call))
     : toolCalls.map(i => i.call)
 
   // In-flight active tool call or thinking block

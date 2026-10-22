@@ -30,9 +30,7 @@ const OAuth2MetadataController = {
 
   async getJwks(req, res) {
     const jwks = await OAuth2KeyManager.getJwks()
-    if (res.setHeader) {
-      res.setHeader('Cache-Control', 'public, max-age=86400')
-    }
+    res.setHeader('Cache-Control', 'public, max-age=86400')
     return res.json(jwks)
   },
 }

@@ -97,7 +97,7 @@ function persistToSessionStorage() {
   }
 }
 
-export function saveSelectionHistory(entry: SelectionHistoryEntry): void {
+function saveSelectionHistory(entry: SelectionHistoryEntry): void {
   initFromSessionStorage()
   const key = normalizeSelectionKey(entry.originalText)
   if (!key) return

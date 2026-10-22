@@ -71,17 +71,21 @@ function drawCrop(
   return out
 }
 
+function encodeJpeg(canvas: HTMLCanvasElement): ChatImage {
+  const jpeg = canvas.toDataURL('image/jpeg', JPEG_QUALITY)
+  return {
+    mediaType: 'image/jpeg',
+    data: jpeg.slice(jpeg.indexOf(',') + 1),
+  }
+}
+
 /** PNG when it is small, otherwise JPEG; the data has no `data:` prefix. */
 function encodeCanvas(canvas: HTMLCanvasElement): ChatImage {
   const png = canvas.toDataURL('image/png')
   if (png.length - PNG_PREFIX <= MAX_ENCODED_CHARS) {
     return { mediaType: 'image/png', data: png.slice(PNG_PREFIX) }
   }
-  const jpeg = canvas.toDataURL('image/jpeg', JPEG_QUALITY)
-  return {
-    mediaType: 'image/jpeg',
-    data: jpeg.slice(jpeg.indexOf(',') + 1),
-  }
+  return encodeJpeg(canvas)
 }
 
 /**
@@ -138,10 +142,7 @@ export function cropCanvas(
       }
       out = drawCrop(canvas, pixels, size)
       if (!out) return null
-      image = {
-        mediaType: 'image/jpeg',
-        data: out.toDataURL('image/jpeg', JPEG_QUALITY).split(',')[1],
-      }
+      image = encodeJpeg(out)
     }
     image.name = suggestCaptureTitle({
       page: box.page,

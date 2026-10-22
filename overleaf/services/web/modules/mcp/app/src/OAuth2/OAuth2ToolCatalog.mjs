@@ -5,6 +5,7 @@ const CACHE_TTL_MS = 5 * 60 * 1000
 const FETCH_TIMEOUT_MS = 1500
 
 let cache = null // { expiresAt, categories }
+let pendingFetch = null
 
 /**
  * Describe the MCP tools grouped by category, for the OAuth consent page.
@@ -27,27 +28,37 @@ export async function getToolCategories() {
     return cache.categories
   }
 
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
-  try {
-    const response = await fetch(`${Settings.mcp.serviceUrl}/tools/metadata`, {
-      signal: controller.signal,
-    })
-    if (!response.ok) {
-      throw new Error(`unexpected status ${response.status}`)
-    }
-    const body = await response.json()
-    const categories = body.categories || []
-    cache = { expiresAt: now + CACHE_TTL_MS, categories }
-    return categories
-  } catch (err) {
-    logger.warn({ err }, 'failed to fetch MCP tool metadata for consent page')
-    return []
-  } finally {
-    clearTimeout(timeout)
+  if (pendingFetch) {
+    return pendingFetch
   }
+
+  pendingFetch = (async () => {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
+    try {
+      const response = await fetch(`${Settings.mcp.serviceUrl}/tools/metadata`, {
+        signal: controller.signal,
+      })
+      if (!response.ok) {
+        throw new Error(`unexpected status ${response.status}`)
+      }
+      const body = await response.json()
+      const categories = Array.isArray(body?.categories) ? body.categories : []
+      cache = { expiresAt: Date.now() + CACHE_TTL_MS, categories }
+      return categories
+    } catch (err) {
+      logger.warn({ err }, 'failed to fetch MCP tool metadata for consent page')
+      return []
+    } finally {
+      clearTimeout(timeout)
+      pendingFetch = null
+    }
+  })()
+
+  return pendingFetch
 }
 
 export function _resetCacheForTests() {
   cache = null
+  pendingFetch = null
 }

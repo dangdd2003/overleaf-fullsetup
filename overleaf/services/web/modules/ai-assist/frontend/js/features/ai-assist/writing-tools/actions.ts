@@ -10,11 +10,11 @@ export type WritingActionId =
   | 'synonyms'
 
 /** Up to this many words in one sentence is a phrase: Synonyms leads. */
-export const SHORT_SELECTION_WORDS = 5
+const SHORT_SELECTION_WORDS = 5
 /** Below this many words there is nothing worth shortening. */
-export const SHORTEN_MIN_WORDS = 10
+const SHORTEN_MIN_WORDS = 10
 /** A sentence at least this long is offered "Split long sentences". */
-export const LONG_SENTENCE_WORDS = 25
+const LONG_SENTENCE_WORDS = 25
 /** A sentence at most this long is short enough to join with its neighbour. */
 export const SHORT_SENTENCE_WORDS = 12
 /** Two sentences are joined only when the result stays at most this long. */

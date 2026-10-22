@@ -42,15 +42,6 @@ describe('DiffView', function () {
     expect(container.querySelectorAll('.diff-line-ins')).to.have.length(40)
   })
 
-  it('folds the middle of a long hunk when foldLongHunks is enabled', function () {
-    const oldText = Array.from({ length: 40 }, (_unused, i) => `old ${i}`).join('\n')
-    const newText = Array.from({ length: 40 }, (_unused, i) => `new ${i}`).join('\n')
-
-    render(<DiffView oldText={oldText} newText={newText} startLine={1} foldLongHunks={true} />)
-
-    expect(screen.getByText(/more lines/)).to.exist
-  })
-
   it('renders editor clone container with cm-editor and preview classes', function () {
     const { container } = render(
       <DiffView

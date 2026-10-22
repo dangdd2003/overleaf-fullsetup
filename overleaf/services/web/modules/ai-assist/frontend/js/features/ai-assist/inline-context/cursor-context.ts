@@ -32,17 +32,17 @@ const MAX_ENVS = 3
 const GROUP_LOOKBACK = 3000
 
 /** Commands whose argument is a container of its own. */
-const COMMAND_CONTAINERS: Record<string, TextContainer> = {
-  caption: 'caption',
-  footnote: 'footnote',
-  title: 'heading',
-  part: 'heading',
-  chapter: 'heading',
-  section: 'heading',
-  subsection: 'heading',
-  subsubsection: 'heading',
-  paragraph: 'heading',
-}
+const COMMAND_CONTAINERS = new Map<string, TextContainer>([
+  ['caption', 'caption'],
+  ['footnote', 'footnote'],
+  ['title', 'heading'],
+  ['part', 'heading'],
+  ['chapter', 'heading'],
+  ['section', 'heading'],
+  ['subsection', 'heading'],
+  ['subsubsection', 'heading'],
+  ['paragraph', 'heading'],
+])
 const LIST_ENVIRONMENTS = new Set(['itemize', 'enumerate', 'description'])
 
 function regionAt(masked: string, pos: number): CursorContext['region'] {
@@ -101,8 +101,10 @@ function commandContainerAt(masked: string, pos: number): TextContainer | null {
   }
   for (let k = stack.length - 1; k >= 0; k--) {
     const head = masked.slice(Math.max(0, stack[k] - 100), stack[k])
-    const name = COMMAND_BEFORE.exec(head)?.[1]
-    if (name && COMMAND_CONTAINERS[name]) return COMMAND_CONTAINERS[name]
+    const container = COMMAND_CONTAINERS.get(
+      COMMAND_BEFORE.exec(head)?.[1] ?? ''
+    )
+    if (container) return container
   }
   return null
 }

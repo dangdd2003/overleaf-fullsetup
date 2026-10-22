@@ -145,8 +145,18 @@ function attachmentHeader(filename) {
   return `attachment; filename="${fallback}"; filename*=UTF-8''${encoded}`
 }
 
-function baseName(p) {
-  return p.slice(p.lastIndexOf('/') + 1)
+function setDownloadHeaders(res, filename, fallbackType) {
+  const contentType = lookupMimeType(filename) || fallbackType
+  res.contentType(contentType)
+  res.setHeader('Content-Disposition', attachmentHeader(filename))
+}
+
+function linesOrBlank(lines) {
+  return Array.isArray(lines) && lines.length > 0 ? lines : ['']
+}
+
+function byPath(a, b) {
+  return a.path < b.path ? -1 : a.path > b.path ? 1 : 0
 }
 
 /** Levenshtein distance, two rows at a time. */
@@ -173,14 +183,25 @@ function editDistance(a, b) {
  */
 export function suggestPaths(target, paths, limit = 5) {
   const want = target.toLowerCase()
-  const wantBase = baseName(want)
+  const wantBase = path.basename(want)
   const threshold = Math.max(2, Math.ceil(wantBase.length * 0.4))
   const scored = []
-  for (const path of new Set(paths)) {
-    const lower = path.toLowerCase()
-    let distance = Math.min(editDistance(lower, want), editDistance(baseName(lower), wantBase))
+  for (const candidate of new Set(paths)) {
+    const lower = candidate.toLowerCase()
+    const lowerBase = path.basename(lower)
+    if (
+      !lower.startsWith(want) &&
+      Math.abs(lower.length - want.length) > threshold &&
+      Math.abs(lowerBase.length - wantBase.length) > threshold
+    ) {
+      continue
+    }
+    let distance = Math.min(
+      editDistance(lower, want),
+      editDistance(lowerBase, wantBase)
+    )
     if (lower.startsWith(want)) distance = Math.min(distance, 1)
-    if (distance <= threshold) scored.push({ path, distance })
+    if (distance <= threshold) scored.push({ path: candidate, distance })
   }
   return scored
     .sort((a, b) => a.distance - b.distance || a.path.localeCompare(b.path))
@@ -236,21 +257,23 @@ function globMatcher(glob) {
     const stack = [start]
     while (stack.length) {
       const state = stack.pop()
-      if (live[state]) continue
-      live[state] = true
+      if (live[state] === 1) continue
+      live[state] = 1
       for (const next of states[state]?.skip ?? []) stack.push(next)
     }
   }
   const fullPath = pattern.includes('/')
-  return path => {
-    const subject = (fullPath ? path.slice(1) : baseName(path)).toLowerCase()
-    let live = new Array(accept + 1).fill(false)
+  let live = new Uint8Array(accept + 1)
+  let next = new Uint8Array(accept + 1)
+  return candidatePath => {
+    const subject = (fullPath ? candidatePath.slice(1) : path.basename(candidatePath)).toLowerCase()
+    live.fill(0)
     addClosed(live, 0)
     for (const c of subject) {
-      const next = new Array(accept + 1).fill(false)
+      next.fill(0)
       let any = false
       for (let state = 0; state < accept; state++) {
-        if (!live[state]) continue
+        if (live[state] === 0) continue
         const { step, loop } = states[state]
         if (step?.(c)) {
           addClosed(next, state + 1)
@@ -262,9 +285,11 @@ function globMatcher(glob) {
         }
       }
       if (!any) return false
+      const tmp = live
       live = next
+      next = tmp
     }
-    return live[accept]
+    return live[accept] === 1
   }
 }
 
@@ -1120,6 +1145,7 @@ async function searchFiles(req, res) {
         docs: docLines,
         limit: maxMatches + 1,
         signal: abort.signal,
+        ownerId: req.mcpTokenId || req.mcpUserId,
       })
     } catch (err) {
       if (err.name === 'AbortError') return

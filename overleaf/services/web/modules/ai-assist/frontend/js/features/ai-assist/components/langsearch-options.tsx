@@ -24,6 +24,10 @@ type FlagKey = {
   [K in keyof LangsearchDraft]: LangsearchDraft[K] extends boolean ? K : never
 }[keyof LangsearchDraft]
 
+type StringKey<T> = {
+  [K in keyof T]: T[K] extends string ? K : never
+}[keyof T]
+
 export function draftFromLangsearch(
   config?: LangsearchProviderConfig
 ): LangsearchDraft {
@@ -92,10 +96,10 @@ export default function LangsearchOptions({
   draft: LangsearchDraft
   onChange: (next: LangsearchDraft) => void
 }) {
-  const set = <K extends keyof LangsearchDraft>(
-    key: K,
-    value: LangsearchDraft[K]
-  ) => onChange({ ...draft, [key]: value })
+  const setFlag = (key: FlagKey, value: boolean) =>
+    onChange({ ...draft, [key]: value })
+  const setText = (key: StringKey<LangsearchDraft>, value: string) =>
+    onChange({ ...draft, [key]: value })
 
   const id = (key: keyof LangsearchDraft) => `ai-web-search-langsearch-${key}`
 
@@ -105,12 +109,12 @@ export default function LangsearchOptions({
       label={label}
       description={description}
       checked={draft[key]}
-      onChange={value => set(key, value)}
+      onChange={value => setFlag(key, value)}
     />
   )
 
   const dropdown = (
-    key: Exclude<keyof LangsearchDraft, FlagKey>,
+    key: StringKey<LangsearchDraft>,
     label: string,
     description: string,
     options: Choice[]
@@ -121,13 +125,13 @@ export default function LangsearchOptions({
       description={description}
       width="wide"
       options={options}
-      value={draft[key] as string}
-      onChange={value => set(key, value as LangsearchDraft[typeof key])}
+      value={draft[key]}
+      onChange={value => setText(key, value)}
     />
   )
 
   const text = (
-    key: Exclude<keyof LangsearchDraft, FlagKey>,
+    key: StringKey<LangsearchDraft>,
     label: string,
     description: string,
     placeholder: string,
@@ -143,8 +147,8 @@ export default function LangsearchOptions({
       label={label}
       description={description}
       placeholder={placeholder}
-      value={draft[key] as string}
-      onChange={value => set(key, value as LangsearchDraft[typeof key])}
+      value={draft[key]}
+      onChange={value => setText(key, value)}
       {...extra}
     />
   )

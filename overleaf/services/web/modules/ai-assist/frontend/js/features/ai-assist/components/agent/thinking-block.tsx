@@ -4,7 +4,10 @@ import { Brain } from '@phosphor-icons/react'
 import { useStickToBottom } from '../../hooks/use-stick-to-bottom'
 import { useRevealLive, useStreamReveal } from '../../hooks/use-stream-reveal'
 import { applyChunkFades, createFadeState, FadeState } from './stream-fade'
-import { subresultExpansionStore } from './subresult-group'
+import {
+  subresultExpansionStore,
+  thinkingSignature,
+} from './subresult-expansion-store'
 import { reconcileContainerHtml, renderMarkdown } from './markdown-content'
 
 export const ThinkingBlock: FC<{
@@ -18,12 +21,13 @@ export const ThinkingBlock: FC<{
   const uniqueId = blockId ?? (groupId ? `${groupId}-think` : undefined)
   const storageKey = uniqueId ? `think-item:${uniqueId}` : null
 
-  const [expanded, setExpanded] = useState<boolean>(() => {
-    if (storageKey && subresultExpansionStore.has(storageKey)) {
-      return subresultExpansionStore.get(storageKey)!
-    }
-    return false
-  })
+  // Folded until the user opens it; only this block's own toggle changes it
+  const [expanded, setExpanded] = useState<boolean>(
+    () =>
+      (storageKey &&
+        subresultExpansionStore.read(storageKey, thinkingSignature(thinking))) ||
+      false
+  )
 
   const contentRef = useRef<HTMLDivElement>(null)
   const { onScroll, scrollToBottom } = useStickToBottom(contentRef)
@@ -76,24 +80,15 @@ export const ThinkingBlock: FC<{
   }
 
   const handleToggle = () => {
-    setExpanded(prev => {
-      const next = !prev
-      if (storageKey) {
-        subresultExpansionStore.set(storageKey, next)
-      }
-      if (groupId) {
-        subresultExpansionStore.set(groupId, next)
-        const entryPrefix = groupId.split('-subresults-')[0]
-        if (entryPrefix) {
-          subresultExpansionStore.set(`${entryPrefix}-activity`, next)
-        }
-      }
-      if (next) {
-        window.dispatchEvent(new CustomEvent('aiAssist:stickToBottom'))
-        setTimeout(() => scrollToBottom({ smooth: false }), 0)
-      }
-      return next
-    })
+    const next = !expanded
+    setExpanded(next)
+    if (storageKey) {
+      subresultExpansionStore.write(storageKey, next, thinkingSignature(thinking))
+    }
+    if (next) {
+      window.dispatchEvent(new CustomEvent('aiAssist:stickToBottom'))
+      setTimeout(() => scrollToBottom({ smooth: false }), 0)
+    }
   }
 
   return (

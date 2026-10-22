@@ -59,7 +59,7 @@ describe('BrowserRoute (HTTP client)', function () {
     const fetchFn = fakeFetch({ body: '<html><body>Raw Page</body></html>' })
     const route = new BrowserRoute({ baseUrl: BASE_URL, token: TOKEN, fetchFn })
 
-    const res = await route.raw('https://example.com/src')
+    const res = await route.fetchPage('https://example.com/src')
     expect(res.url).to.equal('https://example.com/dest')
     expect(res.body.toString('utf8')).to.equal(
       '<html><body>Raw Page</body></html>'
@@ -98,7 +98,7 @@ describe('BrowserRoute (HTTP client)', function () {
 
     let error = null
     try {
-      await route.raw('https://example.com/gone')
+      await route.fetchPage('https://example.com/gone')
     } catch (err) {
       error = err
     }
@@ -118,7 +118,7 @@ describe('BrowserRoute (HTTP client)', function () {
 
     let err503 = null
     try {
-      await route.raw('https://example.com/a')
+      await route.fetchPage('https://example.com/a')
     } catch (err) {
       err503 = err
     }
@@ -137,7 +137,7 @@ describe('BrowserRoute (HTTP client)', function () {
     })
     let err403 = null
     try {
-      await route403.raw('https://example.com/private')
+      await route403.fetchPage('https://example.com/private')
     } catch (err) {
       err403 = err
     }
@@ -224,11 +224,11 @@ describe('BrowserRoute (HTTP client)', function () {
     expect(fetchFn.called).to.equal(false)
   })
 
-  it('raw and render check the address before asking the sidecar, as fetchPage does', async function () {
+  it('fetchPage and render check the address before asking the sidecar', async function () {
     const fetchFn = fakeFetch()
     const route = new BrowserRoute({ baseUrl: BASE_URL, token: TOKEN, fetchFn })
     for (const read of [
-      route.raw('http://127.0.0.1/'),
+      route.fetchPage('http://127.0.0.1/'),
       route.render('http://user:pw@example.com/'),
     ]) {
       let error = null
@@ -250,7 +250,7 @@ describe('BrowserRoute (HTTP client)', function () {
     })
     let error = null
     try {
-      await route.raw('https://example.com/broken')
+      await route.fetchPage('https://example.com/broken')
     } catch (err) {
       error = err
     }
@@ -282,7 +282,7 @@ describe('BrowserRoute (HTTP client)', function () {
       fetchFn,
     })
     await Promise.all(
-      [1, 2, 3, 4, 5].map(n => route.raw(`https://example.com/${n}`))
+      [1, 2, 3, 4, 5].map(n => route.fetchPage(`https://example.com/${n}`))
     )
     const reads = fetchFn.getCalls().filter(call => call.args[0].endsWith('/v1/raw'))
     expect(reads.length).to.equal(5)
@@ -309,7 +309,7 @@ describe('BrowserRoute (HTTP client)', function () {
     })
     const route = new BrowserRoute({ baseUrl: BASE_URL, token: TOKEN, fetchFn })
     await Promise.all(
-      [1, 2, 3, 4, 5, 6].map(n => route.raw(`https://example.com/${n}`))
+      [1, 2, 3, 4, 5, 6].map(n => route.fetchPage(`https://example.com/${n}`))
     )
     expect(most).to.equal(4)
     const healthCalls = fetchFn
@@ -339,14 +339,14 @@ describe('BrowserRoute (HTTP client)', function () {
       fetchFn,
       now: () => now,
     })
-    await Promise.all([1, 2, 3, 4].map(n => route.raw(`https://example.com/${n}`)))
+    await Promise.all([1, 2, 3, 4].map(n => route.fetchPage(`https://example.com/${n}`)))
     expect(most).to.equal(2)
-    await route.raw('https://example.com/5')
+    await route.fetchPage('https://example.com/5')
     const healthCalls = () =>
       fetchFn.getCalls().filter(call => call.args[0] === `${BASE_URL}/v1/health`)
     expect(healthCalls().length).to.equal(1)
     now += 31_000
-    await route.raw('https://example.com/6')
+    await route.fetchPage('https://example.com/6')
     expect(healthCalls().length).to.equal(2)
   })
 
@@ -385,7 +385,7 @@ describe('BrowserRoute (HTTP client)', function () {
       fetchFn,
     })
     // The only page place is taken by a read that has not finished
-    const read = route.raw('https://example.com/slow')
+    const read = route.fetchPage('https://example.com/slow')
     const icon = await route.fetchFile('https://example.com/favicon.ico', {
       maxBytes: 1024,
     })
@@ -502,7 +502,7 @@ describe('BrowserRoute (HTTP client)', function () {
     })
 
     const route = new BrowserRoute({ baseUrl: BASE_URL, token: TOKEN, fetchFn })
-    const res = await route.raw('https://example.com/src')
+    const res = await route.fetchPage('https://example.com/src')
     expect(res.url).to.equal(malformedUrl)
     expect(res.body.toString('utf8')).to.equal(
       '<html><body>Page with bad redirect header</body></html>'

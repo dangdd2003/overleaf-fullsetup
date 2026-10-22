@@ -1,4 +1,5 @@
 import { renderAttachments } from './attachments'
+import { plural } from './compile-error'
 import { escapeAttribute, neutraliseClosingTags } from './escape'
 import {
   Attachment,
@@ -8,10 +9,6 @@ import {
   PdfViewerSnapshot,
   fingerprintFiles,
 } from './types'
-
-function plural(count: number, noun: string) {
-  return `${count} ${noun}${count === 1 ? '' : 's'}`
-}
 
 const MAX_EXPLICIT_FILES = 50
 

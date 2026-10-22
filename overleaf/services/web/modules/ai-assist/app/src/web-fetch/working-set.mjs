@@ -17,14 +17,13 @@
  * as long as providers keep a prompt cache, so a chat picked up again within
  * it reads its pages from memory.
  */
-export const WORKING_TTL_MS = 60 * 60 * 1000
+const WORKING_TTL_MS = 60 * 60 * 1000
 
 class BoundedMap {
-  constructor({ maxEntries, maxChars, ttlMs, now = () => Date.now() }) {
+  constructor({ maxEntries, maxChars, ttlMs }) {
     this.maxEntries = maxEntries
     this.maxChars = maxChars
     this.ttlMs = ttlMs
-    this.now = now
     this.entries = new Map()
     this.chars = 0
   }
@@ -32,7 +31,7 @@ class BoundedMap {
   get(key) {
     const entry = this.entries.get(key)
     if (!entry) return null
-    if (this.now() - entry.at >= this.ttlMs) {
+    if (Date.now() - entry.at >= this.ttlMs) {
       this.delete(key)
       return null
     }
@@ -45,7 +44,7 @@ class BoundedMap {
   set(key, value, chars) {
     this.delete(key)
     if (chars > this.maxChars) return
-    this.entries.set(key, { value, chars, at: this.now() })
+    this.entries.set(key, { value, chars, at: Date.now() })
     this.chars += chars
     for (const [oldest] of this.entries) {
       if (

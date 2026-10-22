@@ -33,9 +33,7 @@ export function buildApp(config) {
 
       const { app } = createHttpApp({ config, client })
       await new Promise((resolve, reject) => {
-        const server = app.listen(config.port, config.host, err =>
-          err ? reject(err) : resolve(server)
-        )
+        const server = app.listen(config.port, config.host, () => resolve(server))
         server.on('error', reject)
       })
       logger.info(

@@ -28,7 +28,9 @@ function csvLines(lines: string[]): string[] {
   for (const line of lines) {
     const count = csvCommas(line)
     if (count < 2) continue
-    groups.set(count, [...(groups.get(count) ?? []), line])
+    const group = groups.get(count)
+    if (group) group.push(line)
+    else groups.set(count, [line])
   }
   let best: string[] = []
   for (const group of groups.values()) {
@@ -40,38 +42,42 @@ function csvLines(lines: string[]): string[] {
 const tabLines = (lines: string[]) => lines.filter(line => line.includes('\t'))
 const markdownLines = (lines: string[]) => lines.filter(line => MARKDOWN_ROW.test(line))
 
+type TabularAnalysis = {
+  format: TabularFormat | null
+  lines: string[]
+  dataLines: string[]
+}
+
+function analyzeTabular(text: string): TabularAnalysis {
+  const lines = nonEmptyLines(text)
+  const tabs = tabLines(lines)
+  if (tabs.length >= 2) {
+    return { format: 'tsv', lines, dataLines: tabs }
+  }
+  const markdown = markdownLines(lines)
+  if (markdown.length >= 2) {
+    return { format: 'markdown', lines, dataLines: markdown }
+  }
+  const csv = csvLines(lines)
+  if (csv.length > 0) {
+    return { format: 'csv', lines, dataLines: csv }
+  }
+  return { format: null, lines, dataLines: [] }
+}
+
 /** The format of the tabular text in `text`, if any. */
 export function tabularFormat(text: string): TabularFormat | null {
-  const lines = nonEmptyLines(text)
-  if (tabLines(lines).length >= 2) return 'tsv'
-  if (markdownLines(lines).length >= 2) return 'markdown'
-  if (csvLines(lines).length > 0) return 'csv'
-  return null
+  return analyzeTabular(text).format
 }
 
 export function isTabularText(text: string): boolean {
   return tabularFormat(text) !== null
 }
 
-/** The lines of `text` that hold its tabular data. */
-function dataLines(text: string): string[] {
-  const lines = nonEmptyLines(text)
-  switch (tabularFormat(text)) {
-    case 'tsv':
-      return tabLines(lines)
-    case 'markdown':
-      return markdownLines(lines)
-    case 'csv':
-      return csvLines(lines)
-    default:
-      return []
-  }
-}
-
 /** Nothing but tabular lines: pasted cells with no instructions around them. */
 export function onlyTabular(text: string): boolean {
-  const data = dataLines(text)
-  return data.length > 0 && data.length === nonEmptyLines(text).length
+  const { dataLines, lines } = analyzeTabular(text)
+  return dataLines.length > 0 && dataLines.length === lines.length
 }
 
 function splitCsv(line: string): string[] {
@@ -103,8 +109,9 @@ function splitCsv(line: string): string[] {
  * lines count, so instructions around pasted cells are not data.
  */
 export function tabularCells(text: string): string[] {
-  const format = tabularFormat(text)
-  const cells = dataLines(text).flatMap(line => {
+  const { format, dataLines } = analyzeTabular(text)
+  if (!format) return []
+  const cells = dataLines.flatMap(line => {
     if (format === 'tsv') return line.split('\t')
     if (format === 'markdown') {
       if (MARKDOWN_RULE.test(line)) return []

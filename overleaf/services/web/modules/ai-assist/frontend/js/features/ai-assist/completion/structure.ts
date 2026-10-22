@@ -94,7 +94,7 @@ for (const [names, role] of [
 }
 
 /** Definitions that name what their environment holds outright. */
-const DEFINES: Array<[RegExp, EnvRole | 'list-type']> = [
+const DEFINES: Array<[RegExp, EnvRole]> = [
   // enumitem: \newlist{steps}{enumerate}{3}
   [/\\newlist\s*\{([^}]+)\}/g, 'list'],
   [/\\lstnewenvironment\s*\{([^}]+)\}/g, 'code'],
@@ -117,7 +117,7 @@ function definedRoles(doc: string): Map<string, EnvRole> {
   const roles = new Map<string, EnvRole>()
   const masked = maskComments(doc)
   for (const [pattern, role] of DEFINES) {
-    for (const match of masked.matchAll(pattern)) roles.set(match[1].trim(), role as EnvRole)
+    for (const match of masked.matchAll(pattern)) roles.set(match[1].trim(), role)
   }
   // \newminted{python}{…} defines `pythoncode`
   for (const match of masked.matchAll(/\\newminted\s*(?:\[([^\]]+)\])?\s*\{([^}]+)\}/g)) {

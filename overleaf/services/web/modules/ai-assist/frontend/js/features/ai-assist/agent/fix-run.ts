@@ -80,9 +80,6 @@ export function buildFixTaskBlock(level: string): string {
   ].join('\n')
 }
 
-/** The block for an error-level entry; warnings get their own wording. */
-export const FIX_TASK_BLOCK = buildFixTaskBlock('error')
-
 /**
  * Reads the code a fix run should start from already knowing.
  *

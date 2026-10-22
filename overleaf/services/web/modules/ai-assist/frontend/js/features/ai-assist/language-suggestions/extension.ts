@@ -15,7 +15,7 @@ import { resolveModel } from './model-choice'
 import { readLanguageSuggestionsPreferences, wantsStyle } from './preferences'
 import { onPageAttention, pageAttended } from '../inline-context/page-attention'
 import { backgroundHold, onModelReleased } from '../inline-context/model-priority'
-import { EditPositions, Scheduler } from './scheduler'
+import { EditPositions, type Resolved, Scheduler } from './scheduler'
 import { projectSharedResults } from './shared'
 import { TabShare } from './tab-share'
 import {
@@ -56,7 +56,7 @@ const languageSuggestionsPlugin = ViewPlugin.fromClass(
     private destroyed = false
 
     private onLearnedWord = () => {
-      if (this.destroyed || (this.view as any).isDestroyed) return
+      if (this.destroyed) return
       this.view.dispatch({ effects: refreshFilters.of(null) })
     }
 
@@ -82,7 +82,7 @@ const languageSuggestionsPlugin = ViewPlugin.fromClass(
           hasConsented() &&
           readLanguageSuggestionsPreferences().enabled,
         isAttended: pageAttended,
-        resolve: () => {
+        resolve: (): Resolved | null => {
           const preferences = readLanguageSuggestionsPreferences()
           const model = resolveModel(preferences.model)
           return model

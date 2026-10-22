@@ -1,17 +1,13 @@
 import customLocalStorage from '@/infrastructure/local-storage'
-import type { MaskedEdit } from './edits'
+import { isMaskedEdit, type MaskedEdit } from './edits'
 import type { KeyContext } from './model-choice'
 import { PROMPT_VERSION } from './prompt'
 import { normalizeForCheck } from './semantic'
+import type { SharedEntry } from './shared'
 
 /** A sentence's checked edits ([] = clean) and those rejected this session. */
-export type CacheEntry = {
-  edits: MaskedEdit[]
+export type CacheEntry = SharedEntry & {
   rejected: MaskedEdit[]
-  /** The masked text the edits were made for, when it has any. */
-  text?: string
-  /** The neighbours' words where it was checked, one per place it stands (semantic.ts); absent: any. */
-  contexts?: string[]
 }
 
 export const CACHE_SIZE = 5000
@@ -26,16 +22,12 @@ type PersistedEntry = [string, MaskedEdit[], string | null, string[] | null, Mas
 type Persisted = { v: 2; entries: PersistedEntry[] }
 
 export type CacheStorage = {
-  getItem: (key: string) => any
+  getItem: (key: string) => unknown
   setItem: (key: string, value: any) => void
 }
 
 export function cacheKey(context: KeyContext, hash: string): string {
   return `${context.slot}:${context.model}|${context.variant}|${context.style ? 'style' : 'grammar'}|${PROMPT_VERSION}|${hash}`
-}
-
-export function sameEdit(a: MaskedEdit, b: MaskedEdit): boolean {
-  return a.from === b.from && a.to === b.to && a.insert === b.insert
 }
 
 /** The same words replaced the same way, wherever they are. */
@@ -66,7 +58,7 @@ export class SuggestionCache {
     if (!this.storage) return
     let stored: Persisted | null = null
     try {
-      stored = this.storage.getItem(PERSIST_KEY)
+      stored = this.storage.getItem(PERSIST_KEY) as Persisted | null
     } catch {
       return
     }
@@ -75,10 +67,14 @@ export class SuggestionCache {
       if (!Array.isArray(entry) || typeof entry[0] !== 'string' || !Array.isArray(entry[1])) {
         continue
       }
-      const [key, edits, text, contexts, rejected] = entry
+      const [key, rawEdits, text, contexts, rawRejected] = entry
+      if (!rawEdits.every(isMaskedEdit)) {
+        continue
+      }
+      const validRejected = Array.isArray(rawRejected) ? rawRejected.filter(isMaskedEdit) : []
       this.entries.set(key, {
-        edits,
-        rejected: Array.isArray(rejected) ? rejected : [],
+        edits: rawEdits,
+        rejected: validRejected,
         ...(typeof text === 'string' ? { text } : {}),
         ...(Array.isArray(contexts) ? { contexts } : {}),
       })
@@ -116,14 +112,6 @@ export class SuggestionCache {
     }
   }
 
-  get size(): number {
-    return this.entries.size
-  }
-
-  has(key: string): boolean {
-    return this.entries.has(key)
-  }
-
   get(key: string): CacheEntry | undefined {
     const entry = this.entries.get(key)
     if (entry) {
@@ -151,8 +139,18 @@ export class SuggestionCache {
    */
   visible(key: string): MaskedEdit[] | undefined {
     const entry = this.get(key)
-    return entry?.edits.filter(
-      edit => !entry.rejected.some(rejected => sameChange(rejected, edit))
+    if (!entry) return undefined
+    if (entry.rejected.length === 0) return entry.edits
+    const rejectedKeys = new Set(
+      entry.rejected.map(rejected =>
+        JSON.stringify([rejected.insert, normalizeForCheck(rejected.original).text])
+      )
+    )
+    return entry.edits.filter(
+      edit =>
+        !rejectedKeys.has(
+          JSON.stringify([edit.insert, normalizeForCheck(edit.original).text])
+        )
     )
   }
 

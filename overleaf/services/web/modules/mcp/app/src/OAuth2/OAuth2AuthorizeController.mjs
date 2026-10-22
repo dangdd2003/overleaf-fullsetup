@@ -23,9 +23,6 @@ async function findClient(clientId) {
     id: dbClient.id,
     name: dbClient.name,
     redirectUris: dbClient.redirectUris,
-    grants: dbClient.grants,
-    scopes: dbClient.scopes,
-    isPublic: !dbClient.clientSecret,
     _id: dbClient._id,
   }
 }
@@ -299,7 +296,7 @@ const OAuth2AuthorizeController = {
       authorizationCode: hashToken(authorizationCode),
       expiresAt: new Date(Date.now() + 5 * 60 * 1000), // 5 minutes TTL
       client_id: client.id,
-      oauthApplication_id: client._id || null,
+      oauthApplication_id: client._id,
       redirectUri: redirect_uri,
       scope: grantedScope,
       user_id: user._id,

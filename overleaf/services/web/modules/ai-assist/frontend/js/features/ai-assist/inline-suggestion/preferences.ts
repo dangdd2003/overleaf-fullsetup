@@ -11,7 +11,15 @@ export type CompletionMode = 'disabled' | 'manual' | 'automatic'
 const COMPLETION_MODES: CompletionMode[] = ['disabled', 'manual', 'automatic']
 /** The pauses Automatic can wait for, in milliseconds. */
 export const COMPLETION_DELAYS = [100, 200, 300, 400, 500, 600, 800, 1000]
-export const DEFAULT_COMPLETION_DELAY = 300
+const DEFAULT_COMPLETION_DELAY = 300
+
+function isCompletionMode(v: unknown): v is CompletionMode {
+  return COMPLETION_MODES.includes(v as CompletionMode)
+}
+
+function isCompletionDelay(v: unknown): v is number {
+  return COMPLETION_DELAYS.includes(v as number)
+}
 
 /** Settings → Editor → AI assistance. Everything starts off. */
 export type InlineSuggestionsPreferences = {
@@ -27,17 +35,21 @@ export type InlineSuggestionsPreferences = {
  * existed has `sentenceCompletion`, whose `true` was today's Manual.
  */
 export function normalizeInlineSuggestionsPreferences(
-  raw: any
+  raw: unknown
 ): InlineSuggestionsPreferences {
+  const fields: Partial<Record<string, unknown>> =
+    typeof raw === 'object' && raw !== null
+      ? (raw as Record<string, unknown>)
+      : {}
   return {
-    emptyLineShortcut: raw?.emptyLineShortcut === true,
-    completionMode: COMPLETION_MODES.includes(raw?.completionMode)
-      ? raw.completionMode
-      : raw?.sentenceCompletion === true
+    emptyLineShortcut: fields.emptyLineShortcut === true,
+    completionMode: isCompletionMode(fields.completionMode)
+      ? fields.completionMode
+      : fields.sentenceCompletion === true
         ? 'manual'
         : 'disabled',
-    completionDelayMs: COMPLETION_DELAYS.includes(raw?.completionDelayMs)
-      ? raw.completionDelayMs
+    completionDelayMs: isCompletionDelay(fields.completionDelayMs)
+      ? fields.completionDelayMs
       : DEFAULT_COMPLETION_DELAY,
   }
 }

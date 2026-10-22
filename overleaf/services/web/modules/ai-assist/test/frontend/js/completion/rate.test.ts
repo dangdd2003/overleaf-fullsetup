@@ -1,7 +1,6 @@
 import { expect } from 'chai'
 import sinon from 'sinon'
 import {
-  CACHE_SIZE,
   cacheKey,
   CompletionCache,
   RateGate,
@@ -69,7 +68,7 @@ describe('completion: request gap and cache', function () {
 
   it('keeps the 32 most recently used completions', function () {
     const cache = new CompletionCache()
-    for (let i = 0; i < CACHE_SIZE; i++) cache.set(`k${i}`, `t${i}`)
+    for (let i = 0; i < 32; i++) cache.set(`k${i}`, `t${i}`)
     expect(cache.get('k0')).to.equal('t0') // now the most recent
     cache.set('new', 'x')
     expect(cache.get('k1')).to.equal(undefined)

@@ -9,26 +9,23 @@ import { expect } from 'chai'
 import sinon from 'sinon'
 import {
   AiAssistWebTools,
-  PAGE_CHARS,
-  clearWebDocumentCache,
-  documentFromResponse,
   fetchOnlyWebSettings,
-  fetchPublicUrl,
-  guardedLookup,
-  htmlToMarkdown,
-  isPublicAddress,
   normalizeWebSearchSettings,
   buildEndpointPool,
-  EndpointRotator,
   testWebSearch,
   getOwnerCaches,
-  openWebCache,
   searchCacheText,
   REPEATED_SEARCH_NOTICE,
   WEB_TOOL_SPECS,
   maskKey,
   checkApiKeyAlive,
 } from '../../../app/src/AiAssistWebTools.mjs'
+import { PAGE_CHARS, documentFromResponse } from '../../../app/src/web-fetch/document.mjs'
+import { fetchPublicUrl, guardedLookup, isPublicAddress } from '../../../app/src/web-fetch/transport.mjs'
+import { htmlToMarkdown } from '../../../app/src/web-fetch/extract/html.mjs'
+import { clearEndpointHealth } from '../../../app/src/web-fetch/routing.mjs'
+import { clearWebCacheStore, openWebCache } from '../../../app/src/web-fetch/cache-store.mjs'
+import { clearWorkingSet } from '../../../app/src/web-fetch/working-set.mjs'
 import { renderToolResult } from '../../../app/src/AiAssistToolRender.mjs'
 import { resetDockerHostCache } from '../../../app/src/DockerHost.mjs'
 import { webError } from '../../../app/src/web-fetch/util.mjs'
@@ -69,7 +66,9 @@ describe('AiAssistWebTools', function () {
   })
 
   beforeEach(function () {
-    clearWebDocumentCache()
+    clearWebCacheStore()
+    clearWorkingSet()
+    clearEndpointHealth()
   })
 
   describe('normalizeWebSearchSettings', function () {
@@ -1417,7 +1416,9 @@ describe('AiAssistWebTools', function () {
 
   describe('Multi-provider pools and rotation', function () {
     beforeEach(function () {
-      clearWebDocumentCache()
+      clearWebCacheStore()
+      clearWorkingSet()
+      clearEndpointHealth()
     })
 
     const multiSettings = {
@@ -1449,51 +1450,6 @@ describe('AiAssistWebTools', function () {
       expect(pool[0].baseUrl).to.equal('http://searx-1:8080')
       expect(pool[0].defaultCategories).to.equal('science')
       expect(pool[2].apiKey).to.equal('key-alpha')
-    })
-
-    it('cycles round-robin across healthy endpoints across providers', function () {
-      const rotator = new EndpointRotator(multiSettings)
-      const e1 = rotator.select()
-      const e2 = rotator.select()
-      const e3 = rotator.select()
-      const e4 = rotator.select()
-      const e5 = rotator.select()
-      expect(e1.id).to.equal('searxng:0')
-      expect(e2.id).to.equal('searxng:1')
-      expect(e3.id).to.equal('ollama:0')
-      expect(e4.id).to.equal('ollama:1')
-      expect(e5.id).to.equal('searxng:0')
-    })
-
-    it('skips endpoints on cooldown and fails over to healthy endpoints', function () {
-      const rotator = new EndpointRotator(multiSettings)
-      rotator.markFailure('searxng:0', { status: 429 })
-      const e = rotator.select()
-      expect(e.id).to.equal('searxng:1')
-    })
-
-    it('supports provider-priority strategy', function () {
-      const settings = {
-        ...multiSettings,
-        rotationStrategy: 'provider-priority',
-        primaryProvider: 'searxng',
-      }
-      const rotator = new EndpointRotator(settings)
-      expect(rotator.select().provider).to.equal('searxng')
-      expect(rotator.select().provider).to.equal('searxng')
-      // SearXNG exhausted
-      rotator.markFailure('searxng:0', { status: 429 })
-      rotator.markFailure('searxng:1', { status: 429 })
-      expect(rotator.select().provider).to.equal('ollama')
-    })
-
-    it('supports sticky strategy until error occurs', function () {
-      const settings = { ...multiSettings, rotationStrategy: 'sticky' }
-      const rotator = new EndpointRotator(settings)
-      const first = rotator.select().id
-      expect(rotator.select().id).to.equal(first)
-      rotator.markFailure(first, { status: 429 })
-      expect(rotator.select().id).to.not.equal(first)
     })
 
     it('in-flight search automatically fails over when first endpoint returns 429', async function () {

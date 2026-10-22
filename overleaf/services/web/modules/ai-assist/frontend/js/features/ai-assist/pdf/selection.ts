@@ -25,9 +25,9 @@ export function readPdfSelection(
   selection: Selection | null
 ): PdfSelectionContext | null {
   if (!root || !selection || selection.isCollapsed) return null
-  const text = selection.toString().trim()
-  if (!text) return null
   const page = pdfPageOf(selection.anchorNode, root)
   if (page === null) return null
+  const text = selection.toString().trim()
+  if (!text) return null
   return { page, text: text.slice(0, MAX_PDF_SELECTION_CHARS) }
 }

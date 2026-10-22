@@ -2,11 +2,13 @@ import { expect } from 'chai'
 import {
   buildCompletionMessage,
   COMPLETION_SYSTEM,
-  CURSOR,
   MAX_TOKENS,
 } from '../../../../frontend/js/features/ai-assist/completion/prompt'
 import { describeCursor } from '../../../../frontend/js/features/ai-assist/completion/placement'
 import type { CompletionKind } from '../../../../frontend/js/features/ai-assist/completion/detect'
+
+/** The cursor marker the excerpt carries (prompt.ts). */
+const CURSOR = '<cursor/>'
 
 const FACTS = {
   docClass: 'article',

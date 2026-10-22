@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import OLButton from '@/shared/components/ol/ol-button'
 import OLFormControl from '@/shared/components/ol/ol-form-control'
 import OLBadge from '@/shared/components/ol/ol-badge'
-import { AgentMode } from '../../agent/agent-mode'
+import { ApprovalDecision } from '../../agent/agent-events'
 import { MarkdownContent } from './markdown-content'
 
 export function PlanApprovalCard({
@@ -12,7 +12,7 @@ export function PlanApprovalCard({
   decided,
 }: {
   plan: string
-  onDecision: (decision: { accepted: boolean; note?: string; nextMode?: AgentMode }) => void
+  onDecision: (decision: ApprovalDecision) => void
   decided?: 'accepted' | 'rejected'
 }) {
   const { t } = useTranslation()

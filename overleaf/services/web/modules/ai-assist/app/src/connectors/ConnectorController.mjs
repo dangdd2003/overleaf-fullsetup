@@ -18,6 +18,17 @@ function scriptJson(value) {
   return JSON.stringify(value).replace(/</g, '\\u003c')
 }
 
+/** Answers with the handler's result, or its error with the status it names. */
+function respond(handler) {
+  return async (req, res) => {
+    try {
+      res.json(await handler(req))
+    } catch (err) {
+      res.status(err.status || 400).json({ error: err.message, code: err.code })
+    }
+  }
+}
+
 export const ConnectorController = {
   async list(req, res, next) {
     try {
@@ -37,102 +48,29 @@ export const ConnectorController = {
     }
   },
 
-  async create(req, res, _next) {
-    try {
-      const result = await ConnectorService.create(req.user._id, req.body)
-      res.json(result)
-    } catch (err) {
-      res
-        .status(err.status || 400)
-        .json({ error: err.message, code: err.code })
-    }
-  },
+  create: respond(req => ConnectorService.create(req.user._id, req.body)),
 
-  async import(req, res, _next) {
-    try {
-      const result = await ConnectorService.import(
-        req.user._id,
-        req.body?.config
-      )
-      res.json(result)
-    } catch (err) {
-      res
-        .status(err.status || 400)
-        .json({ error: err.message, code: err.code })
-    }
-  },
+  import: respond(req =>
+    ConnectorService.import(req.user._id, req.body?.config)
+  ),
 
-  async update(req, res, _next) {
-    try {
-      const result = await ConnectorService.update(
-        req.params.id,
-        req.user._id,
-        req.body
-      )
-      res.json(result)
-    } catch (err) {
-      res
-        .status(err.status || 400)
-        .json({ error: err.message, code: err.code })
-    }
-  },
+  update: respond(req =>
+    ConnectorService.update(req.params.id, req.user._id, req.body)
+  ),
 
-  async remove(req, res, _next) {
-    try {
-      const result = await ConnectorService.remove(
-        req.params.id,
-        req.user._id
-      )
-      res.json(result)
-    } catch (err) {
-      res
-        .status(err.status || 400)
-        .json({ error: err.message, code: err.code })
-    }
-  },
+  remove: respond(req => ConnectorService.remove(req.params.id, req.user._id)),
 
-  async authorize(req, res, _next) {
-    try {
-      const result = await ConnectorService.authorize(
-        req.params.id,
-        req.user._id,
-        { scope: req.body?.scope }
-      )
-      res.json(result)
-    } catch (err) {
-      res
-        .status(err.status || 400)
-        .json({ error: err.message, code: err.code })
-    }
-  },
+  authorize: respond(req =>
+    ConnectorService.authorize(req.params.id, req.user._id, {
+      scope: req.body?.scope,
+    })
+  ),
 
-  async refresh(req, res, _next) {
-    try {
-      const result = await ConnectorService.refresh(
-        req.params.id,
-        req.user._id
-      )
-      res.json(result)
-    } catch (err) {
-      res
-        .status(err.status || 400)
-        .json({ error: err.message, code: err.code })
-    }
-  },
+  refresh: respond(req => ConnectorService.refresh(req.params.id, req.user._id)),
 
-  async disconnect(req, res, _next) {
-    try {
-      const result = await ConnectorService.disconnect(
-        req.params.id,
-        req.user._id
-      )
-      res.json(result)
-    } catch (err) {
-      res
-        .status(err.status || 400)
-        .json({ error: err.message, code: err.code })
-    }
-  },
+  disconnect: respond(req =>
+    ConnectorService.disconnect(req.params.id, req.user._id)
+  ),
 
   async oauthCallback(req, res, _next) {
     const { code, state, iss, error, error_description } = req.query

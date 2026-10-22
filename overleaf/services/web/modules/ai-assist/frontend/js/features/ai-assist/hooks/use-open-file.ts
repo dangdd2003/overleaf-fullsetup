@@ -38,7 +38,7 @@ function searchTree(
  * Resolves a file path string to an entity ID and type.
  */
 function resolveEntity(
-  fileTreeContext: any,
+  fileTreeContext: React.ContextType<typeof FileTreePathContext>,
   fileTreeData: Folder | undefined,
   rawPath: string
 ): { _id: string; type: 'doc' | 'fileRef' } | null {
@@ -46,12 +46,12 @@ function resolveEntity(
   const clean = rawPath.trim().replace(/^\.\//, '').replace(/^\/+/, '')
 
   // 1. Direct path lookup from path context
-  const direct = fileTreeContext?.findEntityByPath?.(clean)
+  const direct = fileTreeContext?.findEntityByPath(clean)
   if (direct?.entity?._id && (direct.type === 'doc' || direct.type === 'fileRef')) {
     return { _id: direct.entity._id, type: direct.type }
   }
 
-  // 2. Direct path lookup without extension or leading components
+  // 2. Search the tree by file name
   if (fileTreeData) {
     const fromTree = searchTree(fileTreeData, clean)
     if (fromTree) return fromTree

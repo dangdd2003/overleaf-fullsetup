@@ -115,6 +115,6 @@ const SCOPE_LIMITS = {
  */
 export function scopeRefusal(commandId, toolName) {
   const scope = SLASH_COMMAND_SCOPES[commandId]
-  const limit = SCOPE_LIMITS[scope] ?? 'this command does not allow it'
+  const limit = SCOPE_LIMITS[scope]
   return `\`${toolName}\` is outside /${commandId}'s scope: ${limit}. Report the change instead of making it.`
 }

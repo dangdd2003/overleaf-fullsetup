@@ -1,27 +1,21 @@
 import { useEditorThemeStyles } from '../../hooks/use-editor-theme-styles'
 
-export interface CodeViewProps {
+const NUMBERED_LINE = /^(\d+):\s?(.*)$/
+
+interface CodeViewProps {
   lines?: string[]
-  content?: string
   startLine?: number
   onLineClick?: (line: number) => void
-  maxHeight?: number | string
 }
 
 export default function CodeView({
   lines,
-  content = '',
   startLine = 1,
   onLineClick,
-  maxHeight,
 }: CodeViewProps) {
   const { editorStyle, gutterStyle, isDark } = useEditorThemeStyles()
 
-  const rawLines = Array.isArray(lines)
-    ? lines
-    : typeof content === 'string'
-    ? content.split('\n')
-    : []
+  const rawLines = Array.isArray(lines) ? lines : []
 
   const safeStartLine =
     typeof startLine === 'number' && Number.isFinite(startLine) && startLine > 0
@@ -33,15 +27,12 @@ export default function CodeView({
       className={`cm-editor cm-editor-preview ${
         isDark ? 'overall-theme-dark' : 'overall-theme-light'
       } ai-suggest-code-diff`}
-      style={{
-        ...editorStyle,
-        ...(maxHeight ? { maxHeight } : {}),
-      }}
+      style={editorStyle}
     >
       <div className="cm-scroller">
         <div className="cm-content">
           {rawLines.map((line, index) => {
-            const match = line.match(/^(\d+):\s?(.*)$/)
+            const match = line.match(NUMBERED_LINE)
             const lineNo = match ? parseInt(match[1], 10) : safeStartLine + index
             const codeText = match ? match[2] : line
 

@@ -35,24 +35,27 @@ export function computeLineDiff(original, current) {
     return { insertions: ins, deletions: del }
   }
 
-  const dp = Array.from({ length: m + 1 }, () => new Uint32Array(n + 1))
+  // Two rolling rows of the LCS table: only the last row is needed
+  let prev = new Uint32Array(n + 1)
+  let curr = new Uint32Array(n + 1)
   for (let i = 0; i < m; i++) {
     for (let j = 0; j < n; j++) {
       if (linesA[i] === linesB[j]) {
-        dp[i + 1][j + 1] = dp[i][j] + 1
+        curr[j + 1] = prev[j] + 1
       } else {
-        dp[i + 1][j + 1] = Math.max(dp[i + 1][j], dp[i][j + 1])
+        curr[j + 1] = Math.max(curr[j], prev[j + 1])
       }
     }
+    ;[prev, curr] = [curr, prev]
   }
-  const lcs = dp[m][n]
+  const lcs = prev[n]
   return {
     insertions: n - lcs,
     deletions: m - lcs,
   }
 }
 
-const OBJECT_ID = /^[0-9a-f]{24}$/i
+export const OBJECT_ID = /^[0-9a-f]{24}$/i
 const CHAT_ID = /^[A-Za-z0-9_-]{1,64}$/
 
 export function isValidChatId(chatId) {
@@ -75,6 +78,14 @@ export function baseDir() {
     (Settings.aiAssist?.chatHistoryDir
       ? Path.join(Settings.aiAssist.chatHistoryDir, 'checkpoints')
       : '/var/lib/overleaf/data/ai-assist/checkpoints')
+  )
+}
+
+function validIds(projectId, userId, chatId) {
+  return (
+    OBJECT_ID.test(String(projectId)) &&
+    OBJECT_ID.test(String(userId)) &&
+    isValidChatId(chatId)
   )
 }
 
@@ -153,12 +164,14 @@ export async function saveCheckpoint(
 }
 
 export async function getCheckpoint(projectId, userId, chatId, userMessageId) {
+  if (!validIds(projectId, userId, chatId)) return null
+  if (!isValidUserMessageId(userMessageId)) return null
   try {
-    const file = fileFor(projectId, userId, chatId, userMessageId)
-    return await readCheckpoint(file)
+    return await readCheckpoint(
+      fileFor(projectId, userId, chatId, userMessageId)
+    )
   } catch (err) {
     if (err.code === 'ENOENT') return null
-    if (err.message?.includes('invalid')) return null
     throw err
   }
 }
@@ -219,11 +232,6 @@ async function loadCheckpointIndex(projectId, userId, chatId) {
 
   loaded.sort((a, b) => a.createdAt - b.createdAt)
   return loaded
-}
-
-export async function listCheckpoints(projectId, userId, chatId) {
-  const index = await loadCheckpointIndex(projectId, userId, chatId)
-  return index.map(item => item.userMessageId)
 }
 
 const REWIND_MAX_MESSAGES = 500
@@ -312,15 +320,15 @@ export async function checkRewind(
   chatId,
   userMessageId,
   currentFiles = {},
-  { userMessageIds } = {}
+  { userMessageIds, checkpoint: precomputed } = {}
 ) {
-  const checkpoint = await getRewindCheckpoint(
-    projectId,
-    userId,
-    chatId,
-    userMessageId,
-    { userMessageIds }
-  )
+  // A caller that already merged the rewind checkpoint passes it on
+  const checkpoint =
+    precomputed !== undefined
+      ? precomputed
+      : await getRewindCheckpoint(projectId, userId, chatId, userMessageId, {
+          userMessageIds,
+        })
   if (!checkpoint) {
     return {
       canRewind: false,
@@ -370,14 +378,8 @@ export async function checkRewind(
 }
 
 export async function deleteChatCheckpoints(projectId, userId, chatId) {
-  try {
-    const dir = dirFor(projectId, userId, chatId)
-    await fs.rm(dir, { recursive: true, force: true })
-  } catch (err) {
-    if (err.code === 'ENOENT') return
-    if (err.message?.includes('invalid')) return
-    throw err
-  }
+  if (!validIds(projectId, userId, chatId)) return
+  await fs.rm(dirFor(projectId, userId, chatId), { recursive: true, force: true })
 }
 
 // Copies checkpoints of a forked chat so its code can still be rewound.
@@ -410,7 +412,6 @@ export default {
   baseDir,
   saveCheckpoint,
   getCheckpoint,
-  listCheckpoints,
   getRewindCheckpoint,
   checkRewind,
   deleteChatCheckpoints,

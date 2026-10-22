@@ -332,4 +332,4 @@ const McpRouter = {
 }
 
 export default McpRouter
-export { McpRouter, mcpHandler }
+export { mcpHandler }

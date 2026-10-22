@@ -5,9 +5,9 @@ import { RefObject, useCallback, useEffect, useLayoutEffect, useRef, useState } 
  * fractional scroll position, which sub-pixel layout and zoom both produce,
  * would read as "scrolled up" and stop the transcript following the stream.
  */
-export const BOTTOM_THRESHOLD_PX = 32
+const BOTTOM_THRESHOLD_PX = 32
 
-export interface StickToBottomReturn {
+interface StickToBottomReturn {
   onScroll: () => void
   isAtBottom: boolean
   scrollToBottom: (options?: { smooth?: boolean }) => void

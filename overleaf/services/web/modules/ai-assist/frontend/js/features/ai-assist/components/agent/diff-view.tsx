@@ -9,8 +9,6 @@ import {
   useEditorHighlightStyle,
 } from '../../hooks/use-editor-code-highlight'
 
-const MAX_ROWS = 12
-
 // Word-level diff, not a plain index-aligned character scan: a naive
 // left-to-right character comparison can walk straight through a run that
 // happens to re-align (e.g. "title" in "title asfsa sec" -> "titlesec" is
@@ -19,7 +17,7 @@ const MAX_ROWS = 12
 // "title" and "titlesec" as different tokens, so the whole changed phrase is
 // grouped into one deleted/inserted span instead of being split around a
 // coincidental character match.
-export function computeInlineDiff(
+function computeInlineDiff(
   original: unknown = '',
   replacement: unknown = ''
 ) {
@@ -114,7 +112,6 @@ export default function DiffView({
   startLine = 1,
   path,
   onLineClick,
-  foldLongHunks = false,
 }: {
   oldText?: string
   newText?: string
@@ -122,7 +119,6 @@ export default function DiffView({
   /** The file's name, for highlighting its code the way the editor does. */
   path?: string
   onLineClick?: (line: number) => void
-  foldLongHunks?: boolean
 }) {
   const { editorStyle, editorTheme, isDark } = useEditorThemeStyles()
   useEditorHighlightStyle(editorTheme)
@@ -136,20 +132,21 @@ export default function DiffView({
       : 1
 
   const extension = typeof path === 'string' ? path.split('.').pop() : ''
-  const highlighted = Boolean(extension && canHighlightCode(extension))
+  const lang =
+    extension && canHighlightCode(extension) ? extension : null
   const oldSegments = useMemo(
     () =>
-      highlighted
-        ? highlightCodeLines(safeOldText, extension!)!
+      lang
+        ? highlightCodeLines(safeOldText, lang) ?? plainLines(safeOldText)
         : plainLines(safeOldText),
-    [safeOldText, extension, highlighted]
+    [safeOldText, lang]
   )
   const newSegments = useMemo(
     () =>
-      highlighted
-        ? highlightCodeLines(safeNewText, extension!)!
+      lang
+        ? highlightCodeLines(safeNewText, lang) ?? plainLines(safeNewText)
         : plainLines(safeNewText),
-    [safeNewText, extension, highlighted]
+    [safeNewText, lang]
   )
 
   const renderGutter = (kind: RowKind, lineNo: number) => (
@@ -188,12 +185,12 @@ export default function DiffView({
 
   const renderContainer = (children: React.ReactNode) => {
     const { backgroundColor: _bg, ...diffStyle } = (editorStyle ||
-      {}) as Record<string, any>
+      {}) as React.CSSProperties
     return (
       <div
         className={`cm-editor cm-editor-preview ${
           isDark ? 'overall-theme-dark' : 'overall-theme-light'
-        } ai-suggest-code-diff is-diff${highlighted ? ` ${EDITOR_CODE_CLASS}` : ''}`}
+        } ai-suggest-code-diff is-diff${lang ? ` ${EDITOR_CODE_CLASS}` : ''}`}
         style={
           {
             ...diffStyle,
@@ -338,24 +335,6 @@ export default function DiffView({
       }
     })
   })
-
-  // By default, renders the full diff inside the scrollable editor container.
-  // When foldLongHunks is explicitly enabled, the middle folds into a summary row.
-  if (foldLongHunks && rows.length > MAX_ROWS) {
-    const head = rows.slice(0, MAX_ROWS / 2)
-    const tail = rows.slice(rows.length - MAX_ROWS / 2)
-    const hidden = rows.length - MAX_ROWS
-    return renderContainer(
-      <>
-        {head}
-        <div className="diff-line diff-line-fold">
-          <span className="diff-gutter" />
-          <span className="diff-content">… {hidden} more lines</span>
-        </div>
-        {tail}
-      </>
-    )
-  }
 
   return renderContainer(rows)
 }

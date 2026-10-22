@@ -57,6 +57,7 @@ export function parseOutline({ docs, rootPath }) {
   const sections = []
   const includes = []
   const packages = []
+  const seenPackages = new Set()
   const notes = []
   let documentClass = null
   let hasTitle = false
@@ -86,7 +87,10 @@ export function parseOutline({ docs, rootPath }) {
       while (pkg) {
         for (const name of pkg[1].split(',')) {
           const trimmed = name.trim()
-          if (trimmed && !packages.includes(trimmed)) packages.push(trimmed)
+          if (trimmed && !seenPackages.has(trimmed)) {
+            seenPackages.add(trimmed)
+            packages.push(trimmed)
+          }
         }
         pkg = PACKAGE_RE.exec(line)
       }
@@ -202,18 +206,16 @@ export function extractReferences({ docs }) {
   const bibKeySet = new Set(bibKeys.map(entry => entry.key))
 
   const seen = new Set()
-  const duplicateLabels = []
+  const duplicateLabels = new Set()
   for (const label of labels) {
-    if (seen.has(label.key) && !duplicateLabels.includes(label.key)) {
-      duplicateLabels.push(label.key)
-    }
+    if (seen.has(label.key)) duplicateLabels.add(label.key)
     seen.add(label.key)
   }
 
   return {
     labels,
     bibKeys,
-    duplicateLabels,
+    duplicateLabels: [...duplicateLabels],
     refs: rawRefs.map(use => ({ ...use, resolved: labelKeys.has(use.key) })),
     citations: rawCitations.map(use => ({
       ...use,
@@ -224,7 +226,7 @@ export function extractReferences({ docs }) {
 
 // ---- project-index.ts ----
 
-/** Above this a file is listed but never parsed; parsing it would cost more than it can return. */
+/** Above this, environments and packages skip oversize files; parsing them would cost more than it can return. */
 export const MAX_INDEXED_BYTES = 512 * 1024
 
 /** Bounds the line list per environment so a figure-heavy paper cannot bloat the index. */
@@ -277,13 +279,14 @@ export function scanEnvironments(content) {
     .sort((a, b) => a.name.localeCompare(b.name))
 }
 
+const SCAN_PACKAGE_RE =
+  /\\(?:usepackage|RequirePackage)\s*(?:\[([^\]]*)\])?\s*\{([^}]*)\}/g
+
 export function scanPackages(content) {
   const uses = []
   content.split('\n').forEach((rawLine, index) => {
     const line = rawLine.replace(/(?<!\\)%.*/, '')
-    const re = /\\(?:usepackage|RequirePackage)\s*(?:\[([^\]]*)\])?\s*\{([^}]*)\}/g
-    let match = re.exec(line)
-    while (match) {
+    for (const match of line.matchAll(SCAN_PACKAGE_RE)) {
       const options = match[1]?.trim() || undefined
       const pkgList = match[2]
       for (const name of pkgList.split(',')) {
@@ -296,7 +299,6 @@ export function scanPackages(content) {
           })
         }
       }
-      match = re.exec(line)
     }
   })
   return uses
@@ -305,9 +307,8 @@ export function scanPackages(content) {
 const envCache = new Map()
 const ENV_CACHE_MAX = 500
 
-function environmentsFor(path, content) {
+function environmentsFor(path, content, hash) {
   if (!path.endsWith('.tex')) return []
-  const hash = hashContent(content)
   const cached = envCache.get(hash)
   if (cached) return cached
   const scanned = scanEnvironments(content)
@@ -319,9 +320,8 @@ function environmentsFor(path, content) {
 const pkgCache = new Map()
 const PKG_CACHE_MAX = 500
 
-function packagesFor(path, content) {
+function packagesFor(path, content, hash) {
   if (!path.endsWith('.tex')) return []
-  const hash = hashContent(content)
   let scanned = pkgCache.get(hash)
   if (!scanned) {
     scanned = scanPackages(content)
@@ -332,10 +332,15 @@ function packagesFor(path, content) {
 }
 
 export function buildProjectIndex({ docs, rootPath }, previous) {
-  const entries = Object.entries(docs)
+  // Each file is hashed once: the index hash and the cache keys reuse it
+  const entries = Object.entries(docs).map(([path, content]) => ({
+    path,
+    content,
+    hash: hashContent(content),
+  }))
   const hash = hashContent(
     entries
-      .map(([path, content]) => `${path} ${hashContent(content)}`)
+      .map(entry => `${entry.path} ${entry.hash}`)
       .sort()
       .join(' ')
   )
@@ -345,19 +350,21 @@ export function buildProjectIndex({ docs, rootPath }, previous) {
   }
 
   const files = entries
-    .map(([path, content]) => ({
+    .map(({ path, content, hash: fileHash }) => ({
       path,
-      hash: hashContent(content),
+      hash: fileHash,
       tooLarge: content.length > MAX_INDEXED_BYTES,
       environments:
         content.length > MAX_INDEXED_BYTES
           ? []
-          : environmentsFor(path, content),
+          : environmentsFor(path, content, fileHash),
     }))
     .sort((a, b) => a.path.localeCompare(b.path))
 
-  const packages = entries.flatMap(([path, content]) =>
-    content.length > MAX_INDEXED_BYTES ? [] : packagesFor(path, content)
+  const packages = entries.flatMap(({ path, content, hash: fileHash }) =>
+    content.length > MAX_INDEXED_BYTES
+      ? []
+      : packagesFor(path, content, fileHash)
   )
 
   return {

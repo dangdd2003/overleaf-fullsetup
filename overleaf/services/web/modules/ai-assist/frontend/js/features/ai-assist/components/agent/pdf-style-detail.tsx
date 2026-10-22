@@ -1,19 +1,20 @@
 import { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { PdfDetailHeader } from './pdf-tool-shared'
-
-type TranslateFn = (key: string, opts?: any) => string
+import { PdfDetailHeader, type TranslateFn } from './pdf-tool-shared'
 
 /** A measured value as the server tags it: number plus where it was found. */
 function measured(
   value: unknown
 ): { v: number; by?: string } | undefined {
   const raw =
-    value && typeof value === 'object' ? (value as any).v : value
+    typeof value === 'object' && value !== null && 'v' in value ? value.v : value
   if (typeof raw !== 'number' || !Number.isFinite(raw)) return undefined
   const by =
-    value && typeof value === 'object' && typeof (value as any).by === 'string'
-      ? (value as any).by
+    typeof value === 'object' &&
+    value !== null &&
+    'by' in value &&
+    typeof value.by === 'string'
+      ? value.by
       : undefined
   return { v: Math.round(raw * 10) / 10, by }
 }
@@ -43,6 +44,25 @@ function StyleRow({
         {by && <span className="ai-assist-outline-line"> · {by}</span>}
       </span>
     </div>
+  )
+}
+
+/** Measured rows as StyleRows; a row without a measured value renders nothing. */
+function MeasuredRows({ rows }: { rows: Array<[string, unknown]> }) {
+  return (
+    <>
+      {rows.map(([label, value]) => {
+        const m = measured(value)
+        return (
+          <StyleRow
+            key={label}
+            label={`${label}:`}
+            value={m ? `${m.v} pt` : undefined}
+            by={m?.by}
+          />
+        )
+      })}
+    </>
   )
 }
 
@@ -88,7 +108,6 @@ export function PdfStyleDetail({
   result,
 }: {
   result: any
-  openFile: (path: string, line?: number) => void
 }) {
   const { t } = useTranslation()
   const style = result?.style
@@ -136,6 +155,7 @@ export function PdfStyleDetail({
   }
 
   const areaCols = typeof area.cols === 'number' ? area.cols : undefined
+  const gutter = plain(area.gutter)
   const fontName =
     (typeof body.font?.name === 'string' && body.font.name) ||
     (typeof body.font?.family === 'string' && body.font.family) ||
@@ -226,24 +246,14 @@ export function PdfStyleDetail({
         {tr('ai_assist_tool_pdf_style_text_area', { defaultValue: 'Text area' })}
       </div>
       <div className="ai-assist-settings-rows">
-        {areaRows.map(([label, value]) => {
-          const m = measured(value)
-          return (
-            <StyleRow
-              key={label}
-              label={`${label}:`}
-              value={m ? `${m.v} pt` : undefined}
-              by={m?.by}
-            />
-          )
-        })}
+        <MeasuredRows rows={areaRows} />
         <StyleRow
           label={`${tr('ai_assist_tool_pdf_style_columns', { defaultValue: 'Columns' })}:`}
           value={areaCols !== undefined ? String(areaCols) : undefined}
         />
         <StyleRow
           label={`${tr('ai_assist_tool_pdf_style_column_gap', { defaultValue: 'Column gap' })}:`}
-          value={plain(area.gutter) ? `${plain(area.gutter)} pt` : undefined}
+          value={gutter ? `${gutter} pt` : undefined}
         />
       </div>
 
@@ -251,17 +261,7 @@ export function PdfStyleDetail({
         {tr('ai_assist_tool_pdf_style_body_text', { defaultValue: 'Body text' })}
       </div>
       <div className="ai-assist-settings-rows">
-        {bodyRows.map(([label, value]) => {
-          const m = measured(value)
-          return (
-            <StyleRow
-              key={label}
-              label={`${label}:`}
-              value={m ? `${m.v} pt` : undefined}
-              by={m?.by}
-            />
-          )
-        })}
+        <MeasuredRows rows={bodyRows} />
         <StyleRow
           label={`${tr('ai_assist_tool_pdf_style_font', { defaultValue: 'Font' })}:`}
           value={fontName}
@@ -311,17 +311,7 @@ export function PdfStyleDetail({
             {tr('ai_assist_tool_pdf_style_rules', { defaultValue: 'Rules' })}
           </div>
           <div className="ai-assist-settings-rows">
-            {ruleRows.map(([label, value]) => {
-              const m = measured(value)
-              return (
-                <StyleRow
-                  key={label}
-                  label={`${label}:`}
-                  value={m ? `${m.v} pt` : undefined}
-                  by={m?.by}
-                />
-              )
-            })}
+            <MeasuredRows rows={ruleRows} />
           </div>
         </>
       )}

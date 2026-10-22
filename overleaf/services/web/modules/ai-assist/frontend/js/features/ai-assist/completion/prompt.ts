@@ -14,14 +14,14 @@ export const MAX_TOKENS: Record<CompletionKind, number> = {
 
 /** Packages listed to the model: enough to know which commands exist. */
 const MAX_PACKAGES = 30
-/** Keys listed for `\ref` and `\cite`, the nearest to the cursor. */
+/** Keys listed for `\ref` and `\cite`: the last ones in document order. */
 const MAX_KEYS = 25
 /** The end of the text before the cursor, repeated in the task so the reply joins it exactly. */
 const TAIL_CHARS = 120
 const MAX_REJECTED = 400
 
 /** Where the reply goes in the excerpt. */
-export const CURSOR = '<cursor/>'
+const CURSOR = '<cursor/>'
 
 /**
  * The system prompt of every completion. The model is a completion engine,
@@ -93,7 +93,7 @@ function tailOf(prefix: string): string {
   return tail.trim() ? tail : ''
 }
 
-export type CompletionPrompt = {
+type CompletionPrompt = {
   window: CompletionWindow
   facts: CompletionFacts
   kind: CompletionKind

@@ -63,23 +63,33 @@ export function spellingsOf(alternative) {
   return [...new Set([display, display.replace(/^\\+/, '')])].filter(Boolean)
 }
 
-/** BM25 over the query's words, for a document held in memory. */
-function scorer(views, terms) {
+/**
+ * BM25 over the query's words, for a document held in memory. `stats` holds
+ * what depends only on the views (their average length and each term's idf),
+ * so it is computed once per document, not once per search.
+ */
+function scorer(views, terms, stats) {
   const patterns = terms.map(termPattern)
-  const average =
+  stats.average ??=
     views.reduce((sum, view) => sum + view.length, 0) /
     Math.max(1, views.length)
-  const idf = patterns.map(pattern => {
-    let df = 0
-    for (const view of views) {
-      pattern.lastIndex = 0
-      if (pattern.test(view)) df++
+  const idf = patterns.map((pattern, t) => {
+    if (!stats.idf.has(terms[t])) {
+      let df = 0
+      for (const view of views) {
+        pattern.lastIndex = 0
+        if (pattern.test(view)) df++
+      }
+      stats.idf.set(
+        terms[t],
+        Math.log(1 + (views.length - df + 0.5) / (df + 0.5))
+      )
     }
-    return Math.log(1 + (views.length - df + 0.5) / (df + 0.5))
+    return stats.idf.get(terms[t])
   })
   return index => {
     const view = views[index]
-    const norm = 0.5 + (0.5 * view.length) / Math.max(1, average)
+    const norm = 0.5 + (0.5 * view.length) / Math.max(1, stats.average)
     let score = 0
     patterns.forEach((pattern, t) => {
       const tf = countOf(pattern, view)
@@ -100,6 +110,8 @@ export function memorySource(doc) {
     return sections.get(key)
   })
 
+  const stats = { average: undefined, idf: new Map() }
+
   const search = alternative => {
     for (const spelling of spellingsOf(alternative)) {
       const phrase = searchText(spelling)
@@ -109,7 +121,7 @@ export function memorySource(doc) {
         if (view.includes(phrase)) ids.push(index)
       })
       if (ids.length > 0) {
-        const score = scorer(views, termsOf(phrase))
+        const score = scorer(views, termsOf(phrase), stats)
         const hits = ids.map(index => ({
           index,
           level: 0,
@@ -126,7 +138,7 @@ export function memorySource(doc) {
     if (terms.length < 2) return { hits: [], ids: [] }
     const patterns = terms.map(termPattern)
     const needed = partialThreshold(terms.length)
-    const score = scorer(views, terms)
+    const score = scorer(views, terms, stats)
     const hits = []
     views.forEach((view, index) => {
       let inBody = 0
@@ -165,14 +177,18 @@ export function memorySource(doc) {
   }
 }
 
+/** The word patterns of a hit, compiled once for the hit. */
+function wordPatterns(hit) {
+  return (hit.terms ?? termsOf(hit.phrase ?? '')).map(termPattern)
+}
+
 /** The line of `lines` the match is on: the phrase, else the most query words. */
-function focusLine(lines, hit) {
+function focusLine(lines, hit, patterns) {
   const views = lines.map(searchText)
   if (hit.phrase) {
     const at = views.findIndex(view => view.includes(hit.phrase))
     if (at !== -1) return at
   }
-  const patterns = (hit.terms ?? termsOf(hit.phrase ?? '')).map(termPattern)
   let best = 0
   let bestCount = 0
   views.forEach((view, index) => {
@@ -207,20 +223,25 @@ function windowOfLine(line, hit, size) {
   return `${from > 0 ? '…' : ''}${line.slice(from, to).trim()}${to < line.length ? '…' : ''}`
 }
 
-function rowMatches(row, hit) {
+function rowMatches(row, hit, patterns) {
   const view = searchText(row)
   if (hit.phrase) return view.includes(hit.phrase)
-  return (hit.terms ?? []).some(term => termPattern(term).test(view))
+  return patterns.some(pattern => {
+    pattern.lastIndex = 0
+    return pattern.test(view)
+  })
 }
 
 /** Part of a block too long to show whole, around its match. */
 function windowOf(block, hit, size) {
   const lines = block.text.split('\n')
+  const patterns = wordPatterns(hit)
   if (block.kind === 'table' && /^\|?\s*:?-{3,}/.test(lines[1] ?? '')) {
     const rows = []
     let length = lines[0].length + lines[1].length + 2
     for (const row of lines.slice(2)) {
-      if (!rowMatches(row, hit) || length + row.length + 1 > size) continue
+      if (!rowMatches(row, hit, patterns) || length + row.length + 1 > size)
+        continue
       rows.push(row)
       length += row.length + 1
     }
@@ -234,7 +255,7 @@ function windowOf(block, hit, size) {
     closesFence(fenceMarker(lines[0]), lines[lines.length - 1])
   const body = fenced ? lines.slice(1, closed ? -1 : undefined) : lines
   if (body.length === 0) return clip(block.text, size)
-  const focus = focusLine(body, hit)
+  const focus = focusLine(body, hit, patterns)
   if (body[focus].length > size) return windowOfLine(body[focus], hit, size)
   let from = focus
   let to = focus

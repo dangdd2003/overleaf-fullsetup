@@ -35,6 +35,21 @@ export class AiAssistRunReaper {
   }
 
   async sweepOnce() {
+    // Two sweeps would publish 'stop' for the same run and interleave their
+    // zeroSince writes, so a tick that finds the last sweep still running is skipped
+    if (this._sweeping) {
+      logger.debug({}, 'skipping ai-assist orphan reaper sweep, previous sweep running')
+      return []
+    }
+    this._sweeping = true
+    try {
+      return await this._sweep()
+    } finally {
+      this._sweeping = false
+    }
+  }
+
+  async _sweep() {
     const graceMs = (Settings.aiAssist?.orphanGraceSeconds ?? 300) * 1000
     if (graceMs <= 0) return [] // reaping disabled
     const heartbeatStaleMs = (Settings.aiAssist?.heartbeatStaleSeconds ?? 1800) * 1000

@@ -48,8 +48,9 @@ export async function ensureGrantExpiry() {
       )
     }
   }
-  // Grants written before accessTokenExpiresAt was dropped would be deleted by
-  // upstream's TTL on that field, refresh token included. Clear it once.
+  // Runs at each startup. Grants written before accessTokenExpiresAt was
+  // dropped would be deleted by upstream's TTL on that field, refresh token
+  // included, so clear the stale field. Idempotent.
   await db.oauthAccessTokens.updateMany(
     {
       refreshTokenExpiresAt: { $exists: true },

@@ -1,6 +1,6 @@
 import { maskComments } from '../texgpt/latex-text'
 import { labelStyle } from '../generator/labels'
-import { findTabulars } from './columns'
+import { findTabulars, TABULAR_START } from './columns'
 
 export type RuleStyle = 'booktabs' | 'hline'
 export type CaptionPosition = 'top' | 'bottom'
@@ -31,7 +31,6 @@ export const DEFAULT_TABLE_LABEL_STYLE = 'tab:'
 export const TABLE_LABEL_PREFIXES = ['table:', 'tab:', 'tbl:', 'tab-', 'tbl-']
 
 const TABLE_FLOAT = /\\begin\s*\{(table\*?)\}(\s*\[[^\]]*\])?([\s\S]*?)\\end\s*\{\1\}/g
-const TABULAR_START = /\\begin\s*\{(?:tabular\*?|tabularx|longtable)\}/
 const SIZE = /\\(tiny|scriptsize|footnotesize|small)\b/
 const ENVIRONMENTS: Array<[string, RegExp]> = [
   ['tabular', /\\begin\s*\{tabular\}/g],
@@ -54,9 +53,8 @@ function mostCommon<T>(values: T[]): T | undefined {
   return best
 }
 
-/** Whether the document sets text in two page columns. */
-export function isTwoColumn(doc: string): boolean {
-  const match = maskComments(doc).match(/\\documentclass\s*(?:\[([^\]]*)\])?\s*\{([^}]+)\}/)
+function twoColumnOf(masked: string): boolean {
+  const match = masked.match(/\\documentclass\s*(?:\[([^\]]*)\])?\s*\{([^}]+)\}/)
   if (!match) return false
   const options = (match[1] ?? '').split(',').map(option => option.trim())
   const documentClass = match[2].trim()
@@ -64,6 +62,11 @@ export function isTwoColumn(doc: string): boolean {
   if (documentClass === 'IEEEtran') return !options.includes('onecolumn')
   if (documentClass === 'acmart') return options.includes('sigconf') || options.includes('sigplan')
   return false
+}
+
+/** Whether the document sets text in two page columns. */
+export function isTwoColumn(doc: string): boolean {
+  return twoColumnOf(maskComments(doc))
 }
 
 /**
@@ -135,7 +138,7 @@ export function tableHabits(
     size,
     labelStyle: labelStyle(labels, TABLE_LABEL_PREFIXES, DEFAULT_TABLE_LABEL_STYLE),
     envs,
-    twoColumn: isTwoColumn(doc),
+    twoColumn: twoColumnOf(text),
     indent: tabs > spaces ? '\t' : '  ',
     columnTypes: new Set([...text.matchAll(/\\newcolumntype\s*\{(.)\}/g)].map(match => match[1])),
   }

@@ -42,6 +42,10 @@ type SlotConfig = {
   write: (settings: ProviderSettings) => void
   clear: () => void
   idPrefix: string
+  /** Window event fired when this slot's settings change elsewhere. */
+  changedEvent: 'aiAssist:providerChanged' | 'aiAssist:fastProviderChanged'
+  /** The settings slot a form for this model saves into, if not the main one. */
+  settingsSlot?: 'fastProvider'
   /** Whether the data-sharing consent notice is shown for this slot. */
   needsConsent: boolean
 }
@@ -59,6 +63,7 @@ const SLOTS: SlotConfig[] = [
     write: writeSettings,
     clear: clearSettings,
     idPrefix: 'ai-provider',
+    changedEvent: 'aiAssist:providerChanged',
     needsConsent: true,
   },
   {
@@ -75,6 +80,8 @@ const SLOTS: SlotConfig[] = [
     write: writeFastSettings,
     clear: clearFastSettings,
     idPrefix: 'ai-fast-provider',
+    changedEvent: 'aiAssist:fastProviderChanged',
+    settingsSlot: 'fastProvider',
     needsConsent: false,
   },
 ]
@@ -89,7 +96,6 @@ export default function AiProvidersWidget() {
   useEffect(() => {
     if (!enabled) return
     setConsented(hasConsented())
-    setAiEnabled(isAiAssistEnabled())
   }, [enabled])
 
   const toggleAiEnabled = useCallback(async () => {
@@ -183,16 +189,12 @@ function ProviderSlot({
 
   useEffect(() => {
     setSettings(slot.read())
-    const eventName =
-      slot.id === 'main'
-        ? 'aiAssist:providerChanged'
-        : 'aiAssist:fastProviderChanged'
     const handleUpdate = () => {
       setSettings(slot.read())
     }
-    window.addEventListener(eventName, handleUpdate)
+    window.addEventListener(slot.changedEvent, handleUpdate)
     return () => {
-      window.removeEventListener(eventName, handleUpdate)
+      window.removeEventListener(slot.changedEvent, handleUpdate)
     }
   }, [slot])
 
@@ -298,6 +300,7 @@ function ProviderSlot({
           onSave={save}
           onCancel={() => setEditing(false)}
           idPrefix={slot.idPrefix}
+          slot={slot.settingsSlot}
         />
       ) : null}
     </div>

@@ -1,40 +1,14 @@
 import Settings from "@overleaf/settings";
 import { validateSafeProviderBaseUrl } from "./AiAssistProviders.mjs";
+import { MAX_HISTORY_IMAGES } from "./AiAssistImages.mjs";
+import { normalizeInstanceBaseUrl } from "./web-fetch/base-url.mjs";
 
 function normalizeSearxngBaseUrl(raw) {
-  if (typeof raw !== "string" || !raw.trim()) return "";
-  let value = raw.trim();
-  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) value = `http://${value}`;
-  let parsed;
-  try {
-    parsed = new URL(value);
-  } catch {
-    return "";
-  }
-  parsed.search = "";
-  parsed.hash = "";
-  parsed.pathname = parsed.pathname
-    .replace(/\/search\/?$/, "")
-    .replace(/\/+$/, "");
-  return parsed.toString().replace(/\/+$/, "");
+  return normalizeInstanceBaseUrl(raw, /\/search\/?$/);
 }
 
 function normalizeFirecrawlBaseUrl(raw) {
-  if (typeof raw !== "string" || !raw.trim()) return "";
-  let value = raw.trim();
-  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) value = `http://${value}`;
-  let parsed;
-  try {
-    parsed = new URL(value);
-  } catch {
-    return "";
-  }
-  parsed.search = "";
-  parsed.hash = "";
-  parsed.pathname = parsed.pathname
-    .replace(/\/v[12](\/.*)?$/, "")
-    .replace(/\/+$/, "");
-  return parsed.toString().replace(/\/+$/, "");
+  return normalizeInstanceBaseUrl(raw, /\/v[12](\/.*)?$/);
 }
 
 // A whole number from the environment, or the fallback when it is unset or
@@ -61,8 +35,6 @@ const REQUEST_TIMEOUT_SECONDS =
 // Fixed operating values
 const WEB_SEARCH_ROTATION_STRATEGY = "round-robin";
 const WEB_SEARCH_PRIMARY_PROVIDER = "searxng";
-const SEARXNG_DEFAULT_CATEGORIES = "";
-const SEARXNG_DEFAULT_LANGUAGE = "";
 const ORPHAN_GRACE_SECONDS = 300;
 const APPROVAL_TIMEOUT_SECONDS = 600;
 const HEARTBEAT_STALE_SECONDS = 1800;
@@ -72,17 +44,11 @@ const STREAM_KEEPALIVE_SECONDS = 15;
 // request ceiling (OpenAI takes 50 MB): room for a 1M-token conversation,
 // whose old images the run drops before a request (maxHistoryImages).
 const MAX_TRANSCRIPT_BYTES = 32 * 1024 * 1024;
-// User images each request re-sends: the newest ones, the rest dropped
-const MAX_HISTORY_IMAGES = 20;
 // Anthropic prompt cache lifetime, fixed at '5m' (1.25x write).
 const PROMPT_CACHE_TTL = "5m";
 const CHAT_HISTORY_DIR = "/var/lib/overleaf/data/ai-assist";
 // SQLite file for cached web searches and pages; ':memory:' keeps them in RAM
 const WEB_CACHE_PATH = "/var/lib/overleaf/data/ai-assist/web-cache.sqlite";
-
-const cacheHours = WEB_SEARCH_CACHE_HOURS;
-const maxCachedSearches = WEB_SEARCH_MAX_CACHED_SEARCHES;
-const maxCachedPages = WEB_SEARCH_MAX_CACHED_PAGES;
 
 function parseKeyList(raw) {
   return (raw || "")
@@ -91,18 +57,37 @@ function parseKeyList(raw) {
     .filter(Boolean);
 }
 
+// Keeps a credential out of enumeration (JSON, Object.keys, spreads)
+function withSecret(obj, key, value) {
+  Object.defineProperty(obj, key, {
+    value,
+    enumerable: false,
+    writable: true,
+    configurable: true,
+  });
+  return obj;
+}
+
+// The URLs that pass the safe provider check, after an optional normalizer
+function safeBaseUrls(list, normalize = url => url) {
+  return list
+    .map(url => normalize(url))
+    .filter(url => {
+      if (!url) return false;
+      try {
+        validateSafeProviderBaseUrl(url);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+}
+
 let serverWebSearch = null;
 function providerConfig(enabled, extra = {}, secrets = {}) {
   const conf = { enabled, ...extra };
   for (const [key, val] of Object.entries(secrets)) {
-    if (val !== undefined) {
-      Object.defineProperty(conf, key, {
-        value: val,
-        enumerable: false,
-        writable: true,
-        configurable: true,
-      });
-    }
+    if (val !== undefined) withSecret(conf, key, val);
   }
   return conf;
 }
@@ -110,17 +95,10 @@ function providerConfig(enabled, extra = {}, secrets = {}) {
 // Server-provided web search is configured only by the provider keys and URLs
 // below. It is available exactly when at least one of them is set.
 {
-  const searxngUrls = parseKeyList(process.env.AI_ASSIST_SEARXNG_URLS)
-    .map((u) => normalizeSearxngBaseUrl(u))
-    .filter((u) => {
-      if (!u) return false;
-      try {
-        validateSafeProviderBaseUrl(u);
-        return true;
-      } catch {
-        return false;
-      }
-    });
+  const searxngUrls = safeBaseUrls(
+    parseKeyList(process.env.AI_ASSIST_SEARXNG_URLS),
+    normalizeSearxngBaseUrl,
+  );
 
   const ollamaKeys = parseKeyList(process.env.AI_ASSIST_OLLAMA_API_KEYS);
   const websearchapiKeys = parseKeyList(
@@ -138,14 +116,7 @@ function providerConfig(enabled, extra = {}, secrets = {}) {
   const tinyfishKeys = parseKeyList(process.env.AI_ASSIST_TINYFISH_API_KEYS);
   const parallelKeys = parseKeyList(process.env.AI_ASSIST_PARALLEL_API_KEYS);
 
-  const mcpUrls = parseKeyList(process.env.AI_ASSIST_MCP_URLS).filter((u) => {
-    try {
-      validateSafeProviderBaseUrl(u);
-      return true;
-    } catch {
-      return false;
-    }
-  });
+  const mcpUrls = safeBaseUrls(parseKeyList(process.env.AI_ASSIST_MCP_URLS));
 
   let mcpHeaders = [];
   if (process.env.AI_ASSIST_MCP_HEADERS) {
@@ -188,23 +159,10 @@ function providerConfig(enabled, extra = {}, secrets = {}) {
     });
   }
 
-  const firecrawlSelfHostedUrls = parseKeyList(
-    process.env.AI_ASSIST_FIRECRAWL_SELFHOSTED_URLS,
-  )
-    .map((u) => normalizeFirecrawlBaseUrl(u))
-    .filter((u) => {
-      if (!u) return false;
-      try {
-        validateSafeProviderBaseUrl(u);
-        return true;
-      } catch {
-        return false;
-      }
-    });
-
-  const defaultCategories =
-    SEARXNG_DEFAULT_CATEGORIES.trim() || undefined;
-  const defaultLanguage = SEARXNG_DEFAULT_LANGUAGE.trim() || undefined;
+  const firecrawlSelfHostedUrls = safeBaseUrls(
+    parseKeyList(process.env.AI_ASSIST_FIRECRAWL_SELFHOSTED_URLS),
+    normalizeFirecrawlBaseUrl,
+  );
 
   const rotationStrategy = WEB_SEARCH_ROTATION_STRATEGY;
   const primaryProvider = WEB_SEARCH_PRIMARY_PROVIDER;
@@ -241,10 +199,7 @@ function providerConfig(enabled, extra = {}, secrets = {}) {
       providers: {
         searxng: providerConfig(
           searxngEnabled,
-          {
-            ...(defaultCategories ? { defaultCategories } : {}),
-            ...(defaultLanguage ? { defaultLanguage } : {}),
-          },
+          {},
           { baseUrls: searxngUrls },
         ),
         ollama: providerConfig(ollamaEnabled, {}, { apiKeys: ollamaKeys }),
@@ -281,17 +236,16 @@ function providerConfig(enabled, extra = {}, secrets = {}) {
           {},
           { apiKeys: parallelKeys },
         ),
-        mcp: providerConfig(
-          mcpEnabled,
-          { ...(mcpHeaders.length > 0 ? { headers: mcpHeaders } : {}) },
-          { serverUrls: mcpUrls },
-        ),
+        mcp: providerConfig(mcpEnabled, {}, {
+          serverUrls: mcpUrls,
+          headers: mcpHeaders.length > 0 ? mcpHeaders : undefined,
+        }),
       },
       rotationStrategy,
       primaryProvider,
-      cacheHours,
-      maxCachedSearches,
-      maxCachedPages,
+      cacheHours: WEB_SEARCH_CACHE_HOURS,
+      maxCachedSearches: WEB_SEARCH_MAX_CACHED_SEARCHES,
+      maxCachedPages: WEB_SEARCH_MAX_CACHED_PAGES,
     };
   }
 }
@@ -305,22 +259,17 @@ Settings.aiAssist = {
   enabled: process.env.AI_ASSIST_ENABLED === "true",
   webToolsEnabled: process.env.AI_ASSIST_WEB_TOOLS_ENABLED === "true",
   serverWebSearch,
-  cacheHours,
-  maxCachedSearches,
-  maxCachedPages,
+  cacheHours: WEB_SEARCH_CACHE_HOURS,
+  maxCachedSearches: WEB_SEARCH_MAX_CACHED_SEARCHES,
+  maxCachedPages: WEB_SEARCH_MAX_CACHED_PAGES,
   // The headless-browser sidecar (services/overleaf-browser); unset leaves it out
-  browser: (() => {
-    const obj = {
+  browser: withSecret(
+    {
       url: (process.env.AI_ASSIST_BROWSER_URL || "").trim() || null,
-    };
-    Object.defineProperty(obj, "token", {
-      value: (process.env.AI_ASSIST_BROWSER_TOKEN || "").trim() || null,
-      enumerable: false,
-      writable: true,
-      configurable: true,
-    });
-    return obj;
-  })(),
+    },
+    "token",
+    (process.env.AI_ASSIST_BROWSER_TOKEN || "").trim() || null,
+  ),
   orphanGraceSeconds: ORPHAN_GRACE_SECONDS,
   approvalTimeoutSeconds: APPROVAL_TIMEOUT_SECONDS,
   heartbeatStaleSeconds: HEARTBEAT_STALE_SECONDS,

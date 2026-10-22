@@ -480,7 +480,7 @@ describe('OAuth2TokenController', () => {
       // Verify the minted JWT with OAuth2KeyManager
       const decodedPayload = await OAuth2KeyManager.verifyJwt(res.responseData.access_token)
       expect(decodedPayload.sub).to.equal('user_abc_789')
-      expect(decodedPayload.aud).to.equal('http://localhost:3050/mcp')
+      expect(decodedPayload.aud).to.equal(`${Settings.siteUrl}/mcp`)
       expect(decodedPayload.client_id).to.equal('claude')
       expect(decodedPayload.scope).to.equal('mcp')
       expect(decodedPayload).to.have.property('jti').that.match(/^jwt_[0-9a-f]{32}$/)

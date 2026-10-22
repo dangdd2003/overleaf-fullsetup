@@ -29,7 +29,7 @@ export type SelectionKind =
  * reorder the actions a kind already offers; none changes the kind.
  */
 export type SelectionCue =
-  /** A claim of evidence or a percentage with no citation command. */
+  /** A claim about prior work, the state of the art or common knowledge, with no citation command. */
   | 'uncited_claim'
   /** Contractions or conversational words. */
   | 'informal'

@@ -269,7 +269,7 @@ const INLINE_MATH: SelectionActionId[] = [
 describe('selectionActionIds', function () {
   it('ranks each kind in the spec order', function () {
     for (const kind of KINDS) {
-      expect(selectionActionIds(scope(kind), ''), kind).to.deep.equal(
+      expect(selectionActionIds(scope(kind)), kind).to.deep.equal(
         EXPECTED_ORDER[kind]
       )
     }
@@ -277,57 +277,57 @@ describe('selectionActionIds', function () {
 
   it('puts prose_to_table second when prose states several numbers', function () {
     expect(
-      selectionActionIds(scope('prose', { numeric: true }), '')
+      selectionActionIds(scope('prose', { numeric: true }))
     ).to.deep.equal(PROSE_NUMERIC)
   })
 
   it('puts summarize_selection third from eight lines up', function () {
-    expect(selectionActionIds(scope('prose', { lines: 8 }), '')).to.deep.equal(
+    expect(selectionActionIds(scope('prose', { lines: 8 }))).to.deep.equal(
       PROSE_LONG
     )
-    expect(selectionActionIds(scope('prose', { lines: 7 }), '')).to.deep.equal(
+    expect(selectionActionIds(scope('prose', { lines: 7 }))).to.deep.equal(
       EXPECTED_ORDER.prose
     )
   })
 
   it('applies both prose adjustments in order', function () {
     expect(
-      selectionActionIds(scope('prose', { numeric: true, lines: 12 }), '')
+      selectionActionIds(scope('prose', { numeric: true, lines: 12 }))
     ).to.deep.equal(PROSE_NUMERIC_LONG)
   })
 
   it('adjusts only prose for numbers and length', function () {
     expect(
-      selectionActionIds(scope('list', { numeric: true, lines: 12 }), '')
+      selectionActionIds(scope('list', { numeric: true, lines: 12 }))
     ).to.deep.equal(EXPECTED_ORDER.list)
     expect(
-      selectionActionIds(scope('heading', { numeric: true, lines: 12 }), '')
+      selectionActionIds(scope('heading', { numeric: true, lines: 12 }))
     ).to.deep.equal(EXPECTED_ORDER.heading)
   })
 
   it('offers equation_to_display second in place of align_equation for inline math', function () {
-    const ids = selectionActionIds(scope('math', { inline: true }), '')
+    const ids = selectionActionIds(scope('math', { inline: true }))
     expect(ids).to.deep.equal(INLINE_MATH)
     expect(ids).to.not.include('align_equation')
   })
 
   it('keeps each call independent, so adjustments never leak', function () {
     const numeric = scope('prose', { numeric: true, lines: 12 })
-    const first = selectionActionIds(numeric, '')
-    expect(selectionActionIds(scope('prose'), '')).to.deep.equal(
+    const first = selectionActionIds(numeric)
+    expect(selectionActionIds(scope('prose'))).to.deep.equal(
       EXPECTED_ORDER.prose
     )
-    expect(selectionActionIds(numeric, '')).to.deep.equal(first)
+    expect(selectionActionIds(numeric)).to.deep.equal(first)
   })
 })
 
 describe('selectionActionIds with content cues', function () {
   const prose = (...cues: SelectionCue[]) =>
-    selectionActionIds(scope('prose', { cues }), '')
+    selectionActionIds(scope('prose', { cues }))
 
   it('ranks as before with no cues or an empty list', function () {
     expect(prose()).to.deep.equal(EXPECTED_ORDER.prose)
-    expect(selectionActionIds(scope('prose', { cues: undefined }), '')).to.deep.equal(EXPECTED_ORDER.prose)
+    expect(selectionActionIds(scope('prose', { cues: undefined }))).to.deep.equal(EXPECTED_ORDER.prose)
   })
 
   it('offers define_term first for a term, in prose and in LaTeX', function () {
@@ -337,7 +337,7 @@ describe('selectionActionIds with content cues', function () {
       'suggest_citation',
       'fix_grammar',
     ])
-    expect(selectionActionIds(scope('latex', { cues: ['term'] }), '')).to.deep.equal([
+    expect(selectionActionIds(scope('latex', { cues: ['term'] }))).to.deep.equal([
       'define_term',
       'explain_meaning',
       'suggest_citation',
@@ -377,7 +377,7 @@ describe('selectionActionIds with content cues', function () {
   })
 
   it('combines cues with the numeric and length adjustments', function () {
-    const ids = selectionActionIds(scope('prose', { numeric: true, lines: 12, cues: ['uncited_claim'] }), '')
+    const ids = selectionActionIds(scope('prose', { numeric: true, lines: 12, cues: ['uncited_claim'] }))
     expect(ids.slice(0, 4)).to.deep.equal([
       'refine_writing',
       'suggest_citation',
@@ -393,8 +393,8 @@ describe('selectionActionIds with content cues', function () {
   })
 
   it('ignores prose cues on other kinds', function () {
-    expect(selectionActionIds(scope('list', { cues: ['informal', 'abstract'] }), '')).to.deep.equal(EXPECTED_ORDER.list)
-    expect(selectionActionIds(scope('table', { cues: ['term'] }), '')).to.deep.equal(EXPECTED_ORDER.table)
+    expect(selectionActionIds(scope('list', { cues: ['informal', 'abstract'] }))).to.deep.equal(EXPECTED_ORDER.list)
+    expect(selectionActionIds(scope('table', { cues: ['term'] }))).to.deep.equal(EXPECTED_ORDER.table)
   })
 })
 

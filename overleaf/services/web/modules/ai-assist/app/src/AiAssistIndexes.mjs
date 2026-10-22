@@ -47,7 +47,7 @@ export async function ensureAiAssistIndexes() {
   for (const [collectionName, indexes] of Object.entries(CONNECTOR_INDEXES)) {
     const collection = await getCollectionInternal(collectionName)
     for (const { key, ...options } of indexes) {
-      await collection.createIndex(key, { background: true, ...options })
+      await collection.createIndex(key, options)
     }
   }
   logger.debug({}, '[AiAssist] connector indexes in place')

@@ -2,10 +2,12 @@ import TagsHandler from '../../../../app/src/Features/Tags/TagsHandler.mjs'
 import ProjectGetter from '../../../../app/src/Features/Project/ProjectGetter.mjs'
 import McpErrors from './McpErrors.mjs'
 import {
-  ACCESS_BUCKETS,
+  accessibleProjects,
   invalid,
   isTrueParam,
 } from './McpRequestParams.mjs'
+
+const NAME_COLLATOR = new Intl.Collator(undefined, { sensitivity: 'base' })
 
 // The editor's own colour picker only produces #RRGGBB values.
 const COLOR_REGEX = /^#[a-fA-F0-9]{6}$/
@@ -79,7 +81,7 @@ async function listTags(req, res) {
   const tags = await TagsHandler.promises.getAllTags(req.mcpUserId)
   const summaries = tags
     .map(tag => tagSummary(tag, { includeProjects }))
-    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
+    .sort((a, b) => NAME_COLLATOR.compare(a.name, b.name))
   res.json({ tags: summaries, total: summaries.length })
 }
 
@@ -190,8 +192,8 @@ async function accessibleProjectIds(userId) {
     _id: 1,
   })
   const ids = new Set()
-  for (const [bucket] of ACCESS_BUCKETS) {
-    for (const project of all[bucket] || []) ids.add(String(project._id))
+  for (const { project } of accessibleProjects(all)) {
+    ids.add(String(project._id))
   }
   return ids
 }

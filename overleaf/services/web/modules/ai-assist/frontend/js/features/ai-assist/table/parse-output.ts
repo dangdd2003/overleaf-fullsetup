@@ -24,9 +24,9 @@ export type ParsedTable =
     }
   | { kind: 'cannot'; reason: string; complete: boolean }
 
-type TableReply = Extract<ParsedTable, { kind: 'table' }>
+export type TableReply = Extract<ParsedTable, { kind: 'table' }>
 
-/** Up to three lines of notes. */
+/** Notes are cut at 600 characters. */
 const MAX_NOTES = 600
 const TABLE_OPEN = /<table\b([^>]*)>/
 const FENCE = /```[a-zA-Z]*[ \t]*\n([\s\S]*?)\n?```/

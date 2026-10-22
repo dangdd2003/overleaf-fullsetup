@@ -1,30 +1,58 @@
 import { SlashCommandId } from './types'
 
-export type CommandUsage = {
+type CommandUsage = {
   count: number
   lastUsed: number
 }
 
 const STORAGE_KEY = 'ol_ai_assist_slash_usage'
 
+function isCommandUsage(value: unknown): value is CommandUsage {
+  if (!value || typeof value !== 'object') return false
+  const candidate = value as Record<string, unknown>
+  return (
+    typeof candidate.count === 'number' &&
+    Number.isFinite(candidate.count) &&
+    typeof candidate.lastUsed === 'number' &&
+    Number.isFinite(candidate.lastUsed)
+  )
+}
+
 function readStorage(): Record<string, CommandUsage> {
-  if (typeof window === 'undefined' || !window.localStorage) return {}
+  if (typeof window === 'undefined') return {}
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY)
+    const storage = window.localStorage
+    if (!storage) return {}
+    const raw = storage.getItem(STORAGE_KEY)
     if (!raw) return {}
-    return JSON.parse(raw) ?? {}
+    const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    const valid: Record<string, CommandUsage> = {}
+    for (const [key, value] of Object.entries(parsed)) {
+      if (isCommandUsage(value)) {
+        valid[key] = value
+      }
+    }
+    return valid
   } catch {
     return {}
   }
 }
 
 function writeStorage(data: Record<string, CommandUsage>): void {
-  if (typeof window === 'undefined' || !window.localStorage) return
+  if (typeof window === 'undefined') return
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
+    const storage = window.localStorage
+    if (!storage) return
+    storage.setItem(STORAGE_KEY, JSON.stringify(data))
   } catch {
     // Ignore storage quota or disabled storage
   }
+}
+
+/** Read all valid slash command usage records from storage. */
+export function readSlashCommandUsage(): Record<string, CommandUsage> {
+  return readStorage()
 }
 
 /** Record that a slash command was used by the user. */
@@ -70,11 +98,16 @@ export function computeUsageScore(usage: CommandUsage | null): number {
 
 /**
  * Returns command IDs that have been used, sorted by mostly used and recently used.
+ * Stale or unknown IDs from corrupted storage or removed commands are filtered out
+ * when a set of known IDs is provided.
  */
-export function getTopUsedCommandIds(limit = 3): SlashCommandId[] {
+export function getTopUsedCommandIds(
+  limit = 3,
+  known?: Set<string>
+): SlashCommandId[] {
   const data = readStorage()
   const scored = Object.entries(data)
-    .filter(([_, usage]) => usage.count > 0)
+    .filter(([id, usage]) => usage.count > 0 && (!known || known.has(id)))
     .map(([id, usage]) => ({
       id: id as SlashCommandId,
       score: computeUsageScore(usage),

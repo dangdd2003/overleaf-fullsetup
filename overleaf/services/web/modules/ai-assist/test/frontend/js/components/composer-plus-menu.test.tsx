@@ -142,7 +142,6 @@ describe('ComposerPlusMenu', function () {
         onAddFiles={onAddFiles}
         onSlashCommands={onSlashCommands}
         chatId={CHAT_ID}
-        isMac={false}
         {...overrides}
       />
     )
@@ -184,13 +183,15 @@ describe('ComposerPlusMenu', function () {
   })
 
   it('displays shortcut badge Ctrl+U on non-Mac platforms', function () {
-    renderMenu({ isOpen: true, isMac: false })
+    sandbox.stub(window.navigator, 'platform').value('Linux x86_64')
+    renderMenu({ isOpen: true })
     const shortcutBadge = screen.getByText('Ctrl+U')
     expect(shortcutBadge.className).to.include('ai-assist-plus-menu-shortcut')
   })
 
   it('displays shortcut badge ⌘U on Mac platform', function () {
-    renderMenu({ isOpen: true, isMac: true })
+    sandbox.stub(window.navigator, 'platform').value('MacIntel')
+    renderMenu({ isOpen: true })
     expect(screen.getByText('⌘U')).to.exist
   })
 

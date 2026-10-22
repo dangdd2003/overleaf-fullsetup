@@ -62,10 +62,15 @@ export async function resolveAttachments(
   handle: ProjectHandle
 ): Promise<Attachment[]> {
   const files = await handle.listFiles().catch(() => [])
+  // The first file at each path wins, as a search from the top would find it
+  const byPath = new Map<string, (typeof files)[number]>()
+  for (const file of files) {
+    if (!byPath.has(file.path)) byPath.set(file.path, file)
+  }
 
   return Promise.all(
     refs.map(async ref => {
-      const file = files.find(candidate => candidate.path === ref.path)
+      const file = byPath.get(ref.path)
       if (!file || file.type === 'binary') return { ...ref, text: null }
 
       try {

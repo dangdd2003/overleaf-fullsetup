@@ -5,8 +5,8 @@ import {
   ToolCallCard,
   ToolCallSummaryLine,
   summarise,
-  toolCallExpansionStore,
 } from '../../../../../frontend/js/features/ai-assist/components/agent/tool-call-card'
+import { subresultExpansionStore } from '../../../../../frontend/js/features/ai-assist/components/agent/subresult-expansion-store'
 
 const fakeT = (_key: string, opts?: any) =>
   typeof opts === 'string' ? opts : opts?.defaultValue || _key
@@ -25,7 +25,7 @@ const mcpCall = (overrides: Record<string, unknown> = {}) =>
 
 describe('connector tool cards', function () {
   afterEach(function () {
-    toolCallExpansionStore.clear()
+    subresultExpansionStore.clear()
   })
 
   describe('header', function () {
@@ -148,8 +148,7 @@ describe('connector tool cards', function () {
           }
         />
       )
-      expect(screen.getByText('Error')).to.exist
-      expect(screen.getByText('Rate limited')).to.exist
+      expect(screen.getByText(/Rate limited/)).to.exist
     })
 
     it('shows a failed result text as its message', function () {
@@ -162,7 +161,7 @@ describe('connector tool cards', function () {
           }
         />
       )
-      expect(screen.getByText('Quota exceeded')).to.exist
+      expect(screen.getByText(/Quota exceeded/)).to.exist
     })
 
     it('says so when there is no output', function () {

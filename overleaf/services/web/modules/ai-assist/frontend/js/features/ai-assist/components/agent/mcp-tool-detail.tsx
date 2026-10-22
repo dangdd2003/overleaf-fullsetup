@@ -1,17 +1,17 @@
-import { ReactNode, useState } from 'react'
+import { ReactNode, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ToolCallRecord } from '../../agent/agent-messages'
 import {
   ConnectorOutcome,
   connectorOutcome,
+  OutputSegment,
   outputSegments,
   parseJsonOutput,
 } from '../../agent/mcp-tool-output'
 import CodeView from './code-view'
 import { MarkdownContent } from './markdown-content'
 import { CopyToClipboard } from '@/shared/components/copy-to-clipboard'
-
-type TranslateFn = (key: string, opts?: any) => string
+import type { TranslateFn } from './pdf-tool-shared'
 
 /** Past this many characters, or lines, a value or output is clamped. */
 const LONG_TEXT_CHARS = 250
@@ -163,20 +163,22 @@ function pagingLabel(outcome: ConnectorOutcome, t: TranslateFn): string {
   return parts.join(' · ')
 }
 
-function OutputBody({ body }: { body: string }) {
-  const segments = outputSegments(body)
-  const json = segments.every((segment) => segment.kind === 'text')
-    ? parseJsonOutput(body)
-    : undefined
-
-  if (json !== undefined) {
-    const lines = JSON.stringify(json, null, 2).split('\n')
+function OutputBody({
+  body,
+  segments,
+  jsonLines,
+}: {
+  body: string
+  segments: OutputSegment[]
+  jsonLines?: string[]
+}) {
+  if (jsonLines !== undefined) {
     return (
       <ClampedBlock
-        long={lines.length > LONG_TEXT_LINES}
+        long={jsonLines.length > LONG_TEXT_LINES}
         className="ai-assist-mcp-code-wrap"
       >
-        <CodeView lines={lines} startLine={1} />
+        <CodeView lines={jsonLines} startLine={1} />
       </ClampedBlock>
     )
   }
@@ -220,6 +222,20 @@ function OutputSection({
 }) {
   const { t } = useTranslation()
 
+  const { segments, jsonLines, hasOutput } = useMemo(() => {
+    const segs = outputSegments(outcome.body)
+    const isAllText = segs.every((segment) => segment.kind === 'text')
+    const json = isAllText ? parseJsonOutput(outcome.body) : undefined
+    const lines =
+      json !== undefined
+        ? JSON.stringify(json, null, 2).split('\n')
+        : undefined
+    const hasOut = segs.some(
+      (segment) => segment.kind === 'image' || segment.text.trim() !== ''
+    )
+    return { segments: segs, jsonLines: lines, hasOutput: hasOut }
+  }, [outcome.body])
+
   if (outcome.isError) {
     return (
       <div className="ai-assist-tool-detail-error" role="alert">
@@ -231,9 +247,6 @@ function OutputSection({
     )
   }
 
-  const hasOutput = outputSegments(outcome.body).some(
-    (segment) => segment.kind === 'image' || segment.text.trim() !== ''
-  )
   const label = pagingLabel(outcome, t)
 
   return (
@@ -250,7 +263,11 @@ function OutputSection({
         </div>
       )}
       {hasOutput ? (
-        <OutputBody body={outcome.body} />
+        <OutputBody
+          body={outcome.body}
+          segments={segments}
+          jsonLines={jsonLines}
+        />
       ) : (
         <div className="ai-assist-mcp-empty">
           {t('ai_assist_mcp_no_output', 'No output')}
@@ -284,24 +301,28 @@ export function McpToolDetail({
     call.args && typeof call.args === 'object' && !Array.isArray(call.args)
       ? (call.args as Record<string, unknown>)
       : null
-  const argNames = args ? Object.keys(args) : []
+  const argEntries = args ? Object.entries(args) : []
   const running = result === undefined
+  const outcome = useMemo(
+    () => (running ? null : connectorOutcome(result, Boolean(call.isError))),
+    [result, call.isError, running]
+  )
 
   return (
     <div className="ai-assist-mcp-detail">
-      {argNames.length > 0 && (
+      {argEntries.length > 0 && (
         <div className="ai-assist-mcp-section">
           <div className="ai-assist-mcp-label">
             {t('ai_assist_mcp_input', 'Input')}
           </div>
           <div className="ai-assist-mcp-rows">
-            {argNames.map((name) => (
+            {argEntries.map(([name, value]) => (
               <div key={name} className="ai-assist-mcp-row">
                 <span className="ai-assist-mcp-key" title={name}>
                   {name}
                 </span>
                 <div className="ai-assist-mcp-val">
-                  <InputValue value={args![name]} />
+                  <InputValue value={value} />
                 </div>
               </div>
             ))}
@@ -309,7 +330,7 @@ export function McpToolDetail({
         </div>
       )}
 
-      {running ? (
+      {running || !outcome ? (
         <div className="ai-assist-mcp-section">
           <div className="ai-assist-mcp-label">
             {t('ai_assist_mcp_output', 'Output')}
@@ -323,10 +344,7 @@ export function McpToolDetail({
           <div className="ai-assist-mcp-label">
             {t('ai_assist_mcp_output', 'Output')}
           </div>
-          <OutputSection
-            call={call}
-            outcome={connectorOutcome(result, Boolean(call.isError))}
-          />
+          <OutputSection call={call} outcome={outcome} />
         </div>
       )}
     </div>

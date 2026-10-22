@@ -24,7 +24,7 @@ function isEmpty(value) {
  * @param {unknown} value
  * @returns {unknown}
  */
-export function prune(value) {
+function prune(value) {
   if (Array.isArray(value)) {
     return value.map(prune).filter(item => !isEmpty(item))
   }

@@ -18,8 +18,7 @@ import { highlightInPdf, HighlightRequest, HighlightResult } from '../pdf/highli
 import { matchesGlob } from './tools/search-text'
 import {
   applyLiveSettingsUpdate,
-  DARK_EDITOR_THEMES,
-  LIGHT_EDITOR_THEMES,
+  editorThemeSlots,
 } from './live-settings-updater'
 import { locateAnchorInText, countOccurrences } from './latex-matcher'
 import {
@@ -185,11 +184,12 @@ export function findUniqueSpan(
   const textLines = text.split('\n')
   const oldLines = oldText.split('\n').map(l => l.trim())
   if (oldLines.length > 0 && oldLines.some(l => l.length > 0)) {
+    const trimmedText = textLines.map(l => l.trim())
     const matchingStarts: number[] = []
     for (let i = 0; i <= textLines.length - oldLines.length; i++) {
       let matches = true
       for (let j = 0; j < oldLines.length; j++) {
-        if (textLines[i + j].trim() !== oldLines[j]) {
+        if (trimmedText[i + j] !== oldLines[j]) {
           matches = false
           break
         }
@@ -257,17 +257,18 @@ export function spanToLineRange(
   return { from, to: Math.max(from, to) }
 }
 
-export function docToProjectFile(path: string, content: any): ProjectFile {
-  if (content === null || content === undefined) {
-    return { path, type: 'doc', size: 0, lines: 0 }
-  }
-  const str = String(content)
+function toLogEntrySummary(e: any): LogEntrySummary {
   return {
-    path,
-    type: 'doc',
-    size: str.length,
-    lines: str === '' ? 1 : str.split('\n').length,
+    message: e.message ?? '',
+    file: e.file ?? null,
+    line: typeof e.line === 'number' ? e.line : parseInt(e.line, 10) || null,
   }
+}
+
+function warningsOf(entries: any): LogEntrySummary[] {
+  return (entries?.warnings ?? entries?.all ?? [])
+    .filter((e: any) => e.level === 'warning' || entries?.warnings)
+    .map(toLogEntrySummary)
 }
 
 export function toLastCompile(
@@ -276,22 +277,12 @@ export function toLastCompile(
 ): LastCompile | null {
   if (!entries) return null
   const errors: LogEntrySummary[] = (entries.errors ?? []).map((e: any) => {
-    const summary: LogEntrySummary = {
-      message: e.message ?? '',
-      file: e.file ?? null,
-      line: typeof e.line === 'number' ? e.line : parseInt(e.line, 10) || null,
-    }
+    const summary = toLogEntrySummary(e)
     const excerpt = errorExcerpt(e)
     if (excerpt) summary.excerpt = excerpt
     return summary
   })
-  const warnings: LogEntrySummary[] = (entries.warnings ?? entries.all ?? [])
-    .filter((e: any) => e.level === 'warning' || entries.warnings)
-    .map((e: any) => ({
-      message: e.message ?? '',
-      file: e.file ?? null,
-      line: typeof e.line === 'number' ? e.line : parseInt(e.line, 10) || null,
-    }))
+  const warnings = warningsOf(entries)
   const status = errors.length > 0 ? 'failure' : 'success'
   return {
     status,
@@ -403,11 +394,7 @@ export function toCompileOutcome(
   }
 
   const errors: LogEntrySummary[] = (entries?.errors ?? []).map((e: any) => {
-    const summary: LogEntrySummary = {
-      message: e.message ?? '',
-      file: e.file ?? null,
-      line: typeof e.line === 'number' ? e.line : parseInt(e.line, 10) || null,
-    }
+    const summary = toLogEntrySummary(e)
     const excerpt =
       errorExcerpt(e) ??
       (rawLog && summary.message
@@ -419,35 +406,13 @@ export function toCompileOutcome(
     return summary
   })
 
-  const warnings: LogEntrySummary[] = (entries?.warnings ?? entries?.all ?? [])
-    .filter((e: any) => e.level === 'warning' || entries?.warnings)
-    .map((e: any) => ({
-      message: e.message ?? '',
-      file: e.file ?? null,
-      line: typeof e.line === 'number' ? e.line : parseInt(e.line, 10) || null,
-    }))
+  const warnings = warningsOf(entries)
 
   return {
     status: status ?? (errors.length > 0 ? 'failure' : 'success'),
     errors,
     warnings,
   }
-}
-
-export function folderIdForPath(
-  root: Folder,
-  segments: string[]
-): string | null {
-  if (!root) return null
-  if (!segments || segments.length === 0) return root._id
-  let current: Folder | null = root
-  for (const part of segments) {
-    if (!current?.folders) return null
-    const next: Folder | undefined = current.folders.find(f => f.name === part)
-    if (!next) return null
-    current = next
-  }
-  return current?._id ?? null
 }
 
 export async function ensureFolderPath(
@@ -488,6 +453,15 @@ export async function ensureFolderPath(
     }
   }
   return currentFolder._id
+}
+
+/** Same numbers as splitting on '\n': size sums len+1 per line, lines is the count. */
+function docStats(text: string): { size: number; lines: number } {
+  let newlines = 0
+  for (let i = text.indexOf('\n'); i !== -1; i = text.indexOf('\n', i + 1)) {
+    newlines += 1
+  }
+  return { size: text.length + 1, lines: newlines + 1 }
 }
 
 function normalizeDoc(content: any): string[] {
@@ -531,8 +505,6 @@ function snapshotDocs(projectSnapshot: any): Record<string, string> {
   return result
 }
 
-export { filesFromFileTree }
-
 export function readDocOverBridge(
   targetPath?: string,
   docId?: string,
@@ -548,15 +520,9 @@ export function readDocOverBridge(
       resolved = true
       window.removeEventListener('aiAssist:agentReadDocResult', onResult)
       clearTimeout(timer)
-      if (
-        detail?.text === null ||
-        detail?.error === 'pathMismatch' ||
-        detail?.error === 'docIdMismatch'
-      ) {
-        resolve(null)
-      } else {
-        resolve(detail?.text ?? null)
-      }
+      const mismatch =
+        detail?.error === 'pathMismatch' || detail?.error === 'docIdMismatch'
+      resolve(mismatch ? null : (detail?.text ?? null))
     }
     window.addEventListener('aiAssist:agentReadDocResult', onResult)
     const timer = setTimeout(() => {
@@ -583,25 +549,23 @@ export type BridgeEditDetail = {
   oldText: string
   replacement: string
   isAppend?: boolean
-  requestId?: string
 }
+
+type BridgeEditStatus =
+  | 'applied'
+  | 'drifted'
+  | 'pathMismatch'
+  | 'docIdMismatch'
+  | 'timeout'
+  | 'error'
 
 export function applyEditOverBridge(
   detail: BridgeEditDetail,
   timeoutMs = REPLY_TIMEOUT_MS
-): Promise<{
-  status:
-    | 'applied'
-    | 'drifted'
-    | 'pathMismatch'
-    | 'docIdMismatch'
-    | 'timeout'
-    | 'error'
-  message?: string
-}> {
+): Promise<{ status: BridgeEditStatus; message?: string }> {
   return new Promise(resolve => {
     let resolved = false
-    const requestId = detail.requestId || Math.random().toString(36).slice(2)
+    const requestId = Math.random().toString(36).slice(2)
     const onResult = (event: Event) => {
       if (resolved) return
       const result = (event as CustomEvent)?.detail
@@ -836,13 +800,15 @@ export function useProjectHandle({
           projectSnapshot.getDocContents?.(norm) ??
           projectSnapshot.getDocContents?.('/' + norm) ??
           ''
-        const lines =
-          typeof docContents === 'string' ? docContents.split('\n') : []
+        const stats =
+          typeof docContents === 'string'
+            ? docStats(docContents)
+            : { size: 0, lines: 0 }
         result.push({
           path: norm,
           type: 'doc',
-          size: lines.reduce((sum, l) => sum + l.length + 1, 0),
-          lines: lines.length,
+          size: stats.size,
+          lines: stats.lines,
         })
       }
     } else {
@@ -1104,39 +1070,30 @@ export function useProjectHandle({
         const sIdx = edit.startLine - 1
         const anchorLineCount = edit.oldText.split('\n').length
         const windowRadius = Math.max(2, anchorLineCount + 1)
-
-        // Try local window first
-        const localEIdx =
+        const endLine =
           typeof edit.endLine === 'number' && edit.endLine >= edit.startLine
             ? edit.endLine
-            : Math.min(lines.length, sIdx + windowRadius)
-        const localSlice = lines.slice(sIdx, localEIdx)
-        const localSpan = findUniqueSpan(localSlice.join('\n'), edit.oldText)
+            : undefined
+        const charOffset =
+          lines.slice(0, sIdx).join('\n').length + (sIdx > 0 ? 1 : 0)
 
-        if (localSpan.status === 'found') {
-          const charOffset =
-            lines.slice(0, sIdx).join('\n').length + (sIdx > 0 ? 1 : 0)
-          span = {
-            status: 'found',
-            index: localSpan.index + charOffset,
-            matchedLength: localSpan.matchedLength,
-          }
-        } else {
-          const eIdx =
-            typeof edit.endLine === 'number' && edit.endLine >= edit.startLine
-              ? edit.endLine
-              : lines.length
-          const sliceLines = lines.slice(sIdx, eIdx)
-          const scopedContent = sliceLines.join('\n')
-          const scopedSpan = findUniqueSpan(scopedContent, edit.oldText)
-          if (scopedSpan.status === 'found') {
-            const charOffset =
-              lines.slice(0, sIdx).join('\n').length + (sIdx > 0 ? 1 : 0)
+        // Local window first, then the whole scoped slice
+        const sliceEnds =
+          endLine !== undefined
+            ? [endLine]
+            : [Math.min(lines.length, sIdx + windowRadius), lines.length]
+        for (const eIdx of sliceEnds) {
+          const sliceSpan = findUniqueSpan(
+            lines.slice(sIdx, eIdx).join('\n'),
+            edit.oldText
+          )
+          if (sliceSpan.status === 'found') {
             span = {
               status: 'found',
-              index: scopedSpan.index + charOffset,
-              matchedLength: scopedSpan.matchedLength,
+              index: sliceSpan.index + charOffset,
+              matchedLength: sliceSpan.matchedLength,
             }
+            break
           }
         }
       }
@@ -1710,18 +1667,11 @@ export function useProjectHandle({
 
       if (settingsToUpdate.editorTheme !== undefined) {
         const themeName = String(settingsToUpdate.editorTheme)
-        if (
-          payload.editorDarkTheme === undefined &&
-          (DARK_EDITOR_THEMES.has(themeName) ||
-            !LIGHT_EDITOR_THEMES.has(themeName))
-        ) {
+        const slots = editorThemeSlots(themeName)
+        if (payload.editorDarkTheme === undefined && slots.isDark) {
           payload.editorDarkTheme = themeName
         }
-        if (
-          payload.editorLightTheme === undefined &&
-          (LIGHT_EDITOR_THEMES.has(themeName) ||
-            !DARK_EDITOR_THEMES.has(themeName))
-        ) {
+        if (payload.editorLightTheme === undefined && slots.isLight) {
           payload.editorLightTheme = themeName
         }
       }
@@ -1867,10 +1817,7 @@ export function useProjectHandle({
         code: l.code,
         name: l.name,
       }))
-      const rawImages: any[] =
-        (getMeta('ol-imageNames') as any[]) ||
-        ((getMeta as any)('ol-allowedImageNames') as any[]) ||
-        []
+      const rawImages: any[] = (getMeta('ol-imageNames') as any[]) || []
       const imageNames = rawImages.map((img: any) => ({
         imageName: img.imageName,
         imageDesc: img.imageDesc || img.imageName,

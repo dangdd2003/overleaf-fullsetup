@@ -38,9 +38,9 @@ export function createFadeState(container?: HTMLElement | null): FadeState {
   }
 }
 
-function fadeElement(el: Element, ageMs: number) {
+function fadeElement(el: HTMLElement | SVGElement, ageMs: number) {
   el.classList.add('ai-assist-stream-fade')
-  ;(el as HTMLElement).style.animationDelay = `${Math.round(-ageMs)}ms`
+  el.style.animationDelay = `${Math.round(-ageMs)}ms`
 }
 
 /**
@@ -88,18 +88,20 @@ export function applyChunkFades(container: HTMLElement, state: FadeState) {
   fadeRules(container, state, now, windowMs)
   if (chunks.length === 0) return
 
-  const chunkAt = (offset: number) => {
-    for (let i = chunks.length - 1; i >= 0; i--) {
-      if (offset >= chunks[i].start) return chunks[i]
-    }
-    return null
-  }
-
+  // Chunks and nodes both run in document order, so the last chunk that starts
+  // at or before the current node only ever moves forward
+  let chunkIndex = -1
   const unitChunks = new Map<Element, FadeChunk | null>()
   let offset = 0
   for (const node of nodes) {
     const nodeStart = offset
     offset += node.data.length
+    while (
+      chunkIndex + 1 < chunks.length &&
+      chunks[chunkIndex + 1].start <= nodeStart
+    ) {
+      chunkIndex++
+    }
 
     // Chunks of the enclosing structures that are fading in whole
     const covering = new Set<FadeChunk>()
@@ -107,7 +109,7 @@ export function applyChunkFades(container: HTMLElement, state: FadeState) {
     while (el && el !== container) {
       if (el.matches(FADE_UNIT_SELECTOR)) {
         if (!unitChunks.has(el)) {
-          const chunk = chunkAt(nodeStart)
+          const chunk = chunkIndex >= 0 ? chunks[chunkIndex] : null
           unitChunks.set(el, chunk)
           if (chunk) fadeElement(el, now - chunk.at)
         }
@@ -124,7 +126,8 @@ export function applyChunkFades(container: HTMLElement, state: FadeState) {
     // an enclosing structure is already fading that very chunk
     let current: Text = node
     let currentStart = nodeStart
-    for (let i = 0; i < chunks.length; i++) {
+    for (let i = Math.max(chunkIndex, 0); i < chunks.length; i++) {
+      if (chunks[i].start >= offset) break
       const start = Math.max(chunks[i].start, currentStart)
       const end = Math.min(chunks[i + 1]?.start ?? Infinity, offset)
       if (end <= start) continue

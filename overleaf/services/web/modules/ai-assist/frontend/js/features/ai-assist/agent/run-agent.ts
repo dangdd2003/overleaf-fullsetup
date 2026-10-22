@@ -298,8 +298,6 @@ export async function* runAgent({
         message: error?.message ?? 'The provider request failed.',
         status: error?.status,
         hint: error?.hint,
-        upstreamCode: error?.upstreamCode,
-        upstreamType: error?.upstreamType,
       }
       return yield { type: 'turnFinished', reason: 'stop' }
     }
@@ -421,11 +419,11 @@ export async function* runAgent({
         rejectedEditPaths.push(String(path ?? 'the file'))
       }
       const isFailed = isError || status === 'noMatch' || status === 'ambiguous'
+      const callSig = `${call.name}:${JSON.stringify(call.args ?? {})}`
       let stop: StopReason | null = null
 
       if (isFailed) {
         turnFailed = true
-        const callSig = `${call.name}:${JSON.stringify(call.args)}`
         const repeats = (failedCallSignatures.get(callSig) ?? 0) + 1
         failedCallSignatures.set(callSig, repeats)
 
@@ -453,10 +451,9 @@ export async function* runAgent({
       // X, Y, X, Y with identical names and arguments makes no progress.
       // Mirrors the server loop.
       if (!stop) {
-        recentCallSignatures.push({
-          name: call.name,
-          signature: `${call.name}:${JSON.stringify(call.args ?? {})}`,
-        })
+        recentCallSignatures.push({ name: call.name, signature: callSig })
+        // Only the last four calls are compared, so older ones are dropped
+        if (recentCallSignatures.length > 4) recentCallSignatures.shift()
         if (recentCallSignatures.length >= 4) {
           const [a, b, c, d] = recentCallSignatures.slice(-4)
           if (

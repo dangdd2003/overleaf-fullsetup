@@ -7,7 +7,6 @@ import defaultStore, {
   isValidChatCursor,
   isValidChatId,
 } from './AiAssistChatHistoryStore.mjs'
-import defaultCheckpointStore from './AiAssistCheckpointStore.mjs'
 import { createProviderClient } from './AiAssistProviders.mjs'
 import { generateChatTitle } from './AiAssistChatTitler.mjs'
 import SessionManager from '../../../../app/src/Features/Authentication/SessionManager.mjs'
@@ -16,11 +15,9 @@ export class AiAssistChatHistoryController {
   constructor({
     store = defaultStore,
     clientFactory = createProviderClient,
-    checkpointStore = defaultCheckpointStore,
   } = {}) {
     this.store = store
     this.clientFactory = clientFactory
-    this.checkpointStore = checkpointStore
   }
 
   #ids(req, res) {
@@ -162,7 +159,7 @@ export class AiAssistChatHistoryController {
   generateTitle = async (req, res) => {
     const ids = this.#ids(req, res)
     if (!ids) return
-    const { providerSettings, prompt, assistantReply } = req.body || {}
+    const { providerSettings, prompt } = req.body || {}
     if (!providerSettings) {
       return res.status(400).json({ error: 'Missing providerSettings' })
     }
@@ -176,7 +173,6 @@ export class AiAssistChatHistoryController {
       const title = await generateChatTitle({
         client,
         firstMessageText: prompt || '',
-        assistantReplyText: assistantReply || '',
       })
       if (title && ids.chatId) {
         await this.store.saveChatTitle(
@@ -201,11 +197,6 @@ export class AiAssistChatHistoryController {
     if (!ids) return
     try {
       await this.store.deleteChat(ids.projectId, ids.userId, ids.chatId)
-      if (this.checkpointStore?.deleteChatCheckpoints) {
-        await this.checkpointStore
-          .deleteChatCheckpoints(ids.projectId, ids.userId, ids.chatId)
-          .catch(() => {})
-      }
       res.sendStatus(204)
     } catch (err) {
       logger.error(

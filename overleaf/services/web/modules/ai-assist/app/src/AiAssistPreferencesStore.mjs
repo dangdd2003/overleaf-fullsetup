@@ -3,6 +3,7 @@ import Path from 'node:path'
 import crypto from 'node:crypto'
 import { baseDir } from './AiAssistChatHistoryStore.mjs'
 import { REASONING_EFFORTS } from './AiAssistProviders.mjs'
+import { createLocalLock } from './AiAssistFileLock.mjs'
 
 // One JSON file per user, next to the chat history:
 //   <chatHistoryDir>/preferences/<userId>.json
@@ -146,18 +147,7 @@ export function normalizePreferences(raw) {
 }
 
 // Writes to one user's file wait their turn (within this process)
-const fileLocks = new Map()
-
-function withFileLock(file, task) {
-  const previous = fileLocks.get(file) || Promise.resolve()
-  const next = previous.catch(() => {}).then(task)
-  const tail = next.catch(() => {})
-  fileLocks.set(file, tail)
-  tail.then(() => {
-    if (fileLocks.get(file) === tail) fileLocks.delete(file)
-  })
-  return next
-}
+const withFileLock = createLocalLock()
 
 /** The saved preferences, or null if this user never saved any. */
 async function get(userId) {
@@ -180,8 +170,13 @@ async function save(userId, preferences) {
     await fs.mkdir(Path.dirname(file), { recursive: true })
     // Write-then-rename so a crash mid-write never leaves a truncated file.
     const tmp = `${file}.${crypto.randomBytes(6).toString('hex')}.tmp`
-    await fs.writeFile(tmp, JSON.stringify(normalized))
-    await fs.rename(tmp, file)
+    try {
+      await fs.writeFile(tmp, JSON.stringify(normalized))
+      await fs.rename(tmp, file)
+    } catch (err) {
+      await fs.rm(tmp, { force: true }).catch(() => {})
+      throw err
+    }
     return normalized
   })
 }

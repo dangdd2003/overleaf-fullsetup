@@ -72,6 +72,16 @@ import {
 
 type Version = { text: string; warnings: WritingWarning[]; unit: EditUnit }
 
+/** The message and hint of a thrown error, when they are strings. */
+function failureOf(error: unknown): { message?: string; hint?: string } {
+  if (typeof error !== 'object' || error === null) return {}
+  const { message, hint } = error as { message?: unknown; hint?: unknown }
+  return {
+    message: typeof message === 'string' ? message : undefined,
+    hint: typeof hint === 'string' ? hint : undefined,
+  }
+}
+
 type Phase =
   | { name: 'consent' }
   | { name: 'noProvider' }
@@ -132,61 +142,60 @@ export function WritingToolsPanel({
   const [preferences, setPreferences] = useState<WritingToolsPreferences>(
     readWritingToolsPreferences
   )
+  // What was kept from the last session on this text, if any
+  const restored = cachedHistory?.history.versions.length
+    ? cachedHistory.history
+    : { versions: [], index: 0 }
+  const restoredSynonyms = cachedHistory?.synonyms ?? []
   const [phase, setPhase] = useState<Phase>(() => {
-    if (
-      cachedHistory &&
-      (cachedHistory.history.versions.length > 0 || cachedHistory.synonyms.length > 0)
-    ) {
+    if (restored.versions.length > 0 || restoredSynonyms.length > 0) {
       return { name: 'ready' }
     }
     return parts.core.length > MAX_SELECTION_CHARS
       ? { name: 'tooLong' }
       : { name: 'streaming', text: '', options: [] }
   })
-  const [history, setHistory] = useState<{ versions: Version[]; index: number }>(() => {
-    if (cachedHistory && cachedHistory.history.versions.length > 0) {
-      return cachedHistory.history
-    }
-    return { versions: [], index: 0 }
-  })
-  const [synonyms, setSynonyms] = useState<string[]>(() => {
-    if (cachedHistory && cachedHistory.synonyms.length > 0) {
-      return cachedHistory.synonyms
-    }
-    return []
-  })
+  const [history, setHistory] = useState<{ versions: Version[]; index: number }>(restored)
+  const [synonyms, setSynonyms] = useState<string[]>(restoredSynonyms)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsClosing, setSettingsClosing] = useState(false)
   const settingsCloseTimerRef = useRef<number | null>(null)
+  const copyTimerRef = useRef<number | null>(null)
+
+  const cancelSettingsTimer = useCallback(() => {
+    if (settingsCloseTimerRef.current) window.clearTimeout(settingsCloseTimerRef.current)
+    settingsCloseTimerRef.current = null
+  }, [])
 
   const toggleSettings = useCallback(() => {
     if (settingsOpen && !settingsClosing) {
       setSettingsClosing(true)
-      if (settingsCloseTimerRef.current) window.clearTimeout(settingsCloseTimerRef.current)
+      cancelSettingsTimer()
       settingsCloseTimerRef.current = window.setTimeout(() => {
         setSettingsOpen(false)
         setSettingsClosing(false)
       }, 180)
     } else if (!settingsOpen) {
-      if (settingsCloseTimerRef.current) window.clearTimeout(settingsCloseTimerRef.current)
+      cancelSettingsTimer()
       setSettingsOpen(true)
       setSettingsClosing(false)
     }
-  }, [settingsOpen, settingsClosing])
+  }, [settingsOpen, settingsClosing, cancelSettingsTimer])
 
   const onSettingsAnimationEnd = useCallback(() => {
     if (settingsClosing) {
-      if (settingsCloseTimerRef.current) window.clearTimeout(settingsCloseTimerRef.current)
+      cancelSettingsTimer()
       setSettingsOpen(false)
       setSettingsClosing(false)
     }
-  }, [settingsClosing])
+  }, [settingsClosing, cancelSettingsTimer])
 
   useEffect(() => {
     return () => {
-      if (settingsCloseTimerRef.current) window.clearTimeout(settingsCloseTimerRef.current)
+      cancelSettingsTimer()
+      if (copyTimerRef.current) window.clearTimeout(copyTimerRef.current)
     }
-  }, [])
+  }, [cancelSettingsTimer])
   const [prompt, setPrompt] = useState(() => cachedHistory?.prompt ?? '')
   const [copied, setCopied] = useState(false)
   const [durationMs, setDurationMs] = useState<number | null>(() => cachedHistory?.durationMs ?? null)
@@ -226,30 +235,29 @@ export function WritingToolsPanel({
   ).size
   const allKept = groupCount > 0 && keptHere.size === groupCount
   const toggleChange = useCallback(
-    (id: number) =>
-      setKept(previous => {
-        const set = new Set(previous.get(history.index))
-        if (set.has(id)) set.delete(id)
-        else set.add(id)
-        const nextKept = new Map(previous).set(history.index, set)
-        if (history.versions.length > 0) {
-          saveWritingToolHistory({
-            kind: 'writing-tool',
-            originalText: session.original,
-            action: session.action,
-            targetLanguage: session.targetLanguage,
-            history,
-            synonyms,
-            rephraseSettings: { ...preferences.rephrase, prompt },
-            prompt,
-            durationMs,
-            kept: Array.from(nextKept.entries()).map(([k, s]) => [k, Array.from(s)]),
-            timestamp: Date.now(),
-          })
-        }
-        return nextKept
-      }),
-    [history, session, synonyms, preferences.rephrase, prompt, durationMs]
+    (id: number) => {
+      const set = new Set(kept.get(history.index))
+      if (set.has(id)) set.delete(id)
+      else set.add(id)
+      const nextKept = new Map(kept).set(history.index, set)
+      if (history.versions.length > 0) {
+        saveWritingToolHistory({
+          kind: 'writing-tool',
+          originalText: session.original,
+          action: session.action,
+          targetLanguage: session.targetLanguage,
+          history,
+          synonyms,
+          rephraseSettings: { ...preferences.rephrase, prompt },
+          prompt,
+          durationMs,
+          kept: Array.from(nextKept.entries()).map(([k, s]) => [k, Array.from(s)]),
+          timestamp: Date.now(),
+        })
+      }
+      setKept(nextKept)
+    },
+    [kept, history, session, synonyms, preferences.rephrase, prompt, durationMs]
   )
   const stale = state.sliceDoc(session.from, session.to) !== session.original
   const streaming = phase.name === 'streaming'
@@ -433,12 +441,13 @@ export function WritingToolsPanel({
             return
           }
         }
-      } catch (error: any) {
+      } catch (error) {
         if (controller.signal.aborted) return
+        const failure = failureOf(error)
         setPhase({
           name: 'error',
-          message: error?.message || 'The request failed.',
-          hint: error?.hint,
+          message: failure.message || 'The request failed.',
+          hint: failure.hint,
         })
       }
     },
@@ -532,7 +541,11 @@ export function WritingToolsPanel({
       ?.writeText(composed)
       .then(() => {
         setCopied(true)
-        window.setTimeout(() => setCopied(false), 1500)
+        if (copyTimerRef.current) window.clearTimeout(copyTimerRef.current)
+        copyTimerRef.current = window.setTimeout(() => {
+          copyTimerRef.current = null
+          setCopied(false)
+        }, 1500)
       })
       .catch(() => {})
   }, [current, composed])
@@ -810,6 +823,7 @@ export function WritingToolsPanel({
                     <DiffText
                       original={session.original}
                       result={current.text}
+                      segments={segments}
                       kept={keptHere}
                       unit={current.unit}
                       onToggle={stale ? undefined : toggleChange}

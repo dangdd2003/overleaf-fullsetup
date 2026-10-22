@@ -134,6 +134,28 @@ describe('OverleafClient', function () {
     expect(Buffer.from(result.base64, 'base64').equals(zip)).to.be.true
   })
 
+  it('encodes a streamed body exactly as one buffer whatever the chunk sizes', async function () {
+    const bytes = Buffer.from(Array.from({ length: 257 }, (_, i) => (i * 37) & 0xff))
+    const expected = bytes.toString('base64')
+    for (const size of [1, 2, 3, 4, 5, 7, 256]) {
+      const chunks = []
+      for (let i = 0; i < bytes.length; i += size) {
+        chunks.push(new Uint8Array(bytes.subarray(i, i + size)))
+      }
+      const stream = new ReadableStream({
+        start(controller) {
+          for (const chunk of chunks) controller.enqueue(chunk)
+          controller.close()
+        },
+      })
+      fetchImpl.resolves(
+        new Response(stream, { headers: { 'content-type': 'application/zip' } })
+      )
+      const result = await client.requestBinary(TOKEN, '/projects/p1/download/zip')
+      expect(result.base64, `chunk size ${size}`).to.equal(expected)
+    }
+  })
+
   it('lets one call set a longer deadline than the default', async function () {
     const clock = sinon.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     try {

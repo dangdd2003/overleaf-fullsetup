@@ -5,7 +5,7 @@ import { uniqueLabel } from '../generator/labels'
 import { GeneratorProgress, NonResult } from '../generator/types'
 import { InsertWhere } from './context'
 import { TableHabits } from './hints'
-import { ParsedTable, parseTableReply } from './parse-output'
+import { ParsedTable, parseTableReply, TableReply } from './parse-output'
 import { buildTableRepair, TABLE_SYSTEM } from './prompt'
 import { bodyProblems, countColumns, splitBody } from './columns'
 import { spliceBlock, TableEnv, TableShape, wrapTable } from './wrap'
@@ -13,7 +13,7 @@ import { missingValues, valuesWarning } from './values'
 import { tablePackages } from './packages'
 
 /** Tables are long; `runWritingTool` caps this at the model's own limit. */
-export const TABLE_MAX_TOKENS = 16384
+const TABLE_MAX_TOKENS = 16384
 
 export type TableWarning = {
   kind: 'structure' | 'env' | 'label' | 'wide' | 'values' | 'package'
@@ -67,8 +67,6 @@ export type TableOutcome = TableResult | NonResult
 
 export type TableProgress = GeneratorProgress<ParsedTable>
 
-type TableReply = Extract<ParsedTable, { kind: 'table' }>
-
 export function coerceEnv(env: string | null): { env: TableEnv; coerced: boolean } {
   if (env === 'tabular' || env === 'tabularx') return { env, coerced: false }
   return { env: 'tabular', coerced: env !== null }
@@ -79,9 +77,15 @@ function captioned(parsed: TableReply, where: InsertWhere): boolean {
   return where.kind === 'inner' ? !where.hasCaption : parsed.float
 }
 
-function shapeOf(parsed: TableReply, facts: TableFacts, label: string | null): TableShape {
+function shapeOf(
+  parsed: TableReply,
+  facts: TableFacts,
+  label: string | null,
+  split?: { rows: Array<{ span: number }> }
+): TableShape {
   const show = captioned(parsed, facts.where)
-  const widest = Math.max(1, ...splitBody(parsed.body).rows.map(row => row.span))
+  const rows = split ? split.rows : splitBody(parsed.body).rows
+  const widest = Math.max(1, ...rows.map(row => row.span))
   return {
     env: coerceEnv(parsed.env).env,
     spec: parsed.spec ?? 'l'.repeat(widest),
@@ -133,7 +137,8 @@ export function buildTableResult(
     warnings.push({ kind: 'wide', message: 'Placed as a normal table: the document has one column.' })
   }
 
-  const shape = shapeOf({ ...parsed, body }, facts, label)
+  const split = splitBody(body)
+  const shape = shapeOf({ ...parsed, body }, facts, label, split)
   const latex = wrapTable(shape, facts.habits, facts.where)
   const spliced = spliceBlock(latex, facts.around)
 
@@ -162,7 +167,7 @@ export function buildTableResult(
     text: spliced.text,
     cursorOffset: spliced.blockEnd,
     columns: countColumns(shape.spec, facts.habits.columnTypes).count,
-    rows: splitBody(body).rows.length,
+    rows: split.rows.length,
     packages,
     notes: parsed.notes,
     warnings,
@@ -170,9 +175,7 @@ export function buildTableResult(
   }
 }
 
-/** The outcome of a finished reply. */
-export function tableOutcomeOf(raw: string, facts: TableFacts): TableOutcome {
-  const parsed = parseTableReply(raw, true)
+function outcomeFromParsed(parsed: ParsedTable, raw: string, facts: TableFacts): TableOutcome {
   if (parsed.kind === 'cannot') {
     return parsed.reason.trim().toLowerCase() === 'no-image'
       ? { kind: 'imageUnsupported' }
@@ -181,9 +184,7 @@ export function tableOutcomeOf(raw: string, facts: TableFacts): TableOutcome {
   return buildTableResult(parsed, raw, facts)
 }
 
-/** What in a finished reply would not compile: what a repair turn should fix. */
-export function tableProblems(raw: string, facts: TableFacts): string[] {
-  const parsed = parseTableReply(raw, true)
+function problemsFromParsed(parsed: ParsedTable, facts: TableFacts): string[] {
   if (parsed.kind !== 'table') return []
   if (!parsed.body.trim()) {
     return ['Reply with a <table env="…" spec="…" label="…"> block whose <body> holds the rows.']
@@ -199,6 +200,16 @@ export function tableProblems(raw: string, facts: TableFacts): string[] {
   }
   problems.push(...bodyProblems(parsed.body, columns))
   return problems
+}
+
+/** The outcome of a finished reply. */
+export function tableOutcomeOf(raw: string, facts: TableFacts): TableOutcome {
+  return outcomeFromParsed(parseTableReply(raw, true), raw, facts)
+}
+
+/** What in a finished reply would not compile: what a repair turn should fix. */
+export function tableProblems(raw: string, facts: TableFacts): string[] {
+  return problemsFromParsed(parseTableReply(raw, true), facts)
 }
 
 /** A version kept despite its problems says so first. */
@@ -253,8 +264,9 @@ export async function generateTable({
   const raw = await call(messages, text =>
     onProgress({ stage: 'writing', reply: parseTableReply(text, false) })
   )
-  const first = tableOutcomeOf(raw, facts)
-  const problems = tableProblems(raw, facts)
+  const parsed = parseTableReply(raw, true)
+  const first = outcomeFromParsed(parsed, raw, facts)
+  const problems = problemsFromParsed(parsed, facts)
   if (first.kind === 'cannot' || first.kind === 'imageUnsupported' || problems.length === 0) {
     return first
   }
@@ -269,8 +281,9 @@ export async function generateTable({
       ],
       () => {}
     )
-    const second = tableOutcomeOf(repairedRaw, facts)
-    const left = tableProblems(repairedRaw, facts)
+    const repairedParsed = parseTableReply(repairedRaw, true)
+    const second = outcomeFromParsed(repairedParsed, repairedRaw, facts)
+    const left = problemsFromParsed(repairedParsed, facts)
     if (second.kind === 'table' && (first.kind !== 'table' || left.length < problems.length)) {
       return withProblems(second, left)
     }

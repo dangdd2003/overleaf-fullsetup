@@ -32,6 +32,10 @@ function mcpPath(pathname) {
   return `/${historyPath(pathname)}`
 }
 
+function renamedTo(path) {
+  return `renamed to ${path}`
+}
+
 /**
  * Make recent edits visible to history before reading it.
  *
@@ -66,7 +70,7 @@ function changedPaths(update) {
     if (op.add) paths.set(mcpPath(op.add.pathname), 'added')
     if (op.remove) paths.set(mcpPath(op.remove.pathname), 'deleted')
     if (op.rename) {
-      paths.set(mcpPath(op.rename.pathname), `renamed to ${mcpPath(op.rename.newPathname)}`)
+      paths.set(mcpPath(op.rename.pathname), renamedTo(mcpPath(op.rename.newPathname)))
     }
   }
   return [...paths].map(([path, change]) => ({ path, change }))
@@ -98,7 +102,7 @@ async function listHistory(req, res) {
     }))
   const touches = entry =>
     entry.changes.some(
-      c => c.path === filter || c.change === `renamed to ${filter}`
+      c => c.path === filter || c.change === renamedTo(filter)
     )
 
   // A filter is applied to each page, so one page can come back empty while

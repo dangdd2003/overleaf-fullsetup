@@ -288,14 +288,17 @@ export function classifySelectionInDoc(
     return scope
   }
 
-  const refine = (kind: SelectionKind, env: string | null = null, inline = false): SelectionScope => ({
-    kind,
-    env,
-    lines: scope.lines,
-    numeric: numericFor(kind, maskComments(text)),
-    inline,
-    cues: textCues(kind, maskComments(text)),
-  })
+  const refine = (kind: SelectionKind, env: string | null = null, inline = false): SelectionScope => {
+    const masked = maskComments(text)
+    return {
+      kind,
+      env,
+      lines: scope.lines,
+      numeric: numericFor(kind, masked),
+      inline,
+      cues: textCues(kind, masked),
+    }
+  }
   // Prose keeps its text cues and gains the part of the paper it sits in.
   const inSection = (prose: SelectionScope): SelectionScope => {
     const cues = sectionCues(context)

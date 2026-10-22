@@ -12,12 +12,9 @@ export async function runJobInline(job) {
   switch (job.kind) {
     case 'html':
       return htmlToMarkdown(job.html, job.url)
-    case 'pdf': {
-      const buffer = Buffer.isBuffer(job.body)
-        ? job.body
-        : Buffer.from(job.body)
-      return pdfToText(buffer, { url: job.url, ...job.options })
-    }
+    case 'pdf':
+      // pdfToText copies the bytes once, which also covers a structured clone
+      return pdfToText(job.body, { url: job.url, ...job.options })
     case 'index':
       return buildIndexFile(job.text, job.file, job.size)
     case 'pagemap':

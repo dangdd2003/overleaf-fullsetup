@@ -28,13 +28,6 @@ export function connectorFor(
   return suffixed
 }
 
-export function connectorNameFor(
-  connectors: ConnectorView[],
-  segment: string
-): string | undefined {
-  return connectorFor(connectors, segment)?.name
-}
-
 // One request serves every card on the page; a change to the connectors
 // empties it and tells the cards to ask again
 let loaded: ConnectorView[] | null = null

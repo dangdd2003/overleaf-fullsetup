@@ -5,6 +5,7 @@ import OLBadge from '@/shared/components/ol/ol-badge'
 import Notification from '@/shared/components/notification'
 import { Key, PlugsConnected } from '@phosphor-icons/react'
 import { connectWithPopup } from '../../connectors/oauth-popup'
+import { ConnectorDecision } from './connector-approval-card'
 
 export function ConnectorAuthCard({
   connectorId,
@@ -16,7 +17,7 @@ export function ConnectorAuthCard({
   connectorId: string
   connectorName: string
   toolName?: string
-  onDecision: (decision: { accepted: boolean; note?: string }) => void
+  onDecision: (decision: ConnectorDecision) => void
   decided?: 'accepted' | 'rejected'
 }) {
   const { t } = useTranslation()
@@ -43,8 +44,9 @@ export function ConnectorAuthCard({
           )
         )
       }
-    } catch (err: any) {
-      setError(err?.message || 'Failed to start authorization')
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : undefined
+      setError(message || 'Failed to start authorization')
     } finally {
       setConnecting(false)
     }

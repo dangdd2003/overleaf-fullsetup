@@ -1,5 +1,5 @@
 import OAuth2KeyManager from './OAuth2KeyManager.mjs'
-import { hashToken } from './OAuth2Utils.mjs'
+import { hashToken, oauthError } from './OAuth2Utils.mjs'
 import { OauthAccessToken } from '../../../../../app/src/models/OauthAccessToken.mjs'
 
 /**
@@ -40,10 +40,7 @@ const OAuth2RevocationController = {
   async revoke(req, res) {
     const { token, client_id: clientId } = req.body || {}
     if (!token || typeof token !== 'string') {
-      return res.status(400).json({
-        error: 'invalid_request',
-        error_description: 'token is required',
-      })
+      return oauthError(res, 400, 'invalid_request', 'token is required')
     }
 
     // RFC 7009 §2.1: only the client the token was issued to may revoke it.

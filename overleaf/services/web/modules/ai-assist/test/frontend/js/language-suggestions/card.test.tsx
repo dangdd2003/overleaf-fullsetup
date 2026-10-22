@@ -50,7 +50,6 @@ function handlers() {
     onAccept: sinon.spy(),
     onReject: sinon.spy(),
     onBlock: sinon.spy(),
-    onActivate: sinon.spy(),
     onClose: sinon.spy(),
   }
 }

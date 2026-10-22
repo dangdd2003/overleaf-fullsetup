@@ -12,7 +12,6 @@ import {
   clearConversation,
   saveConversation,
 } from '../../../../../frontend/js/features/ai-assist/agent/conversation-store'
-import { clearStartersCache } from '../../../../../frontend/js/features/ai-assist/agent/starters/use-project-starters'
 import {
   EditorProviders,
   PROJECT_ID,
@@ -220,7 +219,9 @@ describe('buildUserEntry', function () {
 
 describe('AgentEmptyState', function () {
   beforeEach(function () {
-    clearStartersCache('default')
+    try {
+      customLocalStorage.removeItem('ai-assist:starters:default')
+    } catch {}
   })
 
   it('offers the advanced tool and the generic starters for a plain project', function () {

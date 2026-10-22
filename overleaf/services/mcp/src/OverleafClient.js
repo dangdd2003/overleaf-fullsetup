@@ -3,7 +3,7 @@ import { CODES, OverleafApiError, codeForStatus, sanitiseMessage } from './error
 const API_PREFIX = '/api/v0/mcp'
 const DEFAULT_TIMEOUT_MS = 30000
 /** Largest binary output (PDF, zip, download) returned to a tool, in bytes. */
-export const MAX_BINARY_BYTES = 64 * 1024 * 1024
+const MAX_BINARY_BYTES = 64 * 1024 * 1024
 const MIB = 1024 * 1024
 
 function tooLarge(totalBytes, maxBytes) {
@@ -35,16 +35,14 @@ async function readBase64Capped(response, maxBytes) {
   }
   if (!response.body) {
     if (typeof response.arrayBuffer === 'function') {
-      const buf = Buffer.from(await response.arrayBuffer())
-      if (buf.byteLength > maxBytes) throw tooLarge(buf.byteLength, maxBytes)
-      return buf.toString('base64')
+      return base64FromArrayBuffer(response, maxBytes)
     }
     return ''
   }
 
   if (typeof response.body.getReader === 'function') {
     const reader = response.body.getReader()
-    const chunks = []
+    const encoder = createBase64Encoder()
     let total = 0
     for (;;) {
       const { done, value } = await reader.read()
@@ -54,13 +52,13 @@ async function readBase64Capped(response, maxBytes) {
         await reader.cancel().catch(() => {})
         throw tooLarge(null, maxBytes)
       }
-      chunks.push(value)
+      encoder.write(Buffer.from(value.buffer, value.byteOffset, value.byteLength))
     }
-    return Buffer.concat(chunks, total).toString('base64')
+    return encoder.end()
   }
 
   if (typeof response.body[Symbol.asyncIterator] === 'function') {
-    const chunks = []
+    const encoder = createBase64Encoder()
     let total = 0
     for await (const chunk of response.body) {
       total += chunk.byteLength || chunk.length
@@ -68,18 +66,56 @@ async function readBase64Capped(response, maxBytes) {
         await response.body.destroy?.()
         throw tooLarge(null, maxBytes)
       }
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+      encoder.write(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
     }
-    return Buffer.concat(chunks, total).toString('base64')
+    return encoder.end()
   }
 
   if (typeof response.arrayBuffer === 'function') {
-    const buf = Buffer.from(await response.arrayBuffer())
-    if (buf.byteLength > maxBytes) throw tooLarge(buf.byteLength, maxBytes)
-    return buf.toString('base64')
+    return base64FromArrayBuffer(response, maxBytes)
   }
 
   return ''
+}
+
+/**
+ * Base64-encode a byte stream one chunk at a time. Base64 works in groups of
+ * three bytes, so up to two trailing bytes that do not complete a group wait
+ * for the next chunk. The output equals encoding all the bytes in one call,
+ * and the chunks are never joined into a single buffer first.
+ *
+ * @returns {{ write: (chunk: Buffer) => void, end: () => string }}
+ */
+function createBase64Encoder() {
+  const parts = []
+  let carry = Buffer.alloc(0)
+  return {
+    write(chunk) {
+      let bytes = chunk
+      if (carry.length) {
+        const take = Math.min(3 - carry.length, chunk.length)
+        carry = Buffer.concat([carry, chunk.subarray(0, take)])
+        bytes = chunk.subarray(take)
+        if (carry.length < 3) return
+        parts.push(carry.toString('base64'))
+        carry = Buffer.alloc(0)
+      }
+      const whole = bytes.length - (bytes.length % 3)
+      if (whole) parts.push(bytes.toString('base64', 0, whole))
+      carry = Buffer.from(bytes.subarray(whole))
+    },
+    end() {
+      if (carry.length) parts.push(carry.toString('base64'))
+      return parts.join('')
+    },
+  }
+}
+
+/** Read a whole body through arrayBuffer(), for responses that expose no stream. */
+async function base64FromArrayBuffer(response, maxBytes) {
+  const buf = Buffer.from(await response.arrayBuffer())
+  if (buf.byteLength > maxBytes) throw tooLarge(buf.byteLength, maxBytes)
+  return buf.toString('base64')
 }
 
 /**

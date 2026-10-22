@@ -21,13 +21,15 @@ parentPort.postMessage(hits)
 // A search that runs longer than this is stopped. Each search holds a worker
 // thread and a copy of the project text, so an unbounded search would let one
 // catastrophic pattern tie up resources until the client gave up.
-export const REGEX_SEARCH_TIMEOUT_MS = 10 * 1000
+const REGEX_SEARCH_TIMEOUT_MS = 10 * 1000
 
 // Searches that may hold a worker thread at once in this process. A search
 // beyond this is refused (SearchBusyError) rather than queued, so a burst of
 // requests cannot start unbounded threads.
 export const MAX_CONCURRENT_SEARCHES = 4
+export const MAX_SEARCHES_PER_USER = 2
 let activeSearches = 0
+const searchesByOwner = new Map()
 
 /**
  * Line-by-line regex search over document lines, off the main thread.
@@ -45,6 +47,7 @@ let activeSearches = 0
  * @param {number} options.limit stop after this many matching lines
  * @param {AbortSignal} [options.signal] stops the search when aborted
  * @param {number} [options.timeoutMs]
+ * @param {string} [options.ownerId] identifier for per-user concurrency limiting
  * @returns {Promise<Array<{doc: number, line: number}>>} zero-based indexes
  */
 export function regexSearchLines({
@@ -54,12 +57,18 @@ export function regexSearchLines({
   limit,
   signal,
   timeoutMs = REGEX_SEARCH_TIMEOUT_MS,
+  ownerId,
 }) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
       return reject(abortError())
     }
     if (activeSearches >= MAX_CONCURRENT_SEARCHES) {
+      const err = new Error('too many regular expression searches are running')
+      err.name = 'SearchBusyError'
+      return reject(err)
+    }
+    if (ownerId && (searchesByOwner.get(ownerId) || 0) >= MAX_SEARCHES_PER_USER) {
       const err = new Error('too many regular expression searches are running')
       err.name = 'SearchBusyError'
       return reject(err)
@@ -71,10 +80,21 @@ export function regexSearchLines({
       workerData: { query, flags: caseSensitive ? '' : 'i', docs, limit },
     })
     activeSearches++
+    if (ownerId) {
+      searchesByOwner.set(ownerId, (searchesByOwner.get(ownerId) || 0) + 1)
+    }
     const finish = (err, hits) => {
       if (settled) return
       settled = true
       activeSearches--
+      if (ownerId) {
+        const count = (searchesByOwner.get(ownerId) || 1) - 1
+        if (count <= 0) {
+          searchesByOwner.delete(ownerId)
+        } else {
+          searchesByOwner.set(ownerId, count)
+        }
+      }
       clearTimeout(timer)
       signal?.removeEventListener('abort', onAbort)
       void worker.terminate()

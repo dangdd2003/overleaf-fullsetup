@@ -1,5 +1,6 @@
 import crypto from 'node:crypto'
 import { buildEndpointPool } from '../AiAssistWebTools.mjs'
+import { TAVILY_KEY_STATUSES } from './util.mjs'
 
 export const SEARCH_CAPABLE = new Set([
   'searxng',
@@ -70,7 +71,7 @@ export function classifyFailure(
 
   const status = Number(err?.status)
   // 432 and 433 are Tavily's key, plan and pay-as-you-go limits
-  if ([401, 402, 403, 432, 433].includes(status)) {
+  if (TAVILY_KEY_STATUSES.includes(status)) {
     return { class: 'key', pauseMs: MAX_PAUSE_MS, skipProvider: false }
   }
 
@@ -150,16 +151,9 @@ export class WebRouter {
     return !entry || entry.cooldownUntil <= Date.now()
   }
 
-  getCooldownRemaining(endpoint) {
-    const key = endpointHealthKey(endpoint)
-    const entry = this.healthStore.get(key)
-    if (!entry) return 0
-    return Math.max(0, entry.cooldownUntil - Date.now())
-  }
-
   success(endpoint, tool = 'search') {
     const key = endpointHealthKey(endpoint)
-    this.healthStore.set(key, { cooldownUntil: 0, consecutiveErrors: 0 })
+    this.healthStore.delete(key)
     const ownerState = this._getOwnerState()
     if (endpoint?.provider) {
       ownerState.stickyProvider[tool] = endpoint.provider
@@ -258,63 +252,5 @@ export class WebRouter {
         endpoints: [...healthyKeys, ...pausedKeys],
       }
     })
-  }
-
-  // Backward compatibility alias for existing callers
-  select({ attempted = new Set() } = {}) {
-    if (this.pool.length === 0) return null
-    const unattempted = this.pool.filter(
-      e => SEARCH_CAPABLE.has(e.provider) && !attempted.has(e.id)
-    )
-    if (unattempted.length === 0) return null
-
-    const strategy = this.settings.rotationStrategy || 'round-robin'
-
-    if (strategy === 'sticky') {
-      if (this.stickyId) {
-        const found = unattempted.find(e => e.id === this.stickyId)
-        if (found && this.isHealthy(found)) return found
-      }
-      const healthy = unattempted.find(e => this.isHealthy(e))
-      const chosen = healthy || unattempted[0]
-      this.stickyId = chosen.id
-      return chosen
-    }
-
-    if (strategy === 'provider-priority') {
-      const primary = this.settings.primaryProvider || 'searxng'
-      const primaryPool = unattempted.filter(e => e.provider === primary)
-      const healthyPrimary = primaryPool.filter(e => this.isHealthy(e))
-      if (healthyPrimary.length > 0) {
-        this.pointer = ((this.pointer ?? -1) + 1) % healthyPrimary.length
-        return healthyPrimary[this.pointer]
-      }
-      const fallbackPool = unattempted.filter(e => e.provider !== primary)
-      const healthyFallback = fallbackPool.filter(e => this.isHealthy(e))
-      if (healthyFallback.length > 0) {
-        this.fallbackPointer =
-          ((this.fallbackPointer ?? -1) + 1) % healthyFallback.length
-        return healthyFallback[this.fallbackPointer]
-      }
-      return primaryPool[0] || unattempted[0]
-    }
-
-    // Default: 'round-robin'
-    const healthy = unattempted.filter(e => this.isHealthy(e))
-    const candidates = healthy.length > 0 ? healthy : unattempted
-    this.pointer = ((this.pointer ?? -1) + 1) % candidates.length
-    return candidates[this.pointer]
-  }
-
-  markSuccess(id) {
-    const ep = this.pool.find(e => e.id === id)
-    if (ep) this.success(ep, 'search')
-    this.stickyId = id
-  }
-
-  markFailure(id, err) {
-    const ep = this.pool.find(e => e.id === id)
-    if (ep) this.failure(ep, err)
-    if (this.stickyId === id) this.stickyId = null
   }
 }

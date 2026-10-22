@@ -160,10 +160,10 @@ export function renderCompactLedger(ledger: CompactLedger): string {
  * (spec section 4). The model reads it as the start of the conversation.
  */
 export function renderCompactionMessage(entry: CompactEntry): string {
-  const ledger = normalizeLedger(entry?.ledger)
+  const ledger = normalizeLedger(entry.ledger)
   const turns = ledger.userMessages.length
-  const trigger = entry?.trigger === 'auto' ? 'auto' : 'manual'
-  const date = Number.isFinite(entry?.createdAt)
+  const trigger = entry.trigger === 'auto' ? 'auto' : 'manual'
+  const date = Number.isFinite(entry.createdAt)
     ? ` date="${new Date(entry.createdAt).toISOString().slice(0, 10)}"`
     : ''
   const lines = [
@@ -171,11 +171,11 @@ export function renderCompactionMessage(entry: CompactEntry): string {
     COMPACT_INTRO,
     '',
     '## Summary',
-    String(entry?.summary ?? '').trim(),
+    String(entry.summary ?? '').trim(),
     '',
     renderCompactLedger(ledger),
   ]
-  if (entry?.excerpts) {
+  if (entry.excerpts) {
     lines.push('', '## Recently edited excerpts', String(entry.excerpts))
   }
   lines.push('</compacted-conversation>')
@@ -227,7 +227,7 @@ export type AutoCompactState = {
 /** Auto compaction stops after this many failures in a row. */
 export const AUTO_COMPACT_MAX_FAILURES = 3
 /** An automatic compaction within this many user turns of the last is skipped. */
-export const AUTO_COMPACT_MIN_TURNS_APART = 2
+const AUTO_COMPACT_MIN_TURNS_APART = 2
 /** Need this many user turns since the last boundary before compacting. */
 export const AUTO_COMPACT_MIN_TURNS = 2
 

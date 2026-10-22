@@ -3,7 +3,10 @@ import { Globe } from "@phosphor-icons/react";
 import OLButton from "@/shared/components/ol/ol-button";
 import LinkingStatus from "@/features/settings/components/linking/status";
 import WebSearchForm from "./web-search-form";
-import { MultiWebSearchSettings } from "../providers/types";
+import {
+  MultiWebSearchSettings,
+  WebSearchPrimaryProvider,
+} from "../providers/types";
 import {
   clearWebSearchSettings,
   isServerWebSearchAvailable,
@@ -14,6 +17,42 @@ import {
 function plural(count: number, noun: string, nouns = `${noun}s`) {
   return `${count} ${count === 1 ? noun : nouns}`;
 }
+
+type ProviderList = "apiKeys" | "baseUrls" | "serverUrls";
+type ProviderConfig = { enabled?: boolean } & Partial<
+  Record<ProviderList, string[]>
+>;
+
+/** Every provider, in the order its summary line appears. */
+const PROVIDER_SPECS: readonly {
+  key: WebSearchPrimaryProvider;
+  name: string;
+  unit: string;
+  list: ProviderList;
+}[] = [
+  { key: "searxng", name: "SearXNG", unit: "instance", list: "baseUrls" },
+  { key: "ollama", name: "Ollama", unit: "API key", list: "apiKeys" },
+  {
+    key: "websearchapi",
+    name: "WebSearchAPI.ai",
+    unit: "API key",
+    list: "apiKeys",
+  },
+  { key: "tavily", name: "Tavily", unit: "API key", list: "apiKeys" },
+  { key: "firecrawl", name: "Firecrawl", unit: "API key", list: "apiKeys" },
+  {
+    key: "firecrawlSelfHosted",
+    name: "Firecrawl self-hosted",
+    unit: "instance",
+    list: "baseUrls",
+  },
+  { key: "jina", name: "Jina AI", unit: "API key", list: "apiKeys" },
+  { key: "langsearch", name: "LangSearch", unit: "API key", list: "apiKeys" },
+  { key: "exa", name: "Exa", unit: "API key", list: "apiKeys" },
+  { key: "tinyfish", name: "TinyFish", unit: "API key", list: "apiKeys" },
+  { key: "parallel", name: "Parallel", unit: "API key", list: "apiKeys" },
+  { key: "mcp", name: "MCP WebSearch", unit: "endpoint", list: "serverUrls" },
+];
 
 /**
  * What web search is using: a lead-in line, one bullet per enabled provider,
@@ -30,90 +69,17 @@ function statusSummary(settings: MultiWebSearchSettings) {
     };
   }
 
-  const providers: string[] = [];
-  const searxng = settings.providers?.searxng;
-  if (searxng?.enabled && searxng.baseUrls?.length) {
-    providers.push(`SearXNG (${plural(searxng.baseUrls.length, "instance")})`);
-  }
-  const ollama = settings.providers?.ollama;
-  if (ollama?.enabled && ollama.apiKeys?.length) {
-    providers.push(`Ollama (${plural(ollama.apiKeys.length, "API key")})`);
-  }
-  const websearchapi = settings.providers?.websearchapi;
-  if (websearchapi?.enabled && websearchapi.apiKeys?.length) {
-    providers.push(
-      `WebSearchAPI.ai (${plural(websearchapi.apiKeys.length, "API key")})`,
-    );
-  }
-  const tavily = settings.providers?.tavily;
-  if (tavily?.enabled && tavily.apiKeys?.length) {
-    providers.push(`Tavily (${plural(tavily.apiKeys.length, "API key")})`);
-  }
-  const firecrawl = settings.providers?.firecrawl;
-  if (firecrawl?.enabled && firecrawl.apiKeys?.length) {
-    providers.push(
-      `Firecrawl (${plural(firecrawl.apiKeys.length, "API key")})`,
-    );
-  }
-  const firecrawlSelfHosted = settings.providers?.firecrawlSelfHosted;
-  if (firecrawlSelfHosted?.enabled && firecrawlSelfHosted.baseUrls?.length) {
-    providers.push(
-      `Firecrawl self-hosted (${plural(firecrawlSelfHosted.baseUrls.length, "instance")})`,
-    );
-  }
-  const jina = settings.providers?.jina;
-  if (jina?.enabled && jina.apiKeys?.length) {
-    providers.push(`Jina AI (${plural(jina.apiKeys.length, "API key")})`);
-  }
-  const langsearch = settings.providers?.langsearch;
-  if (langsearch?.enabled && langsearch.apiKeys?.length) {
-    providers.push(
-      `LangSearch (${plural(langsearch.apiKeys.length, "API key")})`,
-    );
-  }
-  const exa = settings.providers?.exa;
-  if (exa?.enabled && exa.apiKeys?.length) {
-    providers.push(`Exa (${plural(exa.apiKeys.length, "API key")})`);
-  }
-  const tinyfish = settings.providers?.tinyfish;
-  if (tinyfish?.enabled && tinyfish.apiKeys?.length) {
-    providers.push(`TinyFish (${plural(tinyfish.apiKeys.length, "API key")})`);
-  }
-  const parallel = settings.providers?.parallel;
-  if (parallel?.enabled && parallel.apiKeys?.length) {
-    providers.push(`Parallel (${plural(parallel.apiKeys.length, "API key")})`);
-  }
-  const mcp = settings.providers?.mcp;
-  if (mcp?.enabled && mcp.serverUrls?.length) {
-    providers.push(
-      `MCP WebSearch (${plural(mcp.serverUrls.length, "endpoint")})`,
-    );
-  }
-
+  const providers = PROVIDER_SPECS.flatMap((spec) => {
+    const config = settings.providers?.[spec.key] as
+      | ProviderConfig
+      | undefined;
+    const count = config?.enabled ? (config[spec.list]?.length ?? 0) : 0;
+    return count ? [`${spec.name} (${plural(count, spec.unit)})`] : [];
+  });
   const primary =
-    settings.primaryProvider === "ollama"
-      ? "Ollama"
-      : settings.primaryProvider === "websearchapi"
-        ? "WebSearchAPI.ai"
-        : settings.primaryProvider === "tavily"
-          ? "Tavily"
-          : settings.primaryProvider === "firecrawl"
-            ? "Firecrawl"
-            : settings.primaryProvider === "firecrawlSelfHosted"
-              ? "Firecrawl self-hosted"
-              : settings.primaryProvider === "jina"
-                ? "Jina AI"
-                : settings.primaryProvider === "langsearch"
-                  ? "LangSearch"
-                  : settings.primaryProvider === "exa"
-                    ? "Exa"
-                    : settings.primaryProvider === "tinyfish"
-                      ? "TinyFish"
-                      : settings.primaryProvider === "parallel"
-                        ? "Parallel"
-                        : settings.primaryProvider === "mcp"
-                          ? "MCP WebSearch"
-                          : "SearXNG";
+    PROVIDER_SPECS.find(
+      (spec) => spec.key === (settings.primaryProvider ?? "searxng"),
+    )?.name ?? "SearXNG";
   const rotation =
     settings.rotationStrategy === "provider-priority"
       ? `Searches go to ${primary} first, then the others.`

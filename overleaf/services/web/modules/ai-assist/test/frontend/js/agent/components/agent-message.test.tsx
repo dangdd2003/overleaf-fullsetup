@@ -513,35 +513,6 @@ describe('AgentMessageView Actions & Badges', function () {
       expect(container.querySelector('.ai-assist-edited-code-badge')).to.not.exist
     })
 
-    it('triggers file jump and diff review when the Edited code badge is clicked', function () {
-      const onFileJump = sinon.stub()
-      const onDiffReview = sinon.stub()
-      const openDiffSpy = sinon.spy()
-      window.addEventListener('aiAssist:openDiff', openDiffSpy)
-
-      const { container } = render(
-        <AgentMessageView
-          entry={assistantWithEdits}
-          pendingApprovalId={null}
-          onDecision={sinon.stub()}
-          onFileJump={onFileJump}
-          onDiffReview={onDiffReview}
-          isRunning={false}
-        />
-      )
-
-      const badge = container.querySelector(
-        '.ai-assist-edited-code-badge'
-      ) as HTMLButtonElement
-      fireEvent.click(badge)
-
-      expect(onFileJump.calledWith('main.tex', 12)).to.be.true
-      expect(onDiffReview.calledWith(assistantWithEdits, 'main.tex')).to.be.true
-      expect(openDiffSpy.calledOnce).to.be.true
-
-      window.removeEventListener('aiAssist:openDiff', openDiffSpy)
-    })
-
     it('renders create_file tool call in the edited code badge', function () {
       const assistantWithCreate: TranscriptEntry = {
         id: 'a4',

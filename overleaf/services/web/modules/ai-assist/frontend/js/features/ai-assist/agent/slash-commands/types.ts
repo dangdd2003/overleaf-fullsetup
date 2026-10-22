@@ -30,7 +30,7 @@
 export type SlashCommandScope = 'read' | 'edit' | 'full'
 
 /** Whether the command needs highlighted text to make sense. */
-export type SelectionNeed = 'required' | 'preferred' | 'none'
+export type SelectionNeed = 'preferred' | 'none'
 
 /**
  * Context a command reads at send time and freezes into its block, so the
@@ -59,8 +59,6 @@ export type SlashCommandGatherer =
   | 'packages'
   /** \newcommand, \DeclareMathOperator and similar definitions. */
   | 'macros'
-
-export type SlashCommandCategory = 'write' | 'build' | 'insert' | 'review'
 
 export type SlashCommandId =
   | 'fix'
@@ -108,20 +106,36 @@ export type SlashParamKind =
   | 'package'
   | 'text'
 
-export type SlashParamSpec = {
+type SlashParamSpecBase = {
   name: string
-  kind: SlashParamKind
-  /** `choice` only: every accepted word, lower case, to its canonical value. */
-  choices?: Record<string, string>
   /** `choice` only: more than one value may be given. */
   multiple?: boolean
-  /** `package` only: the param it must directly follow. */
-  after?: string
   /** The send is held until it is given. */
   required?: boolean
   /** What applies when it is not given, as the model reads it; '' for nothing. */
   fallback: string
 }
+
+export type SlashChoiceParamSpec = SlashParamSpecBase & {
+  kind: 'choice'
+  /** Every accepted word, lower case, to its canonical value. */
+  choices: Record<string, string>
+}
+
+export type SlashPackageParamSpec = SlashParamSpecBase & {
+  kind: 'package'
+  /** The param it must directly follow. */
+  after: string
+}
+
+export type SlashSimpleParamSpec = SlashParamSpecBase & {
+  kind: 'amount' | 'location' | 'page' | 'file' | 'language' | 'text'
+}
+
+export type SlashParamSpec =
+  | SlashChoiceParamSpec
+  | SlashPackageParamSpec
+  | SlashSimpleParamSpec
 
 /** The inputs read from a command's words. Values are canonical. */
 export type SlashParamValues = Record<string, string[]>
@@ -130,12 +144,9 @@ export type SlashCommandDefinition = {
   id: SlashCommandId
   /** Extra names the menu matches and the parser accepts. */
   aliases?: string[]
-  category: SlashCommandCategory
-  /** i18n key and English fallback for the menu label. */
-  labelKey: string
+  /** English fallback for the menu label. */
   label: string
-  /** i18n key and English fallback for the one-line menu description. */
-  descriptionKey: string
+  /** English fallback for the one-line menu description. */
   description: string
   /** Shown greyed after the name while typing, e.g. `<language> [notes]`. */
   argumentHint?: string
@@ -158,3 +169,6 @@ export type ParsedSlashInput = {
   command: SlashCommandDefinition
   args: string
 }
+
+/** Matches a slash command input: `/name` or `/name words`. */
+export const SLASH_INPUT_RE = /^\/([a-z][a-z-]*)(?:\s+([\s\S]*))?$/i

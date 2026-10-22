@@ -31,6 +31,13 @@ function findUnit(
     ?.units.find(unit => unit.hash === hash && unit.from === from)
 }
 
+function editsAt(unit: UnitSuggestions | undefined, indexes: number[]): MaskedEdit[] {
+  if (!unit) return []
+  return indexes
+    .map(index => unit.edits[index])
+    .filter((edit): edit is MaskedEdit => Boolean(edit))
+}
+
 /**
  * The edits left after accepting `accepted`, moved to fit the new sentence
  * text. An edit that holds an accepted one (a rewording around the
@@ -78,9 +85,7 @@ export function settleEdits(
   }
   const unit = findUnit(view, hash, from)
   const context = keyContext(readLanguageSuggestionsPreferences())
-  const dropped = reject
-    .map(index => unit?.edits[index])
-    .filter((edit): edit is MaskedEdit => Boolean(edit))
+  const dropped = editsAt(unit, reject)
   if (context && dropped.length > 0) {
     suggestionCache.reject(cacheKey(context, hash), dropped)
   }
@@ -102,11 +107,8 @@ export function acceptEdits(
 ) {
   const unit = findUnit(view, hash, from)
   if (!unit) return
-  const dropped = new Set(dropIndexes.map(index => unit.edits[index]))
-  const accepted = indexes
-    .map(index => unit.edits[index])
-    .filter((edit): edit is MaskedEdit => Boolean(edit))
-    .sort((a, b) => a.from - b.from)
+  const dropped = new Set(editsAt(unit, dropIndexes))
+  const accepted = editsAt(unit, indexes).sort((a, b) => a.from - b.from)
   if (accepted.length === 0) return
 
   const delta = unitDelta(unit)
@@ -123,7 +125,7 @@ export function acceptEdits(
     : []
 
   noteAccepted(accepted)
-  noteDismissed([...dropped].filter((edit): edit is MaskedEdit => Boolean(edit)))
+  noteDismissed([...dropped])
   const context = keyContext(readLanguageSuggestionsPreferences())
   if (next && context) {
     suggestionCache.set(cacheKey(context, next.hash), {
@@ -169,9 +171,7 @@ export function rejectEdits(
 ) {
   const unit = findUnit(view, hash, from)
   if (!unit) return
-  const edits = indexes
-    .map(index => unit.edits[index])
-    .filter((edit): edit is MaskedEdit => Boolean(edit))
+  const edits = editsAt(unit, indexes)
   if (edits.length === 0) return
   const context = keyContext(readLanguageSuggestionsPreferences())
   if (context) suggestionCache.reject(cacheKey(context, hash), edits)

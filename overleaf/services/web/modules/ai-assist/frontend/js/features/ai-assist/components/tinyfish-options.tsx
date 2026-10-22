@@ -1,4 +1,3 @@
-import ToggleSetting from '@/features/ide-settings/components/toggle-setting'
 import DropdownSetting from '@/features/ide-settings/components/dropdown-setting'
 import { ApiHeading, SettingsGroup, TextSetting } from './web-search-settings'
 import {
@@ -12,7 +11,7 @@ import {
  * the API's default". tinyfishOptionsFromDraft turns it back into stored options.
  * See https://docs.tinyfish.ai/search-api/reference
  */
-export type TinyfishDraft = {
+type TinyfishDraft = {
   maxResults: string
   domainType: '' | TinyfishDomainType
   location: string
@@ -25,10 +24,6 @@ export type TinyfishDraft = {
   pubYearMin: string
   pubYearMax: string
 }
-
-type FlagKey = {
-  [K in keyof TinyfishDraft]: TinyfishDraft[K] extends boolean ? K : never
-}[keyof TinyfishDraft]
 
 export function draftFromTinyfish(
   config?: TinyfishProviderConfig
@@ -127,20 +122,8 @@ export default function TinyfishOptions({
 
   const id = (key: keyof TinyfishDraft) => `ai-web-search-tinyfish-${key}`
 
-  const toggle = (key: FlagKey, label: string, description: string) => (
-    <ToggleSetting
-      id={id(key)}
-      label={label}
-      description={description}
-      checked={draft[key]}
-      onChange={value => set(key, value as TinyfishDraft[typeof key])}
-    />
-  )
-
-  void toggle
-
   const dropdown = (
-    key: Exclude<keyof TinyfishDraft, FlagKey>,
+    key: keyof TinyfishDraft,
     label: string,
     description: string,
     options: Choice[]
@@ -157,7 +140,7 @@ export default function TinyfishOptions({
   )
 
   const text = (
-    key: Exclude<keyof TinyfishDraft, FlagKey>,
+    key: keyof TinyfishDraft,
     label: string,
     description: string,
     placeholder: string,

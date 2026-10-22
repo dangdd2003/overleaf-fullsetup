@@ -52,19 +52,7 @@ export type WebSearchRotationStrategy =
   | "provider-priority"
   | "sticky";
 
-export type WebSearchPrimaryProvider =
-  | "searxng"
-  | "ollama"
-  | "websearchapi"
-  | "tavily"
-  | "firecrawl"
-  | "firecrawlSelfHosted"
-  | "jina"
-  | "langsearch"
-  | "exa"
-  | "tinyfish"
-  | "parallel"
-  | "mcp";
+export type WebSearchPrimaryProvider = WebSearchProviderType;
 
 export interface McpHeader {
   key: string;
@@ -338,20 +326,21 @@ export interface ExaSearchOptions {
 }
 
 /** How Exa's Contents API reads pages for web_fetch. */
-export interface ExaReadOptions {
-  maxCharacters?: number;
-  includeHtmlTags?: boolean;
-  highlights?: boolean;
-  numSentences?: number;
-  highlightsPerUrl?: number;
-  highlightsQuery?: string;
-  summary?: boolean;
-  summaryQuery?: string;
-  livecrawl?: ExaLivecrawl;
-  livecrawlTimeout?: number;
-  subpages?: number;
-  subpageTarget?: string;
-}
+export type ExaReadOptions = Pick<
+  ExaSearchOptions,
+  | "maxCharacters"
+  | "includeHtmlTags"
+  | "highlights"
+  | "numSentences"
+  | "highlightsPerUrl"
+  | "highlightsQuery"
+  | "summary"
+  | "summaryQuery"
+  | "livecrawl"
+  | "livecrawlTimeout"
+  | "subpages"
+  | "subpageTarget"
+>;
 
 export interface ExaProviderConfig {
   enabled: boolean;
@@ -412,13 +401,15 @@ export interface ParallelSearchOptions {
 }
 
 /** How Parallel's Extract API reads pages for web_fetch. */
-export interface ParallelExtractOptions {
+export type ParallelExtractOptions = Pick<
+  ParallelSearchOptions,
+  | "maxCharsPerResult"
+  | "maxAgeSeconds"
+  | "timeoutSeconds"
+  | "disableCacheFallback"
+> & {
   fullContent?: boolean;
-  maxCharsPerResult?: number;
-  maxAgeSeconds?: number;
-  timeoutSeconds?: number;
-  disableCacheFallback?: boolean;
-}
+};
 
 export interface ParallelProviderConfig {
   enabled: boolean;
@@ -660,40 +651,6 @@ export type ProviderModel = {
  * When present, these are a better default than the hardcoded fallback in
  * `DEFAULT_LIMITS`, which only exists for endpoints that report nothing.
  */
-export function parseModelLimits(entry: any): {
-  contextWindow?: number;
-  maxOutputTokens?: number;
-} {
-  const contextWindow =
-    entry?.max_input_tokens ??
-    entry?.context_window ??
-    entry?.details?.context_length;
-  let maxOutputTokens =
-    entry?.max_tokens ??
-    entry?.max_output_tokens ??
-    entry?.details?.max_output_tokens;
-
-  // For models reporting a large context length (>= 128k, such as Gemma 4
-  // 256k on Ollama) but omitting max_tokens, set maxOutputTokens to the
-  // 64k (65,536) maximum ceiling.
-  if (
-    typeof contextWindow === "number" &&
-    contextWindow >= 128000 &&
-    !maxOutputTokens
-  ) {
-    maxOutputTokens = 65536;
-  }
-
-  return {
-    ...(typeof contextWindow === "number" && contextWindow > 0
-      ? { contextWindow }
-      : {}),
-    ...(typeof maxOutputTokens === "number" && maxOutputTokens > 0
-      ? { maxOutputTokens }
-      : {}),
-  };
-}
-
 export type ProviderErrorCode =
   | "providerAuth"
   | "providerError"
@@ -706,8 +663,7 @@ export type ProviderErrorCode =
   | "runawayToolLoop"
   | "consecutiveToolFailures"
   | "outputTruncated"
-  | "imageUnsupported"
-  | "modelNotFound";
+  | "imageUnsupported";
 
 /**
  * A failure talking to the provider.
@@ -719,10 +675,6 @@ export type ProviderErrorCode =
 export class ProviderError extends Error {
   code: ProviderErrorCode;
   status?: number;
-  upstreamMessage?: string;
-  upstreamCode?: string;
-  upstreamType?: string;
-  upstreamParam?: string;
   hint?: string;
 
   constructor(
@@ -730,10 +682,6 @@ export class ProviderError extends Error {
     message: string,
     status?: number,
     options?: {
-      upstreamMessage?: string;
-      upstreamCode?: string;
-      upstreamType?: string;
-      upstreamParam?: string;
       hint?: string;
     },
   ) {
@@ -741,10 +689,6 @@ export class ProviderError extends Error {
     this.name = "ProviderError";
     this.code = code;
     this.status = status;
-    this.upstreamMessage = options?.upstreamMessage;
-    this.upstreamCode = options?.upstreamCode;
-    this.upstreamType = options?.upstreamType;
-    this.upstreamParam = options?.upstreamParam;
     this.hint = options?.hint;
   }
 }
@@ -818,98 +762,6 @@ export function normalizeProviderBaseUrl(
     url = `${url}/v1`;
   }
   return url;
-}
-
-export const REQUIRES_API_KEY: Record<ProviderType, boolean> = {
-  openai: true,
-  anthropic: true,
-  google: true,
-  ollama: false,
-};
-
-/** Turns a fetch rejection or bad status into an informative typed error. */
-export async function toProviderError(response: Response) {
-  const body = await response.text().catch(() => "");
-  let upstreamMessage = body.slice(0, 1000).trim();
-  let upstreamCode: string | undefined;
-  let upstreamType: string | undefined;
-  let upstreamParam: string | undefined;
-
-  try {
-    const parsed = JSON.parse(body);
-    if (typeof parsed?.error === "string") {
-      upstreamMessage = parsed.error;
-    } else if (parsed?.error && typeof parsed.error === "object") {
-      if (typeof parsed.error.message === "string") {
-        upstreamMessage = parsed.error.message;
-      }
-      if (typeof parsed.error.code === "string") {
-        upstreamCode = parsed.error.code;
-      }
-      if (typeof parsed.error.type === "string") {
-        upstreamType = parsed.error.type;
-      }
-      if (typeof parsed.error.param === "string") {
-        upstreamParam = parsed.error.param;
-      }
-    } else if (typeof parsed?.message === "string") {
-      upstreamMessage = parsed.message;
-      if (typeof parsed?.code === "string") {
-        upstreamCode = parsed.code;
-      }
-    }
-  } catch {
-    // keep raw slice
-  }
-
-  let code: ProviderErrorCode = "providerError";
-  let message = upstreamMessage;
-  let hint = "";
-
-  if (response.status === 401 || response.status === 403) {
-    code = "providerAuth";
-    hint =
-      "The API key was rejected. Verify your API key and permissions in Account Settings.";
-    message =
-      upstreamMessage ||
-      `The provider rejected this API key (HTTP ${response.status}).`;
-  } else if (response.status === 404) {
-    code = "modelsUnsupported";
-    hint =
-      "The requested endpoint or model was not found. Verify the model name and endpoint base URL in Account Settings.";
-    message =
-      upstreamMessage || `This endpoint or model was not found (HTTP 404).`;
-  } else if (response.status === 429) {
-    code = "providerError";
-    hint =
-      "Rate limit or billing quota exceeded. Check your plan, usage limits, and credit balance on your provider dashboard.";
-    message = upstreamMessage || `Rate limit or quota exceeded (HTTP 429).`;
-  } else if (response.status === 400) {
-    code = "providerError";
-    hint =
-      "The upstream API rejected the request parameters or payload format.";
-    message =
-      upstreamMessage || `The provider rejected the request format (HTTP 400).`;
-  } else if (response.status >= 500) {
-    code = "providerError";
-    hint = `Upstream service failure (HTTP ${response.status}). The AI provider's servers encountered an internal error. Check their status page or retry.`;
-    message =
-      upstreamMessage ||
-      `The AI provider encountered an internal server error (HTTP ${response.status}).`;
-  } else {
-    code = "providerError";
-    hint = `Unexpected response from provider (HTTP ${response.status}).`;
-    message =
-      upstreamMessage || `The provider returned HTTP ${response.status}.`;
-  }
-
-  return new ProviderError(code, message, response.status, {
-    upstreamMessage,
-    upstreamCode,
-    upstreamType,
-    upstreamParam,
-    hint,
-  });
 }
 
 /** How each provider type is named in the UI. */

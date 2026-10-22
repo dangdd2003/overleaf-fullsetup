@@ -16,6 +16,7 @@ const CLOSED_GRACE_MS = 1500
 const GIVE_UP_MS = 10 * 60 * 1000
 const POPUP_WIDTH = 520
 const POPUP_HEIGHT = 720
+const AUTH_FAILED = 'Authorization with the MCP server failed'
 
 /**
  * Window features that put the popup in the middle of the user's window,
@@ -64,9 +65,10 @@ function isOAuthMessage(
   value: unknown,
   connectorId: string
 ): value is ConnectorOAuthMessage {
-  const message = value as ConnectorOAuthMessage | null
+  if (typeof value !== 'object' || value === null) return false
+  const message = value as Partial<ConnectorOAuthMessage>
   return (
-    message?.type === 'ai-assist:connector-oauth' &&
+    message.type === 'ai-assist:connector-oauth' &&
     message.connectorId === connectorId
   )
 }
@@ -99,7 +101,7 @@ function listenForCallback(
         ? { status: 'connected' }
         : {
             status: 'error',
-            error: data.error || 'Authorization with the MCP server failed',
+            error: data.error || AUTH_FAILED,
           }
     )
   }
@@ -329,7 +331,7 @@ export function connectWithPopup(
           error:
             error?.data?.error ||
             error?.message ||
-            'Authorization with the MCP server failed',
+            AUTH_FAILED,
         })
       })
   })

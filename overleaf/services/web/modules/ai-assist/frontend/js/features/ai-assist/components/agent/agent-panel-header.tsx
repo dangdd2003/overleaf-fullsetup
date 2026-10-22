@@ -58,7 +58,6 @@ export default function AgentPanelHeader({
   const titleText = typeof title === 'string' ? title : ''
   const [draft, setDraft] = useState(titleText)
   const inputRef = useRef<HTMLInputElement>(null)
-  const titleRef = useRef<HTMLHeadingElement>(null)
 
   const defaultTitle = t('ai_assist_panel_title', 'AI assistant')
   const [shownTitle, setShownTitle] = useState(titleText)
@@ -177,7 +176,6 @@ export default function AgentPanelHeader({
       ) : (
         <div className="ai-assist-header-title-wrapper">
           <h4
-            ref={titleRef}
             className={`rail-panel-title ai-assist-panel-title-text ${
               onRenameTitle ? 'is-editable' : ''
             }`}

@@ -1,4 +1,4 @@
-import { lineLookup } from './textEdit.js'
+import { escapeRegex, lineLookup, readBraceGroup } from './textEdit.js'
 
 const SECTION_LEVELS = new Map([
   ['part', 0],
@@ -43,27 +43,29 @@ const DEFINE_COMMANDS = [
 
 const TODO_COMMENT = /(?:^|\s)(TODO|FIXME|XXX|HACK|NOTE)\b[:\s-]*(.*)$/
 
-/**
- * Read a balanced {...} group starting at openIndex.
- *
- * @returns {{ content: string, endIndex: number }|null}
- */
-function readBraceGroup(text, openIndex) {
-  if (text[openIndex] !== '{') return null
-  let depth = 0
-  for (let i = openIndex; i < text.length; i++) {
-    const ch = text[i]
-    if (ch === '\\') {
-      i++
-      continue
-    }
-    if (ch === '{') depth++
-    else if (ch === '}') {
-      depth--
-      if (depth === 0) return { content: text.slice(openIndex + 1, i), endIndex: i }
-    }
-  }
-  return null
+// Module-level patterns are only ever used through matchAll, which clones them,
+// so their lastIndex never carries over between calls.
+const SECTION_PATTERN = new RegExp(`\\\\(${[...SECTION_LEVELS.keys()].join('|')})(\\*)?`, 'g')
+const INCLUDE_PATTERN = new RegExp(`\\\\(${INCLUDE_COMMANDS.join('|')})\\s*\\{`, 'g')
+const CITE_PATTERN = new RegExp(
+  `\\\\(${CITE_COMMANDS.join('|')})\\s*(?:(?:\\[[^\\]]*\\])+\\s*)?\\{`,
+  'g'
+)
+const LABEL_PATTERN = /\\label\s*\{/g
+const REF_PATTERN = new RegExp(`\\\\(${REF_COMMANDS.join('|')})\\s*\\{`, 'g')
+const DEFINE_PATTERN = new RegExp(`\\\\(${DEFINE_COMMANDS.join('|')})\\s*`, 'g')
+const TODO_PATTERN = /\\(todo|TODO)\s*(?:\[[^\]]*\]\s*)?\{/g
+const ENV_LABEL = /\\label\s*\{([^}]*)\}/
+const ENV_CAPTION = /\\caption\b/
+// Sticky, so a match is anchored at its lastIndex without copying the source.
+const COMMAND_NAME = /\\[A-Za-z@]+\*?/y
+
+/** The non-empty, trimmed items of a comma-separated argument. */
+function listItems(content) {
+  return content
+    .split(',')
+    .map(item => item.trim())
+    .filter(Boolean)
 }
 
 /** Skip whitespace and an optional [..] argument, returning the next index. */
@@ -128,9 +130,8 @@ export function stripComments(text) {
 export function parseSections(text) {
   const source = stripComments(text)
   const lineOf = lineLookup(source)
-  const pattern = new RegExp(`\\\\(${[...SECTION_LEVELS.keys()].join('|')})(\\*)?`, 'g')
   const sections = []
-  for (const match of source.matchAll(pattern)) {
+  for (const match of source.matchAll(SECTION_PATTERN)) {
     const braceIndex = skipOptional(source, match.index + match[0].length)
     const group = readBraceGroup(source, braceIndex)
     if (!group) continue
@@ -167,20 +168,16 @@ export function parseSections(text) {
 export function parseIncludes(text) {
   const source = stripComments(text)
   const lineOf = lineLookup(source)
-  const pattern = new RegExp(`\\\\(${INCLUDE_COMMANDS.join('|')})\\s*\\{`, 'g')
   const includes = []
-  for (const match of source.matchAll(pattern)) {
+  for (const match of source.matchAll(INCLUDE_PATTERN)) {
     const group = readBraceGroup(source, match.index + match[0].length - 1)
     if (!group) continue
-    for (const path of group.content.split(',')) {
-      const trimmed = path.trim()
-      if (trimmed) {
-        includes.push({
-          command: match[1],
-          path: trimmed,
-          line: lineOf(match.index),
-        })
-      }
+    for (const path of listItems(group.content)) {
+      includes.push({
+        command: match[1],
+        path,
+        line: lineOf(match.index),
+      })
     }
   }
   return includes
@@ -195,20 +192,16 @@ export function parseIncludes(text) {
 export function parseCitations(text) {
   const source = stripComments(text)
   const lineOf = lineLookup(source)
-  const pattern = new RegExp(`\\\\(${CITE_COMMANDS.join('|')})\\s*(?:\\[[^\\]]*\\])*\\s*\\{`, 'g')
   const citations = []
-  for (const match of source.matchAll(pattern)) {
+  for (const match of source.matchAll(CITE_PATTERN)) {
     const group = readBraceGroup(source, match.index + match[0].length - 1)
     if (!group) continue
-    for (const key of group.content.split(',')) {
-      const trimmed = key.trim()
-      if (trimmed) {
-        citations.push({
-          key: trimmed,
-          command: match[1],
-          line: lineOf(match.index),
-        })
-      }
+    for (const key of listItems(group.content)) {
+      citations.push({
+        key,
+        command: match[1],
+        line: lineOf(match.index),
+      })
     }
   }
   return citations
@@ -226,22 +219,18 @@ export function parseLabelsAndRefs(text) {
   const labels = []
   const refs = []
 
-  for (const match of source.matchAll(/\\label\s*\{/g)) {
+  for (const match of source.matchAll(LABEL_PATTERN)) {
     const group = readBraceGroup(source, match.index + match[0].length - 1)
     if (group) {
       labels.push({ name: group.content.trim(), line: lineOf(match.index) })
     }
   }
 
-  const refPattern = new RegExp(`\\\\(${REF_COMMANDS.join('|')})\\s*\\{`, 'g')
-  for (const match of source.matchAll(refPattern)) {
+  for (const match of source.matchAll(REF_PATTERN)) {
     const group = readBraceGroup(source, match.index + match[0].length - 1)
     if (!group) continue
-    for (const name of group.content.split(',')) {
-      const trimmed = name.trim()
-      if (trimmed) {
-        refs.push({ name: trimmed, command: match[1], line: lineOf(match.index) })
-      }
+    for (const name of listItems(group.content)) {
+      refs.push({ name, command: match[1], line: lineOf(match.index) })
     }
   }
 
@@ -261,7 +250,7 @@ export function parseEnvironments(text, names) {
   const found = []
 
   for (const name of names) {
-    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const escaped = escapeRegex(name)
     const begin = new RegExp(`\\\\begin\\s*\\{${escaped}\\*?\\}`, 'g')
     const end = new RegExp(`\\\\end\\s*\\{${escaped}\\*?\\}`, 'g')
 
@@ -286,9 +275,9 @@ export function parseEnvironments(text, names) {
 
     for (const { start, end: close } of pairs) {
       const body = source.slice(start.after, close.index)
-      const labelMatch = /\\label\s*\{([^}]*)\}/.exec(body)
+      const labelMatch = ENV_LABEL.exec(body)
       let caption = null
-      const captionMatch = /\\caption\b/.exec(body)
+      const captionMatch = ENV_CAPTION.exec(body)
       if (captionMatch) {
         const afterCmd = captionMatch.index + captionMatch[0].length
         const braceIndex = skipOptional(body, afterCmd)
@@ -320,10 +309,9 @@ export function parseEnvironments(text, names) {
 export function parseCustomCommands(text) {
   const source = stripComments(text)
   const lineOf = lineLookup(source)
-  const pattern = new RegExp(`\\\\(${DEFINE_COMMANDS.join('|')})\\s*`, 'g')
   const commands = []
 
-  for (const match of source.matchAll(pattern)) {
+  for (const match of source.matchAll(DEFINE_PATTERN)) {
     let i = match.index + match[0].length
     let name
 
@@ -333,10 +321,8 @@ export function parseCustomCommands(text) {
       name = group.content.trim()
       i = group.endIndex + 1
     } else {
-      // Sticky, so the match is anchored at i without copying the rest of the source.
-      const commandName = /\\[A-Za-z@]+\*?/y
-      commandName.lastIndex = i
-      const nameMatch = commandName.exec(source)
+      COMMAND_NAME.lastIndex = i
+      const nameMatch = COMMAND_NAME.exec(source)
       if (!nameMatch) continue
       name = nameMatch[0]
       i += nameMatch[0].length
@@ -400,7 +386,7 @@ export function parseTodoNotes(text) {
     }
   })
 
-  for (const match of raw.matchAll(/\\(todo|TODO)\s*(?:\[[^\]]*\])?\s*\{/g)) {
+  for (const match of raw.matchAll(TODO_PATTERN)) {
     const group = readBraceGroup(raw, match.index + match[0].length - 1)
     if (group) {
       notes.push({

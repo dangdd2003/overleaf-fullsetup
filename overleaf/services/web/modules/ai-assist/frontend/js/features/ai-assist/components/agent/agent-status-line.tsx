@@ -97,7 +97,6 @@ const RollingText: FC<{ text: string }> = ({ text }) => {
 export const AgentStatusLine: FC<{
   startedAt: number
   blocks?: AssistantBlock[]
-  pendingApproval?: { id: string; edit: any } | null
   isRunning?: boolean
   /** The run is waiting on the user rather than working. */
   isPaused?: boolean
@@ -111,7 +110,6 @@ export const AgentStatusLine: FC<{
 }> = ({
   startedAt,
   blocks = [],
-  pendingApproval = null,
   isRunning = true,
   isPaused = false,
   durationMs,
@@ -202,10 +200,6 @@ export const AgentStatusLine: FC<{
 
     return () => clearInterval(timer)
   }, [startedAt, isRunning, isPaused, durationMs])
-
-  if (pendingApproval) {
-    return null
-  }
 
   if (isRunning && isPaused) {
     const elapsed = formatElapsed(elapsedMs)

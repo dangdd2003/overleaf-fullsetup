@@ -109,4 +109,3 @@ const OAuth2Router = {
 }
 
 export default OAuth2Router
-export { OAuth2Router }

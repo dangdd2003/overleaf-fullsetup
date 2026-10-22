@@ -1,5 +1,4 @@
 import logger from '@overleaf/logger'
-import Settings from '@overleaf/settings'
 import './ModuleSettings.mjs'
 import SessionManager from '../../../../app/src/Features/Authentication/SessionManager.mjs'
 import {
@@ -13,6 +12,27 @@ import defaultUserSettingsStore from './AiAssistUserSettingsStore.mjs'
 
 // Earlier web calls of one fix run; a fix is capped far below this
 const MAX_KNOWN_CALLS = 50
+
+function pickResultFields(result) {
+  if (!result || typeof result !== 'object') return result
+  const picked = {}
+  for (const key of [
+    'error',
+    'source',
+    'url',
+    'title',
+    'snippet',
+    'published',
+    'page',
+    'totalPages',
+  ]) {
+    if (result[key] !== undefined) picked[key] = result[key]
+  }
+  if (Array.isArray(result.results)) {
+    picked.results = result.results.map(r => pickResultFields(r))
+  }
+  return picked
+}
 
 function knownCallsFrom(raw) {
   if (!Array.isArray(raw)) return []
@@ -29,7 +49,7 @@ function knownCallsFrom(raw) {
     .map(call => ({
       name: call.name,
       args: call.args ?? {},
-      result: call.result,
+      result: pickResultFields(call.result),
     }))
 }
 

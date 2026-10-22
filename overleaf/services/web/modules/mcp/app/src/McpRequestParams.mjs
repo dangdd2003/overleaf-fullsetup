@@ -47,8 +47,26 @@ function invalid(res, message, { allowed, hint } = {}) {
   })
 }
 
+/**
+ * Yields accessible projects from ProjectGetter.findAllUsersProjects in
+ * ACCESS_BUCKETS order, tagged with accessLevel and owned flag.
+ *
+ * @param {Record<string, Array<object>>} all
+ * @returns {Array<{ project: object, accessLevel: string, owned: boolean }>}
+ */
+function accessibleProjects(all) {
+  const rows = []
+  for (const [bucket, accessLevel] of ACCESS_BUCKETS) {
+    for (const project of all[bucket] || []) {
+      rows.push({ project, accessLevel, owned: bucket === 'owned' })
+    }
+  }
+  return rows
+}
+
 export {
   ACCESS_BUCKETS,
+  accessibleProjects,
   parseIntParam,
   isTrueParam,
   hasDotSegment,

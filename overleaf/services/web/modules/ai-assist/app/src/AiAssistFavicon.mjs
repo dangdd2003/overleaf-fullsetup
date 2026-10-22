@@ -76,11 +76,16 @@ export function sniffImageType(body) {
   return null
 }
 
-function attribute(tag, name) {
-  const match = new RegExp(
-    `\\s${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`,
-    'i'
-  ).exec(tag)
+function attributePattern(name) {
+  return new RegExp(`\\s${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i')
+}
+
+const REL_ATTRIBUTE = attributePattern('rel')
+const HREF_ATTRIBUTE = attributePattern('href')
+const SIZES_ATTRIBUTE = attributePattern('sizes')
+
+function attribute(tag, pattern) {
+  const match = pattern.exec(tag)
   if (!match) return undefined
   return (match[1] ?? match[2] ?? match[3]).replace(/&amp;/g, '&').trim()
 }
@@ -92,13 +97,13 @@ function attribute(tag, name) {
 export function iconLinksIn(html, baseUrl) {
   const icons = []
   for (const [tag] of String(html).matchAll(/<link\b[^>]*>/gi)) {
-    const rel = (attribute(tag, 'rel') || '').toLowerCase().split(/\s+/)
+    const rel = (attribute(tag, REL_ATTRIBUTE) || '').toLowerCase().split(/\s+/)
     const rank = rel.includes('icon')
       ? 0
       : rel.some(token => token.startsWith('apple-touch-icon'))
         ? 1
         : -1
-    const href = attribute(tag, 'href')
+    const href = attribute(tag, HREF_ATTRIBUTE)
     if (rank < 0 || !href) continue
     let url
     try {
@@ -108,7 +113,7 @@ export function iconLinksIn(html, baseUrl) {
     }
     if (url.protocol !== 'http:' && url.protocol !== 'https:') continue
     const size = parseInt(
-      /(\d+)x\d+/i.exec(attribute(tag, 'sizes') || '')?.[1],
+      /(\d+)x\d+/i.exec(attribute(tag, SIZES_ATTRIBUTE) || '')?.[1],
       10
     )
     icons.push({
@@ -261,7 +266,12 @@ export class FaviconResolver {
    */
   async find(origin) {
     const cached = this.cache.get(origin)
-    if (cached && cached.expires > this.now()) return cached.found
+    if (cached && cached.expires > this.now()) {
+      // Re-set as the newest entry, so a site in use is not evicted by one-off origins
+      this.cache.delete(origin)
+      this.cache.set(origin, cached)
+      return cached.found
+    }
     // A search lists several pages of one site at once: one lookup serves all.
     let pending = this.pending.get(origin)
     if (!pending) {

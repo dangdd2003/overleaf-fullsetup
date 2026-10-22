@@ -90,6 +90,13 @@ function normalizePath(path: string | null | undefined): string {
   return path.replace(/^\//, "");
 }
 
+function trimLineEnds(text: string): string {
+  return text
+    .split("\n")
+    .map((l: string) => l.trimEnd())
+    .join("\n");
+}
+
 function ApplyFixListenerInner() {
   const view = useCodeMirrorViewContext();
   const { openDocName, currentDocumentId } = useEditorOpenDocContext();
@@ -417,7 +424,10 @@ function ApplyFixListenerInner() {
       }
 
       const doc = view.state.doc;
-      const docText = doc.toString();
+      // Single-character reads keep the common paths O(1); the whole
+      // document is only materialised for the fallback search below.
+      const charAt = (i: number) =>
+        i < 0 || i >= doc.length ? "" : doc.sliceString(i, i + 1);
 
       const applyAiChange = (from: number, to: number, insert: string) => {
         view.dispatch({
@@ -436,7 +446,7 @@ function ApplyFixListenerInner() {
         const docLen = doc.length;
         let insertText = replacement;
         // If the document is non-empty and does not end with a newline, prepend one
-        if (docLen > 0 && !docText.endsWith("\n")) {
+        if (docLen > 0 && charAt(docLen - 1) !== "\n") {
           insertText = "\n" + replacement;
         }
         return applyAiChange(docLen, docLen, insertText);
@@ -445,19 +455,19 @@ function ApplyFixListenerInner() {
       // Helper to compute clean line deletion offsets
       const adjustForCleanLineDeletion = (cFrom: number, cTo: number) => {
         if (replacement !== "") return { cFrom, cTo };
-        const isFullLineStart = cFrom === 0 || docText[cFrom - 1] === "\n";
+        const isFullLineStart = cFrom === 0 || charAt(cFrom - 1) === "\n";
         const isFullLineEnd =
           cTo === doc.length ||
-          docText[cTo - 1] === "\n" ||
-          docText[cTo] === "\n";
+          charAt(cTo - 1) === "\n" ||
+          charAt(cTo) === "\n";
         if (isFullLineStart && isFullLineEnd) {
           // If the span already includes its trailing newline, no adjustment is needed
-          if (cTo > cFrom && docText[cTo - 1] === "\n") {
+          if (cTo > cFrom && charAt(cTo - 1) === "\n") {
             return { cFrom, cTo };
           }
-          if (cTo < doc.length && docText[cTo] === "\n") {
+          if (cTo < doc.length && charAt(cTo) === "\n") {
             return { cFrom, cTo: cTo + 1 };
-          } else if (cFrom > 0 && docText[cFrom - 1] === "\n") {
+          } else if (cFrom > 0 && charAt(cFrom - 1) === "\n") {
             return { cFrom: cFrom - 1, cTo };
           }
         }
@@ -472,19 +482,11 @@ function ApplyFixListenerInner() {
           fromOffset <= toOffset
         ) {
           const slice = view.state.sliceDoc(fromOffset, toOffset);
-          const normSlice = slice
-            .split("\n")
-            .map((l: string) => l.trimEnd())
-            .join("\n");
-          const normOldText = oldText
-            .split("\n")
-            .map((l: string) => l.trimEnd())
-            .join("\n");
           if (
             slice === oldText ||
             slice.trimEnd() === oldText.trimEnd() ||
             slice.trim() === oldText.trim() ||
-            normSlice === normOldText
+            trimLineEnds(slice) === trimLineEnds(oldText)
           ) {
             const { cFrom, cTo } = adjustForCleanLineDeletion(
               fromOffset,
@@ -497,7 +499,7 @@ function ApplyFixListenerInner() {
 
       // 3. Fallback: Search for oldText in live document (handles cursor/typing drift)
       if (typeof oldText === "string" && oldText.length > 0) {
-        const span = findUniqueSpan(docText, oldText);
+        const span = findUniqueSpan(doc.toString(), oldText);
         if (span.status === "found") {
           const cFrom = span.index;
           const cTo = span.index + (span.matchedLength ?? oldText.length);
@@ -520,14 +522,7 @@ function ApplyFixListenerInner() {
         const currentSlice = view.state.sliceDoc(offsets.from, offsets.to);
         if (
           currentSlice === oldText ||
-          currentSlice
-            .split("\n")
-            .map((l: string) => l.trimEnd())
-            .join("\n") ===
-            oldText
-              .split("\n")
-              .map((l: string) => l.trimEnd())
-              .join("\n")
+          trimLineEnds(currentSlice) === trimLineEnds(oldText)
         ) {
           const { cFrom, cTo } = adjustForCleanLineDeletion(
             offsets.from,

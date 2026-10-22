@@ -8,7 +8,7 @@ import { clip, collapse } from './util.mjs'
  */
 
 /** Words a question is phrased with, which say nothing about what it asks. */
-export const STOPWORDS = new Set(
+const STOPWORDS = new Set(
   'a about all also an and any are as at be been but by can could did do does doing for from get had has have how i if in into is it its me my no not of on or our should so some than that the their them then there these they this those to too use used using was we were what when where which who whom whose why will with would you your'.split(
     ' '
   )
@@ -50,7 +50,7 @@ export function termsOf(phrase, max = 8) {
   ].slice(0, max)
 }
 
-export function escapeRegExp(text) {
+function escapeRegExp(text) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 

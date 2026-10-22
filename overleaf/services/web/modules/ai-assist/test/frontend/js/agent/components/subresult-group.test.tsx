@@ -57,8 +57,6 @@ describe('partitionBlocks', function () {
 })
 
 describe('formatSubresultsSummary', function () {
-  const fakeT = (_key: string, opts?: any) =>
-    typeof opts === 'string' ? opts : opts?.defaultValue || _key
 
   it('summarizes multiple tool actions', function () {
     const items: any[] = [
@@ -69,7 +67,7 @@ describe('formatSubresultsSummary', function () {
       { type: 'tool_call', call: { name: 'list_references', args: {} } },
     ]
 
-    const { title } = formatSubresultsSummary(items, false, fakeT)
+    const { title } = formatSubresultsSummary(items, false)
     expect(title).to.include('Read 1 file')
     expect(title.toLowerCase()).to.include('checked references')
   })
@@ -79,7 +77,7 @@ describe('formatSubresultsSummary', function () {
     // thought so far has nothing to tally, and saying "Thinking…" here would
     // duplicate the separate status line that already reports the run is live.
     const items: any[] = [{ type: 'thinking', thinking: 'thinking' }]
-    const { title } = formatSubresultsSummary(items, true, fakeT)
+    const { title } = formatSubresultsSummary(items, true)
     expect(title).to.equal('')
   })
 
@@ -92,7 +90,7 @@ describe('formatSubresultsSummary', function () {
       },
     ]
 
-    const { title } = formatSubresultsSummary(items, false, fakeT)
+    const { title } = formatSubresultsSummary(items, false)
     expect(title.toLowerCase()).to.include('configured settings')
     expect(title.toLowerCase()).to.include('checked settings')
   })
@@ -109,7 +107,7 @@ describe('formatSubresultsSummary', function () {
       },
     ]
 
-    const { title } = formatSubresultsSummary(items, false, fakeT)
+    const { title } = formatSubresultsSummary(items, false)
     expect(title.toLowerCase()).to.include('configured settings (2)')
   })
 
@@ -133,7 +131,7 @@ describe('formatSubresultsSummary', function () {
       },
     ]
 
-    const { diffStats } = formatSubresultsSummary(items, false, fakeT)
+    const { diffStats } = formatSubresultsSummary(items, false)
     expect(diffStats).to.deep.equal({ added: 3, removed: 0 })
   })
 
@@ -144,7 +142,7 @@ describe('formatSubresultsSummary', function () {
         call: { name: 'read_file', args: { path: 'a.tex' } },
       },
     ]
-    const { diffStats } = formatSubresultsSummary(items, false, fakeT)
+    const { diffStats } = formatSubresultsSummary(items, false)
     expect(diffStats).to.equal(null)
   })
 
@@ -159,7 +157,7 @@ describe('formatSubresultsSummary', function () {
         },
       },
     ]
-    const { title, diffStats } = formatSubresultsSummary(items, false, fakeT)
+    const { title, diffStats } = formatSubresultsSummary(items, false)
     expect(title.toLowerCase()).to.include('1 edit rejected')
     expect(title.toLowerCase()).to.not.include('edited 1 file')
     expect(diffStats).to.equal(null)
@@ -184,7 +182,7 @@ describe('formatSubresultsSummary', function () {
         },
       },
     ]
-    const { title } = formatSubresultsSummary(items, false, fakeT)
+    const { title } = formatSubresultsSummary(items, false)
     expect(title.toLowerCase()).to.include('edited 1 file')
     expect(title.toLowerCase()).to.include('1 edit rejected')
   })
@@ -208,7 +206,7 @@ describe('formatSubresultsSummary', function () {
         },
       },
     ]
-    const { title, diffStats } = formatSubresultsSummary(items, false, fakeT)
+    const { title, diffStats } = formatSubresultsSummary(items, false)
     expect(title.toLowerCase()).to.include('read 1 file')
     expect(title.toLowerCase()).to.include('1 edit cancelled')
     expect(title.toLowerCase()).to.not.include('edited 1 file')
@@ -225,7 +223,7 @@ describe('formatSubresultsSummary', function () {
         },
       },
     ]
-    const { title, diffStats } = formatSubresultsSummary(items, false, fakeT)
+    const { title, diffStats } = formatSubresultsSummary(items, false)
     expect(title.toLowerCase()).to.include('1 edit cancelled')
     expect(title.toLowerCase()).to.not.include('edited 1 file')
     expect(diffStats).to.equal(null)
@@ -242,7 +240,7 @@ describe('formatSubresultsSummary', function () {
         },
       },
     ]
-    const { title, diffStats } = formatSubresultsSummary(items, false, fakeT)
+    const { title, diffStats } = formatSubresultsSummary(items, false)
     expect(title.toLowerCase()).to.include('1 file creation cancelled')
     expect(title.toLowerCase()).to.not.include('created 1 file')
     expect(diffStats).to.equal(null)
@@ -790,7 +788,7 @@ describe('SubresultGroup Component', function () {
     expect(subItems).to.have.length(2)
   })
 
-  it('inherits entry expansion state across segmented groups so activities never fold when text intervenes', function () {
+  it('does not inherit expansion across segmented groups (each line persists independently)', function () {
     const { container: c1 } = render(
       <SubresultGroup
         groupId="entryA-subresults-0"
@@ -825,8 +823,8 @@ describe('SubresultGroup Component', function () {
     )
 
     const btn2 = c2.querySelector('.ai-assist-subresult-group-header')!
-    // Must inherit the unfolded state from entryA
-    expect(btn2.getAttribute('aria-expanded')).to.equal('true')
+    // A different group persists its own folded state
+    expect(btn2.getAttribute('aria-expanded')).to.equal('false')
   })
 
   it('marks header and title as active and renders blooming spinner when group has active tool call', function () {

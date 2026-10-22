@@ -1,3 +1,5 @@
+import { uncomment } from './outline'
+
 export type LabelDefinition = { key: string; path: string; line: number }
 export type ReferenceUse = {
   key: string
@@ -21,11 +23,6 @@ const CITE_RE =
   /\\(cite|citep|citet|citeauthor|citeyear|nocite)\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}/g
 const BIB_ENTRY_RE = /^\s*@\w+\s*\{\s*([^,\s}]+)\s*,/
 const THEBIB_RE = /\\begin\{thebibliography\}/
-
-function uncomment(line: string): string {
-  const index = line.search(/(?<!\\)%/)
-  return index === -1 ? line : line.slice(0, index)
-}
 
 function keysOf(group: string): string[] {
   return group
@@ -110,9 +107,11 @@ export function extractReferences({
   const bibKeySet = new Set(bibKeys.map(entry => entry.key))
 
   const seen = new Set<string>()
+  const duplicateSet = new Set<string>()
   const duplicateLabels: string[] = []
   for (const label of labels) {
-    if (seen.has(label.key) && !duplicateLabels.includes(label.key)) {
+    if (seen.has(label.key) && !duplicateSet.has(label.key)) {
+      duplicateSet.add(label.key)
       duplicateLabels.push(label.key)
     }
     seen.add(label.key)

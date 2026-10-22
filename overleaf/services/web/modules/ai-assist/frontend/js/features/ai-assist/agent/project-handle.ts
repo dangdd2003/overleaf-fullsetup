@@ -1,6 +1,7 @@
 import { ProjectIndex } from './context/project-index'
 import type { PdfViewerSnapshot } from './context/types'
 import type { HighlightRequest, HighlightResult } from '../pdf/highlight'
+import type { AgentMode } from './agent-mode'
 
 export type ProjectFile = {
   path: string
@@ -36,6 +37,7 @@ export type EditOutcome =
       endLine?: number
       newText?: string
       oldText?: string
+      mode?: AgentMode
     }
   | { status: 'rejected'; note?: string }
   | { status: 'noMatch'; message?: string }

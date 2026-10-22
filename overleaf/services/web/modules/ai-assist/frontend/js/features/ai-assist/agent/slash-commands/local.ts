@@ -1,3 +1,5 @@
+import { SLASH_INPUT_RE } from './types'
+
 /**
  * Local slash commands: run by the composer itself, never sent to the model.
  *
@@ -12,11 +14,9 @@ export type LocalSlashCommand = {
   id: LocalSlashCommandId
   /** Extra names the menu matches and the composer accepts. */
   aliases: string[]
-  /** i18n key and English fallback for the menu label. */
-  labelKey: string
+  /** English fallback for the menu label. */
   label: string
-  /** i18n key and English fallback for the one-line menu description. */
-  descriptionKey: string
+  /** English fallback for the one-line menu description. */
   description: string
   /** Shown after the name in the menu, when the command takes words. */
   argumentHint?: string
@@ -26,24 +26,17 @@ export const LOCAL_SLASH_COMMANDS: LocalSlashCommand[] = [
   {
     id: 'context',
     aliases: ['usage', 'tokens'],
-    labelKey: 'ai_assist_slash_context',
     label: 'Context usage',
-    descriptionKey: 'ai_assist_slash_context_desc',
     description: "Show what fills this chat's context window",
   },
   {
     id: 'compact',
     aliases: [],
-    labelKey: 'ai_assist_slash_compact',
     label: 'Compact conversation',
-    descriptionKey: 'ai_assist_slash_compact_desc',
     description: 'Summarize this chat to free up context',
     argumentHint: '[instructions]',
   },
 ]
-
-/** Same shape as the model commands' input (catalog.ts): `/name words`. */
-const LOCAL_INPUT_RE = /^\/([a-z][a-z-]*)(?:\s+([\s\S]*))?$/i
 
 /**
  * A typed local command and the words after its name, or null when the input
@@ -52,7 +45,7 @@ const LOCAL_INPUT_RE = /^\/([a-z][a-z-]*)(?:\s+([\s\S]*))?$/i
 export function parseLocalSlashInput(
   text: string
 ): { command: LocalSlashCommand; args: string } | null {
-  const match = LOCAL_INPUT_RE.exec(text.trim())
+  const match = SLASH_INPUT_RE.exec(text.trim())
   if (!match) return null
   const command = findLocalSlashCommand(match[1])
   if (!command) return null

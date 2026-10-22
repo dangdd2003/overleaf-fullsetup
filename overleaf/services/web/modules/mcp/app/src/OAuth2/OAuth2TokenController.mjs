@@ -10,6 +10,7 @@ import {
   mcpAudience,
   ACCESS_TOKEN_TTL_SECONDS,
   REFRESH_TOKEN_IDLE_MS,
+  oauthError,
 } from './OAuth2Utils.mjs'
 import { OauthAuthorizationCode } from '../../../../../app/src/models/OauthAuthorizationCode.mjs'
 import { OauthAccessToken } from '../../../../../app/src/models/OauthAccessToken.mjs'
@@ -85,10 +86,7 @@ function tokenResponse({ accessToken, scope, refreshToken }) {
 }
 
 function error(res, status, errorCode, errorDescription) {
-  return res.status(status).json({
-    error: errorCode,
-    error_description: errorDescription,
-  })
+  return oauthError(res, status, errorCode, errorDescription)
 }
 
 function findGrantByRefreshHash(hash) {
@@ -311,7 +309,7 @@ const OAuth2TokenController = {
     }
 
     const baseUrl = getBaseUrl(req)
-    const audience = authRecord.resource || mcpAudience(baseUrl)
+    const audience = mcpAudience(baseUrl)
     // A caller may name only the granted audience, otherwise a token could be
     // minted for any resource.
     if (resource && resource !== audience) {

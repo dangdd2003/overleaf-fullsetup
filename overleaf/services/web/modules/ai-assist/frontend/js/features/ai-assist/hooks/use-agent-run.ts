@@ -3,7 +3,6 @@ import { UserSettingsContext } from '@/shared/context/user-settings-context'
 import { ProjectContext } from '@/shared/context/project-context'
 import { applyLiveSettingsUpdate } from '../agent/live-settings-updater'
 import { debugConsole } from '@/utils/debugging'
-import { useTranslation } from 'react-i18next'
 import { AiAssistant } from '../assistant'
 import {
   hasConsented,
@@ -81,7 +80,6 @@ export function useAgentRun({
   initialMode?: AgentMode
   chatId?: string
 }) {
-  const { t } = useTranslation()
   const [state, setState] = useState<AgentState>(() =>
     emptyAgentState(initialTranscript ?? [], initialMode ?? 'manual')
   )
@@ -180,20 +178,17 @@ export function useAgentRun({
       modeRef.current = event.mode
     }
     if (event.type === 'toolCallStarted') {
-      const e: any = event
-      const id = e.id || e.call?.id
-      const name = e.name || e.call?.name
+      const { id, name } = event
       if (id && name) {
         callMapRef.current.set(id, name)
       }
     }
     if (event.type === 'toolCallFinished') {
-      const e: any = event
-      const name = e.name || e.call?.name || callMapRef.current.get(e.id) || ''
-      const result = e.result
+      const name = event.name || callMapRef.current.get(event.id) || ''
+      const result = event.result as any
       dispatchPdfResultHighlights(result)
       if (result && result.status === 'applied') {
-        const mode = e.mode || modeRef.current || 'manual'
+        const mode = event.mode || modeRef.current || 'manual'
         dispatchAiEditHighlight(name, result, mode)
         if (result.updatedSettings) {
           try {
@@ -304,15 +299,24 @@ export function useAgentRun({
       note?: string
       nextMode?: AgentMode
     }) => {
-      if (currentRunIdRef.current) {
-        await approveBackgroundEdit(currentRunIdRef.current, decision)
-      } else {
-        approvalRef.current?.(decision)
-        approvalRef.current = null
-      }
+      const pendingContext = approvalContext
+      // Close the prompt immediately on choice. The approval request can take
+      // a network round trip for a background run; keep that latency out of
+      // the user's interaction feedback.
       setApprovalContext(null)
+      try {
+        if (currentRunIdRef.current) {
+          await approveBackgroundEdit(currentRunIdRef.current, decision)
+        } else {
+          approvalRef.current?.(decision)
+          approvalRef.current = null
+        }
+      } catch (error) {
+        setApprovalContext(current => current ?? pendingContext)
+        throw error
+      }
     },
-    []
+    [approvalContext]
   )
 
   /**
@@ -436,6 +440,40 @@ export function useAgentRun({
     }))
   }, [projectId, systemPrompt, whenRunEnded])
 
+  const startMainRun = useCallback(
+    (
+      runChatId: string | undefined,
+      payload: TranscriptEntry[],
+      mode: AgentMode,
+      assistantSettings: any,
+      compact?: { trigger: 'manual' | 'auto'; instructions?: string }
+    ) => {
+      const connectorIds = isConnectorsEnabled()
+        ? getChatConnectorIds(runChatId)
+        : null
+      return startBackgroundRun({
+        projectId,
+        transcript: payload,
+        providerSettings: assistantSettings,
+        mode,
+        chatId: runChatId,
+        webSearchSettings: isWebToolsAvailable()
+          ? readWebSearchSettings()
+          : null,
+        ...(connectorIds ? { connectorIds } : {}),
+        trackActive: false,
+        ...(compact
+          ? {
+              kind: 'compact' as const,
+              trigger: compact.trigger,
+              instructions: compact.instructions,
+            }
+          : {}),
+      })
+    },
+    [projectId]
+  )
+
   const run = useCallback(
     async (
       transcript: TranscriptEntry[],
@@ -516,18 +554,15 @@ export function useAgentRun({
             signal: controller.signal,
           })) {
             if (event.type === 'toolCallStarted') {
-              const e: any = event
-              const id = e.id || e.call?.id
-              const name = e.name || e.call?.name
+              const { id, name } = event
               if (id && name) {
                 callMapRef.current.set(id, name)
               }
             }
             if (event.type === 'toolCallFinished') {
-              const e: any = event
               const name =
-                e.name || e.call?.name || callMapRef.current.get(e.id) || ''
-              const result = e.result
+                event.name || callMapRef.current.get(event.id) || ''
+              const result = event.result as any
               dispatchPdfResultHighlights(result)
               if (
                 result &&
@@ -582,28 +617,13 @@ export function useAgentRun({
       // Server-side background execution for main chat
       try {
         const mode = modeRef.current
-        const connectorIds = isConnectorsEnabled()
-          ? getChatConnectorIds(runChatId)
-          : null
-        const runId = await startBackgroundRun({
-          projectId,
-          transcript: payload,
-          providerSettings: assistant.settings,
+        const runId = await startMainRun(
+          runChatId,
+          payload,
           mode,
-          chatId: runChatId,
-          webSearchSettings: isWebToolsAvailable()
-            ? readWebSearchSettings()
-            : null,
-          ...(connectorIds ? { connectorIds } : {}),
-          trackActive: false,
-          ...(compact
-            ? {
-                kind: 'compact' as const,
-                trigger: compact.trigger,
-                instructions: compact.instructions,
-              }
-            : {}),
-        })
+          assistant.settings,
+          compact
+        )
         if (leftChat()) {
           // Its chat was left while the request was out: the run goes on in
           // parallel, off screen, and must not stream into the chat now shown
@@ -683,11 +703,11 @@ export function useAgentRun({
       onEvent,
       handleStreamEvent,
       onRunEvent,
-      t,
       projectContext,
       userSettingsContext,
       stop,
       followRunEnd,
+      startMainRun,
     ]
   )
 
@@ -784,21 +804,12 @@ export function useAgentRun({
       const assistant = AiAssistant.fromStoredSettings()
       if (systemPrompt || !assistant || !hasConsented()) return
       const payload = transcript
-      const connectorIds = isConnectorsEnabled()
-        ? getChatConnectorIds(runChatId)
-        : null
-      const runId = await startBackgroundRun({
-        projectId,
-        transcript: payload,
-        providerSettings: assistant.settings,
+      const runId = await startMainRun(
+        runChatId,
+        payload,
         mode,
-        chatId: runChatId,
-        webSearchSettings: isWebToolsAvailable()
-          ? readWebSearchSettings()
-          : null,
-        ...(connectorIds ? { connectorIds } : {}),
-        trackActive: false,
-      })
+        assistant.settings
+      )
       const startedAt = Date.now()
       setDetachedRun(projectId, runChatId, { runId, startedAt })
       followDetachedRun({
@@ -810,7 +821,7 @@ export function useAgentRun({
         mode,
       })
     },
-    [projectId, systemPrompt]
+    [projectId, systemPrompt, startMainRun]
   )
 
   // Reconnect on mount if a background run is in progress

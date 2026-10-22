@@ -20,7 +20,7 @@ export type MatchResult = {
   score?: number
 }
 
-export function normalizeLines(str: string): string {
+function normalizeLines(str: string): string {
   return (str || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n')
 }
 
@@ -270,7 +270,7 @@ export function locateAnchorInText(
   return null
 }
 
-export function cleanWord(w: string): string {
+function cleanWord(w: string): string {
   return (w || '').toLowerCase().replace(/[^a-z0-9\\]/g, '')
 }
 

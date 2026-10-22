@@ -103,7 +103,7 @@ export type ContextBreakdown = {
   /** The limits the run resolved for this request. */
   contextWindow: number
   maxOutputTokens: number
-  /** The trim threshold: window - maxOutput - 10% margin. */
+  /** The block threshold (contextThresholds.blockAt): requests at or past it are not sent. */
   budget: number
   /** The model the request was sent to, when known. */
   model?: string

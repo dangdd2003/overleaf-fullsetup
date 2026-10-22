@@ -25,7 +25,7 @@ export type Detection =
   | { kind: null; reason: string }
 
 /** At least this much text (spaces aside) just before the cursor… */
-export const MIN_CONTEXT_CHARS = 12
+const MIN_CONTEXT_CHARS = 12
 /** …looked for this far back. */
 const CONTEXT_LOOKBACK = 300
 
@@ -110,7 +110,7 @@ const KEY_ARGUMENT = new RegExp(
 const OPTIONAL_ARGUMENT = /\\[A-Za-z@]+\*?\s*(?:\{[^{}]*\}\s*)*\[[^\]]*$/
 
 /** Whether the cursor is inside a `%` comment on its line. */
-export function inComment(state: EditorState, pos: number): boolean {
+function inComment(state: EditorState, pos: number): boolean {
   const line = state.doc.lineAt(pos)
   const before = line.text.slice(0, pos - line.from)
   return maskComments(before) !== before
@@ -120,7 +120,7 @@ export function inComment(state: EditorState, pos: number): boolean {
  * Whether the rest of the line lets a completion be appended at the cursor
  * (see `TRAILING_FITS`); a comment and spaces do not count.
  */
-export function trailingFits(lineRest: string): boolean {
+function trailingFits(lineRest: string): boolean {
   const code = lineRest.replace(/(?<!\\)%.*$/, '').replace(/\s+/g, '')
   return TRAILING_FITS.test(code)
 }
@@ -244,14 +244,4 @@ export function detectCompletion(
     (automatic ? quietReason(state, pos, place) : null)
   if (reason) return { kind: null, reason }
   return { kind: kindAt(place), reason: null }
-}
-
-/** The kind of completion at `pos`, or null where none may run (Shift+Space's rules). */
-export function completionKind(state: EditorState, pos: number): CompletionKind | null {
-  return detectCompletion(state, pos, { automatic: false }).kind
-}
-
-/** Why a pause in typing at `pos` does not ask for a suggestion; null where it may. */
-export function autoSkipReason(state: EditorState, pos: number): string | null {
-  return detectCompletion(state, pos, { automatic: true }).reason
 }

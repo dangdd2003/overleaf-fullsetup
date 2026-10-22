@@ -89,13 +89,18 @@ function basename(path: string): string {
   return path.split('/').pop() ?? path
 }
 
+/** The root document a prompt names when the project index has none. */
+function rootOf(index: ProjectIndex | null): string {
+  return index?.rootPath ?? 'main.tex'
+}
+
 function joinKeys(keys: string[], max = 5): string {
   const shown = keys.slice(0, max)
   const rest = keys.length - shown.length
   return rest > 0 ? `${shown.join(', ')} +${rest} more` : shown.join(', ')
 }
 
-function envCounts(index: ProjectIndex): Map<string, number> {
+export function envCounts(index: ProjectIndex): Map<string, number> {
   const counts = new Map<string, number>()
   for (const file of index.files) {
     for (const env of file.environments) {
@@ -112,18 +117,21 @@ function fileWithEnvironment(index: ProjectIndex, name: string): string | null {
   return hit ? hit.path : null
 }
 
-function envCount(counts: Map<string, number>, ...names: string[]): number {
+export function envCount(counts: Map<string, number>, ...names: string[]): number {
   return names.reduce((total, name) => total + (counts.get(name) ?? 0), 0)
 }
 
+/** A LaTeX command and its optional braced argument, blanked out of a heading. */
+const HEADING_COMMAND = /\\[a-zA-Z]+\*?(\{[^}]*\})?/g
+
 function sectionTitles(index: ProjectIndex): string[] {
   return index.outline.sections.map(section =>
-    section.title.replace(/\\[a-zA-Z]+\*?(\{[^}]*\})?/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase()
+    section.title.replace(HEADING_COMMAND, ' ').replace(/\s+/g, ' ').trim().toLowerCase()
   )
 }
 
-function hasSection(index: ProjectIndex, wanted: string): boolean {
-  return sectionTitles(index).some(title => title.includes(wanted))
+function hasSection(titles: string[], wanted: string): boolean {
+  return titles.some(title => title.includes(wanted))
 }
 
 function docLines(files: ProjectFile[]): number {
@@ -163,8 +171,8 @@ const RULES: Array<(signals: StarterSignals) => StarterRuleResult | null> = [
     )
     if (!missing) return null
     const [env, pkg] = missing
-    const file = fileWithEnvironment(index, env) ?? index.rootPath ?? 'main.tex'
-    const root = index.rootPath ?? 'main.tex'
+    const file = fileWithEnvironment(index, env) ?? rootOf(index)
+    const root = rootOf(index)
     return {
       id: 'add_missing_package',
       params: { package_name: pkg },
@@ -180,7 +188,7 @@ const RULES: Array<(signals: StarterSignals) => StarterRuleResult | null> = [
     if (cites.length === 0 || index.hasThebibliography) return null
     if (files.some(file => file.path.endsWith('.bib'))) return null
     const keys = [...new Set(cites.map(cite => cite.key))]
-    const root = index.rootPath ?? 'main.tex'
+    const root = rootOf(index)
     return {
       id: 'add_bibliography',
       params: { cite_count: keys.length },
@@ -200,7 +208,7 @@ const RULES: Array<(signals: StarterSignals) => StarterRuleResult | null> = [
     const unresolved = index.references.citations.filter(cite => !cite.resolved)
     if (unresolved.length === 0) return null
     const keys = [...new Set(unresolved.map(cite => cite.key))]
-    const root = index.rootPath ?? 'main.tex'
+    const root = rootOf(index)
     return {
       id: 'add_missing_bib_entries',
       params: { cite_count: keys.length },
@@ -212,7 +220,7 @@ const RULES: Array<(signals: StarterSignals) => StarterRuleResult | null> = [
   // Duplicate \label definitions make \ref silently point to the wrong location.
   ({ index }) => {
     if (!index) return null
-    const dups = index.references?.duplicateLabels ?? []
+    const dups = index.references.duplicateLabels ?? []
     if (dups.length === 0) return null
     const keys = [...new Set(dups)]
     return {
@@ -242,7 +250,7 @@ const RULES: Array<(signals: StarterSignals) => StarterRuleResult | null> = [
     if (!lastCompile || lastCompile.errors.length > 0) return null
     const count = lastCompile.warnings.length
     if (count === 0) return null
-    const root = index?.rootPath ?? 'main.tex'
+    const root = rootOf(index)
     return {
       id: 'resolve_warnings',
       params: { warning_count: count },
@@ -272,13 +280,14 @@ const RULES: Array<(signals: StarterSignals) => StarterRuleResult | null> = [
   // A paper with a discussion but no conclusion is one section short.
   ({ index, openFile }) => {
     if (!index || index.outline.sections.length < 3) return null
-    if (hasSection(index, 'conclusion') || hasSection(index, 'summary')) {
+    const titles = sectionTitles(index)
+    if (hasSection(titles, 'conclusion') || hasSection(titles, 'summary')) {
       return null
     }
-    if (!hasSection(index, 'discussion') && !hasSection(index, 'result')) {
+    if (!hasSection(titles, 'discussion') && !hasSection(titles, 'result')) {
       return null
     }
-    const file = openFile?.path ?? index.rootPath ?? 'main.tex'
+    const file = openFile?.path ?? rootOf(index)
     return {
       id: 'draft_conclusion',
       params: { file: clampName(basename(file)) },
@@ -293,7 +302,7 @@ const RULES: Array<(signals: StarterSignals) => StarterRuleResult | null> = [
     const counts = envCounts(index)
     const hasAbstract = (counts.get('abstract') ?? 0) > 0
     if (hasAbstract && index.outline.hasTitle) return null
-    const root = index.rootPath ?? 'main.tex'
+    const root = rootOf(index)
     return {
       id: 'draft_abstract_title',
       params: { root_file: clampName(basename(root)) },
@@ -314,7 +323,7 @@ const RULES: Array<(signals: StarterSignals) => StarterRuleResult | null> = [
     return {
       id: 'add_summary_table',
       params: { file: clampName(basename(openFile.path)) },
-      prompt: `Read ${openFile.path} and decide whether anything it describes in prose - parameters, comparisons, repeated measurements, results - would read better as a table. If so, build the table out of the values the text actually states, insert it in the passage that discusses them, and match the caption and label conventions the project already uses, adding any package it needs to ${index.rootPath ?? 'main.tex'}. Do not invent values and do not insert an empty skeleton: if nothing in the file is tabular, say so and insert nothing.`,
+      prompt: `Read ${openFile.path} and decide whether anything it describes in prose - parameters, comparisons, repeated measurements, results - would read better as a table. If so, build the table out of the values the text actually states, insert it in the passage that discusses them, and match the caption and label conventions the project already uses, adding any package it needs to ${rootOf(index)}. Do not invent values and do not insert an empty skeleton: if nothing in the file is tabular, say so and insert nothing.`,
       priority: 60,
     }
   },
@@ -458,4 +467,16 @@ export function deriveStarters(
   }
 
   return picked
+}
+
+/**
+ * The ids of the concrete rules that fire for these signals, uncapped. Used
+ * where only membership matters and the prompts are not needed.
+ */
+export function firedStarterIds(signals: StarterSignals): Set<StarterRuleId> {
+  return new Set(
+    RULES.map(rule => rule(signals))
+      .filter((starter): starter is StarterRuleResult => starter !== null)
+      .map(starter => starter.id)
+  )
 }

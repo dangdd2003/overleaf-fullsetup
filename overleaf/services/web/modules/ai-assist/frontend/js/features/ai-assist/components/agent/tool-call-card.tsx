@@ -31,8 +31,8 @@ import { wantsCleanCompile } from '../../agent/tools/compile-args'
 import { diffStatsForCall } from './diff-stats'
 import { DiffStatBadge } from './diff-stat-badge'
 import { useOpenFileInEditor } from '../../hooks/use-open-file'
+import { SiteIcon } from './site-icon'
 import {
-  SiteIcon,
   ToolCallDetailView,
   badBoxesLabel,
   overviewFindings,
@@ -48,7 +48,11 @@ import {
   SEARCH_CONNECTOR_TOOLS,
 } from '../../agent/mcp-tool-output'
 import { useMcpConnector } from '../../agent/mcp-connector-names'
-import { subresultExpansionStore } from './subresult-expansion-store'
+import {
+  subresultExpansionStore,
+  toolCallSignature,
+} from './subresult-expansion-store'
+import type { TranslateFn } from './pdf-tool-shared'
 
 export function getToolIcon(name: string, size = 13) {
   switch (name) {
@@ -116,7 +120,7 @@ export function getToolIcon(name: string, size = 13) {
   }
 }
 
-export type ToolSummary = {
+type ToolSummary = {
   action: string
   target?: string
   isFile?: boolean
@@ -128,7 +132,7 @@ export type ToolSummary = {
   compileCounts?: { errors: number; warnings: number }
 }
 
-export function formatLineRanges(args: any, result: any): string | null {
+function formatLineRanges(args: any, result: any): string | null {
   if (!args && !result) return null
 
   if (Array.isArray(args?.ranges) && args.ranges.length > 0) {
@@ -160,8 +164,6 @@ export function formatLineRanges(args: any, result: any): string | null {
 
   return null
 }
-
-type TranslateFn = (key: string, opts?: any) => string
 
 const PDF_TOOLS = new Set([
   'view_compiled_pdf_page',
@@ -462,19 +464,10 @@ function summariseCall(
   }
 
   switch (call.name) {
-    case 'get_references':
-    case 'list_references':
-      return {
-        action: t('ai_assist_tool_list_references', 'Checked references'),
-      }
     case 'get_outline':
       return {
         action: t('ai_assist_tool_get_outline', 'Outlined project'),
         target: args.section ? `section "${args.section}"` : undefined,
-      }
-    case 'get_packages':
-      return {
-        action: t('ai_assist_tool_get_packages', 'Checked packages'),
       }
     case 'list_files':
       return {
@@ -504,8 +497,7 @@ function summariseCall(
       const lineCandidate =
         (result as any)?.startLine ??
         args?.from ??
-        args?.startLine ??
-        (call as any)?.startLine
+        args?.startLine
       return {
         action: isRejected
           ? t('ai_assist_tool_edit_file_rejected', 'Edit rejected')
@@ -590,10 +582,6 @@ function summariseCall(
             ? t('ai_assist_tool_diff_pdf_same', 'no visible change')
             : undefined,
       }
-    case 'inspect_compiled_style':
-      return {
-        action: t('ai_assist_tool_inspect_pdf_style', 'Checked PDF style'),
-      }
     case 'highlight_in_pdf':
       return {
         action: t('ai_assist_tool_highlight_pdf', 'Highlighted in PDF'),
@@ -605,43 +593,6 @@ function summariseCall(
                 defaultValue: `${result.count} area${result.count === 1 ? '' : 's'}`,
               })
             : undefined,
-      }
-    case 'get_project_settings':
-      return {
-        action: t(
-          'ai_assist_tool_get_project_settings',
-          'Checked project settings'
-        ),
-      }
-    case 'configure_project_settings':
-    case 'configure_compiler_settings':
-      return {
-        action: t(
-          'ai_assist_tool_configure_project_settings',
-          'Configured project settings'
-        ),
-      }
-    case 'get_editor_settings':
-      return {
-        action: t(
-          'ai_assist_tool_get_editor_settings',
-          'Checked editor settings'
-        ),
-      }
-    case 'configure_editor_settings':
-    case 'configure_appearance_settings':
-      return {
-        action: t(
-          'ai_assist_tool_configure_editor_settings',
-          'Configured editor settings'
-        ),
-      }
-    case 'list_available_settings':
-      return {
-        action: t(
-          'ai_assist_tool_list_available_settings',
-          'Checked available settings'
-        ),
       }
     case 'web_search': {
       return {
@@ -692,6 +643,7 @@ export function ToolCallSummaryLine({
       ? { ...summarised, target: connectorName }
       : summarised
   const diffStats = diffStatsForCall(call)
+  const target = summary.target
   // A fetched page or connector is shown with its site's icon, as Claude.ai does
   const pageUrl =
     call.name === 'web_fetch'
@@ -718,35 +670,36 @@ export function ToolCallSummaryLine({
         className={`ai-assist-tool-call-label ${isActive ? 'is-active' : ''}`}
       >
         <span className="ai-assist-tool-call-action">{summary.action}</span>
-        {summary.target &&
+        {target && ' '}
+        {target &&
           (summary.isFile ? (
             <span
               role="button"
               tabIndex={0}
               className="ai-assist-file-link"
               title={t('ai_assist_open_file', {
-                path: summary.target,
-                defaultValue: `Open ${summary.target}`,
+                path: target,
+                defaultValue: `Open ${target}`,
               })}
               onClick={event => {
                 event.stopPropagation()
-                openFile(summary.target!, summary.fileLine)
+                openFile(target, summary.fileLine)
               }}
               onKeyDown={event => {
                 if (event.key === 'Enter') {
                   event.stopPropagation()
-                  openFile(summary.target!, summary.fileLine)
+                  openFile(target, summary.fileLine)
                 }
               }}
             >
-              {summary.target}
+              {target}
             </span>
           ) : (
             <span
               className="ai-assist-tool-call-target"
-              title={summary.target}
+              title={target}
             >
-              {summary.target}
+              {target}
             </span>
           ))}
       </span>
@@ -797,7 +750,7 @@ export function ToolCallSummaryLine({
 }
 
 /** Web results read as a list of pages, not as a log of tool output. */
-export function toolCallDetailClass(call: ToolCallRecord, extra = '') {
+function toolCallDetailClass(call: ToolCallRecord, extra = '') {
   return [
     'ai-assist-tool-call-detail',
     extra,
@@ -809,57 +762,26 @@ export function toolCallDetailClass(call: ToolCallRecord, extra = '') {
     .join(' ')
 }
 
-export const toolCallExpansionStore = {
-  _map: new Map<string, boolean>(),
-  get(key: string): boolean {
-    if (this._map.has(key)) return this._map.get(key)!
-    return subresultExpansionStore.get(`tool:${key}`)
-  },
-  set(key: string, value: boolean) {
-    this._map.set(key, value)
-    subresultExpansionStore.set(`tool:${key}`, value)
-    return this
-  },
-  has(key: string): boolean {
-    if (this._map.has(key)) return true
-    return subresultExpansionStore.has(`tool:${key}`)
-  },
-  clear() {
-    this._map.clear()
-    subresultExpansionStore.clear()
-  },
-}
-
 export function ToolCallCard({
   call,
-  defaultExpanded = false,
   isActive = false,
 }: {
   call: ToolCallRecord
-  defaultExpanded?: boolean
   isActive?: boolean
 }) {
-  const [userToggled, setUserToggled] = useState<boolean | null>(() => {
-    if (call?.id && toolCallExpansionStore.has(call.id)) {
-      return toolCallExpansionStore.get(call.id)
-    }
-    return null
-  })
-
-  // Drop down sub activity lines are static and follow only user behaviour.
-  // AI actions or subsequent activities must never fold or unfold them.
-  const expanded =
-    userToggled !== null
-      ? userToggled
-      : call?.id && toolCallExpansionStore.has(call.id)
-        ? toolCallExpansionStore.get(call.id)
-        : defaultExpanded
+  // Drop down sub activity lines start folded and follow only the user's
+  // clicks; AI actions or later activities never fold or unfold them.
+  const signature = toolCallSignature(call)
+  const [expanded, setExpanded] = useState<boolean>(
+    () =>
+      subresultExpansionStore.read(`tool:${call?.id}`, signature) ?? false
+  )
 
   const handleToggle = () => {
     const next = !expanded
-    setUserToggled(next)
+    setExpanded(next)
     if (call?.id) {
-      toolCallExpansionStore.set(call.id, next)
+      subresultExpansionStore.write(`tool:${call.id}`, next, signature)
     }
   }
 

@@ -23,7 +23,7 @@ export function encodeMcpName(name) {
   return `base64:${Buffer.from(String(name), 'utf8').toString('base64')}`
 }
 
-export function parseWwwAuthenticate(header) {
+function parseWwwAuthenticate(header) {
   if (!header || typeof header !== 'string') return {}
   const result = { raw: header }
   const regex = /([a-zA-Z0-9_-]+)=(?:"([^"]*)"|([^,\s]+))/g

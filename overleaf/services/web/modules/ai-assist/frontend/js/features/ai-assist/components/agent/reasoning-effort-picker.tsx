@@ -31,8 +31,7 @@ import {
  */
 export function ReasoningEffortPicker() {
   const { t } = useTranslation()
-  const [currentType, setCurrentType] = useState(() => readSettings()?.type)
-  const type = currentType
+  const [type, setCurrentType] = useState(() => readSettings()?.type)
   const [effort, setEffort] = useState(() =>
     type ? readReasoningEffort(type) : undefined
   )

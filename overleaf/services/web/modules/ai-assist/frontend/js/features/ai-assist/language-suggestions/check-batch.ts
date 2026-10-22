@@ -63,16 +63,17 @@ export async function checkBatch({
    */
   const reportReady = (sentences: ParsedSentence[], done: boolean) => {
     const byTarget = new Map<string, { grammar?: string; style?: string }>()
-    const order: string[] = []
+    const order: Array<{ id: string; target: { grammar?: string; style?: string } }> = []
     for (const sentence of sentences) {
-      if (!byTarget.has(sentence.id)) {
-        byTarget.set(sentence.id, {})
-        order.push(sentence.id)
+      let record = byTarget.get(sentence.id)
+      if (!record) {
+        record = {}
+        byTarget.set(sentence.id, record)
+        order.push({ id: sentence.id, target: record })
       }
-      byTarget.get(sentence.id)![sentence.kind] = sentence.text
+      record[sentence.kind] = sentence.text
     }
-    order.forEach((id, k) => {
-      const target = byTarget.get(id)!
+    order.forEach(({ id, target }, k) => {
       const ready = done || !request.style || target.style !== undefined || k < order.length - 1
       const unit = byId.get(id)
       if (!ready || !unit || reported.has(id)) return

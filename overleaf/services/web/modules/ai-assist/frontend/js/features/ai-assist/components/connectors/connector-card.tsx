@@ -34,11 +34,10 @@ import { connectWithPopup } from '../../connectors/oauth-popup'
 import { TEST_RESULT_MS, useAutoDismiss } from '../../hooks/use-auto-dismiss'
 import { SiteIcon, connectorIconUrl } from '../agent/site-icon'
 
-export type ConnectorCardProps = {
+type ConnectorCardProps = {
   connector: ConnectorView
   onEdit: () => void
   onConfigureTools: () => void
-  onRefresh: () => void
 }
 
 function StatusBadge({
@@ -88,15 +87,20 @@ function StatusBadge({
         </OLBadge>
       )
     case 'pending':
-    default:
       return (
         <OLBadge bg="info">{t('connector_status_pending', 'Pending')}</OLBadge>
       )
+    default: {
+      const unreachable: never = status
+      return (
+        <OLBadge bg="info">{t('connector_status_pending', 'Pending')}</OLBadge>
+      )
+    }
   }
 }
 
 /** Confirms before a connector is removed. Destructive, so the danger style. */
-export function RemoveConnectorModal({
+function RemoveConnectorModal({
   show,
   name,
   removing,
@@ -165,7 +169,6 @@ export function ConnectorCard({
   connector,
   onEdit,
   onConfigureTools,
-  onRefresh,
 }: ConnectorCardProps) {
   const { t } = useTranslation()
 
@@ -194,15 +197,19 @@ export function ConnectorCard({
 
   const toolCount = connector.tools?.length || 0
   const isConnected = connector.status === 'connected'
+  const signedInResult = useCallback(
+    () => ({
+      type: 'success' as const,
+      text: t('connector_signed_in', 'Signed in and connected.'),
+    }),
+    [t]
+  )
 
   useEffect(() => {
     if (!signInPending || !isConnected) return
     setSignInPending(false)
-    setResult({
-      type: 'success',
-      text: t('connector_signed_in', 'Signed in and connected.'),
-    })
-  }, [signInPending, isConnected, t])
+    setResult(signedInResult())
+  }, [signInPending, isConnected, signedInResult])
 
   const toolsText = useCallback(
     (count: number) =>
@@ -220,7 +227,6 @@ export function ConnectorCard({
       await updateConnector(connector.id, { enabled: !connector.enabled })
       setResult(null)
       notifyConnectorsChanged()
-      onRefresh()
     } catch (err) {
       setResult({
         type: 'error',
@@ -232,7 +238,7 @@ export function ConnectorCard({
     } finally {
       setIsUpdating(false)
     }
-  }, [connector.id, connector.enabled, onRefresh, t])
+  }, [connector.id, connector.enabled, t])
 
   // Only after the server has asked for it: the user clicks Sign in, and the
   // popup opens from that click.
@@ -242,12 +248,8 @@ export function ConnectorCard({
     try {
       const outcome = await connectWithPopup(connector.id)
       if (outcome.status === 'connected') {
-        setResult({
-          type: 'success',
-          text: t('connector_signed_in', 'Signed in and connected.'),
-        })
+        setResult(signedInResult())
         notifyConnectorsChanged()
-        onRefresh()
       } else if (outcome.status === 'error') {
         setResult({ type: 'error', text: outcome.error })
       } else {
@@ -271,7 +273,7 @@ export function ConnectorCard({
     } finally {
       setIsAuthorizing(false)
     }
-  }, [connector.id, onRefresh, t])
+  }, [connector.id, signedInResult, t])
 
   // Connect and Test connection both let the server decide: it connects
   // straight away when it takes no sign-in, and only says so when it does.
@@ -311,7 +313,6 @@ export function ConnectorCard({
           })
         }
         notifyConnectorsChanged()
-        onRefresh()
       } catch (err) {
         setResult({
           type: 'error',
@@ -327,7 +328,7 @@ export function ConnectorCard({
         setTesting(false)
       }
     },
-    [connector.id, onRefresh, t, toolsText]
+    [connector.id, t, toolsText]
   )
 
   const handleDisconnect = useCallback(async () => {
@@ -336,7 +337,6 @@ export function ConnectorCard({
       await disconnectConnector(connector.id)
       setResult(null)
       notifyConnectorsChanged()
-      onRefresh()
     } catch (err) {
       setResult({
         type: 'error',
@@ -348,7 +348,7 @@ export function ConnectorCard({
     } finally {
       setIsUpdating(false)
     }
-  }, [connector.id, onRefresh, t])
+  }, [connector.id, t])
 
   const handleRemove = useCallback(async () => {
     setIsUpdating(true)
@@ -356,7 +356,6 @@ export function ConnectorCard({
       await removeConnector(connector.id)
       setConfirmingRemove(false)
       notifyConnectorsChanged()
-      onRefresh()
     } catch (err) {
       setResult({
         type: 'error',
@@ -368,7 +367,7 @@ export function ConnectorCard({
     } finally {
       setIsUpdating(false)
     }
-  }, [connector.id, onRefresh, t])
+  }, [connector.id, t])
 
   // The one primary action a connector needs right now, if any. Sign in only
   // shows once the server has said it needs one.

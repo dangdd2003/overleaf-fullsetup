@@ -10,15 +10,19 @@ import type { PdfAreaContext } from '../agent/context/types'
 import type { ChatImage } from '../providers/types'
 import { sourceAtPdfPoint, SynctexContext, SourcePosition } from './sync'
 import { cropCanvas } from './crop'
-import { pagePointToPdf, PageBox, startBoxDrag } from './box-select'
+import { boxToPdfRect, PageBox, startBoxDrag } from './box-select'
 import {
   cancelPdfBoxSelect,
-  addPdfArea,
+  getPdfTurnContext,
+  MAX_PDF_ITEMS,
   updatePdfAreaSource,
   updatePdfTurnContext,
   usePdfTurnContext,
 } from './turn-context'
-import { PDF_RESULT_HIGHLIGHTS_EVENT } from './result-highlights'
+import {
+  PDF_RESULT_HIGHLIGHTS_EVENT,
+  PdfResultHighlightsDetail,
+} from './result-highlights'
 import type PDFJSWrapper from '@/features/pdf-preview/util/pdf-js-wrapper'
 
 export type AreaOptions = {
@@ -60,12 +64,10 @@ export async function areaFromBox(
 ): Promise<PdfAreaContext | null> {
   const view = wrapper.viewer.getPageView(box.page - 1)
   if (!view?.viewport) return null
-  const viewport = view.viewport
-  const topLeft = pagePointToPdf(viewport, box.left, box.top)
-  const bottomRight = pagePointToPdf(viewport, box.right, box.bottom)
+  const { rect, topLeft, bottomRight } = boxToPdfRect(view.viewport, box)
   const h = (topLeft.h + bottomRight.h) / 2
-  const top = Math.min(topLeft.v, bottomRight.v)
-  const bottom = Math.max(topLeft.v, bottomRight.v)
+  const top = rect.y
+  const bottom = rect.y + rect.h
 
   const lookup = (v: number) =>
     sourceAtPdfPoint(
@@ -82,12 +84,7 @@ export async function areaFromBox(
   return {
     page: box.page,
     source,
-    rect: {
-      x: Math.min(topLeft.h, bottomRight.h),
-      y: top,
-      w: Math.abs(bottomRight.h - topLeft.h),
-      h: bottom - top,
-    },
+    rect,
     image,
   }
 }
@@ -130,7 +127,7 @@ export function usePdfContext(): void {
   useEffect(() => {
     const onHighlights = (event: Event) => {
       // Already validated where the event was dispatched
-      const highlights = (event as CustomEvent).detail?.highlights
+      const highlights = (event as CustomEvent<PdfResultHighlightsDetail>).detail?.highlights
       if (Array.isArray(highlights) && highlights.length > 0) {
         setHighlights(highlights)
       }
@@ -154,21 +151,7 @@ export function usePdfContext(): void {
         // Synchronously cropped now, so it appears immediately like selected text without blinking
         const image = cropCanvas(canvas, box)
         const view = wrapper.viewer.getPageView(box.page - 1)
-        const viewport = view?.viewport
-        const topLeft = viewport
-          ? pagePointToPdf(viewport, box.left, box.top)
-          : { h: 0, v: 0 }
-        const bottomRight = viewport
-          ? pagePointToPdf(viewport, box.right, box.bottom)
-          : { h: 0, v: 0 }
-        const top = Math.min(topLeft.v, bottomRight.v)
-        const bottom = Math.max(topLeft.v, bottomRight.v)
-        const rect = {
-          x: Math.min(topLeft.h, bottomRight.h),
-          y: top,
-          w: Math.abs(bottomRight.h - topLeft.h),
-          h: bottom - top,
-        }
+        const { rect } = boxToPdfRect(view?.viewport, box)
 
         const areaId = `pdf-area-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
         const initialArea: PdfAreaContext = {
@@ -180,8 +163,8 @@ export function usePdfContext(): void {
         }
 
         // Add area immediately and exit box selection in a single update
-        updatePdfTurnContext({ boxSelecting: false })
-        addPdfArea(initialArea)
+        const nextAreas = [...getPdfTurnContext().areas, initialArea].slice(-MAX_PDF_ITEMS)
+        updatePdfTurnContext({ boxSelecting: false, areas: nextAreas })
 
         // Resolve synctex source line numbers in the background without blocking UI
         areaFromBox(wrapper, box, projectId, context, {

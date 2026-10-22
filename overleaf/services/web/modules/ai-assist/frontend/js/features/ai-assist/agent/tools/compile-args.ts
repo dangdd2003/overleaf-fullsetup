@@ -6,11 +6,14 @@
  * rebuild working without a paragraph of prompt coaching telling the model how
  * to spell its own arguments.
  *
- * Kept in its own module, with no imports, because the status line and the tool
- * call card both need it to describe an in-flight call. Hanging it off the tool
- * would pull the whole registry into those components, and registry.ts already
- * imports the tool — a cycle waiting for the next edit.
+ * Kept in its own module, importing only the shared truthy set, because the
+ * status line and the tool call card both need it to describe an in-flight
+ * call. Hanging it off the tool would pull the whole registry into those
+ * components, and registry.ts already imports the tool — a cycle waiting for
+ * the next edit.
  */
+import { TRUTHY } from './coerce-args'
+
 export function wantsCleanCompile(args: unknown): boolean {
   if (!args || typeof args !== 'object') return false
   const source = args as Record<string, unknown>
@@ -27,7 +30,7 @@ export function wantsCleanCompile(args: unknown): boolean {
   if (typeof raw === 'number') return raw !== 0
   if (typeof raw === 'string') {
     const normalized = raw.trim().toLowerCase()
-    return ['true', '1', 'yes', 'y', 'on'].includes(normalized)
+    return TRUTHY.has(normalized)
   }
   return false
 }

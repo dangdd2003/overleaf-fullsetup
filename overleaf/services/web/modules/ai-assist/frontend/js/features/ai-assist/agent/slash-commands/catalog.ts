@@ -1,12 +1,13 @@
 import {
   ParsedSlashInput,
+  SLASH_INPUT_RE,
   SlashCommandDefinition,
   SlashCommandId,
   SlashParamSpec,
 } from './types'
 import {
   computeUsageScore,
-  getSlashCommandUsage,
+  readSlashCommandUsage,
 } from './usage-store'
 
 /** The free-text param most commands end on, worded the same everywhere. */
@@ -27,10 +28,7 @@ export const SLASH_COMMANDS: SlashCommandDefinition[] = [
   {
     id: 'fix',
     aliases: ['debug', 'error'],
-    category: 'build',
-    labelKey: 'ai_assist_slash_fix',
     label: 'Fix errors',
-    descriptionKey: 'ai_assist_slash_fix_desc',
     description: 'Fix the errors of the last compile, cause first',
     argumentHint: '[all] [file.tex:line] [notes]',
     params: [
@@ -54,10 +52,7 @@ export const SLASH_COMMANDS: SlashCommandDefinition[] = [
   {
     id: 'layout',
     aliases: ['overfull', 'badbox', 'float'],
-    category: 'build',
-    labelKey: 'ai_assist_slash_layout',
     label: 'Fix layout',
-    descriptionKey: 'ai_assist_slash_layout_desc',
     description: 'Fix overfull boxes, stray floats and bad page breaks',
     argumentHint: '[page N] [boxes|floats|breaks] [notes]',
     params: [
@@ -88,10 +83,7 @@ export const SLASH_COMMANDS: SlashCommandDefinition[] = [
   {
     id: 'preamble',
     aliases: ['packages', 'usepackage'],
-    category: 'build',
-    labelKey: 'ai_assist_slash_preamble',
     label: 'Preamble',
-    descriptionKey: 'ai_assist_slash_preamble_desc',
     description: 'Add, remove, explain or audit packages safely',
     argumentHint: '[add|remove|explain|audit] [package] [notes]',
     params: [
@@ -120,10 +112,7 @@ export const SLASH_COMMANDS: SlashCommandDefinition[] = [
   {
     id: 'rewrite',
     aliases: ['improve', 'refine', 'shorten', 'polish'],
-    category: 'write',
-    labelKey: 'ai_assist_slash_rewrite',
     label: 'Rewrite',
-    descriptionKey: 'ai_assist_slash_rewrite_desc',
     description: 'Rewrite prose in a chosen style; LaTeX stays intact',
     argumentHint: '[clearer|formal|concise|simpler|active|flow] [30%] [notes]',
     params: [
@@ -162,10 +151,7 @@ export const SLASH_COMMANDS: SlashCommandDefinition[] = [
   {
     id: 'proofread',
     aliases: ['grammar', 'spellcheck', 'typo'],
-    category: 'write',
-    labelKey: 'ai_assist_slash_proofread',
     label: 'Proofread',
-    descriptionKey: 'ai_assist_slash_proofread_desc',
     description: 'Fix grammar, spelling and punctuation, nothing else',
     argumentHint: '[us|uk] [section|file] [focus]',
     params: [
@@ -197,10 +183,7 @@ export const SLASH_COMMANDS: SlashCommandDefinition[] = [
   },
   {
     id: 'translate',
-    category: 'write',
-    labelKey: 'ai_assist_slash_translate',
     label: 'Translate',
-    descriptionKey: 'ai_assist_slash_translate_desc',
     description: 'Translate prose; commands, math and keys stay as they are',
     argumentHint: '<language> [notes]',
     params: [
@@ -214,10 +197,7 @@ export const SLASH_COMMANDS: SlashCommandDefinition[] = [
   {
     id: 'cite',
     aliases: ['citation', 'source'],
-    category: 'insert',
-    labelKey: 'ai_assist_slash_cite',
     label: 'Cite',
-    descriptionKey: 'ai_assist_slash_cite_desc',
     description: 'Cite a claim from your .bib; add web for new sources',
     argumentHint: '[web] [claim]',
     params: [
@@ -243,10 +223,7 @@ export const SLASH_COMMANDS: SlashCommandDefinition[] = [
   {
     id: 'bib',
     aliases: ['bibtex', 'bibliography'],
-    category: 'insert',
-    labelKey: 'ai_assist_slash_bib',
     label: 'Bibliography',
-    descriptionKey: 'ai_assist_slash_bib_desc',
     description: 'Tidy .bib entries: duplicates, missing fields, casing',
     argumentHint: '[duplicates|fields|casing|unused] [key or file]',
     params: [
@@ -274,10 +251,7 @@ export const SLASH_COMMANDS: SlashCommandDefinition[] = [
   {
     id: 'table',
     aliases: ['tabular'],
-    category: 'insert',
-    labelKey: 'ai_assist_slash_table',
     label: 'Table',
-    descriptionKey: 'ai_assist_slash_table_desc',
     description: 'Build or fix a table from values the document states',
     argumentHint: '[what it should show]',
     params: [
@@ -290,10 +264,7 @@ export const SLASH_COMMANDS: SlashCommandDefinition[] = [
   {
     id: 'figure',
     aliases: ['tikz', 'diagram', 'image'],
-    category: 'insert',
-    labelKey: 'ai_assist_slash_figure',
     label: 'Figure',
-    descriptionKey: 'ai_assist_slash_figure_desc',
     description: 'Insert a project image or draw a TikZ diagram',
     argumentHint: '[image path] [what to draw]',
     params: [
@@ -307,10 +278,7 @@ export const SLASH_COMMANDS: SlashCommandDefinition[] = [
   {
     id: 'equation',
     aliases: ['math', 'formula'],
-    category: 'insert',
-    labelKey: 'ai_assist_slash_equation',
     label: 'Equation',
-    descriptionKey: 'ai_assist_slash_equation_desc',
     description: "Write an equation in the document's own notation",
     argumentHint: '[inline|display|align] [the equation in words]',
     params: [
@@ -335,10 +303,7 @@ export const SLASH_COMMANDS: SlashCommandDefinition[] = [
   {
     id: 'explain',
     aliases: ['what'],
-    category: 'review',
-    labelKey: 'ai_assist_slash_explain',
     label: 'Explain',
-    descriptionKey: 'ai_assist_slash_explain_desc',
     description: 'Explain a passage, equation, command or error',
     argumentHint: '[what to explain]',
     params: [notes('the selection, else the lines at the cursor')],
@@ -349,10 +314,7 @@ export const SLASH_COMMANDS: SlashCommandDefinition[] = [
   {
     id: 'summarize',
     aliases: ['summary', 'tldr'],
-    category: 'review',
-    labelKey: 'ai_assist_slash_summarize',
     label: 'Summarize',
-    descriptionKey: 'ai_assist_slash_summarize_desc',
     description: 'Summarize the selection, a section or the paper',
     argumentHint: '[150 words|5 bullets] [section or file]',
     params: [
@@ -371,10 +333,7 @@ export const SLASH_COMMANDS: SlashCommandDefinition[] = [
   {
     id: 'review',
     aliases: ['critique', 'feedback'],
-    category: 'review',
-    labelKey: 'ai_assist_slash_review',
     label: 'Review',
-    descriptionKey: 'ai_assist_slash_review_desc',
     description: 'Peer-review the paper or a section; changes nothing',
     argumentHint: '[logic|methods|clarity|structure] [section]',
     params: [
@@ -403,10 +362,7 @@ export const SLASH_COMMANDS: SlashCommandDefinition[] = [
   {
     id: 'check',
     aliases: ['lint', 'consistency'],
-    category: 'review',
-    labelKey: 'ai_assist_slash_check',
     label: 'Check consistency',
-    descriptionKey: 'ai_assist_slash_check_desc',
     description: 'Find broken refs, missing citations and notation drift',
     argumentHint: '[refs|cites|notation|terms]',
     params: [
@@ -453,8 +409,6 @@ export function slashCommandById(
   return SLASH_COMMANDS.find(command => command.id === id)
 }
 
-const INPUT_RE = /^\/([a-z][a-z-]*)(?:\s+([\s\S]*))?$/i
-
 /**
  * Aliases that name a style of their command, so `/shorten 30%` reads as
  * `/rewrite concise 30%`. The style is put in front of the typed words.
@@ -470,7 +424,7 @@ const ALIAS_PREFIX: Record<string, string> = {
  * with a path (`/usr/share/...`) or an unknown word is sent as typed.
  */
 export function parseSlashInput(text: string): ParsedSlashInput | null {
-  const match = INPUT_RE.exec(text.trimStart())
+  const match = SLASH_INPUT_RE.exec(text.trimStart())
   if (!match) return null
   const command = findSlashCommand(match[1])
   if (!command) return null
@@ -485,22 +439,18 @@ export function parseSlashInput(text: string): ParsedSlashInput | null {
  * Scored by text match (id exact/prefix, alias, label, description) boosted by
  * historical usage frequency and recency.
  */
-export function filterSlashCommands(
-  query: string,
-  options: { includeUsageBoost?: boolean } = { includeUsageBoost: true }
-): SlashCommandDefinition[] {
+export function filterSlashCommands(query: string): SlashCommandDefinition[] {
   const q = query.trim().toLowerCase()
+  const usage = readSlashCommandUsage()
 
   // When query is empty (user just typed /), return catalog ordered with
   // recently and mostly used commands prioritized at the top
   if (!q) {
-    if (!options.includeUsageBoost) return SLASH_COMMANDS
-    return [...SLASH_COMMANDS].sort((a, b) => {
-      const scoreA = computeUsageScore(getSlashCommandUsage(a.id))
-      const scoreB = computeUsageScore(getSlashCommandUsage(b.id))
-      if (scoreA !== scoreB) return scoreB - scoreA
-      return 0
-    })
+    return [...SLASH_COMMANDS].sort(
+      (a, b) =>
+        computeUsageScore(usage[b.id] ?? null) -
+        computeUsageScore(usage[a.id] ?? null)
+    )
   }
 
   const scored: { command: SlashCommandDefinition; score: number }[] = []
@@ -532,9 +482,7 @@ export function filterSlashCommands(
     }
 
     if (matchScore >= 0) {
-      const usageBoost = options.includeUsageBoost
-        ? computeUsageScore(getSlashCommandUsage(command.id))
-        : 0
+      const usageBoost = computeUsageScore(usage[command.id] ?? null)
       const totalScore = matchScore + usageBoost - index / 100
       scored.push({ command, score: totalScore })
     }

@@ -6,14 +6,14 @@ import { webError } from '../util.mjs'
 
 const WORKER_SCRIPT = fileURLToPath(new URL('./worker.mjs', import.meta.url))
 const DEFAULT_WORKER_COUNT = 2
-export const JOB_TIMEOUT_MS = 20_000
+const JOB_TIMEOUT_MS = 20_000
 /** Extra time per million characters or bytes, so a large document is never cut off. */
 const JOB_TIME_PER_MB_MS = 10_000
 /**
  * Jobs waiting for a worker. Past this a read is refused rather than queued:
  * a job whose read has already timed out would otherwise hold memory until it ran.
  */
-export const MAX_QUEUED_JOBS = 32
+const MAX_QUEUED_JOBS = 32
 /**
  * Each worker may use a quarter of the machine's memory, so the default two
  * together stay within half of it, and a runaway job dies alone, not with the
@@ -25,7 +25,7 @@ const WORKER_HEAP_MB = Math.max(
 )
 
 /** How long a job may run: a stall guard that grows with the job's input. */
-export function jobTimeoutFor(job, base = JOB_TIMEOUT_MS) {
+function jobTimeoutFor(job, base = JOB_TIMEOUT_MS) {
   const size = job?.text?.length ?? job?.html?.length ?? job?.body?.length ?? 0
   return base + Math.floor(size / 1_000_000) * JOB_TIME_PER_MB_MS
 }
@@ -84,17 +84,7 @@ export class ExtractWorkerPool {
     })
 
     worker.on('error', err => {
-      const active = this.activeJobs.get(worker)
-      if (active) {
-        clearTimeout(active.timeout)
-        this.activeJobs.delete(worker)
-        active.reject(
-          webError(
-            `${active.job.url || 'Page'} could not be parsed: ${err.message}`,
-            { kind: 'content' }
-          )
-        )
-      }
+      this._settleActive(worker, err.message)
       this._removeWorker(worker)
       // Jobs still queued must not wait for a worker that may never come
       this._drainQueue()
@@ -102,23 +92,26 @@ export class ExtractWorkerPool {
 
     worker.on('exit', () => {
       // A worker that exits mid-job answers that job now, not at its timeout
-      const active = this.activeJobs.get(worker)
-      if (active) {
-        clearTimeout(active.timeout)
-        this.activeJobs.delete(worker)
-        active.reject(
-          webError(
-            `${active.job.url || 'Page'} could not be parsed: the worker stopped.`,
-            { kind: 'content' }
-          )
-        )
-      }
+      this._settleActive(worker, 'the worker stopped.')
       this._removeWorker(worker)
       this._drainQueue()
     })
 
     this.workers.push(worker)
     this.idleWorkers.push(worker)
+  }
+
+  /** Fails the job `worker` is running, if any, with a content error. */
+  _settleActive(worker, detail) {
+    const active = this.activeJobs.get(worker)
+    if (!active) return
+    clearTimeout(active.timeout)
+    this.activeJobs.delete(worker)
+    active.reject(
+      webError(`${active.job.url || 'Page'} could not be parsed: ${detail}`, {
+        kind: 'content',
+      })
+    )
   }
 
   _removeWorker(worker) {
@@ -213,7 +206,7 @@ export class ExtractWorkerPool {
   }
 }
 
-export const defaultExtractPool = new ExtractWorkerPool()
+const defaultExtractPool = new ExtractWorkerPool()
 
 export function runExtractJob(job) {
   return defaultExtractPool.runJob(job)

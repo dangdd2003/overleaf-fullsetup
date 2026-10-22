@@ -1,4 +1,4 @@
-import { ReactNode, useRef, useState } from 'react'
+import { ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import MaterialIcon from '@/shared/components/material-icon'
 import OLButton from '@/shared/components/ol/ol-button'
@@ -10,6 +10,7 @@ import { TexGptWarning } from '../../texgpt/checks'
 import { DiffText } from '../writing-tools/diff-text'
 import { RevealBox } from '../reveal-box'
 import { InlineNotice } from './texgpt-notices'
+import type { TexGptNotice } from './texgpt-notices'
 import { renderMarkdown } from '../agent/markdown-content'
 import type { RetryingState } from '../../agent/agent-state'
 import {
@@ -38,18 +39,14 @@ export type TexGptVersion =
   | { kind: 'options'; options: string[]; raw: string; messages: AgentMessage[] }
 
 export type TexGptPhase =
+  | TexGptNotice
   | { name: 'menu' }
-  | { name: 'consent' }
-  | { name: 'noProvider' }
   | { name: 'tooLong' }
   | { name: 'streaming'; reply: ParsedReply | null; repairing: boolean }
   | { name: 'ready' }
   | { name: 'unchanged' }
-  | { name: 'cannot'; reason: string }
-  | { name: 'empty' }
-  | { name: 'error'; message: string; hint?: string }
 
-export type TexGptResultProps = {
+type TexGptResultProps = {
   /** The author's words or the generator's name. */
   title: string
   phase: TexGptPhase
@@ -113,14 +110,17 @@ export function CodeBlock({ code }: { code: string }) {
 /** Markdown through the chat's renderer (sanitised there). */
 function Answer({ text }: { text: string }) {
   useSystemHighlightStyle()
+  const html = useMemo(
+    () =>
+      renderMarkdown(text, undefined, undefined, {
+        codeClass: SYSTEM_CODE_CLASS,
+      }),
+    [text]
+  )
   return (
     <div
       className="ai-assist-markdown ai-texgpt-answer"
-      dangerouslySetInnerHTML={{
-        __html: renderMarkdown(text, undefined, undefined, {
-          codeClass: SYSTEM_CODE_CLASS,
-        }),
-      }}
+      dangerouslySetInnerHTML={{ __html: html }}
     />
   )
 }
@@ -164,6 +164,7 @@ function Streaming({
 export function TexGptResult(props: TexGptResultProps) {
   const { t } = useTranslation()
   const [copied, setCopied] = useState(false)
+  const copiedTimer = useRef<number | undefined>(undefined)
   const bodyRef = useRef<HTMLDivElement>(null)
   const { onScroll: onBodyScroll } = useStickToBottom(bodyRef)
   const { phase, versions, index } = props
@@ -172,13 +173,16 @@ export function TexGptResult(props: TexGptResultProps) {
   const blocked =
     phase.name === 'consent' || phase.name === 'noProvider' || phase.name === 'tooLong'
 
+  useEffect(() => () => window.clearTimeout(copiedTimer.current), [])
+
   const copy = () => {
     if (!props.copyText) return
     navigator.clipboard
       ?.writeText(props.copyText)
       .then(() => {
         setCopied(true)
-        window.setTimeout(() => setCopied(false), 1500)
+        window.clearTimeout(copiedTimer.current)
+        copiedTimer.current = window.setTimeout(() => setCopied(false), 1500)
       })
       .catch(() => {})
   }

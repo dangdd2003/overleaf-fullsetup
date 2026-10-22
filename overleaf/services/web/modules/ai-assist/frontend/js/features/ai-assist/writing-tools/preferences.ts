@@ -14,28 +14,40 @@ export type WritingToolsPreferences = {
   showDiff: boolean
 }
 
-export const MAX_RECENT_LANGUAGES = 3
+const MAX_RECENT_LANGUAGES = 3
 
 const LEVELS: RephraseLevel[] = ['low', 'medium', 'high']
 const STYLES: RephraseStyle[] = ['scientific', 'concise', 'punchy']
 const LENGTHS: RephraseLength[] = ['shorten', 'lengthen']
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function pick<T extends string>(options: T[], value: unknown): T | undefined {
+  return options.find(option => option === value)
+}
+
 export function normalizeWritingToolsPreferences(
-  raw: any
+  raw: unknown
 ): WritingToolsPreferences {
-  const rephrase = raw?.rephrase ?? {}
+  const data = isRecord(raw) ? raw : {}
+  const rephrase = isRecord(data.rephrase) ? data.rephrase : {}
   return {
-    recentLanguages: Array.isArray(raw?.recentLanguages)
-      ? raw.recentLanguages
-          .filter((language: unknown) => typeof language === 'string')
+    recentLanguages: Array.isArray(data.recentLanguages)
+      ? data.recentLanguages
+          .filter(
+            (language: unknown): language is string =>
+              typeof language === 'string'
+          )
           .slice(0, MAX_RECENT_LANGUAGES)
       : [],
     rephrase: {
-      level: LEVELS.includes(rephrase.level) ? rephrase.level : 'medium',
-      style: STYLES.includes(rephrase.style) ? rephrase.style : null,
-      length: LENGTHS.includes(rephrase.length) ? rephrase.length : null,
+      level: pick(LEVELS, rephrase.level) ?? 'medium',
+      style: pick(STYLES, rephrase.style) ?? null,
+      length: pick(LENGTHS, rephrase.length) ?? null,
     },
-    showDiff: raw?.showDiff !== false,
+    showDiff: data.showDiff !== false,
   }
 }
 

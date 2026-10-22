@@ -232,12 +232,10 @@ function promote(ids: SelectionActionId[], id: SelectionActionId, slot: number) 
 
 /**
  * The applicable action ids for a selection, best first. Callers take the top
- * few; `deriveSelectionActions` does that. `text` is part of the signature but
- * the scope already carries everything the rules read.
+ * few; `deriveSelectionActions` does that.
  */
 export function selectionActionIds(
-  scope: SelectionScope,
-  text: string
+  scope: SelectionScope
 ): SelectionActionId[] {
   const cues = scope.cues ?? []
   const term = cues.includes('term') ? TERM_ACTIONS[scope.kind] : undefined
@@ -271,7 +269,7 @@ export function deriveSelectionActions(
   const scope = selection.scope ?? classifySelectionText(text, path)
   const where =
     from === to ? `line ${from} of ${path}` : `lines ${from}-${to} of ${path}`
-  return selectionActionIds(scope, text)
+  return selectionActionIds(scope)
     .slice(0, max)
     .map(id => ({ id, prompt: PROMPTS[id](where), edits: EDITS.has(id) }))
 }

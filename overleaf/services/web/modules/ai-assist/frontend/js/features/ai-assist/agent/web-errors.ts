@@ -273,7 +273,7 @@ function searchFailure(error: string): WebFailure {
         attempts.length > 1
           ? 'Every search provider returned an error.'
           : 'The search provider returned an error.',
-      fixes: fixesFor(attempts.map(a => ({ ...a, label: a.label }))),
+      fixes: fixesFor(attempts),
       attempts,
       raw: error,
     }

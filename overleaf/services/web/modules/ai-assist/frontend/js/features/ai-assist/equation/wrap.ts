@@ -1,17 +1,12 @@
 import { stripFences } from '../writing-tools/parse-output'
 import { CursorWhere } from './context'
-import { EquationForm } from './parse-output'
+import { EQUATION_FORMS, EquationForm } from './parse-output'
 
-const ENVIRONMENT_FORMS = new Set([
-  'equation',
-  'equation*',
-  'align',
-  'align*',
-  'gather',
-  'gather*',
-  'multline',
-  'multline*',
-])
+const ENVIRONMENT_FORMS: ReadonlySet<string> = new Set(
+  EQUATION_FORMS.filter(
+    form => form !== 'body' && form !== 'inline' && form !== 'display'
+  )
+)
 
 /**
  * The math only: the delimiters, form environment and `\label` the model was

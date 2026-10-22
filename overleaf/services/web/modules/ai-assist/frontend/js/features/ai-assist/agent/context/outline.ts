@@ -41,7 +41,7 @@ const TITLE_RE = /\\title\s*(?:\[[^\]]*\])?\s*\{/
 const PACKAGE_RE = /\\usepackage\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}/g
 
 /** Strips a line comment, respecting an escaped percent sign. */
-function uncomment(line: string): string {
+export function uncomment(line: string): string {
   const index = line.search(/(?<!\\)%/)
   return index === -1 ? line : line.slice(0, index)
 }
@@ -93,6 +93,7 @@ export function parseOutline({
   const sections: OutlineSection[] = []
   const includes: OutlineInclude[] = []
   const packages: string[] = []
+  const seenPackages = new Set<string>()
   const notes: string[] = []
   let documentClass: string | null = null
   let hasTitle = false
@@ -122,7 +123,10 @@ export function parseOutline({
       while (pkg) {
         for (const name of pkg[1].split(',')) {
           const trimmed = name.trim()
-          if (trimmed && !packages.includes(trimmed)) packages.push(trimmed)
+          if (trimmed && !seenPackages.has(trimmed)) {
+            seenPackages.add(trimmed)
+            packages.push(trimmed)
+          }
         }
         pkg = PACKAGE_RE.exec(line)
       }

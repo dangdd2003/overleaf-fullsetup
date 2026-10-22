@@ -21,6 +21,7 @@ import {
   extractFootnotes,
   normalizeMarkdown,
   splitMarkdownBlocks,
+  MATH_ENVIRONMENTS,
 } from './markdown-repair'
 import {
   faviconUrl,
@@ -30,7 +31,7 @@ import {
   WebSources,
 } from '../../agent/web-sources'
 
-export function insertSnippetIntoEditor(text: string): boolean {
+function insertSnippetIntoEditor(text: string): boolean {
   if (!text || typeof window === 'undefined') return false
   window.dispatchEvent(
     new CustomEvent('aiAssist:insertSnippet', { detail: { text } })
@@ -38,7 +39,7 @@ export function insertSnippetIntoEditor(text: string): boolean {
   return true
 }
 
-export function tableElementToLatex(tableEl: HTMLTableElement): string {
+function tableElementToLatex(tableEl: HTMLTableElement): string {
   const rows = Array.from(tableEl.querySelectorAll('tr'))
   if (rows.length === 0) return ''
 
@@ -80,7 +81,7 @@ export function tableElementToLatex(tableEl: HTMLTableElement): string {
   return lines.join('\n')
 }
 
-export function extractCodeText(block: Element | null): string {
+function extractCodeText(block: Element | null): string {
   if (!block) return ''
   const dataCode = block.getAttribute('data-code')
   if (dataCode !== null && dataCode !== undefined) return dataCode
@@ -94,30 +95,23 @@ export function extractCodeText(block: Element | null): string {
   return codeEl?.textContent || ''
 }
 
-export function renderCodeLinesHtml(code: string, lang: string): string {
+function renderCodeLinesHtml(code: string, lang: string): string {
   const lineSegments = lang ? highlightCodeLines(code, lang) : null
+  const lineRows: Array<Array<{ text: string; className?: string }>> =
+    lineSegments && lineSegments.length > 0
+      ? lineSegments
+      : code.split('\n').map(line => [{ text: line }])
 
-  if (lineSegments && lineSegments.length > 0) {
-    return lineSegments
-      .map((segments, index) => {
-        const lineNo = index + 1
-        const lineHtml = segments
-          .map(s =>
-            s.className
-              ? `<span class="${s.className}">${escapeHtml(s.text)}</span>`
-              : escapeHtml(s.text)
-          )
-          .join('')
-        return `<span class="ai-assist-code-line"><span class="ai-assist-code-line-num" aria-hidden="true">${lineNo}</span><span class="ai-assist-code-line-content">${lineHtml || ' '}</span></span>`
-      })
-      .join('')
-  }
-
-  const rawLines = code.split('\n')
-  return rawLines
-    .map((line, index) => {
+  return lineRows
+    .map((segments, index) => {
       const lineNo = index + 1
-      const lineHtml = escapeHtml(line)
+      const lineHtml = segments
+        .map(s =>
+          s.className
+            ? `<span class="${s.className}">${escapeHtml(s.text)}</span>`
+            : escapeHtml(s.text)
+        )
+        .join('')
       return `<span class="ai-assist-code-line"><span class="ai-assist-code-line-num" aria-hidden="true">${lineNo}</span><span class="ai-assist-code-line-content">${lineHtml || ' '}</span></span>`
     })
     .join('')
@@ -200,7 +194,7 @@ function resetTableSize(handle: HTMLElement) {
   }
 }
 
-export function renderFileMentionHtml(filePath: string, line?: string): string {
+function renderFileMentionHtml(filePath: string, line?: string): string {
   const cleanPath = filePath.replace(/^\.\//, '')
   const safePath = escapeHtml(cleanPath)
   const lineAttr = line ? ` data-line="${escapeHtml(line)}"` : ''
@@ -210,10 +204,19 @@ export function renderFileMentionHtml(filePath: string, line?: string): string {
   return `<button type="button" class="ai-assist-file-mention ai-assist-file-link" data-path="${safePath}"${lineAttr} title="${title}" aria-label="${title}"><span class="ai-assist-file-name">${safePath}</span>${line ? `<span class="ai-assist-file-line">${lineLabel}</span>` : ''}</button>`
 }
 
-export const FILE_PATH_REGEX =
-  /(?:^|(?<=[\s("`]))((?:\.\/)?[a-zA-Z0-9_.-]+(?:\/[a-zA-Z0-9_.-]+)*\.(?:tex|bib|sty|cls|bbl|bst|dtx|ins|png|jpg|jpeg|pdf|eps|svg|csv|tsv|txt|md))(?::(\d+))?(?=[.,;:!?")\s`]|$)/g
+const FILE_PATH_PATTERN =
+  '(?:\\./)?[a-zA-Z0-9_.-]+(?:/[a-zA-Z0-9_.-]+)*\\.(?:tex|bib|sty|cls|bbl|bst|dtx|ins|png|jpg|jpeg|pdf|eps|svg|csv|tsv|txt|md)'
 
-export function renderTextWithFileMentions(rawText: string): string {
+const FILE_PATH_REGEX = new RegExp(
+  String.raw`(?:^|(?<=[\s("\`]))(${FILE_PATH_PATTERN})(?::(\d+))?(?=[.,;:!?")\s\`]|$)`,
+  'g'
+)
+
+const CODESPAN_FILE_REGEX = new RegExp(
+  `^(${FILE_PATH_PATTERN})(?::(\\d+))?$`
+)
+
+function renderTextWithFileMentions(rawText: string): string {
   if (!rawText) return ''
   return rawText.replace(FILE_PATH_REGEX, (_match, filePath, line) => {
     return renderFileMentionHtml(filePath, line)
@@ -290,12 +293,7 @@ function escapeHtml(str: string): string {
     .replace(/'/g, '&#39;')
 }
 
-const MATH_ENVIRONMENTS =
-  '(?:equation|align|alignat|gather|multline|matrix|pmatrix|bmatrix|vmatrix|Vmatrix|cases|aligned|gathered)'
-const blockEnvRegex = new RegExp(
-  `^(\\\\begin\\{(${MATH_ENVIRONMENTS}\\*?)\\}[\\s\\S]+?\\\\end\\{\\2\\})`
-)
-const inlineEnvRegex = new RegExp(
+const envRegex = new RegExp(
   `^(\\\\begin\\{(${MATH_ENVIRONMENTS}\\*?)\\}[\\s\\S]+?\\\\end\\{\\2\\})`
 )
 
@@ -310,6 +308,13 @@ function renderKatex(text: string, displayMode: boolean): string {
     katexCache.set(key, html)
   }
   return html
+}
+
+interface BlockMathToken {
+  type: 'blockMath'
+  raw: string
+  text: string
+  display: boolean
 }
 
 const blockMath = {
@@ -331,18 +336,25 @@ const blockMath = {
       return { type: 'blockMath', raw: m[0], text: m[1].trim(), display: true }
     }
     // 3. \begin{env} ... \end{env}
-    m = src.match(blockEnvRegex)
+    m = src.match(envRegex)
     if (m) {
       return { type: 'blockMath', raw: m[0], text: m[1].trim(), display: true }
     }
   },
-  renderer(token: any) {
+  renderer(token: BlockMathToken) {
     try {
       return renderKatex(token.text, token.display)
     } catch {
       return `<div class="katex-error">${escapeHtml(token.text)}</div>`
     }
   },
+}
+
+interface InlineMathToken {
+  type: 'inlineMath'
+  raw: string
+  text: string
+  display: boolean
 }
 
 const inlineMath = {
@@ -364,7 +376,7 @@ const inlineMath = {
       return { type: 'inlineMath', raw: m[0], text: m[1].trim(), display: true }
     }
     // 3. \begin{env} ... \end{env}
-    m = src.match(inlineEnvRegex)
+    m = src.match(envRegex)
     if (m) {
       return { type: 'inlineMath', raw: m[0], text: m[1].trim(), display: true }
     }
@@ -392,7 +404,7 @@ const inlineMath = {
       }
     }
   },
-  renderer(token: any) {
+  renderer(token: InlineMathToken) {
     try {
       return renderKatex(token.text, token.display)
     } catch {
@@ -484,6 +496,12 @@ function renderCitation(sources: WebSource[]): string {
   )
 }
 
+interface CitationToken {
+  type: 'citation'
+  raw: string
+  sources: WebSource[]
+}
+
 const citation = {
   name: 'citation',
   level: 'inline' as const,
@@ -511,7 +529,7 @@ const citation = {
     if (sources.length === 0 && !m[0].includes('【')) return
     return { type: 'citation', raw: m[0], sources }
   },
-  renderer(token: any) {
+  renderer(token: CitationToken) {
     return token.sources.length > 0 ? renderCitation(token.sources) : ''
   },
 }
@@ -611,6 +629,13 @@ const RAW_HTML_TAGS = new Set(
 let activeFootnotes: { notes: Map<string, string>; order: string[] } | null =
   null
 
+interface FootnoteRefToken {
+  type: 'footnoteRef'
+  raw: string
+  n: number
+  note: string
+}
+
 const footnoteRef = {
   name: 'footnoteRef',
   level: 'inline' as const,
@@ -625,7 +650,7 @@ const footnoteRef = {
     if (!order.includes(m[1])) order.push(m[1])
     return { type: 'footnoteRef', raw: m[0], n: order.indexOf(m[1]) + 1, note }
   },
-  renderer(token: any) {
+  renderer(token: FootnoteRefToken) {
     return `<sup class="ai-assist-footnote-ref" title="${escapeHtml(token.note)}">${token.n}</sup>`
   },
 }
@@ -642,10 +667,20 @@ function renderFootnotes(): string {
 // table renderer takes the next one for each table it draws
 let activeTableTitles: string[] | null = null
 
+interface MarkdownToken {
+  type: string
+  raw?: string
+  text?: string
+  tokens?: MarkdownToken[]
+  items?: Array<{ tokens?: MarkdownToken[] }>
+  header?: Array<{ tokens?: MarkdownToken[]; text?: string }>
+  [key: string]: unknown
+}
+
 const TABLE_CAPTION = /^table(?:\s+\d+[a-z]?)?\s*[:.]\s*(\S.*)$/i
 
 /** The text of inline tokens, still HTML-escaped as the lexer left it. */
-function inlinePlainText(tokens: any[] = []): string {
+function inlinePlainText(tokens: MarkdownToken[] = []): string {
   return tokens
     .map(token => {
       if (['citation', 'footnoteRef', 'html', 'image'].includes(token.type)) {
@@ -653,7 +688,7 @@ function inlinePlainText(tokens: any[] = []): string {
       }
       if (token.type === 'br') return ' '
       if (token.tokens) return inlinePlainText(token.tokens)
-      if (token.type === 'inlineMath') return escapeHtml(token.raw)
+      if (token.type === 'inlineMath' && token.raw) return escapeHtml(token.raw)
       return token.text ?? ''
     })
     .join('')
@@ -677,34 +712,34 @@ function cleanTableTitle(escaped: string): string {
 }
 
 /** A single-line paragraph, as its inline tokens. */
-function singleLine(token: any): any[] | null {
-  if (token?.type !== 'paragraph' || token.text.includes('\n')) return null
-  return token.tokens
+function singleLine(token: MarkdownToken | undefined): MarkdownToken[] | null {
+  if (token?.type !== 'paragraph' || !token.text || token.text.includes('\n')) return null
+  return token.tokens ?? null
 }
 
 /** A "Table: …" or "Table 2. …" caption line. */
-function captionTitle(token: any): string {
+function captionTitle(token: MarkdownToken | undefined): string {
   const inline = singleLine(token)
   const text = inline ? inlinePlainText(inline).trim() : ''
   return TABLE_CAPTION.test(text) ? cleanTableTitle(text) : ''
 }
 
 /** A heading, a bold line or a caption written right above a table. */
-function leadInTitle(token: any): string {
-  if (token?.type === 'heading') {
+function leadInTitle(token: MarkdownToken | undefined): string {
+  if (token?.type === 'heading' && token.tokens) {
     return cleanTableTitle(inlinePlainText(token.tokens))
   }
   const inline = singleLine(token)?.filter(
-    t => !(t.type === 'text' && /^[\s:]*$/.test(t.text))
+    t => !(t.type === 'text' && t.text && /^[\s:]*$/.test(t.text))
   )
-  if (inline?.length === 1 && inline[0].type === 'strong') {
+  if (inline?.length === 1 && inline[0].type === 'strong' && inline[0].tokens) {
     return cleanTableTitle(inlinePlainText(inline[0].tokens))
   }
   return captionTitle(token)
 }
 
 /** Index of the nearest block before or after `from`, skipping blank lines. */
-function neighbourBlock(tokens: any[], from: number, step: 1 | -1): number {
+function neighbourBlock(tokens: MarkdownToken[], from: number, step: 1 | -1): number {
   let at = from + step
   while (tokens[at]?.type === 'space') at += step
   return tokens[at] ? at : -1
@@ -716,14 +751,16 @@ function neighbourBlock(tokens: any[], from: number, step: 1 | -1): number {
  * becomes its title and leaves the prose; failing that a caption right below
  * it; failing that its column names.
  */
-function titleTables(tokens: any[], titles: string[]) {
+function titleTables(tokens: MarkdownToken[], titles: string[]) {
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i]
-    if (token.type === 'blockquote') titleTables(token.tokens, titles)
-    if (token.type === 'list') {
-      for (const item of token.items) titleTables(item.tokens, titles)
+    if (token.type === 'blockquote' && token.tokens) titleTables(token.tokens, titles)
+    if (token.type === 'list' && token.items) {
+      for (const item of token.items) {
+        if (item.tokens) titleTables(item.tokens, titles)
+      }
     }
-    if (token.type !== 'table') continue
+    if (token.type !== 'table' || !token.header) continue
 
     const before = neighbourBlock(tokens, i, -1)
     const after = neighbourBlock(tokens, i, 1)
@@ -735,7 +772,7 @@ function titleTables(tokens: any[], titles: string[]) {
       tokens.splice(after, 1)
     } else {
       title = token.header
-        .map((cell: any) => cleanTableTitle(inlinePlainText(cell.tokens)))
+        .map(cell => cleanTableTitle(inlinePlainText(cell.tokens)))
         .filter(Boolean)
         .join(' · ')
     }
@@ -814,9 +851,7 @@ marked.use({
 </div>`
     },
     codespan(code: string) {
-      const fileMatch = code.match(
-        /^((?:\.\/)?[a-zA-Z0-9_.-]+(?:\/[a-zA-Z0-9_.-]+)*\.(?:tex|bib|sty|cls|bbl|bst|dtx|ins|png|jpg|jpeg|pdf|eps|svg|csv|tsv|txt|md))(?::(\d+))?$/
-      )
+      const fileMatch = code.match(CODESPAN_FILE_REGEX)
       if (fileMatch) {
         return renderFileMentionHtml(fileMatch[1], fileMatch[2])
       }
@@ -872,7 +907,7 @@ marked.use({
       // Inline style is how raw HTML could fetch a remote background image
       // (CSS url()) or lay a page-sized box over the chat. Such markup shows as
       // text, the way remote images do.
-      const styled = /[\s/]style\s*=/i.test(html)
+      const styled = /style\s*=/i.test(html)
       return !styled && tags.every(([, tag]) => RAW_HTML_TAGS.has(tag.toLowerCase()))
         ? html
         : escapeHtml(html)
@@ -948,7 +983,7 @@ function renderPreparedMarkdown(
 ): string {
   const footnotes = extractFootnotes(text)
 
-  DOMPurify.addHook('afterSanitizeAttributes', node => {
+  const sanitizeAttributesHook = (node: Element) => {
     if (node.nodeName === 'A') {
       const rawHref = node.getAttribute('href') || ''
       if (rawHref) {
@@ -969,7 +1004,9 @@ function renderPreparedMarkdown(
       node.setAttribute('rel', 'noreferrer noopener')
       node.setAttribute('target', '_blank')
     }
-  })
+  }
+
+  DOMPurify.addHook('afterSanitizeAttributes', sanitizeAttributesHook)
 
   activeSources = sources ?? null
   activeFootnotes = { notes: footnotes.notes, order: [] }
@@ -999,7 +1036,7 @@ function renderPreparedMarkdown(
     activeTableTitles = null
     activeIsThinking = false
     activeCodeClass = EDITOR_CODE_CLASS
-    DOMPurify.removeHook('afterSanitizeAttributes')
+    DOMPurify.removeHook('afterSanitizeAttributes', sanitizeAttributesHook)
   }
 }
 
@@ -1083,6 +1120,58 @@ export function reconcileContainerHtml(container: HTMLElement, newHtml: string) 
   }
 }
 
+const buttonTimers = new WeakMap<HTMLElement, number>()
+
+interface FlashButtonOptions {
+  activeClass: string
+  labelSelector: string
+  activeLabel: string
+  idleLabel: string
+  activeTitle: string
+  idleTitle: string
+  timeoutMs?: number
+}
+
+function flashButton(btn: HTMLElement, options: FlashButtonOptions): void {
+  const existingTimer = buttonTimers.get(btn)
+  if (existingTimer !== undefined) {
+    window.clearTimeout(existingTimer)
+  }
+
+  btn.classList.add(options.activeClass)
+  const label = btn.querySelector(options.labelSelector)
+  if (label) {
+    label.textContent = options.activeLabel
+  }
+  btn.setAttribute('title', options.activeTitle)
+
+  const timer = window.setTimeout(() => {
+    btn.classList.remove(options.activeClass)
+    if (label) {
+      label.textContent = options.idleLabel
+    }
+    btn.setAttribute('title', options.idleTitle)
+    buttonTimers.delete(btn)
+  }, options.timeoutMs ?? 2000)
+
+  buttonTimers.set(btn, timer)
+}
+
+function openFileLink(
+  el: HTMLElement,
+  openFile: (path: string, line?: number) => void
+): void {
+  const path =
+    el.getAttribute('data-path') ||
+    el.textContent?.trim() ||
+    ''
+  const lineStr = el.getAttribute('data-line')
+  const line = lineStr ? parseInt(lineStr, 10) : undefined
+  if (path) {
+    openFile(path, line)
+  }
+}
+
 export const MarkdownContent: FC<{
   content: string
   onOpenFile?: (path: string, line?: number) => void
@@ -1117,9 +1206,14 @@ export const MarkdownContent: FC<{
   }, [text, sources, baseUrl])
 
   const containerRef = useRef<HTMLDivElement>(null)
-  const fadeState = useRef<FadeState | null>(
-    revealLive ? createFadeState() : null
-  )
+  const fadeState = useRef<FadeState | null>(null)
+  const didInitFade = useRef(false)
+  if (!didInitFade.current) {
+    didInitFade.current = true
+    if (revealLive) {
+      fadeState.current = createFadeState()
+    }
+  }
 
   // Runs after React renders and before browser paint to incrementally update DOM
   useLayoutEffect(() => {
@@ -1156,24 +1250,14 @@ export const MarkdownContent: FC<{
 
         insertSnippetIntoEditor(textToInsert)
 
-        if ((insertBtn as any)._insertTimeout) {
-          window.clearTimeout((insertBtn as any)._insertTimeout)
-        }
-
-        insertBtn.classList.add('is-inserted')
-        const label = insertBtn.querySelector('.ai-assist-insert-text')
-        if (label) {
-          label.textContent = 'Inserted!'
-        }
-        insertBtn.setAttribute('title', 'Inserted!')
-        ;(insertBtn as any)._insertTimeout = window.setTimeout(() => {
-          insertBtn.classList.remove('is-inserted')
-          if (label) {
-            label.textContent = 'Insert'
-          }
-          insertBtn.setAttribute('title', 'Insert at cursor')
-          delete (insertBtn as any)._insertTimeout
-        }, 2000)
+        flashButton(insertBtn, {
+          activeClass: 'is-inserted',
+          labelSelector: '.ai-assist-insert-text',
+          activeLabel: 'Inserted!',
+          idleLabel: 'Insert',
+          activeTitle: 'Inserted!',
+          idleTitle: 'Insert at cursor',
+        })
         return
       }
 
@@ -1194,24 +1278,14 @@ export const MarkdownContent: FC<{
 
         insertSnippetIntoEditor(latex)
 
-        if ((tableInsertBtn as any)._insertTimeout) {
-          window.clearTimeout((tableInsertBtn as any)._insertTimeout)
-        }
-
-        tableInsertBtn.classList.add('is-inserted')
-        const label = tableInsertBtn.querySelector('.ai-assist-insert-text')
-        if (label) {
-          label.textContent = 'Inserted!'
-        }
-        tableInsertBtn.setAttribute('title', 'Inserted!')
-        ;(tableInsertBtn as any)._insertTimeout = window.setTimeout(() => {
-          tableInsertBtn.classList.remove('is-inserted')
-          if (label) {
-            label.textContent = 'Insert'
-          }
-          tableInsertBtn.setAttribute('title', 'Insert as LaTeX table')
-          delete (tableInsertBtn as any)._insertTimeout
-        }, 2000)
+        flashButton(tableInsertBtn, {
+          activeClass: 'is-inserted',
+          labelSelector: '.ai-assist-insert-text',
+          activeLabel: 'Inserted!',
+          idleLabel: 'Insert',
+          activeTitle: 'Inserted!',
+          idleTitle: 'Insert as LaTeX table',
+        })
         return
       }
 
@@ -1229,24 +1303,14 @@ export const MarkdownContent: FC<{
         if (!textToCopy) return
 
         copyTextToClipboard(textToCopy).then(() => {
-          if ((copyBtn as any)._copyTimeout) {
-            window.clearTimeout((copyBtn as any)._copyTimeout)
-          }
-
-          copyBtn.classList.add('is-copied')
-          const label = copyBtn.querySelector('.ai-assist-copy-text')
-          if (label) {
-            label.textContent = 'Copied!'
-          }
-          copyBtn.setAttribute('title', 'Copied!')
-          ;(copyBtn as any)._copyTimeout = window.setTimeout(() => {
-            copyBtn.classList.remove('is-copied')
-            if (label) {
-              label.textContent = 'Copy'
-            }
-            copyBtn.setAttribute('title', 'Copy code')
-            delete (copyBtn as any)._copyTimeout
-          }, 2000)
+          flashButton(copyBtn, {
+            activeClass: 'is-copied',
+            labelSelector: '.ai-assist-copy-text',
+            activeLabel: 'Copied!',
+            idleLabel: 'Copy',
+            activeTitle: 'Copied!',
+            idleTitle: 'Copy code',
+          })
         })
         return
       }
@@ -1258,15 +1322,7 @@ export const MarkdownContent: FC<{
       if (fileLink) {
         e.preventDefault()
         e.stopPropagation()
-        const path =
-          fileLink.getAttribute('data-path') ||
-          fileLink.textContent?.trim() ||
-          ''
-        const lineStr = fileLink.getAttribute('data-line')
-        const line = lineStr ? parseInt(lineStr, 10) : undefined
-        if (path) {
-          openFile(path, line)
-        }
+        openFileLink(fileLink, openFile)
       }
     },
     [openFile]
@@ -1282,15 +1338,7 @@ export const MarkdownContent: FC<{
         if (fileLink) {
           e.preventDefault()
           e.stopPropagation()
-          const path =
-            fileLink.getAttribute('data-path') ||
-            fileLink.textContent?.trim() ||
-            ''
-          const lineStr = fileLink.getAttribute('data-line')
-          const line = lineStr ? parseInt(lineStr, 10) : undefined
-          if (path) {
-            openFile(path, line)
-          }
+          openFileLink(fileLink, openFile)
         }
       }
     },

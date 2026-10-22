@@ -2,6 +2,7 @@ import { AgentMessage, ProviderRetry, ProviderSettings } from '../providers/type
 import {
   buildRepairMessage,
   buildUserMessage,
+  splitWhitespace,
   WRITING_TOOLS_SYSTEM,
   WritingRequest,
 } from './prompt'
@@ -94,12 +95,6 @@ function repairable(warnings: WritingWarning[]): WritingWarning[] {
   return warnings.filter(warning => REPAIRABLE.has(warning.kind))
 }
 
-function splitEdges(text: string) {
-  const lead = text.match(/^\s*/)?.[0] ?? ''
-  const trail = text.slice(lead.length).match(/\s*$/)?.[0] ?? ''
-  return { lead, trail }
-}
-
 /**
  * One writing-tool run: a single model call, its reply parsed and checked
  * deterministically, and — only when the check finds broken LaTeX or copied
@@ -171,7 +166,7 @@ export async function generate({
     return options.length ? { kind: 'synonyms', options } : { kind: 'empty' }
   }
 
-  const { lead, trail } = splitEdges(original)
+  const { lead, trail } = splitWhitespace(original)
   const raw = await call([user], text => {
     const parsed = parseRewrite(text, false)
     onProgress({

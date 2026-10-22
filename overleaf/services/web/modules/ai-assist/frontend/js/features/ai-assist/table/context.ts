@@ -6,6 +6,7 @@ import { mathAncestorNode } from '@/features/source-editor/utils/tree-operations
 import { maskComments } from '../texgpt/latex-text'
 import { structureProblems } from '../texgpt/checks'
 import { isTabularText } from '../generator/clipboard'
+import { TABULAR_START } from './columns'
 
 /** Where the table goes: a new float, or only a tabular inside a float or box. */
 export type InsertWhere = { kind: 'float' } | { kind: 'inner'; hasCaption: boolean }
@@ -29,22 +30,6 @@ export type BlockRange = {
   indent: string
 }
 
-/** Floats and boxes a float cannot go inside: only a tabular goes there. */
-const INNER_ENVIRONMENTS = new Set([
-  'table',
-  'table*',
-  'figure',
-  'figure*',
-  'subtable',
-  'subfigure',
-  'minipage',
-  'wraptable',
-  'wrapfigure',
-  'sidewaystable',
-  'sidewaysfigure',
-  'threeparttable',
-])
-
 /** The inner environments that have a caption of their own. */
 const FLOATS = new Set([
   'table',
@@ -58,6 +43,9 @@ const FLOATS = new Set([
   'sidewaystable',
   'sidewaysfigure',
 ])
+
+/** Floats and boxes a float cannot go inside: only a tabular goes there. */
+const INNER_ENVIRONMENTS = new Set([...FLOATS, 'minipage', 'threeparttable'])
 
 /** Command arguments and groups: `\textbf{…}`, `\footnote{…}`, `{\small …}`. */
 const GROUPS = ['Group', 'TextArgument', 'ShortTextArgument', 'OptionalArgument']
@@ -119,7 +107,7 @@ export function tableWhere(
 }
 
 export function selectionKind(text: string): SelectionKind {
-  if (/\\begin\s*\{(?:tabular\*?|tabularx|longtable)\}/.test(maskComments(text))) return 'table'
+  if (TABULAR_START.test(maskComments(text))) return 'table'
   return isTabularText(text) ? 'data' : 'text'
 }
 

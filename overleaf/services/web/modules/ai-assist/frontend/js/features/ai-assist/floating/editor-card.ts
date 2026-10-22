@@ -26,7 +26,7 @@ export const FLOATING_MARGIN = 16
  * Below this beside the text the card would be squashed: it is laid over the
  * text instead, inside the visible editor.
  */
-export const MIN_FLOATING_HEIGHT = 200
+const MIN_FLOATING_HEIGHT = 200
 
 export type FloatingSide = 'top' | 'bottom'
 
@@ -54,7 +54,7 @@ export type FloatingCardOptions = {
 }
 
 /** How much wider than its box the widest of `rows` needs to be. */
-export function rowOverflow(rows: Iterable<HTMLElement>): number {
+function rowOverflow(rows: Iterable<HTMLElement>): number {
   let overflow = 0
   for (const row of rows) {
     overflow = Math.max(overflow, row.scrollWidth - row.clientWidth)
@@ -79,7 +79,7 @@ type Box = { left: number; right: number; top: number; bottom: number }
  * shows. Horizontally it spans the range on one line, or the last line's
  * part of it otherwise.
  */
-export function rangeCoords(
+function rangeCoords(
   view: EditorView,
   { from, to }: FloatingRange
 ): Rect | null {
@@ -169,11 +169,10 @@ export function floatingCard(
     // then kept inside the pane, then inside the window. Nothing depends on a
     // measured width, so it never shows at a stale offset, before its content
     // first renders or after it resizes
-    const keep = (name: string, value: string, edge: string) =>
+    const keep = (value: string, edge: string) =>
       `clamp(var(--ai-floating-${edge}-min, -1e5px), ${value}, calc(var(--ai-floating-${edge}-max, 1e5px) - 100%))`
     dom.style.transform = `translateX(${keep(
-      'window',
-      keep('pane', centred ? '-50%' : '0px', 'pane'),
+      keep(centred ? '-50%' : '0px', 'pane'),
       'window'
     )})`
     // Shown only once it is placed with its content measured, so the first

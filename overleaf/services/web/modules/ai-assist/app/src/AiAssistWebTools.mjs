@@ -12,7 +12,7 @@ import {
   isoDay,
   webError,
 } from "./web-fetch/util.mjs";
-import { apiRequest } from "./web-fetch/api.mjs";
+import { apiJson, apiRequest } from "./web-fetch/api.mjs";
 import {
   isNotMcpError,
   mcpTarget,
@@ -27,8 +27,11 @@ import { REQUEST_TIMEOUT_MS, fetchPublicUrl } from "./web-fetch/transport.mjs";
 import { WebFetcher } from "./web-fetch/WebFetcher.mjs";
 import { sharedBrowserRoute } from "./web-fetch/routes/browser.mjs";
 import {
+  EXA_API_BASE,
+  FIRECRAWL_API_BASE,
   JINA_SEARCH_BASE,
   OLLAMA_API_BASE,
+  PARALLEL_API_BASE,
   TAVILY_API_BASE,
   WEBSEARCHAPI_BASE,
   exaTimeoutMs,
@@ -38,38 +41,12 @@ import {
   jinaTimeoutMs,
   tavilyHeaders,
 } from "./web-fetch/routes/readers.mjs";
-import { WebRouter, clearEndpointHealth } from "./web-fetch/routing.mjs";
-import {
-  clearWebCacheStore,
-  ownerWebCaches,
-} from "./web-fetch/cache-store.mjs";
+import { normalizeInstanceBaseUrl } from "./web-fetch/base-url.mjs";
+import { WebRouter } from "./web-fetch/routing.mjs";
+import { ownerWebCaches } from "./web-fetch/cache-store.mjs";
 import { JINA_COUNTRIES, JINA_LANGUAGES } from "./web-fetch/jina-codes.mjs";
 import { cacheKeyFor } from "./web-fetch/urls.mjs";
-import { clearWorkingSet, keepSearchPage } from "./web-fetch/working-set.mjs";
-
-export { openWebCache } from "./web-fetch/cache-store.mjs";
-export {
-  WebRouter,
-  WebRouter as EndpointRotator,
-  clearEndpointHealth,
-} from "./web-fetch/routing.mjs";
-export {
-  PAGE_CHARS,
-  documentFromResponse,
-  splitPages,
-} from "./web-fetch/document.mjs";
-export { findPassages } from "./web-fetch/find.mjs";
-export { extractPageDates, htmlToMarkdown } from "./web-fetch/extract/html.mjs";
-export {
-  fetchPublicUrl,
-  guardedLookup,
-  isPublicAddress,
-} from "./web-fetch/transport.mjs";
-export {
-  isoDay,
-  safeDecodeURI,
-  safeDecodeURIComponent,
-} from "./web-fetch/util.mjs";
+import { keepSearchPage } from "./web-fetch/working-set.mjs";
 
 /**
  * Web research for the agent: `web_search` and `web_fetch`.
@@ -87,7 +64,8 @@ export {
  * through.
  */
 
-export const WEB_SEARCH_PROVIDERS = [
+// Every provider, in the order a fallback picks the first enabled one
+const WEB_SEARCH_PROVIDERS = [
   "searxng",
   "ollama",
   "websearchapi",
@@ -102,40 +80,14 @@ export const WEB_SEARCH_PROVIDERS = [
   "mcp",
 ];
 export const WEB_TOOL_NAMES = new Set(["web_search", "web_fetch"]);
-export const WEB_SEARCH_ROTATION_STRATEGIES = [
+const WEB_SEARCH_ROTATION_STRATEGIES = [
   "round-robin",
   "provider-priority",
   "sticky",
 ];
-export const WEB_SEARCH_PRIMARY_PROVIDERS = [
-  "searxng",
-  "ollama",
-  "websearchapi",
-  "tavily",
-  "firecrawl",
-  "firecrawlSelfHosted",
-  "jina",
-  "langsearch",
-  "exa",
-  "tinyfish",
-  "parallel",
-  "mcp",
-];
+const WEB_SEARCH_PRIMARY_PROVIDERS = WEB_SEARCH_PROVIDERS;
 /** Providers that answer web_search. */
-export const SEARCH_PROVIDERS = new Set([
-  "searxng",
-  "ollama",
-  "websearchapi",
-  "tavily",
-  "firecrawl",
-  "firecrawlSelfHosted",
-  "jina",
-  "langsearch",
-  "exa",
-  "tinyfish",
-  "parallel",
-  "mcp",
-]);
+const SEARCH_PROVIDERS = new Set(WEB_SEARCH_PROVIDERS);
 
 export const WEB_SEARCH_DEFAULTS = {
   cacheHours: 24,
@@ -143,12 +95,10 @@ export const WEB_SEARCH_DEFAULTS = {
   maxCachedPages: 64,
 };
 
-export const LANGSEARCH_API_BASE = "https://api.langsearch.com";
-export const EXA_API_BASE = "https://api.exa.ai";
-export const TINYFISH_API_BASE = "https://api.search.tinyfish.ai";
-export const PARALLEL_API_BASE = "https://api.parallel.ai";
-export const PARALLEL_MAX_RESULTS = 20;
-export const PARALLEL_MODES = ["turbo", "fast", "basic", "advanced"];
+const LANGSEARCH_API_BASE = "https://api.langsearch.com";
+const TINYFISH_API_BASE = "https://api.search.tinyfish.ai";
+const PARALLEL_MAX_RESULTS = 20;
+const PARALLEL_MODES = ["turbo", "fast", "basic", "advanced"];
 
 /** Settings for a run with no search backend: web_fetch only, default caching. */
 export function fetchOnlyWebSettings() {
@@ -245,7 +195,7 @@ const RECENCY_VALUES = ["day", "week", "month", "year"];
  * Overleaf's own services. The body is capped too. Hosted providers pass as
  * the public addresses they are.
  */
-export const endpointFetch = (url, init = {}) => connectorFetch(url, init);
+const endpointFetch = (url, init = {}) => connectorFetch(url, init);
 
 /** The most results a SearXNG instance's answer keeps. */
 const SEARXNG_MAX_RESULTS = 100;
@@ -302,20 +252,8 @@ const SNIPPET_STOPWORDS = new Set([
   "recent",
 ]);
 
-/**
- * A search backend that returns the whole page as the "snippet" (Ollama does)
- * starts it with the site's boilerplate. Show the passage that actually
- * mentions what was searched for instead.
- */
-export function bestSnippet(text, query, max = MAX_SNIPPET_CHARS) {
-  const plain = collapse(
-    String(text ?? "")
-      .replace(/\{%[^%]*%\}/g, " ")
-      .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
-      .replace(/^#{1,6}\s+/gm, ""),
-  );
-  if (plain.length <= max) return plain;
-  const terms = [
+function queryTerms(query) {
+  return [
     ...new Set(
       collapse(query)
         .toLowerCase()
@@ -323,6 +261,24 @@ export function bestSnippet(text, query, max = MAX_SNIPPET_CHARS) {
         .filter((term) => term.length >= 3 && !SNIPPET_STOPWORDS.has(term)),
     ),
   ];
+}
+
+/**
+ * A search backend that returns the whole page as the "snippet" (Ollama does)
+ * starts it with the site's boilerplate. Show the passage that actually
+ * mentions what was searched for instead.
+ */
+function bestSnippet(text, queryOrTerms, max = MAX_SNIPPET_CHARS) {
+  const plain = collapse(
+    String(text ?? "")
+      .replace(/\{%[^%]*%\}/g, " ")
+      .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+      .replace(/^#{1,6}\s+/gm, ""),
+  );
+  if (plain.length <= max) return plain;
+  const terms = Array.isArray(queryOrTerms)
+    ? queryOrTerms
+    : queryTerms(queryOrTerms);
   const sentences = plain.split(/(?<=[.!?])\s+/);
   let best = 0;
   let bestScore = 0;
@@ -345,47 +301,27 @@ export function bestSnippet(text, query, max = MAX_SNIPPET_CHARS) {
  * The SearXNG API lives at `<instance>/search`. People paste the address of a
  * results page as often as the instance root, so both are accepted.
  */
-export function normalizeSearxngBaseUrl(raw) {
-  if (typeof raw !== "string" || !raw.trim()) return "";
-  let value = raw.trim();
-  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) value = `http://${value}`;
-  let parsed;
-  try {
-    parsed = new URL(value);
-  } catch {
+function normalizeSearxngBaseUrl(raw) {
+  const norm = normalizeInstanceBaseUrl(raw, /\/search\/?$/);
+  if (!norm && typeof raw === "string" && raw.trim()) {
     throw settingsError("The SearXNG URL is not a valid URL.");
   }
-  parsed.search = "";
-  parsed.hash = "";
-  parsed.pathname = parsed.pathname
-    .replace(/\/search\/?$/, "")
-    .replace(/\/+$/, "");
-  return parsed.toString().replace(/\/+$/, "");
+  return norm;
 }
 
 /**
  * A self-hosted Firecrawl's API lives at `<instance>/v2`. The address is
  * accepted with or without the version path.
  */
-export function normalizeFirecrawlBaseUrl(raw) {
-  if (typeof raw !== "string" || !raw.trim()) return "";
-  let value = raw.trim();
-  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) value = `http://${value}`;
-  let parsed;
-  try {
-    parsed = new URL(value);
-  } catch {
+function normalizeFirecrawlBaseUrl(raw) {
+  const norm = normalizeInstanceBaseUrl(raw, /\/v[12](\/.*)?$/);
+  if (!norm && typeof raw === "string" && raw.trim()) {
     throw settingsError("The Firecrawl URL is not a valid URL.");
   }
-  parsed.search = "";
-  parsed.hash = "";
-  parsed.pathname = parsed.pathname
-    .replace(/\/v[12](\/.*)?$/, "")
-    .replace(/\/+$/, "");
-  return parsed.toString().replace(/\/+$/, "");
+  return norm;
 }
 
-export function normalizeMcpOptions(raw = {}) {
+function normalizeMcpOptions(raw = {}) {
   const rawHeaders = Array.isArray(raw?.headers) ? raw.headers : [];
   const headers = rawHeaders
     .filter(
@@ -413,10 +349,7 @@ export function normalizeMcpOptions(raw = {}) {
   });
 }
 
-/**
- * Validates the web search settings a client sent with a run. Returns null
- * when none were sent, which leaves the web tools out of the run.
- */
+// A cache limit from the client: at least min, or the default when not a number
 function clampCacheParam(value, min, defaultValue) {
   const num =
     typeof value === "string"
@@ -468,22 +401,26 @@ function withoutUndefined(object) {
   );
 }
 
+function objectOrEmpty(value) {
+  return value && typeof value === "object" ? value : {};
+}
+
+function clampedInt(value, min, max) {
+  return Number.isInteger(value)
+    ? Math.min(max, Math.max(min, value))
+    : undefined;
+}
+
 /**
  * The WebSearchAPI.ai request options a user chose, keeping only valid values.
  * An option left out is left to the API's own default.
  */
-export function normalizeWebsearchapiOptions(raw = {}) {
-  const rawSearch =
-    raw?.search && typeof raw.search === "object" ? raw.search : {};
-  const rawScrape =
-    raw?.scrape && typeof raw.scrape === "object" ? raw.scrape : {};
-  const timeout = Number.isInteger(rawScrape.timeout)
-    ? Math.min(120, Math.max(1, rawScrape.timeout))
-    : undefined;
+function normalizeWebsearchapiOptions(raw = {}) {
+  const rawSearch = objectOrEmpty(raw?.search);
+  const rawScrape = objectOrEmpty(raw?.scrape);
+  const timeout = clampedInt(rawScrape.timeout, 1, 120);
   const search = withoutUndefined({
-    maxResults: Number.isInteger(rawSearch.maxResults)
-      ? Math.min(WEBSEARCHAPI_MAX_RESULTS, Math.max(1, rawSearch.maxResults))
-      : undefined,
+    maxResults: clampedInt(rawSearch.maxResults, 1, WEBSEARCHAPI_MAX_RESULTS),
     country: optionalText(rawSearch.country, /^[a-z]{2}$/i)?.toLowerCase(),
     language: optionalText(rawSearch.language, /^[a-z]{2}$/i)?.toLowerCase(),
     sortBy: optionalChoice(rawSearch.sortBy, ["relevance", "date"]),
@@ -509,9 +446,7 @@ export function normalizeWebsearchapiOptions(raw = {}) {
   const scrape = withoutUndefined({
     engine: optionalChoice(rawScrape.engine, WEBSEARCHAPI_ENGINES),
     timeout,
-    tokenBudget: Number.isInteger(rawScrape.tokenBudget)
-      ? Math.min(1_000_000, Math.max(100, rawScrape.tokenBudget))
-      : undefined,
+    tokenBudget: clampedInt(rawScrape.tokenBudget, 100, 1_000_000),
     retainImages: optionalChoice(rawScrape.retainImages, ["all", "none"]),
     targetSelector: optionalText(rawScrape.targetSelector, null, 500),
     removeSelector: optionalText(rawScrape.removeSelector, null, 500),
@@ -541,11 +476,9 @@ export function normalizeWebsearchapiOptions(raw = {}) {
  * dropping combinations the API refuses. An option left out is left to the
  * API's own default.
  */
-export function normalizeTavilyOptions(raw = {}) {
-  const rawSearch =
-    raw?.search && typeof raw.search === "object" ? raw.search : {};
-  const rawExtract =
-    raw?.extract && typeof raw.extract === "object" ? raw.extract : {};
+function normalizeTavilyOptions(raw = {}) {
+  const rawSearch = objectOrEmpty(raw?.search);
+  const rawExtract = objectOrEmpty(raw?.extract);
   const depth = optionalChoice(rawSearch.searchDepth, TAVILY_DEPTHS);
   const quick = depth === "fast" || depth === "ultra-fast";
   const topic = optionalChoice(rawSearch.topic, TAVILY_TOPICS);
@@ -556,14 +489,12 @@ export function normalizeTavilyOptions(raw = {}) {
   )?.toLowerCase();
   const day = (value) => optionalText(value, /^\d{4}-\d{2}-\d{2}$/);
   const search = withoutUndefined({
-    maxResults: Number.isInteger(rawSearch.maxResults)
-      ? Math.min(TAVILY_MAX_RESULTS, Math.max(1, rawSearch.maxResults))
-      : undefined,
+    maxResults: clampedInt(rawSearch.maxResults, 1, TAVILY_MAX_RESULTS),
     searchDepth: depth,
     // Snippets come as one summary per page at ultra-fast
     chunksPerSource:
-      Number.isInteger(rawSearch.chunksPerSource) && depth !== "ultra-fast"
-        ? Math.min(3, Math.max(1, rawSearch.chunksPerSource))
+      depth !== "ultra-fast"
+        ? clampedInt(rawSearch.chunksPerSource, 1, 3)
         : undefined,
     topic,
     timeRange: optionalChoice(rawSearch.timeRange, RECENCY_VALUES),
@@ -636,15 +567,10 @@ function selectorList(value, max = 50) {
  * API's own default. Proxies are a Firecrawl Cloud service, so a self-hosted
  * instance is never asked for one.
  */
-export function normalizeFirecrawlOptions(raw = {}, { cloud = true } = {}) {
-  const rawSearch =
-    raw?.search && typeof raw.search === "object" ? raw.search : {};
-  const rawScrape =
-    raw?.scrape && typeof raw.scrape === "object" ? raw.scrape : {};
-  const timeout = (value) =>
-    Number.isInteger(value)
-      ? Math.min(300_000, Math.max(1000, value))
-      : undefined;
+function normalizeFirecrawlOptions(raw = {}, { cloud = true } = {}) {
+  const rawSearch = objectOrEmpty(raw?.search);
+  const rawScrape = objectOrEmpty(raw?.scrape);
+  const timeout = (value) => clampedInt(value, 1000, 300_000);
   const categories = Array.isArray(rawSearch.categories)
     ? [...new Set(rawSearch.categories)].filter((category) =>
         FIRECRAWL_CATEGORIES.includes(category),
@@ -657,9 +583,7 @@ export function normalizeFirecrawlOptions(raw = {}, { cloud = true } = {}) {
       )
     : [];
   const search = withoutUndefined({
-    maxResults: Number.isInteger(rawSearch.maxResults)
-      ? Math.min(FIRECRAWL_MAX_RESULTS, Math.max(1, rawSearch.maxResults))
-      : undefined,
+    maxResults: clampedInt(rawSearch.maxResults, 1, FIRECRAWL_MAX_RESULTS),
     categories: categories.length > 0 ? categories : undefined,
     timeRange: optionalChoice(rawSearch.timeRange, FIRECRAWL_TIME_RANGES),
     sortByDate: optionalFlag(rawSearch.sortByDate),
@@ -698,9 +622,7 @@ export function normalizeFirecrawlOptions(raw = {}, { cloud = true } = {}) {
     languages: languages.length > 0 ? languages : undefined,
     includeTags: selectorList(rawScrape.includeTags),
     excludeTags: selectorList(rawScrape.excludeTags),
-    waitFor: Number.isInteger(rawScrape.waitFor)
-      ? Math.min(60_000, Math.max(0, rawScrape.waitFor))
-      : undefined,
+    waitFor: clampedInt(rawScrape.waitFor, 0, 60_000),
     timeout: timeout(rawScrape.timeout),
     mobile: optionalFlag(rawScrape.mobile),
     blockAds: optionalFlag(rawScrape.blockAds),
@@ -722,18 +644,15 @@ export function normalizeFirecrawlOptions(raw = {}, { cloud = true } = {}) {
  * left out is left to the API's own default. Reader options travel as HTTP
  * headers, so their text must be printable ASCII.
  */
-export function normalizeJinaOptions(raw = {}) {
-  const rawSearch =
-    raw?.search && typeof raw.search === "object" ? raw.search : {};
-  const rawRead = raw?.read && typeof raw.read === "object" ? raw.read : {};
+function normalizeJinaOptions(raw = {}) {
+  const rawSearch = objectOrEmpty(raw?.search);
+  const rawRead = objectOrEmpty(raw?.read);
   const headerText = (value) => optionalText(value, /^[\x20-\x7e]+$/, 500);
   const country = optionalText(rawSearch.country)?.toLowerCase();
   const language = optionalText(rawSearch.language)?.toLowerCase();
   const respondWith = optionalChoice(rawRead.respondWith, ["readerlm-v2"]);
   const search = withoutUndefined({
-    maxResults: Number.isInteger(rawSearch.maxResults)
-      ? Math.min(JINA_MAX_RESULTS, Math.max(1, rawSearch.maxResults))
-      : undefined,
+    maxResults: clampedInt(rawSearch.maxResults, 1, JINA_MAX_RESULTS),
     includeContent: optionalFlag(rawSearch.includeContent),
     type: optionalChoice(rawSearch.type, ["news"]),
     country: JINA_COUNTRIES.has(country) ? country : undefined,
@@ -743,9 +662,7 @@ export function normalizeJinaOptions(raw = {}) {
   });
   const read = withoutUndefined({
     engine: optionalChoice(rawRead.engine, JINA_ENGINES),
-    timeout: Number.isInteger(rawRead.timeout)
-      ? Math.min(180, Math.max(1, rawRead.timeout))
-      : undefined,
+    timeout: clampedInt(rawRead.timeout, 1, 180),
     targetSelector: headerText(rawRead.targetSelector),
     removeSelector: headerText(rawRead.removeSelector),
     retainImages: optionalChoice(rawRead.retainImages, ["none", "alt"]),
@@ -781,22 +698,17 @@ export function normalizeJinaOptions(raw = {}) {
  * The LangSearch request options a user chose, keeping only valid values.
  * An option left out is left to the API's own default.
  */
-export function normalizeLangsearchOptions(raw = {}) {
-  const rawSearch =
-    raw?.search && typeof raw.search === "object" ? raw.search : raw;
+function normalizeLangsearchOptions(raw = {}) {
+  const rawSearch = objectOrEmpty(raw?.search ?? raw);
   const includeDomains = domainList(rawSearch.includeDomains);
   const excludeDomains = domainList(rawSearch.excludeDomains);
   const search = withoutUndefined({
-    maxResults: Number.isInteger(rawSearch.maxResults)
-      ? Math.min(LANGSEARCH_MAX_RESULTS, Math.max(1, rawSearch.maxResults))
-      : undefined,
+    maxResults: clampedInt(rawSearch.maxResults, 1, LANGSEARCH_MAX_RESULTS),
     freshness: optionalChoice(rawSearch.freshness, LANGSEARCH_FRESHNESS),
     includeDomains,
     excludeDomains,
     includeContent: optionalFlag(rawSearch.includeContent),
-    maxCharacters: Number.isInteger(rawSearch.maxCharacters)
-      ? Math.min(100_000, Math.max(100, rawSearch.maxCharacters))
-      : undefined,
+    maxCharacters: clampedInt(rawSearch.maxCharacters, 100, 100_000),
   });
   return Object.keys(search).length > 0 ? { search } : {};
 }
@@ -805,15 +717,9 @@ export function normalizeLangsearchOptions(raw = {}) {
  * The Exa request options a user chose, keeping only valid values.
  * An option left out is left to the API's own default.
  */
-export function normalizeExaOptions(raw = {}) {
-  const rawSearch =
-    raw?.search && typeof raw.search === "object" ? raw.search : {};
-  const rawRead =
-    raw?.read && typeof raw.read === "object"
-      ? raw.read
-      : raw?.contents && typeof raw.contents === "object"
-        ? raw.contents
-        : {};
+function normalizeExaOptions(raw = {}) {
+  const rawSearch = objectOrEmpty(raw?.search);
+  const rawRead = objectOrEmpty(raw?.read ?? raw?.contents);
 
   const stringArray = (val) => {
     if (Array.isArray(val)) {
@@ -833,9 +739,7 @@ export function normalizeExaOptions(raw = {}) {
   };
 
   const search = withoutUndefined({
-    maxResults: Number.isInteger(rawSearch.maxResults)
-      ? Math.min(EXA_MAX_RESULTS, Math.max(1, rawSearch.maxResults))
-      : undefined,
+    maxResults: clampedInt(rawSearch.maxResults, 1, EXA_MAX_RESULTS),
     type: optionalChoice(rawSearch.type, EXA_SEARCH_TYPES),
     category: optionalChoice(rawSearch.category, EXA_SEARCH_CATEGORIES),
     includeDomains: domainList(rawSearch.includeDomains),
@@ -846,52 +750,32 @@ export function normalizeExaOptions(raw = {}) {
     excludeText: stringArray(rawSearch.excludeText),
     moderation: optionalFlag(rawSearch.moderation),
     includeContent: optionalFlag(rawSearch.includeContent),
-    maxCharacters: Number.isInteger(rawSearch.maxCharacters)
-      ? Math.min(100_000, Math.max(100, rawSearch.maxCharacters))
-      : undefined,
+    maxCharacters: clampedInt(rawSearch.maxCharacters, 100, 100_000),
     includeHtmlTags: optionalFlag(rawSearch.includeHtmlTags),
     highlights: optionalFlag(rawSearch.highlights),
-    numSentences: Number.isInteger(rawSearch.numSentences)
-      ? Math.min(10, Math.max(1, rawSearch.numSentences))
-      : undefined,
-    highlightsPerUrl: Number.isInteger(rawSearch.highlightsPerUrl)
-      ? Math.min(10, Math.max(1, rawSearch.highlightsPerUrl))
-      : undefined,
+    numSentences: clampedInt(rawSearch.numSentences, 1, 10),
+    highlightsPerUrl: clampedInt(rawSearch.highlightsPerUrl, 1, 10),
     highlightsQuery: optionalText(rawSearch.highlightsQuery),
     summary: optionalFlag(rawSearch.summary),
     summaryQuery: optionalText(rawSearch.summaryQuery),
     livecrawl: optionalChoice(rawSearch.livecrawl, EXA_LIVECRAWL_MODES),
-    livecrawlTimeout: Number.isInteger(rawSearch.livecrawlTimeout)
-      ? Math.min(60_000, Math.max(1000, rawSearch.livecrawlTimeout))
-      : undefined,
-    subpages: Number.isInteger(rawSearch.subpages)
-      ? Math.min(10, Math.max(1, rawSearch.subpages))
-      : undefined,
+    livecrawlTimeout: clampedInt(rawSearch.livecrawlTimeout, 1000, 60_000),
+    subpages: clampedInt(rawSearch.subpages, 1, 10),
     subpageTarget: optionalText(rawSearch.subpageTarget),
   });
 
   const read = withoutUndefined({
-    maxCharacters: Number.isInteger(rawRead.maxCharacters)
-      ? Math.min(100_000, Math.max(100, rawRead.maxCharacters))
-      : undefined,
+    maxCharacters: clampedInt(rawRead.maxCharacters, 100, 100_000),
     includeHtmlTags: optionalFlag(rawRead.includeHtmlTags),
     highlights: optionalFlag(rawRead.highlights),
-    numSentences: Number.isInteger(rawRead.numSentences)
-      ? Math.min(10, Math.max(1, rawRead.numSentences))
-      : undefined,
-    highlightsPerUrl: Number.isInteger(rawRead.highlightsPerUrl)
-      ? Math.min(10, Math.max(1, rawRead.highlightsPerUrl))
-      : undefined,
+    numSentences: clampedInt(rawRead.numSentences, 1, 10),
+    highlightsPerUrl: clampedInt(rawRead.highlightsPerUrl, 1, 10),
     highlightsQuery: optionalText(rawRead.highlightsQuery),
     summary: optionalFlag(rawRead.summary),
     summaryQuery: optionalText(rawRead.summaryQuery),
     livecrawl: optionalChoice(rawRead.livecrawl, EXA_LIVECRAWL_MODES),
-    livecrawlTimeout: Number.isInteger(rawRead.livecrawlTimeout)
-      ? Math.min(60_000, Math.max(1000, rawRead.livecrawlTimeout))
-      : undefined,
-    subpages: Number.isInteger(rawRead.subpages)
-      ? Math.min(10, Math.max(1, rawRead.subpages))
-      : undefined,
+    livecrawlTimeout: clampedInt(rawRead.livecrawlTimeout, 1000, 60_000),
+    subpages: clampedInt(rawRead.subpages, 1, 10),
     subpageTarget: optionalText(rawRead.subpageTarget),
   });
 
@@ -907,17 +791,14 @@ export function normalizeExaOptions(raw = {}) {
  * Date filters are mutually exclusive with recency and unsupported for
  * research_paper; invalid combos are dropped here so the API never sees a 400.
  */
-export function normalizeTinyfishOptions(raw = {}) {
-  const rawSearch =
-    raw?.search && typeof raw.search === "object" ? raw.search : {};
+function normalizeTinyfishOptions(raw = {}) {
+  const rawSearch = objectOrEmpty(raw?.search);
   const domainType = optionalChoice(
     rawSearch.domainType ?? rawSearch.domain_type,
     TINYFISH_DOMAIN_TYPES,
   );
   const isPaper = domainType === "research_paper";
-  const recencyMinutes = Number.isInteger(rawSearch.recencyMinutes)
-    ? Math.min(5256000, Math.max(1, rawSearch.recencyMinutes))
-    : undefined;
+  const recencyMinutes = clampedInt(rawSearch.recencyMinutes, 1, 5256000);
   const afterDate =
     !isPaper && recencyMinutes === undefined
       ? optionalText(rawSearch.afterDate, /^\d{4}-\d{2}-\d{2}$/, 10)
@@ -927,9 +808,7 @@ export function normalizeTinyfishOptions(raw = {}) {
       ? optionalText(rawSearch.beforeDate, /^\d{4}-\d{2}-\d{2}$/, 10)
       : undefined;
   const search = withoutUndefined({
-    maxResults: Number.isInteger(rawSearch.maxResults)
-      ? Math.min(TINYFISH_MAX_RESULTS, Math.max(1, rawSearch.maxResults))
-      : undefined,
+    maxResults: clampedInt(rawSearch.maxResults, 1, TINYFISH_MAX_RESULTS),
     domainType,
     location: optionalText(
       rawSearch.location ?? rawSearch.country,
@@ -941,12 +820,8 @@ export function normalizeTinyfishOptions(raw = {}) {
     excludeDomains: domainList(rawSearch.excludeDomains),
     ...(isPaper
       ? {
-          pubYearMin: Number.isInteger(rawSearch.pubYearMin)
-            ? Math.min(9999, Math.max(0, rawSearch.pubYearMin))
-            : undefined,
-          pubYearMax: Number.isInteger(rawSearch.pubYearMax)
-            ? Math.min(9999, Math.max(0, rawSearch.pubYearMax))
-            : undefined,
+          pubYearMin: clampedInt(rawSearch.pubYearMin, 0, 9999),
+          pubYearMax: clampedInt(rawSearch.pubYearMax, 0, 9999),
         }
       : {
           recencyMinutes,
@@ -963,20 +838,12 @@ export function normalizeTinyfishOptions(raw = {}) {
  * The Parallel request options a user chose, keeping only valid values.
  * An option left out is left to the API's own default.
  */
-export function normalizeParallelOptions(raw = {}) {
-  const rawSearch =
-    raw?.search && typeof raw.search === "object" ? raw.search : {};
-  const rawRead =
-    raw?.read && typeof raw.read === "object"
-      ? raw.read
-      : raw?.extract && typeof raw.extract === "object"
-        ? raw.extract
-        : {};
+function normalizeParallelOptions(raw = {}) {
+  const rawSearch = objectOrEmpty(raw?.search);
+  const rawRead = objectOrEmpty(raw?.read ?? raw?.extract);
 
   const search = withoutUndefined({
-    maxResults: Number.isInteger(rawSearch.maxResults)
-      ? Math.min(PARALLEL_MAX_RESULTS, Math.max(1, rawSearch.maxResults))
-      : undefined,
+    maxResults: clampedInt(rawSearch.maxResults, 1, PARALLEL_MAX_RESULTS),
     mode: optionalChoice(rawSearch.mode, PARALLEL_MODES),
     location: optionalText(rawSearch.location, /^[a-z]{2}$/i)?.toLowerCase(),
     includeDomains: domainList(rawSearch.includeDomains),
@@ -991,9 +858,7 @@ export function normalizeParallelOptions(raw = {}) {
     maxAgeSeconds: Number.isInteger(rawSearch.maxAgeSeconds)
       ? Math.max(600, rawSearch.maxAgeSeconds)
       : undefined,
-    timeoutSeconds: Number.isInteger(rawSearch.timeoutSeconds)
-      ? Math.min(120, Math.max(1, rawSearch.timeoutSeconds))
-      : undefined,
+    timeoutSeconds: clampedInt(rawSearch.timeoutSeconds, 1, 120),
     disableCacheFallback: optionalFlag(rawSearch.disableCacheFallback),
   });
 
@@ -1005,9 +870,7 @@ export function normalizeParallelOptions(raw = {}) {
     maxAgeSeconds: Number.isInteger(rawRead.maxAgeSeconds)
       ? Math.max(600, rawRead.maxAgeSeconds)
       : undefined,
-    timeoutSeconds: Number.isInteger(rawRead.timeoutSeconds)
-      ? Math.min(120, Math.max(1, rawRead.timeoutSeconds))
-      : undefined,
+    timeoutSeconds: clampedInt(rawRead.timeoutSeconds, 1, 120),
     disableCacheFallback: optionalFlag(rawRead.disableCacheFallback),
   });
 
@@ -1017,6 +880,21 @@ export function normalizeParallelOptions(raw = {}) {
   };
 }
 
+// Trimmed, non-empty keys from a provider's apiKeys list or single apiKey
+function readerKeys(raw) {
+  return Array.isArray(raw?.apiKeys)
+    ? raw.apiKeys
+        .map((k) => (typeof k === "string" ? k.trim() : ""))
+        .filter(Boolean)
+    : typeof raw?.apiKey === "string" && raw.apiKey.trim()
+      ? [raw.apiKey.trim()]
+      : [];
+}
+
+/**
+ * Validates the web search settings a client sent with a run. Returns null
+ * when none were sent, which leaves the web tools out of the run.
+ */
 export function normalizeWebSearchSettings(
   raw,
   { allowConfiguredOnly = false } = {},
@@ -1170,14 +1048,6 @@ export function normalizeWebSearchSettings(
     const rawTinyfish = raw.providers.tinyfish;
     const rawParallel = raw.providers.parallel;
     const rawMcp = raw.providers.mcp;
-    const readerKeys = (raw) =>
-      Array.isArray(raw?.apiKeys)
-        ? raw.apiKeys
-            .map((k) => (typeof k === "string" ? k.trim() : ""))
-            .filter(Boolean)
-        : typeof raw?.apiKey === "string" && raw.apiKey.trim()
-          ? [raw.apiKey.trim()]
-          : [];
     const jinaKeys = readerKeys(rawJina);
     const firecrawlKeys = readerKeys(rawFirecrawl);
     const langsearchKeys = readerKeys(rawLangsearch);
@@ -1185,21 +1055,8 @@ export function normalizeWebSearchSettings(
     const tinyfishKeys = readerKeys(rawTinyfish);
     const parallelKeys = readerKeys(rawParallel);
 
-    const ollamaKeys = Array.isArray(rawOllama?.apiKeys)
-      ? rawOllama.apiKeys
-          .map((k) => (typeof k === "string" ? k.trim() : ""))
-          .filter(Boolean)
-      : typeof rawOllama?.apiKey === "string" && rawOllama.apiKey.trim()
-        ? [rawOllama.apiKey.trim()]
-        : [];
-    const websearchapiKeys = Array.isArray(rawWebsearchapi?.apiKeys)
-      ? rawWebsearchapi.apiKeys
-          .map((k) => (typeof k === "string" ? k.trim() : ""))
-          .filter(Boolean)
-      : typeof rawWebsearchapi?.apiKey === "string" &&
-          rawWebsearchapi.apiKey.trim()
-        ? [rawWebsearchapi.apiKey.trim()]
-        : [];
+    const ollamaKeys = readerKeys(rawOllama);
+    const websearchapiKeys = readerKeys(rawWebsearchapi);
 
     const tavilyKeys = readerKeys(rawTavily);
 
@@ -1273,21 +1130,24 @@ export function normalizeWebSearchSettings(
     );
     let mcpEnabled = Boolean(rawMcp?.enabled && mcpServerUrls.length > 0);
 
-    if (
-      !ollamaEnabled &&
-      !searxngEnabled &&
-      !websearchapiEnabled &&
-      !tavilyEnabled &&
-      !firecrawlEnabled &&
-      !firecrawlSelfHostedEnabled &&
-      !jinaEnabled &&
-      !langsearchEnabled &&
-      !exaEnabled &&
-      !tinyfishEnabled &&
-      !parallelEnabled &&
-      !mcpEnabled
-    ) {
-      if (allowConfiguredOnly || raw.forTest) {
+    const enabledFlags = () => ({
+      searxng: searxngEnabled,
+      ollama: ollamaEnabled,
+      websearchapi: websearchapiEnabled,
+      tavily: tavilyEnabled,
+      firecrawl: firecrawlEnabled,
+      firecrawlSelfHosted: firecrawlSelfHostedEnabled,
+      jina: jinaEnabled,
+      langsearch: langsearchEnabled,
+      exa: exaEnabled,
+      tinyfish: tinyfishEnabled,
+      parallel: parallelEnabled,
+      mcp: mcpEnabled,
+    });
+    const anyEnabled = () => Object.values(enabledFlags()).some(Boolean);
+
+    if (!anyEnabled()) {
+      if (allowConfiguredOnly) {
         ollamaEnabled = ollamaKeys.length > 0;
         searxngEnabled = searxngUrls.length > 0;
         websearchapiEnabled = websearchapiKeys.length > 0;
@@ -1303,20 +1163,7 @@ export function normalizeWebSearchSettings(
       }
     }
 
-    if (
-      !ollamaEnabled &&
-      !searxngEnabled &&
-      !websearchapiEnabled &&
-      !tavilyEnabled &&
-      !firecrawlEnabled &&
-      !firecrawlSelfHostedEnabled &&
-      !jinaEnabled &&
-      !langsearchEnabled &&
-      !exaEnabled &&
-      !tinyfishEnabled &&
-      !parallelEnabled &&
-      !mcpEnabled
-    ) {
+    if (!anyEnabled()) {
       return null;
     }
 
@@ -1332,30 +1179,9 @@ export function normalizeWebSearchSettings(
       ? raw.primaryProvider
       : "searxng";
 
+    const flags = enabledFlags();
     return {
-      type: searxngEnabled
-        ? "searxng"
-        : ollamaEnabled
-          ? "ollama"
-          : websearchapiEnabled
-            ? "websearchapi"
-            : tavilyEnabled
-              ? "tavily"
-              : firecrawlEnabled
-                ? "firecrawl"
-                : firecrawlSelfHostedEnabled
-                  ? "firecrawlSelfHosted"
-                  : jinaEnabled
-                    ? "jina"
-                    : langsearchEnabled
-                      ? "langsearch"
-                      : exaEnabled
-                        ? "exa"
-                        : tinyfishEnabled
-                          ? "tinyfish"
-                          : parallelEnabled
-                            ? "parallel"
-                            : "mcp",
+      type: WEB_SEARCH_PROVIDERS.find((name) => flags[name]) ?? "mcp",
       providers: {
         ollama: {
           enabled: ollamaEnabled,
@@ -1721,7 +1547,7 @@ export const REPEATED_SEARCH_NOTICE =
  * used out first. A page counts two bytes a character, so this holds sixteen
  * of the longest documents or thousands of ordinary pages.
  */
-export const MAX_DOCUMENT_CACHE_BYTES = 1024 * 1024 * 1024;
+const MAX_DOCUMENT_CACHE_BYTES = 1024 * 1024 * 1024;
 
 /**
  * A user's search and page caches, at the limits the user set. They live in
@@ -1739,12 +1565,6 @@ export function getOwnerCaches(
     pages: maxCachedPages,
     pageBytes: MAX_DOCUMENT_CACHE_BYTES,
   });
-}
-
-export function clearWebDocumentCache() {
-  clearWebCacheStore();
-  clearWorkingSet();
-  clearEndpointHealth();
 }
 
 // ---------------------------------------------------------------------------
@@ -1772,6 +1592,7 @@ function searchPage(text, format, limit) {
 function normalizeResults(list, max, query) {
   const seen = new Set();
   const results = [];
+  const terms = queryTerms(query);
   for (const entry of Array.isArray(list) ? list : []) {
     const url = typeof entry?.url === "string" ? entry.url.trim() : "";
     if (!/^https?:\/\//i.test(url)) continue;
@@ -1794,7 +1615,7 @@ function normalizeResults(list, max, query) {
       title: clip(collapse(entry.title || url), 200),
       url,
       ...(published ? { published } : {}),
-      snippet: bestSnippet(rawSnippet, query),
+      snippet: bestSnippet(rawSnippet, terms),
       // Taken off before the results are cached or shown (see keepPages)
       ...(entry.page ? { page: entry.page } : {}),
     });
@@ -1806,10 +1627,24 @@ function normalizeResults(list, max, query) {
 /** Top search results read in the background for the next web_fetch. */
 export const PREFETCH_RESULTS = 3;
 
+/**
+ * The validated web search settings from normalizeWebSearchSettings: the
+ * `type` of the first enabled provider, each provider's `enabled` flag and
+ * options, the rotation and primary provider, and the cache limits.
+ *
+ * @typedef {object} WebSearchSettings
+ * @property {string} type
+ * @property {Record<string, { enabled: boolean }>} providers
+ * @property {string} rotationStrategy
+ * @property {string} primaryProvider
+ * @property {number} cacheHours
+ * @property {number} maxCachedSearches
+ * @property {number} maxCachedPages
+ */
+
 export class AiAssistWebTools {
   /**
-   * @param {{ type: 'ollama', apiKey: string } | { type: 'searxng', baseUrl: string },
-   *          cacheHours, maxCachedSearches, maxCachedPages } settings
+   * @param {WebSearchSettings | null} settings
    *   Already validated by `normalizeWebSearchSettings`.
    */
   constructor(
@@ -1979,7 +1814,7 @@ export class AiAssistWebTools {
         );
         const repeated = Boolean(key) && this.searchedQueries.has(key);
         const result = await this._shared(key, () =>
-          this.search(args, { signal }),
+          this.search(args, { signal, cacheTextKey: key }),
         );
         if (result?.error) return result;
         if (key) this.searchedQueries.add(key);
@@ -2032,7 +1867,7 @@ export class AiAssistWebTools {
     return structuredClone(await pending);
   }
 
-  async search(args, { signal, useCache = true } = {}) {
+  async search(args, { signal, useCache = true, cacheTextKey } = {}) {
     const query = collapse(typeof args?.query === "string" ? args.query : "");
     if (!query) return { error: "web_search needs a query." };
 
@@ -2054,7 +1889,7 @@ export class AiAssistWebTools {
       this.settings.providers?.searxng?.safeSearch ?? null,
       this.settings.providers?.searxng?.defaultCategories ?? null,
       this.settings.providers?.searxng?.defaultLanguage ?? null,
-      searchCacheText(query),
+      cacheTextKey ?? searchCacheText(query),
     ]);
 
     const cacheHours =
@@ -2339,7 +2174,7 @@ export class AiAssistWebTools {
 
   async _postOllama(endpoint, payload, signal, apiKey = null) {
     const key = apiKey || this.settings.apiKey;
-    const res = await this._request(
+    return apiJson(
       `${OLLAMA_API_BASE}/${endpoint}`,
       {
         method: "POST",
@@ -2349,15 +2184,13 @@ export class AiAssistWebTools {
         },
         body: JSON.stringify(payload),
       },
-      signal,
-      "Ollama web search",
-      "ollama",
+      {
+        signal,
+        label: "Ollama web search",
+        providerType: "ollama",
+        fetchFn: this.fetchFn,
+      },
     );
-    try {
-      return await res.json();
-    } catch {
-      throw webError("Ollama web search returned a response that is not JSON.");
-    }
   }
 
   async _ollamaSearch(query, signal, endpoint = null) {
@@ -2379,7 +2212,7 @@ export class AiAssistWebTools {
     apiKey,
     timeoutMs = REQUEST_TIMEOUT_MS,
   ) {
-    const res = await this._request(
+    return apiJson(
       `${WEBSEARCHAPI_BASE}/${path}`,
       {
         method: "POST",
@@ -2389,16 +2222,14 @@ export class AiAssistWebTools {
         },
         body: JSON.stringify(payload),
       },
-      signal,
-      "WebSearchAPI.ai",
-      "websearchapi",
-      timeoutMs,
+      {
+        signal,
+        label: "WebSearchAPI.ai",
+        providerType: "websearchapi",
+        timeoutMs,
+        fetchFn: this.fetchFn,
+      },
     );
-    try {
-      return await res.json();
-    } catch {
-      throw webError("WebSearchAPI.ai returned a response that is not JSON.");
-    }
   }
 
   /**
@@ -2446,7 +2277,7 @@ export class AiAssistWebTools {
   async _tavilySearch(query, signal, endpoint) {
     const options = endpoint.search ?? {};
     const limit = options.maxResults ?? DEFAULT_RESULTS;
-    const res = await this._request(
+    const body = await apiJson(
       `${TAVILY_API_BASE}/search`,
       {
         method: "POST",
@@ -2477,16 +2308,13 @@ export class AiAssistWebTools {
           }),
         ),
       },
-      signal,
-      "Tavily",
-      "tavily",
+      {
+        signal,
+        label: "Tavily",
+        providerType: "tavily",
+        fetchFn: this.fetchFn,
+      },
     );
-    let body;
-    try {
-      body = await res.json();
-    } catch {
-      throw webError("Tavily returned a response that is not JSON.");
-    }
     const results = (Array.isArray(body?.results) ? body.results : []).map(
       (entry) => ({
         ...entry,
@@ -2527,9 +2355,9 @@ export class AiAssistWebTools {
     const scrape = { ...endpoint.scrape };
     delete scrape.zeroDataRetention;
     const request = firecrawlRequest(endpoint, "search");
-    let res;
+    let body;
     try {
-      res = await this._request(
+      body = await apiJson(
         request.url,
         {
           method: "POST",
@@ -2554,10 +2382,13 @@ export class AiAssistWebTools {
             }),
           ),
         },
-        signal,
-        label,
-        endpoint.provider,
-        firecrawlTimeoutMs(options.timeout),
+        {
+          signal,
+          label,
+          providerType: endpoint.provider,
+          timeoutMs: firecrawlTimeoutMs(options.timeout),
+          fetchFn: this.fetchFn,
+        },
       );
     } catch (err) {
       // A self-hosted instance with no search engine behind it fails searches
@@ -2568,12 +2399,6 @@ export class AiAssistWebTools {
         );
       }
       throw err;
-    }
-    let body;
-    try {
-      body = await res.json();
-    } catch {
-      throw webError(`${label} returned a response that is not JSON.`);
     }
     // v2 answers { data: { web: [...], news: [...] } }; older instances a plain list
     const list = Array.isArray(body?.data)
@@ -2601,7 +2426,7 @@ export class AiAssistWebTools {
   async _jinaSearch(query, signal, endpoint) {
     const options = endpoint.search ?? {};
     const limit = options.maxResults ?? DEFAULT_RESULTS;
-    const res = await this._request(
+    const body = await apiJson(
       `${JINA_SEARCH_BASE}/`,
       {
         method: "POST",
@@ -2623,17 +2448,14 @@ export class AiAssistWebTools {
           }),
         ),
       },
-      signal,
-      "Jina Search",
-      "jina",
-      options.includeContent ? jinaTimeoutMs() : REQUEST_TIMEOUT_MS,
+      {
+        signal,
+        label: "Jina Search",
+        providerType: "jina",
+        timeoutMs: options.includeContent ? jinaTimeoutMs() : REQUEST_TIMEOUT_MS,
+        fetchFn: this.fetchFn,
+      },
     );
-    let body;
-    try {
-      body = await res.json();
-    } catch {
-      throw webError("Jina Search returned a response that is not JSON.");
-    }
     // `date` is the search engine's; publishedTime can be a Last-Modified header
     const results = (Array.isArray(body?.data) ? body.data : []).map(
       (entry) => ({
@@ -2669,7 +2491,7 @@ export class AiAssistWebTools {
           }
         : undefined,
     });
-    const res = await this._request(
+    const body = await apiJson(
       `${LANGSEARCH_API_BASE}/v1/web-search`,
       {
         method: "POST",
@@ -2679,16 +2501,13 @@ export class AiAssistWebTools {
         },
         body: JSON.stringify(payload),
       },
-      signal,
-      "LangSearch",
-      "langsearch",
+      {
+        signal,
+        label: "LangSearch",
+        providerType: "langsearch",
+        fetchFn: this.fetchFn,
+      },
     );
-    let body;
-    try {
-      body = await res.json();
-    } catch {
-      throw webError("LangSearch returned a response that is not JSON.");
-    }
     const rawResults =
       body?.data?.webPages?.value || body?.data?.results || body?.results || [];
     const results = rawResults.map((entry) => ({
@@ -2784,7 +2603,7 @@ export class AiAssistWebTools {
       contents,
     });
 
-    const res = await this._request(
+    const body = await apiJson(
       `${EXA_API_BASE}/search`,
       {
         method: "POST",
@@ -2794,18 +2613,14 @@ export class AiAssistWebTools {
         },
         body: JSON.stringify(payload),
       },
-      signal,
-      "Exa",
-      "exa",
-      exaTimeoutMs(options.livecrawlTimeout),
+      {
+        signal,
+        label: "Exa",
+        providerType: "exa",
+        timeoutMs: exaTimeoutMs(options.livecrawlTimeout),
+        fetchFn: this.fetchFn,
+      },
     );
-
-    let body;
-    try {
-      body = await res.json();
-    } catch {
-      throw webError("Exa returned a response that is not JSON.");
-    }
 
     const rawResults = Array.isArray(body?.results) ? body.results : [];
     const results = rawResults.map((entry) => ({
@@ -2869,7 +2684,7 @@ export class AiAssistWebTools {
       }
     }
     const url = `${TINYFISH_API_BASE}/?${params.toString()}`;
-    const res = await this._request(
+    const body = await apiJson(
       url,
       {
         method: "GET",
@@ -2878,16 +2693,13 @@ export class AiAssistWebTools {
           "X-API-Key": endpoint.apiKey,
         },
       },
-      signal,
-      "TinyFish",
-      "tinyfish",
+      {
+        signal,
+        label: "TinyFish",
+        providerType: "tinyfish",
+        fetchFn: this.fetchFn,
+      },
     );
-    let body;
-    try {
-      body = await res.json();
-    } catch {
-      throw webError("TinyFish returned a response that is not JSON.");
-    }
     const rawResults = Array.isArray(body?.results) ? body.results : [];
     const results = rawResults.map((entry) => ({
       title: entry?.title,
@@ -2972,7 +2784,7 @@ export class AiAssistWebTools {
       ? Math.max(REQUEST_TIMEOUT_MS, (options.timeoutSeconds + 10) * 1000)
       : undefined;
 
-    const res = await this._request(
+    const body = await apiJson(
       `${PARALLEL_API_BASE}/v1/search`,
       {
         method: "POST",
@@ -2982,18 +2794,14 @@ export class AiAssistWebTools {
         },
         body: JSON.stringify(payload),
       },
-      signal,
-      "Parallel",
-      "parallel",
-      timeoutMs,
+      {
+        signal,
+        label: "Parallel",
+        providerType: "parallel",
+        timeoutMs,
+        fetchFn: this.fetchFn,
+      },
     );
-
-    let body;
-    try {
-      body = await res.json();
-    } catch {
-      throw webError("Parallel returned a response that is not JSON.");
-    }
 
     const rawResults = Array.isArray(body?.results) ? body.results : [];
     const results = rawResults.map((entry) => ({
@@ -3271,7 +3079,7 @@ export async function checkApiKeyAlive(
     switch (provider) {
       case "tavily":
         return classifyKeyStatus(
-          await get("https://api.tavily.com/usage", bearer),
+          await get(`${TAVILY_API_BASE}/usage`, bearer),
           {
             limits: {
               429: "Usage limit reached",
@@ -3282,14 +3090,14 @@ export async function checkApiKeyAlive(
         );
       case "exa":
         return classifyKeyStatus(
-          await get("https://api.exa.ai/monitors", {
+          await get(`${EXA_API_BASE}/monitors`, {
             "x-api-key": endpoint.apiKey,
           }),
           { limits: OUT_OF_CREDITS },
         );
       case "firecrawl":
         return classifyKeyStatus(
-          await get("https://api.firecrawl.dev/v1/team/credit-usage", bearer),
+          await get(`${FIRECRAWL_API_BASE}/v1/team/credit-usage`, bearer),
           { limits: OUT_OF_CREDITS },
         );
       case "firecrawlSelfHosted":
@@ -3299,7 +3107,7 @@ export async function checkApiKeyAlive(
       case "jina":
         return classifyKeyStatus(
           await post(
-            "https://s.jina.ai/",
+            `${JINA_SEARCH_BASE}/`,
             { ...bearer, "X-Respond-With": "no-content" },
             { q: "ping", num: 1 },
           ),
@@ -3307,7 +3115,7 @@ export async function checkApiKeyAlive(
         );
       case "websearchapi":
         return classifyKeyStatus(
-          await post("https://api.websearchapi.ai/ai-search", bearer, {
+          await post(`${WEBSEARCHAPI_BASE}/ai-search`, bearer, {
             query: "ping",
             maxResults: 1,
           }),
@@ -3315,7 +3123,7 @@ export async function checkApiKeyAlive(
         );
       case "langsearch":
         return classifyKeyStatus(
-          await post("https://api.langsearch.com/v1/web-search", bearer, {
+          await post(`${LANGSEARCH_API_BASE}/v1/web-search`, bearer, {
             count: 1,
           }),
           { authorized: AUTHORIZED_OR_REJECTED_BODY },
@@ -3338,7 +3146,7 @@ export async function checkApiKeyAlive(
         );
       case "ollama":
         return classifyKeyStatus(
-          await post("https://ollama.com/api/web_search", bearer, {}),
+          await post(`${OLLAMA_API_BASE}/web_search`, bearer, {}),
           { authorized: AUTHORIZED_OR_REJECTED_BODY },
         );
       case "mcp": {

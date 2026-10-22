@@ -6,7 +6,7 @@ import { mathAncestorNode } from '@/features/source-editor/utils/tree-operations
 import { matchingBrace } from '../texgpt/latex-text'
 
 export type MathKind = 'inline' | 'display' | 'align'
-export type Container = 'text' | 'caption' | 'heading' | 'cell'
+type Container = 'text' | 'caption' | 'heading' | 'cell'
 
 /** Where the anchor is, with the bounds a passage must stay inside. */
 export type CursorWhere =
@@ -25,11 +25,11 @@ export type PassageParts = {
   after: string
 }
 
-export const MIN_WORDS_BEFORE = 8
-export const MAX_WORDS_BEFORE = 40
-export const MAX_CHARS_BEFORE = 300
-export const MAX_WORDS_AFTER = 25
-export const MAX_CHARS_AFTER = 200
+const MIN_WORDS_BEFORE = 8
+const MAX_WORDS_BEFORE = 40
+const MAX_CHARS_BEFORE = 300
+const MAX_WORDS_AFTER = 25
+const MAX_CHARS_AFTER = 200
 
 const COMMENT_START = /(?<!\\)%/
 
@@ -67,7 +67,7 @@ function mathContent(node: SyntaxNode): { from: number; to: number } {
 export function cursorWhere(state: EditorState, pos: number): CursorWhere {
   const line = state.doc.lineAt(pos)
   if (COMMENT_START.test(state.sliceDoc(line.from, pos))) return { kind: 'refused' }
-  ensureSyntaxTree(state, Math.min(state.doc.length, line.to), 500)
+  ensureSyntaxTree(state, line.to, 500)
   if (ancestorNodeOfType(state, pos, 'VerbatimEnvironment')) {
     return { kind: 'refused' }
   }
@@ -101,7 +101,7 @@ export function cursorWhere(state: EditorState, pos: number): CursorWhere {
 }
 
 function lineStart(doc: string, pos: number): number {
-  return doc.lastIndexOf('\n', pos - 1) + 1
+  return pos <= 0 ? 0 : doc.lastIndexOf('\n', pos - 1) + 1
 }
 
 function lineEnd(doc: string, pos: number): number {
@@ -126,8 +126,7 @@ function lastStopEnd(text: string): number {
 
 /** Start of the first in-line stop in `text`, or -1. */
 function firstStop(text: string): number {
-  const match = new RegExp(IN_LINE_STOP.source).exec(text)
-  return match ? match.index : -1
+  return text.search(IN_LINE_STOP)
 }
 
 /** How far the passage may reach: lines and in-line stops, never comments. */
@@ -182,7 +181,7 @@ function crossesStop(selection: string): boolean {
       .split('\n')
       .slice(1)
       .some(line => HARD_STOP_LINE.test(line)) ||
-    new RegExp(IN_LINE_STOP.source).test(selection) ||
+    selection.search(IN_LINE_STOP) !== -1 ||
     COMMENT_START.test(selection)
   )
 }

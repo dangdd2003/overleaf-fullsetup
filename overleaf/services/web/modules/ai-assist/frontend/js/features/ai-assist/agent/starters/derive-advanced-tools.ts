@@ -1,5 +1,11 @@
 import { ProjectIndex } from '../context/project-index'
-import { deriveStarters, StarterRuleId, StarterSignals } from './derive-starters'
+import {
+  envCount,
+  envCounts,
+  firedStarterIds,
+  StarterRuleId,
+  StarterSignals,
+} from './derive-starters'
 
 /**
  * The "Advanced tools" cards in the empty chat state.
@@ -79,6 +85,7 @@ const REPORT =
 
 type Context = {
   index: ProjectIndex
+  counts: Map<string, number>
   lines: number
   root: string
   beamer: boolean
@@ -89,16 +96,6 @@ function docLines(signals: StarterSignals): number {
   return signals.files
     .filter(file => file.type === 'doc' && /\.(tex|ltx)$/i.test(file.path))
     .reduce((total, file) => total + (file.lines ?? 0), 0)
-}
-
-function envTotal(index: ProjectIndex, ...names: string[]): number {
-  let total = 0
-  for (const file of index.files) {
-    for (const env of file.environments) {
-      if (names.includes(env.name)) total += env.count
-    }
-  }
-  return total
 }
 
 function filesWithEnv(index: ProjectIndex, ...names: string[]): number {
@@ -128,8 +125,8 @@ const RULES: Array<(context: Context) => AdvancedTool | null> = [
   },
 
   // Floats the text never points to are the commonest referee complaint about figures.
-  ({ index }) => {
-    const floats = envTotal(index, 'figure', 'table')
+  ({ index, counts }) => {
+    const floats = envCount(counts, 'figure', 'table')
     if (floats < MIN_FLOATS) return null
     const referenced = referencedKeys(index)
     const unreferenced = index.references.labels.filter(
@@ -189,8 +186,8 @@ const RULES: Array<(context: Context) => AdvancedTool | null> = [
   },
 
   // An abstract written before the results drifts from them.
-  ({ index, beamer }) => {
-    if (beamer || envTotal(index, 'abstract') === 0) return null
+  ({ index, counts, beamer }) => {
+    if (beamer || envCount(counts, 'abstract') === 0) return null
     if (!sectionTitles(index).some(title => RESULT_SECTION.test(title))) return null
     return {
       id: 'abstract_results',
@@ -201,8 +198,8 @@ const RULES: Array<(context: Context) => AdvancedTool | null> = [
   },
 
   // Many equations across files is where notation drifts.
-  ({ index }) => {
-    const equations = envTotal(index, 'equation', 'align')
+  ({ index, counts }) => {
+    const equations = envCount(counts, 'equation', 'align')
     if (equations < MIN_EQUATIONS) return null
     return {
       id: 'notation',
@@ -272,13 +269,10 @@ export function deriveAdvancedTools(signals: StarterSignals): AdvancedTool[] {
   const generic = genericTools(root)
   if (!index || lines < MIN_AUDIT_LINES) return generic
 
-  const starterIds = new Set(
-    deriveStarters(safeSignals)
-      .filter(starter => starter.oneShot)
-      .map(starter => starter.id)
-  )
+  const starterIds = firedStarterIds(safeSignals)
   const context: Context = {
     index,
+    counts: envCounts(index),
     lines,
     root,
     beamer: index.outline.documentClass === 'beamer',

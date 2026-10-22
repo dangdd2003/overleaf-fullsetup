@@ -5,6 +5,7 @@ import "./ModuleSettings.mjs";
 import defaultStore from "./AiAssistRunStore.mjs";
 import defaultTools, { compiledBuild } from "./AiAssistTools.mjs";
 import defaultChatHistoryStore, {
+  compactEntryProblem,
   hydrateTranscript,
 } from "./AiAssistChatHistoryStore.mjs";
 import defaultCheckpointStore from "./AiAssistCheckpointStore.mjs";
@@ -14,7 +15,6 @@ import {
   compactConversation,
   renderCompactionMessage,
 } from "./AiAssistCompaction.mjs";
-import { compactEntryProblem } from "./AiAssistChatHistoryStore.mjs";
 import {
   abortableSleep,
   planRetry,
@@ -35,11 +35,7 @@ import {
   MAX_HISTORY_IMAGES,
   stripToolImages,
 } from "./AiAssistImages.mjs";
-import {
-  systemBlocksFor,
-  joinSystemBlocks,
-  systemPromptFor,
-} from "./AiAssistSystemPrompt.mjs";
+import { systemBlocksFor, joinSystemBlocks } from "./AiAssistSystemPrompt.mjs";
 import { coerceToolArgs } from "./AiAssistToolSchema.mjs";
 import {
   contextBreakdownFor,
@@ -49,7 +45,6 @@ import {
   estimateMessageTokens,
   estimateRequestTokens,
   estimateTokens,
-  MARGIN_FRACTION,
   messageFramingTokens,
   withExactFixed,
 } from "./AiAssistContextUsage.mjs";
@@ -90,13 +85,26 @@ import {
 export const SENT_DURING_RUN_NOTE =
   "[Sent while you were working. Address this, then carry on with the rest of the task unless it says otherwise.]";
 
+/** The index of the newest user turn of a transcript, or -1. */
+function findLatestUserIndex(transcript) {
+  if (!Array.isArray(transcript)) return -1;
+  for (let i = transcript.length - 1; i >= 0; i--) {
+    if (transcript[i]?.role === "user") return i;
+  }
+  return -1;
+}
+
 /** The newest user turn of a transcript, or null. */
 function findLatestUserEntry(transcript) {
-  if (!Array.isArray(transcript)) return null;
-  for (let i = transcript.length - 1; i >= 0; i--) {
-    if (transcript[i]?.role === "user") return transcript[i];
-  }
-  return null;
+  const index = findLatestUserIndex(transcript);
+  return index === -1 ? null : transcript[index];
+}
+
+/** The id of the newest user turn of a transcript, or null. */
+function findLatestUserMessageId(transcript) {
+  const index = findLatestUserIndex(transcript);
+  if (index === -1) return null;
+  return transcript[index].id || `user_${index}`;
 }
 
 /**
@@ -400,7 +408,6 @@ const MAX_COMPILE_LOG_CHARS = 2_000_000;
 // One error or warning as the model reads it; a log line never needs more
 const MAX_COMPILE_FILE_CHARS = 500;
 const MAX_COMPILE_TEXT_CHARS = 2_000;
-/** Model requests one run may make before it stops and asks to be continued. */
 /** The model requests one run may make before it stops to ask the user. */
 const MAX_MODEL_STEPS = 200;
 /** Messages the user may send into a run that has not read them yet. */
@@ -439,21 +446,13 @@ function sanitizeCompileOutcome(outcome) {
   };
 }
 
-export const KEEP_RECENT_TOOL_RESULTS = 3;
-export const KEEP_RECENT_ASSISTANT_TURNS = 3;
-export const ASSISTANT_ELISION_MARKER = "[earlier reply elided]";
+const KEEP_RECENT_TOOL_RESULTS = 3;
+const KEEP_RECENT_ASSISTANT_TURNS = 3;
+const ASSISTANT_ELISION_MARKER = "[earlier reply elided]";
 // Once trimming is needed, trim to this fraction of the budget instead of to
 // just under it. See applyContextBudget.
 export const TRIM_TARGET_FRACTION = 0.7;
 
-// The estimator lives with the context breakdown; re-exported for its callers
-export { estimateMessageTokens, estimateRequestTokens, estimateTokens, MARGIN_FRACTION };
-
-// Re-export mode policy constants for backward compatibility
-export { FILE_EDIT_TOOLS, READ_ONLY_TOOLS };
-
-// The same failing call, arguments and all: the second failure carries a
-// warning in its result, the third ends the run.
 /**
  * Sent once, as a user turn, when the model runs tools and then closes the run
  * with an empty reply. Without it the panel shows a row of tool cards and
@@ -501,11 +500,13 @@ export function toQueuedMessage(message, index = 0) {
   };
 }
 
-export const IDENTICAL_FAILURE_LIMIT = 3;
+// The same failing call, arguments and all: the second failure carries a
+// warning in its result, the third ends the run.
+const IDENTICAL_FAILURE_LIMIT = 3;
 // Model turns in a row in which every tool call failed. Counted per turn, not
 // per call: one reply with three parallel guesses that all miss is one wrong
 // decision, not three.
-export const FAILED_TURN_LIMIT = 4;
+const FAILED_TURN_LIMIT = 4;
 // Web calls for one instruction after which the model is told, once, to answer
 // with what it has. Nothing is blocked: a hard question may need more.
 export const WEB_CALL_NUDGE = 8;
@@ -569,9 +570,9 @@ function connectorToolSpecs(session) {
 }
 
 /** Automatic compactions in one run: at least this many steps apart... */
-export const AUTO_COMPACT_MIN_STEPS = 2;
+const AUTO_COMPACT_MIN_STEPS = 2;
 /** ...and none once this many have failed in a row. */
-export const AUTO_COMPACT_FAILURE_LIMIT = 3;
+const AUTO_COMPACT_FAILURE_LIMIT = 3;
 
 /** The tokens a usage report counts for one request: input, cache and output. */
 export function usageTokens(usage) {
@@ -706,8 +707,18 @@ export function recordRunStep(
   return entries;
 }
 
-export function isElided(message) {
+function isElided(message) {
   if (message.role !== "tool") return false;
+  // The stub is written by JSON.stringify, which never escapes plain letters,
+  // so "elided" only needs a parse when its text, or a \u escape, is present
+  const { content } = message;
+  if (
+    typeof content === "string" &&
+    !content.includes("elided") &&
+    !content.includes("\\u")
+  ) {
+    return false;
+  }
   try {
     return JSON.parse(message.content)?.elided === true;
   } catch {
@@ -926,10 +937,10 @@ export function applyContextBudget({
     Math.max(0, assistantIndices.length - KEEP_RECENT_ASSISTANT_TURNS),
   );
 
+  const markerTokens = estimateTokens(ASSISTANT_ELISION_MARKER);
   for (const idx of elidableAssistants) {
     const msg = working[idx];
-    if (estimateTokens(ASSISTANT_ELISION_MARKER) >= estimateTokens(msg.content))
-      continue;
+    if (markerTokens >= estimateTokens(msg.content)) continue;
     replace(idx, { ...msg, content: ASSISTANT_ELISION_MARKER });
     if (total <= target) return { messages: working, exhausted: false };
   }
@@ -941,14 +952,15 @@ export function applyContextBudget({
   // reject with a 400. If only one turn is left and it still does not fit,
   // report exhaustion.
   if (total > rawBudget) {
-    while (total > target) {
-      const nextUser = working.findIndex(
-        (message, index) => index > 0 && message.role === "user",
-      );
-      if (nextUser === -1) break;
-      working.splice(0, nextUser);
-      total -= sizes.splice(0, nextUser).reduce((sum, size) => sum + size, 0);
+    // Walks the turn starts once: each user message after the first is a
+    // possible cut, and everything before the last cut taken is dropped
+    let cutAt = 0;
+    for (let index = 1; index < working.length && total > target; index++) {
+      if (working[index].role !== "user") continue;
+      for (let i = cutAt; i < index; i++) total -= sizes[i];
+      cutAt = index;
     }
+    working.splice(0, cutAt);
   }
 
   return {
@@ -974,7 +986,7 @@ export function applyContextBudget({
  *
  * Returns a Map from each incomplete call to 'cutOff' or 'invalid'.
  */
-export function classifyIncompleteCalls(calls, truncated, toolSpecs = []) {
+function classifyIncompleteCalls(calls, truncated, toolSpecs = []) {
   const specsByName = new Map(
     (toolSpecs ?? [])
       .filter((spec) => spec?.name)
@@ -1002,10 +1014,15 @@ export function classifyIncompleteCalls(calls, truncated, toolSpecs = []) {
   return incomplete;
 }
 
-export function incompleteCallError(call, reason, maxTokens) {
+function incompleteCallError(call, reason, maxTokens) {
   return reason === "cutOff"
     ? `This ${call.name} call was cut off at the ${maxTokens}-token output limit, so its arguments are incomplete and it was not run. Make the change in smaller pieces: replace a smaller line range per edit_file call, or create the file with part of its content and add the rest with edit_file.`
     : `The arguments of this ${call.name} call were not valid JSON, so it was not run. Send the call again with complete arguments.`;
+}
+
+/** The result a tool call that threw is reported with. */
+function toolFailure(err) {
+  return { error: err.message || "Tool execution failed" };
 }
 
 /** The error an aborted compaction is reported with. */
@@ -1296,6 +1313,18 @@ export class AiAssistRunManager {
     return false;
   }
 
+  /** Count of active runs for a given user across all chats in this process. */
+  countActiveRunsForUser(userId) {
+    if (!userId) return 0;
+    let count = 0;
+    for (const run of this.activeRuns.values()) {
+      if (run.userId === userId) {
+        count++;
+      }
+    }
+    return count;
+  }
+
   async _startRun({
     runId,
     projectId,
@@ -1318,16 +1347,6 @@ export class AiAssistRunManager {
     // requests and a new user turn can be added without splitting a turn.
     const queuedMessages = [];
 
-    const findLatestUserMessageId = (t) => {
-      if (!Array.isArray(t)) return null;
-      for (let i = t.length - 1; i >= 0; i--) {
-        const entry = t[i];
-        if (entry?.role === "user") {
-          return entry.id || `user_${i}`;
-        }
-      }
-      return null;
-    };
     let activeUserMessageId = findLatestUserMessageId(transcript);
 
     const activeRun = {
@@ -1642,9 +1661,11 @@ export class AiAssistRunManager {
           onAbort = null;
         }
         approvalPromiseResolvers.resolve = null;
+        approvalPromiseResolvers.pendingId = null;
       };
 
       await this.store.touchHeartbeat?.(runId, 0);
+      approvalPromiseResolvers.pendingId = approvalData.id;
       const decision = await new Promise((resolve) => {
         const settle = (value) => {
           if (settled) return;
@@ -1822,7 +1843,7 @@ export class AiAssistRunManager {
             messages.push(msg);
             runEntries.push(queuedEntry(queued));
             activeUserMessageId = queued.id;
-            if (activeRun) activeRun.activeUserMessageId = queued.id;
+            activeRun.activeUserMessageId = queued.id;
             // The scope of the turn that is now being answered
             activeCommandId = activeCommandFrom(queued);
             // Everything a tab needs to store the turn byte for byte, even
@@ -2275,7 +2296,7 @@ export class AiAssistRunManager {
                 prefetched.set(call, { result: value, isError: false });
               } catch (err) {
                 prefetched.set(call, {
-                  result: { error: err.message || "Tool execution failed" },
+                  result: toolFailure(err),
                   isError: true,
                 });
               }
@@ -2330,14 +2351,17 @@ export class AiAssistRunManager {
           let result = null;
           let isError = false;
 
-          const liveMode = this.activeRuns.get(runId)?.mode || "manual";
+          const liveMode = activeRun.mode || "manual";
           const connectorDesc =
             connectorSession && isConnectorTool(call.name)
               ? connectorSession.describe(call.name)
               : null;
           // The mode and the command's scope both gate the call; the stricter
           // answer wins, so a scope can refuse but never approve.
-          const modeVerdict = decide(liveMode, call.name, connectorDesc || {});
+          const modeVerdict = decide(liveMode, call.name, {
+            ...(connectorDesc || {}),
+            path: call.args?.path,
+          });
           const scopeVerdict = scopeDecision(
             activeCommandId ? SLASH_COMMAND_SCOPES[activeCommandId] : null,
             call.name,
@@ -2431,13 +2455,13 @@ export class AiAssistRunManager {
                     toolName: call.name,
                     args: execArgs,
                   });
-                  result = await this.tools.execute(call.name, execArgs, {
-                    projectId,
-                    userId,
-                    ...toolContext(call),
-                  });
+                  result = await this.tools.execute(
+                    call.name,
+                    execArgs,
+                    toolContext(call),
+                  );
                 } catch (err) {
-                  result = { error: err.message || "Tool execution failed" };
+                  result = toolFailure(err);
                   isError = true;
                 }
               } else {
@@ -2468,13 +2492,13 @@ export class AiAssistRunManager {
                       toolName: call.name,
                       args: execArgs,
                     });
-                    result = await this.tools.execute(call.name, execArgs, {
-                      projectId,
-                      userId,
-                      ...toolContext(call),
-                    });
+                    result = await this.tools.execute(
+                      call.name,
+                      execArgs,
+                      toolContext(call),
+                    );
                   } catch (err) {
-                    result = { error: err.message || "Tool execution failed" };
+                    result = toolFailure(err);
                     isError = true;
                   }
                 }
@@ -2504,7 +2528,7 @@ export class AiAssistRunManager {
                   toolContext(call),
                 );
               } catch (err) {
-                result = { error: err.message || "Tool execution failed" };
+                result = toolFailure(err);
                 isError = true;
               }
             }
@@ -2519,8 +2543,7 @@ export class AiAssistRunManager {
 
             if (decision?.accepted) {
               const nextMode = normalizeMode(decision.nextMode || "manual");
-              const active = this.activeRuns.get(runId);
-              if (active) active.mode = nextMode;
+              activeRun.mode = nextMode;
               await this.store.setMode(runId, nextMode);
               await emitEvent({
                 type: "modeChanged",
@@ -2589,7 +2612,7 @@ export class AiAssistRunManager {
                 result = await runTool(call);
                 if (result?.error) isError = true;
               } catch (err) {
-                result = { error: err.message || "Tool execution failed" };
+                result = toolFailure(err);
                 isError = true;
               }
               // What the user said when allowing it follows the result
@@ -2608,7 +2631,7 @@ export class AiAssistRunManager {
             try {
               result = await runTool(call);
             } catch (err) {
-              result = { error: err.message || "Tool execution failed" };
+              result = toolFailure(err);
               isError = true;
             }
           }
@@ -2624,8 +2647,13 @@ export class AiAssistRunManager {
           const callSig = `${call.name}:${JSON.stringify(call.args ?? {})}`;
           let repeats = 0;
           if (isFailed) {
-            repeats = (failedCallSignatures.get(callSig) ?? 0) + 1;
-            failedCallSignatures.set(callSig, repeats);
+            // Only a digest is kept for the run: an edit's arguments can be large
+            const digest = crypto
+              .createHash("sha1")
+              .update(callSig)
+              .digest("base64");
+            repeats = (failedCallSignatures.get(digest) ?? 0) + 1;
+            failedCallSignatures.set(digest, repeats);
             if (
               repeats === IDENTICAL_FAILURE_LIMIT - 1 &&
               result &&
@@ -2641,12 +2669,11 @@ export class AiAssistRunManager {
           // Everything the model is told about this call is in `result` before
           // it is emitted, so the stored transcript rebuilds the same message.
           const notices = [];
-          const liveRun = this.activeRuns.get(runId);
-          if (liveRun?.modeNotice) {
+          if (activeRun.modeNotice) {
             notices.push(
-              `The user switched to ${modeLabel(liveRun.modeNotice)} mode.`,
+              `The user switched to ${modeLabel(activeRun.modeNotice)} mode.`,
             );
-            liveRun.modeNotice = null;
+            activeRun.modeNotice = null;
           }
           const fetched =
             call.name === "web_fetch" ? fetchedPageKey(call.args) : "";
@@ -2664,7 +2691,7 @@ export class AiAssistRunManager {
           }
           if (notices.length) result = withNotice(result, notices.join(" "));
 
-          const currentMode = this.activeRuns.get(runId)?.mode || liveMode;
+          const currentMode = activeRun.mode || liveMode;
           // The same verdict the rebuilt transcript takes (toolMessageIsError),
           // so a result that reports an error reads as failed live too.
           await emitEvent({
@@ -3044,8 +3071,22 @@ export class AiAssistRunManager {
   async approveEdit(runId, decision) {
     const active = this.activeRuns.get(runId);
     if (active?.approvalResolver?.resolve) {
-      await this.store.clearPendingApproval(runId, "running");
+      if (
+        decision?.id &&
+        active.approvalResolver.pendingId &&
+        decision.id !== active.approvalResolver.pendingId
+      ) {
+        return;
+      }
+      // Resume the run immediately. Redis cleanup is independent of executing
+      // the approved tool, and its conditional update cannot overwrite a
+      // terminal status if the run finishes first.
       active.approvalResolver.resolve(decision);
+      this.store
+        .clearPendingApproval(runId, "running")
+        .catch((err) =>
+          logger.warn({ err, runId }, "failed to clear pending approval"),
+        );
       return;
     }
     if (this.control) {
@@ -3236,10 +3277,15 @@ export class AiAssistRunManager {
       // a broadcast, and loop.
       const active = this.activeRuns.get(runId);
       if (active?.approvalResolver?.resolve) {
-        void this.store
-          .clearPendingApproval(runId, "running")
-          .then(() => active.approvalResolver.resolve(decision))
-          .catch(() => {});
+        if (
+          decision?.id &&
+          active.approvalResolver.pendingId &&
+          decision.id !== active.approvalResolver.pendingId
+        ) {
+          return;
+        }
+        active.approvalResolver.resolve(decision);
+        void this.store.clearPendingApproval(runId, "running").catch(() => {});
       }
     }
   }

@@ -1,4 +1,4 @@
-import { useContext, useEffect, useMemo, useState } from 'react'
+import { useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import getMeta from '@/utils/meta'
 import useEventListener from '@/shared/hooks/use-event-listener'
 import { ProjectContext } from '@/shared/context/project-context'
@@ -30,13 +30,16 @@ export default function LastFixBanner() {
 
   const [summary, setSummary] = useState<LastFixSummary | null>(null)
 
-  const refresh = () => setSummary(getLastCompletedFix(projectId))
+  const refresh = useCallback(
+    () => setSummary(getLastCompletedFix(projectId)),
+    [projectId]
+  )
 
   useEventListener('aiAssist:suggestDone', refresh)
 
   useEffect(() => {
     refresh()
-  }, [projectId, logEntries])
+  }, [refresh, logEntries])
 
   // The fingerprint (file+line+message) is still present in the current
   // compile log, meaning the error it was for hasn't actually gone away —

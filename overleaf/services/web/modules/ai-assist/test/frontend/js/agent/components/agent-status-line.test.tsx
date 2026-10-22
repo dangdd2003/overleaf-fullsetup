@@ -331,23 +331,16 @@ describe('AgentStatusLine', function () {
     expect(text).to.contain('Running tools…')
   })
 
-  it('finishes the counter and renders nothing when pendingApproval requests user input', function () {
+  it('shows paused status line when isPaused is true', function () {
     const { container } = render(
       <AgentStatusLine
         startedAt={Date.now()}
-        blocks={[
-          {
-            type: 'tool_call',
-            call: { id: 'c3', name: 'edit_file', args: { path: 'main.tex' } },
-          },
-        ]}
-        pendingApproval={{
-          id: 'c3',
-          edit: { path: 'main.tex', oldText: 'a', newText: 'b' },
-        }}
+        isPaused={true}
       />
     )
-    expect(container.querySelector('.ai-assist-status-line')).to.be.null
+    expect(container.querySelector('.ai-assist-status-line.is-paused')).to.not.be.null
+    const text = screen.getByRole('status').textContent || ''
+    expect(text).to.contain('Waiting for approval')
   })
 
   it('shows fancy rotating text when generating text', function () {

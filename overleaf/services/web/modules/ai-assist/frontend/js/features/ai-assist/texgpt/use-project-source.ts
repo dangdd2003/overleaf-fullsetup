@@ -30,9 +30,9 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 /**
  * Reads the project for one request: every editable doc from the project
  * snapshot (refreshed first, as the assistant's read tools do), with the
- * open file's live text. The contexts are read without their throwing hooks:
- * outside the editor, or when the snapshot cannot be read in time, only the
- * open file is known and `complete` is false.
+ * open file's live text. The view hook throws outside the editor, so this
+ * hook is only usable inside the CodeMirror provider. When the snapshot
+ * cannot be read in time, only the open file is known and `complete` is false.
  */
 export function useProjectSource(): () => Promise<ProjectSource> {
   const view = useCodeMirrorViewContext()

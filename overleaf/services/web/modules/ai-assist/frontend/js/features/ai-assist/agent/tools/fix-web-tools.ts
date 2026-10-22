@@ -1,18 +1,32 @@
-import getMeta from '@/utils/meta'
 import { ToolSpec, WebSearchSettings } from '../../providers/types'
 import { isWebToolsAvailable, readWebSearchSettings } from '../../provider-store'
+import { csrfHeaders } from '../../utils/csrf'
 import { AgentTool } from './registry'
 
 const ALLOWED_WEB_TOOLS = new Set(['web_search', 'web_fetch'])
 
 type KnownCall = { name: string; args: unknown; result: unknown }
 
-function csrfHeaders(): Record<string, string> {
-  const token =
-    (typeof window !== 'undefined' && (window as any).csrfToken) ||
-    getMeta('ol-csrfToken') ||
-    ''
-  return token ? { 'X-Csrf-Token': token } : {}
+function pickWebResult(result: unknown): unknown {
+  if (!result || typeof result !== 'object') return result
+  const src = result as Record<string, unknown>
+  const picked: Record<string, unknown> = {}
+  for (const key of [
+    'error',
+    'source',
+    'url',
+    'title',
+    'snippet',
+    'published',
+    'page',
+    'totalPages',
+  ] as const) {
+    if (src[key] !== undefined) picked[key] = src[key]
+  }
+  if (Array.isArray(src.results)) {
+    picked.results = src.results.map(pickWebResult)
+  }
+  return picked
 }
 
 async function postJson(
@@ -66,14 +80,17 @@ export function createFixWebTools({
       async execute(args, _handle, options) {
         const payload = await postJson(
           fetchImpl,
-          `/ai-assist/projects/${projectId}/web-tools/${spec.name}`,
+          `/ai-assist/projects/${encodeURIComponent(projectId)}/web-tools/${spec.name}`,
           { args, webSearchSettings, contextWindow, knownCalls },
           options?.signal
         )
         const result = payload?.result ?? { error: 'The web request failed.' }
         if (result && typeof result === 'object') {
           if (typeof payload?.text === 'string') texts.set(result, payload.text)
-          knownCalls.push({ name: spec.name, args, result })
+          knownCalls.push({ name: spec.name, args, result: pickWebResult(result) })
+          if (knownCalls.length > 50) {
+            knownCalls.splice(0, knownCalls.length - 50)
+          }
         }
         return result
       },
@@ -106,7 +123,7 @@ export async function prepareFixWebTools({
   try {
     const payload = await postJson(
       fetchImpl,
-      `/ai-assist/projects/${projectId}/web-tools`,
+      `/ai-assist/projects/${encodeURIComponent(projectId)}/web-tools`,
       { webSearchSettings }
     )
     const specs: ToolSpec[] = Array.isArray(payload?.specs) ? payload.specs : []

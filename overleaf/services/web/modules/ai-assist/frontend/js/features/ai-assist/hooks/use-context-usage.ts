@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { TranscriptEntry } from '../agent/agent-messages'
 import { computeContextUsage } from '../agent/context/context-usage'
 import { ContextUsageSnapshot } from '../agent/context/context-usage-types'
-import { readSettings } from '../provider-store'
+import { readSettings, SETTINGS_KEY } from '../provider-store'
 import { ProviderSettings, resolveLimits } from '../providers/types'
 
 /**
@@ -18,12 +18,17 @@ export function useContextUsage(
   )
 
   useEffect(() => {
-    const refresh = () => setSettings(readSettings())
-    window.addEventListener('aiAssist:providerChanged', refresh)
-    window.addEventListener('storage', refresh)
+    const onProviderChanged = () => setSettings(readSettings())
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === SETTINGS_KEY) {
+        setSettings(readSettings())
+      }
+    }
+    window.addEventListener('aiAssist:providerChanged', onProviderChanged)
+    window.addEventListener('storage', onStorage)
     return () => {
-      window.removeEventListener('aiAssist:providerChanged', refresh)
-      window.removeEventListener('storage', refresh)
+      window.removeEventListener('aiAssist:providerChanged', onProviderChanged)
+      window.removeEventListener('storage', onStorage)
     }
   }, [])
 

@@ -68,7 +68,7 @@ export const createFileTool: AgentTool = {
         return {
           status: 'applied',
           message: `Created ${path}.`,
-          startLine: (outcome as any).startLine ?? 1,
+          startLine: outcome.startLine ?? 1,
         }
       case 'rejected': {
         const userNote = outcome.note ? ` with note: "${outcome.note}"` : ''

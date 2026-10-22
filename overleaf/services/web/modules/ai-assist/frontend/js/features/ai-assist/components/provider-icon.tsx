@@ -5,7 +5,7 @@ type IconProps = {
   className?: string
 }
 
-export function OpenAiIcon({ size = 28, className = '' }: IconProps) {
+function OpenAiIcon({ size = 28, className = '' }: IconProps) {
   return (
     <svg
       role="img"
@@ -22,7 +22,7 @@ export function OpenAiIcon({ size = 28, className = '' }: IconProps) {
   )
 }
 
-export function ClaudeIcon({ size = 28, className = '' }: IconProps) {
+function ClaudeIcon({ size = 28, className = '' }: IconProps) {
   return (
     <svg
       role="img"
@@ -39,7 +39,7 @@ export function ClaudeIcon({ size = 28, className = '' }: IconProps) {
   )
 }
 
-export function OllamaIcon({ size = 28, className = '' }: IconProps) {
+function OllamaIcon({ size = 28, className = '' }: IconProps) {
   return (
     <svg
       role="img"
@@ -56,7 +56,7 @@ export function OllamaIcon({ size = 28, className = '' }: IconProps) {
   )
 }
 
-export function GoogleIcon({ size = 28, className = '' }: IconProps) {
+function GoogleIcon({ size = 28, className = '' }: IconProps) {
   return (
     <svg
       role="img"

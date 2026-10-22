@@ -81,3 +81,10 @@ export function normalizeScope(scope) {
   }
   return tokens.every(token => token === MCP_SCOPE) ? MCP_SCOPE : null
 }
+
+export function oauthError(res, status, error, errorDescription) {
+  return res.status(status).json({
+    error,
+    error_description: errorDescription,
+  })
+}

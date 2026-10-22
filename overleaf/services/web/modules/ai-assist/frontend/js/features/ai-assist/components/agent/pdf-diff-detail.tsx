@@ -1,33 +1,56 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ImageLightbox } from './image-lightbox'
-import { PdfDetailHeader, getPdfImages } from './pdf-tool-shared'
+import {
+  PdfDetailHeader,
+  getPdfImages,
+  formatPageRanges,
+  type TranslateFn,
+} from './pdf-tool-shared'
 
-type TranslateFn = (key: string, opts?: any) => string
+export { formatPageRanges }
 
-/** Page numbers as ranges: [1, 2, 3, 5] reads as "1–3, 5" */
-export function formatPageRanges(pages: number[]): string {
-  const sorted = Array.from(new Set(pages)).sort((a, b) => a - b)
-  const ranges: string[] = []
-  let start = sorted[0]
-  let end = sorted[0]
-  for (const page of sorted.slice(1)) {
-    if (page === end + 1) {
-      end = page
-    } else {
-      ranges.push(start === end ? `${start}` : `${start}–${end}`)
-      start = page
-      end = page
-    }
-  }
-  if (sorted.length > 0) {
-    ranges.push(start === end ? `${start}` : `${start}–${end}`)
-  }
-  return ranges.join(', ')
+export interface PdfDiffRegion {
+  x: number
+  y: number
+  w: number
+  h: number
+  kind?: string
+}
+
+export interface PdfDiffShift {
+  y?: number
+  shiftPt?: number
+}
+
+export interface PdfDiffPage {
+  page?: number | null
+  beforePage?: number | null
+  status?: string
+  reason?: string
+  changedFraction?: number
+  regions?: PdfDiffRegion[]
+  shiftedBelow?: PdfDiffShift
+}
+
+export interface PdfDiffResult {
+  status?: string
+  changed?: boolean
+  beforeBuildId?: string
+  afterBuildId?: string
+  dpi?: number
+  pageCount?: { before?: number; after?: number }
+  pairing?: string
+  pages?: PdfDiffPage[]
+  unchangedPages?: number[]
+  highlights?: unknown[]
+  summary?: string[]
+  images?: unknown[]
+  truncated?: boolean
 }
 
 /** What one page of a diff changed, as short findings in the overview's wording */
-function diffFindings(page: any, t: TranslateFn): string[] {
+function diffFindings(page: PdfDiffPage, t: TranslateFn): string[] {
   if (page.status === 'removed') {
     return [
       t('ai_assist_tool_pdf_diff_removed', {
@@ -47,9 +70,9 @@ function diffFindings(page: any, t: TranslateFn): string[] {
     )
   }
 
-  const regions: any[] = Array.isArray(page.regions)
+  const regions: PdfDiffRegion[] = Array.isArray(page.regions)
     ? page.regions.filter(
-        (region: any) =>
+        (region): region is PdfDiffRegion =>
           typeof region?.y === 'number' && typeof region?.h === 'number'
       )
     : []
@@ -106,9 +129,7 @@ function diffFindings(page: any, t: TranslateFn): string[] {
 export function PdfDiffDetail({
   result,
 }: {
-  result: any
-  args: any
-  openFile: (path: string, line?: number) => void
+  result: PdfDiffResult
 }) {
   const { t } = useTranslation()
   const [previewImage, setPreviewImage] = useState<{
@@ -116,8 +137,8 @@ export function PdfDiffDetail({
     title: string
   } | null>(null)
 
-  const pages: any[] = Array.isArray(result?.pages)
-    ? result.pages.filter((page: any) => page && typeof page === 'object')
+  const pages: PdfDiffPage[] = Array.isArray(result?.pages)
+    ? result.pages.filter((page): page is PdfDiffPage => Boolean(page && typeof page === 'object'))
     : []
   const summary: string[] = Array.isArray(result?.summary)
     ? result.summary.filter((line: unknown): line is string => typeof line === 'string')

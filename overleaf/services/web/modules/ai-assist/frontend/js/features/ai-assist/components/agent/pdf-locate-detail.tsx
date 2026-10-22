@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next'
-import { FileLink, PdfDetailHeader } from './pdf-tool-shared'
+import { FileLink, PdfDetailHeader, formatPageRanges } from './pdf-tool-shared'
 
 // Result views for the tools that point at a place in the PDF: resolve_pdf_block
 // (a labelled block to its source lines) and highlight_in_pdf (what the user's
@@ -12,20 +12,17 @@ function rangeLabel(path: string, line?: number, endLine?: number): string {
   return `${path}:${line}${end}`
 }
 
-/** Page numbers as ranges: 1–3, 5. */
-export function pageRangeText(pages: unknown[]): string {
-  const sorted = [
-    ...new Set(pages.filter((page): page is number => Number.isInteger(page))),
-  ].sort((a, b) => a - b)
-  const ranges: Array<[number, number]> = []
-  for (const page of sorted) {
-    const last = ranges[ranges.length - 1]
-    if (last && page === last[1] + 1) last[1] = page
-    else ranges.push([page, page])
-  }
-  return ranges
-    .map(([from, to]) => (from === to ? `${from}` : `${from}–${to}`))
-    .join(', ')
+export interface PdfBlockResult {
+  block?: string
+  page?: number
+  path?: string
+  line?: number
+  endLine?: number
+}
+
+export interface PdfBlockArgs {
+  block?: string
+  page?: number
 }
 
 /** The block a model named from a PDF view, and the source lines behind it. */
@@ -34,8 +31,8 @@ export function PdfBlockDetail({
   args,
   openFile,
 }: {
-  result: any
-  args: any
+  result?: PdfBlockResult | null
+  args?: PdfBlockArgs | null
   openFile: (path: string, line?: number) => void
 }) {
   const { t } = useTranslation()
@@ -85,14 +82,28 @@ export function PdfBlockDetail({
   )
 }
 
+export interface PdfHighlightResult {
+  pages?: number[]
+  count?: number
+  highlights?: unknown[]
+  stale?: boolean
+}
+
+export interface PdfHighlightArgs {
+  path?: string
+  line?: number
+  endLine?: number
+  boxes?: unknown
+}
+
 /** What the user's PDF viewer now highlights: where, on which pages, and whether it is stale. */
 export function PdfHighlightDetail({
   result,
   args,
   openFile,
 }: {
-  result: any
-  args: any
+  result?: PdfHighlightResult | null
+  args?: PdfHighlightArgs | null
   openFile: (path: string, line?: number) => void
 }) {
   const { t } = useTranslation()
@@ -109,7 +120,7 @@ export function PdfHighlightDetail({
         : 0
   const sourcePath = typeof args?.path === 'string' ? args.path : ''
   const hasBoxes = args?.boxes !== undefined && args?.boxes !== null
-  const pageText = pageRangeText(pages)
+  const pageText = formatPageRanges(pages)
 
   return (
     <div className="ai-assist-tool-detail-outline ai-assist-tool-detail-pdf-highlight">

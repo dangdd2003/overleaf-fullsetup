@@ -5,7 +5,8 @@ import { createMcpExpressApp } from '@modelcontextprotocol/express'
 import { toNodeHandler } from '@modelcontextprotocol/node'
 import { createMcpHandler } from '@modelcontextprotocol/server'
 import { createMcpServerFactory, listToolMetadata } from './server.js'
-import { OverleafApiError } from './errors.js'
+import { CODES, OverleafApiError } from './errors.js'
+import { DEFAULT_RESOURCE_URI } from './config.js'
 import {
   PROTECTED_RESOURCE_WELL_KNOWN_PATH,
   getProtectedResourceMetadata,
@@ -19,6 +20,10 @@ const BEARER_PATTERN = /^Bearer\s+(\S+)$/i
 const MAX_CACHED_TOKENS = 10000
 /** Longest a proxied request to web may take, body included. */
 const PROXY_TIMEOUT_MS = 30000
+/** Largest upstream body the proxy will buffer, judged by its declared Content-Length. */
+const PROXY_MAX_BODY_BYTES = 64 * 1024 * 1024
+/** A path segment that is "." or ".." in any case, plain or percent-encoded. */
+const DOT_SEGMENT_PATTERN = /(^|\/)(\.|%2e){1,2}(\/|$)/i
 /** RFC 9110 §7.6.1 headers that apply to one connection and are never forwarded. */
 const HOP_BY_HOP_HEADERS = new Set([
   'connection',
@@ -54,7 +59,7 @@ const MAX_BEARER_TOKEN_LENGTH = 8192
  * @param {object} config
  * @returns {import('express').RequestHandler}
  */
-export function createPreBodyGate(config) {
+function createPreBodyGate(config) {
   const windows = new Map()
 
   function countRequest(ip, now) {
@@ -77,20 +82,42 @@ export function createPreBodyGate(config) {
       res.setHeader('Retry-After', String(Math.ceil(PRE_BODY_RATE_WINDOW_MS / 1000)))
       res
         .status(429)
-        .json({ code: 'rate_limited', message: 'rate limit exceeded' })
+        .json({ code: CODES.RATE_LIMITED, message: 'rate limit exceeded' })
       return
     }
 
     const match = BEARER_PATTERN.exec(req.get('authorization') || '')
     if (!match || match[1].length > MAX_BEARER_TOKEN_LENGTH) {
-      res.setHeader('WWW-Authenticate', buildWwwAuthenticateHeader(config))
-      res
-        .status(401)
-        .json({ code: 'unauthorized', message: 'an Authorization: Bearer token is required' })
+      sendBearerRequired(res, config)
       return
     }
     next()
   }
+}
+
+/**
+ * Send the bearer challenge with its JSON error body. The challenge header is
+ * built from the config, and an optional error and description name why the
+ * token was refused.
+ *
+ * @param {object} res
+ * @param {object} config
+ * @param {number} status
+ * @param {{ code: string, message: string }} body
+ * @param {string} [error] RFC 6750 error token
+ * @param {string} [description]
+ */
+function sendChallenge(res, config, status, body, error, description) {
+  res.setHeader('WWW-Authenticate', buildWwwAuthenticateHeader(config, error, description))
+  res.status(status).json(body)
+}
+
+/** Reply to a request that carries no usable bearer token. */
+function sendBearerRequired(res, config) {
+  sendChallenge(res, config, 401, {
+    code: CODES.UNAUTHORIZED,
+    message: 'an Authorization: Bearer token is required',
+  })
 }
 
 /**
@@ -100,18 +127,19 @@ export function createPreBodyGate(config) {
  * @param {string} url
  * @returns {string}
  */
-export function redactUrl(url) {
+function redactUrl(url) {
   return String(url ?? '').replace(/([?&]access_token=)[^&#]*/gi, '$1[redacted]')
 }
 
 /** Unauthenticated endpoint the OAuth consent page reads to describe tools. */
-export const TOOLS_METADATA_PATH = '/tools/metadata'
+const TOOLS_METADATA_PATH = '/tools/metadata'
 
 /**
  * Require and authenticate a bearer token on the Authorization header.
  *
  * Supports both:
- * 1. RS256 signed OAuth 2.1 JWTs: verified statelessly via JWKS with 0 network latency.
+ * 1. RS256 signed OAuth 2.1 JWTs: verified locally against a cached JWKS
+ *    (fetched on first use, on expiry and on unknown kid).
  * 2. Personal Access Tokens (`olp_...`): validated against the Overleaf web API.
  * Valid tokens are cached in memory for cacheTtlMs to avoid excessive upstream
  * validation round-trips during active sessions.
@@ -130,13 +158,18 @@ export function createBearerAuthMiddleware(
   const tokenCache = new Map()
   let verifier = jwtVerifier
 
-  // Expired entries are otherwise never removed. Sweep them once the cache
-  // grows past the limit, then evict the oldest entries if still over it.
+  // Expired entries are otherwise never removed. Once the cache is full, sweep
+  // them at most once per TTL, since a full scan on every insert would cost
+  // O(MAX_CACHED_TOKENS) each time. Between sweeps, evict the oldest entries.
+  let lastSweepAt = 0
   function rememberToken(token, entry) {
     if (tokenCache.size >= MAX_CACHED_TOKENS) {
       const now = Date.now()
-      for (const [key, value] of tokenCache) {
-        if (value.expiresAt <= now) tokenCache.delete(key)
+      if (now - lastSweepAt >= cacheTtlMs) {
+        lastSweepAt = now
+        for (const [key, value] of tokenCache) {
+          if (value.expiresAt <= now) tokenCache.delete(key)
+        }
       }
       while (tokenCache.size >= MAX_CACHED_TOKENS) {
         tokenCache.delete(tokenCache.keys().next().value)
@@ -146,14 +179,10 @@ export function createBearerAuthMiddleware(
   }
 
   return async function requireBearerToken(req, res, next) {
-    const activeConfig =
-      config || req.app?.locals?.config || { resourceUri: 'http://localhost:3050/mcp' }
+    const activeConfig = config || req.app?.locals?.config || { resourceUri: DEFAULT_RESOURCE_URI }
     const match = BEARER_PATTERN.exec(req.get('authorization') || '')
     if (!match) {
-      res.setHeader('WWW-Authenticate', buildWwwAuthenticateHeader(activeConfig))
-      res
-        .status(401)
-        .json({ code: 'unauthorized', message: 'an Authorization: Bearer token is required' })
+      sendBearerRequired(res, activeConfig)
       return
     }
 
@@ -205,29 +234,34 @@ export function createBearerAuthMiddleware(
         // token's header back, so clients get fixed text
         if (err.code === 'insufficient_scope') {
           const message = 'the access token lacks the mcp scope'
-          res.setHeader(
-            'WWW-Authenticate',
-            buildWwwAuthenticateHeader(activeConfig, 'insufficient_scope', message)
+          sendChallenge(
+            res,
+            activeConfig,
+            403,
+            { code: CODES.INSUFFICIENT_SCOPE, message },
+            CODES.INSUFFICIENT_SCOPE,
+            message
           )
-          res.status(403).json({ code: 'insufficient_scope', message })
           return
         }
         if (err.code === 'JWKS_UNAVAILABLE' || err.name === 'TimeoutError') {
           logger.warn({ err }, 'could not load the signing keys to verify a token')
           res.setHeader('Retry-After', '30')
           res.status(503).json({
-            code: 'temporarily_unavailable',
+            code: CODES.TEMPORARILY_UNAVAILABLE,
             message: 'token verification is temporarily unavailable',
           })
           return
         }
-        const code = 'invalid_token'
         const message = 'the access token is invalid or expired'
-        res.setHeader(
-          'WWW-Authenticate',
-          buildWwwAuthenticateHeader(activeConfig, code, message)
+        sendChallenge(
+          res,
+          activeConfig,
+          401,
+          { code: CODES.INVALID_TOKEN, message },
+          CODES.INVALID_TOKEN,
+          message
         )
-        res.status(401).json({ code, message })
         return
       }
     }
@@ -237,11 +271,14 @@ export function createBearerAuthMiddleware(
     // Passing it through would let any string act as a credential.
     const activeClient = client || req.app?.locals?.client
     if (!activeClient) {
-      res.setHeader(
-        'WWW-Authenticate',
-        buildWwwAuthenticateHeader(activeConfig, 'invalid_token', 'token could not be validated')
+      sendChallenge(
+        res,
+        activeConfig,
+        401,
+        { code: CODES.UNAUTHORIZED, message: 'valid authentication required' },
+        CODES.INVALID_TOKEN,
+        'token could not be validated'
       )
-      res.status(401).json({ code: 'unauthorized', message: 'valid authentication required' })
       return
     }
 
@@ -255,13 +292,9 @@ export function createBearerAuthMiddleware(
       // error's text could name internal details, so it is replaced.
       const known = err instanceof OverleafApiError
       const status = (known && err.status) || 401
-      const code = (known && err.code) || 'unauthorized'
+      const code = (known && err.code) || CODES.UNAUTHORIZED
       const message = (known && err.message) || 'valid authentication required'
-      res.setHeader(
-        'WWW-Authenticate',
-        buildWwwAuthenticateHeader(activeConfig, code, message)
-      )
-      res.status(status).json({ code, message })
+      sendChallenge(res, activeConfig, status, { code, message }, code, message)
       return
     }
 
@@ -329,7 +362,7 @@ export function originHostnames(origins) {
  * the site hostname, because nginx forwards the public Host to this service.
  *
  * @param {{ config: object, client: object }} deps
- * @returns {{ app: import('express').Express, handler: object }}
+ * @returns {{ app: import('express').Express }}
  */
 export function createHttpApp({ config, client }) {
   const handler = createMcpHandler(createMcpServerFactory({ client }))
@@ -347,6 +380,10 @@ export function createHttpApp({ config, client }) {
       : {}),
   })
   const app = express()
+  // nginx is the only hop in front, on loopback. Trust just that hop so req.ip
+  // is the client address from X-Forwarded-For, not the proxy's, or the
+  // per-IP gate below would count every user as one.
+  app.set('trust proxy', 'loopback')
   // Exact path only, so an endpoint mounted at '/' does not gate every route.
   app.all(config.endpointPath, createPreBodyGate(config))
   app.use(sdkApp)
@@ -412,7 +449,7 @@ export function createHttpApp({ config, client }) {
   app.all(config.endpointPath, authMiddleware, (req, res) => {
     void node(req, res, req.body)
   })
-  return { app, handler }
+  return { app }
 }
 
 /**
@@ -440,7 +477,16 @@ export async function proxyToInternalUrl(req, res, internalUrl) {
     // Only the path and query of the incoming request are forwarded. Resolving
     // the raw request target against internalUrl would let an absolute-form
     // target (GET http://other/js/x) or a '//host' path pick the destination.
-    const incoming = new URL(req.originalUrl || req.url, 'http://localhost')
+    const rawTarget = req.originalUrl || req.url
+    const incoming = new URL(rawTarget, 'http://localhost')
+    // The routes above match the raw path, but URL resolves dot segments (and
+    // backslashes) before forwarding, so /js/../../admin would reach web. Refuse
+    // any path the URL parser would rewrite, rather than forward a different one.
+    const rawPath = rawTarget.split('?')[0]
+    if (rawPath.includes('\\') || DOT_SEGMENT_PATTERN.test(rawPath)) {
+      res.status(404).end()
+      return
+    }
     const targetUrl = new URL(internalUrl)
     targetUrl.pathname = incoming.pathname
     targetUrl.search = incoming.search
@@ -480,11 +526,24 @@ export async function proxyToInternalUrl(req, res, internalUrl) {
       signal: AbortSignal.timeout(PROXY_TIMEOUT_MS),
     })
 
+    // A declared length past the cap is refused before the body is read at all.
+    const declaredLength = Number(upstreamRes.headers.get('content-length'))
+    if (Number.isFinite(declaredLength) && declaredLength > PROXY_MAX_BODY_BYTES) {
+      await upstreamRes.body?.cancel().catch(() => {})
+      throw new Error(`upstream body of ${declaredLength} bytes exceeds the proxy cap`)
+    }
+
     res.status(upstreamRes.status)
+    // Set-cookie is copied below as a list, so the per-header loop skips it.
+    const setCookies =
+      typeof upstreamRes.headers.getSetCookie === 'function'
+        ? upstreamRes.headers.getSetCookie()
+        : null
     for (const [key, value] of upstreamRes.headers.entries()) {
       // fetch has already decoded the body, so the upstream encoding no longer applies.
       const lower = key.toLowerCase()
       if (HOP_BY_HOP_HEADERS.has(lower) || lower === 'content-encoding') continue
+      if (lower === 'set-cookie' && setCookies) continue
       if (lower === 'location') {
         const location = relativeLocation(value, targetUrl)
         if (location !== null) res.setHeader(key, location)
@@ -493,11 +552,8 @@ export async function proxyToInternalUrl(req, res, internalUrl) {
       res.setHeader(key, value)
     }
 
-    if (typeof upstreamRes.headers.getSetCookie === 'function') {
-      const setCookies = upstreamRes.headers.getSetCookie()
-      if (setCookies?.length) {
-        res.setHeader('set-cookie', setCookies)
-      }
+    if (setCookies?.length) {
+      res.setHeader('set-cookie', setCookies)
     }
 
     const buffer = Buffer.from(await upstreamRes.arrayBuffer())

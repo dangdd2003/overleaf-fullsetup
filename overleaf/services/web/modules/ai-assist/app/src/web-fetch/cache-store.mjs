@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS searches (
   PRIMARY KEY (owner, key)
 );
 CREATE INDEX IF NOT EXISTS searches_used ON searches (owner, used);
+CREATE INDEX IF NOT EXISTS searches_at ON searches (at);
 
 CREATE TABLE IF NOT EXISTS pages (
   id INTEGER PRIMARY KEY,
@@ -45,6 +46,7 @@ CREATE TABLE IF NOT EXISTS pages (
   UNIQUE (owner, key)
 );
 CREATE INDEX IF NOT EXISTS pages_used ON pages (owner, used);
+CREATE INDEX IF NOT EXISTS pages_at ON pages (at);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS pages_fts USING fts5(
   title, text,
@@ -126,7 +128,7 @@ export function openWebCache(file) {
   return db
 }
 
-export function closeWebCache() {
+function closeWebCache() {
   if (db) db.close()
   db = null
   statements = new Map()

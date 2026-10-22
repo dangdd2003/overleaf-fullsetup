@@ -7,11 +7,15 @@ import { equationField } from '../equation/session'
 import { tableField } from '../table/session'
 import { inlinePopupField } from './popup-field'
 
+type VimAdapterView = EditorView & {
+  cm?: { state?: { vim?: { insertMode?: boolean } | null } }
+}
+
 /** Vim in normal or visual mode: Space is a motion there, not text. */
-export function vimBlocksTyping(view: EditorView): boolean {
+function vimBlocksTyping(view: EditorView): boolean {
   // @replit/codemirror-vim keeps its CodeMirror 5 adapter on the view
-  const vim = (view as any).cm?.state?.vim
-  return Boolean(vim) && !vim.insertMode
+  const vim = (view as VimAdapterView).cm?.state?.vim
+  return !!vim && !vim.insertMode
 }
 
 /**
@@ -19,7 +23,7 @@ export function vimBlocksTyping(view: EditorView): boolean {
  * popup. `exceptNotice` leaves out a notice of ours at the cursor (an error,
  * the consent prompt): it is only a message, which Shift+Space replaces.
  */
-export function otherAiUiOpen(
+function otherAiUiOpen(
   state: EditorState,
   { exceptNotice = false }: { exceptNotice?: boolean } = {}
 ): boolean {

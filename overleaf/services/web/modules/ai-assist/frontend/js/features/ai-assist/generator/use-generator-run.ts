@@ -36,6 +36,12 @@ export type GeneratorRun<Facts, Extra> = {
   messages: AgentMessage[] | null
 }
 
+export function isProviderError(
+  error: unknown
+): error is { code?: string; message?: string; hint?: string } {
+  return typeof error === 'object' && error !== null
+}
+
 export type GeneratorRunOptions<Facts, Extra, Result extends { raw: string }, Reply> = {
   /** The open session's id; null while closed. A new id starts from a clean slate. */
   sessionId: number | null
@@ -61,7 +67,7 @@ export type GeneratorRunOptions<Facts, Extra, Result extends { raw: string }, Re
   /** A new version arrived: reset per-version choices. */
   onVersion?: () => void
   /** A phase for errors the generator explains itself; null for the generic one. */
-  errorPhase?: (error: any) => GeneratorPhase<Reply> | null
+  errorPhase?: (error: unknown) => GeneratorPhase<Reply> | null
   failedMessage: string
   /** Closes the session (Discard). */
   close: () => void
@@ -205,10 +211,11 @@ export function useGeneratorRun<Facts, Extra, Result extends { raw: string }, Re
       setDurationMs(Date.now() - startTimeRef.current)
       onVersion?.()
       setPhase({ name: 'ready' })
-    } catch (error: any) {
+    } catch (error) {
       if (abortRef.current === controller) setRetry(null)
       if (controller.signal.aborted) return
-      if (error?.code === 'imageUnsupported') {
+      const err = isProviderError(error) ? error : undefined
+      if (err?.code === 'imageUnsupported') {
         setPhase({ name: 'imageUnsupported' })
         return
       }
@@ -217,7 +224,7 @@ export function useGeneratorRun<Facts, Extra, Result extends { raw: string }, Re
         setPhase(explained)
         return
       }
-      setPhase({ name: 'error', message: error?.message || failedMessage, hint: error?.hint })
+      setPhase({ name: 'error', message: err?.message || failedMessage, hint: err?.hint })
     }
   }
 

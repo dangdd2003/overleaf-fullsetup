@@ -2,7 +2,11 @@ import { fetchWithRetry } from "../AiAssistProviders.mjs";
 import { ProviderError } from "../AiAssistErrors.mjs";
 import { connectorFetch } from "../connectors/ConnectorFetch.mjs";
 import { REQUEST_TIMEOUT_MS } from "./transport.mjs";
-import { webError } from "./util.mjs";
+import {
+  KEY_REFUSED_STATUSES,
+  TAVILY_KEY_STATUSES,
+  webError,
+} from "./util.mjs";
 
 /**
  * Requests to the search and page-reader APIs the user configured. Unlike a
@@ -60,13 +64,13 @@ export async function upstreamError(res, label, type) {
       "SearXNG's bot limiter blocked the request; allow this server's address or turn the limiter off for it.";
   } else if (
     type === "websearchapi" &&
-    (res.status === 401 || res.status === 402 || res.status === 403)
+    KEY_REFUSED_STATUSES.includes(res.status)
   ) {
     hint =
       "The WebSearchAPI.ai API key was rejected or is out of credits. Create one at https://websearchapi.ai and update it in Account Settings.";
   } else if (
     type === "tavily" &&
-    [401, 402, 403, 432, 433].includes(res.status)
+    TAVILY_KEY_STATUSES.includes(res.status)
   ) {
     hint =
       "The Tavily API key was rejected or reached its usage limit. Create one at https://app.tavily.com and update it in Account Settings.";
@@ -75,7 +79,7 @@ export async function upstreamError(res, label, type) {
       "Tavily's rate limit was reached. Wait a moment before trying again.";
   } else if (
     type === "firecrawl" &&
-    (res.status === 401 || res.status === 402 || res.status === 403)
+    KEY_REFUSED_STATUSES.includes(res.status)
   ) {
     hint =
       "The Firecrawl API key was rejected or is out of credits. Create one at https://www.firecrawl.dev/app/api-keys and update it in Account Settings.";
@@ -93,7 +97,7 @@ export async function upstreamError(res, label, type) {
       "Firecrawl's rate or concurrency limit was reached. Wait a moment before trying again.";
   } else if (
     type === "jina" &&
-    (res.status === 401 || res.status === 402 || res.status === 403)
+    KEY_REFUSED_STATUSES.includes(res.status)
   ) {
     hint =
       "The Jina API key was rejected or is out of tokens. Create one at https://jina.ai/api-dashboard/key-manager and update it in Account Settings.";
@@ -101,7 +105,7 @@ export async function upstreamError(res, label, type) {
     hint = "Jina's rate limit was reached. Wait a moment before trying again.";
   } else if (
     type === "langsearch" &&
-    (res.status === 401 || res.status === 402 || res.status === 403)
+    KEY_REFUSED_STATUSES.includes(res.status)
   ) {
     hint =
       "The LangSearch API key was rejected or is out of credits. Create one at https://langsearch.com and update it in Account Settings.";
@@ -110,7 +114,7 @@ export async function upstreamError(res, label, type) {
       "LangSearch's rate limit was reached. Wait a moment before trying again.";
   } else if (
     type === "exa" &&
-    (res.status === 401 || res.status === 402 || res.status === 403)
+    KEY_REFUSED_STATUSES.includes(res.status)
   ) {
     hint =
       "The Exa API key was rejected or is out of credits. Create one at https://dashboard.exa.ai/api-keys and update it in Account Settings.";
@@ -118,7 +122,7 @@ export async function upstreamError(res, label, type) {
     hint = "Exa's rate limit was reached. Wait a moment before trying again.";
   } else if (
     type === "parallel" &&
-    (res.status === 401 || res.status === 402 || res.status === 403)
+    KEY_REFUSED_STATUSES.includes(res.status)
   ) {
     hint =
       "The Parallel API key was rejected or is out of credits. Create one at https://parallel.ai and update it in Account Settings.";
@@ -127,7 +131,7 @@ export async function upstreamError(res, label, type) {
       "Parallel's rate limit was reached. Wait a moment before trying again.";
   } else if (
     type === "tinyfish" &&
-    (res.status === 401 || res.status === 402 || res.status === 403)
+    KEY_REFUSED_STATUSES.includes(res.status)
   ) {
     hint =
       "The TinyFish API key was rejected or is out of credits. Create one at https://agent.tinyfish.ai/api-keys and update it in Account Settings.";

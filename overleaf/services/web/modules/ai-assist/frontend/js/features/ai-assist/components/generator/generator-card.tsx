@@ -1,4 +1,4 @@
-import { KeyboardEvent, ReactNode, useRef, useState } from 'react'
+import { KeyboardEvent, ReactNode, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import classNames from 'classnames'
 import { Info, Sparkle, Warning } from '@phosphor-icons/react'
@@ -47,8 +47,8 @@ export type GeneratorCardProps = {
   /** The current version, shown when ready: previews, changes. */
   children?: ReactNode
   notes: string | null
-  warnings: Array<{ message: string }>
-  packages: string[]
+  warnings: ReadonlyArray<{ readonly message: string }>
+  packages: ReadonlyArray<string>
   canAddPackages: boolean
   addPackages: boolean
   onAddPackages: (value: boolean) => void
@@ -69,9 +69,13 @@ export type GeneratorCardProps = {
 export function GeneratorCard(props: GeneratorCardProps) {
   const { t } = useTranslation()
   const [copied, setCopied] = useState(false)
+  const copiedTimer = useRef<number | undefined>(undefined)
   const bodyRef = useRef<HTMLDivElement>(null)
   const { onScroll: onBodyScroll } = useStickToBottom(bodyRef)
   const { phase, text, index, versionCount } = props
+
+  useEffect(() => () => window.clearTimeout(copiedTimer.current), [])
+
   const hasVersion = props.copyText !== null
   const streaming = phase.name === 'streaming'
   const blocked = phase.name === 'consent' || phase.name === 'noProvider'
@@ -83,7 +87,8 @@ export function GeneratorCard(props: GeneratorCardProps) {
       ?.writeText(props.copyText)
       .then(() => {
         setCopied(true)
-        window.setTimeout(() => setCopied(false), 1500)
+        window.clearTimeout(copiedTimer.current)
+        copiedTimer.current = window.setTimeout(() => setCopied(false), 1500)
       })
       .catch(() => {})
   }

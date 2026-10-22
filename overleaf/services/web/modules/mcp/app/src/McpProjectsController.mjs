@@ -17,11 +17,13 @@ import AuthorizationManager from '../../../../app/src/Features/Authorization/Aut
 import UserGetter from '../../../../app/src/Features/User/UserGetter.mjs'
 import McpErrors from './McpErrors.mjs'
 import {
-  ACCESS_BUCKETS,
+  accessibleProjects,
   hasDotSegment,
   invalid,
   parseIntParam,
 } from './McpRequestParams.mjs'
+
+const NAME_COLLATOR = new Intl.Collator(undefined, { sensitivity: 'base' })
 
 const LIST_STATUSES = ['active', 'archived', 'trashed', 'all']
 const LIST_OWNERSHIPS = ['all', 'owned', 'shared']
@@ -162,7 +164,7 @@ async function ownersById(ownerRefs) {
  * The compact project shape every tool returns. `owner` is pre-resolved by
  * the caller so this stays synchronous.
  */
-function compactProject(project, { accessLevel, owner, userId }) {
+function compactProject(project, { accessLevel, owner, userId, status }) {
   return {
     id: project._id.toString(),
     name: project.name,
@@ -170,8 +172,8 @@ function compactProject(project, { accessLevel, owner, userId }) {
     accessLevel,
     owner,
     compiler: project.compiler || Settings.defaultLatexCompiler,
-    archived: safeIsArchived(project, userId),
-    trashed: safeIsTrashed(project, userId),
+    archived: status != null ? status === 'archived' : safeIsArchived(project, userId),
+    trashed: status != null ? status === 'trashed' : safeIsTrashed(project, userId),
   }
 }
 
@@ -218,15 +220,10 @@ function compareProjects(sortBy, order) {
     if (sortBy === 'name') {
       return (
         direction *
-        (a.project.name || '').localeCompare(b.project.name || '', undefined, {
-          sensitivity: 'base',
-        })
+        NAME_COLLATOR.compare(a.project.name || '', b.project.name || '')
       )
     }
-    return (
-      direction *
-      (new Date(a.project.lastUpdated || 0) - new Date(b.project.lastUpdated || 0))
-    )
+    return direction * (a.time - b.time)
   }
 }
 
@@ -263,13 +260,17 @@ async function listProjects(req, res) {
   // so a project the caller owns is never reported as shared.
   const seen = new Set()
   let rows = []
-  for (const [bucket, accessLevel] of ACCESS_BUCKETS) {
-    for (const project of all[bucket] || []) {
-      const id = project._id.toString()
-      if (seen.has(id)) continue
-      seen.add(id)
-      rows.push({ project, accessLevel, owned: bucket === 'owned' })
-    }
+  for (const { project, accessLevel, owned } of accessibleProjects(all)) {
+    const id = project._id.toString()
+    if (seen.has(id)) continue
+    seen.add(id)
+    rows.push({
+      project,
+      accessLevel,
+      owned,
+      time: new Date(project.lastUpdated || 0).getTime(),
+      status: statusOf(project, userId),
+    })
   }
 
   if (ownership !== 'all') {
@@ -279,20 +280,21 @@ async function listProjects(req, res) {
     rows = rows.filter(row => (row.project.name || '').toLowerCase().includes(query))
   }
   if (status !== 'all') {
-    rows = rows.filter(row => statusOf(row.project, userId) === status)
+    rows = rows.filter(row => row.status === status)
   }
   rows.sort(compareProjects(sortBy, order))
 
   const total = rows.length
   const page = rows.slice(0, limit)
   const owners = await ownersById(page.map(row => row.project.owner_ref))
-  const projects = page.map(({ project, accessLevel }) =>
+  const projects = page.map(({ project, accessLevel, status: rowStatus }) =>
     compactProject(project, {
       accessLevel,
       owner: owners.get(project.owner_ref?.toString()) || {
         id: project.owner_ref?.toString(),
       },
       userId,
+      status: rowStatus,
     })
   )
 

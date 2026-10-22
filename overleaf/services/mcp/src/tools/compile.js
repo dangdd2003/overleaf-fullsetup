@@ -139,7 +139,7 @@ function normaliseDiagnostics(diag) {
   const withPath = entries =>
     Array.isArray(entries)
       ? entries.map(({ file, ...rest }) => ({
-          path: file ? `/${String(file).replace(/^\/+/, '')}` : null,
+          path: file ? slashed(file) : null,
           ...rest,
         }))
       : entries
@@ -1527,8 +1527,7 @@ export function registerCompileTools(server, deps) {
             : zoomsOnBlock
               ? ' (zoomed on the block)'
               : ''
-        const attached =
-          images.length > 1 ? `attached as ${images.length} images` : 'attached'
+        const attached = attachedText(images)
         const warnings = []
         if (stale) warnings.push(staleWarning(stale))
         const nextSteps = sourceRanges.length
@@ -1723,8 +1722,7 @@ export function registerCompileTools(server, deps) {
       const from = shown.fromPage ?? fromPage ?? 1
       const to = shown.toPage ?? from
       const of = shown.pageCount ? `/${shown.pageCount}` : ''
-      const attached =
-        images.length > 1 ? `attached as ${images.length} images` : 'attached'
+      const attached = attachedText(images)
       const paper = shown.paper
         ? `paper ${shown.paper.name ?? `${shown.paper.width}x${shown.paper.height}`}${shown.paper.orientation ? ` ${shown.paper.orientation}` : ''}`
         : null
@@ -1979,6 +1977,11 @@ function imageBlocks(images) {
   }))
 }
 
+/** How a result describes its attached images: "attached" or "attached as N images". */
+function attachedText(images) {
+  return images.length > 1 ? `attached as ${images.length} images` : 'attached'
+}
+
 /** The stale marker a web result carries, with paths as project paths. */
 function staleOf(shown) {
   if (!shown.stale) return null
@@ -2044,7 +2047,7 @@ function renderOverviewPage(page) {
     problems.push(`sourceStatus ${page.sourceStatus}`)
   }
   const extra = Object.fromEntries(
-    Object.entries(page).filter(([key]) => !OVERVIEW_PAGE_FIELDS.has(key) && key !== 'page')
+    Object.entries(page).filter(([key]) => !OVERVIEW_PAGE_FIELDS.has(key))
   )
   if (compactJson(extra)) problems.push(compactJson(extra))
   return [`p${page.page}`, source.length ? source.join(' ') : 'no source', problems.join(', ')]

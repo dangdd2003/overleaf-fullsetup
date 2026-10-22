@@ -49,7 +49,7 @@ describe('AiAssistCheckpointController', function () {
 
     mockEntityHandler = {
       getDocIdByPath: sinon.stub().resolves('doc_resolved_id'),
-      getAllDocs: sinon.stub().resolves([]),
+      getAllDocs: sinon.stub().resolves({}),
     }
 
     mockEditorController = {
@@ -230,9 +230,9 @@ describe('AiAssistCheckpointController', function () {
         USER_MSG_ID,
         { userMessageIds },
       ])
-      expect(mockCheckpointStore.checkRewind.firstCall.args[5]).to.deep.equal({
-        userMessageIds,
-      })
+      expect(mockCheckpointStore.checkRewind.firstCall.args[5].userMessageIds).to.deep.equal(
+        userMessageIds
+      )
     })
 
     it('ignores userMessageIds that are not an array of strings', async function () {

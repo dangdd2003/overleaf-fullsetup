@@ -650,6 +650,17 @@ describe('MarkdownContent safety', function () {
     )
   })
 
+  it('escapes raw HTML when style attribute has no preceding whitespace', function () {
+    const { container } = render(
+      <MarkdownContent content={'<div class="x"style="background:url(https://attacker.example/t)">hi</div>'} />
+    )
+
+    expect(container.querySelector('.ai-assist-markdown [style]')).to.equal(null)
+    expect(container.querySelector('.ai-assist-markdown')?.textContent).to.include(
+      'style="background:url(https://attacker.example/t)"'
+    )
+  })
+
   it('keeps raw HTML without a style attribute when every tag is one the chat renders', function () {
     const { container } = render(<MarkdownContent content={'Press <kbd>Ctrl</kbd> and <em>hold</em>.'} />)
 

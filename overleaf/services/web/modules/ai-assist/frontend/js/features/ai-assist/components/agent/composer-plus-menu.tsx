@@ -19,7 +19,6 @@ export interface ComposerPlusMenuProps {
   onSlashCommands: () => void
   /** The chat whose connector selection the Connectors submenu edits. */
   chatId?: string | null
-  isMac?: boolean
   /** Starts or cancels drawing a box on the PDF; the item shows only with it. */
   onTogglePdfArea?: () => void
   /** Whether a box is being drawn, so the item offers to cancel it. */
@@ -62,7 +61,7 @@ export function submenuAnchor(trigger: HTMLElement) {
   }
 }
 
-export function SquareSlashIcon({
+function SquareSlashIcon({
   size = 16,
   className,
 }: {
@@ -92,15 +91,18 @@ function detectMac(): boolean {
   if (typeof window === 'undefined' || !window.navigator) {
     return false
   }
+  const nav = window.navigator as Navigator & {
+    userAgentData?: { platform?: string }
+  }
   const platform =
-    (window.navigator as any).userAgentData?.platform ||
-    window.navigator.platform ||
-    window.navigator.userAgent ||
+    nav.userAgentData?.platform ||
+    nav.platform ||
+    nav.userAgent ||
     ''
   return /Mac/i.test(platform)
 }
 
-export function ConnectorAvatar({
+function ConnectorAvatar({
   connector,
 }: {
   connector: ConnectorView
@@ -129,7 +131,6 @@ export function ComposerPlusMenu({
   onAddFiles,
   onSlashCommands,
   chatId = null,
-  isMac: isMacProp,
   onTogglePdfArea,
   pdfAreaSelecting = false,
 }: ComposerPlusMenuProps) {
@@ -277,7 +278,7 @@ export function ComposerPlusMenu({
     return null
   }
 
-  const isMacPlatform = isMacProp ?? detectMac()
+  const isMacPlatform = detectMac()
   const shortcut = isMacPlatform ? '⌘U' : 'Ctrl+U'
 
   const handleAddFiles = (event: React.MouseEvent) => {

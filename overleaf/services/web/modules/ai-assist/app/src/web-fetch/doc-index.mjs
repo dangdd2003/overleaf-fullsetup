@@ -55,7 +55,7 @@ function isRunning(pid) {
 }
 
 /** This process's index folder, clearing those of processes that have ended. */
-export function indexFolder() {
+function indexFolder() {
   if (folder) return folder
   const cache = Settings.aiAssist?.webCachePath
   let base =
@@ -347,17 +347,3 @@ export async function documentIndex(
   return { map, source: indexSource(built, doc) }
 }
 
-/** Closes every index: for tests and shutdown. */
-export function closeDocumentIndexes() {
-  for (const entry of open.values()) {
-    entry
-      .then(built => {
-        built.db.close()
-        fs.rmSync(built.file, { force: true })
-      })
-      .catch(() => {})
-  }
-  open.clear()
-  small.clear()
-  smallChars = 0
-}

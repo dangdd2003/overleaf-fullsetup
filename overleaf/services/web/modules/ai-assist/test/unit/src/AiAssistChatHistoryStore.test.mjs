@@ -8,7 +8,6 @@ import store, {
   sanitizeChatTitle,
   fallbackTitleFor,
   reorganizePromptToTitle,
-  titleFor,
 } from '../../../app/src/AiAssistChatHistoryStore.mjs'
 import { generateChatTitle } from '../../../app/src/AiAssistChatTitler.mjs'
 

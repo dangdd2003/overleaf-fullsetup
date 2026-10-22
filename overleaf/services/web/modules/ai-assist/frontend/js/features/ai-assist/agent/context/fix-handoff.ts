@@ -54,16 +54,23 @@ const HANDOFF_BLOCK = [
   '</handoff>',
 ].join('\n')
 
+/** The `status` a tool result reports, when the result is an object that has one. */
+function statusOf(value: unknown): unknown {
+  return typeof value === 'object' && value !== null && 'status' in value
+    ? value.status
+    : undefined
+}
+
 /** How the user ultimately answered an edit the fix run proposed. */
 function editStatus(
   call: ToolCallRecord,
   decidedEdits: Record<string, EditDecision>
 ): string {
-  const result = call.result as { status?: string } | undefined
+  const status = statusOf(call.result)
   const decided = decidedEdits[call.id]
 
-  if (result?.status === 'applied' || decided?.accepted === true) return 'applied'
-  if (result?.status === 'rejected' || decided?.accepted === false) {
+  if (status === 'applied' || decided?.accepted === true) return 'applied'
+  if (status === 'rejected' || decided?.accepted === false) {
     return 'rejected'
   }
   return 'proposed, not applied'
@@ -137,9 +144,10 @@ export function renderFixHandoff({
   decidedEdits,
   error,
 }: FixHandoffInput): string {
-  const first = transcript.find(entry => entry.role === 'user') as
-    | Extract<TranscriptEntry, { role: 'user' }>
-    | undefined
+  const first = transcript.find(
+    (entry): entry is Extract<TranscriptEntry, { role: 'user' }> =>
+      entry.role === 'user'
+  )
 
   const sections: string[] = []
   if (first?.contextText) sections.push(first.contextText)

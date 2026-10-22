@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { originOf } from './ConnectorFetch.mjs'
 
 /**
  * MCP servers may declare icons in their initialize result (spec 2025-11-25,
@@ -152,14 +153,6 @@ export function cacheTtl(found) {
 
 const defaultCache = new IconCache()
 
-function originOf(url) {
-  try {
-    return new URL(String(url)).origin
-  } catch {
-    return null
-  }
-}
-
 function notFound(res) {
   res.setHeader('Cache-Control', 'no-store')
   res.status(404).end()
@@ -202,7 +195,7 @@ export function createConnectorIconHandler({
     const origin = originOf(connector.url)
     if (!origin) return { icon: null, sure: true }
     return deps
-      .resolveOriginIcon(new URL(connector.url).origin, {
+      .resolveOriginIcon(origin, {
         allowPrivate: true,
         parentFallback: true,
       })

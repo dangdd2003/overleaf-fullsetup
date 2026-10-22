@@ -499,9 +499,10 @@ export function connectorsPrompt(connectors, state = {}) {
   ]
 
   if (servers.length > 0) {
+    const toolLists = servers.map(server => toolsOf(server))
     lines.push('', '## Connected servers')
-    for (const server of servers) {
-      const tools = toolsOf(server)
+    for (const [index, server] of servers.entries()) {
+      const tools = toolLists[index]
       const names = tools.map(tool => oneLine(tool.name, 80))
       if (deferred) {
         lines.push(`- ${oneLine(server.name, 80)}: ${countOf(tools.length, 'tool')}, not loaded yet`)
@@ -520,8 +521,8 @@ export function connectorsPrompt(connectors, state = {}) {
         'for several exact names, or keywords to search. Then call the tool on your next step.',
         ''
       )
-      for (const server of servers) {
-        const tools = toolsOf(server)
+      for (const [index, server] of servers.entries()) {
+        const tools = toolLists[index]
         if (tools.length === 0) continue
         lines.push(`- ${oneLine(server.name, 80)}`)
         for (const tool of tools) {

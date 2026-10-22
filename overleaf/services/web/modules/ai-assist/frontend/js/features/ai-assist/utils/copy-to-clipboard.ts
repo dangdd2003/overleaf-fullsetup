@@ -4,12 +4,7 @@
  */
 export async function copyToClipboard(text: string): Promise<boolean> {
   if (!text) return false
-  const nav =
-    typeof window !== 'undefined' && window.navigator
-      ? window.navigator
-      : typeof navigator !== 'undefined'
-        ? navigator
-        : null
+  const nav = typeof navigator !== 'undefined' ? navigator : null
 
   if (nav?.clipboard?.writeText) {
     try {

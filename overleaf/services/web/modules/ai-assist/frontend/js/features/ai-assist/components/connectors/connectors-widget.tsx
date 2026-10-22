@@ -103,10 +103,6 @@ export default function ConnectorsWidget() {
     previousCount.current = connectors.length
   }, [loading, connectors.length])
 
-  const handleSaved = useCallback(() => {
-    fetchConnectors()
-  }, [fetchConnectors])
-
   if (!enabled) return null
 
   const activeCount = connectors.filter(
@@ -241,7 +237,6 @@ export default function ConnectorsWidget() {
                   onConfigureTools={() =>
                     setConfiguringToolsConnector(connector)
                   }
-                  onRefresh={fetchConnectors}
                 />
               </li>
             ))}
@@ -281,10 +276,7 @@ export default function ConnectorsWidget() {
       </div>
 
       {importing ? (
-        <ImportConnectorsModal
-          show={importing}
-          onHide={() => setImporting(false)}
-        />
+        <ImportConnectorsModal show onHide={() => setImporting(false)} />
       ) : null}
 
       {modalConnector.open ? (
@@ -292,17 +284,15 @@ export default function ConnectorsWidget() {
           show={modalConnector.open}
           onHide={() => setModalConnector({ open: false, connector: null })}
           connector={modalConnector.connector}
-          onSaved={handleSaved}
           meta={meta}
         />
       ) : null}
 
       {configuringToolsConnector ? (
         <ToolPermissionsModal
-          show={Boolean(configuringToolsConnector)}
+          show
           onHide={() => setConfiguringToolsConnector(null)}
           connector={configuringToolsConnector}
-          onSaved={fetchConnectors}
         />
       ) : null}
     </div>

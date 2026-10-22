@@ -1,6 +1,6 @@
 /** Two Shift+Space requests never start closer together than this; Automatic has no gap. */
-export const MIN_REQUEST_GAP_MS = 1000
-export const CACHE_SIZE = 32
+const MIN_REQUEST_GAP_MS = 1000
+const CACHE_SIZE = 32
 const KEY_PREFIX_CHARS = 500
 const KEY_SUFFIX_CHARS = 200
 

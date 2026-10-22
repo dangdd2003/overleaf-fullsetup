@@ -25,6 +25,13 @@ import SessionManager from '../../../../app/src/Features/Authentication/SessionM
 import AuthorizationManager from '../../../../app/src/Features/Authorization/AuthorizationManager.mjs'
 import TokenAccessHandler from '../../../../app/src/Features/TokenAccess/TokenAccessHandler.mjs'
 
+const MAX_CONCURRENT_RUNS_PER_USER = 5
+
+/** The largest transcript or message, in bytes, a run accepts. */
+function maxTranscriptBytes() {
+  return Settings.aiAssist?.maxTranscriptBytes ?? 32 * 1024 * 1024
+}
+
 /**
  * The web settings a run may use, from what the browser sent. Null when the
  * instance has no web tools or the user disabled web search. A client cannot
@@ -66,6 +73,24 @@ export class AiAssistRunController {
     this.store = store
     this.subscriber = subscriber
     this.authorization = authorization
+  }
+
+  /**
+   * The run named in the request, or null after answering 404 when it does not
+   * exist or 403 when it belongs to another project.
+   */
+  async #loadRun(req, res) {
+    const run = await this.store.getRun(req.params.runId)
+    if (!run) {
+      res.status(404).json({ error: 'Run not found' })
+      return null
+    }
+    const projectId = req.params.Project_id || req.params.project_id
+    if (projectId && run.projectId !== projectId) {
+      res.status(403).json({ error: 'Cross-project run access forbidden' })
+      return null
+    }
+    return run
   }
 
   /**
@@ -128,7 +153,7 @@ export class AiAssistRunController {
         .json({ error: 'Missing transcript or providerSettings' })
     }
 
-    const maxBytes = Settings.aiAssist?.maxTranscriptBytes ?? 32 * 1024 * 1024
+    const maxBytes = maxTranscriptBytes()
     if (!Array.isArray(transcript) || transcript.length === 0) {
       return res
         .status(400)
@@ -239,6 +264,13 @@ export class AiAssistRunController {
         .slice(0, 50)
     }
 
+    if (userId && this.manager.countActiveRunsForUser?.(userId) >= MAX_CONCURRENT_RUNS_PER_USER) {
+      return res.status(429).json({
+        error: 'Too many concurrent runs in progress',
+        code: 'tooManyRuns',
+      })
+    }
+
     const runId = `run_${Date.now()}_${crypto.randomBytes(16).toString('hex')}`
 
     // Start background promise without awaiting completion
@@ -268,17 +300,10 @@ export class AiAssistRunController {
     const parsed = parseInt(req.query.since || '0', 10)
     const sinceSeq = Number.isFinite(parsed) && parsed > 0 ? parsed : 0
 
-    const run = await this.store.getRun(runId)
-    if (!run) {
-      return res.status(404).json({ error: 'Run not found' })
-    }
+    const run = await this.#loadRun(req, res)
+    if (!run) return
 
     const projectId = req.params.Project_id || req.params.project_id
-    if (projectId && run.projectId !== projectId) {
-      return res
-        .status(403)
-        .json({ error: 'Cross-project run access forbidden' })
-    }
 
     if (
       !projectId &&
@@ -418,17 +443,10 @@ export class AiAssistRunController {
 
   stopRun = async (req, res) => {
     const { runId } = req.params
-    const run = await this.store.getRun(runId)
-    if (!run) {
-      return res.status(404).json({ error: 'Run not found' })
-    }
+    const run = await this.#loadRun(req, res)
+    if (!run) return
 
     const projectId = req.params.Project_id || req.params.project_id
-    if (projectId && run.projectId !== projectId) {
-      return res
-        .status(403)
-        .json({ error: 'Cross-project run access forbidden' })
-    }
 
     if (
       !projectId &&
@@ -443,17 +461,10 @@ export class AiAssistRunController {
 
   approve = async (req, res) => {
     const { runId } = req.params
-    const run = await this.store.getRun(runId)
-    if (!run) {
-      return res.status(404).json({ error: 'Run not found' })
-    }
+    const run = await this.#loadRun(req, res)
+    if (!run) return
 
     const projectId = req.params.Project_id || req.params.project_id
-    if (projectId && run.projectId !== projectId) {
-      return res
-        .status(403)
-        .json({ error: 'Cross-project run access forbidden' })
-    }
 
     if (
       !projectId &&
@@ -469,17 +480,10 @@ export class AiAssistRunController {
 
   compileResult = async (req, res) => {
     const { runId } = req.params
-    const run = await this.store.getRun(runId)
-    if (!run) {
-      return res.status(404).json({ error: 'Run not found' })
-    }
+    const run = await this.#loadRun(req, res)
+    if (!run) return
 
     const projectId = req.params.Project_id || req.params.project_id
-    if (projectId && run.projectId !== projectId) {
-      return res
-        .status(403)
-        .json({ error: 'Cross-project run access forbidden' })
-    }
 
     const { id, outcome } = req.body || {}
     if (typeof id !== 'string' || !id) {
@@ -496,17 +500,10 @@ export class AiAssistRunController {
    */
   queueMessage = async (req, res) => {
     const { runId } = req.params
-    const run = await this.store.getRun(runId)
-    if (!run) {
-      return res.status(404).json({ error: 'Run not found' })
-    }
+    const run = await this.#loadRun(req, res)
+    if (!run) return
 
     const projectId = req.params.Project_id || req.params.project_id
-    if (projectId && run.projectId !== projectId) {
-      return res
-        .status(403)
-        .json({ error: 'Cross-project run access forbidden' })
-    }
 
     if (TERMINAL_STATUSES.includes(run.status)) {
       return res.status(409).json({
@@ -530,7 +527,7 @@ export class AiAssistRunController {
       return res.status(400).json({ error: 'text must be a non-empty string' })
     }
 
-    const maxBytes = Settings.aiAssist?.maxTranscriptBytes ?? 32 * 1024 * 1024
+    const maxBytes = maxTranscriptBytes()
     const size =
       Buffer.byteLength(text) +
       Buffer.byteLength(contextText || '') +
@@ -550,7 +547,7 @@ export class AiAssistRunController {
       queued.command = invocation
     }
     if (hasImages) {
-      queued.images = images.map((img, idx) => ({
+      queued.images = images.map(img => ({
         ...img,
         name:
           img.name ||
@@ -594,17 +591,10 @@ export class AiAssistRunController {
    */
   async #actOnQueuedMessage(req, res, action) {
     const { runId, messageId } = req.params
-    const run = await this.store.getRun(runId)
-    if (!run) {
-      return res.status(404).json({ error: 'Run not found' })
-    }
+    const run = await this.#loadRun(req, res)
+    if (!run) return
 
     const projectId = req.params.Project_id || req.params.project_id
-    if (projectId && run.projectId !== projectId) {
-      return res
-        .status(403)
-        .json({ error: 'Cross-project run access forbidden' })
-    }
 
     if (TERMINAL_STATUSES.includes(run.status)) {
       return res.status(409).json({ error: 'Run has ended', reason: 'ended' })
@@ -620,17 +610,10 @@ export class AiAssistRunController {
 
   setMode = async (req, res) => {
     const { runId } = req.params
-    const run = await this.store.getRun(runId)
-    if (!run) {
-      return res.status(404).json({ error: 'Run not found' })
-    }
+    const run = await this.#loadRun(req, res)
+    if (!run) return
 
     const projectId = req.params.Project_id || req.params.project_id
-    if (projectId && run.projectId !== projectId) {
-      return res
-        .status(403)
-        .json({ error: 'Cross-project run access forbidden' })
-    }
 
     const mode = req.body?.mode
     if (!MODES.includes(mode)) {

@@ -3,10 +3,9 @@ import { useTranslation } from 'react-i18next'
 import { Code } from '@phosphor-icons/react'
 import { diffLines } from 'diff'
 import { ToolCallRecord, TranscriptEntry, blocksForEntry } from '../../agent/agent-messages'
-import { DiffStats, sumDiffStats } from './diff-stats'
+import { DiffStats, editTextsOf, sumDiffStats } from './diff-stats'
 import { DiffStatBadge } from './diff-stat-badge'
 import { useOpenFileInEditor } from '../../hooks/use-open-file'
-import { subresultExpansionStore } from './subresult-expansion-store'
 
 /**
  * Extracts all edit_file and create_file tool calls from an assistant turn.
@@ -35,18 +34,20 @@ export function getFileEditCalls(
   return calls
 }
 
+function toArgs(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {}
+}
+
 export type EditedCodeBadgeProps = {
   entry: Extract<TranscriptEntry, { role: 'assistant' }>
   toolCalls?: ToolCallRecord[]
-  onDiffReview?: (entry: TranscriptEntry, path?: string) => void
-  onFileJump?: (path: string, line?: number) => void
 }
 
 export const EditedCodeBadge: FC<EditedCodeBadgeProps> = ({
   entry,
   toolCalls,
-  onDiffReview,
-  onFileJump,
 }) => {
   const { t } = useTranslation()
   const openFile = useOpenFileInEditor()
@@ -61,7 +62,7 @@ export const EditedCodeBadge: FC<EditedCodeBadgeProps> = ({
   const paths = useMemo(() => {
     const list: string[] = []
     for (const call of calls) {
-      const args = (call.args ?? {}) as any
+      const args = toArgs(call.args)
       const p = args.path ?? args.filePath ?? args.file
       if (typeof p === 'string' && p.trim() && !list.includes(p.trim())) {
         list.push(p.trim())
@@ -83,15 +84,7 @@ export const EditedCodeBadge: FC<EditedCodeBadgeProps> = ({
     let hasDiff = false
 
     for (const call of calls) {
-      const args = (call.args ?? {}) as any
-      const oldText =
-        call.name === 'create_file'
-          ? ''
-          : (args.oldText ?? args.old_text ?? args.old_string ?? '')
-      const newText =
-        call.name === 'create_file'
-          ? (args.content ?? '')
-          : (args.newText ?? args.new_text ?? args.new_string ?? '')
+      const { oldText, newText } = editTextsOf(call)
 
       if (oldText || newText) {
         try {
@@ -113,13 +106,11 @@ export const EditedCodeBadge: FC<EditedCodeBadgeProps> = ({
 
   const primaryCall = calls[0]
   const primaryPath = paths[0] || ''
-  const primaryArgs = (primaryCall?.args ?? {}) as any
-  const primaryResult = (primaryCall?.result ?? {}) as any
+  const primaryArgs = toArgs(primaryCall?.args)
+  const primaryResult = toArgs(primaryCall?.result)
+  const rawStartLine = primaryArgs.startLine ?? primaryResult.startLine
   const startLine =
-    primaryArgs?.from ??
-    primaryArgs?.startLine ??
-    primaryResult?.startLine ??
-    1
+    typeof rawStartLine === 'number' && rawStartLine > 0 ? rawStartLine : 1
 
   // Format file label: "main.tex" or "main.tex, intro.tex" or "3 files"
   const fileLabel =
@@ -132,28 +123,12 @@ export const EditedCodeBadge: FC<EditedCodeBadgeProps> = ({
           : ''
 
   const handleClick = useCallback(() => {
-    if (onFileJump && primaryPath) {
-      onFileJump(primaryPath, startLine)
-    }
-    if (onDiffReview) {
-      onDiffReview(entry, primaryPath)
-    }
-
     if (primaryPath) {
       openFile(primaryPath, startLine)
     }
 
-    if (entry.id) {
-      subresultExpansionStore.set(`${entry.id}-activity`, true)
-    }
-
-    window.dispatchEvent(
-      new CustomEvent('aiAssist:openDiff', {
-        detail: { entry, path: primaryPath, line: startLine },
-      })
-    )
     window.dispatchEvent(new CustomEvent('aiAssist:stickToBottom'))
-  }, [entry, primaryPath, startLine, onFileJump, onDiffReview, openFile])
+  }, [primaryPath, startLine, openFile])
 
   if (calls.length === 0) return null
 

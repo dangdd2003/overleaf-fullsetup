@@ -29,6 +29,31 @@ export function pagePointToPdf(
   return { h, v: viewport.viewBox[3] - pdfY }
 }
 
+export function boxToPdfRect(
+  viewport: { convertToPdfPoint(x: number, y: number): number[]; viewBox: number[] } | undefined,
+  box: { left: number; top: number; right: number; bottom: number }
+): {
+  rect: { x: number; y: number; w: number; h: number }
+  topLeft: { h: number; v: number }
+  bottomRight: { h: number; v: number }
+} {
+  const topLeft = viewport
+    ? pagePointToPdf(viewport, box.left, box.top)
+    : { h: 0, v: 0 }
+  const bottomRight = viewport
+    ? pagePointToPdf(viewport, box.right, box.bottom)
+    : { h: 0, v: 0 }
+  const top = Math.min(topLeft.v, bottomRight.v)
+  const bottom = Math.max(topLeft.v, bottomRight.v)
+  const rect = {
+    x: Math.min(topLeft.h, bottomRight.h),
+    y: top,
+    w: Math.abs(bottomRight.h - topLeft.h),
+    h: bottom - top,
+  }
+  return { rect, topLeft, bottomRight }
+}
+
 /**
  * The box spanned by two points, clamped to a canvas of `size`. Pure, so the
  * geometry can be tested without a layout.

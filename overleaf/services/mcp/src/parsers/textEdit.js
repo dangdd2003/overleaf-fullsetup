@@ -7,15 +7,6 @@ const MAX_NEAREST_WORK = 20000
 const MAX_NEAREST_NEEDLE_LINES = 200
 const NEAREST_MIN_SIMILARITY = 0.4
 
-/** 1-based line number of a character offset. */
-export function lineOf(text, index) {
-  let line = 1
-  for (let i = 0; i < index && i < text.length; i++) {
-    if (text[i] === '\n') line++
-  }
-  return line
-}
-
 /**
  * A lookup from character offset to 1-based line number for one text. The
  * newline offsets are indexed once, so a parser that resolves many offsets pays
@@ -40,6 +31,29 @@ export function lineLookup(text) {
     }
     return lo + 1
   }
+}
+
+/**
+ * Read a balanced {...} group starting at openIndex.
+ *
+ * @returns {{ content: string, endIndex: number }|null}
+ */
+export function readBraceGroup(text, openIndex) {
+  if (text[openIndex] !== '{') return null
+  let depth = 0
+  for (let i = openIndex; i < text.length; i++) {
+    const ch = text[i]
+    if (ch === '\\') {
+      i++
+      continue
+    }
+    if (ch === '{') depth++
+    else if (ch === '}') {
+      depth--
+      if (depth === 0) return { content: text.slice(openIndex + 1, i), endIndex: i }
+    }
+  }
+  return null
 }
 
 /**
@@ -71,7 +85,7 @@ function squash(text) {
   return String(text).replace(/\s+/g, ' ').trim()
 }
 
-function escapeRegex(text) {
+export function escapeRegex(text) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
@@ -215,8 +229,9 @@ function notFoundError(current, path, editIndex, total, oldString) {
 }
 
 function ambiguousError(current, path, editIndex, total, spans) {
+  const lineAt = lineLookup(current)
   const shown = spans.slice(0, 10).map(span => ({
-    line: lineOf(current, span.index),
+    line: lineAt(span.index),
     preview: lineTextAt(current, span.index),
   }))
   const label = total > 1 ? `edit ${editIndex + 1} of ${total}` : 'oldString'
@@ -249,7 +264,7 @@ function ambiguousError(current, path, editIndex, total, spans) {
  */
 export function applyEdits(text, edits, { path }) {
   let current = text
-  let regions = []
+  const regions = []
   let replacements = 0
   const warnings = []
 
@@ -284,10 +299,7 @@ export function applyEdits(text, edits, { path }) {
     next += current.slice(cursor)
 
     const moved = remapper(targets, lengths)
-    regions = regions.map(region => ({
-      ...region,
-      start: moved(region.start),
-    }))
+    for (const region of regions) region.start = moved(region.start)
     targets.forEach(span => {
       regions.push({
         start: moved(span.index),

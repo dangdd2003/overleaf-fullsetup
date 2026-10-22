@@ -5,8 +5,6 @@ export type ParsedSentence = {
   /** Which result: the correction, or the rewording (prompt.ts). */
   kind: 'grammar' | 'style'
   text: string
-  /** What the model says it changed: its justification, not shown. */
-  why?: string
 }
 
 export type ParsedReply = {
@@ -44,7 +42,6 @@ export function parseReply(raw: string, done: boolean): ParsedReply {
       id,
       kind,
       text: match[2].replace(/<\\\//g, '</').trim(),
-      ...(attributes.why ? { why: attributes.why.trim() } : {}),
     })
   }
   const none = NONE.test(text)

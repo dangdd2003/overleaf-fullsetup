@@ -250,15 +250,17 @@ export function ContextUsagePopover({
     return label;
   };
 
+  const onHideRef = useRef(onHide);
+  onHideRef.current = onHide;
+
   const togglePanel = () => {
-    setPanelOpen((open) => {
-      writeOpen(!open);
-      return !open;
-    });
+    const next = !panelOpen;
+    writeOpen(next);
+    setPanelOpen(next);
   };
 
   const close = () => {
-    onHide();
+    onHideRef.current();
     targetRef.current?.focus();
   };
 
@@ -271,11 +273,11 @@ export function ContextUsagePopover({
       if (boxRef.current?.contains(node) || targetRef.current?.contains(node)) {
         return;
       }
-      onHide();
+      onHideRef.current();
     };
     document.addEventListener("mousedown", onMouseDown);
     return () => document.removeEventListener("mousedown", onMouseDown);
-  }, [show, onHide, targetRef]);
+  }, [show, targetRef]);
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Escape") {

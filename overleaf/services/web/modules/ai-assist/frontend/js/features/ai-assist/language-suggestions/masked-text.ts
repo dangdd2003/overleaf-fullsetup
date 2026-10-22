@@ -18,7 +18,6 @@ export type PlaceholderKind = 'M' | 'C' | 'R' | 'X'
 
 export type Placeholder = {
   kind: PlaceholderKind
-  token: string
   /** The source range of the LaTeX it stands for. */
   from: number
   to: number
@@ -90,7 +89,7 @@ export class MaskedBuilder {
   ) {
     this.counts[kind]++
     const token = `[[${kind}${this.counts[kind]}]]`
-    this.placeholders.push({ kind, token, from, to, source })
+    this.placeholders.push({ kind, from, to, source })
     this.push(token, from, to, 'placeholder', this.placeholders.length - 1)
   }
 
@@ -146,4 +145,11 @@ export function plainMasked(text: string): MaskedText {
   const builder = new MaskedBuilder()
   for (let i = 0; i < text.length; i++) builder.push(text[i], i, i + 1, 'text')
   return builder.build()
+}
+
+const PLACEHOLDER_PATTERN = /\[\[[MCRX]\d+\]\]/g
+
+/** Words in a masked or plain text, placeholders treated as whitespace. */
+export function wordCount(text: string): number {
+  return (text.replace(PLACEHOLDER_PATTERN, ' ').match(/[\p{L}\p{N}]+/gu) ?? []).length
 }

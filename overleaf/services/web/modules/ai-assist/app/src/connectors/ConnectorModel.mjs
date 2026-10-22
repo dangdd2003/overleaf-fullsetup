@@ -20,7 +20,7 @@ const { ObjectId } = Schema
 // - aiAssistOAuthStates: sign-ins in flight, keyed by the hashed `state`,
 //   removed by Mongo's TTL monitor once they expire.
 
-export const ConnectorSchema = new Schema(
+const ConnectorSchema = new Schema(
   {
     user_id: { type: ObjectId, ref: 'User', required: true, index: true },
     name: { type: String, required: true },
@@ -124,7 +124,7 @@ export const ConnectorSchema = new Schema(
   { collection: 'aiAssistConnectors', timestamps: true, minimize: false }
 )
 
-export const ConnectorCredentialSchema = new Schema(
+const ConnectorCredentialSchema = new Schema(
   {
     connector_id: { type: ObjectId, required: true, unique: true },
     user_id: { type: ObjectId, ref: 'User', required: true, index: true },
@@ -137,7 +137,7 @@ export const ConnectorCredentialSchema = new Schema(
   { collection: 'aiAssistConnectorCredentials', timestamps: true }
 )
 
-export const OAuthClientSchema = new Schema(
+const OAuthClientSchema = new Schema(
   {
     issuer: { type: String, required: true },
     redirectUri: { type: String, required: true },
@@ -152,7 +152,7 @@ export const OAuthClientSchema = new Schema(
 )
 OAuthClientSchema.index({ issuer: 1, redirectUri: 1 }, { unique: true })
 
-export const OAuthStateSchema = new Schema(
+const OAuthStateSchema = new Schema(
   {
     stateHash: { type: String, required: true, unique: true },
     connector_id: { type: ObjectId, required: true },
@@ -167,6 +167,7 @@ export const OAuthStateSchema = new Schema(
   },
   { collection: 'aiAssistOAuthStates', timestamps: true }
 )
+OAuthStateSchema.index({ connector_id: 1 })
 
 function model(name, schema) {
   return mongoose.models[name] || mongoose.model(name, schema)

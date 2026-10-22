@@ -471,7 +471,7 @@ function closeOpenBlocks(text: string): string {
       const lineStart = text.lastIndexOf('\n', at - 1) + 1
       stack.push({
         name: match[1] ? match[2].trim() : null,
-        indent: /^[ \t]*/.exec(text.slice(lineStart))![0],
+        indent: /^[ \t]*/.exec(text.slice(lineStart, at))![0],
         at,
         bodyFrom: at + match[0].length,
       })
@@ -577,5 +577,5 @@ export function cleanCompletion(
   if (final) {
     text = text.replace(/\s+$/, '')
   }
-  return text.trim() ? { text, complete: stopped.complete } : { text: '', complete: stopped.complete }
+  return { text: text.trim() ? text : '', complete: stopped.complete }
 }

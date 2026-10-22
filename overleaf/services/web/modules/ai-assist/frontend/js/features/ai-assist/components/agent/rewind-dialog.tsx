@@ -16,13 +16,13 @@ import {
 
 export type RewindChoice = 'both' | 'conversation' | 'code'
 
-export type RewindOptionConfig = {
+type RewindOptionConfig = {
   value: RewindChoice
   label: string
   description: string
 }
 
-export type RewindDialogProps = {
+type RewindDialogProps = {
   isOpen: boolean
   projectId: string
   chatId: string
@@ -295,5 +295,3 @@ export const RewindDialog: FC<RewindDialogProps> = ({
     </OLModal>
   )
 }
-
-export default RewindDialog

@@ -17,6 +17,8 @@ export type DiffTextProps = {
   onToggle?: (group: number) => void
   /** What one click switches: a phrase, or every change in a sentence. */
   unit?: EditUnit
+  /** The diff of `original` and `result`, when the caller already has it. */
+  segments?: DiffSegment[]
 }
 
 type Chunk = { text: string; className?: string; tag: 'span' | 'del' | 'ins' }
@@ -47,10 +49,11 @@ export function DiffText({
   kept,
   onToggle,
   unit = 'phrase',
+  segments: given,
 }: DiffTextProps) {
   const segments = useMemo(
-    () => diffSegments(original, result, unit),
-    [original, result, unit]
+    () => given ?? diffSegments(original, result, unit),
+    [given, original, result, unit]
   )
 
   const renderChunks = (list: Chunk[], keyPrefix: string): ReactNode[] =>

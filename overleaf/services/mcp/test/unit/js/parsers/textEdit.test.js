@@ -3,7 +3,7 @@ import {
   applyEdits,
   findExact,
   findLoose,
-  lineOf,
+  lineLookup,
   nearestWindow,
   numberLines,
 } from '../../../../src/parsers/textEdit.js'
@@ -179,9 +179,9 @@ describe('textEdit', function () {
   })
 
   describe('line helpers', function () {
-    it('lineOf is 1-based', function () {
-      expect(lineOf('a\nb\nc', 0)).to.equal(1)
-      expect(lineOf('a\nb\nc', 4)).to.equal(3)
+    it('lineLookup is 1-based', function () {
+      expect(lineLookup('a\nb\nc')(0)).to.equal(1)
+      expect(lineLookup('a\nb\nc')(4)).to.equal(3)
     })
 
     it('numberLines prefixes each line with its number', function () {

@@ -1,16 +1,16 @@
 import { expect } from 'chai'
-import { ChangeSet, EditorState } from '@codemirror/state'
+import { EditorState } from '@codemirror/state'
 import { snippet } from '@codemirror/autocomplete'
 import {
   aiEdit,
-  aiEditGlowExtension,
   aiEditGlowField,
-  changedRanges,
-  isAiTransaction,
+  extension,
 } from '../../../../frontend/js/features/ai-assist/ai-edit-glow/extension'
 
-const create = (doc: string) =>
-  EditorState.create({ doc, extensions: aiEditGlowExtension() })
+const create = (doc: string) => {
+  window.metaAttributesCache.set('ol-aiAssistEnabled', true)
+  return EditorState.create({ doc, extensions: extension() })
+}
 
 describe('ai edit glow', function () {
   it('ignores edits that are not the AI’s', function () {
@@ -58,13 +58,21 @@ describe('ai edit glow', function () {
   })
 
   it('stands in a neighbouring character for a pure deletion', function () {
-    const doc = 'abc def ghi'
-    const changes = ChangeSet.of({ from: 3, to: 7 }, doc.length)
-    expect(changedRanges(changes, doc.length - 4)).to.deep.equal([
-      { from: 3, to: 4 },
-    ])
-    const atEnd = ChangeSet.of({ from: 7, to: 11 }, doc.length)
-    expect(changedRanges(atEnd, 7)).to.deep.equal([{ from: 6, to: 7 }])
+    const state = create('abc def ghi').update({
+      changes: { from: 3, to: 7 },
+      annotations: aiEdit.of(true),
+    }).state
+    expect(
+      state.field(aiEditGlowField).map(({ from, to }) => [from, to])
+    ).to.deep.equal([[3, 4]])
+
+    const atEnd = create('abc def ghi').update({
+      changes: { from: 7, to: 11 },
+      annotations: aiEdit.of(true),
+    }).state
+    expect(
+      atEnd.field(aiEditGlowField).map(({ from, to }) => [from, to])
+    ).to.deep.equal([[6, 7]])
   })
 
   it('recognizes table snippet insertions', function () {
@@ -74,7 +82,6 @@ describe('ai edit glow', function () {
       {
         state,
         dispatch: tr => {
-          expect(isAiTransaction(tr)).to.be.true
           nextState = state.update(tr).state
         },
       },
@@ -89,11 +96,11 @@ describe('ai edit glow', function () {
   })
 
   it('recognizes transactions with ai userEvents', function () {
-    const tr = create('hello').update({
+    const nextState = create('hello').update({
       changes: { from: 0, insert: 'X' },
       userEvent: 'input.ai-table',
-    })
-    expect(isAiTransaction(tr)).to.be.true
+    }).state
+    expect(nextState.field(aiEditGlowField)).to.have.length(1)
   })
 
   it('adds manual glows via markAiGlow', function () {

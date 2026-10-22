@@ -17,7 +17,7 @@ import {
  * the API's default". tavilyOptionsFromDraft turns it back into the stored
  * options, leaving out everything left at the default.
  */
-export type TavilyDraft = {
+type TavilyDraft = {
   projectId: string
   maxResults: string
   searchDepth: '' | 'advanced' | 'fast' | 'ultra-fast'
@@ -43,6 +43,9 @@ export type TavilyDraft = {
   format: '' | 'text'
   timeout: string
 }
+
+const isQuickDepth = (depth: TavilyDraft['searchDepth']) =>
+  depth === 'fast' || depth === 'ultra-fast'
 
 type FlagKey = {
   [K in keyof TavilyDraft]: TavilyDraft[K] extends boolean ? K : never
@@ -286,8 +289,7 @@ export function tavilyOptionsFromDraft(draft: TavilyDraft): {
   search?: TavilySearchOptions
   extract?: TavilyExtractOptions
 } {
-  const quick =
-    draft.searchDepth === 'fast' || draft.searchDepth === 'ultra-fast'
+  const quick = isQuickDepth(draft.searchDepth)
   const includeDomains = domains(draft.includeDomains)
   const language = draft.language.trim().toLowerCase()
   const search = withoutEmpty({
@@ -419,8 +421,8 @@ export default function TavilyOptions({
     />
   )
 
-  const quick =
-    draft.searchDepth === 'fast' || draft.searchDepth === 'ultra-fast'
+  const quick = isQuickDepth(draft.searchDepth)
+  const hasIncludeDomains = domains(draft.includeDomains).length > 0
 
   return (
     <>
@@ -570,7 +572,7 @@ export default function TavilyOptions({
           'arxiv.org, ctan.org',
           { wide: true }
         )}
-        {domains(draft.includeDomains).length > 0 &&
+        {hasIncludeDomains &&
           dropdown(
             'includeDomainsMode',
             'Domain mode',

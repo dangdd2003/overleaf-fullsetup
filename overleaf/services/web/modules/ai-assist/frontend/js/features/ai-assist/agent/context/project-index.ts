@@ -1,11 +1,11 @@
-import { Outline, OutlineSection, parseOutline } from './outline'
+import { Outline, OutlineSection, parseOutline, uncomment } from './outline'
 import {
   References,
   extractReferences,
   hasThebibliographyEnvironment,
 } from './references'
 
-/** Above this a file is listed but never parsed; parsing it would cost more than it can return. */
+/** Above this, environments and packages skip oversize files; parsing them would cost more than it can return. */
 export const MAX_INDEXED_BYTES = 512 * 1024
 
 /** Bounds the line list per environment so a figure-heavy paper cannot bloat the index. */
@@ -22,6 +22,11 @@ const ENV_NAMES = [
   'tikzpicture',
   'abstract',
 ]
+
+const ENV_PATTERNS = ENV_NAMES.map(name => ({
+  name,
+  re: new RegExp(`\\\\begin\\{${name}\\*?\\}`),
+}))
 
 export type EnvironmentCount = { name: string; count: number; lines: number[] }
 
@@ -60,11 +65,6 @@ export function hashContent(content: string): string {
   return `${content.length}:${(h >>> 0).toString(16)}`
 }
 
-function uncomment(line: string): string {
-  const index = line.search(/(?<!\\)%/)
-  return index === -1 ? line : line.slice(0, index)
-}
-
 /**
  * Counts the environments a reader of a paper asks about ("where are the
  * figures?") that the section tree does not show. One regex pass per file.
@@ -74,8 +74,7 @@ export function scanEnvironments(content: string): EnvironmentCount[] {
 
   content.split('\n').forEach((rawLine, index) => {
     const line = uncomment(rawLine)
-    for (const name of ENV_NAMES) {
-      const re = new RegExp(`\\\\begin\\{${name}\\*?\\}`)
+    for (const { name, re } of ENV_PATTERNS) {
       if (re.test(line)) {
         const entry = found.get(name) ?? { count: 0, lines: [] }
         entry.count += 1
@@ -94,9 +93,9 @@ export function scanPackages(
   content: string
 ): Array<Omit<PackageUse, 'path'>> {
   const uses: Array<Omit<PackageUse, 'path'>> = []
+  const re = /\\(?:usepackage|RequirePackage)\s*(?:\[([^\]]*)\])?\s*\{([^}]*)\}/g
   content.split('\n').forEach((rawLine, index) => {
-    const line = rawLine.replace(/(?<!\\)%.*/, '')
-    const re = /\\(?:usepackage|RequirePackage)\s*(?:\[([^\]]*)\])?\s*\{([^}]*)\}/g
+    const line = uncomment(rawLine)
     let match = re.exec(line)
     while (match) {
       const options = match[1]?.trim() || undefined
@@ -117,36 +116,44 @@ export function scanPackages(
   return uses
 }
 
-// Per-file environment cache, keyed by content hash. A keystroke reparses one
-// file; everything else is a map hit. Bounded so a long session cannot grow it
+// Per-file caches, keyed by content hash. A keystroke reparses one file;
+// everything else is a map hit. Bounded so a long session cannot grow them
 // without limit.
 const envCache = new Map<string, EnvironmentCount[]>()
 const ENV_CACHE_MAX = 500
-
-function environmentsFor(path: string, content: string): EnvironmentCount[] {
-  if (!path.endsWith('.tex')) return []
-  const hash = hashContent(content)
-  const cached = envCache.get(hash)
-  if (cached) return cached
-  const scanned = scanEnvironments(content)
-  if (envCache.size >= ENV_CACHE_MAX) envCache.clear()
-  envCache.set(hash, scanned)
-  return scanned
-}
-
 const pkgCache = new Map<string, Array<Omit<PackageUse, 'path'>>>()
 const PKG_CACHE_MAX = 500
 
-function packagesFor(path: string, content: string): PackageUse[] {
+function memoByHash<T>(
+  cache: Map<string, T>,
+  max: number,
+  hash: string,
+  scan: () => T
+): T {
+  const cached = cache.get(hash)
+  if (cached) return cached
+  const scanned = scan()
+  if (cache.size >= max) cache.clear()
+  cache.set(hash, scanned)
+  return scanned
+}
+
+function environmentsFor(
+  path: string,
+  content: string,
+  hash: string
+): EnvironmentCount[] {
   if (!path.endsWith('.tex')) return []
-  const hash = hashContent(content)
-  let scanned = pkgCache.get(hash)
-  if (!scanned) {
-    scanned = scanPackages(content)
-    if (pkgCache.size >= PKG_CACHE_MAX) pkgCache.clear()
-    pkgCache.set(hash, scanned)
-  }
-  return scanned.map(u => ({ ...u, path }))
+  return memoByHash(envCache, ENV_CACHE_MAX, hash, () =>
+    scanEnvironments(content)
+  )
+}
+
+function packagesFor(path: string, content: string, hash: string): PackageUse[] {
+  if (!path.endsWith('.tex')) return []
+  return memoByHash(pkgCache, PKG_CACHE_MAX, hash, () =>
+    scanPackages(content)
+  ).map(u => ({ ...u, path }))
 }
 
 /**
@@ -165,10 +172,14 @@ export function buildProjectIndex(
   }: { docs: Record<string, string>; rootPath: string | null },
   previous?: ProjectIndex | null
 ): ProjectIndex {
-  const entries = Object.entries(docs)
+  const entries = Object.entries(docs).map(([path, content]) => ({
+    path,
+    content,
+    hash: hashContent(content),
+  }))
   const hash = hashContent(
     entries
-      .map(([path, content]) => `${path} ${hashContent(content)}`)
+      .map(entry => `${entry.path} ${entry.hash}`)
       .sort()
       .join(' ')
   )
@@ -178,19 +189,22 @@ export function buildProjectIndex(
   }
 
   const files: FileIndex[] = entries
-    .map(([path, content]) => ({
+    .map(({ path, content, hash: contentHash }) => ({
       path,
-      hash: hashContent(content),
+      hash: contentHash,
       tooLarge: content.length > MAX_INDEXED_BYTES,
       environments:
         content.length > MAX_INDEXED_BYTES
           ? []
-          : environmentsFor(path, content),
+          : environmentsFor(path, content, contentHash),
     }))
     .sort((a, b) => a.path.localeCompare(b.path))
 
-  const packages: PackageUse[] = entries.flatMap(([path, content]) =>
-    content.length > MAX_INDEXED_BYTES ? [] : packagesFor(path, content)
+  const packages: PackageUse[] = entries.flatMap(
+    ({ path, content, hash: contentHash }) =>
+      content.length > MAX_INDEXED_BYTES
+        ? []
+        : packagesFor(path, content, contentHash)
   )
 
   return {

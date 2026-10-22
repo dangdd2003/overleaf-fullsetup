@@ -10,7 +10,7 @@ import { DiffText } from '../writing-tools/diff-text'
 
 export type TableVersion = Versioned<TableResult>
 
-export type TablePhase = GeneratorPhase<ParsedTable>
+type TablePhase = GeneratorPhase<ParsedTable>
 
 export type TableCardProps = {
   /** The prompt, "From pasted data", "From selection" or "From image". */

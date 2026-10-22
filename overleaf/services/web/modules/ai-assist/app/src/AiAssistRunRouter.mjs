@@ -44,6 +44,9 @@ export default {
     const connectorIconLimit = RateLimiterMiddleware.rateLimit(
       new RateLimiter('ai-assist-connector-icon', { points: 240, duration: 60 })
     )
+    const connectorProbeLimit = RateLimiterMiddleware.rateLimit(
+      new RateLimiter('ai-assist-connector-probe', { points: 20, duration: 60 })
+    )
 
     // 0. Provider requests (model list, connection test, in-page agent turns)
     // are made from the server so internal providers work behind a public domain.
@@ -325,6 +328,7 @@ export default {
       webRouter.post(
         '/ai-assist/connectors/probe',
         AuthenticationController.requireLogin(),
+        connectorProbeLimit,
         ConnectorController.probe
       )
 

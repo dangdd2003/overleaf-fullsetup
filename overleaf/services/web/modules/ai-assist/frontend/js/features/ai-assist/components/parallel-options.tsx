@@ -39,6 +39,10 @@ type FlagKey = {
   [K in keyof ParallelDraft]: ParallelDraft[K] extends boolean ? K : never
 }[keyof ParallelDraft]
 
+type StringKey<T> = {
+  [K in keyof T]: T[K] extends string ? K : never
+}[keyof T]
+
 export function draftFromParallel(
   config?: ParallelProviderConfig
 ): ParallelDraft {
@@ -146,7 +150,9 @@ export default function ParallelOptions({
   draft: ParallelDraft
   onChange: (next: ParallelDraft) => void
 }) {
-  const set = <K extends keyof ParallelDraft>(key: K, value: ParallelDraft[K]) =>
+  const setFlag = (key: FlagKey, value: boolean) =>
+    onChange({ ...draft, [key]: value })
+  const setText = (key: StringKey<ParallelDraft>, value: string) =>
     onChange({ ...draft, [key]: value })
 
   const id = (key: keyof ParallelDraft) => `ai-web-search-parallel-${key}`
@@ -157,12 +163,12 @@ export default function ParallelOptions({
       label={label}
       description={description}
       checked={draft[key]}
-      onChange={value => set(key, value)}
+      onChange={value => setFlag(key, value)}
     />
   )
 
   const dropdown = (
-    key: Exclude<keyof ParallelDraft, FlagKey>,
+    key: StringKey<ParallelDraft>,
     label: string,
     description: string,
     options: Choice[]
@@ -173,13 +179,13 @@ export default function ParallelOptions({
       description={description}
       width="wide"
       options={options}
-      value={draft[key] as string}
-      onChange={value => set(key, value as ParallelDraft[typeof key])}
+      value={draft[key]}
+      onChange={value => setText(key, value)}
     />
   )
 
   const text = (
-    key: Exclude<keyof ParallelDraft, FlagKey>,
+    key: StringKey<ParallelDraft>,
     label: string,
     description: string,
     placeholder: string,
@@ -195,8 +201,8 @@ export default function ParallelOptions({
       label={label}
       description={description}
       placeholder={placeholder}
-      value={draft[key] as string}
-      onChange={value => set(key, value as ParallelDraft[typeof key])}
+      value={draft[key]}
+      onChange={value => setText(key, value)}
       {...extra}
     />
   )

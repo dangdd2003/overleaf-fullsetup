@@ -2,7 +2,6 @@ import {
   defineGeneratorSession,
   GeneratorAnchor,
   GeneratorPassage,
-  GeneratorSession,
   isPassageStale,
 } from '../generator/session'
 
@@ -10,7 +9,6 @@ import {
 export type EquationAnchor = GeneratorAnchor
 /** The editable window around the anchor, and its text when Generate was pressed. */
 export type EquationPassage = GeneratorPassage
-export type EquationSession = GeneratorSession
 
 export { isPassageStale }
 

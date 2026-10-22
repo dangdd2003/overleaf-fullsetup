@@ -355,5 +355,33 @@ describe('requireMcpAuth', () => {
       expect(next).toHaveBeenCalled()
       expect(existsSpy).not.toHaveBeenCalled()
     })
+    it('sets req.mcpTokenId to grant_id when present, falling back to sha256', async () => {
+      vi.spyOn(OauthAccessToken, 'exists').mockResolvedValue({ _id: grantId })
+      const tokenWithGrant = await OAuth2KeyManager.signJwt({
+        sub: 'user_grant_4',
+        scope: 'mcp',
+        iss: 'http://127.0.0.1:3000',
+        aud: 'http://127.0.0.1:3000/mcp',
+        grant_id: grantId,
+        exp: Math.floor(Date.now() / 1000) + 3600,
+      })
+      const { req, next } = ctx({ authorization: `Bearer ${tokenWithGrant}` })
+      await requireMcpAuth(req, {}, next)
+      expect(next).toHaveBeenCalled()
+      expect(req.mcpTokenId).toBe(grantId)
+
+      const tokenWithoutGrant = await OAuth2KeyManager.signJwt({
+        sub: 'user_grant_5',
+        scope: 'mcp',
+        iss: 'http://127.0.0.1:3000',
+        aud: 'http://127.0.0.1:3000/mcp',
+        exp: Math.floor(Date.now() / 1000) + 3600,
+      })
+      const ctx2 = ctx({ authorization: `Bearer ${tokenWithoutGrant}` })
+      await requireMcpAuth(ctx2.req, {}, ctx2.next)
+      expect(ctx2.next).toHaveBeenCalled()
+      expect(ctx2.req.mcpTokenId).not.toBe(grantId)
+      expect(ctx2.req.mcpTokenId).toMatch(/^[0-9a-f]{64}$/)
+    })
   })
 })

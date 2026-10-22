@@ -54,7 +54,7 @@ const RECENCY_WORDS = {
 /** One search result, as the numbered source the model cites it by. */
 function sourceLines(entry, index) {
   const number = Number.isInteger(entry.source) ? entry.source : index + 1
-  const lines = [`[${number}] ${webText(entry.title)}`, `    ${entry.url}`]
+  const lines = [`[${number}] ${webText(entry.title)}`, `    ${webText(entry.url)}`]
   if (entry.published) lines.push(`    published ${entry.published}`)
   if (entry.snippet) lines.push(`    ${webText(entry.snippet)}`)
   if (entry.cached)
@@ -65,11 +65,11 @@ function sourceLines(entry, index) {
 function webPageAttributes(result) {
   return [
     Number.isInteger(result.source) ? ` source="${result.source}"` : '',
-    ` url="${attributeValue(result.url)}"`,
-    result.title ? ` title="${attributeValue(result.title)}"` : '',
-    result.published ? ` published="${result.published}"` : '',
-    result.modified ? ` updated="${result.modified}"` : '',
-    result.archived ? ` archived="${result.archived}"` : '',
+    ` url="${attributeValue(webText(result.url))}"`,
+    result.title ? ` title="${attributeValue(webText(result.title))}"` : '',
+    result.published ? ` published="${attributeValue(webText(result.published))}"` : '',
+    result.modified ? ` updated="${attributeValue(webText(result.modified))}"` : '',
+    result.archived ? ` archived="${attributeValue(webText(result.archived))}"` : '',
     result.partial ? ' partial="true"' : '',
   ].join('')
 }
@@ -240,10 +240,8 @@ function copyNotes(result) {
 }
 
 const CHOSEN_BY = {
-  page: '',
   line: 'the page where the requested line is typeset',
   lastEdit: 'the page of your last edit',
-  default: '',
 }
 
 /**
@@ -271,7 +269,10 @@ function pdfPageLines(result) {
   }
   // A zoom on source names its lines already, so the reason it was chosen
   // would only repeat them.
-  const why = focus ? '' : CHOSEN_BY[result.chosenBy]
+  const why =
+    focus || !Object.hasOwn(CHOSEN_BY, result.chosenBy)
+      ? ''
+      : CHOSEN_BY[result.chosenBy]
   const lines = [
     `PDF page ${result.page}${of}${size}${zoom}${why ? `: ${why}` : ''}.`,
   ]
@@ -1126,7 +1127,7 @@ export function renderToolResult(name, result) {
     }
     return JSON.stringify(result)
   }
-  const renderer = RENDERERS[name]
+  const renderer = Object.hasOwn(RENDERERS, name) ? RENDERERS[name] : undefined
   if (
     !renderer ||
     result === null ||

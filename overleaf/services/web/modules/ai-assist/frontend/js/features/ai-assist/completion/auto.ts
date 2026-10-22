@@ -29,17 +29,12 @@ function staleList(state: EditorState, pos: number): boolean {
 }
 
 /** Ignored suggestions in a row before Automatic starts waiting longer. */
-export const IGNORED_BEFORE_SLOWDOWN = 2
+const IGNORED_BEFORE_SLOWDOWN = 2
 /** The longest Automatic waits, however many suggestions were ignored. */
-export const MAX_AUTO_DELAY_MS = 2000
+const MAX_AUTO_DELAY_MS = 2000
 
 /** Automatic suggestions shown in a row and dismissed or typed over; one accepted resets it. */
 let ignoredInARow = 0
-
-/** For tests. */
-export function resetAutoCompletion() {
-  ignoredInARow = 0
-}
 
 /**
  * The author's chosen pause, doubled for each suggestion ignored in a row
