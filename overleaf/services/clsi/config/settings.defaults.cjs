@@ -193,15 +193,19 @@ if ((process.env.DOCKER_RUNNER || process.env.SANDBOXED_COMPILES) === 'true') {
   let seccompProfilePath
   try {
     seccompProfilePath = Path.resolve(__dirname, '../seccomp/clsi-profile.json')
-    module.exports.clsi.docker.seccomp_profile =
-      process.env.SECCOMP_PROFILE ||
-      JSON.stringify(
-        JSON.parse(require('node:fs').readFileSync(seccompProfilePath))
-      )
+    // parsed here so an invalid profile stops startup instead of failing
+    // every sandboxed compile at container create
+    module.exports.clsi.docker.seccomp_profile = JSON.stringify(
+      process.env.SECCOMP_PROFILE
+        ? JSON.parse(process.env.SECCOMP_PROFILE)
+        : JSON.parse(require('node:fs').readFileSync(seccompProfilePath))
+    )
   } catch (error) {
     console.error(
       error,
-      `could not load seccomp profile from ${seccompProfilePath}`
+      process.env.SECCOMP_PROFILE
+        ? 'could not parse SECCOMP_PROFILE as JSON'
+        : `could not load seccomp profile from ${seccompProfilePath}`
     )
     process.exit(1)
   }

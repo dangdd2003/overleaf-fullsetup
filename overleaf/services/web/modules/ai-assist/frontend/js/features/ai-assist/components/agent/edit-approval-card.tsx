@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import OLButton from '@/shared/components/ol/ol-button'
 import OLFormControl from '@/shared/components/ol/ol-form-control'
 import OLBadge from '@/shared/components/ol/ol-badge'
+import MaterialIcon from '@/shared/components/material-icon'
 import { EditRequest } from '../../agent/project-handle'
 import { useOpenFileInEditor } from '../../hooks/use-open-file'
 import DiffView from './diff-view'
@@ -106,34 +107,44 @@ export function EditApprovalCard({
       <div className="ai-assist-edit-approval-header">
         <span className="ai-assist-edit-approval-prompt">{title}</span>
         {decided && (
-          <span className={`ai-assist-edit-decision-badge is-${decided}`}>
-            {decided === 'accepted' ? '✓ Accepted' : '✗ Rejected'}
-          </span>
+          <OLBadge
+            bg={decided === 'accepted' ? 'success' : 'danger'}
+            className="ai-assist-edit-decision-badge"
+            prepend={
+              <MaterialIcon type={decided === 'accepted' ? 'check' : 'close'} />
+            }
+          >
+            {decided === 'accepted'
+              ? t('ai_assist_decision_accepted', 'Accepted')
+              : t('ai_assist_decision_rejected', 'Rejected')}
+          </OLBadge>
         )}
       </div>
 
       <div className="ai-assist-edit-approval-path">
         <span
-          role="button"
-          tabIndex={0}
-          className="ai-assist-file-link"
+          className="ai-assist-edit-approval-location"
           title={t('ai_assist_open_file', {
             path,
             defaultValue: `Open ${path}`,
           })}
-          onClick={handleOpen}
-          onKeyDown={e => e.key === 'Enter' && handleOpen()}
         >
-          {path}
+          <OLButton
+            type="button"
+            variant="link"
+            size="sm"
+            className="ai-assist-file-link"
+            onClick={handleOpen}
+          >
+            {path}
+          </OLButton>
+          {safeStartLine > 1 && (
+            <span className="ai-assist-edit-approval-line">
+              :{safeStartLine}
+            </span>
+          )}
         </span>
-        {safeStartLine > 1 && (
-          <span className="ai-assist-edit-approval-line">:{safeStartLine}</span>
-        )}
-        <OLBadge
-          bg={badgeBg}
-          text={badgeBg === 'light' ? 'dark' : undefined}
-          className="ms-2"
-        >
+        <OLBadge bg={badgeBg} text={badgeBg === 'light' ? 'dark' : undefined}>
           {badgeText}
         </OLBadge>
       </div>

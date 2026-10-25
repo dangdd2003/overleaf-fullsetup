@@ -234,6 +234,12 @@ function clearCache(req, res, next) {
   CompileManager.stopCompile(projectId, userId, error => {
     if (error) return next(OError.tag(error, 'stop compile'))
     ProjectPersistenceManager.clearProject(projectId, userId, error => {
+      if (error instanceof Errors.AlreadyCompilingError) {
+        return res.status(423).send('compile in progress') // Http 423 Locked
+      }
+      if (error instanceof Errors.TooManyCompileRequestsError) {
+        return res.status(503).send('too many concurrent requests')
+      }
       if (error) return next(OError.tag(error, 'clear project'))
       res.sendStatus(204)
     })

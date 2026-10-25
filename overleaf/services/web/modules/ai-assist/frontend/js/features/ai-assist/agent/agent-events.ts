@@ -37,6 +37,8 @@ export type ApprovalDecision = {
 
 /** What the chat shows while an approval is pending, beyond the call itself. */
 export type ApprovalContext = {
+  /** The call this context belongs to. */
+  callId?: string
   startLine?: number
   kind?: ApprovalKind
   connector?: Partial<ConnectorApproval>

@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import OLButton from '@/shared/components/ol/ol-button'
 import OLFormControl from '@/shared/components/ol/ol-form-control'
 import OLBadge from '@/shared/components/ol/ol-badge'
+import MaterialIcon from '@/shared/components/material-icon'
 import { ApprovalDecision } from '../../agent/agent-events'
 import { MarkdownContent } from './markdown-content'
 
@@ -30,9 +31,18 @@ export function PlanApprovalCard({
           {t('ai_assist_plan_badge', 'plan')}
         </OLBadge>
         {decided && (
-          <span className={`ai-assist-edit-decision-badge is-${decided}`}>
-            {decided === 'accepted' ? '✓ Approved' : '✗ Feedback Sent'}
-          </span>
+          <OLBadge
+            bg={decided === 'accepted' ? 'success' : 'light'}
+            text={decided === 'accepted' ? undefined : 'dark'}
+            className="ai-assist-edit-decision-badge"
+            prepend={
+              <MaterialIcon type={decided === 'accepted' ? 'check' : 'send'} />
+            }
+          >
+            {decided === 'accepted'
+              ? t('ai_assist_plan_decision_approved', 'Approved')
+              : t('ai_assist_plan_decision_feedback', 'Feedback sent')}
+          </OLBadge>
         )}
       </div>
 
@@ -54,7 +64,7 @@ export function PlanApprovalCard({
             )}
             onChange={e => setNote(e.target.value)}
           />
-          <div className="d-flex justify-content-end gap-1 mt-1">
+          <div className="ai-assist-edit-approval-actions mt-2">
             <OLButton
               type="button"
               variant="secondary"
@@ -77,7 +87,7 @@ export function PlanApprovalCard({
       )}
 
       {!showFeedback && (
-        <div className="ai-assist-plan-approval-actions d-flex flex-wrap gap-1 mt-2">
+        <div className="ai-assist-edit-approval-actions mt-2">
           <OLButton
             type="button"
             variant="secondary"
@@ -101,7 +111,9 @@ export function PlanApprovalCard({
             variant="primary"
             size="sm"
             disabled={locked}
-            onClick={() => onDecision({ accepted: true, nextMode: 'acceptEdits' })}
+            onClick={() =>
+              onDecision({ accepted: true, nextMode: 'acceptEdits' })
+            }
           >
             {t('ai_assist_plan_auto_edits', 'Yes, auto-accept edits')}
           </OLButton>

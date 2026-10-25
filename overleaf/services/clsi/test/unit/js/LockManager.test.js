@@ -121,4 +121,37 @@ describe('LockManager', () => {
       )
     })
   })
+  describe('expired locks', () => {
+    it('do not count against the concurrency limit', ctx => {
+      for (let i = 0; i <= ctx.Settings.compileConcurrencyLimit; i++) {
+        ctx.LockManager.acquire('stuck_key' + i)
+      }
+      ctx.clock.tick(15 * 60 * 1000)
+      const lock = ctx.LockManager.acquire('fresh_key')
+      expect(lock.key).to.equal('fresh_key')
+      lock.release()
+    })
+
+    it('an extended lock does not expire at the default timeout', ctx => {
+      const lock = ctx.LockManager.acquire(ctx.key)
+      lock.extend(30 * 60 * 1000)
+      ctx.clock.tick(15 * 60 * 1000)
+      expect(() => ctx.LockManager.acquire(ctx.key)).to.throw(
+        Errors.AlreadyCompilingError
+      )
+      lock.release()
+    })
+
+    it('a late release does not remove the lock that replaced it', ctx => {
+      const stale = ctx.LockManager.acquire(ctx.key)
+      ctx.clock.tick(15 * 60 * 1000)
+      const current = ctx.LockManager.acquire(ctx.key)
+      stale.release()
+      expect(ctx.LockManager.getExistingLock(ctx.key)).to.equal(current)
+      expect(() => ctx.LockManager.acquire(ctx.key)).to.throw(
+        Errors.AlreadyCompilingError
+      )
+      current.release()
+    })
+  })
 })

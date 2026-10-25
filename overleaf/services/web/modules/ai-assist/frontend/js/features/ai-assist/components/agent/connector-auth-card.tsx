@@ -2,8 +2,8 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import OLButton from '@/shared/components/ol/ol-button'
 import OLBadge from '@/shared/components/ol/ol-badge'
+import MaterialIcon from '@/shared/components/material-icon'
 import Notification from '@/shared/components/notification'
-import { Key, PlugsConnected } from '@phosphor-icons/react'
 import { connectWithPopup } from '../../connectors/oauth-popup'
 import { ConnectorDecision } from './connector-approval-card'
 
@@ -56,33 +56,40 @@ export function ConnectorAuthCard({
     <div className="ai-assist-edit-approval ai-assist-connector-auth">
       <div className="ai-assist-edit-approval-header">
         <span className="ai-assist-edit-approval-prompt">
-          <Key size={16} className="me-1 inline-block align-middle" />
           {t('ai_assist_auth_connector_title', 'Authentication required:')}
         </span>
-        <OLBadge bg="warning" className="ms-2">
+        <OLBadge bg="warning" className="ms-1">
           {connectorName}
         </OLBadge>
         {decided && (
-          <span className={`ai-assist-edit-decision-badge is-${decided}`}>
-            {decided === 'accepted' ? '✓ Authenticated' : '✗ Cancelled'}
-          </span>
+          <OLBadge
+            bg={decided === 'accepted' ? 'success' : 'danger'}
+            className="ai-assist-edit-decision-badge"
+            prepend={
+              <MaterialIcon type={decided === 'accepted' ? 'check' : 'close'} />
+            }
+          >
+            {decided === 'accepted'
+              ? t('ai_assist_auth_decision_authenticated', 'Authenticated')
+              : t('ai_assist_auth_decision_cancelled', 'Cancelled')}
+          </OLBadge>
         )}
       </div>
 
-      <div className="ai-assist-settings-list">
-        <p className="mb-2">
-          {t(
-            'ai_assist_auth_connector_desc',
-            'This external MCP tool requires authorization before the assistant can use it.'
-          )}
-        </p>
-        {toolName ? (
+      <p className="ai-assist-connector-auth-desc">
+        {t(
+          'ai_assist_auth_connector_desc',
+          'This external MCP tool requires authorization before the assistant can use it.'
+        )}
+      </p>
+      {toolName ? (
+        <div className="ai-assist-settings-list">
           <div className="ai-assist-settings-row">
             <span className="ai-assist-settings-key">Tool:</span>
-            <span className="ai-assist-settings-value font-monospace">{toolName}</span>
+            <span className="ai-assist-settings-value">{toolName}</span>
           </div>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
 
       {error ? (
         <div className="mb-2">
@@ -96,14 +103,17 @@ export function ConnectorAuthCard({
         </div>
       ) : null}
 
-      <div className="ai-assist-edit-approval-actions d-flex gap-2 justify-content-end mt-2">
+      <div className="ai-assist-edit-approval-actions mt-2">
         <OLButton
           type="button"
           variant="secondary"
           size="sm"
           disabled={locked || connecting}
           onClick={() =>
-            onDecision({ accepted: false, note: 'User cancelled authentication' })
+            onDecision({
+              accepted: false,
+              note: 'User cancelled authentication',
+            })
           }
         >
           {t('cancel', 'Cancel')}
@@ -112,10 +122,10 @@ export function ConnectorAuthCard({
           type="button"
           variant="primary"
           size="sm"
+          leadingIcon="link"
           disabled={locked || connecting}
           onClick={handleConnect}
         >
-          <PlugsConnected size={14} className="me-1" />
           {connecting
             ? t('connecting', 'Connecting…')
             : t('connect_to_server', `Connect to ${connectorName}`)}

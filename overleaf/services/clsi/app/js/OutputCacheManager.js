@@ -18,6 +18,10 @@ let OutputCacheManager
 
 const OLDEST_BUILD_DIR = new Map()
 const PENDING_PROJECT_ACTIONS = new Map()
+// Bounds one output dir operation (counted from when it starts), so a stuck
+// save or synctex run cannot wedge that project's later operations. A timed out
+// operation is not cancelled and may overlap with the next one.
+const OUTPUT_DIR_OPERATION_TIMEOUT_MS = 10 * 60 * 1000
 
 function init() {
   doInit().catch(err => {
@@ -73,13 +77,19 @@ async function runBulkCleanup() {
 }
 
 async function cleanupDirectory(dir, options) {
-  return await queueDirOperation(dir, async () => {
-    try {
-      await OutputCacheManager.promises.expireOutputFiles(dir, options)
-    } catch (err) {
-      logger.err({ dir, err }, 'cleanup of output directory failed')
-    }
-  })
+  try {
+    return await queueDirOperation(dir, async () => {
+      try {
+        await OutputCacheManager.promises.expireOutputFiles(dir, options)
+      } catch (err) {
+        logger.err({ dir, err }, 'cleanup of output directory failed')
+      }
+    })
+  } catch (err) {
+    // a timed out cleanup must not reject runBulkCleanup, or the next
+    // scheduled cleanup is never armed
+    logger.warn({ dir, err }, 'cleanup of output directory did not finish')
+  }
 }
 
 /**
@@ -91,7 +101,16 @@ async function cleanupDirectory(dir, options) {
  */
 async function queueDirOperation(dir, fn) {
   const pending = PENDING_PROJECT_ACTIONS.get(dir) || Promise.resolve()
-  const p = pending.then(fn, fn).finally(() => {
+  let timer
+  const run = () =>
+    new Promise((resolve, reject) => {
+      timer = setTimeout(() => {
+        reject(new Error('output directory operation timed out'))
+      }, OUTPUT_DIR_OPERATION_TIMEOUT_MS)
+      Promise.resolve().then(fn).then(resolve, reject)
+    })
+  const p = pending.then(run, run).finally(() => {
+    clearTimeout(timer)
     if (PENDING_PROJECT_ACTIONS.get(dir) === p) {
       PENDING_PROJECT_ACTIONS.delete(dir)
     }

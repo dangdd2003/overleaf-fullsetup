@@ -65,7 +65,8 @@ function runLatex(projectId, options, callback) {
 
   const id = `${projectId}` // record running project under this id
 
-  ProcessTable[id] = CommandRunner.run(
+  let finished = false
+  const runId = CommandRunner.run(
     projectId,
     command,
     directory,
@@ -75,6 +76,7 @@ function runLatex(projectId, options, callback) {
     compileGroup,
     null,
     function (error, output) {
+      finished = true
       delete ProcessTable[id]
       if (error) {
         return callback(error)
@@ -115,6 +117,8 @@ function runLatex(projectId, options, callback) {
       })
     }
   )
+  // the runner may call back synchronously (e.g. image not allowed)
+  if (!finished) ProcessTable[id] = runId
 }
 
 function _writeLogOutput(projectId, directory, output, callback) {

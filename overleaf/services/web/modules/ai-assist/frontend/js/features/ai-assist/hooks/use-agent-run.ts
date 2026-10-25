@@ -121,12 +121,14 @@ export function useAgentRun({
    */
   const modeRef = useRef(state.mode)
   modeRef.current = state.mode
+  const pendingApprovalRef = useRef(state.pendingApproval)
+  pendingApprovalRef.current = state.pendingApproval
 
   const requestApproval = useCallback(
     (_edit: EditRequest, context: { startLine: number }) =>
       new Promise<{ accepted: boolean; note?: string }>(resolve => {
         approvalRef.current = resolve
-        setApprovalContext(context)
+        setApprovalContext(current => ({ ...current, ...context }))
       }),
     []
   )
@@ -204,42 +206,52 @@ export function useAgentRun({
       }
     }
     if (event.type === 'awaitingApproval') {
+      const callId = event.id
+      // Context is tagged with its call, so a late line lookup for an
+      // earlier call never relabels the card that is showing now.
+      const setForCall = (context: ApprovalContext) =>
+        setApprovalContext(current =>
+          current?.callId === callId ? { ...current, ...context } : current
+        )
+      setApprovalContext({ callId })
       if (event.kind === 'connector' || event.kind === 'connectorAuth') {
-        setApprovalContext({ kind: event.kind, connector: event.connector })
+        setForCall({ kind: event.kind, connector: event.connector })
       } else if (event.edit) {
         const edit = event.edit
-      if (typeof edit?.startLine === 'number' && edit.startLine > 0) {
-        setApprovalContext({ startLine: edit.startLine })
-      } else if (edit?.path) {
-        handleRef.current
-          .readFile(edit.path)
-          .then(res => {
-            const lines = res?.lines
-            const text = Array.isArray(lines) ? lines.join('\n') : ''
-            const match = locateAnchorInText(text, edit.oldText)
-            if (match) {
-              const anchor = match.anchor
-              const idx = text.indexOf(anchor)
+        if (typeof edit?.startLine === 'number' && edit.startLine > 0) {
+          setForCall({ startLine: edit.startLine })
+        } else if (edit?.path) {
+          handleRef.current
+            .readFile(edit.path)
+            .then(res => {
+              const lines = res?.lines
+              const text = Array.isArray(lines) ? lines.join('\n') : ''
+              const match = locateAnchorInText(text, edit.oldText)
+              if (match) {
+                const anchor = match.anchor
+                const idx = text.indexOf(anchor)
+                if (idx !== -1) {
+                  const line = text.slice(0, idx).split('\n').length
+                  setForCall({ startLine: line })
+                  return
+                }
+              }
+              const idx = edit.oldText
+                ? text.indexOf(edit.oldText)
+                : text.length
               if (idx !== -1) {
                 const line = text.slice(0, idx).split('\n').length
-                setApprovalContext({ startLine: line })
-                return
+                setForCall({ startLine: line })
+              } else {
+                setForCall({ startLine: 1 })
               }
-            }
-            const idx = edit.oldText ? text.indexOf(edit.oldText) : text.length
-            if (idx !== -1) {
-              const line = text.slice(0, idx).split('\n').length
-              setApprovalContext({ startLine: line })
-            } else {
-              setApprovalContext({ startLine: 1 })
-            }
-          })
-          .catch(() => {
-            setApprovalContext({ startLine: 1 })
-          })
+            })
+            .catch(() => {
+              setForCall({ startLine: 1 })
+            })
+        }
       }
     }
-  }
     if (event.type === 'toolCallFinished') {
       finishedCallIdsRef.current.add(event.id)
     }
@@ -299,11 +311,15 @@ export function useAgentRun({
       note?: string
       nextMode?: AgentMode
     }) => {
-      const pendingContext = approvalContext
-      // Close the prompt immediately on choice. The approval request can take
-      // a network round trip for a background run; keep that latency out of
-      // the user's interaction feedback.
-      setApprovalContext(null)
+      const pending = pendingApprovalRef.current
+      // The card goes the moment the user chooses: the call drops back into
+      // its activity line, which animates while the background applies it.
+      // The approval context stays, so that line keeps the edit's lines.
+      setState(current =>
+        current.pendingApproval && current.pendingApproval === pending
+          ? { ...current, pendingApproval: null }
+          : current
+      )
       try {
         if (currentRunIdRef.current) {
           await approveBackgroundEdit(currentRunIdRef.current, decision)
@@ -312,11 +328,15 @@ export function useAgentRun({
           approvalRef.current = null
         }
       } catch (error) {
-        setApprovalContext(current => current ?? pendingContext)
+        setState(current =>
+          current.pendingApproval || !pending
+            ? current
+            : { ...current, pendingApproval: pending }
+        )
         throw error
       }
     },
-    [approvalContext]
+    []
   )
 
   /**

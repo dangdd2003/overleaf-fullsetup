@@ -2881,17 +2881,18 @@ $ai-card-shadow:
 
   .ai-assist-settings-tool-name {
     color: var(--content-secondary-themed);
-    font-size: 0.625rem;
+    font-size: var(--font-size-01);
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    margin-bottom: 6px;
+    margin-bottom: var(--spacing-02);
   }
 
   .ai-assist-settings-row {
     display: flex;
     justify-content: space-between;
-    align-items: center;
-    padding: 3px 0;
+    align-items: baseline;
+    gap: var(--spacing-03);
+    padding: var(--spacing-01) 0;
     border-bottom: 1px dashed var(--border-divider-themed);
 
     &:last-child {
@@ -2900,13 +2901,25 @@ $ai-card-shadow:
   }
 
   .ai-assist-settings-key {
+    flex-shrink: 0;
     color: var(--content-secondary-themed);
   }
 
   .ai-assist-settings-value {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    text-align: right;
     color: var(--content-primary-themed);
     font-weight: 600;
   }
+
+  .ai-assist-settings-empty {
+    color: var(--content-secondary-themed);
+  }
+}
+
+.ai-assist-connector-auth .ai-assist-settings-list {
+  margin-top: 0;
 }
 
 .ai-assist-subresult-item .ai-assist-thinking-content {
@@ -5830,103 +5843,23 @@ $ai-card-shadow:
   }
 }
 
-// Edit approval & diff
+// Approval cards: edit / plan / settings / connector permission / connector
+// auth. They share one container, header, path row, input and action row so
+// every prompt in the AI panel reads the same way.
 
-.ai-assist-edit-approval {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-02);
-  padding: var(--spacing-03);
-  border: 1px solid var(--border-divider-themed);
-  border-radius: var(--border-radius-base);
-  background: var(--bg-secondary-themed);
-  color: var(--content-primary-themed);
-  margin: var(--spacing-02) 0;
-
-  .ai-assist-edit-approval-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--spacing-02);
-    margin-bottom: 2px;
-
-    .ai-assist-edit-approval-prompt {
-      font-size: var(--font-size-01);
-      font-weight: 600;
-      color: var(--content-primary-themed);
-    }
-
-    .ai-assist-edit-decision-badge {
-      font-size: 0.6875rem;
-      font-weight: 600;
-      padding: 1px 6px;
-      border-radius: 4px;
-
-      &.is-accepted {
-        background: color-mix(
-          in srgb,
-          var(--content-positive-themed) 15%,
-          transparent
-        );
-        color: var(--content-positive-themed);
-      }
-
-      &.is-rejected {
-        background: color-mix(
-          in srgb,
-          var(--content-danger-themed) 15%,
-          transparent
-        );
-        color: var(--content-danger-themed);
-      }
-    }
+@keyframes ai-assist-approval-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
   }
 
-  .ai-assist-edit-approval-path {
-    font-family: $code-font-family;
-    font-weight: 600;
-    font-size: var(--font-size-01);
-    line-height: var(--line-height-01);
-    color: var(--content-primary-themed);
-
-    .ai-assist-file-link {
-      cursor: pointer;
-      color: var(--link-ui-themed);
-      text-decoration: none;
-
-      &:hover {
-        text-decoration: underline;
-      }
-    }
-  }
-
-  .form-control {
-    background-color: var(--bg-secondary-themed);
-    color: var(--content-primary-themed);
-    border-color: var(--border-divider-themed);
-
-    &::placeholder {
-      color: var(--content-secondary-themed);
-      opacity: 0.7;
-    }
-
-    &:focus {
-      background-color: var(--bg-secondary-themed);
-      color: var(--content-primary-themed);
-      border-color: var(--link-ui-themed);
-      box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2);
-    }
-  }
-
-  .ai-assist-edit-approval-actions {
-    display: flex;
-    gap: var(--spacing-02);
-    justify-content: flex-end;
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 
-// Connector tool permission prompt (Claude Code style)
-
+.ai-assist-edit-approval,
 .ai-assist-connector-approval {
   display: flex;
   flex-direction: column;
@@ -5940,19 +5873,15 @@ $ai-card-shadow:
   font-size: var(--font-size-02);
   min-width: 0;
   overflow: hidden;
-  outline: none;
+  animation: ai-assist-approval-in 0.15s ease-out both;
 
-  &:focus-visible {
-    box-shadow: 0 0 0 2px
-      color-mix(in srgb, var(--link-ui-themed) 35%, transparent);
-  }
-
+  .ai-assist-edit-approval-header,
   .ai-assist-connector-approval-title {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: var(--spacing-02);
     min-height: 24px;
-    margin-bottom: 2px;
     font-size: var(--font-size-01);
     font-weight: 600;
     color: var(--content-primary-themed);
@@ -5961,6 +5890,110 @@ $ai-card-shadow:
       font-size: var(--font-size-02);
       color: var(--content-secondary-themed);
     }
+  }
+
+  .ai-assist-edit-decision-badge {
+    margin-left: auto;
+    flex-shrink: 0;
+
+    .material-symbols {
+      font-size: var(--font-size-01);
+      color: inherit;
+    }
+  }
+
+  .ai-assist-connector-auth-desc {
+    margin: 0;
+    font-size: var(--font-size-01);
+    line-height: var(--line-height-01);
+    color: var(--content-secondary-themed);
+  }
+
+  .ai-assist-edit-approval-path {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--spacing-02);
+    min-width: 0;
+    font-size: var(--font-size-01);
+    line-height: var(--line-height-01);
+    color: var(--content-primary-themed);
+
+    .ai-assist-edit-approval-location {
+      display: inline-flex;
+      align-items: baseline;
+      min-width: 0;
+      max-width: 100%;
+    }
+
+    // Real button, styled as a link: keyboard focus and Enter come for free
+    .ai-assist-file-link.btn {
+      padding: 0;
+      border: 0;
+      font-family: $code-font-family;
+      font-size: inherit;
+      font-weight: 600;
+      line-height: inherit;
+      text-align: left;
+      text-decoration: none;
+      overflow-wrap: anywhere;
+      color: var(--link-ui-themed);
+
+      &:hover,
+      &:focus-visible {
+        color: var(--link-ui-hover-themed);
+        text-decoration: underline;
+      }
+    }
+
+    .ai-assist-edit-approval-line {
+      flex-shrink: 0;
+      white-space: nowrap;
+      font-family: $code-font-family;
+      font-weight: 400;
+      color: var(--content-secondary-themed);
+    }
+  }
+
+  .form-control {
+    background-color: var(--bg-primary-themed);
+    color: var(--content-primary-themed);
+    border-color: var(--border-divider-themed);
+
+    &::placeholder {
+      color: var(--content-secondary-themed);
+      opacity: 1;
+      text-overflow: ellipsis;
+    }
+
+    &:focus {
+      background-color: var(--bg-primary-themed);
+      color: var(--content-primary-themed);
+      border-color: var(--link-ui-themed);
+      box-shadow: 0 0 0 2px
+        color-mix(in srgb, var(--link-ui-themed) 35%, transparent);
+    }
+  }
+
+  .ai-assist-edit-approval-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-02);
+    justify-content: flex-end;
+  }
+}
+
+.ai-assist-connector-approval {
+  outline: none;
+
+  &:focus-visible {
+    box-shadow: 0 0 0 2px
+      color-mix(in srgb, var(--link-ui-themed) 35%, transparent);
+  }
+
+  .ai-assist-connector-approval-title {
+    margin-bottom: 2px;
+    font-size: var(--font-size-01);
   }
 
   .ai-assist-connector-approval-call {
@@ -5991,7 +6024,7 @@ $ai-card-shadow:
     border: 1px solid var(--border-divider-themed);
     border-radius: var(--border-radius-base);
     font-family: inherit;
-    font-size: 0.6875rem;
+    font-size: var(--font-size-01);
     font-weight: 500;
     color: var(--content-secondary-themed);
   }
@@ -6107,18 +6140,6 @@ $ai-card-shadow:
     width: 100%;
     min-width: 0;
     margin-top: var(--spacing-01);
-    background-color: var(--bg-primary-themed);
-    color: var(--content-primary-themed);
-    border-color: var(--border-divider-themed);
-
-    &::placeholder {
-      color: var(--content-secondary-themed);
-    }
-
-    &:focus {
-      border-color: var(--link-ui-themed);
-      box-shadow: none;
-    }
   }
 
   .ai-assist-connector-approval-hint {
@@ -6126,6 +6147,13 @@ $ai-card-shadow:
     color: var(--content-secondary-themed);
     padding-top: var(--spacing-01);
     border-top: 1px solid var(--border-divider-themed);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-assist-edit-approval,
+  .ai-assist-connector-approval {
+    animation: none;
   }
 }
 

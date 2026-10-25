@@ -165,6 +165,14 @@ function formatLineRanges(args: any, result: any): string | null {
   return null
 }
 
+/** "14-25" for the lines an applied edit landed on. */
+function appliedLineRange(result: any): string | undefined {
+  const from = result?.startLine
+  const to = result?.endLine
+  if (typeof from !== 'number' || from <= 0) return undefined
+  return typeof to === 'number' && to > from ? `${from}-${to}` : String(from)
+}
+
 const PDF_TOOLS = new Set([
   'view_compiled_pdf_page',
   'view_compiled_pdf_overview',
@@ -508,6 +516,7 @@ function summariseCall(
           typeof lineCandidate === 'number' && lineCandidate > 0
             ? lineCandidate
             : undefined,
+        lineRange: isRejected ? undefined : appliedLineRange(result),
       }
     }
     case 'create_file': {

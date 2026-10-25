@@ -45,11 +45,14 @@ type DecisionHandler = (decision: ApprovalDecision) => void
 
 function renderApprovalCard(
   pendingCall: ToolCallRecord | null | undefined,
-  approvalContext: ApprovalContext | null | undefined,
+  context: ApprovalContext | null | undefined,
   onDecision: DecisionHandler
 ) {
   if (!pendingCall) return null
   const args = toArgs(pendingCall.args)
+  // A context left from an earlier call never describes this one.
+  const approvalContext =
+    context?.callId && context.callId !== pendingCall.id ? null : context
   if (pendingCall.name === 'present_plan') {
     return (
       <PlanApprovalCard
@@ -313,6 +316,31 @@ function isEditAction(
   )
 }
 
+/**
+ * The lines an edit covers, "14-25", from where it lands and how long the
+ * longer of its old and new text is. Null while the start is unknown.
+ */
+function editLineRange(
+  call: ToolCallRecord,
+  approvalContext: ApprovalContext | null | undefined
+): string | null {
+  const args = toArgs(call.args)
+  const start =
+    typeof args.startLine === 'number' && args.startLine > 0
+      ? args.startLine
+      : approvalContext?.callId === call.id
+        ? approvalContext.startLine
+        : undefined
+  if (!start) return null
+  const edit = getSafeEdit(call)
+  const span = Math.max(
+    edit.oldText ? edit.oldText.split('\n').length : 0,
+    edit.newText ? edit.newText.split('\n').length : 0,
+    1
+  )
+  return span > 1 ? `${start}-${start + span - 1}` : String(start)
+}
+
 function getSafeEdit(call: ToolCallRecord): EditRequest {
   const name = call.name || ''
   const args = toArgs(call.args)
@@ -463,9 +491,17 @@ export const SubresultGroup: FC<{
           case 'read_file':
             return target ? `Read ${target}…` : 'Reading file…'
           case 'edit_file':
-            return target ? `Edit ${target}…` : 'Editing file…'
-          case 'create_file':
-            return target ? `Create ${target}…` : 'Creating file…'
+          case 'create_file': {
+            const verb = inFlightCall.name === 'edit_file' ? 'Edit' : 'Create'
+            if (!target) {
+              return verb === 'Edit' ? 'Editing file…' : 'Creating file…'
+            }
+            const range =
+              verb === 'Edit'
+                ? editLineRange(inFlightCall, approvalContext)
+                : null
+            return `${verb} ${target}${range ? ` (${range})` : ''}…`
+          }
           case 'search_text':
           case 'search_project':
             return target ? `Search "${target}"…` : 'Searching project…'

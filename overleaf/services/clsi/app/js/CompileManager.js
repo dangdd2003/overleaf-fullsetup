@@ -25,6 +25,7 @@ import LatexMetrics from './LatexMetrics.js'
 import { callbackifyMultiResult } from '@overleaf/promise-utils'
 import * as HistoryResourceWriter from './HistoryResourceWriter.js'
 import Png2Pdf from './Png2Pdf.js'
+import RequestParser from './RequestParser.js'
 
 const { downloadLatestCompileCache, downloadOutputDotSynctexFromCompileCache } =
   CLSICacheHandler
@@ -62,16 +63,54 @@ function getOutputDir(projectId, userId) {
   return Path.join(Settings.path.outputDir, getCompileName(projectId, userId))
 }
 
+// Bounds a sandboxed compile: resource sync, then latexmk (re-armed when it
+// starts, so slow syncing does not eat into its own timeout), then saving. The
+// lock is extended along with it, so it cannot expire before the kill lands.
+const COMPILE_DEADLINE_MS = RequestParser.MAX_TIMEOUT * 1000 + 60 * 1000
+const COMPILE_DEADLINE_MARGIN_MS = 60 * 1000
+// unwinding after the kill (output save) is bounded by the output dir queue
+const COMPILE_UNWIND_MS = 11 * 60 * 1000
+
 async function doCompileWithLock(request, stats, timings) {
   const compileDir = getCompileDir(request.project_id, request.user_id)
   request.isInitialCompile =
     (await fsPromises.mkdir(compileDir, { recursive: true })) === compileDir
   // prevent simultaneous compiles
   const lock = LockManager.acquire(compileDir)
+  const compile = doCompile(request, stats, timings)
+  // the lock follows the work in compileDir, not the caller: it is released
+  // once doCompile settles, even when the caller gave up at the deadline
+  const release = () => lock.release()
+  compile.then(release, release)
+  if (Settings.clsi?.dockerRunner !== true) {
+    return await compile
+  }
+  const compileName = getCompileName(request.project_id, request.user_id)
+  let timer
+  const deadline = new Promise((resolve, reject) => {
+    const arm = ms => {
+      clearTimeout(timer)
+      lock.extend(ms + COMPILE_DEADLINE_MARGIN_MS)
+      timer = setTimeout(() => {
+        request.compileDeadlineExceeded = true
+        lock.extend(COMPILE_UNWIND_MS)
+        logger.warn({ compileName }, 'compile exceeded its deadline, killing it')
+        LatexRunner.promises.killLatex(compileName).catch(err => {
+          logger.warn({ err, compileName }, 'failed to kill compile')
+        })
+        const error = new OError('compile deadline exceeded')
+        error.timedout = true
+        reject(error)
+      }, ms)
+    }
+    arm(COMPILE_DEADLINE_MS)
+    request.onLatexStart = () =>
+      arm((request.timeout || 0) + COMPILE_DEADLINE_MARGIN_MS)
+  })
   try {
-    return await doCompile(request, stats, timings)
+    return await Promise.race([compile, deadline])
   } finally {
-    lock.release()
+    clearTimeout(timer)
   }
 }
 
@@ -216,6 +255,13 @@ async function doCompile(request, stats, timings) {
   enableLatexMkMetrics(stats)
 
   try {
+    if (request.compileDeadlineExceeded) {
+      // the deadline fired while syncing: do not start latexmk after the kill
+      const error = new OError('compile deadline exceeded before latexmk')
+      error.timedout = true
+      throw error
+    }
+    request.onLatexStart?.()
     await LatexRunner.promises.runLatex(compileName, {
       directory: compileDir,
       mainFile: request.rootResourcePath,
@@ -397,6 +443,8 @@ async function _saveOutputFiles({
 // as fdb files are typically much smaller and only metrics are extracted from them.
 const MAX_FDB_FILE_SIZE = 1024 * 1024 // 1 MB
 
+const STOP_COMPILE_TIMEOUT_MS = 30 * 1000
+
 async function _readFdbFile(compileDir) {
   const fdbFile = Path.join(compileDir, 'output.fdb_latexmk')
   const { result } = await SafeReader.promises.readFile(
@@ -418,13 +466,33 @@ async function stopCompile(projectId, userId) {
     logger.warn({ projectId, userId }, 'found running compile without lock')
     lockReleased = Promise.resolve()
   }
-  await LatexRunner.promises.killLatex(compileName)
-  await lockReleased
+  try {
+    await LatexRunner.promises.killLatex(compileName)
+  } catch (err) {
+    logger.warn({ err, projectId, userId }, 'failed to kill compile')
+  }
+  // do not hang the stop request on a compile that never settles
+  let timer
+  await Promise.race([
+    lockReleased,
+    new Promise(resolve => {
+      timer = setTimeout(resolve, STOP_COMPILE_TIMEOUT_MS)
+    }),
+  ])
+  clearTimeout(timer)
 }
 
 async function clearProject(projectId, userId) {
   const compileDir = getCompileDir(projectId, userId)
-  await fsPromises.rm(compileDir, { force: true, recursive: true })
+  // stopCompile gives up after STOP_COMPILE_TIMEOUT_MS: holding the lock
+  // refuses (AlreadyCompilingError) while a compile still works in the dir,
+  // and keeps a new compile from starting mid-removal
+  const lock = LockManager.acquire(compileDir)
+  try {
+    await fsPromises.rm(compileDir, { force: true, recursive: true })
+  } finally {
+    lock.release()
+  }
 }
 
 async function clearProjectWithListing(projectId, userId, allEntries) {
@@ -469,7 +537,18 @@ async function clearExpiredProjects(maxCacheAgeMs) {
     const age = now - stats.mtime
     const hasExpired = age > maxCacheAgeMs
     if (hasExpired) {
-      await fsPromises.rm(dir, { force: true, recursive: true })
+      let lock
+      try {
+        lock = LockManager.acquire(dir)
+      } catch (err) {
+        // still compiling (or at the concurrency limit), retry next round
+        continue
+      }
+      try {
+        await fsPromises.rm(dir, { force: true, recursive: true })
+      } finally {
+        lock.release()
+      }
     }
   }
 }

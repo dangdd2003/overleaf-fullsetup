@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import OLButton from '@/shared/components/ol/ol-button'
 import OLFormControl from '@/shared/components/ol/ol-form-control'
 import OLBadge from '@/shared/components/ol/ol-badge'
+import MaterialIcon from '@/shared/components/material-icon'
 
 export function SettingsApprovalCard({
   toolName,
@@ -19,28 +20,41 @@ export function SettingsApprovalCard({
   const [note, setNote] = useState('')
   const locked = Boolean(decided)
 
-  const entries = Object.entries(args).filter(([_, v]) => v !== undefined && v !== null)
+  const entries = Object.entries(args).filter(
+    ([_, v]) => v !== undefined && v !== null
+  )
 
   return (
     <div className="ai-assist-edit-approval ai-assist-settings-approval">
       <div className="ai-assist-edit-approval-header">
         <span className="ai-assist-edit-approval-prompt">
-          {t('ai_assist_confirm_settings_title', 'Review proposed settings change:')}
+          {t(
+            'ai_assist_confirm_settings_title',
+            'Review proposed settings change:'
+          )}
         </span>
         <OLBadge bg="info" className="ms-2">
           {t('ai_assist_settings_badge', 'settings')}
         </OLBadge>
         {decided && (
-          <span className={`ai-assist-edit-decision-badge is-${decided}`}>
-            {decided === 'accepted' ? '✓ Accepted' : '✗ Rejected'}
-          </span>
+          <OLBadge
+            bg={decided === 'accepted' ? 'success' : 'danger'}
+            className="ai-assist-edit-decision-badge"
+            prepend={
+              <MaterialIcon type={decided === 'accepted' ? 'check' : 'close'} />
+            }
+          >
+            {decided === 'accepted'
+              ? t('ai_assist_decision_accepted', 'Accepted')
+              : t('ai_assist_decision_rejected', 'Rejected')}
+          </OLBadge>
         )}
       </div>
 
       <div className="ai-assist-settings-list">
         <div className="ai-assist-settings-tool-name">{toolName}</div>
         {entries.length === 0 ? (
-          <div>(no parameters)</div>
+          <div className="ai-assist-settings-empty">(no parameters)</div>
         ) : (
           entries.map(([key, val]) => (
             <div key={key} className="ai-assist-settings-row">
@@ -69,7 +83,9 @@ export function SettingsApprovalCard({
           variant="secondary"
           size="sm"
           disabled={locked}
-          onClick={() => onDecision({ accepted: false, note: note || undefined })}
+          onClick={() =>
+            onDecision({ accepted: false, note: note || undefined })
+          }
         >
           {t('reject', 'Reject')}
         </OLButton>

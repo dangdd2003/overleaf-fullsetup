@@ -115,6 +115,7 @@ describe('CompileManager', () => {
     }
     ctx.lock = {
       release: sinon.stub(),
+      extend: sinon.stub(),
     }
     ctx.LockManager = {
       acquire: sinon.stub().returns(ctx.lock),
@@ -626,6 +627,16 @@ describe('CompileManager', () => {
         force: true,
         recursive: true,
       })
+      expect(ctx.lock.release).to.have.been.calledOnce
+    })
+
+    it('should refuse while a compile holds the lock', async ctx => {
+      const error = new Error('compile in progress')
+      ctx.LockManager.acquire.throws(error)
+      await expect(
+        ctx.CompileManager.promises.clearProject(ctx.projectId, ctx.userId)
+      ).to.be.rejectedWith(error)
+      expect(ctx.fsPromises.rm).not.to.have.been.called
     })
   })
 

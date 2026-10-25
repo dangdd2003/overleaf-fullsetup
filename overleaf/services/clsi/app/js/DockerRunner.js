@@ -1,14 +1,13 @@
 import Docker from 'dockerode'
 import Settings from '@overleaf/settings'
 import logger from '@overleaf/logger'
-import metrics from '@overleaf/metrics'
 import crypto from 'node:crypto'
 import Path from 'node:path'
 import util from 'node:util'
 import fs from 'node:fs'
 import os from 'node:os'
+import OError from '@overleaf/o-error'
 import * as LastProjectAccessModule from './LastProjectAccess.js'
-import LockManager from './LockManager.js'
 import * as AutoPullManager from './AutoPullManager.js'
 
 const LastProjectAccess = LastProjectAccessModule.getLastProjectAccessTime
@@ -17,38 +16,209 @@ const LastProjectAccess = LastProjectAccessModule.getLastProjectAccessTime
 
 let dockerClient
 let detectedMounts = null
+// compileName -> Set of in-flight runs (compile, synctex, wordcount, ...)
 const activeCompiles = new Map()
+// containerName -> in-flight run, used for kill checks during start/wait
+const runningContainers = new Map()
+// containerName -> queued runs, so two runs never drive the same container
+const containerQueues = new Map()
 
-function getDocker() {
-  if (!dockerClient) {
-    dockerClient = new Docker(Settings.clsi?.docker?.clientConfig || {})
+function trackCompile(projectId, entry) {
+  let entries = activeCompiles.get(projectId)
+  if (!entries) {
+    entries = new Set()
+    activeCompiles.set(projectId, entries)
   }
-  return dockerClient
+  entries.add(entry)
 }
 
+function untrackCompile(projectId, entry) {
+  const entries = activeCompiles.get(projectId)
+  if (!entries) return
+  entries.delete(entry)
+  if (entries.size === 0) activeCompiles.delete(projectId)
+}
+
+function runExclusive(name, fn, callback) {
+  let done = false
+  const release = (...args) => {
+    if (done) return
+    done = true
+    const queue = containerQueues.get(name)
+    queue.shift()
+    if (queue.length > 0) {
+      process.nextTick(queue[0])
+    } else {
+      containerQueues.delete(name)
+    }
+    callback(...args)
+  }
+  const job = () => {
+    try {
+      fn(release)
+    } catch (err) {
+      release(err)
+    }
+  }
+  const queue = containerQueues.get(name)
+  if (queue) {
+    queue.push(job)
+    return
+  }
+  containerQueues.set(name, [job])
+  job()
+}
+
+// Docker calls other than wait/attach streams return quickly; bound them so a
+// stalled daemon fails the compile instead of holding its lock forever.
+const DOCKER_CALL_TIMEOUT_MS = 60 * 1000
+// Grace period for trailing output after the container exited
+const STREAM_END_TIMEOUT_MS = 2 * 1000
+const MAX_OUTPUT_BYTES = 16 * 1024 * 1024
+// head and tail each keep half of the cap; the middle of a huge log is dropped
+const OUTPUT_HALF_BYTES = MAX_OUTPUT_BYTES / 2
+
+function newOutputBuffer() {
+  return { head: [], headBytes: 0, tail: [], tailBytes: 0, dropped: 0 }
+}
+
+// Chunks are kept as Buffers and decoded once in renderOutput, so a multibyte
+// character split across chunks is decoded correctly and nothing is re-copied.
+function appendOutput(buf, chunk) {
+  let b = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk))
+  if (buf.headBytes < OUTPUT_HALF_BYTES) {
+    const cut = Math.min(OUTPUT_HALF_BYTES - buf.headBytes, b.length)
+    buf.head.push(b.subarray(0, cut))
+    buf.headBytes += cut
+    b = b.subarray(cut)
+    if (b.length === 0) return
+  }
+  buf.tail.push(b)
+  buf.tailBytes += b.length
+  let excess = buf.tailBytes - OUTPUT_HALF_BYTES
+  while (excess > 0) {
+    const first = buf.tail[0]
+    if (first.length <= excess) {
+      buf.tail.shift()
+      excess -= first.length
+      buf.tailBytes -= first.length
+      buf.dropped += first.length
+    } else {
+      buf.tail[0] = first.subarray(excess)
+      buf.tailBytes -= excess
+      buf.dropped += excess
+      excess = 0
+    }
+  }
+}
+
+function renderOutput(buf) {
+  const parts = [Buffer.concat(buf.head)]
+  if (buf.dropped > 0) {
+    parts.push(
+      Buffer.from(`\n[... ${buf.dropped} bytes of output omitted ...]\n`)
+    )
+  }
+  parts.push(Buffer.concat(buf.tail))
+  return Buffer.concat(parts).toString('utf8')
+}
+
+function withDeadline(label, fn, callback) {
+  let settled = false
+  const timer = setTimeout(() => {
+    if (settled) return
+    settled = true
+    const err = new Error(`docker ${label} timed out`)
+    err.dockerTimeout = true
+    callback(err)
+  }, DOCKER_CALL_TIMEOUT_MS)
+  const settle = (err, ...rest) => {
+    if (settled) {
+      // late attach: nobody reads it, close the hijacked connection
+      if (typeof rest[0]?.destroy === 'function') rest[0].destroy()
+      return
+    }
+    settled = true
+    clearTimeout(timer)
+    callback(err, ...rest)
+  }
+  try {
+    fn(settle)
+  } catch (err) {
+    settle(err)
+  }
+}
+
+// Mounts of the container this clsi runs in, used to translate compile dirs
+// into host paths for the sibling containers. Only a successful lookup is
+// cached: caching a failed one would bind non-existent host paths (docker
+// creates them empty) for every compile until the process restarts.
 function getDetectedMounts(callback) {
   if (detectedMounts) return callback(null, detectedMounts)
+  let container
   try {
-    const docker = DockerRunner._getDocker()
-    const container = docker.getContainer(os.hostname())
-    if (!container || typeof container.inspect !== 'function') {
-      detectedMounts = {}
-      return callback(null, detectedMounts)
-    }
-    container.inspect((err, data) => {
-      detectedMounts = {}
-      if (!err && data?.Mounts) {
-        for (const m of data.Mounts) {
-          if (m.Destination && m.Source) {
-            detectedMounts[m.Destination] = m.Source
-          }
+    container = DockerRunner._getDocker().getContainer(os.hostname())
+  } catch (err) {
+    logger.warn({ err }, 'could not look up own container for host paths')
+    return callback(null, {})
+  }
+  if (!container || typeof container.inspect !== 'function') {
+    return callback(null, {})
+  }
+  withDeadline(
+    'inspect self',
+    cb => container.inspect(cb),
+    (err, data) => {
+      if (err && err.statusCode === 404) {
+        // not running inside a container, compile dirs are host paths
+        detectedMounts = {}
+        return callback(null, detectedMounts)
+      }
+      if (err || !Array.isArray(data?.Mounts)) {
+        logger.warn(
+          { err, hostname: os.hostname() },
+          'could not inspect own container for host paths, retrying on next compile'
+        )
+        return callback(err || new Error('no mounts in container inspect'))
+      }
+      const mounts = {}
+      for (const m of data.Mounts) {
+        if (m.Destination && m.Source) {
+          mounts[m.Destination] = m.Source
         }
       }
+      detectedMounts = mounts
       callback(null, detectedMounts)
-    })
-  } catch (err) {
-    detectedMounts = {}
-    callback(null, detectedMounts)
+    }
+  )
+}
+
+function replacePrefix(path, prefix, replacement) {
+  // function replacement, so that `$` in host paths is taken literally
+  return path.replace(prefix, () => replacement)
+}
+
+// Only chmod when the mode is wrong, so trees that are already writable are
+// not rewritten on every compile. statSync follows a symlink, as chmodSync
+// does, so the top-level directory behaves as before.
+function ensureMode(p, mode) {
+  if ((fs.statSync(p).mode & 0o777) !== mode) fs.chmodSync(p, mode)
+}
+
+// The tex user in the image is not the owner of the files clsi writes, so the
+// whole tree (including subdirectories of included files) must be writable.
+// Symlinked entries inside the tree are not followed.
+function makeWritable(directory) {
+  ensureMode(directory, 0o777)
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    const p = Path.join(directory, entry.name)
+    try {
+      if (entry.isDirectory()) {
+        makeWritable(p)
+      } else if (entry.isFile()) {
+        ensureMode(p, 0o666)
+      }
+    } catch (e) {}
   }
 }
 
@@ -74,7 +244,10 @@ function resolveHostPath(containerPath, mounts) {
 
 const DockerRunner = {
   _getDocker() {
-    return new Docker(Settings.clsi?.docker?.clientConfig || {})
+    if (!dockerClient) {
+      dockerClient = new Docker(Settings.clsi?.docker?.clientConfig || {})
+    }
+    return dockerClient
   },
   MAX_CONTAINER_AGE:
     Settings.clsi?.expireProjectAfterIdleMs || 24 * 60 * 60 * 1000,
@@ -122,31 +295,40 @@ const DockerRunner = {
     }
 
     const compileEntry = { containerName: null, killed: false }
-    activeCompiles.set(projectId, compileEntry)
+    trackCompile(projectId, compileEntry)
+    const done = (err, output) => {
+      untrackCompile(projectId, compileEntry)
+      callback(err, output)
+    }
 
     const defaultImage =
       Settings.clsi?.docker?.image || 'sharelatex/texlive-full:latest'
     let selectedImage = image || defaultImage
 
+    // the png2pdf helper is clsi's own configured image, never listed in
+    // allowedImages; only that exact image is exempt
+    const isPng2pdfRun =
+      compileGroup === 'png2pdf' && selectedImage === Settings.png2pdfImage
     if (
+      !isPng2pdfRun &&
       Array.isArray(Settings.clsi?.docker?.allowedImages) &&
       Settings.clsi.docker.allowedImages.length > 0
     ) {
       if (!Settings.clsi.docker.allowedImages.includes(selectedImage)) {
-        activeCompiles.delete(projectId)
-        return callback(new Error('image not allowed'))
+        return done(new Error('image not allowed'))
       }
     }
 
     // allowedImages lists the canonical names, so the registry override is
     // applied after validation (as in Server Pro)
-    if (Settings.texliveImageNameOveride) {
-      const parts = selectedImage.split('/')
-      const imageNameWithTag = parts[parts.length - 1]
-      selectedImage = `${Settings.texliveImageNameOveride}/${imageNameWithTag}`
-    }
+    selectedImage = AutoPullManager.resolveImageName(selectedImage)
 
-    getDetectedMounts((_, mounts) => {
+    getDetectedMounts((mountsErr, mounts) => {
+      if (mountsErr) {
+        return done(
+          OError.tag(mountsErr, 'could not resolve host paths for compile')
+        )
+      }
       const detectedCompiles =
         resolveHostPath('/var/lib/overleaf/data/compiles', mounts) ||
         resolveHostPath(Settings.path?.compilesDir, mounts) ||
@@ -174,12 +356,14 @@ const DockerRunner = {
       if (compileGroup === 'synctex-output') {
         isReadOnly = true
         if (directory.startsWith('/var/lib/overleaf/data/output')) {
-          hostDirectory = directory.replace(
+          hostDirectory = replacePrefix(
+            directory,
             '/var/lib/overleaf/data/output',
             hostOutputDir
           )
         } else if (directory.startsWith('/local/compile/directory')) {
-          hostDirectory = directory.replace(
+          hostDirectory = replacePrefix(
+            directory,
             '/local/compile/directory',
             hostOutputDir + '/directory'
           )
@@ -187,12 +371,14 @@ const DockerRunner = {
       } else if (compileGroup === 'synctex' || compileGroup === 'wordcount') {
         isReadOnly = true
         if (directory.startsWith('/var/lib/overleaf/data/compile')) {
-          hostDirectory = directory.replace(
+          hostDirectory = replacePrefix(
+            directory,
             /^\/var\/lib\/overleaf\/data\/compiles?/,
             hostCompilesDir
           )
         } else if (directory.startsWith('/local/compile/directory')) {
-          hostDirectory = directory.replace(
+          hostDirectory = replacePrefix(
+            directory,
             '/local/compile/directory',
             hostCompilesDir + '/directory'
           )
@@ -200,28 +386,45 @@ const DockerRunner = {
       } else if (compileGroup === 'conversions') {
         isReadOnly = false
         if (directory.startsWith('/var/lib/overleaf/data/compile')) {
-          hostDirectory = directory.replace(
+          hostDirectory = replacePrefix(
+            directory,
             /^\/var\/lib\/overleaf\/data\/compiles?/,
             hostCompilesDir
           )
         } else if (directory.startsWith('/local/compile/directory')) {
-          hostDirectory = directory.replace(
+          hostDirectory = replacePrefix(
+            directory,
             '/local/compile/directory',
             hostCompilesDir + '/directory'
           )
         }
       } else {
         if (directory.startsWith('/var/lib/overleaf/data/compiles')) {
-          hostDirectory = directory.replace(
+          hostDirectory = replacePrefix(
+            directory,
             '/var/lib/overleaf/data/compiles',
             hostCompilesDir
           )
         } else if (directory.startsWith('/local/compile/directory')) {
-          hostDirectory = directory.replace(
+          hostDirectory = replacePrefix(
+            directory,
             '/local/compile/directory',
             hostCompilesDir + '/directory'
           )
         }
+      }
+
+      const cacheDir = Settings.path?.clsiCacheDir
+      if (
+        Settings.path?.sandboxedCompilesHostDirCache &&
+        cacheDir &&
+        directory.startsWith(cacheDir + '/')
+      ) {
+        hostDirectory = replacePrefix(
+          directory,
+          cacheDir,
+          Settings.path.sandboxedCompilesHostDirCache
+        )
       }
 
       // If no manual host dir was specified, resolve directly from Docker inspect
@@ -230,21 +433,26 @@ const DockerRunner = {
         hostDirectory = directResolved
       }
 
-      if (!isReadOnly && directory) {
+      // Inside a container, an untranslated path does not exist on the host:
+      // docker would bind a fresh empty dir and the compile would fail with no
+      // output. Refuse instead.
+      if (
+        hostDirectory === directory &&
+        !directResolved &&
+        !Settings.path?.sandboxedCompilesHostDirCompiles &&
+        fs.existsSync('/.dockerenv')
+      ) {
+        return done(
+          new OError('could not map compile directory to a host path', {
+            directory,
+            hostname: os.hostname(),
+          })
+        )
+      }
+
+      if (!isReadOnly && directory && compileGroup !== 'png2pdf') {
         try {
-          fs.chmodSync(directory, 0o777)
-          const entries = fs.readdirSync(directory)
-          for (const entry of entries) {
-            try {
-              const p = Path.join(directory, entry)
-              const stat = fs.statSync(p)
-              if (stat.isDirectory()) {
-                fs.chmodSync(p, 0o777)
-              } else {
-                fs.chmodSync(p, 0o666)
-              }
-            } catch (e) {}
-          }
+          makeWritable(directory)
         } catch (err) {
           logger.warn({ err, directory }, 'could not chmod compile directory')
         }
@@ -279,37 +487,55 @@ const DockerRunner = {
       if (compileEntry.killed) {
         const err = new Error('terminated')
         err.terminated = true
-        activeCompiles.delete(projectId)
-        return callback(err)
+        return done(err)
       }
 
-      const executeWithRetry = (isRetry = false) => {
-        this._runAndWaitForContainer(
-          options,
-          volumes,
-          timeout,
-          (err, output) => {
-            if (
-              err &&
-              (err.statusCode === 500 || err.message?.includes('500'))
-            ) {
-              if (!isRetry && !compileEntry.killed) {
-                logger.warn(
-                  { err, containerName, projectId },
-                  'HTTP 500 from docker daemon, destroying container and retrying once'
-                )
-                return this.destroyContainer(containerName, null, false, () => {
-                  executeWithRetry(true)
-                })
-              }
+      runExclusive(
+        containerName,
+        release => {
+          runningContainers.set(containerName, compileEntry)
+          const finish = (err, output) => {
+            runningContainers.delete(containerName)
+            release(err, output)
+            // AutoRemove runs (synctex, wordcount, ...) must not remove the
+            // reusable compile container
+            if (!err && options.HostConfig?.AutoRemove !== true) {
+              this._pruneSiblingContainers(projectId, containerName)
             }
-            activeCompiles.delete(projectId)
-            callback(err, output)
           }
-        )
-      }
-
-      executeWithRetry(false)
+          const executeWithRetry = (isRetry = false) => {
+            if (compileEntry.killed) {
+              const err = new Error('terminated')
+              err.terminated = true
+              return finish(err)
+            }
+            this._runAndWaitForContainer(
+              options,
+              volumes,
+              timeout,
+              (err, output) => {
+                if (err && err.statusCode === 500 && !isRetry) {
+                  logger.warn(
+                    { err, containerName, projectId },
+                    'HTTP 500 from docker daemon, destroying container and retrying once'
+                  )
+                  return this.destroyContainer(
+                    containerName,
+                    null,
+                    false,
+                    () => {
+                      executeWithRetry(true)
+                    }
+                  )
+                }
+                finish(err, output)
+              }
+            )
+          }
+          executeWithRetry(false)
+        },
+        done
+      )
     })
     return projectId
   },
@@ -333,10 +559,17 @@ const DockerRunner = {
     }
 
     const securityOpts = ['no-new-privileges']
-    if (Settings.clsi?.docker?.seccompProfile) {
-      securityOpts.push(
-        `seccomp=${JSON.stringify(Settings.clsi.docker.seccompProfile)}`
-      )
+    // settings.defaults writes seccomp_profile as JSON text, which docker takes
+    // as-is (seccomp=<json>); it must not be JSON-encoded a second time
+    const seccompProfile =
+      Settings.clsi?.docker?.seccomp_profile ||
+      Settings.clsi?.docker?.seccompProfile
+    if (seccompProfile) {
+      const profileJson =
+        typeof seccompProfile === 'string'
+          ? seccompProfile
+          : JSON.stringify(seccompProfile)
+      securityOpts.push(`seccomp=${profileJson}`)
     }
 
     const hostConfig = {
@@ -383,12 +616,16 @@ const DockerRunner = {
   },
 
   _fingerprintContainer(options) {
+    // Existing containers are restarted as they are, so everything that goes
+    // into the container must be part of its name, or a later run would
+    // execute the previous command/env.
     const relevant = {
       Image: options.Image,
+      Cmd: options.Cmd,
+      Env: options.Env,
       User: options.User,
-      CapDrop: options.HostConfig?.CapDrop,
-      SecurityOpt: options.HostConfig?.SecurityOpt,
-      Binds: options.HostConfig?.Binds,
+      WorkingDir: options.WorkingDir,
+      HostConfig: options.HostConfig,
     }
     return crypto
       .createHash('md5')
@@ -397,20 +634,106 @@ const DockerRunner = {
   },
 
   _runAndWaitForContainer(options, volumes, timeout, callback) {
-    const projectId = options?.projectId || 'default'
+    const compileEntry = runningContainers.get(options.name)
+    const out = { stdout: newOutputBuffer(), stderr: newOutputBuffer() }
     let capturedOutput = { stdout: '', stderr: '' }
+    let stream = null
+    let streamEnded = false
+    let finished = false
+    const isAborted = () => compileEntry?.killed === true
 
-    const attachStreamHandler = (err, stream) => {
-      if (err) return
-      if (stream) {
-        if (typeof stream.on === 'function') {
-          stream.on('data', chunk => {
-            capturedOutput.stdout += chunk.toString()
-          })
-        } else {
-          capturedOutput = stream
-        }
+    const attachStreamHandler = (err, attached) => {
+      if (err || !attached) return
+      if (typeof attached.on !== 'function') {
+        capturedOutput = attached
+        return
       }
+      stream = attached
+      stream.on('end', () => {
+        streamEnded = true
+      })
+      stream.on('close', () => {
+        streamEnded = true
+      })
+      stream.on('error', err => {
+        streamEnded = true
+        logger.warn({ err, name: options.name }, 'error on container stream')
+      })
+      const modem = this._getDocker().modem
+      if (typeof modem?.demuxStream === 'function') {
+        // non-tty attach streams are multiplexed (8 byte frame headers)
+        modem.demuxStream(
+          stream,
+          { write: chunk => appendOutput(out.stdout, chunk) },
+          { write: chunk => appendOutput(out.stderr, chunk) }
+        )
+      } else {
+        stream.on('data', chunk => appendOutput(out.stdout, chunk))
+      }
+    }
+
+    const terminated = () => {
+      const termErr = new Error('terminated')
+      termErr.terminated = true
+      return termErr
+    }
+
+    // wait for trailing output, then always close the attach connection
+    const finish = (err, result) => {
+      if (finished) return
+      finished = true
+      if (compileEntry) compileEntry.abort = null
+      if (err) {
+        // the container may still be running unsupervised (start/kill
+        // deadline, kill before start); never let a later run reattach to it
+        return this._destroyContainer(options.name, true, () =>
+          drain(err, result)
+        )
+      }
+      drain(err, result)
+    }
+    const drain = (err, result) => {
+      let called = false
+      const complete = () => {
+        if (called) return
+        called = true
+        clearTimeout(timer)
+        if (stream && typeof stream.destroy === 'function') stream.destroy()
+        // rendered here, after the grace period, so trailing output is kept
+        callback(err, typeof result === 'function' ? result() : result)
+      }
+      const timer =
+        stream && !streamEnded
+          ? setTimeout(complete, STREAM_END_TIMEOUT_MS)
+          : null
+      if (!timer) return complete()
+      stream.once('end', complete)
+      stream.once('close', complete)
+    }
+
+    const collectOutput = exitCode => {
+      if (!stream) {
+        capturedOutput.exitCode = exitCode
+        return capturedOutput
+      }
+      return {
+        stdout: renderOutput(out.stdout),
+        stderr: renderOutput(out.stderr),
+        exitCode,
+      }
+    }
+
+    // kill() must not wait for an image pull inside startContainer (it can take
+    // minutes). Only the pull is abortable: no container exists yet, so nothing
+    // is destroyed, and the late pull result is dropped by the finished flag.
+    // Outside the pull, the lock is held until the docker calls settle.
+    const abortPull = () => {
+      if (finished) return
+      finished = true
+      process.nextTick(() => drain(terminated(), null))
+    }
+    const onPull = active => {
+      if (compileEntry) compileEntry.abort = active ? abortPull : null
     }
 
     this.startContainer(
@@ -418,107 +741,140 @@ const DockerRunner = {
       volumes,
       attachStreamHandler,
       (err, containerId) => {
-        if (err) return callback(err)
+        if (err) return finish(err)
 
-        const compileEntry = activeCompiles.get(projectId)
-        if (compileEntry?.killed) {
-          const termErr = new Error('terminated')
-          termErr.terminated = true
-          return callback(termErr)
-        }
+        // the kill arrived before the container existed
+        if (isAborted()) return finish(terminated())
 
         this.waitForContainer(
           options.name || containerId,
           timeout,
           options,
           (waitErr, exitCode) => {
-            if (compileEntry?.killed) {
-              const termErr = new Error('terminated')
-              termErr.terminated = true
-              return callback(termErr)
-            }
-            if (waitErr) return callback(waitErr)
-            capturedOutput.exitCode = exitCode
-            callback(null, capturedOutput)
+            if (isAborted()) return finish(terminated())
+            if (waitErr) return finish(waitErr)
+            finish(null, () => collectOutput(exitCode))
           }
         )
-      }
+      },
+      false,
+      isAborted,
+      onPull
     )
   },
 
-  startContainer(options, volumes, attachStreamHandler, callback) {
+  startContainer(
+    options,
+    volumes,
+    attachStreamHandler,
+    callback,
+    pulled,
+    isAborted = () => false,
+    onPull = () => {}
+  ) {
     const docker = this._getDocker()
     const container = docker.getContainer(options.name)
 
-    container.inspect((err, info) => {
-      if (err && err.statusCode === 404) {
-        // Container does not exist, create it
-        docker.createContainer(options, (createErr, newContainer) => {
-          if (createErr) {
-            if (
-              createErr.statusCode === 404 &&
-              createErr.message?.includes('No such image') &&
-              process.env.TEX_LIVE_AUTO_PULL_ENABLED === 'true'
-            ) {
-              logger.info(
-                { image: options.Image },
-                '[AutoPull] Image not found locally during compile. Pulling on demand...'
-              )
-              return AutoPullManager.pullImage(options.Image)
-                .then(() => {
-                  this.startContainer(
-                    options,
-                    volumes,
-                    attachStreamHandler,
-                    callback
-                  )
-                })
-                .catch(pullErr => {
-                  logger.error(
-                    { pullErr, image: options.Image },
-                    '[AutoPull] On-demand pull failed'
-                  )
-                  callback(createErr)
-                })
-            }
-            return callback(createErr)
-          }
-          this.attachToContainer(
-            options.name,
-            attachStreamHandler,
-            attachErr => {
-              if (attachErr) return callback(attachErr)
-              newContainer.start(startErr => {
-                if (startErr && startErr.statusCode !== 304) {
-                  return callback(startErr)
-                }
-                callback(null, newContainer.id || options.name)
-              })
-            }
-          )
-        })
-      } else if (!err || err.statusCode === 304) {
-        // Container exists
-        this.attachToContainer(options.name, attachStreamHandler, attachErr => {
-          if (attachErr) return callback(attachErr)
-          container.start(startErr => {
+    const attachAndStart = (target, id) => {
+      this.attachToContainer(options.name, attachStreamHandler, attachErr => {
+        if (attachErr) return callback(attachErr)
+        withDeadline(
+          'start',
+          cb => target.start(cb),
+          startErr => {
             if (startErr && startErr.statusCode !== 304) {
               return callback(startErr)
             }
-            callback(null, container.id || options.name)
-          })
-        })
-      } else {
-        callback(err)
+            callback(null, id || options.name)
+          }
+        )
+      })
+    }
+
+    withDeadline(
+      'inspect',
+      cb => container.inspect(cb),
+      (err, info) => {
+        if (err && err.statusCode === 404) {
+          // Container does not exist, create it
+          withDeadline(
+            'create',
+            cb => docker.createContainer(options, cb),
+            (createErr, newContainer) => {
+              if (createErr) {
+                if (
+                  !pulled &&
+                  createErr.statusCode === 404 &&
+                  createErr.message?.includes('No such image') &&
+                  process.env.TEX_LIVE_AUTO_PULL_ENABLED === 'true'
+                ) {
+                  logger.info(
+                    { image: options.Image },
+                    '[AutoPull] Image not found locally during compile. Pulling on demand...'
+                  )
+                  // killed before the pull: do not pull or create the container
+                  if (isAborted()) {
+                    const err = new Error('terminated')
+                    err.terminated = true
+                    return callback(err)
+                  }
+                  onPull(true)
+                  return AutoPullManager.pullImage(options.Image).then(
+                    () => {
+                      onPull(false)
+                      // killed while pulling: do not create the container now
+                      if (isAborted()) {
+                        const err = new Error('terminated')
+                        err.terminated = true
+                        return callback(err)
+                      }
+                      this.startContainer(
+                        options,
+                        volumes,
+                        attachStreamHandler,
+                        callback,
+                        true,
+                        isAborted,
+                        onPull
+                      )
+                    },
+                    pullErr => {
+                      onPull(false)
+                      logger.error(
+                        { pullErr, image: options.Image },
+                        '[AutoPull] On-demand pull failed'
+                      )
+                      callback(createErr)
+                    }
+                  ).catch(err => {
+                    logger.error(
+                      { err },
+                      '[AutoPull] error after on-demand pull'
+                    )
+                  })
+                }
+                return callback(createErr)
+              }
+              attachAndStart(newContainer, newContainer.id)
+            }
+          )
+        } else if (!err || err.statusCode === 304) {
+          // Container exists
+          attachAndStart(container, container.id)
+        } else {
+          callback(err)
+        }
       }
-    })
+    )
   },
 
   attachToContainer(containerId, attachStreamHandler, callback) {
     const docker = this._getDocker()
     const container = docker.getContainer(containerId)
-    container.attach(
-      { stream: true, stdout: true, stderr: true },
+    withDeadline(
+      'attach',
+      cb =>
+        container.attach({ stream: true, stdout: true, stderr: true }, cb),
       (err, stream) => {
         if (err) return callback(err)
         if (attachStreamHandler) {
@@ -536,11 +892,15 @@ const DockerRunner = {
 
     const timer = setTimeout(() => {
       timedOut = true
-      container.kill(() => {
-        const error = new Error('container timed out')
-        error.timedout = true
-        callback(error)
-      })
+      withDeadline(
+        'kill',
+        cb => container.kill(cb),
+        () => {
+          const error = new Error('container timed out')
+          error.timedout = true
+          callback(error)
+        }
+      )
     }, timeout)
 
     container.wait((err, data) => {
@@ -579,7 +939,9 @@ const DockerRunner = {
         )
           return false
 
-        const match = name.match(/^(?:sandbox-compiler|project)-([a-f0-9]+)-/)
+        const match =
+          name.match(/^sandbox-compiler-(.+)-[a-f0-9]{32}$/) ||
+          name.match(/^project-([a-f0-9]+)-/)
         if (!match) return false
         const projectId = match[1]
 
@@ -610,6 +972,45 @@ const DockerRunner = {
     })
   },
 
+  // Every distinct command/env gets its own container per project. After a
+  // successful compile, the stopped siblings are removed. Containers with a
+  // queued or running run are skipped, and binds are never removed.
+  _pruneSiblingContainers(projectId, keepName) {
+    const prefix = `sandbox-compiler-${projectId}-`
+    // exact match, so a project-level compile never prunes per-user ones
+    const isSibling = name =>
+      name.startsWith(prefix) &&
+      /^[a-f0-9]{32}$/.test(name.slice(prefix.length))
+    this._getDocker().listContainers(
+      { all: true, filters: { name: [prefix] } },
+      (err, containers) => {
+        if (err || !Array.isArray(containers)) return
+        for (const c of containers) {
+          const name = (c.Names?.[0] || '').replace(/^\//, '')
+          if (!isSibling(name) || name === keepName) continue
+          if (c.State !== 'exited' || containerQueues.has(name)) continue
+          // queued like a run on that container, so a run started meanwhile
+          // either finishes first or recreates the container afterwards
+          runExclusive(
+            name,
+            release => {
+              if (runningContainers.has(name)) return release()
+              this._destroyContainer(name, false, release)
+            },
+            destroyErr => {
+              if (destroyErr) {
+                logger.warn(
+                  { err: destroyErr, name },
+                  'could not prune container'
+                )
+              }
+            }
+          )
+        }
+      }
+    )
+  },
+
   destroyContainer(name, id, shouldForce, callback) {
     if (typeof shouldForce === 'function') {
       callback = shouldForce
@@ -621,9 +1022,10 @@ const DockerRunner = {
   _destroyContainer(containerId, shouldForce, callback) {
     const docker = this._getDocker()
     const container = docker.getContainer(containerId)
-    container.remove(
-      { force: Boolean(shouldForce), v: true },
-      (err, result) => {
+    withDeadline(
+      'remove',
+      cb => container.remove({ force: Boolean(shouldForce), v: true }, cb),
+      err => {
         if (err && err.statusCode === 404) {
           return callback(null)
         }
@@ -634,33 +1036,35 @@ const DockerRunner = {
 
   kill(identifier, callback) {
     if (typeof callback !== 'function') callback = () => {}
-    const entry = activeCompiles.get(identifier)
-    let containerId = identifier
-    if (entry) {
+    const containerIds = new Set()
+    for (const entry of activeCompiles.get(identifier) || []) {
       entry.killed = true
-      if (entry.containerName) {
-        containerId = entry.containerName
-      }
+      if (entry.containerName) containerIds.add(entry.containerName)
+      if (entry.abort) entry.abort()
     }
-    const docker = this._getDocker()
-    const container = docker.getContainer(containerId)
-    console.log('[DEBUG kill] container returned:', container)
-    container.kill(err => {
-      if (
-        err &&
-        (err.statusCode === 500 || err.statusCode === 404) &&
-        err.message?.includes('is not running')
-      ) {
-        return process.nextTick(callback)
-      }
-      if (err && err.statusCode === 404) {
-        return process.nextTick(callback)
-      }
-      if (err) {
-        return process.nextTick(() => callback(err))
-      }
-      process.nextTick(callback)
-    })
+    if (!activeCompiles.has(identifier)) containerIds.add(identifier)
+
+    let remaining = containerIds.size
+    if (remaining === 0) return process.nextTick(callback)
+    let firstErr = null
+    for (const containerId of containerIds) {
+      const container = this._getDocker().getContainer(containerId)
+      withDeadline(
+        'kill',
+        cb => container.kill(cb),
+        err => {
+          const ignore =
+            err &&
+            (err.statusCode === 404 || err.message?.includes('is not running'))
+          if (err && !ignore && !firstErr) firstErr = err
+          if (--remaining === 0) {
+            process.nextTick(() =>
+              firstErr ? callback(firstErr) : callback()
+            )
+          }
+        }
+      )
+    }
   },
 }
 

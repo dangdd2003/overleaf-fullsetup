@@ -595,6 +595,191 @@ describe('DockerRunner', () => {
     })
   })
 
+  describe('seccomp profile', () => {
+    const profile = '{"defaultAction":"SCMP_ACT_ERRNO","syscalls":[]}'
+    const securityOpt = ctx =>
+      ctx.DockerRunner._getContainerOptions(['cmd'], 'img', {}, 1000)
+        .HostConfig.SecurityOpt
+
+    it('should send the profile JSON once, from seccomp_profile', ctx => {
+      ctx.Settings.clsi.docker.seccomp_profile = profile
+      expect(securityOpt(ctx)).to.deep.equal([
+        'no-new-privileges',
+        `seccomp=${profile}`,
+      ])
+    })
+
+    it('should still read the seccompProfile key', ctx => {
+      ctx.Settings.clsi.docker.seccompProfile = profile
+      expect(securityOpt(ctx)).to.deep.equal([
+        'no-new-privileges',
+        `seccomp=${profile}`,
+      ])
+    })
+
+    it('should omit seccomp when no profile is configured', ctx => {
+      expect(securityOpt(ctx)).to.deep.equal(['no-new-privileges'])
+    })
+  })
+
+  describe('png2pdf with image restriction', () => {
+    beforeEach(ctx => {
+      ctx.Settings.png2pdfImage = 'example.com/png2pdf:1'
+      ctx.Settings.clsi.docker.allowedImages = ['repo/image:tag1']
+      ctx.DockerRunner._runAndWaitForContainer = sinon
+        .stub()
+        .callsArgWith(3, null, { stdout: '' })
+      ctx.runWith = (image, compileGroup) =>
+        new Promise(resolve =>
+          ctx.DockerRunner.run(
+            ctx.project_id,
+            ['--in-place'],
+            ctx.directory,
+            image,
+            ctx.timeout,
+            ctx.env,
+            compileGroup,
+            null,
+            err => resolve(err)
+          )
+        )
+    })
+
+    it('should allow the configured png2pdf image for png2pdf', async ctx => {
+      expect(await ctx.runWith('example.com/png2pdf:1', 'png2pdf')).not.to
+        .exist
+    })
+
+    it('should still reject it for other groups', async ctx => {
+      const err = await ctx.runWith('example.com/png2pdf:1', 'standard')
+      expect(err.message).to.equal('image not allowed')
+    })
+  })
+
+  describe('_fingerprintContainer', () => {
+    it('should change when the command changes', ctx => {
+      const options = cmd =>
+        ctx.DockerRunner._getContainerOptions(cmd, ctx.image, ctx.volumes, 1)
+      expect(
+        ctx.DockerRunner._fingerprintContainer(options(['latexmk', 'a.tex']))
+      ).not.to.equal(
+        ctx.DockerRunner._fingerprintContainer(options(['latexmk', 'b.tex']))
+      )
+    })
+  })
+
+  describe('host path detection', () => {
+    beforeEach(ctx => {
+      delete ctx.Settings.path.sandboxedCompilesHostDirCompiles
+      ctx.directory = '/var/lib/overleaf/data/compiles/abc'
+      ctx.DockerRunner._runAndWaitForContainer = sinon
+        .stub()
+        .callsArgWith(3, null, { stdout: 'mock-output' })
+      ctx.runOnce = () =>
+        new Promise(resolve => {
+          ctx.DockerRunner.run(
+            ctx.project_id,
+            ['latexmk'],
+            ctx.directory,
+            ctx.image,
+            ctx.timeout,
+            ctx.env,
+            'standard',
+            null,
+            (err, output) => resolve({ err, output })
+          )
+        })
+    })
+
+    it('should retry the lookup after a failed inspect', async ctx => {
+      const daemonError = new Error('server error')
+      daemonError.statusCode = 500
+      ctx.container.inspect = sinon.stub()
+      ctx.container.inspect.onFirstCall().yields(daemonError)
+      ctx.container.inspect.onSecondCall().yields(null, {
+        Mounts: [{ Destination: '/var/lib/overleaf', Source: '/host/vol' }],
+      })
+
+      const first = await ctx.runOnce()
+      expect(first.err).to.exist
+      ctx.DockerRunner._runAndWaitForContainer.called.should.equal(false)
+
+      const second = await ctx.runOnce()
+      expect(second.err).not.to.exist
+      expect(
+        ctx.DockerRunner._runAndWaitForContainer.lastCall.args[1]
+      ).to.deep.equal({ '/host/vol/data/compiles/abc': '/compile' })
+    })
+  })
+
+  describe('concurrent runs', () => {
+    beforeEach(ctx => {
+      ctx.DockerRunner._fingerprintContainer = sinon.stub().returns('same')
+      ctx.pending = []
+      ctx.DockerRunner._runAndWaitForContainer = sinon.spy(
+        (options, volumes, timeout, callback) => ctx.pending.push(callback)
+      )
+      ctx.runInBackground = callback =>
+        ctx.DockerRunner.run(
+          ctx.project_id,
+          ['latexmk'],
+          ctx.directory,
+          ctx.image,
+          ctx.timeout,
+          ctx.env,
+          ctx.compileGroup,
+          null,
+          callback || (() => {})
+        )
+    })
+
+    it('should not drive the same container twice at once', async ctx => {
+      ctx.runInBackground()
+      ctx.runInBackground()
+      ctx.DockerRunner._runAndWaitForContainer.callCount.should.equal(1)
+      ctx.pending[0](null, { stdout: '' })
+      await new Promise(resolve => process.nextTick(resolve))
+      ctx.DockerRunner._runAndWaitForContainer.callCount.should.equal(2)
+    })
+
+    it('should kill the containers of in-flight runs', async ctx => {
+      ctx.container.kill = sinon.stub().yields()
+      ctx.runInBackground()
+      await new Promise(resolve =>
+        ctx.DockerRunner.kill(ctx.project_id, resolve)
+      )
+      ctx.getContainer
+        .calledWith(`sandbox-compiler-${ctx.project_id}-same`)
+        .should.equal(true)
+      ctx.container.kill.called.should.equal(true)
+    })
+  })
+
+  describe('when the docker daemon does not respond', () => {
+    beforeEach(ctx => {
+      vi.useFakeTimers()
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('should fail the start instead of hanging', ctx => {
+      ctx.container.inspect = sinon.stub()
+      const callback = sinon.stub()
+      ctx.DockerRunner.startContainer(
+        { name: 'mock-name' },
+        ctx.volumes,
+        () => {},
+        callback
+      )
+      callback.called.should.equal(false)
+      vi.advanceTimersByTime(60 * 1000)
+      callback.calledOnce.should.equal(true)
+      expect(callback.args[0][0].dockerTimeout).to.equal(true)
+    })
+  })
+
   describe('_runAndWaitForContainer', () => {
     beforeEach(ctx => {
       ctx.options = {

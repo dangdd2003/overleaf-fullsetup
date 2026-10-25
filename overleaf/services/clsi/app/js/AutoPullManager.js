@@ -1,12 +1,25 @@
 import Docker from 'dockerode'
+import Settings from '@overleaf/settings'
 import logger from '@overleaf/logger'
 
 let dockerClient
 const inFlightPulls = new Map()
+// TeX Live images are several GB; a pull that makes no progress for this long
+// is considered stuck so later compiles are not chained onto it forever.
+const PULL_STALL_TIMEOUT_MS = 10 * 60 * 1000
+
+// Same mapping DockerRunner applies to the image a compile runs, so startup
+// pulls fetch from the registry the compiles actually use.
+export function resolveImageName(imageName) {
+  const override = Settings.texliveImageNameOveride
+  if (!override) return imageName
+  const parts = imageName.split('/')
+  return `${override}/${parts[parts.length - 1]}`
+}
 
 function getDocker() {
   if (!dockerClient) {
-    dockerClient = new Docker({ socketPath: '/var/run/docker.sock' })
+    dockerClient = new Docker(Settings.clsi?.docker?.clientConfig || {})
   }
   return dockerClient
 }
@@ -21,27 +34,50 @@ export function pullImage(imageName) {
 
   const docker = getDocker()
   const pullPromise = new Promise((resolve, reject) => {
+    let settled = false
+    let stallTimer
+    let pullStream
+    const settle = (err, output) => {
+      if (settled) return
+      settled = true
+      clearTimeout(stallTimer)
+      if (err) reject(err)
+      else resolve(output)
+    }
+    const armStallTimer = () => {
+      if (settled) return
+      clearTimeout(stallTimer)
+      stallTimer = setTimeout(() => {
+        logger.error({ imageName }, '[AutoPull] Pull stalled, giving up')
+        if (pullStream && typeof pullStream.destroy === 'function') {
+          pullStream.destroy()
+        }
+        settle(new Error(`docker pull of ${imageName} stalled`))
+      }, PULL_STALL_TIMEOUT_MS)
+    }
+    armStallTimer()
+
     logger.info({ imageName }, '[AutoPull] Starting docker pull for image')
     docker.pull(imageName, (err, stream) => {
       if (err) {
         logger.error({ err, imageName }, '[AutoPull] Failed to initiate docker pull')
-        inFlightPulls.delete(imageName)
-        return reject(err)
+        return settle(err)
       }
+      pullStream = stream
 
       let lastLog = Date.now()
       docker.modem.followProgress(
         stream,
         (finishErr, output) => {
-          inFlightPulls.delete(imageName)
           if (finishErr) {
             logger.error({ finishErr, imageName }, '[AutoPull] Error during docker pull')
-            return reject(finishErr)
+            return settle(finishErr)
           }
           logger.info({ imageName }, '[AutoPull] Successfully pulled image')
-          resolve(output)
+          settle(null, output)
         },
         event => {
+          armStallTimer()
           if (Date.now() - lastLog > 10000) {
             lastLog = Date.now()
             if (event.status) {
@@ -51,6 +87,8 @@ export function pullImage(imageName) {
         }
       )
     })
+  }).finally(() => {
+    inFlightPulls.delete(imageName)
   })
 
   inFlightPulls.set(imageName, pullPromise)
@@ -82,14 +120,20 @@ export async function checkAndPullImages() {
   const rawList = process.env.ALL_TEX_LIVE_DOCKER_IMAGES || ''
   const defaultImage = process.env.TEX_LIVE_DOCKER_IMAGE || ''
 
-  const images = rawList
-    .split(',')
-    .map(s => s.trim())
-    .filter(Boolean)
-
-  if (defaultImage && !images.includes(defaultImage)) {
-    images.unshift(defaultImage)
-  }
+  // also the images compiles are validated against (ALLOWED_IMAGES), and
+  // under the registry override compiles actually run
+  const images = [
+    ...new Set(
+      [
+        defaultImage,
+        ...rawList.split(','),
+        ...(Settings.clsi?.docker?.allowedImages || []),
+      ]
+        .map(s => s.trim())
+        .filter(Boolean)
+        .map(resolveImageName)
+    ),
+  ]
 
   if (images.length === 0) {
     logger.info('[AutoPull] No TeX Live images configured to pull.')
@@ -122,6 +166,7 @@ export async function checkAndPullImages() {
 }
 
 export default {
+  resolveImageName,
   pullImage,
   imageExists,
   checkAndPullImages,

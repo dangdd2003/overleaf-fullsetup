@@ -36,7 +36,22 @@ function acquire(key) {
   return lock
 }
 
+// A lock whose compile never finished is only replaced when the same key is
+// compiled again, so expired locks of other projects would keep counting
+// against the limit until every compile is rejected. Sandboxed compiles are
+// killed at their deadline before the lock expires, so this is best effort
+// only for work that is still unwinding.
+function evictExpiredLocks() {
+  for (const lock of LOCKS.values()) {
+    if (lock.isExpired()) {
+      logger.warn({ key: lock.key }, 'Compile lock expired')
+      lock.release()
+    }
+  }
+}
+
 function checkConcurrencyLimit() {
+  evictExpiredLocks()
   Metrics.gauge('concurrent_compile_requests', LOCKS.size)
 
   if (LOCKS.size <= Settings.compileConcurrencyLimit) {
@@ -56,6 +71,11 @@ class Lock {
     this.expiresAt = Date.now() + LOCK_TIMEOUT_MS
   }
 
+  // keep the lock while known work is still bounded, e.g. after a deadline
+  extend(ms) {
+    this.expiresAt = Math.max(this.expiresAt, Date.now() + ms)
+  }
+
   isExpired() {
     return Date.now() >= this.expiresAt
   }
@@ -70,10 +90,13 @@ class Lock {
 
   release() {
     if (this.onRelease) this.onRelease()
-    const lockWasActive = LOCKS.delete(this.key)
-    if (!lockWasActive) {
+    if (LOCKS.get(this.key) === this) {
+      LOCKS.delete(this.key)
+    } else if (this.released && !this.isExpired()) {
       logger.error({ key: this.key }, 'Lock was released twice')
     }
+    // else: expired and evicted, the key may already belong to a new lock
+    this.released = true
     if (this.isExpired()) {
       Metrics.inc('compile_lock_expired_before_release')
     }
