@@ -5,6 +5,7 @@ import { registerCompileTools } from './tools/compile.js'
 import { registerLatexTools } from './tools/latex.js'
 import { registerHistoryTools } from './tools/history.js'
 import { registerTagTools } from './tools/tags.js'
+import { registerChatGptTools } from './tools/chatgpt.js'
 import { registerAllPrompts } from './prompts.js'
 import { portable } from './schemas.js'
 
@@ -24,6 +25,7 @@ const TOOL_CATEGORIES = [
   { key: 'latex', title: 'LaTeX', register: registerLatexTools },
   { key: 'history', title: 'History', register: registerHistoryTools },
   { key: 'tags', title: 'Tags', register: registerTagTools },
+  { key: 'account-search', title: 'Account and search', register: registerChatGptTools },
 ]
 
 /**
@@ -33,9 +35,9 @@ const TOOL_CATEGORIES = [
  * clients resend every description on every turn.
  */
 const SECTIONS = [
+  'Start with list_projects, then get_project and list_files. Use exact project ids and paths returned by tools. Read before editing; verify important layout changes in the compiled PDF. Only permanently delete a project when the user explicitly asks.',
   'Results are compact text: first line is the outcome, then the data. "! " lines are warnings to act on, "→ " lines suggested next calls. Errors read "error <code>: <message>" with a hint line; use the details line (candidates, nearest, allowed) to fix the call. Retry unchanged only when marked retryable.',
   'Conventions: projectId comes from list_projects. Paths look like /chapters/intro.tex. Line numbers are 1-based and inclusive everywhere; path:line refs can be passed straight to read_file/edit_lines.',
-  '1. Orient: list_projects -> get_project -> list_files.',
   '2. Read narrowly: get_doc_outline (followIncludes for multi-file documents) gives section line ranges; read_file with startLine/endLine, or paths[] for several files. search_files finds text or regex.',
   '3. Edit: edit_lines by the line numbers you read, or edit_file with exact oldString (edits[] for several, atomic). Edit results show the changed lines, so no re-read is needed. write_file only for new files or full rewrites.',
   '4. Compile: compile_project parses the log. "success" is clean; "success_with_errors" means the PDF exists but errors must be fixed; "failure"/"timedout" means no usable PDF. Fix each path:line error, compile again until "success". clean: true only for stale .aux/.bbl problems. Build tools default to the latest build.',
@@ -76,6 +78,7 @@ export function registerAllTools(server, deps) {
  * validation; only the JSON Schema conversion is shared.
  */
 const ADVERTISED_INPUTS = new Map()
+const ADVERTISED_OUTPUTS = new Map()
 
 /**
  * Interpose on registration so every tool advertises portable JSON Schema.
@@ -84,10 +87,8 @@ const ADVERTISED_INPUTS = new Map()
  * definitions readable as plain zod, and leaves one place to look when a
  * client rejects a schema keyword.
  *
- * `outputSchema` is not advertised: clients resend tool definitions on every
- * turn, and the output schemas were most of that cost while telling the model
- * nothing the compact result text does not. Tools still declare it, as the
- * contract `structuredContent` is tested against.
+ * Both schemas are portable JSON Schema so ChatGPT can validate structured
+ * outputs while clients with narrower JSON Schema support can still scan tools.
  *
  * @param {McpServer} server
  */
@@ -97,6 +98,9 @@ function withPortableSchemas(server) {
       if (config.inputSchema && !ADVERTISED_INPUTS.has(name)) {
         ADVERTISED_INPUTS.set(name, portable(config.inputSchema))
       }
+      if (outputSchema && !ADVERTISED_OUTPUTS.has(name)) {
+        ADVERTISED_OUTPUTS.set(name, portable(outputSchema))
+      }
       const advertised = ADVERTISED_INPUTS.get(name)
       return server.registerTool(
         name,
@@ -104,6 +108,9 @@ function withPortableSchemas(server) {
           ...config,
           ...(config.inputSchema
             ? { inputSchema: sharedConversion(config.inputSchema, advertised) }
+            : {}),
+          ...(outputSchema
+            ? { outputSchema: ADVERTISED_OUTPUTS.get(name) }
             : {}),
         },
         handler
@@ -183,12 +190,12 @@ function paramsFromInputSchema(inputSchema) {
  * @param {{ client: object, staticToken?: string }} deps
  * @returns {(ctx: object) => McpServer}
  */
-export function createMcpServerFactory({ client, staticToken = '' }) {
+export function createMcpServerFactory({ client, staticToken = '', siteUrl = '' }) {
   return function factory() {
     const server = new McpServer(SERVER_INFO, {
       instructions: OVERLEAF_INSTRUCTIONS,
     })
-    registerAllTools(server, { client, staticToken })
+    registerAllTools(server, { client, staticToken, siteUrl })
     registerAllPrompts(server)
     return server
   }

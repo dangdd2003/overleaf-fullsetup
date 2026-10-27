@@ -1,8 +1,9 @@
 import sinon from 'sinon'
-import { vi, describe, it, beforeEach, expect } from 'vitest'
+import { vi, describe, it, beforeEach, afterEach, expect } from 'vitest'
 import Path from 'node:path'
 import { PassThrough } from 'node:stream'
 import * as Errors from '../../../app/js/Errors.js'
+import { setReqValidationModeForTests } from '@overleaf/validation-tools'
 
 const MODULE_PATH = Path.join(
   import.meta.dirname,
@@ -25,6 +26,16 @@ function uploadedFile(path) {
 }
 
 describe('ConversionController', function () {
+  // the rejection cases assume enforced validation, as in the production
+  // image (REQ_VALIDATION_MODE=enforce-log); without the env var it is 'log'
+  beforeEach(function () {
+    setReqValidationModeForTests('enforce-log')
+  })
+
+  afterEach(function () {
+    setReqValidationModeForTests(null)
+  })
+
   beforeEach(async function (ctx) {
     ctx.conversionDir = '/path/to/conversion/result'
     ctx.zipPath = '/path/to/conversion/result/output.zip'

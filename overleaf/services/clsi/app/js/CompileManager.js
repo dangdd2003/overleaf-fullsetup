@@ -917,6 +917,10 @@ function _getAllowedImages() {
 }
 
 function _isImageNameAllowed(imageName) {
+  // only the sandboxed runner picks an image, see RequestParser
+  if (Settings.clsi?.dockerRunner !== true) {
+    return true
+  }
   const allowedImages = _getAllowedImages()
   return !allowedImages || allowedImages.includes(imageName)
 }

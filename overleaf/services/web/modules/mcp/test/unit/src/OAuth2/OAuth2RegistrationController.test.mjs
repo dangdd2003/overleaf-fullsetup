@@ -128,6 +128,7 @@ describe('OAuth2RegistrationController', () => {
     expect(createdDoc.id).to.equal(responseData.client_id)
     expect(createdDoc.name).to.equal('Third Party AI Client')
     expect(createdDoc.redirectUris).to.deep.equal(['http://127.0.0.1:8000/cb', 'http://localhost:8000/cb'])
+    expect(createdDoc.scopes).to.deep.equal(['mcp'])
     expect(createdDoc.pkceEnabled).to.be.true
   })
 

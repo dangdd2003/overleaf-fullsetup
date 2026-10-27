@@ -57,7 +57,7 @@ describe('OAuth2MetadataController', () => {
     expect(responseData.code_challenge_methods_supported).to.deep.equal([
       'S256',
     ])
-    expect(responseData.scopes_supported).to.deep.equal(['mcp'])
+    expect(responseData.scopes_supported).to.deep.equal(['mcp', 'offline_access'])
     expect(responseData.token_endpoint_auth_methods_supported).to.deep.equal([
       'none',
     ])

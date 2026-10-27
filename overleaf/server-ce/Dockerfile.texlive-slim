@@ -66,10 +66,17 @@ RUN mkdir -p /install-tl-unx && \
       texcount \
       synctex \
       etoolbox \
-      xetex || true && \
+      xetex && \
     tlmgr path add && \
-    echo "shell_escape = t" >> $(find /usr/local/texlive/ -type d -name "20*")/texmf.cnf && \
-    rm -rf /install-tl-unx
+    echo "shell_escape = t" >> /usr/local/texlive/${TEXLIVE_YEAR}/texmf.cnf && \
+    rm -rf /install-tl-unx && \
+    command -v latexmk && \
+    command -v pdflatex && \
+    command -v xelatex && \
+    command -v lualatex && \
+    command -v synctex && \
+    command -v texcount && \
+    kpsewhich article.cls amsmath.sty graphicx.sty hyperref.sty
 
 # 3. Copy custom Latexmk configuration ($go_mode = 3;)
 COPY server-ce/config/latexmkrc /usr/local/share/latexmk/LatexMk

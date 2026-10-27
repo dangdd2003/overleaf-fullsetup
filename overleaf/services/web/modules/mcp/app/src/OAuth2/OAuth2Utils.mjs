@@ -1,8 +1,9 @@
 import crypto from 'node:crypto'
 import Settings from '@overleaf/settings'
 
-// The only scope this authorization server issues.
+// MCP access plus the optional OAuth refresh-access scope.
 export const MCP_SCOPE = 'mcp'
+export const OFFLINE_ACCESS_SCOPE = 'offline_access'
 
 export function base64url(input) {
   const buf = Buffer.isBuffer(input) ? input : Buffer.from(input)
@@ -63,8 +64,9 @@ export function getBaseUrl(req) {
 /**
  * Validate a `scope` request parameter (RFC 6749 §3.3).
  *
- * A missing or blank value means the default `mcp`. Otherwise every
- * space-delimited token must be `mcp`.
+ * A missing or blank value means the default `mcp`. `offline_access` may
+ * accompany `mcp` to request a refresh token, but never grants MCP access by
+ * itself.
  *
  * @returns {string|null} the granted scope, or null for an invalid scope
  */
@@ -79,7 +81,19 @@ export function normalizeScope(scope) {
   if (tokens.length === 0) {
     return MCP_SCOPE
   }
-  return tokens.every(token => token === MCP_SCOPE) ? MCP_SCOPE : null
+  const scopes = [...new Set(tokens)]
+  if (!scopes.includes(MCP_SCOPE)) return null
+  if (
+    scopes.some(
+      token => token !== MCP_SCOPE && token !== OFFLINE_ACCESS_SCOPE
+    )
+  ) {
+    return null
+  }
+  return [
+    MCP_SCOPE,
+    ...(scopes.includes(OFFLINE_ACCESS_SCOPE) ? [OFFLINE_ACCESS_SCOPE] : []),
+  ].join(' ')
 }
 
 export function oauthError(res, status, error, errorDescription) {

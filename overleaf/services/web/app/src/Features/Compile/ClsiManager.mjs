@@ -691,6 +691,18 @@ async function _postToClsi(
         return { response: { compile: { status: 'unavailable' } } }
       } else if (err.response.status === 504) {
         return { response: { compile: { status: 'timedout' } } }
+      } else if (err.response.status === 400) {
+        // clsi refused the request as invalid, e.g. an image this deployment
+        // does not allow: report it to the user as a bad request, not a crash
+        let message = 'CLSI rejected the compile request'
+        try {
+          message = JSON.parse(err.body || '{}').compile?.error || message
+        } catch {}
+        throw new Errors.InvalidError(message, {
+          projectId,
+          userId,
+          statusCode: err.response.status,
+        })
       } else {
         throw new OError('CLSI returned non-success code', {
           projectId,
@@ -1292,7 +1304,11 @@ async function wordCount(
     'wordcount'
   )
   url.searchParams.set('file', filename)
-  url.searchParams.set('image', req.compile.options.imageName)
+  // unset for projects without a stored image: URLSearchParams would send the
+  // literal "undefined", which clsi refuses as an image it does not allow
+  if (req.compile.options.imageName != null) {
+    url.searchParams.set('image', req.compile.options.imageName)
+  }
 
   const requestWordCount = async opts => {
     const { body } = await _makeRequestWithClsiServerId(
@@ -1360,7 +1376,9 @@ async function syncTeX(
     'compileFromClsiCache',
     compileFromClsiCache && ['alpha', 'priority'].includes(compileGroup)
   )
-  url.searchParams.set('imageName', imageName)
+  if (imageName != null) {
+    url.searchParams.set('imageName', imageName)
+  }
   for (const [key, value] of Object.entries(validatedOptions)) {
     url.searchParams.set(key, value)
   }

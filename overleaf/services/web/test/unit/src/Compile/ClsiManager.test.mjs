@@ -1425,6 +1425,32 @@ describe('ClsiManager', function () {
       })
     })
 
+    describe('when clsi rejects the request as invalid (400)', function () {
+      beforeEach(function (ctx) {
+        ctx.FetchUtils.fetchStringWithResponse.onCall(0).rejects(
+          new RequestFailedError(
+            'http://clsi.example.com',
+            { method: 'POST' },
+            { status: 400 },
+            JSON.stringify({
+              compile: { status: 'error', error: 'image not allowed' },
+            })
+          )
+        )
+      })
+
+      it('should raise an InvalidError carrying the clsi message', async function (ctx) {
+        const err = await ctx.ClsiManager.promises
+          .sendRequest(null, ctx.project._id, ctx.user_id, {
+            compileBackendClass: 'free',
+          })
+          .catch(e => e)
+        // compared by name: the module under test may load its own Errors instance
+        expect(err.name).to.equal(new Errors.InvalidError('x').name)
+        expect(err.message).to.equal('image not allowed')
+      })
+    })
+
     describe('with an unavailable response', function () {
       beforeEach(async function (ctx) {
         ctx.FetchUtils.fetchStringWithResponse.onCall(0).resolves({
@@ -1829,7 +1855,60 @@ describe('ClsiManager', function () {
     })
   })
 
+  describe('syncTeX', function () {
+    describe('for a project without a stored image', function () {
+      beforeEach(async function (ctx) {
+        await ctx.ClsiManager.promises.syncTeX(
+          ctx.project._id,
+          ctx.user_id,
+          {
+            direction: 'code',
+            compileFromClsiCache: false,
+            limits: { compileBackendClass: 'free', compileGroup: 'standard' },
+            imageName: undefined,
+            validatedOptions: {},
+            clsiServerId: 'node-1',
+          }
+        )
+      })
+
+      it('should not send the literal "undefined" as the image', function (ctx) {
+        expect(ctx.FetchUtils.fetchString).to.have.been.calledWith(
+          sinon.match(
+            url =>
+              url.pathname.includes('/sync/code') &&
+              !url.searchParams.has('imageName')
+          )
+        )
+      })
+    })
+  })
+
   describe('wordCount', function () {
+    describe('for a project without a stored image', function () {
+      beforeEach(async function (ctx) {
+        delete ctx.project.imageName
+        await ctx.ClsiManager.promises.wordCount(
+          ctx.project._id,
+          ctx.user_id,
+          false,
+          { compileBackendClass: 'free', compileGroup: 'standard' },
+          'node-1',
+          { rootResourcePath: 'main.tex' }
+        )
+      })
+
+      it('should not send the literal "undefined" as the image', function (ctx) {
+        expect(ctx.FetchUtils.fetchString).to.have.been.calledWith(
+          sinon.match(
+            url =>
+              url.pathname.endsWith('/wordcount') &&
+              !url.searchParams.has('image')
+          )
+        )
+      })
+    })
+
     describe('with root file', function () {
       beforeEach(async function (ctx) {
         await ctx.ClsiManager.promises.wordCount(

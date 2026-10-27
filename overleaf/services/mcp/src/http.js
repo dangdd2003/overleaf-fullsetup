@@ -365,7 +365,7 @@ export function originHostnames(origins) {
  * @returns {{ app: import('express').Express }}
  */
 export function createHttpApp({ config, client }) {
-  const handler = createMcpHandler(createMcpServerFactory({ client }))
+  const handler = createMcpHandler(createMcpServerFactory({ client, siteUrl: config.siteUrl }))
   const allowedHosts = expandHosts(config.allowedHosts)
   // The SDK app parses JSON on every request before its own checks run, so
   // the gate below sits in front of it, on the MCP endpoint only.

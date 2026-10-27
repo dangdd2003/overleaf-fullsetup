@@ -363,8 +363,15 @@ const OAuth2TokenController = {
     if (typeof refresh_token !== 'string' || !refresh_token) {
       return error(res, 400, 'invalid_request', 'refresh_token is required')
     }
-    if (scope !== undefined && normalizeScope(scope) === null) {
-      return error(res, 400, 'invalid_scope', 'Only scope=mcp is supported')
+    const normalizedRequestedScope =
+      scope === undefined ? undefined : normalizeScope(scope)
+    if (normalizedRequestedScope === null) {
+      return error(
+        res,
+        400,
+        'invalid_scope',
+        'Supported scopes are mcp and optional offline_access'
+      )
     }
 
     const presentedHash = hashToken(refresh_token)
@@ -407,16 +414,26 @@ const OAuth2TokenController = {
     }
 
     // Mint before rotating. If signing fails, the client keeps a token that
-    // still works. The grant's client, user, audience and scope do not change
-    // on rotation, so the access token is the same whichever read it came from.
+    // still works. Refreshing with a narrower scope affects this access token;
+    // the underlying grant retains its original scope for later refreshes.
     const grantId = grant._id
     const grantedScope = grant.scope || MCP_SCOPE
+    const requestedScope = normalizedRequestedScope ?? grantedScope
+    const grantedScopes = new Set(grantedScope.split(/\s+/))
+    if (requestedScope.split(/\s+/).some(item => !grantedScopes.has(item))) {
+      return error(
+        res,
+        400,
+        'invalid_scope',
+        'Requested scope exceeds the scope originally granted'
+      )
+    }
     const { accessToken } = await mintAccessToken({
       baseUrl,
       userId: grant.user_id,
       clientId: grant.client_id,
       audience,
-      scope: grantedScope,
+      scope: requestedScope,
       grantId,
     })
 
@@ -431,7 +448,7 @@ const OAuth2TokenController = {
     return res.json(
       tokenResponse({
         accessToken,
-        scope: grantedScope,
+        scope: requestedScope,
         refreshToken: refreshTokenValue,
       })
     )

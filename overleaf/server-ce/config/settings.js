@@ -47,23 +47,41 @@ const parseIntOrFail = function (value) {
 const DATA_DIR = '/var/lib/overleaf/data'
 const TMP_DIR = '/var/lib/overleaf/tmp'
 
+// Only set the keys that are configured: the settings merge copies undefined
+// values over the clsi defaults.
+const dockerOverrides = {
+  autoPullImages: process.env.TEX_LIVE_AUTO_PULL_ENABLED === 'true',
+}
+const texLiveImage =
+  process.env.TEXLIVE_IMAGE || process.env.TEX_LIVE_DOCKER_IMAGE
+if (texLiveImage) {
+  dockerOverrides.image = texLiveImage
+}
+// Always set, and always containing the effective default image (clsi's own
+// default when none is configured), so the default is compilable and any
+// other client-named image is refused. An unset list would let clsi accept
+// and auto-pull any image a client names.
+const DEFAULT_TEXLIVE_IMAGE = 'quay.io/sharelatex/texlive-full:2017.1'
+const allowedImages = (
+  process.env.ALLOWED_IMAGES ||
+  process.env.ALL_TEX_LIVE_DOCKER_IMAGES ||
+  ''
+)
+  .split(/[ ,]+/)
+  .map(s => s.trim())
+  .filter(Boolean)
+const defaultTexLiveImage = texLiveImage || DEFAULT_TEXLIVE_IMAGE
+if (!allowedImages.includes(defaultTexLiveImage)) {
+  allowedImages.unshift(defaultTexLiveImage)
+}
+dockerOverrides.allowedImages = allowedImages
+
 const settings = {
   clsi: {
     optimiseInDocker: process.env.OPTIMISE_PDF === 'true',
     dockerRunner:
       (process.env.DOCKER_RUNNER || process.env.SANDBOXED_COMPILES) === 'true',
-    docker: {
-      image: process.env.TEX_LIVE_DOCKER_IMAGE,
-      autoPullImages: process.env.TEX_LIVE_AUTO_PULL_ENABLED === 'true',
-      allowedImages: (
-        process.env.ALLOWED_IMAGES ||
-        process.env.ALL_TEX_LIVE_DOCKER_IMAGES ||
-        ''
-      )
-        .split(/[ ,]+/)
-        .map(s => s.trim())
-        .filter(Boolean),
-    },
+    docker: dockerOverrides,
   },
 
   brandPrefix: '',

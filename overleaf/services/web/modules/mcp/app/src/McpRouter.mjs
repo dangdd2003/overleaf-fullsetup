@@ -6,6 +6,7 @@ import {
   requireMcpProjectWrite,
 } from './McpAuthorizationMiddleware.mjs'
 import McpProjectsController from './McpProjectsController.mjs'
+import McpProfileController from './McpProfileController.mjs'
 import McpFilesController from './McpFilesController.mjs'
 import McpCompileController from './McpCompileController.mjs'
 import McpHistoryController from './McpHistoryController.mjs'
@@ -86,6 +87,11 @@ const McpRouter = {
       '/api/v0/mcp/projects',
       requireMcpAuthWithRateLimit,
       mcpHandler(McpProjectsController.listProjects)
+    )
+    router.get(
+      '/api/v0/mcp/profile',
+      requireMcpAuthWithRateLimit,
+      mcpHandler(McpProfileController.getProfile)
     )
     router.post(
       '/api/v0/mcp/projects',

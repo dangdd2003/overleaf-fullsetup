@@ -77,6 +77,7 @@ export function loadConfig(env = process.env, { stdio = false } = {}) {
     port: LISTEN_PORT,
     endpointPath: ENDPOINT_PATH,
     maxBodyMb: MAX_BODY_MB,
+    siteUrl,
     internalUrl: stdio ? siteUrl : WEB_INTERNAL_URL,
     resourceUri: `${siteUrl}${ENDPOINT_PATH}`,
     authServerUrl: siteUrl,

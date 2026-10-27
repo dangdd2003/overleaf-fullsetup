@@ -25,6 +25,12 @@ describe('OAuth2Utils', () => {
       expect(normalizeScope('mcp\tmcp')).to.equal('mcp')
     })
 
+    it('accepts offline_access only alongside mcp', () => {
+      expect(normalizeScope('mcp offline_access')).to.equal('mcp offline_access')
+      expect(normalizeScope('offline_access mcp')).to.equal('mcp offline_access')
+      expect(normalizeScope('offline_access')).to.be.null
+    })
+
     it('returns null for any scope beyond mcp', () => {
       expect(normalizeScope('admin')).to.be.null
       expect(normalizeScope('mcp admin')).to.be.null

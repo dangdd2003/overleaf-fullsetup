@@ -3,6 +3,7 @@ import chai from 'chai'
 chai.should()
 import sinon from 'sinon'
 import Path from 'node:path'
+import Errors from '../../../app/js/Errors.js'
 
 const modulePath = Path.join(
   import.meta.dirname,
@@ -45,6 +46,7 @@ describe('DockerRunner', () => {
             return true
           },
         }),
+        existsSync: sinon.stub().returns(false),
       }),
     }))
 
@@ -479,10 +481,15 @@ describe('DockerRunner', () => {
           )
         })
 
-        it('should call the callback with an error', ctx => {
+        it('should call the callback with an InvalidParameter error', ctx => {
           const err = new Error('image not allowed')
           ctx.callback.called.should.equal(true)
           ctx.callback.args[0][0].message.should.equal(err.message)
+          // compared by name: the module under test may be a fresh instance
+          // of Errors.js, so instanceof is not reliable here
+          expect(ctx.callback.args[0][0].name).to.equal(
+            new Errors.InvalidParameter().name
+          )
         })
 
         it('should not setup the container', ctx => {
@@ -622,6 +629,48 @@ describe('DockerRunner', () => {
     })
   })
 
+  describe('sandbox host config', () => {
+    const hostConfig = (ctx, compileGroup = 'standard') =>
+      ctx.DockerRunner._getContainerOptions(
+        ['cmd'],
+        'img',
+        {},
+        1000,
+        {},
+        compileGroup
+      ).HostConfig
+
+    it('should not give compiles network access', ctx => {
+      expect(hostConfig(ctx).NetworkMode).to.equal('none')
+    })
+
+    it('should let a compile group change the network mode', ctx => {
+      ctx.Settings.clsi.docker.compileGroupConfig = {
+        standard: { 'HostConfig.NetworkMode': 'bridge' },
+      }
+      expect(hostConfig(ctx).NetworkMode).to.equal('bridge')
+    })
+
+    it('should keep the enforced security options when a group adds one', ctx => {
+      ctx.Settings.clsi.docker.seccomp_profile = '{"syscalls":[]}'
+      ctx.Settings.clsi.docker.compileGroupConfig = {
+        standard: { 'HostConfig.SecurityOpt': ['label=disable'] },
+      }
+      expect(hostConfig(ctx).SecurityOpt).to.deep.equal([
+        'no-new-privileges',
+        'seccomp={"syscalls":[]}',
+        'label=disable',
+      ])
+    })
+
+    it('should keep CapDrop ALL when a group sets CapDrop', ctx => {
+      ctx.Settings.clsi.docker.compileGroupConfig = {
+        standard: { 'HostConfig.CapDrop': ['NET_RAW'] },
+      }
+      expect(hostConfig(ctx).CapDrop).to.deep.equal(['ALL', 'NET_RAW'])
+    })
+  })
+
   describe('png2pdf with image restriction', () => {
     beforeEach(ctx => {
       ctx.Settings.png2pdfImage = 'example.com/png2pdf:1'
@@ -694,6 +743,8 @@ describe('DockerRunner', () => {
     it('should retry the lookup after a failed inspect', async ctx => {
       const daemonError = new Error('server error')
       daemonError.statusCode = 500
+      // running inside a container: an untranslated compile dir must be refused
+      ctx.fs.existsSync.returns(true)
       ctx.container.inspect = sinon.stub()
       ctx.container.inspect.onFirstCall().yields(daemonError)
       ctx.container.inspect.onSecondCall().yields(null, {
@@ -709,6 +760,37 @@ describe('DockerRunner', () => {
       expect(
         ctx.DockerRunner._runAndWaitForContainer.lastCall.args[1]
       ).to.deep.equal({ '/host/vol/data/compiles/abc': '/compile' })
+    })
+
+    it('should refuse a legacy /local/compile/directory path when the own inspect failed', async ctx => {
+      const daemonError = new Error('server error')
+      daemonError.statusCode = 500
+      ctx.fs.existsSync.returns(true)
+      ctx.container.inspect = sinon.stub().yields(daemonError)
+      ctx.directory = '/local/compile/directory/abc'
+
+      const result = await ctx.runOnce()
+      expect(result.err).to.exist
+      expect(result.err.message).to.match(/could not map compile directory/)
+      ctx.DockerRunner._runAndWaitForContainer.called.should.equal(false)
+    })
+
+    it('should inspect the container id from mountinfo, not the hostname', async ctx => {
+      const id = 'a'.repeat(64)
+      ctx.fs.existsSync.returns(true)
+      ctx.fs.readFileSync = sinon
+        .stub()
+        .returns(
+          `1 2 0:1 /var/lib/docker/containers/${'b'.repeat(64)}/mounts/shm /dev/shm rw - tmpfs shm rw\n` +
+            `3 2 0:1 /var/lib/docker/containers/${id}/hostname /etc/hostname rw - ext4 /dev/sda1 rw\n`
+        )
+      ctx.container.inspect = sinon.stub().yields(null, {
+        Mounts: [{ Destination: '/var/lib/overleaf', Source: '/host/vol' }],
+      })
+
+      const { err } = await ctx.runOnce()
+      expect(err).not.to.exist
+      ctx.getContainer.calledWith(id).should.equal(true)
     })
   })
 
@@ -1090,7 +1172,7 @@ describe('DockerRunner', () => {
         ]
         ctx.DockerRunner.MAX_CONTAINER_AGE = oneHourInMilliseconds
         ctx.listContainers.callsArgWith(1, null, ctx.containers)
-        ctx.DockerRunner.destroyContainer = sinon.stub().callsArg(3)
+        ctx.DockerRunner._destroyContainer = sinon.stub().callsArg(2)
         ctx.DockerRunner.destroyOldContainers(error => {
           ctx.callback(error)
           resolve()
@@ -1103,36 +1185,27 @@ describe('DockerRunner', () => {
     })
 
     it('should destroy old containers', ctx => {
-      ctx.DockerRunner.destroyContainer.callCount.should.equal(1)
-      ctx.DockerRunner.destroyContainer
-        .calledWith(
-          'project-69b72c66b1a8c2f5846b24a8-container-name',
-          'old-container-id'
-        )
+      ctx.DockerRunner._destroyContainer.callCount.should.equal(1)
+      ctx.DockerRunner._destroyContainer
+        .calledWith('old-container-id', false)
         .should.equal(true)
     })
 
     it('should not destroy new containers', ctx => {
-      ctx.DockerRunner.destroyContainer
-        .calledWith(
-          'project-69b72c66b1a8c2f5846b24a9-container-name',
-          'new-container-id'
-        )
+      ctx.DockerRunner._destroyContainer
+        .calledWith('new-container-id', false)
         .should.equal(false)
     })
 
     it('should not destroy old containers that were recently used', ctx => {
-      ctx.DockerRunner.destroyContainer
-        .calledWith(
-          'project-68494e7daa5c3680ee7182b1-container-name',
-          'recent-access-container-id'
-        )
+      ctx.DockerRunner._destroyContainer
+        .calledWith('recent-access-container-id', false)
         .should.equal(false)
     })
 
     it('should not destroy non-project containers', ctx => {
-      ctx.DockerRunner.destroyContainer
-        .calledWith('totally-not-a-project-container', 'some-random-id')
+      ctx.DockerRunner._destroyContainer
+        .calledWith('some-random-id', false)
         .should.equal(false)
     })
 

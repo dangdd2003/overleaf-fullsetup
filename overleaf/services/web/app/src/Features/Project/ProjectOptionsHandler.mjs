@@ -44,7 +44,8 @@ const ProjectOptionsHandler = {
       allowed => imageName === allowed.imageName
     )
     if (!isAllowed) {
-      throw new OError('invalid imageName', { imageName })
+      // a client-chosen value the deployment does not allow is a bad request (400)
+      throw new Errors.InvalidError('invalid imageName', { imageName })
     }
     return settings.imageRoot
       ? settings.imageRoot + '/' + imageName

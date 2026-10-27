@@ -333,6 +333,23 @@ describe('CompileController', () => {
       })
     })
 
+    describe('with an invalid parameter (e.g. an image not allowed)', () => {
+      beforeEach(ctx => {
+        ctx.CompileManager.doCompileWithLock = sinon
+          .stub()
+          .callsFake((_req, stats, timings, cb) => {
+            cb(new Errors.InvalidParameter('image not allowed'))
+          })
+        ctx.CompileController.compile(ctx.req, ctx.res)
+      })
+
+      it('should return a 400 with the error', ctx => {
+        ctx.res.status.calledWith(400).should.equal(true)
+        ctx.res.send.args[0][0].compile.status.should.equal('error')
+        ctx.res.send.args[0][0].compile.error.should.equal('image not allowed')
+      })
+    })
+
     describe('with too many compile requests error', () => {
       beforeEach(ctx => {
         const error = new Errors.TooManyCompileRequestsError(

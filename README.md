@@ -452,7 +452,7 @@ The feature runs across two containers:
 
 ### 6. Overleaf Model Context Protocol (MCP) Server
 
-Exposes an MCP server for Overleaf, allowing external AI agents and IDEs (Claude Desktop, Cursor, etc.) to interact directly with projects, files, and compilation runs via HTTP or stdio.
+Exposes an MCP server for Overleaf, allowing external AI agents and IDEs (ChatGPT, Claude Desktop, Cursor, etc.) to interact with projects, files, and compilation runs via Streamable HTTP or stdio. The HTTP server supports OAuth 2.1 refresh tokens, ChatGPT account identification, and Company Knowledge `search`/`fetch` tools.
 
 | Environment Variable | Default | Description |
 | :--- | :--- | :--- |

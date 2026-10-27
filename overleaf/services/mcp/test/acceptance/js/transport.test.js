@@ -150,8 +150,11 @@ describe('MCP HTTP transport', function () {
       'get_doc_outline',
       'scan_latex',
       'search_bib',
+      'get_profile',
+      'search',
+      'fetch',
     ])
-    expect(names).to.have.length(40)
+    expect(names).to.have.length(43)
   })
 
   it('calls a tool with a valid token', async function () {

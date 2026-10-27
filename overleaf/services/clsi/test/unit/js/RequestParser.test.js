@@ -38,6 +38,8 @@ describe('RequestParser', () => {
     }))
 
     ctx.RequestParser = (await import(modulePath)).default
+    // loaded after the mocks, so the class matches the one RequestParser throws
+    ctx.Errors = await import('../../../app/js/Errors.js')
   })
 
   afterEach(() => {
@@ -84,6 +86,12 @@ describe('RequestParser', () => {
         })
         .should.equal(true)
     })
+
+    it('should return an InvalidParameter error (a 400, not a 500)', ctx => {
+      ctx.callback
+        .calledWithMatch(sinon.match.instanceOf(ctx.Errors.InvalidParameter))
+        .should.equal(true)
+    })
   })
 
   describe('without a compiler specified', () => {
@@ -121,7 +129,7 @@ describe('RequestParser', () => {
 
   describe('when image restrictions are present', () => {
     beforeEach(ctx => {
-      ctx.settings.clsi = { docker: {} }
+      ctx.settings.clsi = { dockerRunner: true, docker: {} }
       ctx.settings.clsi.docker.allowedImages = [
         'repo/name:tag1',
         'repo/name:tag2',
@@ -143,6 +151,24 @@ describe('RequestParser', () => {
           'imageName attribute should be one of'
         )
       })
+
+      it('should throw an InvalidParameter error for imageName', ctx => {
+        expect(ctx.error).to.be.instanceOf(ctx.Errors.InvalidParameter)
+      })
+    })
+
+    describe('with an empty allowlist', () => {
+      beforeEach(ctx => {
+        ctx.settings.clsi.docker.allowedImages = []
+        ctx.RequestParser.parse(ctx.validRequest, (error, data) => {
+          ctx.error = error
+          ctx.data = data
+        })
+      })
+
+      it('should reject any imageName', ctx => {
+        expect(ctx.error).to.be.instanceOf(ctx.Errors.InvalidParameter)
+      })
     })
 
     describe('with imageName set to something valid', () => {
@@ -158,6 +184,23 @@ describe('RequestParser', () => {
       it('should set the imageName', ctx => {
         ctx.data.imageName.should.equal('repo/name:tag1')
       })
+    })
+  })
+
+  describe('when image restrictions are present without the sandboxed runner', () => {
+    beforeEach(ctx => {
+      ctx.settings.clsi = { dockerRunner: false, docker: {} }
+      ctx.settings.clsi.docker.allowedImages = []
+      ctx.validRequest.compile.options.imageName = 'something/different:latest'
+      ctx.RequestParser.parse(ctx.validRequest, (error, data) => {
+        ctx.error = error
+        ctx.data = data
+      })
+    })
+
+    it('should not reject a stored imageName the runner never uses', ctx => {
+      expect(ctx.error).to.not.exist
+      ctx.data.imageName.should.equal('something/different:latest')
     })
   })
 

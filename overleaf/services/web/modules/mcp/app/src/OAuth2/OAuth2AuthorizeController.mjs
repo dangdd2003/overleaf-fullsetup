@@ -174,7 +174,7 @@ const OAuth2AuthorizeController = {
         redirect_uri,
         state,
         'invalid_scope',
-        'Only scope=mcp is supported'
+        'Supported scopes are mcp and optional offline_access'
       )
     }
 
@@ -268,7 +268,7 @@ const OAuth2AuthorizeController = {
         redirect_uri,
         state,
         'invalid_scope',
-        'Only scope=mcp is supported'
+        'Supported scopes are mcp and optional offline_access'
       )
     }
 

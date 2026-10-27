@@ -890,8 +890,8 @@ describe('OAuth2TokenController', () => {
       expect(res.responseData.error_description).to.match(/expired/)
     })
 
-    it('accepts scope=mcp on refresh and rejects any other scope', async () => {
-      const grant = baseGrant()
+    it('issues only the requested narrower scope on refresh', async () => {
+      const grant = baseGrant({ scope: 'mcp offline_access' })
       vi.spyOn(OauthAccessToken, 'findOne').mockResolvedValue(grant)
       vi.spyOn(db.oauthAccessTokens, 'findOneAndUpdate').mockResolvedValue({ _id: grant._id })
 
@@ -899,6 +899,13 @@ describe('OAuth2TokenController', () => {
       await OAuth2TokenController.token(refreshRequest('oar_old_token', { scope: 'mcp' }), ok)
       expect(ok.statusCode).to.equal(200)
       expect(ok.responseData.scope).to.equal('mcp')
+      const payload = await OAuth2KeyManager.verifyJwt(ok.responseData.access_token)
+      expect(payload.scope).to.equal('mcp')
+
+      const noScope = createMockRes()
+      await OAuth2TokenController.token(refreshRequest(), noScope)
+      expect(noScope.statusCode).to.equal(200)
+      expect(noScope.responseData.scope).to.equal('mcp offline_access')
 
       const findOne = OauthAccessToken.findOne
       findOne.mockClear()
@@ -910,7 +917,7 @@ describe('OAuth2TokenController', () => {
       expect(bad.statusCode).to.equal(400)
       expect(bad.responseData).to.deep.equal({
         error: 'invalid_scope',
-        error_description: 'Only scope=mcp is supported',
+        error_description: 'Supported scopes are mcp and optional offline_access',
       })
       expect(findOne.mock.calls).to.have.lengthOf(0)
     })
@@ -925,6 +932,21 @@ describe('OAuth2TokenController', () => {
       expect(res.statusCode).to.equal(400)
       expect(res.responseData.error).to.equal('invalid_request')
       expect(findOne.mock.calls).to.have.lengthOf(0)
+    })
+
+    it('rejects a valid scope that exceeds the original grant', async () => {
+      vi.spyOn(OauthAccessToken, 'findOne').mockResolvedValue(baseGrant())
+      const rotate = vi.spyOn(db.oauthAccessTokens, 'findOneAndUpdate')
+      const res = createMockRes()
+
+      await OAuth2TokenController.token(
+        refreshRequest('oar_old_token', { scope: 'mcp offline_access' }),
+        res
+      )
+
+      expect(res.statusCode).to.equal(400)
+      expect(res.responseData.error).to.equal('invalid_scope')
+      expect(rotate.mock.calls).to.have.lengthOf(0)
     })
   })
 

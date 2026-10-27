@@ -620,9 +620,10 @@ describe('protected resource metadata routes', function () {
       'latex',
       'history',
       'tags',
+      'account-search',
     ])
     const allTools = body.categories.flatMap(c => c.tools)
-    expect(allTools).to.have.length(40)
+    expect(allTools).to.have.length(43)
     for (const tool of allTools) {
       expect(tool.name).to.be.a('string').and.not.be.empty
       expect(tool.description).to.be.a('string').and.not.be.empty

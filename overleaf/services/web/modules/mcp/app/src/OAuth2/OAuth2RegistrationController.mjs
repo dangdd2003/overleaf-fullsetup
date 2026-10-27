@@ -1,7 +1,10 @@
 import crypto from 'node:crypto'
 import { OauthApplication } from '../../../../../app/src/models/OauthApplication.mjs'
 import { isLoopback } from './OAuth2RedirectUri.mjs'
-import { MCP_SCOPE, normalizeScope, oauthError } from './OAuth2Utils.mjs'
+import {
+  normalizeScope,
+  oauthError,
+} from './OAuth2Utils.mjs'
 
 // Registration is unauthenticated, so every field is bounded. The limits are
 // well above what any real client sends.
@@ -57,12 +60,13 @@ const OAuth2RegistrationController = {
         `grant_types must be a subset of ${SUPPORTED_GRANT_TYPES.join(', ')}`
       )
     }
-    if (scope !== undefined && normalizeScope(scope) !== MCP_SCOPE) {
+    const normalizedScope = normalizeScope(scope)
+    if (normalizedScope === null) {
       return oauthError(
         res,
         400,
         'invalid_client_metadata',
-        'Only scope=mcp is supported'
+        'Supported scopes are mcp and optional offline_access'
       )
     }
 
@@ -105,20 +109,22 @@ const OAuth2RegistrationController = {
     const grants = Array.isArray(grant_types)
       ? [...new Set(grant_types)]
       : ['authorization_code', 'refresh_token']
-    // The only scope this server grants, so it is the only one stored.
-    const scopes = [MCP_SCOPE]
+    // Store only what the client requested. A missing scope uses the standard
+    // MCP default, and offline_access remains opt-in.
+    const scopes = normalizedScope.split(' ')
     const redirectUris = [...new Set(redirect_uris)]
 
     // This endpoint is unauthenticated by design, so re-adding a connector in
     // ChatGPT or Gemini would otherwise insert another permanent row for a
     // client we already know. A row is reused only when every registered field
-    // matches: name, the set of redirect URIs, the set of grant types, and the
-    // auth method (public, so no secret). Any difference gets a new client, so
-    // a registration with the same name cannot take over another client.
+    // matches: name, the set of redirect URIs, grants, scopes, and auth method
+    // (public, so no secret). Any difference gets a new client, so a
+    // registration with the same name cannot take over another client.
     const existing = await OauthApplication.findOne({
       name: client_name,
       redirectUris: { $all: redirectUris, $size: redirectUris.length },
       grants: { $all: grants, $size: grants.length },
+      scopes: { $all: scopes, $size: scopes.length },
       clientSecret: null,
     })
     if (existing) {

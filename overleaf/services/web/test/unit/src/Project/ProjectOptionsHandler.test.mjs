@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import sinon from 'sinon'
 import mongodb from 'mongodb-legacy'
+import Errors from '../../../../app/src/Features/Errors/Errors.js'
 
 const modulePath =
   '../../../../app/src/Features/Project/ProjectOptionsHandler.mjs'
@@ -97,6 +98,42 @@ describe('ProjectOptionsHandler', function () {
       ).to.be.rejectedWith('invalid imageName')
 
       ctx.projectModel.updateOne.called.should.equal(false)
+    })
+
+    it('should reject a bad request (InvalidError) for an unrecognised image name', async function (ctx) {
+      const err = await ctx.handler.promises
+        .setImageName(projectId, 'something')
+        .catch(e => e)
+      // compared by name: the handler may load its own Errors instance
+      expect(err.name).to.equal(new Errors.InvalidError('x').name)
+    })
+
+    describe('when no image list is configured', function () {
+      beforeEach(function (ctx) {
+        vi.resetModules()
+        vi.doMock('@overleaf/settings', () => ({
+          default: { allowedImageNames: undefined, safeCompilers: [] },
+        }))
+        vi.doMock('../../../../app/src/models/Project', () => ({
+          Project: ctx.projectModel,
+        }))
+        vi.doMock('../../../../app/src/infrastructure/mongodb', () => ({
+          db: ctx.db,
+          ObjectId,
+        }))
+      })
+
+      it('should ignore a named image, as upstream does', async function (ctx) {
+        const handler = (await import(modulePath)).default
+        await handler.promises.setImageName(projectId, 'texlive-full:2026')
+        ctx.projectModel.updateOne.called.should.equal(false)
+      })
+
+      it('should accept an empty image name as a no-op', async function (ctx) {
+        const handler = (await import(modulePath)).default
+        await handler.promises.setImageName(projectId, '')
+        ctx.projectModel.updateOne.called.should.equal(false)
+      })
     })
 
     describe('when called without arg', function () {

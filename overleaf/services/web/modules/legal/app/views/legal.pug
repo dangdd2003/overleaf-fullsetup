@@ -14,11 +14,11 @@ mixin legalTab(id, title, active)
 		a.nav-link(
 			class={active}
 			href='#' + id
-			aria-controls=id
+			aria-controls=id + '-pane'
 			role='tab'
 			id=id + '-tab'
 			data-bs-toggle='tab'
-			data-bs-target='#' + id
+			data-bs-target='#' + id + '-pane'
 			data-ol-bookmarkable-tab
 			aria-selected=active ? 'true' : 'false'
 			tabindex=active ? undefined : '-1'
@@ -28,7 +28,7 @@ mixin legalPane(id, heading, active)
 	.tab-pane(
 		class={active}
 		role='tabpanel'
-		id=id
+		id=id + '-pane'
 		aria-labelledby=id + '-tab'
 	)
 		.row.section-row
@@ -36,7 +36,7 @@ mixin legalPane(id, heading, active)
 				.no-card
 					div
 						h2= heading
-						p Last Modified: #{lastModified}
+						p Last Modified: 27 October 2026
 						block
 
 block content
@@ -50,7 +50,7 @@ block content
 						.no-card
 							div
 								h2 #{appName} Privacy &amp; Terms Overview
-								p Last Modified: #{lastModified}
+								p Last Modified: 27 October 2026
 								p Thank you for using #{appName}!
 								p
 									| #{appName} is free and open-source software, licensed under the
@@ -58,6 +58,32 @@ block content
 									a(href='https://www.gnu.org/licenses/agpl-3.0.html') GNU Affero General Public License v3.0
 									|
 									| (AGPL-3.0). It costs nothing to use: there are no subscriptions, paid plans, ads or trackers. Anyone may self-host it, modify it, fork it, keep developing it, and use it for any purpose, as long as they follow the AGPL.
+
+								h3 Privacy Policy
+								p
+									| #{appName} is an independently operated instance of open-source Overleaf Community Edition. The Operator processes information you provide, information created while you use the Service, and limited technical information needed to run and secure this instance. The Operator does not collect or use this information for advertising, analytics, profiling, sale, or any purpose unrelated to providing and protecting the Service.
+
+								h4 Information processed
+								ul
+									li Account details such as your email address and name, and your password, which is stored as a bcrypt hash rather than in plain text. Your Overleaf password is used to authenticate you to this instance; it is not shared with Google.
+									li Projects and content you create or upload, including document text, files, project details, collaboration and version history, and generated compile output. This information is processed to provide the Overleaf features you use.
+									li Limited technical and security records, such as IP address, browser user agent, request timestamps, and error information, used to operate the Service, prevent abuse, and diagnose problems.
+									li If you choose to connect Google Drive, the Google account email address and account identifier returned by Google, OAuth access and refresh tokens, and Drive file and folder identifiers, names, metadata, and content needed for the Drive features you use. The current integration requests Google's Drive permission, which can allow access to files in your Drive; the Operator uses that access only to provide the Drive features you request. Google authenticates you directly; this instance does not receive your Google password.
+
+								h4 How information is used and shared
+								p
+									| Account information is used to sign you in and manage your account. Project data is used to store, display, compile, collaborate on, and synchronize your projects. Google user data is accessed and used only to connect your Google account and provide the Google Drive import and synchronization features you request. Necessary Google data is sent to Google when the feature reads or updates Drive. Your project data is shared with collaborators according to the sharing settings you choose. The Operator does not sell your data or disclose it to other parties for advertising or unrelated purposes. Data may be disclosed when legally required.
+								p
+									| The Operator does not use Google user data to develop, improve, or train generalized artificial intelligence or machine-learning models. If an optional AI feature is enabled and you choose to use it with Overleaf project content, the content needed for that request may be sent to the provider configured for this instance to produce the requested result; it is not used to train that provider's generalized models by the Operator.
+
+								h4 Storage, security, and retention
+								p
+									| Account and project information is stored in the databases and file storage operated for this instance and protected by access controls. Passwords are bcrypt-hashed. Google Drive OAuth tokens are encrypted with AES-256-GCM before they are stored. Information is retained while needed to provide the Service, or until you or an administrator deletes it. Operational logs are kept only as needed for security and troubleshooting and are rotated or deleted under this instance's retention settings. Backups may retain deleted information until the relevant backup expires.
+								p
+									| You can delete projects or your account. You can disconnect Google Drive at any time; disconnection requests revocation of the Google authorization and removes the stored Google tokens and connection records. Disconnecting Drive does not delete project files already synchronized into Overleaf; delete those projects separately if you want those copies removed. Contact
+									|
+									+contactLink()
+									| for privacy questions or requests.
 								p
 									| Below you will find the full Terms of Service, Privacy Notice, Cookie Policy, Security Overview and Acceptable Use Policy for this instance of #{appName}. If you have any questions, please contact
 									|
@@ -76,7 +102,7 @@ block content
 									+legalTab('Security', 'Security Overview')
 									+legalTab('Use', 'Acceptable Use Policy')
 
-							.tab-content
+							.tab-content(style='min-height:100vh')
 								+legalPane('Terms', appName + ' Terms of Service', true)
 									p
 										| These terms of service (the
@@ -161,16 +187,21 @@ block content
 								+legalPane('Privacy', appName + ' Privacy Notice')
 									p
 										| This notice explains what data this instance of #{appName} holds and how it is used. Your data is held only by the Operator of this instance. The Software's contributors do not run this instance and do not receive your data.
+									p
+										| This instance is operated independently from the Overleaf Software's contributors. The Operator stores and processes information only to provide, maintain, and secure this Service. It does not sell user information or use it for advertising, analytics, or unrelated profiling.
 
 									h3 What we collect
 									ul
 										li Account information: your email address, your name and your password. The password is stored only as a bcrypt hash.
 										li Your Stuff: the projects, files and version history you create.
 										li Technical logs: IP address, browser user agent and timestamps, kept for security and to fix problems.
+										li If you connect Google Drive: your Google account email address and account identifier; encrypted OAuth access and refresh tokens; and Drive file or folder identifiers, names, metadata, and content processed for the import and synchronization features you use. The current integration requests Google's Drive permission, which can allow access to files in your Drive; the Operator uses it only to provide those requested features. This instance does not receive or store your Google password.
 
 									h3 How we use it
 									p
 										| We use this data only to run the Service: to sign you in, to store, compile and sync your projects, to let you collaborate, and to keep the Service secure.
+									p
+										| Google user data is used only to connect your Google account and perform the Drive import or synchronization actions you request. Necessary information is sent to Google to read or update Drive. The Operator does not use Google user data to develop, improve, or train generalized AI or machine-learning models. If you choose to submit Overleaf project content to an enabled AI feature, that content may be sent to the configured provider to fulfill your request; it is not used by the Operator to train generalized models.
 
 									h3 What we never do
 									ul
@@ -181,10 +212,12 @@ block content
 									h3 Sharing
 									p
 										| Your data is shared only with the collaborators you choose, and with outside providers for optional features that the Operator turns on and that you choose to use. See “Optional Features &amp; Third Parties” in the Terms of Service. The Operator may also disclose data when the law requires it.
+									p
+										| For Google Drive, data is exchanged with Google only as needed to authenticate the connection and perform the Drive operations you request. It is not sold or disclosed to other parties for advertising or unrelated purposes. Project content may be visible to collaborators according to your Overleaf project sharing settings.
 
 									h3 Retention
 									p
-										| Your account and projects are kept until you or an administrator delete them. Copies in backups are removed over time. The Operator decides how long logs are kept.
+										| Your account and projects are kept until you or an administrator delete them. Google Drive tokens and connection records are removed when you disconnect Drive or delete your account; the Operator also requests token revocation from Google when you disconnect. Disconnecting Drive does not remove project copies already synchronized to Overleaf. Copies in backups are removed as those backups expire. Operational logs are retained only as needed for security and troubleshooting, then rotated or deleted under this instance's retention settings.
 
 									h3 Your rights
 									p

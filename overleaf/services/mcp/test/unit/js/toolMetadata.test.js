@@ -13,10 +13,11 @@ describe('listToolMetadata', function () {
       'latex',
       'history',
       'tags',
+      'account-search',
     ])
 
     const allTools = groups.flatMap(g => g.tools)
-    expect(allTools).to.have.length(40)
+    expect(allTools).to.have.length(43)
     expect(byKey.compile.tools.map(t => t.name)).to.include(
       'view_compiled_pdf_page'
     )
@@ -44,6 +45,11 @@ describe('listToolMetadata', function () {
       'delete_tag',
       'add_projects_to_tag',
       'remove_projects_from_tag',
+    ])
+    expect(byKey['account-search'].tools.map(t => t.name)).to.have.members([
+      'get_profile',
+      'search',
+      'fetch',
     ])
 
     for (const tool of allTools) {

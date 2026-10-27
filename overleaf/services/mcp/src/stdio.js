@@ -12,6 +12,7 @@ export async function serveStdioTransport({ config, client }) {
   const factory = createMcpServerFactory({
     client,
     staticToken: config.stdioToken,
+    siteUrl: config.resourceUri.replace(/\/mcp$/, ''),
   })
   await serveStdio(factory)
 }

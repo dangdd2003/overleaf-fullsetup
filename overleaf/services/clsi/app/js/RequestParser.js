@@ -1,6 +1,7 @@
 import { promisify } from 'node:util'
 import settings from '@overleaf/settings'
 import OutputCacheManager from './OutputCacheManager.js'
+import Errors from './Errors.js'
 
 const VALID_COMPILERS = ['pdflatex', 'latex', 'xelatex', 'lualatex']
 const MAX_TIMEOUT = 600
@@ -79,10 +80,12 @@ function parse(body, callback) {
       compile.options.imageName,
       {
         type: 'string',
+        // only the sandboxed runner picks an image, so the allowlist is
+        // enforced there alone; non-sandboxed compiles ignore imageName
         validValues:
-          settings.clsi &&
-          settings.clsi.docker &&
-          settings.clsi.docker.allowedImages,
+          settings.clsi?.dockerRunner === true
+            ? settings.clsi.docker?.allowedImages
+            : undefined,
       }
     )
     response.draft = _parseAttribute('draft', compile.options.draft, {
@@ -254,7 +257,9 @@ function _parseAttribute(name, attribute, options) {
   if (attribute != null) {
     if (options.validValues != null) {
       if (options.validValues.indexOf(attribute) === -1) {
-        throw new Error(
+        // a client asking for a value the deployment does not allow is a bad
+        // request (400), not a server error
+        throw new Errors.InvalidParameter(
           `${name} attribute should be one of: ${options.validValues.join(
             ', '
           )}`

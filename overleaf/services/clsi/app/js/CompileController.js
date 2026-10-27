@@ -109,6 +109,14 @@ function compile(req, res, next) {
                 { err: error, projectId: request.project_id },
                 'timeout running compile'
               )
+            } else if (error instanceof Errors.InvalidParameter) {
+              // the request asked for something the deployment does not allow
+              status = 'error'
+              code = 400
+              logger.warn(
+                { err: error, projectId: request.project_id },
+                'invalid compile request'
+              )
             } else if (error) {
               status = 'error'
               code = 500

@@ -7,6 +7,7 @@ import {
   looseObject,
   projectId,
   READ_ONLY,
+  WRITES,
 } from '../schemas.js'
 import { normalisePath } from '../parsers/paths.js'
 import { clip, compactJson, lines, numberRuns, ref } from '../format.js'
@@ -478,13 +479,10 @@ export function registerCompileTools(server, deps) {
       title: 'Compile project',
       description:
         'Compile the project and read its LaTeX and BibTeX logs, so errors are reported even when a PDF was produced. data.status is success, success_with_errors (PDF with log errors, so not trustworthy), failure, timedout, or a transient or setup status. Pass rootDocPath to compile another main file for one run.',
-      // Read-only in the sense the annotation is about: compiling never
-      // changes the project's content. The only thing it writes is Overleaf's
-      // own build output, and clearCache discards exactly that. Labelling it a
-      // write made clients that gate on readOnlyHint stop for a confirmation
-      // on every compile, which is the step an edit-compile-fix loop repeats
-      // most.
-      annotations: READ_ONLY,
+      // Compiling starts a build job and writes generated build artifacts, so
+      // clients should classify it as an action even though source files stay
+      // untouched. Clearing the cache only removes regenerable build files.
+      annotations: { ...WRITES, destructiveHint: false, idempotentHint: false },
       inputSchema: z.object({
         projectId,
         draft: z

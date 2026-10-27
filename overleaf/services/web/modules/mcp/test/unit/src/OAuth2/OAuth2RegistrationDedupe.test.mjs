@@ -36,7 +36,7 @@ describe('OAuth2RegistrationController deduplication', () => {
       name: registration.client_name,
       redirectUris: registration.redirect_uris,
       grants: ['authorization_code', 'refresh_token'],
-      scopes: ['mcp'],
+      scopes: ['mcp', 'offline_access'],
     })
     const create = vi
       .spyOn(OauthApplication, 'create')

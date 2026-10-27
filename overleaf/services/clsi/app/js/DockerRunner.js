@@ -9,6 +9,7 @@ import os from 'node:os'
 import OError from '@overleaf/o-error'
 import * as LastProjectAccessModule from './LastProjectAccess.js'
 import * as AutoPullManager from './AutoPullManager.js'
+import Errors from './Errors.js'
 
 const LastProjectAccess = LastProjectAccessModule.getLastProjectAccessTime
   ? LastProjectAccessModule
@@ -149,6 +150,38 @@ function withDeadline(label, fn, callback) {
   }
 }
 
+// True when clsi itself runs in a container (docker or podman), where compile
+// dirs need a host path translation. Never throws: a throw here would be
+// swallowed by withDeadline and leave the compile without a callback.
+function isInsideContainer() {
+  try {
+    return (
+      fs.existsSync('/.dockerenv') || fs.existsSync('/run/.containerenv')
+    )
+  } catch (err) {
+    return false
+  }
+}
+
+// The id of the container clsi runs in. The hostname is only the container
+// id when no custom hostname is set, so prefer the id docker puts in the
+// source paths of the /etc/hostname, /etc/hosts and /etc/resolv.conf mounts.
+// Only read inside a container: a host's mountinfo lists the mounts of every
+// container on it.
+function ownContainerId() {
+  if (isInsideContainer()) {
+    try {
+      const match = fs
+        .readFileSync('/proc/self/mountinfo', 'utf8')
+        .match(
+          /\/containers\/([0-9a-f]{64})\/(?:hostname|hosts|resolv\.conf) \/etc\//
+        )
+      if (match) return match[1]
+    } catch (err) {}
+  }
+  return os.hostname()
+}
+
 // Mounts of the container this clsi runs in, used to translate compile dirs
 // into host paths for the sibling containers. Only a successful lookup is
 // cached: caching a failed one would bind non-existent host paths (docker
@@ -157,7 +190,7 @@ function getDetectedMounts(callback) {
   if (detectedMounts) return callback(null, detectedMounts)
   let container
   try {
-    container = DockerRunner._getDocker().getContainer(os.hostname())
+    container = DockerRunner._getDocker().getContainer(ownContainerId())
   } catch (err) {
     logger.warn({ err }, 'could not look up own container for host paths')
     return callback(null, {})
@@ -169,14 +202,17 @@ function getDetectedMounts(callback) {
     'inspect self',
     cb => container.inspect(cb),
     (err, data) => {
-      if (err && err.statusCode === 404) {
+      if (err && err.statusCode === 404 && !isInsideContainer()) {
         // not running inside a container, compile dirs are host paths
         detectedMounts = {}
         return callback(null, detectedMounts)
       }
+      // A 404 inside a container means the id lookup failed (e.g. podman or
+      // a foreign mount layout). That is not cached: it must not turn into
+      // "no mounts" for the rest of the process lifetime.
       if (err || !Array.isArray(data?.Mounts)) {
         logger.warn(
-          { err, hostname: os.hostname() },
+          { err, containerId: ownContainerId() },
           'could not inspect own container for host paths, retrying on next compile'
         )
         return callback(err || new Error('no mounts in container inspect'))
@@ -196,6 +232,16 @@ function getDetectedMounts(callback) {
 function replacePrefix(path, prefix, replacement) {
   // function replacement, so that `$` in host paths is taken literally
   return path.replace(prefix, () => replacement)
+}
+
+// Roots that exist inside the clsi container only (never on the docker host).
+const CONTAINER_ONLY_ROOTS = [
+  '/var/lib/overleaf/',
+  '/var/lib/sharelatex/',
+  '/local/compile/',
+]
+function isContainerOnlyPath(p) {
+  return CONTAINER_ONLY_ROOTS.some(root => p.startsWith(root))
 }
 
 // Only chmod when the mode is wrong, so trees that are already writable are
@@ -315,7 +361,7 @@ const DockerRunner = {
       Settings.clsi.docker.allowedImages.length > 0
     ) {
       if (!Settings.clsi.docker.allowedImages.includes(selectedImage)) {
-        return done(new Error('image not allowed'))
+        return done(new Errors.InvalidParameter('image not allowed'))
       }
     }
 
@@ -324,19 +370,24 @@ const DockerRunner = {
     selectedImage = AutoPullManager.resolveImageName(selectedImage)
 
     getDetectedMounts((mountsErr, mounts) => {
+      // Not fatal by itself: explicit SANDBOXED_COMPILES_HOST_DIR_* mappings
+      // still work, and the refusal below covers directories that stay
+      // untranslated inside a container.
       if (mountsErr) {
-        return done(
-          OError.tag(mountsErr, 'could not resolve host paths for compile')
+        logger.warn(
+          { err: mountsErr },
+          'could not inspect own container, relying on explicit host dirs'
         )
       }
+      const mountTable = mountsErr ? {} : mounts
       const detectedCompiles =
-        resolveHostPath('/var/lib/overleaf/data/compiles', mounts) ||
-        resolveHostPath(Settings.path?.compilesDir, mounts) ||
-        resolveHostPath('/var/lib/sharelatex/data/compiles', mounts)
+        resolveHostPath('/var/lib/overleaf/data/compiles', mountTable) ||
+        resolveHostPath(Settings.path?.compilesDir, mountTable) ||
+        resolveHostPath('/var/lib/sharelatex/data/compiles', mountTable)
       const detectedOutput =
-        resolveHostPath('/var/lib/overleaf/data/output', mounts) ||
-        resolveHostPath(Settings.path?.outputDir, mounts) ||
-        resolveHostPath('/var/lib/sharelatex/data/output', mounts)
+        resolveHostPath('/var/lib/overleaf/data/output', mountTable) ||
+        resolveHostPath(Settings.path?.outputDir, mountTable) ||
+        resolveHostPath('/var/lib/sharelatex/data/output', mountTable)
 
       // Build volume mapping and translate host directory
       const hostCompilesDir =
@@ -427,26 +478,48 @@ const DockerRunner = {
         )
       }
 
-      // If no manual host dir was specified, resolve directly from Docker inspect
-      const directResolved = resolveHostPath(directory, mounts)
-      if (!Settings.path?.sandboxedCompilesHostDirCompiles && directResolved) {
+      // Without an explicit host dir, the mount of this container gives the
+      // host path. An explicit SANDBOXED_COMPILES_HOST_DIR_* always wins.
+      // Decided per directory: an explicit mapping only counts when the
+      // directory's own prefix was mapped by a setting.
+      const directResolved = resolveHostPath(directory, mountTable)
+      const explicitMapped = Boolean(
+        (Settings.path?.sandboxedCompilesHostDirCache &&
+          cacheDir &&
+          directory.startsWith(cacheDir + '/')) ||
+          (Settings.path?.sandboxedCompilesHostDirOutput &&
+            directory.startsWith('/var/lib/overleaf/data/output')) ||
+          (Settings.path?.sandboxedCompilesHostDirCompiles &&
+            (directory.startsWith('/var/lib/overleaf/data/compile') ||
+              directory.startsWith('/local/compile/directory')))
+      )
+      if (!explicitMapped && directResolved) {
         hostDirectory = directResolved
       }
 
       // Inside a container, an untranslated path does not exist on the host:
       // docker would bind a fresh empty dir and the compile would fail with no
-      // output. Refuse instead.
+      // output. Refuse instead, with the setting that fixes it. When the own
+      // container could not be inspected, the translation falls back to the
+      // container-side compiles/output dirs, which is still untranslated.
+      const untranslated =
+        hostDirectory === directory ||
+        (mountsErr && isContainerOnlyPath(hostDirectory))
       if (
-        hostDirectory === directory &&
+        untranslated &&
         !directResolved &&
-        !Settings.path?.sandboxedCompilesHostDirCompiles &&
-        fs.existsSync('/.dockerenv')
+        !explicitMapped &&
+        isInsideContainer()
       ) {
         return done(
-          new OError('could not map compile directory to a host path', {
-            directory,
-            hostname: os.hostname(),
-          })
+          new OError(
+            'could not map compile directory to a host path, set SANDBOXED_COMPILES_HOST_DIR_COMPILES (and _OUTPUT / _CACHE) to the host path of the volume',
+            {
+              directory,
+              hostname: os.hostname(),
+              inspectError: mountsErr ? mountsErr.message : undefined,
+            }
+          )
         )
       }
 
@@ -575,6 +648,8 @@ const DockerRunner = {
     const hostConfig = {
       Binds: binds,
       LogConfig: { Type: 'none', Config: {} },
+      // compiles only read and write their bind mounts: no network access
+      NetworkMode: 'none',
       CapDrop: ['ALL'],
       SecurityOpt: securityOpts,
     }
@@ -599,13 +674,33 @@ const DockerRunner = {
       HostConfig: hostConfig,
     }
 
+    // compileGroupConfig comes from the deployment admin (COMPILE_GROUP_DOCKER_CONFIGS),
+    // never from a client. Only SecurityOpt and CapDrop are merged with the
+    // sandbox defaults; any other HostConfig key (NetworkMode, Privileged,
+    // Binds, PidMode, ...) replaces the default outright, so the admin owns
+    // those choices.
     const groupConfig =
       Settings.clsi?.docker?.compileGroupConfig?.[compileGroup]
     if (groupConfig) {
       for (const [key, value] of Object.entries(groupConfig)) {
         if (key.startsWith('HostConfig.')) {
           const prop = key.slice('HostConfig.'.length)
-          options.HostConfig[prop] = value
+          // the sandbox entries are enforced: an override adds to them and
+          // can never drop or replace seccomp, no-new-privileges or CapDrop ALL
+          if (prop === 'SecurityOpt' || prop === 'CapDrop') {
+            const extra = (Array.isArray(value) ? value : []).filter(
+              v =>
+                !(
+                  prop === 'SecurityOpt' &&
+                  (v.startsWith('seccomp') || v.startsWith('no-new-privileges'))
+                )
+            )
+            options.HostConfig[prop] = [
+              ...new Set([...(options.HostConfig[prop] || []), ...extra]),
+            ]
+          } else {
+            options.HostConfig[prop] = value
+          }
         } else {
           options[key] = value
         }
@@ -961,13 +1056,22 @@ const DockerRunner = {
       for (const c of toDestroy) {
         const rawName = c.Names?.[0] || c.Name || ''
         const name = rawName.replace(/^\//, '')
-        this.destroyContainer(name, c.Id, false, destroyErr => {
-          if (destroyErr && !firstErr) firstErr = destroyErr
-          remaining--
-          if (remaining === 0) {
-            callback(firstErr)
+        // queued like a run on that container, so a compile that is starting
+        // on it cannot have the container removed under it
+        runExclusive(
+          name,
+          release => {
+            if (runningContainers.has(name)) return release()
+            this._destroyContainer(c.Id || name, false, release)
+          },
+          destroyErr => {
+            if (destroyErr && !firstErr) firstErr = destroyErr
+            remaining--
+            if (remaining === 0) {
+              callback(firstErr)
+            }
           }
-        })
+        )
       }
     })
   },

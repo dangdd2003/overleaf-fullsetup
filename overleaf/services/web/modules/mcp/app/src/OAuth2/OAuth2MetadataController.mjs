@@ -12,7 +12,7 @@ const OAuth2MetadataController = {
       registration_endpoint: `${baseUrl}/oauth/register`,
       revocation_endpoint: `${baseUrl}/oauth/revoke`,
       revocation_endpoint_auth_methods_supported: ['none'],
-      scopes_supported: ['mcp'],
+      scopes_supported: ['mcp', 'offline_access'],
       response_types_supported: ['code'],
       grant_types_supported: ['authorization_code', 'refresh_token'],
       // Clients are public: the token endpoint reads client_id from the body
