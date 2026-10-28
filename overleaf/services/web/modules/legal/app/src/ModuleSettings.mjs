@@ -6,7 +6,7 @@ if (Settings.enableLegalPage === undefined) {
 
 // Instance admins can override these in settings.js under `legalPage`
 Settings.legalPage = {
-  lastModified: '19 October 2026',
+  lastModified: '28 October 2026',
   sourceUrl: 'https://github.com/dangdd2003/overleaf-fullsetup',
   ...Settings.legalPage,
 }

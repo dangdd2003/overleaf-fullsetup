@@ -3,6 +3,9 @@ extends ../../../../app/views/layout-website-redesign
 block vars
 	- isWebsiteRedesign = true
 
+block entrypointVar
+	- entrypoint = 'modules/legal/pages/legal'
+
 mixin contactLink()
 	if contactEmail
 		a(href='mailto:' + contactEmail)= contactEmail
@@ -36,12 +39,18 @@ mixin legalPane(id, heading, active)
 				.no-card
 					div
 						h2= heading
-						p Last Modified: 27 October 2026
+						p Last Modified: #{lastModified}
 						block
 
-block content
-	- var cellStyle = 'border:1px solid black;border-collapse:collapse;padding:8px'
+mixin limitedUse()
+	p
+		strong
+			| #{appName}'s use and transfer to any other app of information received from Google APIs will adhere to the
+			|
+			a(href='https://developers.google.com/terms/api-services-user-data-policy') Google API Services User Data Policy
+			| , including the Limited Use requirements.
 
+block content
 	main.content.cms-page.content-page#main-content
 		.content-container
 			section
@@ -49,43 +58,27 @@ block content
 					.col-12.col-lg-12
 						.no-card
 							div
-								h2 #{appName} Privacy &amp; Terms Overview
-								p Last Modified: 27 October 2026
+								h2 Privacy and Terms Overview
+								p Last Modified: #{lastModified}
 								p Thank you for using #{appName}!
 								p
-									| #{appName} is free and open-source software, licensed under the
+									| #{appName} is an independently operated instance of the free and open-source
+									|
+									a(href='https://github.com/overleaf/overleaf') Overleaf Community Edition
+									| , licensed under the
 									|
 									a(href='https://www.gnu.org/licenses/agpl-3.0.html') GNU Affero General Public License v3.0
+									| . It is free to use: there are no subscriptions, payments, advertising or tracking.
+								p
+									| We collect only the information needed to run the Service: your account details, the projects you create, and limited technical logs. We never sell your data, never use it for advertising, and never use it to train AI models.
+								p
+									| If you connect Google Drive, #{appName} accesses your Google account email address and the files in the #{appName} folder it creates in your Drive, only to provide the Drive import and synchronization features you request. The full details, including exactly which Google data is accessed and how it is used, stored, shared, protected and deleted, are in the
 									|
-									| (AGPL-3.0). It costs nothing to use: there are no subscriptions, paid plans, ads or trackers. Anyone may self-host it, modify it, fork it, keep developing it, and use it for any purpose, as long as they follow the AGPL.
-
-								h3 Privacy Policy
+									a(href='#Privacy' data-ol-legal-tab-link) Privacy Notice
+									| .
+								+limitedUse()
 								p
-									| #{appName} is an independently operated instance of open-source Overleaf Community Edition. The Operator processes information you provide, information created while you use the Service, and limited technical information needed to run and secure this instance. The Operator does not collect or use this information for advertising, analytics, profiling, sale, or any purpose unrelated to providing and protecting the Service.
-
-								h4 Information processed
-								ul
-									li Account details such as your email address and name, and your password, which is stored as a bcrypt hash rather than in plain text. Your Overleaf password is used to authenticate you to this instance; it is not shared with Google.
-									li Projects and content you create or upload, including document text, files, project details, collaboration and version history, and generated compile output. This information is processed to provide the Overleaf features you use.
-									li Limited technical and security records, such as IP address, browser user agent, request timestamps, and error information, used to operate the Service, prevent abuse, and diagnose problems.
-									li If you choose to connect Google Drive, the Google account email address and account identifier returned by Google, OAuth access and refresh tokens, and Drive file and folder identifiers, names, metadata, and content needed for the Drive features you use. The current integration requests Google's Drive permission, which can allow access to files in your Drive; the Operator uses that access only to provide the Drive features you request. Google authenticates you directly; this instance does not receive your Google password.
-
-								h4 How information is used and shared
-								p
-									| Account information is used to sign you in and manage your account. Project data is used to store, display, compile, collaborate on, and synchronize your projects. Google user data is accessed and used only to connect your Google account and provide the Google Drive import and synchronization features you request. Necessary Google data is sent to Google when the feature reads or updates Drive. Your project data is shared with collaborators according to the sharing settings you choose. The Operator does not sell your data or disclose it to other parties for advertising or unrelated purposes. Data may be disclosed when legally required.
-								p
-									| The Operator does not use Google user data to develop, improve, or train generalized artificial intelligence or machine-learning models. If an optional AI feature is enabled and you choose to use it with Overleaf project content, the content needed for that request may be sent to the provider configured for this instance to produce the requested result; it is not used to train that provider's generalized models by the Operator.
-
-								h4 Storage, security, and retention
-								p
-									| Account and project information is stored in the databases and file storage operated for this instance and protected by access controls. Passwords are bcrypt-hashed. Google Drive OAuth tokens are encrypted with AES-256-GCM before they are stored. Information is retained while needed to provide the Service, or until you or an administrator deletes it. Operational logs are kept only as needed for security and troubleshooting and are rotated or deleted under this instance's retention settings. Backups may retain deleted information until the relevant backup expires.
-								p
-									| You can delete projects or your account. You can disconnect Google Drive at any time; disconnection requests revocation of the Google authorization and removes the stored Google tokens and connection records. Disconnecting Drive does not delete project files already synchronized into Overleaf; delete those projects separately if you want those copies removed. Contact
-									|
-									+contactLink()
-									| for privacy questions or requests.
-								p
-									| Below you will find the full Terms of Service, Privacy Notice, Cookie Policy, Security Overview and Acceptable Use Policy for this instance of #{appName}. If you have any questions, please contact
+									| Below you will find the full Terms of Service, Privacy Notice, Cookie Policy, Security Overview and Acceptable Use Policy for #{appName}. If you have any questions, please contact
 									|
 									+contactLink()
 									| .
@@ -105,21 +98,21 @@ block content
 							.tab-content(style='min-height:100vh')
 								+legalPane('Terms', appName + ' Terms of Service', true)
 									p
-										| These terms of service (the
+										| These Terms of Service (the
 										|
 										strong “Terms”
-										| ) govern your use of this instance of #{appName} (the
+										| ) govern your use of #{appName} (the
 										|
 										strong “Service”
 										| ). The Service runs free and open-source software (the
 										|
 										strong “Software”
-										| ) that is developed by its community of contributors and hosted by the administrator of this instance (the
+										| ) developed by its community of contributors and hosted by the administrator of this instance (the
 										|
 										strong “Operator”
-										| ).
+										| , “we” or “us”).
 									p
-										| By creating an account or using the Service, you agree to these Terms. If you do not agree, please do not use the Service.
+										| By creating an account or using the Service, you agree to these Terms and to our Privacy Notice. If you do not agree, please do not use the Service.
 
 									h3 The Software is Free and Open Source
 									p
@@ -131,136 +124,246 @@ block content
 										a(href=sourceUrl)= sourceUrl
 										| .
 									p
-										| You are free to run, study, change, share and fork the Software, and to use it for any purpose, including commercial purposes, as long as you follow the AGPL. For example, if you run a modified version that people use over a network, you must offer those users its source code. Nothing in these Terms limits the rights the AGPL gives you.
+										| You are free to run, study, change, share and fork the Software, and to use it for any purpose, as long as you follow the AGPL. For example, if you run a modified version that people use over a network, you must offer those users its source code. Nothing in these Terms limits the rights the AGPL gives you.
 									p
-										| Using the Software and this Service costs nothing. There are no subscriptions, paid plans, payments or refunds.
+										| Using the Software and the Service costs nothing. There are no subscriptions, paid plans, payments or refunds.
 
-									h3 Your Stuff &amp; Your Privacy
+									h3 Your Content
 									p
 										| You keep ownership of everything you create or upload, including your documents, files and projects (your
 										|
-										strong “Stuff”
-										| ). The Operator claims no ownership of it. You give the Operator only the permission needed to run the Service for you: to store, back up, compile and display your Stuff to you and to the people you share it with.
-									p
-										| Your Stuff is never sold, and it is not used to train AI models. You are responsible for your Stuff and for making sure you have the right to use it.
+										strong “Content”
+										| ). We claim no ownership of it. You give us only the permission needed to run the Service for you: to store, back up, compile and display your Content to you and to the people you share it with. Your Content is never sold and is never used to train AI models. You are responsible for your Content and for making sure you have the right to use it.
 
-									h3 Sharing Your Stuff
+									h3 Sharing Your Content
 									p
 										| You choose who can see and edit each project, including collaborators and anyone with a share link. Only share content that you have the right to share.
 
-									h3 Registering with us
+									h3 Your Account
 									p
-										| Keep your password secret and give accurate account information. You are responsible for activity on your account. If you think someone else has used your account, tell the Operator straight away.
+										| Keep your password secret and give accurate account information. You are responsible for activity on your account. If you think someone else has used your account, tell us straight away.
 
-									h3 Optional Features &amp; Third Parties
+									h3 Optional Features &amp; Third-Party Services
 									p
-										| Every extra feature is turned off unless the Operator turns it on. This includes AI assistance, Git integration, GitHub and Google Drive sync, and email delivery. When one of these features is on and you use it, the content you use it with is sent to the outside provider the Operator has set up, and that provider's own terms apply. AI output may be wrong, so check it before you rely on it.
+										| Optional integrations, such as Google Drive, AI assistance, Git, GitHub, and connecting external AI assistants, are used only when you choose to use them. When you use one, the data needed for that feature is exchanged with the relevant third-party service, and that service's own terms and privacy policy also apply. Google Drive access is governed by the Google user data section of our Privacy Notice. AI output may be wrong, so check it before you rely on it.
 
 									h3 Usage Limits
 									p
-										| The Operator may set limits, such as storage, compile time, file size, number of projects or request rates, to keep the Service fair and working for everyone.
+										| We may set limits, such as storage, compile time, file size, number of projects or request rates, to keep the Service fair and working for everyone.
 
 									h3 Your Responsibilities
 									p
-										| You must follow the laws that apply to you and the Acceptable Use Policy. Keep your own copies of important work, for example by downloading your projects. Backups made by the Operator are not a promise that your data can be recovered.
-
-									h3 Self-hosting
-									p
-										| If you run your own copy of the Software, you are the Operator of that copy. You control its data and are responsible for following the laws that apply to it, including privacy laws. You may change these Terms for your own copy to suit it. This page is a starting point and is not legal advice.
+										| You must follow the laws that apply to you and the Acceptable Use Policy. Keep your own copies of important work, for example by downloading your projects. Our backups are not a promise that your data can be recovered.
 
 									h3 Termination
 									p
-										| You can stop using the Service and delete your account at any time. The Operator may suspend or remove accounts that break these Terms. After an account is deleted, copies of its data may stay in backups for a limited time.
+										| You can stop using the Service and delete your account at any time. We may suspend or remove accounts that break these Terms. After an account is deleted, copies of its data may remain in backups for a limited time, as described in the Privacy Notice.
 
 									h3 “AS-IS” Disclaimer &amp; Limitation of Liability
 									p
-										| The Software is provided “AS IS”, without warranty of any kind, as set out in sections 15 and 16 of the AGPL-3.0. Its contributors are not liable for any damages that come from using it. The Operator provides the Service on the same terms and, as far as the law allows, is not liable for lost data or for the Service being unavailable.
+										| The Software is provided “AS IS”, without warranty of any kind, as set out in sections 15 and 16 of the AGPL-3.0. Its contributors are not liable for any damages that come from using it. We provide the Service on the same terms and, as far as the law allows, are not liable for lost data or for the Service being unavailable.
 
 									h3 Trademarks
 									p
-										| “Overleaf” is a trademark of Digital Science. This project is an independent community build of the open-source Overleaf code. It is not affiliated with Digital Science and is not endorsed by them.
+										| “Overleaf” is a trademark of Digital Science. #{appName} is an independent deployment of the open-source Overleaf code. It is not affiliated with or endorsed by Digital Science. “Google” and “Google Drive” are trademarks of Google LLC.
 
 									h3 Changes to these Terms
 									p
-										| The Operator may update these Terms. The “Last Modified” date shows when they last changed. If you keep using the Service after a change, you accept the new Terms.
+										| We may update these Terms. The “Last Modified” date shows when they last changed. If you keep using the Service after a change, you accept the new Terms.
 
-								+legalPane('Privacy', appName + ' Privacy Notice')
+									h3 Contact
 									p
-										| This notice explains what data this instance of #{appName} holds and how it is used. Your data is held only by the Operator of this instance. The Software's contributors do not run this instance and do not receive your data.
-									p
-										| This instance is operated independently from the Overleaf Software's contributors. The Operator stores and processes information only to provide, maintain, and secure this Service. It does not sell user information or use it for advertising, analytics, or unrelated profiling.
-
-									h3 What we collect
-									ul
-										li Account information: your email address, your name and your password. The password is stored only as a bcrypt hash.
-										li Your Stuff: the projects, files and version history you create.
-										li Technical logs: IP address, browser user agent and timestamps, kept for security and to fix problems.
-										li If you connect Google Drive: your Google account email address and account identifier; encrypted OAuth access and refresh tokens; and Drive file or folder identifiers, names, metadata, and content processed for the import and synchronization features you use. The current integration requests Google's Drive permission, which can allow access to files in your Drive; the Operator uses it only to provide those requested features. This instance does not receive or store your Google password.
-
-									h3 How we use it
-									p
-										| We use this data only to run the Service: to sign you in, to store, compile and sync your projects, to let you collaborate, and to keep the Service secure.
-									p
-										| Google user data is used only to connect your Google account and perform the Drive import or synchronization actions you request. Necessary information is sent to Google to read or update Drive. The Operator does not use Google user data to develop, improve, or train generalized AI or machine-learning models. If you choose to submit Overleaf project content to an enabled AI feature, that content may be sent to the configured provider to fulfill your request; it is not used by the Operator to train generalized models.
-
-									h3 What we never do
-									ul
-										li Sell your data.
-										li Show ads or use advertising or analytics trackers.
-										li Use your Stuff to train AI models.
-
-									h3 Sharing
-									p
-										| Your data is shared only with the collaborators you choose, and with outside providers for optional features that the Operator turns on and that you choose to use. See “Optional Features &amp; Third Parties” in the Terms of Service. The Operator may also disclose data when the law requires it.
-									p
-										| For Google Drive, data is exchanged with Google only as needed to authenticate the connection and perform the Drive operations you request. It is not sold or disclosed to other parties for advertising or unrelated purposes. Project content may be visible to collaborators according to your Overleaf project sharing settings.
-
-									h3 Retention
-									p
-										| Your account and projects are kept until you or an administrator delete them. Google Drive tokens and connection records are removed when you disconnect Drive or delete your account; the Operator also requests token revocation from Google when you disconnect. Disconnecting Drive does not remove project copies already synchronized to Overleaf. Copies in backups are removed as those backups expire. Operational logs are retained only as needed for security and troubleshooting, then rotated or deleted under this instance's retention settings.
-
-									h3 Your rights
-									p
-										| You can view and correct your account details, download your projects, and delete your projects or your whole account. Depending on where you live, local law may give you more rights. To use them, contact
+										| Questions about these Terms? Contact
 										|
 										+contactLink()
 										| .
 
+								+legalPane('Privacy', appName + ' Privacy Notice')
+									p
+										| This Privacy Notice explains what personal data #{appName} collects, how we use it, who we share it with, how we protect it, how long we keep it, and the choices you have. It applies to everyone who uses #{appName}, including the optional Google Drive integration.
+									p
+										| #{appName} is operated independently by the Operator, who is responsible for your personal data. The contributors to the open-source Overleaf Software do not run this Service and do not receive your data.
+
+									h3 How do we collect and use personal data?
+									p We collect personal data in three ways:
+									ul
+										li
+											strong Information you give us.
+											|  When you register, we collect your email address, your name and your password. Your password is stored only as a bcrypt hash and is never stored in plain text.
+										li
+											strong Content you create.
+											|  The projects, documents, files, comments, chat messages and version history you create or upload, and the compiled output (such as PDFs) generated from them.
+										li
+											strong Technical information.
+											|  When you use the Service, our servers record your IP address, browser user agent, request timestamps and error information.
+									p We use this personal data only to:
+									ul
+										li create and manage your account and sign you in;
+										li store, display, compile and back up your projects;
+										li let you collaborate with the people you choose;
+										li provide the optional features you choose to use, such as Google Drive synchronization;
+										li send you service emails, such as account confirmation and password reset emails; and
+										li keep the Service secure, prevent abuse and fix problems.
+									p
+										| We do not use your personal data for advertising, analytics, profiling or any purpose unrelated to providing the Service.
+
+									h3#google-user-data How do we use Google user data?
+									p
+										| The Google Drive integration is optional. #{appName} accesses Google user data only after you choose to connect your Google account and approve access on Google's consent screen. Google authenticates you directly, and #{appName} never sees or stores your Google password.
+
+									h4 Data accessed
+									.table-styled
+										table
+											thead
+												tr
+													th Google permission (scope)
+													th Data accessed
+													th Why we need it
+											tbody
+												tr
+													td
+														code userinfo.email
+													td Your Google account email address and Google account ID.
+													td To show you which Google account is connected and to identify that connection.
+												tr
+													td
+														code drive
+													td
+														| The content, names, IDs and folder structure of files in the #{appName} folder that the integration creates in your Drive; and Drive change notifications, which include basic metadata (ID, name, type, parent folder, size, modification time) of changed files.
+													td
+														| To import projects from Drive, to sync project changes to Drive, and to detect which synchronized files changed so both copies stay up to date.
+
+									h4 How we use Google user data
+									p
+										| We use Google user data only to provide and improve the user-facing Google Drive import and synchronization features that you request in the #{appName} interface. Specifically, the integration creates a dedicated #{appName} folder in your Drive, reads the project folders inside it so you can import them, writes your project files to it, and watches for changes to keep both copies in sync. We read file content only inside that folder. Change notifications for files outside it are discarded without being stored.
+									p We do not:
+									ul
+										li sell Google user data;
+										li use or transfer Google user data for advertising, including personalized, retargeted or interest-based advertising;
+										li use Google user data to determine credit-worthiness or for lending purposes;
+										li use Google user data to develop, improve or train generalized or non-personalized AI or machine-learning models; or
+										li allow humans to read Google user data, except with your explicit consent for specific content, when necessary for security purposes (such as investigating abuse), to comply with applicable law, or when the data has been aggregated and anonymized for internal operations.
+									+limitedUse()
+
+									h4 How we store and protect Google user data
+									p
+										| Google OAuth access and refresh tokens are encrypted with AES-256-GCM before they are stored in our database. Files imported from Drive are stored as part of your #{appName} project, with the same access controls as the rest of your projects. Records that link a project to a Drive folder store only the Drive file and folder IDs, names and sync state, together with your Google account email address and ID. All data is transferred to and from Google over encrypted HTTPS connections.
+
+									h4 How we share Google user data
+									p
+										| We share Google user data only with Google, as needed to read and update the Drive files you choose. Drive files imported into a project are visible to that project's collaborators according to the sharing settings you choose. We do not share Google user data with any other third party, except where required by law.
+
+									h4 How long we keep Google user data and how to delete it
+									p
+										| We keep your Google tokens and connection records only while your Google account is connected. You can disconnect Google Drive at any time from your #{appName} account settings, and you can also remove #{appName}'s access from your
+										|
+										a(href='https://myaccount.google.com/permissions') Google Account permissions page
+										| . When you disconnect, we ask Google to revoke our access and we delete the stored tokens, Drive identifiers and sync records. Deleting your #{appName} account does the same. Project files that were already imported into #{appName} stay in your projects until you delete those projects. To ask us to delete any Google user data, contact
+										|
+										+contactLink()
+										| .
+
+									h3 The legal basis for our use of your personal data
+									p
+										| Where data protection laws such as the GDPR apply, we process your personal data to perform our agreement with you (providing the Service and the features you request), for our legitimate interests in keeping the Service secure and working, to comply with legal obligations, and, for optional integrations such as Google Drive, on the basis of your consent, which you can withdraw at any time by disconnecting the integration.
+
+									h3 Who we share your personal data with
+									ul
+										li
+											strong Collaborators you choose.
+											|  Projects are shared only with the people you invite or who have a share link you created.
+										li
+											strong Third-party services you choose to use.
+											|  When you use an optional feature, such as Google Drive, AI assistance, GitHub or an external AI assistant you connect, the data needed for that feature is sent to that service. External AI assistants that you connect can access your projects on your behalf, and you can revoke their access at any time in your account settings.
+										li
+											strong Legal requirements.
+											|  We may disclose personal data when required by law.
+									p We do not sell, rent or trade your personal data.
+
+									h3 Security
+									p
+										| We take appropriate technical and organizational measures to protect your personal data, including HTTPS encryption in transit, bcrypt password hashing, encrypted storage of third-party OAuth tokens, and access controls on our servers and databases. See the Security Overview for more details.
+
+									h3 Retention of your personal data
+									p
+										| We keep your account and project data for as long as your account exists, or until you delete the data. Server logs are kept only as long as needed for security and troubleshooting, and are then rotated or deleted. Deleted data may remain in backups until those backups expire.
+
+									h3 Cookies
+									p
+										| We use only the cookies needed to run the Service. See the Cookie Policy for details.
+
+									h3 Your rights
+									p
+										| You can view and correct your account details, download your projects, disconnect integrations, and delete your projects or your whole account at any time from within #{appName}. Depending on where you live, you may also have the right to access, correct, delete, restrict or object to our use of your personal data, to data portability, and to complain to your local data protection authority. To use these rights, contact
+										|
+										+contactLink()
+										| .
+
+									h3 Children
+									p
+										| The Service is not directed at children under 13, and we do not knowingly collect personal data from them.
+
+									h3 Third party sites
+									p
+										| The Service may link to other websites and services, such as Google. Their privacy practices are governed by their own privacy policies.
+
+									h3 Contact details
+									p
+										| For any questions or requests about this Privacy Notice or your personal data, contact
+										|
+										+contactLink()
+										| .
+
+									h3 Changes to this Notice
+									p
+										| We may update this Privacy Notice. The “Last Modified” date shows when it last changed. If we make significant changes, we will make them clear on this page.
+
 								+legalPane('Cookies', appName + ' Cookie Policy')
+									h3 What is a cookie?
+									p
+										| A cookie is a small text file that a website stores in your browser. Websites can also store information in your browser's local storage.
+
+									h3 Which cookies does #{appName} use?
 									p
 										| #{appName} uses only the cookies and browser storage that it needs to work. It sets no analytics, advertising or tracking cookies, so there is nothing to opt out of.
+									.table-styled
+										table
+											thead
+												tr
+													th Name
+													th Type
+													th Purpose
+													th Opt-out
+											tbody
+												tr
+													td
+														code overleaf_session2
+													td Session cookie
+													td Keeps you signed in
+													td Necessary
+												tr
+													td
+														code doc.*
+														| ,
+														|
+														code editor.*
+														| ,
+														|
+														code layout.*
+														| ,
+														|
+														code pdf.*
+													td Local storage
+													td Remembers your editor preferences
+													td Necessary
 
-									table(style='border:1px solid black;border-collapse:collapse')
-										tbody
-											tr
-												th(style=cellStyle) Name
-												th(style=cellStyle) Type
-												th(style=cellStyle) Purpose of cookie
-												th(style=cellStyle) Opt-out
-											tr
-												td(style=cellStyle)
-													code overleaf_session2
-												td(style=cellStyle) Session cookie
-												td(style=cellStyle) Authentication
-												td(style=cellStyle) necessary
-											tr
-												td(style=cellStyle)
-													code doc.*
-													| ,
-													|
-													code editor.*
-													| ,
-													|
-													code layout.*
-													| ,
-													|
-													code pdf.*
-												td(style=cellStyle) Local storage
-												td(style=cellStyle) Editor preferences
-												td(style=cellStyle) necessary
-
+									h3 How can I control cookies?
 									p
 										| You can block or delete cookies in your browser settings. If you block the session cookie, you will not be able to sign in.
+
+									h3 Changes to this policy
+									p
+										| We may update this Cookie Policy. The “Last Modified” date shows when it last changed.
 
 								+legalPane('Security', appName + ' Security Overview')
 									h3 Open Code
@@ -269,7 +372,7 @@ block content
 
 									h3 Secure Storage &amp; Transfers
 									p
-										| Passwords are hashed with bcrypt and are never stored in plain text. How data is encrypted while it travels and while it is stored depends on how the Operator sets up the instance. We recommend serving every instance over HTTPS only.
+										| The Service is served over HTTPS. Passwords are hashed with bcrypt and are never stored in plain text. Third-party OAuth tokens, such as Google Drive tokens, are encrypted with AES-256-GCM before they are stored.
 
 									h3 Backups
 									p
@@ -295,7 +398,7 @@ block content
 										li Send spam or phishing, or harass or abuse other people.
 										li Overload the Service with excessive automated requests or compile jobs.
 									p
-										| The Operator may remove content or suspend accounts that break this policy. To report abuse, contact
+										| We may remove content or suspend accounts that break this policy. To report abuse, contact
 										|
 										+contactLink()
 										| .

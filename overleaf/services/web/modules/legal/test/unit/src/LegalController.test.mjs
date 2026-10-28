@@ -53,7 +53,7 @@ describe('LegalController', function () {
     expect(view).to.match(/[\\/]views[\\/]legal$/)
     expect(locals).to.deep.equal({
       title: 'Privacy & Terms',
-      lastModified: '19 October 2026',
+      lastModified: '28 October 2026',
       appName: 'Acme Overleaf',
       contactEmail: 'admin@acme.test',
       sourceUrl: SOURCE_URL,
