@@ -6,7 +6,7 @@ import { pipeline } from 'node:stream/promises'
 import ProjectEntityHandler from '../../../../app/src/Features/Project/ProjectEntityHandler.mjs'
 import DocstoreManager from '../../../../app/src/Features/Docstore/DocstoreManager.mjs'
 import HistoryManager from '../../../../app/src/Features/History/HistoryManager.mjs'
-import { classifySyncEntry } from './Exclusions.mjs'
+import { classifySyncEntry, isExcludedSyncPath } from './Exclusions.mjs'
 
 // Caps on how much of a project or repo one sync may hold and copy. Fixed in
 // code: exceeding either fails the sync with a 413 `project_too_large` error.
@@ -64,6 +64,11 @@ function _safePath(baseDir, relPath) {
 export async function resolveSafeWritePath(repoDir, relPath) {
   const absPath = _safePath(repoDir, relPath)
   if (!absPath) return null
+  // Apply the same path exclusions in both directions. In particular, project
+  // content must never overwrite the working repository's Git configuration
+  // or hooks, which subsequent Git commands would trust. Check the resolved
+  // relative path so leading slashes and dot segments cannot bypass the rule.
+  if (isExcludedSyncPath(path.relative(repoDir, absPath))) return null
   let current = repoDir
   for (const part of path.relative(repoDir, absPath).split(path.sep)) {
     current = path.join(current, part)

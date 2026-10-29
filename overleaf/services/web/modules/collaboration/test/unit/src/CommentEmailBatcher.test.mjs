@@ -1,269 +1,241 @@
-import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { vi, describe, it, expect, beforeEach } from 'vitest'
 
-const { mockEmailHandler, mockSettings, mockLogger } = vi.hoisted(() => {
-  const mockEmailHandler = {
-    sendDeferredEmail: vi.fn(),
-    promises: {
-      sendEmail: vi.fn(),
+const mocks = vi.hoisted(() => {
+  const client = { eval: vi.fn() }
+  return {
+    client,
+    queue: {
+      client,
+      add: vi.fn(),
+      on: vi.fn(),
+      process: vi.fn(),
+      close: vi.fn(),
     },
+    settings: {
+      enableCollaboration: true,
+      redis: { web: { host: 'redis' } },
+      siteUrl: 'https://example.com',
+    },
+    sendEmail: vi.fn(),
+    getUser: vi.fn(),
+    getProject: vi.fn(),
+    recipients: vi.fn(),
+    cleanup: vi.fn(),
+    Queue: vi.fn(),
   }
-  const mockSettings = {
-    siteUrl: 'http://localhost',
-  }
-  const mockLogger = {
-    error: vi.fn(),
-    warn: vi.fn(),
-    info: vi.fn(),
-  }
-  return { mockEmailHandler, mockSettings, mockLogger }
+})
+vi.mock('bull', () => ({
+  default: class {
+    constructor(...args) {
+      mocks.Queue(...args)
+      return mocks.queue
+    }
+  },
+}))
+vi.mock('@overleaf/settings', () => ({ default: mocks.settings }))
+vi.mock('@overleaf/logger', () => ({ default: { error: vi.fn() } }))
+vi.mock('../../../../../app/src/Features/Email/EmailHandler.mjs', () => ({
+  default: { promises: { sendEmail: mocks.sendEmail } },
+}))
+vi.mock('../../../../../app/src/Features/User/UserGetter.mjs', () => ({
+  default: { promises: { getUser: mocks.getUser } },
+}))
+vi.mock('../../../../../app/src/Features/Project/ProjectGetter.mjs', () => ({
+  default: { promises: { getProject: mocks.getProject } },
+}))
+vi.mock('../../../../../app/src/infrastructure/GracefulShutdown.mjs', () => ({
+  addRequiredCleanupHandlerBeforeDrainingConnections: mocks.cleanup,
+}))
+vi.mock('../../../app/src/CommentNotificationHandler.mjs', () => ({
+  resolveRecipients: mocks.recipients,
+}))
+
+const comment = {
+  authorId: 'author',
+  threadId: 'thread',
+  content: 'hello',
+  isMention: false,
+}
+const recipient = {
+  _id: 'recipient',
+  email: 'new@example.com',
+  first_name: 'Jane',
+}
+const project = { _id: 'project', name: 'Project' }
+let batcher
+beforeEach(async () => {
+  vi.resetAllMocks()
+  vi.resetModules()
+  mocks.settings.enableCollaboration = true
+  mocks.getUser.mockImplementation(async (id) =>
+    id === 'recipient' ? recipient : { _id: 'author', first_name: 'Alice' }
+  )
+  mocks.getProject.mockResolvedValue(project)
+  mocks.recipients.mockResolvedValue([{ user: recipient }])
+  mocks.client.eval.mockResolvedValue(['ready', JSON.stringify(comment)])
+  batcher = (await import('../../../app/src/CommentEmailBatcher.mjs')).default
 })
 
-vi.mock('../../../../../app/src/Features/Email/EmailHandler.mjs', () => ({
-  default: mockEmailHandler,
-}))
-vi.mock('@overleaf/settings', () => ({ default: mockSettings }))
-vi.mock('@overleaf/logger', () => ({ default: mockLogger }))
-
-const CommentEmailBatcher = (
-  await import('../../../app/src/CommentEmailBatcher.mjs')
-).default
-
-describe('CommentEmailBatcher', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    vi.useFakeTimers()
-    CommentEmailBatcher._queues.clear()
+describe('durable comment digest worker', () => {
+  it('creates no queue or worker while disabled', async () => {
+    mocks.settings.enableCollaboration = false
+    batcher.start()
+    await batcher.queueCommentNotification(
+      recipient,
+      project,
+      { _id: 'author' },
+      'thread',
+      'hello',
+      false
+    )
+    expect(mocks.Queue).not.toHaveBeenCalled()
+    expect(mocks.client.eval).not.toHaveBeenCalled()
   })
 
-  afterEach(() => {
-    // Clean up any pending timers
-    for (const entry of CommentEmailBatcher._queues.values()) {
-      if (entry.timer) clearTimeout(entry.timer)
+  it('durably schedules a wake-up before accepting batch contents', async () => {
+    await batcher.queueCommentNotification(
+      recipient,
+      project,
+      { _id: 'author' },
+      'thread',
+      'hello',
+      false
+    )
+    expect(mocks.queue.add).toHaveBeenCalledWith(
+      { userId: 'recipient', projectId: 'project' },
+      { delay: 300000 }
+    )
+    expect(mocks.queue.add.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.client.eval.mock.invocationCallOrder[0]
+    )
+    expect(mocks.client.eval).toHaveBeenCalledWith(
+      expect.stringContaining('HSETNX'),
+      2,
+      expect.stringContaining(':clock'),
+      expect.stringContaining(':pending'),
+      expect.stringContaining('hello')
+    )
+    expect(mocks.cleanup).toHaveBeenCalledOnce()
+  })
+
+  it('does not accept batch contents if durable job creation fails', async () => {
+    mocks.queue.add.mockRejectedValueOnce(new Error('redis offline'))
+    await expect(
+      batcher.queueCommentNotification(
+        recipient,
+        project,
+        { _id: 'author' },
+        'thread',
+        'hello',
+        false
+      )
+    ).to.be.rejectedWith('redis offline')
+    expect(mocks.client.eval).not.toHaveBeenCalled()
+  })
+
+  it('uses the shared debounce deadline supplied by Redis', async () => {
+    mocks.client.eval.mockResolvedValueOnce(['waiting', '12345'])
+    await batcher.flushQueue('recipient', 'project')
+    expect(mocks.queue.add).toHaveBeenCalledWith(
+      { userId: 'recipient', projectId: 'project' },
+      { delay: 12345 }
+    )
+    expect(mocks.sendEmail).not.toHaveBeenCalled()
+  })
+
+  it('recovers persisted batches in a new module instance and uses current address', async () => {
+    batcher.start()
+    vi.resetModules()
+    const restarted = (await import('../../../app/src/CommentEmailBatcher.mjs'))
+      .default
+    await restarted.flushQueue('recipient', 'project')
+    expect(mocks.sendEmail).toHaveBeenCalledWith(
+      'commentDigest',
+      expect.objectContaining({
+        to: 'new@example.com',
+        comments: [
+          expect.objectContaining({ content: 'hello', authorName: 'Alice' }),
+        ],
+      })
+    )
+    expect(mocks.client.eval).toHaveBeenLastCalledWith(
+      expect.any(String),
+      3,
+      expect.stringContaining(':lease'),
+      expect.stringContaining(':sending'),
+      expect.stringContaining(':pending'),
+      expect.any(String),
+      'complete'
+    )
+  })
+
+  it('retains the frozen batch on SMTP failure for Bull retry', async () => {
+    mocks.sendEmail.mockRejectedValueOnce(new Error('smtp offline'))
+    await expect(batcher.flushQueue('recipient', 'project')).to.be.rejectedWith(
+      'smtp offline'
+    )
+    expect(mocks.client.eval).toHaveBeenLastCalledWith(
+      expect.any(String),
+      3,
+      expect.stringContaining(':lease'),
+      expect.stringContaining(':sending'),
+      expect.stringContaining(':pending'),
+      expect.any(String),
+      'retry'
+    )
+    await batcher.flushQueue('recipient', 'project')
+    expect(mocks.sendEmail).toHaveBeenCalledTimes(2)
+  })
+
+  it('schedules pending comments after delivering a retained frozen batch', async () => {
+    mocks.client.eval
+      .mockResolvedValueOnce(['ready', JSON.stringify(comment)])
+      .mockResolvedValueOnce(1)
+    await batcher.flushQueue('recipient', 'project')
+    expect(mocks.sendEmail).toHaveBeenCalledOnce()
+    expect(mocks.queue.add).toHaveBeenCalledWith({
+      userId: 'recipient', projectId: 'project',
+    })
+  })
+
+  it('fails the wake-up for Bull retry if scheduling the pending batch fails', async () => {
+    mocks.client.eval
+      .mockResolvedValueOnce(['ready', JSON.stringify(comment)])
+      .mockResolvedValueOnce(1)
+    mocks.queue.add.mockRejectedValueOnce(new Error('queue unavailable'))
+    await expect(batcher.flushQueue('recipient', 'project')).to.be.rejectedWith(
+      'queue unavailable'
+    )
+  })
+
+  it('does not schedule another job when no pending batch remains', async () => {
+    mocks.client.eval
+      .mockResolvedValueOnce(['ready', JSON.stringify(comment)])
+      .mockResolvedValueOnce(0)
+    await batcher.flushQueue('recipient', 'project')
+    expect(mocks.queue.add).not.toHaveBeenCalled()
+  })
+
+  it.each(['removed', 'muted'])(
+    'discards delivery for a currently %s recipient',
+    async () => {
+      mocks.recipients.mockResolvedValue([])
+      await batcher.flushQueue('recipient', 'project')
+      expect(mocks.sendEmail).not.toHaveBeenCalled()
     }
-    CommentEmailBatcher._queues.clear()
-    vi.useRealTimers()
+  )
+
+  it('discards delivery to a deleted or suspended account', async () => {
+    mocks.getUser.mockResolvedValue(null)
+    await batcher.flushQueue('recipient', 'project')
+    expect(mocks.sendEmail).not.toHaveBeenCalled()
   })
 
-  describe('queueCommentNotification', () => {
-    const recipient = { _id: 'r1', email: 'user@test.com', first_name: 'Bob' }
-    const project = { _id: 'p1', name: 'Test Project' }
-    const author = { first_name: 'Jane', last_name: 'Doe' }
-
-    it('creates a queue entry for a new recipient+project pair', () => {
-      CommentEmailBatcher.queueCommentNotification(
-        recipient,
-        project,
-        author,
-        't1',
-        'hello',
-        false
-      )
-      const key = CommentEmailBatcher._getQueueKey('r1', 'p1')
-      expect(CommentEmailBatcher._queues.has(key)).toBe(true)
-      const entry = CommentEmailBatcher._queues.get(key)
-      expect(entry.comments).toHaveLength(1)
-      expect(entry.comments[0].authorName).toBe('Jane Doe')
-    })
-
-    it('appends to existing queue for same recipient+project', () => {
-      CommentEmailBatcher.queueCommentNotification(
-        recipient,
-        project,
-        author,
-        't1',
-        'first',
-        false
-      )
-      CommentEmailBatcher.queueCommentNotification(
-        recipient,
-        project,
-        author,
-        't1',
-        'second',
-        false
-      )
-      const key = CommentEmailBatcher._getQueueKey('r1', 'p1')
-      const entry = CommentEmailBatcher._queues.get(key)
-      expect(entry.comments).toHaveLength(2)
-    })
-
-    it('uses fallback author name when first_name is missing', () => {
-      CommentEmailBatcher.queueCommentNotification(
-        recipient,
-        project,
-        {},
-        't1',
-        'hello',
-        false
-      )
-      const key = CommentEmailBatcher._getQueueKey('r1', 'p1')
-      const entry = CommentEmailBatcher._queues.get(key)
-      expect(entry.comments[0].authorName).toBe('A collaborator')
-    })
-  })
-
-  describe('flushQueue', () => {
-    it('sends deferred email with correct template and opts', async () => {
-      const recipient = {
-        _id: 'r1',
-        email: 'user@test.com',
-        first_name: 'Bob',
-      }
-      const project = { _id: 'p1', name: 'My Project' }
-      const author = { first_name: 'Jane', last_name: 'Doe' }
-
-      CommentEmailBatcher.queueCommentNotification(
-        recipient,
-        project,
-        author,
-        't1',
-        'check this',
-        true
-      )
-
-      await CommentEmailBatcher.flushQueue('r1', 'p1')
-
-      expect(mockEmailHandler.sendDeferredEmail).toHaveBeenCalledWith(
-        'commentDigest',
-        expect.objectContaining({
-          to: 'user@test.com',
-          recipientName: 'Bob',
-          projectName: 'My Project',
-          projectUrl: 'http://localhost/project/p1',
-          comments: expect.arrayContaining([
-            expect.objectContaining({
-              authorName: 'Jane Doe',
-              content: 'check this',
-              isMention: true,
-            }),
-          ]),
-          hasMention: true,
-        }),
-        0
-      )
-    })
-
-    it('does nothing when queue is empty', async () => {
-      await CommentEmailBatcher.flushQueue('r1', 'p1')
-      expect(mockEmailHandler.sendDeferredEmail).not.toHaveBeenCalled()
-    })
-
-    it('skips email when recipient has no email address', async () => {
-      const recipient = { _id: 'r1', first_name: 'Bob' }
-      const project = { _id: 'p1', name: 'P' }
-
-      CommentEmailBatcher.queueCommentNotification(
-        recipient,
-        project,
-        { first_name: 'A' },
-        't1',
-        'test',
-        false
-      )
-
-      await CommentEmailBatcher.flushQueue('r1', 'p1')
-      expect(mockEmailHandler.sendDeferredEmail).not.toHaveBeenCalled()
-    })
-
-    it('cleans up queue entry after flush', async () => {
-      const recipient = {
-        _id: 'r1',
-        email: 'u@t.com',
-        first_name: 'B',
-      }
-      const project = { _id: 'p1', name: 'P' }
-
-      CommentEmailBatcher.queueCommentNotification(
-        recipient,
-        project,
-        { first_name: 'A' },
-        't1',
-        'test',
-        false
-      )
-
-      const key = CommentEmailBatcher._getQueueKey('r1', 'p1')
-      expect(CommentEmailBatcher._queues.has(key)).toBe(true)
-
-      await CommentEmailBatcher.flushQueue('r1', 'p1')
-      expect(CommentEmailBatcher._queues.has(key)).toBe(false)
-    })
-  })
-
-  describe('debounce behavior', () => {
-    it('triggers flush after debounce interval', async () => {
-      const recipient = {
-        _id: 'r1',
-        email: 'u@t.com',
-        first_name: 'B',
-      }
-      const project = { _id: 'p1', name: 'P' }
-
-      CommentEmailBatcher.queueCommentNotification(
-        recipient,
-        project,
-        { first_name: 'A' },
-        't1',
-        'test',
-        false
-      )
-
-      // Advance past debounce window (5 min default)
-      await vi.advanceTimersByTimeAsync(CommentEmailBatcher._DEBOUNCE_MS + 100)
-
-      expect(mockEmailHandler.sendDeferredEmail).toHaveBeenCalledOnce()
-    })
-
-    it('resets timer when a second comment arrives', async () => {
-      const recipient = {
-        _id: 'r1',
-        email: 'u@t.com',
-        first_name: 'B',
-      }
-      const project = { _id: 'p1', name: 'P' }
-      const author = { first_name: 'A' }
-
-      CommentEmailBatcher.queueCommentNotification(
-        recipient,
-        project,
-        author,
-        't1',
-        'first',
-        false
-      )
-
-      // Advance 3 minutes - not triggered yet
-      await vi.advanceTimersByTimeAsync(180000)
-      expect(mockEmailHandler.sendDeferredEmail).not.toHaveBeenCalled()
-
-      // Add second comment
-      CommentEmailBatcher.queueCommentNotification(
-        recipient,
-        project,
-        author,
-        't1',
-        'second',
-        false
-      )
-
-      // Advance another 3 minutes — first timer would have fired, but
-      // the reset timer hasn't elapsed yet
-      await vi.advanceTimersByTimeAsync(180000)
-
-      // The accumulated time (6 min) hasn't hit debounce (5 min) from
-      // the second queue, but max delay (15 min) ceiling hasn't been reached.
-      // The debounce was reset at t=3m, so it fires at t=3m+5m=8m.
-      // We're at t=6m, so not yet fired.
-      // Actually the delay is min(DEBOUNCE_MS, remainingUntilMax).
-      // elapsed = 3m, remainingUntilMax = 12m, delay = min(5m, 12m) = 5m
-      // So fires at t=3m+5m=8m. We're at t=6m.
-      // Need 2 more minutes:
-      await vi.advanceTimersByTimeAsync(120000)
-
-      expect(mockEmailHandler.sendDeferredEmail).toHaveBeenCalledOnce()
-      // Both comments should be in the batch
-      const call = mockEmailHandler.sendDeferredEmail.mock.calls[0]
-      expect(call[1].comments).toHaveLength(2)
-    })
+  it('does not concurrently send a batch leased by another process', async () => {
+    mocks.client.eval.mockResolvedValueOnce(['busy'])
+    await expect(batcher.flushQueue('recipient', 'project')).to.be.rejectedWith(
+      'leased'
+    )
+    expect(mocks.sendEmail).not.toHaveBeenCalled()
   })
 })

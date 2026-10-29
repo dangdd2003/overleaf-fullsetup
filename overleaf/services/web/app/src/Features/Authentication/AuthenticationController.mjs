@@ -455,11 +455,16 @@ const AuthenticationController = {
   },
 
   requireGlobalLogin(req, res, next) {
-    if (
-      AuthenticationController._globalLoginWhitelist.includes(
-        req._parsedUrl.pathname
-      )
-    ) {
+    const pathname = req._parsedUrl?.pathname || req.path
+    const isWhitelisted = AuthenticationController._globalLoginWhitelist.some(
+      entry =>
+        entry instanceof RegExp
+          ? entry.test(pathname)
+          : typeof entry === 'function'
+            ? entry(pathname, req)
+            : entry === pathname
+    )
+    if (isWhitelisted) {
       return next()
     }
 

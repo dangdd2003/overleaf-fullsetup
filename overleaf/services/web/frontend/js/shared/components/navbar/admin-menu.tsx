@@ -6,6 +6,7 @@ import { useSendProjectListMB } from '@/features/project-list/components/project
 export default function AdminMenu({
   canDisplayAdminMenu,
   canDisplayAdminUserManagement,
+  canDisplayAdminTemplates,
   canDisplayAdminRedirect,
   canDisplayProjectUrlLookup,
   canDisplaySplitTestMenu,
@@ -16,6 +17,7 @@ export default function AdminMenu({
   DefaultNavbarMetadata,
   | 'canDisplayAdminMenu'
   | 'canDisplayAdminUserManagement'
+  | 'canDisplayAdminTemplates'
   | 'canDisplayAdminRedirect'
   | 'canDisplayProjectUrlLookup'
   | 'canDisplaySplitTestMenu'
@@ -40,6 +42,11 @@ export default function AdminMenu({
       {canDisplayAdminMenu ? (
         <>
           <NavDropdownLinkItem href="/admin">Manage Site</NavDropdownLinkItem>
+          {canDisplayAdminTemplates ? (
+            <NavDropdownLinkItem href="/admin/templates">
+              Manage Templates
+            </NavDropdownLinkItem>
+          ) : null}
           {canDisplayAdminUserManagement ? (
             <NavDropdownLinkItem href="/admin/users">
               Manage Users

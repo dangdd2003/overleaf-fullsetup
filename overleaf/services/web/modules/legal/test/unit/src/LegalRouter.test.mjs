@@ -50,4 +50,23 @@ describe('LegalRouter', function () {
     await loadRouter()
     expect(whitelist).to.deep.equal(['/legal'])
   })
+
+  it('serves upstream robots.txt with only /legal allowed', async function () {
+    await loadRouter()
+    const { default: LegalRouter } =
+      await import('../../../app/src/LegalRouter.mjs')
+    const appRoutes = {}
+    LegalRouter.applyAppMiddleware({
+      get: (path, ...handlers) => {
+        appRoutes[path] = handlers
+      },
+    })
+    expect(Object.keys(appRoutes)).to.deep.equal(['/robots.txt'])
+    const res = { type: vi.fn().mockReturnThis(), send: vi.fn() }
+    appRoutes['/robots.txt'][0]({}, res)
+    expect(res.type).toHaveBeenCalledWith('text/plain')
+    expect(res.send).toHaveBeenCalledWith(
+      'User-agent: *\nAllow: /legal\nDisallow: /\n'
+    )
+  })
 })

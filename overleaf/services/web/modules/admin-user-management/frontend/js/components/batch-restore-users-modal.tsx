@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   OLModal,
   OLModalHeader,
@@ -30,12 +30,24 @@ export default function BatchRestoreUsersModal({
 }: BatchRestoreUsersModalProps) {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [remainingUserIds, setRemainingUserIds] = useState<string[] | null>(
+    null
+  )
+  const completed = useRef({ accounts: 0, projects: 0 })
+  useEffect(() => {
+    if (show) {
+      setRemainingUserIds(null)
+      completed.current = { accounts: 0, projects: 0 }
+      setError(null)
+    }
+  }, [show])
 
   async function handleRestore() {
     setIsLoading(true)
     setError(null)
     try {
-      const userIds = records.map(r => r.user?._id || r._id)
+      const userIds =
+        remainingUserIds || records.map((r) => r.user?._id || r._id)
       const res = await postJSON<{
         success: boolean
         restoredCount: number
@@ -48,8 +60,18 @@ export default function BatchRestoreUsersModal({
 
       if (res.error) {
         setError(res.error)
+      } else if (res.failed?.length) {
+        completed.current.accounts += res.restoredCount ?? 0
+        completed.current.projects += res.restoredProjectsCount ?? 0
+        setRemainingUserIds(res.failed.map((item) => item.userId))
+        setError(
+          `Some accounts or projects still need recovery: ${res.failed.map((item) => `${item.userId}: ${item.reason}`).join('; ')}. Retry to resume incomplete restorations.`
+        )
       } else {
-        onSuccess(res.restoredCount ?? 0, res.restoredProjectsCount ?? 0)
+        onSuccess(
+          completed.current.accounts + (res.restoredCount ?? 0),
+          completed.current.projects + (res.restoredProjectsCount ?? 0)
+        )
         onHide()
       }
     } catch (err: any) {
@@ -82,7 +104,7 @@ export default function BatchRestoreUsersModal({
           style={{ maxHeight: '160px', overflowY: 'auto' }}
         >
           <ul className="mb-0 ps-3 small text-break">
-            {records.map(r => (
+            {records.map((r) => (
               <li key={r._id}>
                 {r.deletedUserEmail || r.user?.email || r._id}
               </li>

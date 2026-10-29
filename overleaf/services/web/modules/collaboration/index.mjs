@@ -1,5 +1,6 @@
 import './app/src/ModuleSettings.mjs'
 import Settings from '@overleaf/settings'
+import CommentEmailBatcher from './app/src/CommentEmailBatcher.mjs'
 import CommentController from './app/src/CommentController.mjs'
 import TrackChangesController from './app/src/TrackChangesController.mjs'
 import NotificationPreferencesController from './app/src/NotificationPreferencesController.mjs'
@@ -47,6 +48,7 @@ const CollaborationModule = {
   router: {
     apply(webRouter) {
       if (!isEnabled()) return
+      CommentEmailBatcher.start()
 
       // Comment threads
       webRouter.get(

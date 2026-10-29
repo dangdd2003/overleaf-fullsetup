@@ -65,6 +65,8 @@ nav.navbar.navbar-default.navbar-main.navbar-expand-lg(
 							+dropdown-menu.dropdown-menu-end
 								if canDisplayAdminMenu
 									+dropdown-menu-link-item(href='/admin') Manage Site
+									if hasFeature('template-gallery')
+										+dropdown-menu-link-item(href='/admin/templates') Manage Templates
 									if hasFeature('admin-user-management')
 										+dropdown-menu-link-item(href='/admin/users') Manage Users
 									+dropdown-menu-link-item(href='/admin/register') Register Users

@@ -1,0 +1,53 @@
+extends ../../../../app/views/layout-website-redesign
+
+include ./_mixins
+
+block vars
+	- isWebsiteRedesign = true
+	- showThinFooter = false
+	- metadata = { title: translate(copy.pageTitleKey), description: translate('hundreds_templates_info'), canonicalURL: canonicalURL }
+
+block entrypointVar
+	- entrypoint = 'modules/template-gallery/pages/template-gallery'
+
+block content
+	main#main-content.content.content-page.gallery-page
+		.container.gallery
+			.row
+				.col-md-12
+					+gallery-filters(filters, 'nav')
+			.gallery-header
+				.row
+					.col-md-12
+						h1.gallery-title
+							+eyebrow(translate('overleaf_template_gallery'))
+							if isRoot
+								| #{translate(copy.titleKey)}
+							else
+								| #{translate(copy.titleKey)} — #{translate('recent')}
+				.row
+					.col-md-12
+						p.gallery-summary= translate(copy.summaryKey)
+			+gallery-search(search)
+			if isRoot
+				.popular-tags
+					h2= translate('categories')
+					.row.popular-tags-list
+						each tile in categories
+							+gallery-category(tile)
+			.recent-docs
+				if isRoot
+					h2= translate('recent')
+				if recent.length
+					+gallery-card-grid(recent)
+					+gallery-pagination(pagination)
+				else
+					p.no-articles-matching= translate('no_articles_matching_your_tags')
+			if featured.length
+				.featured-docs
+					h2= translate('featured')
+					+gallery-card-grid(featured)
+		.container
+			.row.section-row
+				.col-md-12
+					+gallery-begin-now

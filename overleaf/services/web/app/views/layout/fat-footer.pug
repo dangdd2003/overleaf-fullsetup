@@ -40,8 +40,10 @@ footer.fat-footer.hidden-print
 							target='_blank'
 							rel='noopener noreferrer'
 						) #{translate('get_started_with_latex')}
-					li
-						a(href='/latex/templates') #{translate('templates')}
+					//- CE serves /latex/templates only through the template-gallery module
+					if hasFeature('saas') || hasFeature('template-gallery')
+						li
+							a(href='/latex/templates') #{translate('templates')}
 					li
 						a(
 							href='https://learn.overleaf.com/calendar'

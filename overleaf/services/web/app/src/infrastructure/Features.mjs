@@ -75,6 +75,8 @@ const Features = {
         return Boolean(Settings.enableMcp)
       case 'api-docs':
         return Boolean(Settings.enableApiDocs)
+      case 'template-gallery':
+        return Boolean(Settings.enableTemplateGallery)
       case 'admin-user-management':
         return Boolean(
           Settings.enableAdminUserManagement ??

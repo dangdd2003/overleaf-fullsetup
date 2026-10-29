@@ -1263,6 +1263,7 @@ module.exports = {
     'ai-assist',
     'api-docs',
     'legal',
+    'template-gallery',
   ],
   viewIncludes: {},
 

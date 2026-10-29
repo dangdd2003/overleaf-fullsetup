@@ -8,6 +8,10 @@ function isEnabled() {
 
 const LegalModule = {
   name: 'legal',
+  appMiddleware(app) {
+    if (!isEnabled()) return
+    LegalRouter.applyAppMiddleware(app)
+  },
   router: {
     apply(webRouter, privateApiRouter, publicApiRouter) {
       if (!isEnabled()) return

@@ -1,3 +1,6 @@
+vi.mock('../../../app/src/CommentEmailBatcher.mjs', () => ({
+  default: { start: vi.fn(), queueCommentNotification: vi.fn() },
+}))
 import { vi, describe, it, expect, beforeEach } from 'vitest'
 
 const {

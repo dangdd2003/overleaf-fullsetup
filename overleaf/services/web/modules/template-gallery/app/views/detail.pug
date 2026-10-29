@@ -1,0 +1,122 @@
+extends ../../../../app/views/layout-website-redesign
+
+include ./_mixins
+
+block vars
+	- isWebsiteRedesign = true
+	- showThinFooter = false
+	- metadata = { title: item.title, description: metaDescription || undefined, canonicalURL: canonicalURL }
+
+block entrypointVar
+	- entrypoint = 'modules/template-gallery/pages/template-gallery'
+
+block content
+	main#main-content.gallery.content.content-page
+		.container
+			if adminPreviewState
+				.row
+					.col-12
+						.alert.alert-warning(role='status')= translate('gallery_admin_preview_state', { state: adminPreviewState })
+			.row.previous-page-link-container
+				.col-lg-6
+					+previous-page-link(backHref, translate('gallery_back_to_all', { itemPlural: translate(copy.itemPluralKey) }))
+			.row
+				.col-md-6.template-item-left-section
+					.row
+						.col-md-12
+							.gallery-item-title
+								h1.h2= item.title
+								if item.official
+									span.gallery-item-title-badge-container
+										span.badge.bg-info(
+											data-bs-toggle='tooltip'
+											data-bs-placement='bottom'
+											title=translate('template_approved_by_publisher')
+										)
+											span.badge-content= translate('official')
+					.row.cta-links-container
+						.col-md-12.cta-links
+							a.btn.btn-primary.cta-link(href=item.openHref rel='nofollow')= translate('open_as_template')
+							if item.mainText !== null
+								button.btn.btn-secondary.cta-link(
+									type='button'
+									data-bs-toggle='modal'
+									data-bs-target='#modalViewSource'
+								)= translate('view_source')
+							a.btn.btn-secondary.cta-link(href=item.pdfHref target='_blank')= translate('view_pdf')
+					.template-details-container
+						if item.author
+							.template-detail
+								div
+									b #{translate('author')}:
+								div= item.author
+						if item.lastUpdated
+							.template-detail
+								div
+									b #{translate('last_updated')}:
+								div
+									span(
+										data-bs-toggle='tooltip'
+										data-bs-placement='bottom'
+										data-timestamp-for-title=item.lastUpdated.epoch
+									)= item.lastUpdated.relative
+						if item.licenseLabel
+							.template-detail
+								div
+									b #{translate('license')}:
+								div= item.licenseLabel
+						if item.abstractHtml || item.description
+							.template-detail
+								div
+									b #{translate('abstract')}:
+								.gallery-abstract(data-ol-mathjax)
+									if item.abstractHtml
+										//- abstractHtml is sanitized by the mirror before it is stored
+										| !{item.abstractHtml}
+									else
+										p= item.description
+						if item.tags.length
+							.template-detail.tags
+								div
+									b #{translate('tags')}:
+								div
+									.badge-link-list
+										each tag in item.tags
+											a.badge-link.badge-link-light(href=tag.href)
+												span.badge.text-dark.bg-light
+													span.badge-content(
+														data-badge-tooltip
+														data-bs-placement='bottom'
+														data-bs-title=tag.title
+													)= tag.title
+				.col-md-6.template-item-right-section
+					.entry
+						.row
+							.col-md-12
+								.gallery-large-pdf-preview
+									img(src=item.previewUrl alt=item.title)
+			.row.section-row
+				.col-md-12
+					+gallery-begin-now
+
+	if item.mainText !== null
+		#modalViewSource.modal.fade(
+			tabindex='-1'
+			role='dialog'
+			aria-labelledby='modalViewSourceTitle'
+			aria-hidden='true'
+		)
+			.modal-dialog(role='document')
+				.modal-content
+					.modal-header
+						h3#modalViewSourceTitle.modal-title= translate('source')
+						button.btn-close(
+							type='button'
+							data-bs-dismiss='modal'
+							aria-label=translate('close_dialog')
+						)
+					.modal-body
+						pre
+							code= item.mainText
+					.modal-footer
+						button.btn.btn-secondary(type='button' data-bs-dismiss='modal')= translate('close')

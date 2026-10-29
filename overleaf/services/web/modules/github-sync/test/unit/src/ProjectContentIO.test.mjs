@@ -5,6 +5,33 @@ import os from 'node:os'
 import { Readable } from 'node:stream'
 
 describe('resolveSafeWritePath', function () {
+  it('refuses excluded paths after resolving them inside the repository', async function () {
+    const { resolveSafeWritePath } = await import('../../../app/src/ProjectContentIO.mjs')
+    const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'ghsync-repo-'))
+    try {
+      for (const relPath of [
+        '.git/config',
+        '/.git/config',
+        'docs/../.git/config',
+        'nested/.git/hooks/pre-commit',
+        '.git\\config',
+        '.github/workflows/ci.yml',
+        '/.github/workflows/ci.yml',
+        '.overleaf/settings',
+      ]) {
+        expect(await resolveSafeWritePath(repo, relPath)).toBeNull()
+      }
+      expect(await resolveSafeWritePath(repo, '.gitignore')).toBe(
+        path.join(repo, '.gitignore')
+      )
+      expect(await resolveSafeWritePath(repo, '.github/README.md')).toBe(
+        path.join(repo, '.github/README.md')
+      )
+    } finally {
+      await fs.rm(repo, { recursive: true, force: true })
+    }
+  })
+
   it('refuses a write that would go through a symlink in the working tree', async function () {
     const { resolveSafeWritePath } = await import('../../../app/src/ProjectContentIO.mjs')
     const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'ghsync-repo-'))
@@ -125,6 +152,48 @@ describe('ProjectContentIO', function () {
       Buffer.from('PNGDATA')
     )
   })
+
+  it.each(['docs', 'files'])(
+    'preserves excluded repository paths when materializing %s',
+    async function (entityType) {
+      const excludedPaths = [
+        '.git/config',
+        '.git/hooks/pre-commit',
+        '.github/workflows/ci.yml',
+        '.overleaf/settings',
+      ]
+      for (const relPath of [...excludedPaths, '.gitignore']) {
+        await fs.mkdir(path.dirname(path.join(workDir, relPath)), { recursive: true })
+        await fs.writeFile(path.join(workDir, relPath), 'repository content')
+      }
+      mockEntities[entityType].push(
+        ...excludedPaths.map((relPath, i) =>
+          entityType === 'docs'
+            ? { path: relPath, doc: { _id: `excluded-${i}` } }
+            : { path: relPath, file: { _id: `excluded-${i}`, hash: 'excluded' } }
+        )
+      )
+      mockDocs.push(
+        ...excludedPaths.map((_, i) => ({ _id: `excluded-${i}`, lines: ['overwrite'] }))
+      )
+      mockBlobStreams.excluded = () => {
+        throw new Error('An excluded file must not be fetched')
+      }
+
+      const manifest = await ProjectContentIO.promises.materializeProject('proj1', workDir)
+
+      expect(manifest.sort()).to.deep.equal(['img/logo.png', 'main.tex'])
+      for (const relPath of [...excludedPaths, '.gitignore']) {
+        expect(await fs.readFile(path.join(workDir, relPath), 'utf8')).to.equal(
+          'repository content'
+        )
+      }
+      expect(await fs.readFile(path.join(workDir, 'main.tex'), 'utf8')).to.equal(
+        'hello\nworld\n'
+      )
+      expect(await fs.readFile(path.join(workDir, 'img/logo.png'), 'utf8')).to.equal('PNGDATA')
+    }
+  )
 
   it('reads the project tree back with sizes', async function () {
     await ProjectContentIO.promises.materializeProject('proj1', workDir)

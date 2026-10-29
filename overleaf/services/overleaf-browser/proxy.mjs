@@ -76,7 +76,7 @@ function authorityOf(value) {
 function ipv6ToBuffer(address) {
   if (address.includes('.')) throw new Error(`unsupported IPv6 form ${address}`)
   const [headText, tailText] = address.split('::')
-  const groups = text => (text ? text.split(':') : [])
+  const groups = (text) => (text ? text.split(':') : [])
   const head = groups(headText)
   const tail = tailText === undefined ? [] : groups(tailText)
   const zeros = Array(8 - head.length - tail.length).fill('0')
@@ -87,13 +87,54 @@ function ipv6ToBuffer(address) {
   return buffer
 }
 
+/** Read a complete handshake frame and retain any following tunnel bytes. */
+function readHandshake(
+  socket,
+  frameLength,
+  onFrame,
+  onError,
+  maxBytes = 16384
+) {
+  let buffered = Buffer.alloc(0)
+  const cleanup = () => {
+    socket.pause()
+    socket.removeListener('data', onData)
+    socket.removeListener('end', onEnd)
+    socket.removeListener('close', onEnd)
+  }
+  const onEnd = () => {
+    cleanup()
+    onError(new Error('Proxy closed during handshake'))
+  }
+  const onData = (chunk) => {
+    buffered = Buffer.concat([buffered, chunk])
+    try {
+      const length = frameLength(buffered)
+      if (length > maxBytes || (!length && buffered.length > maxBytes)) {
+        throw new Error('Proxy handshake exceeds limit')
+      }
+      if (!length || buffered.length < length) return
+      cleanup()
+      if (buffered.length > length) socket.unshift(buffered.subarray(length))
+      onFrame(buffered.subarray(0, length))
+    } catch (err) {
+      cleanup()
+      onError(err)
+    }
+  }
+  socket.on('data', onData)
+  socket.once('end', onEnd)
+  socket.once('close', onEnd)
+  socket.resume()
+}
+
 /** Connects to destination through an upstream SOCKS5 proxy (RFC 1928 / 1929). */
 function connectSocks5Tunnel({ proxy, targetHost, targetPort, timeoutMs }) {
   return new Promise((resolve, reject) => {
     const socket = net.connect({ host: proxy.host, port: proxy.port })
     let cleaned = false
 
-    const cleanup = err => {
+    const cleanup = (err) => {
       if (cleaned) return
       cleaned = true
       clearTimeout(timer)
@@ -101,7 +142,10 @@ function connectSocks5Tunnel({ proxy, targetHost, targetPort, timeoutMs }) {
       reject(err || new Error('SOCKS5 connection failed'))
     }
 
-    const timer = setTimeout(() => cleanup(new Error('SOCKS5 timeout')), timeoutMs)
+    const timer = setTimeout(
+      () => cleanup(new Error('SOCKS5 timeout')),
+      timeoutMs
+    )
     timer.unref?.()
     socket.once('error', cleanup)
 
@@ -113,35 +157,47 @@ function connectSocks5Tunnel({ proxy, targetHost, targetPort, timeoutMs }) {
         : Buffer.from([0x05, 0x01, 0x00])
 
       socket.write(handshake)
-      socket.once('data', methodChunk => {
-        if (methodChunk[0] !== 0x05) {
-          return cleanup(new Error(`Invalid SOCKS version: ${methodChunk[0]}`))
-        }
-        const method = methodChunk[1]
+      readHandshake(
+        socket,
+        () => 2,
+        (methodChunk) => {
+          if (methodChunk[0] !== 0x05) {
+            return cleanup(
+              new Error(`Invalid SOCKS version: ${methodChunk[0]}`)
+            )
+          }
+          const method = methodChunk[1]
 
-        if (method === 0x02 && hasAuth) {
-          // Username/Password authentication (RFC 1929)
-          const uBuf = Buffer.from(proxy.username || '')
-          const pBuf = Buffer.from(proxy.password || '')
-          const authMsg = Buffer.concat([
-            Buffer.from([0x01, uBuf.length]),
-            uBuf,
-            Buffer.from([pBuf.length]),
-            pBuf,
-          ])
-          socket.write(authMsg)
-          socket.once('data', authResp => {
-            if (authResp[1] !== 0x00) {
-              return cleanup(new Error('SOCKS5 authentication failed'))
-            }
+          if (method === 0x02 && hasAuth) {
+            // Username/Password authentication (RFC 1929)
+            const uBuf = Buffer.from(proxy.username || '')
+            const pBuf = Buffer.from(proxy.password || '')
+            const authMsg = Buffer.concat([
+              Buffer.from([0x01, uBuf.length]),
+              uBuf,
+              Buffer.from([pBuf.length]),
+              pBuf,
+            ])
+            socket.write(authMsg)
+            readHandshake(
+              socket,
+              () => 2,
+              (authResp) => {
+                if (authResp[0] !== 0x01 || authResp[1] !== 0x00) {
+                  return cleanup(new Error('SOCKS5 authentication failed'))
+                }
+                sendConnectCommand()
+              },
+              cleanup
+            )
+          } else if (method === 0x00) {
             sendConnectCommand()
-          })
-        } else if (method === 0x00) {
-          sendConnectCommand()
-        } else {
-          return cleanup(new Error(`SOCKS5 rejected auth method: ${method}`))
-        }
-      })
+          } else {
+            return cleanup(new Error(`SOCKS5 rejected auth method: ${method}`))
+          }
+        },
+        cleanup
+      )
     })
 
     function sendConnectCommand() {
@@ -159,19 +215,40 @@ function connectSocks5Tunnel({ proxy, targetHost, targetPort, timeoutMs }) {
       }
       const portBuf = Buffer.alloc(2)
       portBuf.writeUInt16BE(targetPort, 0)
-      const req = Buffer.concat([Buffer.from([0x05, 0x01, 0x00]), addrBuf, portBuf])
+      const req = Buffer.concat([
+        Buffer.from([0x05, 0x01, 0x00]),
+        addrBuf,
+        portBuf,
+      ])
 
       socket.write(req)
-      socket.once('data', resp => {
-        if (resp[0] !== 0x05 || resp[1] !== 0x00) {
-          return cleanup(new Error(`SOCKS5 CONNECT failed with code ${resp[1]}`))
-        }
-        // SOCKS5 tunnel established
-        clearTimeout(timer)
-        socket.removeListener('error', cleanup)
-        cleaned = true
-        resolve(socket)
-      })
+      readHandshake(
+        socket,
+        (bytes) => {
+          if (bytes.length < 4) return 0
+          if (bytes[0] !== 5 || bytes[1] !== 0 || bytes[2] !== 0) {
+            throw new Error(`SOCKS5 CONNECT failed with code ${bytes[1]}`)
+          }
+          if (bytes[3] === 1) return 10
+          if (bytes[3] === 4) return 22
+          if (bytes[3] === 3) return bytes.length < 5 ? 0 : 7 + bytes[4]
+          throw new Error('Invalid SOCKS5 address type')
+        },
+        (resp) => {
+          if (resp[0] !== 0x05 || resp[1] !== 0x00) {
+            return cleanup(
+              new Error(`SOCKS5 CONNECT failed with code ${resp[1]}`)
+            )
+          }
+          // SOCKS5 tunnel established
+          clearTimeout(timer)
+          socket.removeListener('error', cleanup)
+          cleaned = true
+          resolve(socket)
+        },
+        cleanup,
+        262
+      )
     }
   })
 }
@@ -181,10 +258,14 @@ function connectHttpTunnel({ proxy, targetHost, targetPort, timeoutMs }) {
   return new Promise((resolve, reject) => {
     const isTls = proxy.protocol === 'https:'
     const connectFn = isTls ? tls.connect : net.connect
-    const socket = connectFn({ host: proxy.host, port: proxy.port })
+    const socket = connectFn({
+      host: proxy.host,
+      port: proxy.port,
+      ...(isTls && !net.isIP(proxy.host) ? { servername: proxy.host } : {}),
+    })
     let cleaned = false
 
-    const cleanup = err => {
+    const cleanup = (err) => {
       if (cleaned) return
       cleaned = true
       clearTimeout(timer)
@@ -199,7 +280,7 @@ function connectHttpTunnel({ proxy, targetHost, targetPort, timeoutMs }) {
     timer.unref?.()
     socket.once('error', cleanup)
 
-    socket.once('connect', () => {
+    socket.once(isTls ? 'secureConnect' : 'connect', () => {
       const host = net.isIP(targetHost) === 6 ? `[${targetHost}]` : targetHost
       const authority = `${host}:${targetPort}`
       let headers = `CONNECT ${authority} HTTP/1.1\r\nHost: ${authority}\r\n`
@@ -212,17 +293,25 @@ function connectHttpTunnel({ proxy, targetHost, targetPort, timeoutMs }) {
       headers += '\r\n'
 
       socket.write(headers)
-      socket.once('data', chunk => {
-        const line = chunk.toString().split('\r\n')[0]
-        if (/^HTTP\/1\.[01]\s+200\b/i.test(line)) {
-          clearTimeout(timer)
-          socket.removeListener('error', cleanup)
-          cleaned = true
-          resolve(socket)
-        } else {
-          cleanup(new Error(`HTTP proxy refused CONNECT: ${line}`))
-        }
-      })
+      readHandshake(
+        socket,
+        (bytes) => {
+          const end = bytes.indexOf('\r\n\r\n')
+          return end === -1 ? 0 : end + 4
+        },
+        (chunk) => {
+          const line = chunk.toString().split('\r\n')[0]
+          if (/^HTTP\/1\.[01]\s+200\b/i.test(line)) {
+            clearTimeout(timer)
+            socket.removeListener('error', cleanup)
+            cleaned = true
+            resolve(socket)
+          } else {
+            cleanup(new Error(`HTTP proxy refused CONNECT: ${line}`))
+          }
+        },
+        cleanup
+      )
     })
   })
 }
@@ -233,13 +322,13 @@ export function createEgressProxy({
   isPublic,
   ports = EGRESS_PORTS,
   limits = EGRESS_LIMITS,
-  log = line => console.log(line),
+  log = (line) => console.log(line),
 } = {}) {
   const upstream =
     typeof upstreamProxy === 'string'
       ? parseProxyUrl(upstreamProxy)
       : upstreamProxy
-  const resolve = host => resolvePublic(host, { lookup, isPublic })
+  const resolve = (host) => resolvePublic(host, { lookup, isPublic })
   let open = 0
 
   function track(sockets) {
@@ -277,7 +366,10 @@ export function createEgressProxy({
       upstreamRes.destroy()
       log(`egress refused ${label} (response over ${max} bytes)`)
       res
-        .writeHead(502, { 'Content-Type': 'text/plain', [REFUSED_HEADER]: REFUSED_TOO_LARGE })
+        .writeHead(502, {
+          'Content-Type': 'text/plain',
+          [REFUSED_HEADER]: REFUSED_TOO_LARGE,
+        })
         .end('Response too large')
       return
     }
@@ -294,13 +386,14 @@ export function createEgressProxy({
     })
     res.writeHead(upstreamRes.statusCode ?? 502, upstreamRes.headers)
     pipeline(upstreamRes, cap, res).catch(() => {
-      if (sent > max) log(`egress aborted ${label} (response over ${max} bytes)`)
+      if (sent > max)
+        log(`egress aborted ${label} (response over ${max} bytes)`)
     })
   }
 
   function capUpload(source, sink, alreadySent = 0) {
     let sent = alreadySent
-    source.on('data', chunk => {
+    source.on('data', (chunk) => {
       sent += chunk.length
       if (sent > limits.maxUploadBytes) {
         source.destroy()
@@ -381,7 +474,8 @@ export function createEgressProxy({
       // The upstream resolves names itself, so name the address checked above:
       // a rebinding hostname could otherwise reach a private address there.
       const pinned = new URL(target.href)
-      pinned.hostname = address.family === 6 ? `[${address.address}]` : address.address
+      pinned.hostname =
+        address.family === 6 ? `[${address.address}]` : address.address
       const upstreamReq = http.request(
         {
           host: upstream.host,
@@ -390,15 +484,18 @@ export function createEgressProxy({
           path: pinned.href,
           headers,
         },
-        upstreamRes => relayResponse(upstreamRes, res, `${target.hostname}:${port}`)
+        (upstreamRes) =>
+          relayResponse(upstreamRes, res, `${target.hostname}:${port}`)
       )
-      upstreamReq.on('socket', socket => {
+      upstreamReq.on('socket', (socket) => {
         if (!track([req.socket, socket])) {
           upstreamReq.destroy()
           if (!res.headersSent) res.writeHead(429).end('Too many connections')
           return
         }
-        log(`egress http (proxy) ${target.hostname}:${port} via ${upstream.host}`)
+        log(
+          `egress http (proxy) ${target.hostname}:${port} via ${upstream.host}`
+        )
       })
       upstreamReq.on('error', () => {
         if (!res.headersSent) res.writeHead(502)
@@ -423,15 +520,20 @@ export function createEgressProxy({
       path: `${target.pathname}${target.search}`,
       headers,
     })
-    upstreamReq.on('socket', socket => {
+    upstreamReq.on('socket', (socket) => {
       if (!track([req.socket, socket])) {
         upstreamReq.destroy()
         if (!res.headersSent) res.writeHead(429).end('Too many connections')
         return
       }
-      log(`egress http ${target.hostname}:${port} ${address.address}${upstream ? ` (via ${upstream.type})` : ''}`)
+      // Handshake parsing pauses the tunnel to preserve coalesced bytes. The
+      // HTTP parser is installed now, so it is safe to resume that socket.
+      socket.resume()
+      log(
+        `egress http ${target.hostname}:${port} ${address.address}${upstream ? ` (via ${upstream.type})` : ''}`
+      )
     })
-    upstreamReq.on('response', upstreamRes =>
+    upstreamReq.on('response', (upstreamRes) =>
       relayResponse(upstreamRes, res, `${target.hostname}:${port}`)
     )
     upstreamReq.on('error', () => {
@@ -465,7 +567,11 @@ export function createEgressProxy({
 
     let upstreamSocket
     try {
-      upstreamSocket = await openUpstreamSocket(address.address, authority.port, address)
+      upstreamSocket = await openUpstreamSocket(
+        address.address,
+        authority.port,
+        address
+      )
     } catch (err) {
       log(`egress failed ${authority.host}:${authority.port} (${err.message})`)
       client.end('HTTP/1.1 502 Bad Gateway\r\n\r\n')
@@ -478,7 +584,9 @@ export function createEgressProxy({
       return
     }
 
-    log(`egress connect ${authority.host}:${authority.port} ${address.address}${upstream ? ` (via ${upstream.type})` : ''}`)
+    log(
+      `egress connect ${authority.host}:${authority.port} ${address.address}${upstream ? ` (via ${upstream.type})` : ''}`
+    )
     client.write('HTTP/1.1 200 Connection Established\r\n\r\n')
     if (head?.length) upstreamSocket.write(head)
     upstreamSocket.pipe(client)

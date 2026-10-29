@@ -278,6 +278,7 @@ export const AdminUserManagementController = {
       res.json({
         success: true,
         restoredProjectCount: result.restoredProjectCount,
+        failedProjectIds: result.failedProjectIds || [],
       })
     } catch (err) {
       if (err instanceof NotFoundError) {
@@ -309,6 +310,9 @@ export const AdminUserManagementController = {
     } catch (err) {
       if (err instanceof NotFoundError) {
         return res.status(404).json({ error: err.message })
+      }
+      if (err instanceof ConflictError) {
+        return res.status(409).json({ error: err.message })
       }
       logger.error({ err, userId: req.params.userId }, 'Failed to purge deleted user')
       res.status(500).json({ error: 'failed_to_purge_deleted_user' })
@@ -1152,7 +1156,15 @@ export const AdminUserManagementController = {
             callerUserId,
             req.ip || '0.0.0.0'
           )
-          restoredCount++
+          if (result?.failedProjectIds?.length) {
+            failed.push({
+              userId,
+              reason: 'projects_pending_restore',
+              failedProjectIds: result.failedProjectIds,
+            })
+          } else {
+            restoredCount++
+          }
           restoredProjectsCount += result?.restoredProjectCount || 0
         } catch (err) {
           logger.error({ err, userId }, 'Failed to restore user in batch')

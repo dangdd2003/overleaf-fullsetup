@@ -10,7 +10,7 @@ import {
 } from '../proxy.mjs'
 
 async function listen(server) {
-  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
   return server.address().port
 }
 
@@ -21,7 +21,7 @@ function connectThrough(port, authority) {
         `CONNECT ${authority} HTTP/1.1\r\nHost: ${authority}\r\n\r\n`
       )
     })
-    socket.once('data', chunk => {
+    socket.once('data', (chunk) => {
       socket.destroy()
       resolve(chunk.toString().split('\r\n')[0])
     })
@@ -36,7 +36,7 @@ function openTunnel(port, authority) {
         `CONNECT ${authority} HTTP/1.1\r\nHost: ${authority}\r\n\r\n`
       )
     })
-    socket.once('data', chunk => {
+    socket.once('data', (chunk) => {
       const line = chunk.toString().split('\r\n')[0]
       if (/ 200 /.test(line)) resolve(socket)
       else reject(new Error(line))
@@ -46,7 +46,7 @@ function openTunnel(port, authority) {
 }
 
 async function echoTarget() {
-  const target = net.createServer(socket => socket.pipe(socket))
+  const target = net.createServer((socket) => socket.pipe(socket))
   const port = await listen(target)
   return { target, port }
 }
@@ -57,7 +57,7 @@ function proxyFor(targetPort, options = {}) {
     lookup: async () => [{ address: '127.0.0.1', family: 4 }],
     isPublic: () => true,
     ports: new Set([targetPort]),
-    log: line => lines.push(line),
+    log: (line) => lines.push(line),
     ...options,
   })
   return { proxy, lines }
@@ -102,12 +102,15 @@ test('tunnels to a public address on an allowed port and logs it', async () => {
   const port = await listen(proxy)
   try {
     const socket = await openTunnel(port, `example.test:${targetPort}`)
-    const echoed = await new Promise(resolve => {
-      socket.once('data', chunk => resolve(chunk.toString()))
+    const echoed = await new Promise((resolve) => {
+      socket.once('data', (chunk) => resolve(chunk.toString()))
       socket.write('hello')
     })
     assert.equal(echoed, 'hello')
-    assert.match(lines.join('\n'), /egress connect example\.test:\d+ 127\.0\.0\.1/)
+    assert.match(
+      lines.join('\n'),
+      /egress connect example\.test:\d+ 127\.0\.0\.1/
+    )
     socket.destroy()
   } finally {
     proxy.close()
@@ -119,7 +122,10 @@ test('refuses a port that is not a web port', async () => {
   const { proxy, lines } = proxyFor(443)
   const port = await listen(proxy)
   try {
-    assert.match(await connectThrough(port, 'example.test:25'), /^HTTP\/1\.1 403/)
+    assert.match(
+      await connectThrough(port, 'example.test:25'),
+      /^HTTP\/1\.1 403/
+    )
     assert.match(lines.join('\n'), /egress refused example\.test:25 \(port\)/)
   } finally {
     proxy.close()
@@ -131,14 +137,11 @@ test('refuses a private address', async () => {
   const proxy = createEgressProxy({
     lookup: async () => [{ address: '172.18.0.3', family: 4 }],
     ports: new Set([27017]),
-    log: line => lines.push(line),
+    log: (line) => lines.push(line),
   })
   const port = await listen(proxy)
   try {
-    assert.match(
-      await connectThrough(port, 'mongo:27017'),
-      /^HTTP\/1\.1 403/
-    )
+    assert.match(await connectThrough(port, 'mongo:27017'), /^HTTP\/1\.1 403/)
     assert.match(lines.join('\n'), /egress refused mongo:27017 \(address\)/)
   } finally {
     proxy.close()
@@ -149,20 +152,24 @@ test('chains outbound HTTPS through an upstream SOCKS5 proxy with auth', async (
   const { target, port: targetPort } = await echoTarget()
   // Mock SOCKS5 server with auth
   let socksAuthUsed = false
-  const socksServer = net.createServer(socket => {
-    socket.once('data', chunk => {
+  const socksServer = net.createServer((socket) => {
+    socket.once('data', (chunk) => {
       if (chunk[0] === 5 && chunk.includes(2)) {
         socket.write(Buffer.from([5, 2])) // username/password
-        socket.once('data', auth => {
+        socket.once('data', (auth) => {
           socksAuthUsed = true
           socket.write(Buffer.from([1, 0])) // auth ok
-          socket.once('data', req => {
-            if (req[0] === 5 && req[1] === 1) { // CONNECT
+          socket.once('data', (req) => {
+            if (req[0] === 5 && req[1] === 1) {
+              // CONNECT
               // Connect to local target
-              const upstream = net.connect({ host: '127.0.0.1', port: targetPort }, () => {
-                socket.write(Buffer.from([5, 0, 0, 1, 127, 0, 0, 1, 0, 80]))
-                socket.pipe(upstream).pipe(socket)
-              })
+              const upstream = net.connect(
+                { host: '127.0.0.1', port: targetPort },
+                () => {
+                  socket.write(Buffer.from([5, 0, 0, 1, 127, 0, 0, 1, 0, 80]))
+                  socket.pipe(upstream).pipe(socket)
+                }
+              )
             }
           })
         })
@@ -177,13 +184,16 @@ test('chains outbound HTTPS through an upstream SOCKS5 proxy with auth', async (
   const proxyPort = await listen(proxy)
   try {
     const socket = await openTunnel(proxyPort, `example.test:${targetPort}`)
-    const echoed = await new Promise(resolve => {
-      socket.once('data', chunk => resolve(chunk.toString()))
+    const echoed = await new Promise((resolve) => {
+      socket.once('data', (chunk) => resolve(chunk.toString()))
       socket.write('socks5-data')
     })
     assert.equal(echoed, 'socks5-data')
     assert.equal(socksAuthUsed, true)
-    assert.match(lines.join('\n'), /egress connect example\.test:\d+ 127\.0\.0\.1 \(via socks5\)/)
+    assert.match(
+      lines.join('\n'),
+      /egress connect example\.test:\d+ 127\.0\.0\.1 \(via socks5\)/
+    )
     socket.destroy()
   } finally {
     proxy.close()
@@ -197,10 +207,10 @@ test('an upstream SOCKS5 proxy is asked for the address that was checked, not th
   // address when the upstream looks it up again. The tunnel must name the IP.
   let requestedAddressType = null
   let requestedAddress = null
-  const socksServer = net.createServer(socket => {
+  const socksServer = net.createServer((socket) => {
     socket.once('data', () => {
       socket.write(Buffer.from([5, 0]))
-      socket.once('data', req => {
+      socket.once('data', (req) => {
         requestedAddressType = req[3]
         requestedAddress = [...req.subarray(4, 8)].join('.')
         socket.end(Buffer.from([5, 1, 0, 1, 0, 0, 0, 0, 0, 0]))
@@ -210,7 +220,7 @@ test('an upstream SOCKS5 proxy is asked for the address that was checked, not th
   const socksPort = await listen(socksServer)
   const { proxy } = proxyFor(443, {
     lookup: async () => [{ address: '203.0.113.9', family: 4 }],
-    isPublic: address => address !== '10.0.0.1',
+    isPublic: (address) => address !== '10.0.0.1',
     upstreamProxy: `socks5://127.0.0.1:${socksPort}`,
     ports: new Set([443]),
   })
@@ -240,20 +250,24 @@ test('chains outbound HTTP through an upstream HTTP proxy', async () => {
   const proxyPort = await listen(proxy)
   try {
     const res = await new Promise((resolve, reject) => {
-      http.get(
-        {
-          host: '127.0.0.1',
-          port: proxyPort,
-          path: 'http://example.test/test-page',
-          headers: { host: 'example.test' },
-        },
-        resolve
-      ).on('error', reject)
+      http
+        .get(
+          {
+            host: '127.0.0.1',
+            port: proxyPort,
+            path: 'http://example.test/test-page',
+            headers: { host: 'example.test' },
+          },
+          resolve
+        )
+        .on('error', reject)
     })
     assert.equal(res.statusCode, 200)
-    const body = await new Promise(resolve => {
+    const body = await new Promise((resolve) => {
       let b = ''
-      res.on('data', c => { b += c })
+      res.on('data', (c) => {
+        b += c
+      })
       res.on('end', () => resolve(b))
     })
     assert.equal(body, 'from-upstream-http')
@@ -271,14 +285,34 @@ function getThroughProxy(proxyPort, url) {
   return new Promise((resolve, reject) => {
     const req = http.request(
       { host: '127.0.0.1', port: proxyPort, path: url, method: 'GET' },
-      res => {
+      (res) => {
         const chunks = []
-        res.on('data', c => chunks.push(c))
+        res.on('data', (c) => chunks.push(c))
         res.on('end', () =>
-          resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks), ended: true })
+          resolve({
+            status: res.statusCode,
+            headers: res.headers,
+            body: Buffer.concat(chunks),
+            ended: true,
+          })
         )
-        res.on('error', err => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks), ended: false, err }))
-        res.on('aborted', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks), ended: false }))
+        res.on('error', (err) =>
+          resolve({
+            status: res.statusCode,
+            headers: res.headers,
+            body: Buffer.concat(chunks),
+            ended: false,
+            err,
+          })
+        )
+        res.on('aborted', () =>
+          resolve({
+            status: res.statusCode,
+            headers: res.headers,
+            body: Buffer.concat(chunks),
+            ended: false,
+          })
+        )
       }
     )
     req.on('error', reject)
@@ -297,7 +331,9 @@ test('relays a chunked response under the cap intact', async () => {
     res.write('hello ')
     res.end('world')
   })
-  const { proxy, lines } = proxyFor(sitePort, { limits: { ...EGRESS_LIMITS, maxResponseBytes: 1024 } })
+  const { proxy, lines } = proxyFor(sitePort, {
+    limits: { ...EGRESS_LIMITS, maxResponseBytes: 1024 },
+  })
   const port = await listen(proxy)
   try {
     const out = await getThroughProxy(port, `http://example.test:${sitePort}/`)
@@ -325,14 +361,19 @@ test('cuts off a chunked response as it streams past the cap', async () => {
       res.write('x'.repeat(100))
     }, 1)
   })
-  const { proxy, lines } = proxyFor(sitePort, { limits: { ...EGRESS_LIMITS, maxResponseBytes: 1024 } })
+  const { proxy, lines } = proxyFor(sitePort, {
+    limits: { ...EGRESS_LIMITS, maxResponseBytes: 1024 },
+  })
   const port = await listen(proxy)
   try {
     const out = await getThroughProxy(port, `http://example.test:${sitePort}/`)
     assert.equal(out.ended, false, 'the body must not complete')
     assert.ok(out.body.length <= 1024 + 100, `got ${out.body.length} bytes`)
-    await new Promise(r => setTimeout(r, 20))
-    assert.match(lines.join('\n'), /egress aborted example\.test:\d+ \(response over 1024 bytes\)/)
+    await new Promise((r) => setTimeout(r, 20))
+    assert.match(
+      lines.join('\n'),
+      /egress aborted example\.test:\d+ \(response over 1024 bytes\)/
+    )
   } finally {
     proxy.close()
     site.close()
@@ -344,16 +385,180 @@ test('refuses a response whose declared length is over the cap', async () => {
     res.writeHead(200, { 'Content-Length': '5000' })
     res.end('x'.repeat(5000))
   })
-  const { proxy, lines } = proxyFor(sitePort, { limits: { ...EGRESS_LIMITS, maxResponseBytes: 1024 } })
+  const { proxy, lines } = proxyFor(sitePort, {
+    limits: { ...EGRESS_LIMITS, maxResponseBytes: 1024 },
+  })
   const port = await listen(proxy)
   try {
     const out = await getThroughProxy(port, `http://example.test:${sitePort}/`)
     assert.equal(out.status, 502)
     assert.equal(out.headers['x-egress-refused'], 'response-too-large')
     assert.equal(out.body.toString(), 'Response too large')
-    assert.match(lines.join('\n'), /egress refused example\.test:\d+ \(response over 1024 bytes\)/)
+    assert.match(
+      lines.join('\n'),
+      /egress refused example\.test:\d+ \(response over 1024 bytes\)/
+    )
   } finally {
     proxy.close()
     site.close()
   }
 })
+
+// TCP chunks have no relation to protocol frames. Exercise fragmented replies
+// and a server-first payload coalesced with the final handshake bytes.
+async function tunnelBanner(proxyPort) {
+  const client = net.connect(proxyPort, '127.0.0.1')
+  try {
+    return await new Promise((resolve, reject) => {
+      let received = ''
+      const timer = setTimeout(
+        () => reject(new Error('Tunnel banner timed out')),
+        2000
+      )
+      client.on('error', (err) => {
+        clearTimeout(timer)
+        reject(err)
+      })
+      client.on('data', (chunk) => {
+        received += chunk.toString()
+        if (received.includes('hello-tunnel')) {
+          clearTimeout(timer)
+          resolve(received)
+        }
+      })
+      client.once('connect', () =>
+        client.write(
+          'CONNECT example.test:443 HTTP/1.1\r\nHost: example.test:443\r\n\r\n'
+        )
+      )
+    })
+  } finally {
+    client.destroy()
+  }
+}
+
+for (const protocol of ['http', 'socks5']) {
+  test(
+    `${protocol} handshake buffers fragments and preserves trailing tunnel bytes`,
+    { timeout: 4000 },
+    async () => {
+      const sockets = new Set()
+      const upstream = net.createServer((socket) => {
+        sockets.add(socket)
+        socket.on('close', () => sockets.delete(socket))
+        const fragment = (chunks) => {
+          socket.write(chunks[0])
+          setTimeout(() => {
+            if (!socket.destroyed) socket.write(chunks[1])
+          }, 10)
+        }
+        if (protocol === 'http') {
+          socket.once('data', () =>
+            fragment([
+              'HTTP/1.1 ',
+              '200 Connection Established\r\nX-Test: yes\r\n\r\nhello-tunnel',
+            ])
+          )
+        } else {
+          socket.once('data', () => {
+            fragment([Buffer.from([5]), Buffer.from([2])])
+            socket.once('data', () => {
+              fragment([Buffer.from([1]), Buffer.from([0])])
+              socket.once('data', () =>
+                fragment([
+                  Buffer.from([5, 0, 0, 3, 4, 116]),
+                  Buffer.concat([
+                    Buffer.from([101, 115, 116, 0, 80]),
+                    Buffer.from('hello-tunnel'),
+                  ]),
+                ])
+              )
+            })
+          })
+        }
+      })
+      const upstreamPort = await listen(upstream)
+      const { proxy } = proxyFor(443, {
+        upstreamProxy: `${protocol}://user:pass@127.0.0.1:${upstreamPort}`,
+      })
+      const port = await listen(proxy)
+      try {
+        const response = await tunnelBanner(port)
+        assert.match(
+          response,
+          /^HTTP\/1\.1 200 Connection Established\r\n\r\nhello-tunnel$/
+        )
+      } finally {
+        for (const socket of sockets) socket.destroy()
+        proxy.close()
+        upstream.close()
+      }
+    }
+  )
+}
+
+for (const reply of [
+  'HTTP/1.1 200 OK\r\n',
+  'HTTP/1.1 200 OK\r\nX-Large: ' + 'a'.repeat(16384),
+]) {
+  test(`refuses ${reply.length > 16384 ? 'oversized' : 'incomplete'} HTTP proxy headers`, async () => {
+    const upstream = net.createServer((socket) =>
+      socket.once('data', () => socket.end(reply))
+    )
+    const upstreamPort = await listen(upstream)
+    const { proxy } = proxyFor(443, {
+      upstreamProxy: `http://127.0.0.1:${upstreamPort}`,
+    })
+    const port = await listen(proxy)
+    try {
+      assert.match(
+        await connectThrough(port, 'example.test:443'),
+        /^HTTP\/1\.1 502/
+      )
+    } finally {
+      proxy.close()
+      upstream.close()
+    }
+  })
+}
+
+test(
+  'plain HTTP uses a SOCKS tunnel after a fragmented IPv6 reply',
+  { timeout: 4000 },
+  async () => {
+    const sockets = new Set()
+    const upstream = net.createServer((socket) => {
+      sockets.add(socket)
+      socket.on('close', () => sockets.delete(socket))
+      socket.once('data', () => {
+        socket.write(Buffer.from([5, 0]))
+        socket.once('data', () => {
+          socket.write(Buffer.from([5, 0, 0, 4]))
+          setTimeout(() => {
+            if (!socket.destroyed) socket.write(Buffer.alloc(18))
+          }, 10)
+          socket.once('data', (request) => {
+            assert.match(request.toString(), /^GET \/page HTTP\/1\.1/)
+            socket.end(
+              'HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello'
+            )
+          })
+        })
+      })
+    })
+    const upstreamPort = await listen(upstream)
+    const { proxy } = proxyFor(80, {
+      upstreamProxy: `socks5://127.0.0.1:${upstreamPort}`,
+    })
+    const port = await listen(proxy)
+    try {
+      const result = await getThroughProxy(port, 'http://example.test/page')
+      assert.equal(result.status, 200)
+      assert.equal(result.body.toString(), 'hello')
+    } finally {
+      for (const socket of sockets) socket.destroy()
+      proxy.close()
+      upstream.close()
+    }
+  }
+)

@@ -47,11 +47,16 @@ export default function RestoreUserModal({
       const response = await postJSON<{
         success: boolean
         restoredProjectCount: number
+        failedProjectIds?: string[]
         error?: string
       }>(`/admin/users/api/users/${targetUserId}/restore`, { body: {} })
 
       if (response.error) {
         setError(response.error)
+      } else if (response.failedProjectIds?.length) {
+        setError(
+          `Account restored; these projects still need recovery: ${response.failedProjectIds.join(', ')}. Retry Restore Account to resume.`
+        )
       } else {
         onSuccess(response.restoredProjectCount || 0)
         onHide()

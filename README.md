@@ -62,6 +62,7 @@ Stateful data across all services is mapped cleanly to persistent directories or
 | `./data/mongo` | `/data/db` | MongoDB replica set database storage |
 | `./data/redis` | `/data` | Redis in-memory datastore persistence files |
 | `overleaf-browser-profile` | `/data/profile` | Ephemeral user profile storage for the browser container |
+| `template-gallery-data` | `/var/lib/overleaf/data/template-gallery` | Persistent blob storage, PDF caches, and crawler staging for Template Gallery |
 
 ### Running the Browser Service (Optional for AI Web Fetch)
 
@@ -130,6 +131,16 @@ To enable sandboxed compilation:
   ```bash
   docker compose exec overleaf bin/console-admin-create-user --email admin@example.com --password YourSecurePassword123! --admin
   ```
+
+For the hot-reload dev server, run `./dev-server/dev up` after building a local
+slim image. It creates the initial admin with a random password and saves its
+credentials in `dev-server/.admin-credentials` with owner-only permissions.
+Set `ADMIN_EMAIL` and optionally `ADMIN_PASSWORD` before the first start to
+supply initial credentials. Later starts preserve existing admin passwords;
+the private file records the initial credential and does not track password
+changes made through the app. Older credentials migrate from the dev `.env`
+without changing their values; rotate any old shared password through the app.
+See [the dev server guide](dev-server/DESIGN.md) for details.
 
 ---
 
@@ -360,7 +371,14 @@ Adds inline commenting, comment resolution threads, user @mentions, track change
 | Environment Variable | Default | Description |
 | :--- | :--- | :--- |
 | `COLLABORATION_ENABLED`* | `false` | Turn on comments, track changes, Reviewer role, @mentions and email digests. |
-| `COMMENT_MENTION_DELAY_MS` | `300000` | Delay before comment emails are sent (ms). |
+
+Comment email digests become ready after five minutes without new comments,
+or fifteen minutes after the first pending comment, whichever comes first.
+Batches are stored in the instance's existing Redis and survive web worker
+restarts; failed deliveries retain their batch and retry with exponential
+backoff. Delivery can take longer while email service is unavailable, and a
+crash after SMTP acceptance can cause duplicate mail. The worker reuses native
+Redis connection settings; no additional configuration variables are required.
 
 ---
 
@@ -524,3 +542,13 @@ Serves a Privacy & Terms page at `/legal` and adds a "Privacy & Terms" link to t
 | Environment Variable | Default | Description |
 | :--- | :--- | :--- |
 | `LEGAL_PAGE_ENABLED`* | `false` | Turn on the legal page at `/legal`. |
+
+---
+
+### 11. Template Gallery
+
+Integrates an offline/hybrid Template Gallery at `/templates` with catalogue searching, source acquisition, PDF previews, and automated compiler validation. Off by default.
+
+| Environment Variable | Default | Description |
+| :--- | :--- | :--- |
+| `TEMPLATE_GALLERY_ENABLED`* | `false` | Turn on the template gallery at `/templates`. |

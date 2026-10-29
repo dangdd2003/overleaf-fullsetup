@@ -1,4 +1,8 @@
+vi.mock('../../../app/src/CommentEmailBatcher.mjs', () => ({
+  default: { start: vi.fn(), queueCommentNotification: vi.fn() },
+}))
 import { vi, describe, it, expect, beforeEach } from 'vitest'
+import CommentEmailBatcher from '../../../app/src/CommentEmailBatcher.mjs'
 
 const {
   mockProjectGetter,
@@ -337,6 +341,46 @@ describe('CommentNotificationHandler', () => {
   })
 
   describe('handleCommentMessageSent', () => {
+    it.each(['queue creation', 'Redis append'])(
+      'continues notifying recipients when %s fails',
+      async failure => {
+        const authorId = 'aaaaaaaaaaaaaaaaaaaaaaaa'
+        const memberIds = ['bbbbbbbbbbbbbbbbbbbbbbbb', 'cccccccccccccccccccccccc']
+        const projectId = 'project'
+        mockProjectGetter.promises.getProject.mockResolvedValue({
+          _id: projectId,
+          owner_ref: authorId,
+          collaberator_refs: memberIds,
+        })
+        mockUserGetter.promises.getUser.mockImplementation(async id => ({ _id: id }))
+        mockChatApiHandler.promises.getThread.mockResolvedValue({ messages: [] })
+        mockNotificationPreferences.getUserProjectPreferences.mockResolvedValue({
+          commentOnInvitedProject: true,
+        })
+        mockNotificationsHandler.promises.createNotification.mockResolvedValue()
+        const error = new Error(`${failure} unavailable`)
+        CommentEmailBatcher.queueCommentNotification.mockImplementationOnce(() => {
+          if (failure === 'queue creation') throw error
+          return Promise.reject(error)
+        })
+
+        await handleCommentMessageSent({
+          projectId,
+          threadId: 'thread',
+          userId: authorId,
+          content: 'A persisted comment',
+        })
+
+        expect(mockNotificationsHandler.promises.createNotification.mock.calls.map(call => call[0]))
+          .toEqual(memberIds)
+        expect(CommentEmailBatcher.queueCommentNotification).toHaveBeenCalledTimes(2)
+        expect(mockLogger.warn).toHaveBeenCalledWith(
+          expect.objectContaining({ err: error, recipientId: memberIds[0] }),
+          'failed to queue comment email notification'
+        )
+      }
+    )
+
     it('resolves recipients and dispatches notifications', async () => {
       const memberId = 'cccccccccccccccccccccccc'
       const authorId = 'dddddddddddddddddddddddd'

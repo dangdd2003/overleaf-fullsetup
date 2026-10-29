@@ -1,0 +1,51 @@
+extends ../../../../app/views/layout-website-redesign
+
+include ./_mixins
+
+block vars
+	- isWebsiteRedesign = true
+	- showThinFooter = false
+	- metadata = { title: translate(copy.pageTitleKey), description: translate('hundreds_templates_info'), canonicalURL: canonicalURL }
+
+block entrypointVar
+	- entrypoint = 'modules/template-gallery/pages/template-gallery'
+
+block content
+	main#main-content.gallery.gallery-tagged.content.content-page
+		.container
+			.tagged-header-container
+				.row
+					.col-xl-6.col-lg-5
+						+previous-page-link(backHref, translate('gallery_back_to_all', { itemPlural: translate(copy.itemPluralKey) }))
+					.col-xl-6.col-lg-7
+						+gallery-filters(filters, 'div')
+					.col-md-12
+						h1.gallery-title #{translate(copy.titleKey)} — #{tag.title}
+				.row
+					.col-lg-8
+						p.gallery-summary= tag.summary
+
+			if recent.length
+				if topPicks.length
+					.top-picks-banner.container
+						.card.card-gray-dark
+							.card-body
+								.row
+									.col-sm-12
+										h2= translate('selected_by_overleaf_staff')
+									.doc-rows-container
+										+gallery-card-grid(topPicks)
+				.row.recent-docs
+					.col-md-12
+						h2= translate('recent')
+				+gallery-card-grid(recent)
+				+gallery-pagination(pagination)
+			else
+				p.no-articles-matching= translate('no_articles_matching_your_tags')
+
+			if tag.related.length
+				+gallery-related-tags(tag.related)
+
+			.row
+				.col-12
+					+gallery-begin-now

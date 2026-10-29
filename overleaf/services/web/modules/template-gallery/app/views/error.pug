@@ -1,0 +1,19 @@
+extends ../../../../app/views/layout-website-redesign
+
+include ./_mixins
+
+block vars
+	- isWebsiteRedesign = true
+	- showThinFooter = false
+	- metadata = { title: title || translate(titleKey || 'generic_something_went_wrong') }
+
+block content
+	main#main-content.gallery.content.content-page
+		.container
+			.row.previous-page-link-container
+				.col-lg-6
+					+previous-page-link('/latex/templates', translate('gallery_back_to_all', { itemPlural: translate('templates_lowercase') }))
+			.row
+				.col-lg-8
+					h1.h2= title || translate(titleKey || 'generic_something_went_wrong')
+					p= message || translate(messageKey || 'something_went_wrong_server')

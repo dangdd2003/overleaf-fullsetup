@@ -1,8 +1,8 @@
 ---
 services:
-  sharelatex:
+  overleaf:
     image: dangdoan2003/sharelatex:latest
   mongo:
     image: mongo:latest
   redis:
-    image: mongo:latest
+    image: redis:latest

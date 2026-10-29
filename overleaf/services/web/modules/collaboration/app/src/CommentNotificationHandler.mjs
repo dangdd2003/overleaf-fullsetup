@@ -177,14 +177,23 @@ export async function handleCommentMessageSent({
     )
 
     // 2. Batched email digest (debounced & deferred via Queue)
-    CommentEmailBatcher.queueCommentNotification(
-      recipient,
-      project,
-      author,
-      threadId,
-      content,
-      isMention
-    )
+    try {
+      await CommentEmailBatcher.queueCommentNotification(
+        recipient,
+        project,
+        author,
+        threadId,
+        content,
+        isMention
+      )
+    } catch (err) {
+      // The comment is already persisted. An unavailable email queue must not
+      // fail its response or prevent other recipients' in-app notifications.
+      logger.warn(
+        { err, projectId, threadId, recipientId: recipient._id.toString() },
+        'failed to queue comment email notification'
+      )
+    }
   }
 }
 

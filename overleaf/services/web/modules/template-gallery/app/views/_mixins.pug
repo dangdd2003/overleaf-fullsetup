@@ -1,0 +1,161 @@
+include ../../../../app/views/_mixins/eyebrow
+include ../../../../app/views/_mixins/previous_page_link
+
+//- Markup of these mixins mirrors the official overleaf.com gallery pages
+//- (class names and structure), minus their analytics attributes.
+
+mixin gallery-filters(filters, wrapper)
+	#{wrapper || 'nav'}.gallery-filters
+		span #{translate('filters')}:
+		each filter, index in filters
+			if index > 0
+				span(aria-hidden='true') /
+			a(href=filter.href class=filter.active ? 'active' : undefined)= translate(filter.labelKey)
+
+mixin gallery-search(search)
+	.row
+		.col-md-12
+			//- Placeholder hydrated by the gallery search widget.
+			#gallery-search.gallery-search(
+				data-query=search && search.query ? search.query : undefined
+				data-page=search && search.page ? search.page : undefined
+			)
+				form#algolia-search-form
+					input.form-control(disabled aria-label=translate('search'))
+					button.btn.btn-primary(disabled)= translate('search')
+
+mixin gallery-category(tile)
+	.gallery-thumbnail.col-12.col-md-6.col-lg-4
+		a(href=tile.href)
+			.thumbnail-tag
+				img(src=buildImgPath(tile.icon) alt=translate(tile.titleKey))
+			span.caption-title= translate(tile.titleKey)
+		p= translate(tile.descriptionKey)
+
+mixin gallery-card(card)
+	.gallery-thumbnail.col-12.col-md-6.col-lg-4
+		a(href=card.href)
+			.thumbnail
+				img(src=card.thumbUrl alt=card.title loading='lazy')
+			span.gallery-list-item-title
+				span.caption-title= card.title
+				span.badge-container
+					if card.badge === 'official'
+						span.badge.bg-info(title=translate('template_approved_by_publisher'))
+							span.badge-content= translate('official')
+					else if card.badge === 'top-pick'
+						span.badge.bg-primary(
+							data-bs-toggle='tooltip'
+							data-bs-placement='bottom'
+							title=translate('template_top_pick_by_overleaf')
+						)
+							span.badge-content= translate('top_pick')
+		.caption
+			p.caption-description= card.description
+			.author-name
+				div= card.author
+
+mixin gallery-card-grid(cards)
+	.row.gallery-container
+		each card in cards
+			+gallery-card(card)
+
+mixin gallery-pagination(pagination)
+	if pagination
+		nav(role='navigation' aria-label=translate('pagination_navigation'))
+			ul.pagination
+				if pagination.first
+					li
+						a(aria-label=translate('go_to_first_page') href=pagination.first)
+							span(aria-hidden='true') &lt;&lt;
+							|  #{translate('first')}
+				if pagination.prev
+					li
+						a(
+							aria-label=translate('go_to_previous_page')
+							href=pagination.prev
+							rel='prev'
+						)
+							span(aria-hidden='true') &lt;
+							|  #{translate('prev')}
+				if pagination.leadingEllipsis
+					li(aria-hidden='true')
+						span …
+				each page in pagination.pages
+					if page.current
+						li.active
+							span(
+								aria-label=translate('current_page_page', { page: page.number })
+								aria-current='true'
+							)= page.number
+					else
+						li
+							a(
+								aria-label=translate('go_to_page_x', { page: page.number })
+								href=page.href
+							)= page.number
+				if pagination.trailingEllipsis
+					li.ellipses(aria-hidden='true')
+						span …
+				if pagination.next
+					li
+						a(
+							aria-label=translate('go_to_next_page')
+							href=pagination.next
+							rel='next'
+						)
+							| #{translate('next')}#{' '}
+							span(aria-hidden='true') &gt;
+				if pagination.last
+					li
+						a(aria-label=translate('go_to_last_page') href=pagination.last)
+							| #{translate('last')}#{' '}
+							span(aria-hidden='true') &gt;&gt;
+
+mixin gallery-related-tags(tags)
+	.row.related-tags-header
+		.col
+			h2= translate('related_tags')
+	.row
+		.col
+			ul#related-tags.related-tags.badge-link-list
+				each tag in tags
+					li
+						a.badge-link.badge-link-light.col-auto(href=tag.href)
+							span.badge.text-dark.bg-light
+								span.badge-content(
+									data-bs-title=tag.title
+									data-badge-tooltip
+									data-bs-placement='bottom'
+								)= tag.title
+	//- Revealed by the page script when the list overflows its two rows.
+	#more-tags-container.row.show-more-tags.d-none
+		.col-auto
+			button#more-tags.btn.btn-sm.btn-secondary(
+				type='button'
+				aria-controls='related-tags'
+			)= translate('gallery_show_more_tags')
+
+mixin gallery-begin-now()
+	- var showSignUp = hasFeature('registration-page') && !getSessionUser()
+	- var showPlans = hasFeature('saas')
+	.begin-now-card
+		.card.card-pattern
+			.card-body
+				p.dm-mono
+					span.font-size-display-xs
+						span.text-purple-bright \begin
+						wbr
+						span.text-green-bright {
+						span now
+						span.text-green-bright }
+				p #{translate('discover_why_over_people_worldwide_trust_overleaf', { count: settings.userCountInMillions || 30 })}
+				if showSignUp || showPlans
+					p.card-links
+						if showSignUp
+							a.btn.btn-primary.card-link(href='/register')= translate('sign_up_for_free')
+						if showPlans
+							a.btn.card-link(
+								href='/user/subscription/plans'
+								class=showSignUp ? 'btn-secondary' : 'btn-primary'
+							)= translate('explore_all_plans')
