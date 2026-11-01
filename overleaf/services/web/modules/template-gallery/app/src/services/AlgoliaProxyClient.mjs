@@ -23,8 +23,19 @@ function isAuthError(err) {
   return err?.status === 401 || err?.status === 403
 }
 
+// Limiter refusals apply to the 'algolia' slot as a whole, so another host
+// would be refused the same way.
+const LIMITER_REFUSALS = new Set([
+  'circuit_open',
+  'host_backoff',
+  'host_busy',
+  'limiter_reset',
+  'EOUTBOUND_BLOCKED',
+])
+
 function shouldTryNextHost(err) {
-  if (err?.code === 'circuit_open' || err?.name === 'AbortError') return false
+  if (LIMITER_REFUSALS.has(err?.code) || err?.name === 'AbortError')
+    return false
   const status = Number(err?.status) || null
   return status == null || RETRYABLE_STATUSES.has(status)
 }
@@ -39,8 +50,9 @@ async function queryWithConfig(config, params, opts) {
       const res = await withHostSlot(
         'algolia',
         { priority: opts.priority, signal: opts.signal },
-        () =>
+        ({ egress } = {}) =>
           GuardedHttps.requestRaw(`${host}${path}`, {
+            egress,
             method: 'POST',
             headers: {
               'X-Algolia-Application-Id': config.appId,
@@ -71,22 +83,24 @@ async function queryWithConfig(config, params, opts) {
  * POSTs a query to the gallery index.
  *
  * @param {object} params - Algolia search parameters (JSON body)
- * @param {object} [cfg] - template gallery settings
  * @param {{ priority?: string, signal?: AbortSignal, timeoutMs?: number }} [opts]
  */
-export async function queryAlgolia(params = {}, cfg = {}, opts = {}) {
-  const config = await AlgoliaConfigManager.getConfig(cfg)
+export async function queryAlgolia(params = {}, opts = {}) {
+  const config = await AlgoliaConfigManager.getConfig()
   try {
     return await queryWithConfig(config, params, opts)
   } catch (err) {
     if (!isAuthError(err)) throw err
     let refreshed
     try {
-      refreshed = await AlgoliaConfigManager.refresh(cfg)
+      refreshed = await AlgoliaConfigManager.refresh()
     } catch {
       throw err
     }
-    if (refreshed.apiKey === config.apiKey && refreshed.appId === config.appId) {
+    if (
+      refreshed.apiKey === config.apiKey &&
+      refreshed.appId === config.appId
+    ) {
       throw err
     }
     return queryWithConfig(refreshed, params, opts)

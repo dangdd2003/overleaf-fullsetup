@@ -1,5 +1,9 @@
-import crypto from 'node:crypto'
-import Settings from '@overleaf/settings'
+import { logWarn } from '../observability/Log.mjs'
+import {
+  decryptSecret,
+  encryptSecret,
+  hasConfiguredSecret,
+} from './SecretBox.mjs'
 
 /**
  * Storage and encryption for upstream Overleaf Cloud session credentials.
@@ -7,87 +11,35 @@ import Settings from '@overleaf/settings'
  * Format: v2:<ivHex>:<authTagHex>:<ciphertextHex>
  */
 
-const FALLBACK_SECRET = 'overleaf-ce-template-gallery-fallback-secret'
 const CREDENTIAL_DOC_ID = 'credentials'
 
-function getSecret() {
-  return (
-    Settings?.security?.sessionSecret ||
-    Settings?.sessionSecret ||
-    FALLBACK_SECRET
-  )
-}
-
 /**
- * Derive 256-bit AES key using HKDF-SHA256.
+ * Warns once at startup when credentials would be encrypted with the built-in
+ * fallback secret, whose value is public. Encryption is unchanged; the
+ * operator fix is to set security.sessionSecret.
+ *
+ * @returns {boolean} true when the warning was logged
  */
-function deriveKey(secret) {
-  const salt = Buffer.from('template-gallery-session-v1', 'utf8')
-  const info = Buffer.from('aes-256-gcm', 'utf8')
-  return crypto.hkdfSync('sha256', secret, salt, info, 32)
+export function warnIfFallbackSecret() {
+  if (hasConfiguredSecret()) return false
+  logWarn('template_gallery_fallback_secret_in_use', {
+    hint: 'security.sessionSecret is not set; template gallery credentials use a public fallback key',
+  })
+  return true
 }
 
-/**
- * Encrypt a plaintext cookie value using AES-256-GCM.
- * Output format: v2:<ivHex>:<authTagHex>:<ciphertextHex>
- */
-export function encryptCookie(plaintext, secret = null) {
-  if (typeof plaintext !== 'string' || !plaintext) {
-    throw new Error('Plaintext cookie must be a non-empty string')
-  }
+warnIfFallbackSecret()
 
-  const key = deriveKey(secret || getSecret())
-  const iv = crypto.randomBytes(12) // 96-bit IV recommended for GCM
-  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv)
-
-  const ciphertext = Buffer.concat([
-    cipher.update(plaintext, 'utf8'),
-    cipher.final(),
-  ])
-  const authTag = cipher.getAuthTag()
-
-  return `v2:${iv.toString('hex')}:${authTag.toString('hex')}:${ciphertext.toString('hex')}`
-}
-
-/**
- * Decrypt an encrypted cookie payload.
- */
-export function decryptCookie(payload, secret = null) {
-  if (typeof payload !== 'string' || !payload) {
-    throw new Error('Payload must be a non-empty string')
-  }
-
-  const parts = payload.split(':')
-  if (parts.length !== 4 || parts[0] !== 'v2') {
-    throw new Error(`Invalid encrypted credential format: expected v2:... but got ${payload.slice(0, 10)}`)
-  }
-
-  const [, ivHex, authTagHex, ciphertextHex] = parts
-  const iv = Buffer.from(ivHex, 'hex')
-  const authTag = Buffer.from(authTagHex, 'hex')
-  const ciphertext = Buffer.from(ciphertextHex, 'hex')
-
-  const key = deriveKey(secret || getSecret())
-  const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv)
-  decipher.setAuthTag(authTag)
-
-  try {
-    const decrypted = Buffer.concat([
-      decipher.update(ciphertext),
-      decipher.final(),
-    ])
-    return decrypted.toString('utf8')
-  } catch (err) {
-    throw new Error(`Failed to decrypt credential payload: authentication tag mismatch or corrupted secret (${err.message})`)
-  }
-}
+// The cipher lives in SecretBox; these names are kept for existing callers.
+export const encryptCookie = encryptSecret
+export const decryptCookie = decryptSecret
 
 /**
  * Save encrypted session cookie into MongoDB templateGalleryConfig collection.
  */
-export async function saveSessionCredential(collection, cookieValue, userId = null) {
+export async function saveSessionCredential(collection, cookieValue) {
   if (!collection) throw new Error('MongoDB collection required')
-  const encrypted = encryptCookie(cookieValue)
+  const encrypted = encryptSecret(cookieValue)
   const now = new Date()
 
   await collection.updateOne(
@@ -96,7 +48,6 @@ export async function saveSessionCredential(collection, cookieValue, userId = nu
       $set: {
         encryptedCookie: encrypted,
         status: 'VALID',
-        updatedBy: userId,
         updatedAt: now,
         invalidatedAt: null,
         invalidReason: null,
@@ -113,7 +64,10 @@ export async function saveSessionCredential(collection, cookieValue, userId = nu
 
 /**
  * Retrieve and decrypt session cookie from MongoDB.
- * Returns null if no credential exists or if marked invalid.
+ * Returns null if no credential exists, if marked invalid, or if the stored
+ * cookie cannot be decrypted (it is then marked invalid).
+ * `encryptedCookie` is the stored ciphertext; pass it to markSessionInvalid so
+ * a cookie re-saved in the meantime is not invalidated. Never log or return it.
  */
 export async function getDecryptedSessionCredential(collection) {
   if (!collection) throw new Error('MongoDB collection required')
@@ -121,12 +75,57 @@ export async function getDecryptedSessionCredential(collection) {
   if (!doc || !doc.encryptedCookie) return null
   if (doc.status === 'INVALID') return null
 
-  const cookie = decryptCookie(doc.encryptedCookie)
+  let cookie
+  try {
+    cookie = decryptSecret(doc.encryptedCookie)
+  } catch (err) {
+    // Unreadable after a SESSION_SECRET rotation or damaged ciphertext: mark it
+    // INVALID so callers fall through to the next source instead of throwing.
+    // The filter leaves alone a cookie that was re-saved in the meantime.
+    try {
+      await collection.updateOne(
+        { _id: CREDENTIAL_DOC_ID, encryptedCookie: doc.encryptedCookie },
+        {
+          $set: {
+            status: 'INVALID',
+            invalidatedAt: new Date(),
+            invalidReason: 'decrypt_failed',
+          },
+        }
+      )
+    } catch (markErr) {
+      logWarn('template_gallery_session_mark_invalid_failed', {
+        err: markErr.message,
+      })
+    }
+    logWarn('template_gallery_session_undecryptable', { err: err.message })
+    return null
+  }
   return {
     cookie,
+    encryptedCookie: doc.encryptedCookie,
     status: doc.status,
     updatedAt: doc.updatedAt,
-    updatedBy: doc.updatedBy,
+  }
+}
+
+/**
+ * Admin view of the stored session cookie. Never returns the cookie itself.
+ *
+ * @returns {Promise<{ configured: boolean, updatedAt: string|null, invalid: boolean }>}
+ */
+export async function getStatus(collection) {
+  if (!collection) throw new Error('MongoDB collection required')
+  const doc = await collection.findOne(
+    { _id: CREDENTIAL_DOC_ID },
+    { projection: { status: 1, updatedAt: 1, encryptedCookie: 1 } }
+  )
+  const configured = Boolean(doc?.encryptedCookie)
+  return {
+    configured,
+    updatedAt:
+      configured && doc.updatedAt ? new Date(doc.updatedAt).toISOString() : null,
+    invalid: configured && doc.status === 'INVALID',
   }
 }
 
@@ -146,19 +145,24 @@ export async function getSessionCredentialState(collection) {
 
 /**
  * Mark active session credential invalid due to 401/403/captcha.
+ * Optional encryptedCookie filter prevents invalidating credentials updated
+ * by an admin while an acquisition attempt was in-flight.
  */
-export async function markSessionInvalid(collection, reason = 'auth_failed') {
+export async function markSessionInvalid(
+  collection,
+  reason = 'auth_failed',
+  encryptedCookie = null
+) {
   if (!collection) throw new Error('MongoDB collection required')
-  await collection.updateOne(
-    { _id: CREDENTIAL_DOC_ID },
-    {
-      $set: {
-        status: 'INVALID',
-        invalidatedAt: new Date(),
-        invalidReason: reason,
-      },
-    }
-  )
+  const filter = { _id: CREDENTIAL_DOC_ID }
+  if (encryptedCookie) filter.encryptedCookie = encryptedCookie
+  await collection.updateOne(filter, {
+    $set: {
+      status: 'INVALID',
+      invalidatedAt: new Date(),
+      invalidReason: reason,
+    },
+  })
 }
 
 /**
@@ -170,11 +174,13 @@ export async function clearSessionCredential(collection) {
 }
 
 export default {
+  warnIfFallbackSecret,
   encryptCookie,
   decryptCookie,
   saveSessionCredential,
   getDecryptedSessionCredential,
   getSessionCredentialState,
+  getStatus,
   markSessionInvalid,
   clearSessionCredential,
 }

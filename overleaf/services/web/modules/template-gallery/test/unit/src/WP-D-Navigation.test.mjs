@@ -12,9 +12,6 @@ vi.mock('../../../app/src/TemplateGalleryRouter.mjs', () => ({
 vi.mock('../../../app/src/Lifecycle.mjs', () => ({
   default: { installNavigation, start: lifecycleStart },
 }))
-vi.mock('../../../app/src/hooks/UserDeletion.mjs', () => ({
-  default: { onUserRemoved: vi.fn() },
-}))
 
 const { default: TemplateGalleryModule, installHeaderNavigation } =
   await import('../../../index.mjs')

@@ -1,9 +1,0 @@
----
-services:
-  overleaf:
-    volumes:
-      - "template-gallery-data:/var/lib/overleaf/data/template-gallery"
-
-volumes:
-  template-gallery-data:
-    name: template-gallery-data

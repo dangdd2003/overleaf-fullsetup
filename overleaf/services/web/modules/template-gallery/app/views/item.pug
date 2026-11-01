@@ -1,0 +1,12 @@
+extends ../../../../app/views/layout-react
+
+block entrypointVar
+	- entrypoint = 'modules/template-gallery/pages/template-gallery-item'
+
+block append meta
+	meta(name='ol-target-item-id' content=itemId)
+
+block content
+	#main-content.content.content-alt
+		.container
+			#template-gallery-item-container

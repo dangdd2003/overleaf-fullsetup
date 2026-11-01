@@ -57,12 +57,11 @@ Stateful data across all services is mapped cleanly to persistent directories or
 
 | Host Directory / Volume | Target Container Path | Purpose |
 | :--- | :--- | :--- |
-| `./data/overleaf` | `/var/lib/overleaf` | Overleaf uploaded assets, project files, SQLite caches, and AI transcripts |
+| `./data/overleaf` | `/var/lib/overleaf` | Overleaf uploaded assets, project files, SQLite caches, AI transcripts, and Template Gallery blobs and catalogue snapshot (`data/template-gallery`) |
 | `./data/overleaf/log` | `/var/log/overleaf` | Service application and access logs |
 | `./data/mongo` | `/data/db` | MongoDB replica set database storage |
 | `./data/redis` | `/data` | Redis in-memory datastore persistence files |
 | `overleaf-browser-profile` | `/data/profile` | Ephemeral user profile storage for the browser container |
-| `template-gallery-data` | `/var/lib/overleaf/data/template-gallery` | Persistent blob storage, PDF caches, and crawler staging for Template Gallery |
 
 ### Running the Browser Service (Optional for AI Web Fetch)
 
@@ -547,8 +546,9 @@ Serves a Privacy & Terms page at `/legal` and adds a "Privacy & Terms" link to t
 
 ### 11. Template Gallery
 
-Integrates an offline/hybrid Template Gallery at `/templates` with catalogue searching, source acquisition, PDF previews, and automated compiler validation. Off by default.
+A local mirror of the overleaf.com template gallery, served at `/latex/templates` (the old `/templates` URLs redirect there). It syncs the catalogue, detail pages and PDFs from overleaf.com, and serves them from the data volume. Admins control sync (manual, or automatic every N days) and optional outbound proxies from the admin Templates page. Off by default.
 
 | Environment Variable | Default | Description |
 | :--- | :--- | :--- |
-| `TEMPLATE_GALLERY_ENABLED`* | `false` | Turn on the template gallery at `/templates`. |
+| `TEMPLATE_GALLERY_ENABLED`* | `false` | Turn on the template gallery at `/latex/templates`. |
+| `TEMPLATE_GALLERY_FETCH_RPM` | `30` | Requests a minute to overleaf.com per outbound route (direct or proxy), shared by the sync and gallery pages. Whole number, 1-120. |

@@ -18,6 +18,8 @@ const MAX_TERMS = 10
 const SNIPPET_ELLIPSIS = '…'
 const WORD_REGEX = /[\p{L}\p{M}\p{N}]+/gu
 const MONGO_INDEX_NOT_FOUND = 27
+// Upper bound for the unindexed regex fallback, which scans every item.
+const FALLBACK_MAX_TIME_MS = 2_000
 
 const PROJECTION = {
   token: 1,
@@ -210,12 +212,31 @@ function isMissingTextIndex(err) {
   )
 }
 
-async function findPage(col, filter, sort, projection, skip, limit) {
+// `bounded` is for the unindexed regex fallback: the time budget applies to the
+// page and the count, and the count stops at MAX_RESULTS matches.
+async function findPage(
+  col,
+  filter,
+  sort,
+  projection,
+  skip,
+  limit,
+  bounded = false
+) {
+  const timing = bounded ? { maxTimeMS: FALLBACK_MAX_TIME_MS } : {}
   const [docs, nbHits] = await Promise.all([
     limit > 0
-      ? col.find(filter, { projection }).sort(sort).skip(skip).limit(limit).toArray()
+      ? col
+          .find(filter, { projection, ...timing })
+          .sort(sort)
+          .skip(skip)
+          .limit(limit)
+          .toArray()
       : [],
-    col.countDocuments(filter),
+    col.countDocuments(
+      filter,
+      bounded ? { limit: MAX_RESULTS, ...timing } : {}
+    ),
   ])
   return { docs, nbHits }
 }
@@ -242,7 +263,8 @@ async function runQuery(col, terms, skip, limit) {
     { recentOrder: -1, objectIDNum: -1 },
     PROJECTION,
     skip,
-    limit
+    limit,
+    true
   )
 }
 
@@ -277,7 +299,9 @@ export function formatHit(item, terms) {
  * @returns {Promise<{ hits: Array<object>, nbHits: number, page: number, nbPages: number, hitsPerPage: number, query: string }>}
  */
 export async function search({ q, page, hitsPerPage } = {}) {
-  const query = String(q ?? '').trim().slice(0, MAX_QUERY_CHARS)
+  const query = String(q ?? '')
+    .trim()
+    .slice(0, MAX_QUERY_CHARS)
   const perPage = clampInt(hitsPerPage, {
     min: 1,
     max: MAX_HITS_PER_PAGE,

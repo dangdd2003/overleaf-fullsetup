@@ -86,17 +86,6 @@ const settings = {
 
   brandPrefix: '',
 
-  templateGallery: {
-    storage: {
-      acceptedParentMounts:
-        process.env.NODE_ENV === 'development' ? ['/var/lib/overleaf'] : [],
-    },
-    validation: {
-      sandboxEnforced:
-        (process.env.DOCKER_RUNNER || process.env.SANDBOXED_COMPILES) === 'true',
-    },
-  },
-
   allowAnonymousReadAndWriteSharing:
     process.env.OVERLEAF_ALLOW_ANONYMOUS_READ_AND_WRITE_SHARING === 'true',
 

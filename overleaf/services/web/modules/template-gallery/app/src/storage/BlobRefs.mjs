@@ -4,8 +4,16 @@
 // `kind` tells the integrity check how to repair a corrupt blob:
 //  - media: drop the reference so the mirror fetches it again
 //  - source: drop the cached source package so the open flow re-acquires it
-//  - validation: drop the validation artefact
-//  - upload: admin-provided content that cannot be re-fetched
+
+// The source package is one record: a broken package drops all of it, including
+// the zip.sha256 that cachedSource() falls back to.
+const SOURCE_CLEARS = Object.freeze([
+  'sourceBlobStoreKey',
+  'sourcePackageHash',
+  'acquisitionTier',
+  'sourceAcquired',
+  'zip.sha256',
+])
 
 export const BLOB_REF_FIELDS = Object.freeze([
   {
@@ -23,27 +31,10 @@ export const BLOB_REF_FIELDS = Object.freeze([
     kind: 'media',
     clears: ['media.pdfSha', 'media.pdfBytes', 'mirror.pdfAt'],
   },
-  {
-    path: 'sourceBlobStoreKey',
-    kind: 'source',
-    clears: ['sourceBlobStoreKey', 'sourcePackageHash', 'acquisitionTier'],
-  },
-  {
-    path: 'sourcePackageHash',
-    kind: 'source',
-    clears: ['sourceBlobStoreKey', 'sourcePackageHash', 'acquisitionTier'],
-  },
-  { path: 'zip.sha256', kind: 'upload', clears: [] },
-  { path: 'thumbnail.sha256', kind: 'upload', clears: [] },
-  { path: 'pdf.sha256', kind: 'validation', clears: ['pdf'] },
-  { path: 'validation.pdfSha', kind: 'validation', clears: ['validation.pdfSha'] },
-  { path: 'validation.logSha', kind: 'validation', clears: ['validation.logSha'] },
-  {
-    path: 'validation.logSha256',
-    kind: 'validation',
-    clears: ['validation.logSha256'],
-  },
-  // pre-mirror hydration cache
+  { path: 'sourceBlobStoreKey', kind: 'source', clears: SOURCE_CLEARS },
+  { path: 'sourcePackageHash', kind: 'source', clears: SOURCE_CLEARS },
+  { path: 'zip.sha256', kind: 'source', clears: SOURCE_CLEARS },
+  // pre-mirror hydration cache, kept so GC does not sweep it
   { path: 'pdfBlobStoreKey', kind: 'media', clears: ['pdfBlobStoreKey'] },
 ])
 

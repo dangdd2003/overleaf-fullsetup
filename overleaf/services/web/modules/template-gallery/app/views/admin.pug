@@ -4,7 +4,9 @@ block entrypointVar
 	- entrypoint = 'modules/template-gallery/pages/template-gallery-admin'
 
 block vars
-	- isWebsiteRedesign = true
+	- title = 'Template Mirror'
 
 block content
-	#template-gallery-admin-container(data-csrf-token=csrfToken)
+	#main-content.content.content-alt
+		.container
+			#template-gallery-admin-container

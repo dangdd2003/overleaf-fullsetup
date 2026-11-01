@@ -5,27 +5,12 @@ set -euo pipefail
 # Fails closed if TEMPLATE_GALLERY_ENABLED is not true
 [ "${TEMPLATE_GALLERY_ENABLED:-false}" = "true" ] || exit 0
 
+# The store is a sub-folder of the main Overleaf data volume (one volume, one backup),
+# so there is no mount check. The layout must match services/web template-gallery
+# storage/Paths.mjs LAYOUT_SUBDIRS.
 D="/var/lib/overleaf/data/template-gallery"
 
-# Check /proc/self/mountinfo to ensure $D is mounted
-# Format: 5th field (space-delimited) is mount point
-is_mounted() {
-  local target="$1"
-  if [ -r /proc/self/mountinfo ]; then
-    while read -r _ _ _ _ mp _; do
-      # Decode octal escapes if any (\040 etc.), but $target is straightforward ascii
-      if [ "$mp" = "$target" ]; then
-        return 0
-      fi
-    done < /proc/self/mountinfo
-  fi
-  return 1
-}
-
-if is_mounted "$D"; then
-  chown www-data:www-data "$D"
-  chmod 0750 "$D"
-  mkdir -p "$D/blobs/sha256" "$D/tmp" "$D/scratch" "$D/quarantine"
-  chown -R www-data:www-data "$D"
-  chmod -R 0750 "$D"
-fi
+mkdir -p "$D/blobs/sha256" "$D/tmp" "$D/scratch" "$D/quarantine" "$D/catalog"
+chown www-data:www-data "$D" "$D/blobs" "$D/blobs/sha256" "$D/tmp" "$D/scratch" "$D/quarantine" "$D/catalog"
+chmod 0750 "$D" "$D/blobs" "$D/blobs/sha256" "$D/tmp" "$D/scratch" "$D/quarantine" "$D/catalog"
+find "$D" \( ! -user www-data -o ! -group www-data \) -exec chown www-data:www-data {} +

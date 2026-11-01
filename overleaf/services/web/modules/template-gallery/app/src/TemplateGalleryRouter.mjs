@@ -1,9 +1,13 @@
+import express from 'express'
 import AuthenticationController from '../../../../app/src/Features/Authentication/AuthenticationController.mjs'
 import AuthorizationMiddleware from '../../../../app/src/Features/Authorization/AuthorizationMiddleware.mjs'
+import RateLimiterMiddleware from '../../../../app/src/Features/Security/RateLimiterMiddleware.mjs'
+import { RateLimiter } from '../../../../app/src/infrastructure/RateLimiter.mjs'
 import GalleryController from './controllers/GalleryController.mjs'
 import * as OpenController from './controllers/OpenController.mjs'
 import * as SearchController from './controllers/SearchController.mjs'
 import AdminController from './controllers/AdminController.mjs'
+import { registerEgressRoutes } from './EgressRoutes.mjs'
 import GalleryReadService from './services/GalleryReadService.mjs'
 import requireSiteAdminJson from './middleware/requireSiteAdminJson.mjs'
 import { SCOPES, scopeBase } from './util/GalleryUrls.mjs'
@@ -15,10 +19,35 @@ const ITEM = ':slug/:token([a-z]{12})'
 
 const FAMILY_SCOPES = SCOPES.filter(scope => scope !== 'gallery')
 
+// Admin rate limits, per user. Writes allow 60 a minute; hydration and source
+// refetch (upstream work) allow 10.
+function adminRateLimit(name, points) {
+  return RateLimiterMiddleware.rateLimit(
+    new RateLimiter(name, { points, duration: 60 }),
+    {
+      onLimited(res, limiterRes) {
+        res.set(
+          'Retry-After',
+          String(Math.ceil((limiterRes?.msBeforeNext || 60_000) / 1000))
+        )
+        res.status(429).json({ error: 'rate_limited' })
+      },
+    }
+  )
+}
+
+const adminWriteRateLimit = adminRateLimit('template-gallery-admin-write', 60)
+const adminHeavyRateLimit = adminRateLimit('template-gallery-admin-heavy', 10)
+
+// The session cookie is a single short string; keep its body small.
+const credentialJsonParser = express.json({ limit: '16kb' })
+
 export function apply(webRouter) {
   const requireLogin = AuthenticationController.requireLogin()
 
-  if (typeof AuthenticationController.addEndpointToLoginWhitelist === 'function') {
+  if (
+    typeof AuthenticationController.addEndpointToLoginWhitelist === 'function'
+  ) {
     AuthenticationController.addEndpointToLoginWhitelist(
       /^\/(?:latex\/(?:templates|examples)|articles|gallery|templates)(?!\/.*\/open(?:\/|$|\?))(?:\/.*)?$/
     )
@@ -36,7 +65,10 @@ export function apply(webRouter) {
     const base = scopeBase(scope)
     webRouter.get(base, GalleryController.renderScopeRoot(scope))
     webRouter.get(`${base}/recent`, GalleryController.renderRecent(scope))
-    webRouter.get(`${base}/recent/page/:page`, GalleryController.renderRecent(scope))
+    webRouter.get(
+      `${base}/recent/page/:page`,
+      GalleryController.renderRecent(scope)
+    )
     webRouter.get(`${base}/tagged/:name`, GalleryController.renderTagged(scope))
     webRouter.get(
       `${base}/tagged/:name/page/:page`,
@@ -44,14 +76,24 @@ export function apply(webRouter) {
     )
   }
 
-  webRouter.get('/gallery/_media/:token/thumb.jpg', GalleryController.serveThumbnail)
-  webRouter.get('/gallery/_media/:token/preview.jpg', GalleryController.servePreview)
+  webRouter.get(
+    '/gallery/_media/:token/thumb.jpg',
+    GalleryController.serveThumbnail
+  )
+  webRouter.get(
+    '/gallery/_media/:token/preview.jpg',
+    GalleryController.servePreview
+  )
   webRouter.get('/gallery/api/search', SearchController.search)
 
   for (const scope of FAMILY_SCOPES) {
     const base = scopeBase(scope)
     webRouter.get(`${base}/${ITEM}.pdf`, GalleryController.servePdf)
-    webRouter.get(`${base}/${ITEM}/open`, requireLogin, OpenController.renderOpenLoader)
+    webRouter.get(
+      `${base}/${ITEM}/open`,
+      requireLogin,
+      OpenController.renderOpenLoader
+    )
     webRouter.post(
       `${base}/${ITEM}/open`,
       requireLogin,
@@ -74,7 +116,9 @@ export function apply(webRouter) {
 
   const resolveLegacySlug = async (req, res, next) => {
     try {
-      const item = await GalleryReadService.findLegacyItemBySlug(req.params?.slug)
+      const item = await GalleryReadService.findLegacyItemBySlug(
+        req.params?.slug
+      )
       if (!item) return next()
       req.params = { ...req.params, token: item.token }
       next()
@@ -90,42 +134,116 @@ export function apply(webRouter) {
     OpenController.openTemplate
   )
 
-  // Admin HTML Page
-  webRouter.get('/admin/templates', requireLogin, ensureSiteAdminHtml, AdminController.renderAdminPage)
+  // Admin HTML pages
+  webRouter.get(
+    '/admin/templates',
+    requireLogin,
+    ensureSiteAdminHtml,
+    AdminController.renderAdminPage
+  )
+  webRouter.get(
+    '/admin/templates/items/:id',
+    requireLogin,
+    ensureSiteAdminHtml,
+    AdminController.renderItemPage
+  )
 
-  // Admin JSON API Routes
-  webRouter.get('/admin/templates/api/status', requireSiteAdminJson, AdminController.getStatus)
-  webRouter.get('/admin/templates/api/items', requireSiteAdminJson, AdminController.listItems)
-  webRouter.get('/admin/templates/api/items/:id', requireSiteAdminJson, AdminController.getItem)
-  webRouter.patch('/admin/templates/api/items/:id', requireSiteAdminJson, AdminController.patchItem)
+  // Admin JSON API Routes. The site-admin check runs for the whole prefix, so
+  // an unknown or newly added route under it is refused as well (defence in
+  // depth; each route below also lists the guard).
+  webRouter.use('/admin/templates/api', requireSiteAdminJson)
 
-  // BYO-ZIP & Package / Thumbnail Upload Routes
-  webRouter.post('/admin/templates/api/uploads', requireSiteAdminJson, AdminController.uploadByoZip)
-  webRouter.post('/admin/templates/api/items/:id/package', requireSiteAdminJson, AdminController.replaceItemPackage)
-  webRouter.post('/admin/templates/api/items/:id/zip', requireSiteAdminJson, AdminController.replaceItemPackage)
-  webRouter.post('/admin/templates/api/items/:id/thumbnail', requireSiteAdminJson, AdminController.uploadThumbnail)
+  // Sync overview
+  webRouter.get(
+    '/admin/templates/api/status',
+    requireSiteAdminJson,
+    AdminController.getStatus
+  )
+  webRouter.get(
+    '/admin/templates/api/status/summary',
+    requireSiteAdminJson,
+    AdminController.getStatusSummary
+  )
 
-  // Validation, Hydration, Licence & Publish Lifecycle Routes
-  webRouter.post('/admin/templates/api/items/:id/validate', requireSiteAdminJson, AdminController.validateItem)
-  webRouter.post('/admin/templates/api/items/:id/hydrate', requireSiteAdminJson, AdminController.hydrateItem)
-  webRouter.post('/admin/templates/api/items/:id/licence-ack', requireSiteAdminJson, AdminController.acknowledgeLicence)
-  webRouter.post('/admin/templates/api/items/:id/publish', requireSiteAdminJson, AdminController.publishItem)
-  webRouter.post('/admin/templates/api/items/:id/unpublish', requireSiteAdminJson, AdminController.unpublishItem)
-  webRouter.post('/admin/templates/api/items/:id/archive', requireSiteAdminJson, AdminController.archiveItem)
-  webRouter.post('/admin/templates/api/items/:id/delete', requireSiteAdminJson, AdminController.deleteItem)
-  webRouter.get('/admin/templates/api/items/:id/log', requireSiteAdminJson, AdminController.getValidationLog)
-  webRouter.get('/admin/templates/api/jobs/:id', requireSiteAdminJson, AdminController.getJob)
+  // Templates: mirrored items, detail and upstream refetch
+  webRouter.get(
+    '/admin/templates/api/items',
+    requireSiteAdminJson,
+    AdminController.listItems
+  )
+  webRouter.get(
+    '/admin/templates/api/items/:id',
+    requireSiteAdminJson,
+    AdminController.getItem
+  )
+  webRouter.post(
+    '/admin/templates/api/items/:id/hydrate',
+    requireSiteAdminJson,
+    adminHeavyRateLimit,
+    AdminController.hydrateItem
+  )
+  webRouter.post(
+    '/admin/templates/api/items/:id/source',
+    requireSiteAdminJson,
+    adminHeavyRateLimit,
+    AdminController.refetchSource
+  )
 
-  // Algolia Auto-Crawler & Tier-1 Cloud Session Credential Controls
-  webRouter.post('/admin/templates/api/crawler/sync', requireSiteAdminJson, AdminController.triggerCrawlerSync)
-  webRouter.post('/admin/templates/api/crawler/pause', requireSiteAdminJson, AdminController.pauseCrawler)
-  webRouter.post('/admin/templates/api/crawler/resume', requireSiteAdminJson, AdminController.resumeCrawler)
-  webRouter.post('/admin/templates/api/credentials/session', requireSiteAdminJson, AdminController.saveSessionCookie)
-  webRouter.delete('/admin/templates/api/credentials/session', requireSiteAdminJson, AdminController.deleteSessionCookie)
+  // Sync: start a run now, or stop the running one
+  webRouter.post(
+    '/admin/templates/api/crawler/sync',
+    requireSiteAdminJson,
+    adminWriteRateLimit,
+    AdminController.triggerCrawlerSync
+  )
+  webRouter.post(
+    '/admin/templates/api/crawler/sync/stop',
+    requireSiteAdminJson,
+    adminWriteRateLimit,
+    AdminController.stopCrawlerSync
+  )
 
-  // Maintenance Runner & Sandbox Override Controls
-  webRouter.post('/admin/templates/api/runner', requireSiteAdminJson, AdminController.controlRunner)
-  webRouter.post('/admin/templates/api/validation/unsandboxed-ack', requireSiteAdminJson, AdminController.acknowledgeUnsandboxed)
+  // Outbound proxies used for requests to overleaf.com, Algolia and S3
+  registerEgressRoutes(webRouter, {
+    requireSiteAdminJson,
+    jsonParser: credentialJsonParser,
+    adminWriteRateLimit,
+    adminHeavyRateLimit,
+  })
+
+  // Sync settings: automatic sync and refetch interval
+  webRouter.get(
+    '/admin/templates/api/settings',
+    requireSiteAdminJson,
+    AdminController.getSyncSettings
+  )
+  webRouter.post(
+    '/admin/templates/api/settings',
+    requireSiteAdminJson,
+    credentialJsonParser,
+    adminWriteRateLimit,
+    AdminController.saveSyncSettings
+  )
+
+  // Overleaf.com session cookie, used by Tier 1 of "Open as template"
+  webRouter.get(
+    '/admin/templates/api/credentials/session',
+    requireSiteAdminJson,
+    AdminController.getCredential
+  )
+  webRouter.post(
+    '/admin/templates/api/credentials/session',
+    requireSiteAdminJson,
+    credentialJsonParser,
+    adminWriteRateLimit,
+    AdminController.saveSessionCookie
+  )
+  webRouter.delete(
+    '/admin/templates/api/credentials/session',
+    requireSiteAdminJson,
+    adminWriteRateLimit,
+    AdminController.deleteSessionCookie
+  )
 }
 
 const TemplateGalleryRouter = {

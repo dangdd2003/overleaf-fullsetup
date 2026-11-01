@@ -50,8 +50,8 @@ export function extractMetaFromHtml(html) {
   }
 }
 
-function configuredDefaults(cfg) {
-  const alg = { ...DEFAULTS.crawler.algolia, ...(cfg?.crawler?.algolia || {}) }
+function configuredDefaults() {
+  const alg = DEFAULTS.crawler.algolia
   return {
     appId: alg.appId,
     apiKey: alg.apiKey,
@@ -74,9 +74,8 @@ function fromDoc(doc) {
  * Returns the Algolia credentials to use: last scraped key if any, otherwise
  * the configured default key.
  *
- * @param {object} [cfg]
  */
-export async function getConfig(cfg = {}) {
+export async function getConfig() {
   if (cachedConfig) return cachedConfig
   try {
     const col = await configCol()
@@ -88,7 +87,7 @@ export async function getConfig(cfg = {}) {
   } catch {
     // fall through to settings
   }
-  return configuredDefaults(cfg)
+  return configuredDefaults()
 }
 
 /**
@@ -96,10 +95,9 @@ export async function getConfig(cfg = {}) {
  * scrape is persisted; failures throw so a transient outage never pins a
  * stale key. Attempts are rate limited to one per 10 minutes per process.
  *
- * @param {object} [cfg]
  * @param {{ templatesUrl?: string, force?: boolean }} [opts]
  */
-export async function refresh(cfg = {}, opts = {}) {
+export async function refresh(opts = {}) {
   const now = Date.now()
   if (!opts.force && now - lastRefreshAttemptAt < MIN_REFRESH_INTERVAL_MS) {
     const err = new Error('algolia key refresh attempted too recently')
@@ -108,8 +106,9 @@ export async function refresh(cfg = {}, opts = {}) {
   }
   lastRefreshAttemptAt = now
 
-  const html = await withHostSlot('overleaf', { priority: 'background' }, () =>
+  const html = await withHostSlot('overleaf', { priority: 'background' }, ({ egress } = {}) =>
     GuardedHttps.fetchText(opts.templatesUrl || TEMPLATES_URL, {
+      egress,
       timeoutMs: 15_000,
     })
   )
@@ -126,7 +125,7 @@ export async function refresh(cfg = {}, opts = {}) {
     indexName:
       extracted.indexes?.gallery ||
       extracted.indexName ||
-      configuredDefaults(cfg).indexName,
+      configuredDefaults().indexName,
     fetchedAt: new Date(now),
   }
   const col = await configCol()

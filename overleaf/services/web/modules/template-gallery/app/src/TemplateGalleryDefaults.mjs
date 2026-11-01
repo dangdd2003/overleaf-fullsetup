@@ -1,22 +1,20 @@
 // overleaf/services/web/modules/template-gallery/app/src/TemplateGalleryDefaults.mjs
+//
+// The only configuration of the mirror. Nothing here is read from env vars or
+// settings.js: change a value here and redeploy. The one exception is the
+// overleaf.com request budget, which TEMPLATE_GALLERY_FETCH_RPM may override
+// (see ModuleSettings.mjs).
 const KiB = 1024
 const MiB = 1024 * KiB
-const GiB = 1024 * MiB
 const HOUR = 3600_000
 
 export const DEFAULTS = {
+  // Sub-folder of the main Overleaf data volume (one volume, one backup)
   storageDir: '/var/lib/overleaf/data/template-gallery',
-  storage: {
-    requireDedicatedMount: true, // Fails closed if not a dedicated mount
-    acceptedParentMounts: [], // Dev server: ['/var/lib/overleaf']
-    minFreeBytes: 5 * GiB,
-    maxStorageBytes: 50 * GiB, // Storage ceiling for blobs, PDFs, and ZIPs
-  },
   crawler: {
-    // Mirror overleaf.com: Algolia catalogue weekly, recent listings hourly,
-    // detail/PDF/tag pages trickled in the background. Request pacing per
-    // upstream host is fixed in transport/HostLimiter.mjs.
-    enabled: true,
+    // Algolia catalogue weekly, recent listings hourly, detail pages and PDFs
+    // fetched by the parallel sync pool (jobs/Scheduler.mjs). Parallel request
+    // limits per upstream host are in transport/HostLimiter.mjs.
     algolia: {
       // public search-only key from <meta name="ol-algolia">; refreshed
       // automatically when Algolia rejects it
@@ -24,18 +22,6 @@ export const DEFAULTS = {
       apiKey: '9ac63d917afab223adbd2cd09ad0eb17',
       indexName: 'gallery-production',
     },
-  },
-  hydration: {
-    lazyDetailScrape: true, // Fetch a missing detail when a page is viewed
-    cachePdfPreviews: true, // Keep fetched PDFs in the BlobStore
-  },
-  sourceAcquisition: {
-    tiers: [1, 2, 3, 4], // Active acquisition tiers
-    tier1Enabled: true, // Authenticated cloud session project clone
-    tier2Enabled: true, // Upstream git archive auto-fetch
-    tier3Enabled: true, // Anonymous #modalViewSource TeX synthesis
-    tier4Enabled: true, // Admin manual BYO-ZIP upload
-    autoAcquireOnOpen: true, // Lazily acquire source when user clicks "Open as Template"
   },
   outbound: {
     allowedHosts: [
@@ -46,15 +32,17 @@ export const DEFAULTS = {
       'sk53gl4jly-2.algolianet.com',
       'sk53gl4jly-3.algolianet.com',
       'writelatex.s3.amazonaws.com',
-      'github.com',
-      'api.github.com',
-      'codeload.github.com',
-      'gitlab.com',
     ],
     timeoutMs: 20_000,
     maxRedirects: 5,
     maxDownloadBytes: 64 * MiB,
     maxPdfBytes: 128 * MiB,
+    // Requests a minute to www.overleaf.com per outbound route (the direct
+    // connection and each proxy), shared by the sync and interactive pages.
+    // One every 2 s: half the 1/s overleaf.com is seen to accept, so a page a
+    // user opens still fits. A full first sync of ~10k templates (~2 requests
+    // each) takes about 11 h on one route; the weekly refetch about 6 h.
+    fetchRpm: 30,
   },
   limits: {
     maxZipBytes: 50 * MiB,
@@ -63,26 +51,10 @@ export const DEFAULTS = {
     maxEntryBytes: 25 * MiB,
     maxCompressionRatio: 100,
     maxInspectMs: 60_000,
-    maxPdfBytes: 25 * MiB,
-    maxLogBytes: 64 * KiB,
-    maxThumbnailBytes: 512 * KiB,
-    maxLicenceFileBytes: 64 * KiB,
-    maxDescriptionChars: 4000,
-    maxTags: 10,
-  },
-  validation: {
-    sandboxEnforced: false, // Populated from clsi sandbox switch in server-ce settings.js
-    allowUnsandboxedAck: false, // Explicit admin override for unsandboxed dev runs
-    compileTimeoutMs: 180_000,
-    maxRunMs: 360_000,
-    maxAttempts: 3,
-    backoffBaseMs: 60_000,
-    keepFailedStagingMs: 24 * HOUR,
-    queueCap: 100,
   },
   runner: {
     pollIntervalMs: 15_000,
-    lockLeaseMs: 600_000,
+    lockLeaseMs: 120_000, // renewed every heartbeat; a dead leader frees it within 2 min
     jobLeaseMs: 600_000,
     heartbeatMs: 60_000,
     gcIntervalMs: HOUR,
@@ -92,6 +64,7 @@ export const DEFAULTS = {
     blobGraceMs: 24 * HOUR,
   },
   images: {
+    // built-in TeX Live image mapping used by ImageMapper
     map: {
       'texlive-full:2026.1': 'texlive-full:2026',
       'texlive-full:2025.1': 'texlive-full:2025',
@@ -100,32 +73,24 @@ export const DEFAULTS = {
       'texlive-full:2022.1': 'texlive-full:2022',
     },
   },
-  licence: {
-    blockedCodes: ['cc-by-nc-4.0', 'cc-by-nc-sa-4.0', 'cc-by-nc-nd-4.0', 'unknown'],
-    counselOverride: [],
-    ackRequiredCodes: ['other'],
-    ackMinNoteChars: 20,
-  },
-  attribution: { allowSourceLinks: false },
-  search: { pageSize: 24, maxQueryChars: 100 },
 }
 
+export const MIN_FETCH_RPM = 1
+// The old adaptive floor (one request every 500 ms); faster gets blocked
+export const MAX_FETCH_RPM = 120
+
 /**
- * Recursive plain-object merge; arrays and scalars are replaced.
+ * A whole number of requests a minute within the allowed range, or null.
  */
-export function mergePlain(base, override) {
-  const result = { ...(base || {}) }
-  for (const [key, value] of Object.entries(override || {})) {
-    if (value && typeof value === 'object' && !Array.isArray(value)) {
-      result[key] = mergePlain(base?.[key] || {}, value)
-    } else {
-      result[key] = value
-    }
-  }
-  return result
+export function parseFetchRpm(value) {
+  if (value == null || String(value).trim() === '') return null
+  const rpm = Number(value)
+  if (!Number.isInteger(rpm)) return null
+  if (rpm < MIN_FETCH_RPM || rpm > MAX_FETCH_RPM) return null
+  return rpm
 }
 
 export default {
   DEFAULTS,
-  mergePlain,
+  parseFetchRpm,
 }

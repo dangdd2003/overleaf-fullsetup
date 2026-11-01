@@ -23,6 +23,7 @@ import {
   filterLinks,
   LISTING_DESCRIPTION_KEY,
 } from '../util/GalleryCopy.mjs'
+import { isTransientCode } from '../transport/HostLimiter.mjs'
 import { logError } from '../observability/Log.mjs'
 
 const VIEWS_DIR = Path.resolve(import.meta.dirname, '../../views')
@@ -33,7 +34,8 @@ const META_DESCRIPTION_MAX = 155
 
 const MEDIA_CACHE_CONTROL = 'public, max-age=86400'
 const FALLBACK_MEDIA_CACHE_CONTROL = 'public, max-age=3600'
-const DATA_URI_REGEX = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/i
+const DATA_URI_REGEX =
+  /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/i
 
 function view(name) {
   return Path.join(VIEWS_DIR, name)
@@ -92,7 +94,6 @@ function truncate(text, max) {
 
 function renderError(res, status, { titleKey, messageKey }) {
   return res.status(status).render(view('error'), {
-    showThinFooter: false,
     statusCode: status,
     titleKey,
     messageKey,
@@ -129,7 +130,6 @@ async function renderListing(req, res, { scope, page, recentOnly }) {
       : recentBase
 
   res.render(view('listing'), {
-    showThinFooter: false,
     scope,
     copy: scopeCopy(scope),
     filters: filterLinks(scope),
@@ -185,7 +185,11 @@ export function renderTagged(scope) {
     if (!tagName || page === null) return next()
 
     try {
-      const listing = await GalleryReadService.listPage({ scope, tagName, page })
+      const listing = await GalleryReadService.listPage({
+        scope,
+        tagName,
+        page,
+      })
       const tag = await GalleryReadService.getTagView({
         scope,
         tagName,
@@ -193,10 +197,10 @@ export function renderTagged(scope) {
         count: listing.total,
       })
       const basePath = taggedHref(scope, tagName)
-      const path = req.params?.page !== undefined ? `${basePath}/page/${page}` : basePath
+      const path =
+        req.params?.page !== undefined ? `${basePath}/page/${page}` : basePath
 
       res.render(view('tagged'), {
-        showThinFooter: false,
         scope,
         copy: scopeCopy(scope),
         filters: filterLinks(scope, tagName),
@@ -254,7 +258,6 @@ export async function renderDetail(req, res, next) {
     const description = truncate(item.description, META_DESCRIPTION_MAX)
 
     res.render(view('detail'), {
-      showThinFooter: false,
       scope,
       copy: scopeCopy(scope),
       canonicalURL: canonicalUrl(href),
@@ -271,7 +274,9 @@ export async function renderDetail(req, res, next) {
         abstractHtml: item.abstractHtml || null,
         description: item.description || '',
         mainText: typeof item.mainText === 'string' ? item.mainText : null,
-        lastUpdated: lastUpdated(item.lastUpdatedAt),
+        lastUpdated: lastUpdated(
+          item.lastUpdatedAt || item.updatedAt || item.createdAt
+        ),
         tags: (item.tags || [])
           .filter(tag => tag?.name)
           .map(tag => ({
@@ -374,6 +379,9 @@ function serveImage(kind) {
       if (kind === 'thumb' && sendDataUri(res, item.thumbDataUri)) return
       return res.sendStatus(404)
     } catch (err) {
+      if (isTransientCode(err?.code)) {
+        if (!res.headersSent) return res.sendStatus(404)
+      }
       logError('tg.media.failed', err, { kind, token: req.params?.token })
       if (!res.headersSent) res.sendStatus(500)
     }
@@ -409,6 +417,9 @@ export async function servePdf(req, res, next) {
       },
     })
   } catch (err) {
+    if (isTransientCode(err?.code)) {
+      return next()
+    }
     logError('tg.pdf.failed', err, { token: req.params?.token })
     if (!res.headersSent) res.sendStatus(500)
   }
@@ -429,7 +440,9 @@ export function redirectLegacyGallery(req, res) {
 export function redirectLegacyItem(suffix = '') {
   return async function redirectLegacyItemHandler(req, res, next) {
     try {
-      const item = await GalleryReadService.findLegacyItemBySlug(req.params?.slug)
+      const item = await GalleryReadService.findLegacyItemBySlug(
+        req.params?.slug
+      )
       if (!item) return next()
       const targets = {
         '': itemHref(item),

@@ -3,14 +3,14 @@ import fs from 'node:fs'
 import Path from 'node:path'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import Settings from '@overleaf/settings'
-import { DEFAULTS, mergePlain } from '../../../app/src/TemplateGalleryDefaults.mjs'
+import { DEFAULTS } from '../../../app/src/TemplateGalleryDefaults.mjs'
+import { mergePlain } from './support/mergePlain.mjs'
 import { extractMetaFromHtml } from '../../../app/src/services/AlgoliaConfigManager.mjs'
 import {
   transformHit,
   chooseSplit,
 } from '../../../app/src/services/TemplateCrawlerService.mjs'
 import { parseItemUrl } from '../../../app/src/util/GalleryUrls.mjs'
-import { parseDetailPageHtml } from '../../../app/src/services/TemplateHydrationService.mjs'
 import { encryptCookie, decryptCookie } from '../../../app/src/crypto/SessionCredentialStore.mjs'
 import { acquireViaSynthesis } from '../../../app/src/services/tiers/Tier3SynthesisAcquisition.mjs'
 import { setCollectionOverrideForTests } from '../../../app/src/persistence/Collections.mjs'
@@ -71,36 +71,6 @@ describe('Algolia Bootstrapper, Partition Crawler & Detail Hydrator', () => {
     expect(split.positive).toContain('University')
   })
 
-  it('parses detail page DOM for license, author, timestamp, openParams, modalViewSource TeX, and GitHub link', () => {
-    const sampleDetailHtml = `
-      <html>
-        <body>
-          <div class="template-item-left-section">
-            <div class="gallery-item-title"><h1>Modern Simple CV</h1></div>
-          </div>
-          <div class="template-detail"><b>Author:</b><div>Sarah Lang</div></div>
-          <div class="template-detail"><b>License:</b><div>Creative Commons CC BY 4.0</div></div>
-          <div class="template-detail"><b>Last Updated:</b><div><span data-timestamp-for-title="1566156823">7 years ago</span></div></div>
-          <div class="template-detail"><div class="gallery-abstract" data-ol-mathjax>A modern CV template from <a href="https://github.com/latex-ninja/modern-simple-cv">GitHub</a></div></div>
-          <a class="btn btn-primary cta-link" href="/project/new/template/11020?id=30526827&amp;latexEngine=pdflatex&amp;mainFile=main.tex&amp;templateName=Modern+Simple+CV&amp;texImage=texlive-full%3A2026.1&amp;brandVariationId=69">Open as Template</a>
-          <a class="btn btn-secondary cta-link" href="/latex/templates/modern-simple-cv/kwrxbwthgrwr.pdf">View PDF</a>
-          <div id="modalViewSource"><pre><code>\\documentclass{article}\n\\begin{document}\nHello &amp; Welcome\n\\end{document}</code></pre></div>
-        </body>
-      </html>
-    `
-    const d = parseDetailPageHtml(sampleDetailHtml)
-    expect(d.title).toBe('Modern Simple CV')
-    expect(d.author).toBe('Sarah Lang')
-    expect(d.licenseLabel).toBe('Creative Commons CC BY 4.0')
-    expect(d.lastUpdatedEpoch).toBe(1566156823)
-    expect(d.openParams.templateVersionId).toBe('11020')
-    expect(d.openParams.templateId).toBe('30526827')
-    expect(d.openParams.latexEngine).toBe('pdflatex')
-    expect(d.openParams.mainFile).toBe('main.tex')
-    expect(d.openParams.texImage).toBe('texlive-full:2026.1')
-    expect(d.latexSourcePreview).toContain('Hello & Welcome')
-    expect(d.gitRepoUrl).toBe('https://github.com/latex-ninja/modern-simple-cv')
-  })
 })
 
 describe('SessionCredentialStore, Tier 3 Synthesis & OpenService', () => {
@@ -163,7 +133,6 @@ describe('SessionCredentialStore, Tier 3 Synthesis & OpenService', () => {
       storageDir: tmpDir,
       sourceAcquisition: {
         tier1Enabled: false,
-        tier2Enabled: false,
         tier3Enabled: true,
       },
     })
@@ -185,6 +154,7 @@ describe('SessionCredentialStore, Tier 3 Synthesis & OpenService', () => {
     }
     setCollectionOverrideForTests({
       templateGalleryItems: mockItemsCol,
+      templateGalleryConfig: { findOne: vi.fn(async () => null) },
     })
 
     const uploadSpy = vi

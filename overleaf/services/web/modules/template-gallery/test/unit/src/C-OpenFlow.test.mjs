@@ -18,7 +18,8 @@ vi.mock('../../../../../app/src/infrastructure/RedisWrapper.mjs', () => ({
 }))
 
 import Settings from '@overleaf/settings'
-import { DEFAULTS, mergePlain } from '../../../app/src/TemplateGalleryDefaults.mjs'
+import { DEFAULTS } from '../../../app/src/TemplateGalleryDefaults.mjs'
+import { mergePlain } from './support/mergePlain.mjs'
 import { setCollectionOverrideForTests } from '../../../app/src/persistence/Collections.mjs'
 import OpenService from '../../../app/src/services/OpenService.mjs'
 import OpenController, { errorFor, openRateLimiter } from '../../../app/src/controllers/OpenController.mjs'
@@ -34,11 +35,6 @@ import {
   safeMainFileName,
   sourceTextSha,
 } from '../../../app/src/services/tiers/Tier3SynthesisAcquisition.mjs'
-import {
-  ingestAdminZip,
-  generateToken,
-  buildUpsertUpdate,
-} from '../../../app/src/services/tiers/Tier4AdminUploadAcquisition.mjs'
 import {
   scanLatexDependencies,
   stripLatexComments,
@@ -107,7 +103,7 @@ function mockRequest({
   }
 }
 
-describe('Work Package C: Open Flow, Controller, Tier 3 & Tier 4', () => {
+describe('Work Package C: Open Flow, Controller & Tier 3', () => {
   let tmpDir
 
   beforeEach(async () => {
@@ -214,7 +210,7 @@ describe('Work Package C: Open Flow, Controller, Tier 3 & Tier 4', () => {
       expect(err.code).toBe('item_not_found')
     })
 
-    it('openTemplate works without opts argument when template exists', async () => {
+    it('openTemplate works with an explicit storage dir when template exists', async () => {
       const item = {
         _id: 'item-101',
         token: 'abcdefghijkl',
@@ -259,7 +255,7 @@ describe('Work Package C: Open Flow, Controller, Tier 3 & Tier 4', () => {
         .mockResolvedValueOnce(true)
 
       // Invoke openTemplate with ONLY 2 arguments (token, userId) — no opts!
-      const result = await OpenService.openTemplate('abcdefghijkl', 'user-456')
+      const result = await OpenService.openTemplate('abcdefghijkl', 'user-456', { storageDir: tmpDir })
 
       expect(result).toEqual({
         projectId: 'proj-new-123',
@@ -299,7 +295,7 @@ describe('Work Package C: Open Flow, Controller, Tier 3 & Tier 4', () => {
 
       vi.spyOn(TemplateSourceAcquisitionService, 'acquire').mockResolvedValueOnce({
         acquired: false,
-        reasons: ['tier1:no_session_cookie', 'tier2:no_git_repo_detected', 'tier3:missing_main_text'],
+        reasons: ['tier1:no_session_cookie', 'tier3:missing_main_text'],
       })
 
       let err
@@ -312,7 +308,6 @@ describe('Work Package C: Open Flow, Controller, Tier 3 & Tier 4', () => {
       expect(err.code).toBe('source_acquisition_failed')
       expect(err.reasons).toEqual([
         'tier1:no_session_cookie',
-        'tier2:no_git_repo_detected',
         'tier3:missing_main_text',
       ])
     })
@@ -345,7 +340,7 @@ describe('Work Package C: Open Flow, Controller, Tier 3 & Tier 4', () => {
 
       let err
       try {
-        await OpenService.openTemplate('abcdefghijkl', 'user-1')
+        await OpenService.openTemplate('abcdefghijkl', 'user-1', { storageDir: tmpDir })
       } catch (e) {
         err = e
       }
@@ -532,7 +527,7 @@ describe('Work Package C: Open Flow, Controller, Tier 3 & Tier 4', () => {
     it('openTemplate redirects to /project/:id on success (HTML) or returns JSON', async () => {
       vi.spyOn(OpenService, 'openTemplate').mockResolvedValue({
         projectId: 'proj-777',
-        acquisitionTier: 2,
+        acquisitionTier: 1,
         hasMissingDependencies: false,
       })
 
@@ -550,7 +545,7 @@ describe('Work Package C: Open Flow, Controller, Tier 3 & Tier 4', () => {
       expect(resJson.jsonBody).toEqual({
         projectId: 'proj-777',
         redirect: '/project/proj-777',
-        acquisitionTier: 2,
+        acquisitionTier: 1,
         hasMissingDependencies: false,
       })
     })
@@ -660,140 +655,4 @@ describe('Work Package C: Open Flow, Controller, Tier 3 & Tier 4', () => {
     })
   })
 
-  describe('4. Tier 4 upsert without Mongo operator conflicts', () => {
-    it('generateToken produces a valid 12-char lowercase token', () => {
-      for (let i = 0; i < 20; i++) {
-        const token = generateToken()
-        expect(token).toMatch(/^[a-z]{12}$/)
-        expect(isValidToken(token)).toBe(true)
-      }
-    })
-
-    it('buildUpsertUpdate eliminates operator conflicts between $set and $setOnInsert', () => {
-      const set = {
-        title: 'Updated Title',
-        'adminOverrides.title': true,
-        sourceAcquired: true,
-        'compile.compiler': 'pdflatex',
-      }
-      const insertDefaults = {
-        title: 'Default Title',
-        adminOverrides: {},
-        'adminOverrides.title': false,
-        sourceAcquired: false,
-        createdAt: new Date(),
-        slug: 'my-slug',
-        'stats.opens': 0,
-      }
-      const inc = { revision: 1 }
-
-      const update = buildUpsertUpdate(set, insertDefaults, inc)
-
-      expect(update.$set).toEqual(set)
-      expect(update.$inc).toEqual(inc)
-
-      // Key in $set (title, sourceAcquired) must NOT be in $setOnInsert
-      expect(update.$setOnInsert.title).toBeUndefined()
-      expect(update.$setOnInsert.sourceAcquired).toBeUndefined()
-
-      // Parent/child conflicts:
-      // set has 'adminOverrides.title', so insertDefaults 'adminOverrides' and 'adminOverrides.title' must be omitted
-      expect(update.$setOnInsert.adminOverrides).toBeUndefined()
-      expect(update.$setOnInsert['adminOverrides.title']).toBeUndefined()
-
-      // Non-conflicting fields must remain in $setOnInsert
-      expect(update.$setOnInsert.createdAt).toBeDefined()
-      expect(update.$setOnInsert.slug).toBe('my-slug')
-      expect(update.$setOnInsert['stats.opens']).toBe(0)
-    })
-
-    it('ingestAdminZip creates a new admin template and stores it in BlobStore', async () => {
-      const zipBuffer = await ZipInspector.createZipBufferFromEntries([
-        {
-          name: 'main.tex',
-          content: '\\documentclass{article}\\begin{document}Admin\\end{document}',
-        },
-      ])
-      const uploadZipPath = Path.join(tmpDir, 'admin-upload.zip')
-      await fsp.writeFile(uploadZipPath, zipBuffer)
-
-      let insertedDoc = null
-      const mockItemsCol = {
-        findOne: vi.fn(async () => null),
-        findOneAndUpdate: vi.fn(async (filter, update) => {
-          insertedDoc = {
-            _id: 'admin-doc-1',
-            ...update.$setOnInsert,
-            ...update.$set,
-          }
-          return { value: insertedDoc }
-        }),
-      }
-      const mockAuditCol = {
-        insertOne: vi.fn(async () => ({ insertedId: 'audit-1' })),
-      }
-      setCollectionOverrideForTests({
-        templateGalleryItems: mockItemsCol,
-        templateGalleryAudit: mockAuditCol,
-      })
-
-      const result = await ingestAdminZip(
-        uploadZipPath,
-        {
-          title: 'Custom Ingested Template',
-          author: 'Admin User',
-          compiler: 'xelatex',
-          slug: 'custom-ingested',
-        },
-        'admin-user-42',
-        DEFAULTS,
-        { storageDir: tmpDir }
-      )
-
-      expect(result.ok).toBe(true)
-      expect(result.zipSha256).toMatch(/^[0-9a-f]{64}$/)
-      expect(insertedDoc.source).toBe('upload')
-      expect(insertedDoc.acquisitionTier).toBe(4)
-      expect(insertedDoc.compile.compiler).toBe('xelatex')
-      expect(insertedDoc['adminOverrides.title']).toBe(true)
-      expect(isValidToken(insertedDoc.token)).toBe(true)
-
-      // Blob must exist in BlobStore
-      expect(await BlobStore.exists(result.zipSha256, tmpDir)).toBe(true)
-      // Audit log must have been recorded
-      expect(mockAuditCol.insertOne).toHaveBeenCalledWith(
-        expect.objectContaining({
-          action: 'TEMPLATE_ADMIN_ZIP_INGEST',
-          userId: 'admin-user-42',
-        })
-      )
-    })
-
-    it('ingestAdminZip throws item_not_found when replacing non-existent item', async () => {
-      const zipBuffer = await ZipInspector.createZipBufferFromEntries([
-        { name: 'main.tex', content: '\\documentclass{article}\\begin{document}\\end{document}' },
-      ])
-      const uploadZipPath = Path.join(tmpDir, 'bad-replace.zip')
-      await fsp.writeFile(uploadZipPath, zipBuffer)
-
-      setCollectionOverrideForTests({
-        templateGalleryItems: { findOne: vi.fn(async () => null) },
-      })
-
-      let err
-      try {
-        await ingestAdminZip(
-          uploadZipPath,
-          { itemId: 'abcdefghijkl', replaceExisting: true },
-          'admin-1',
-          DEFAULTS,
-          { storageDir: tmpDir }
-        )
-      } catch (e) {
-        err = e
-      }
-      expect(err).toBeDefined()
-      expect(err.message).toContain('Template item not found')
-    })
-  })
 })

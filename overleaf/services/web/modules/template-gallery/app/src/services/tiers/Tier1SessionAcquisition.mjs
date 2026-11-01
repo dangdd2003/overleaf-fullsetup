@@ -2,7 +2,11 @@ import * as cheerio from 'cheerio'
 import { configCol } from '../../persistence/Collections.mjs'
 import SessionCredentialStore from '../../crypto/SessionCredentialStore.mjs'
 import { requestRaw } from '../../transport/GuardedHttps.mjs'
-import { withHostSlot } from '../../transport/HostLimiter.mjs'
+import {
+  withHostSlot,
+  isTransientCode,
+  isThrottledError,
+} from '../../transport/HostLimiter.mjs'
 import { commitZipBuffer, pickMainFile, resolveLimits } from './TierSupport.mjs'
 import { logInfo, logWarn } from '../../observability/Log.mjs'
 
@@ -115,18 +119,22 @@ export function parseLoaderForm(html) {
 
 /**
  * @param {object} item
- * @param {object} [cfg] - Settings.templateGallery
+ * @param {object} [cfg] - limit overrides (defaults: TemplateGalleryDefaults)
  * @param {{ sessionCookie?: string, storageDir?: string, priority?: string }} [opts]
  */
 export async function acquireViaCloudSession(item, cfg = {}, opts = {}) {
   const col = await configCol()
   let storedCookie = opts.sessionCookie || null
+  // Ciphertext of the stored cookie this attempt used, so a cookie re-saved by
+  // an admin meanwhile is not invalidated by this attempt's failure.
+  let storedEncryptedCookie = null
   if (!storedCookie) {
     const credential = await SessionCredentialStore.getDecryptedSessionCredential(col)
     if (!credential?.cookie) {
       return { acquired: false, reason: 'no_session_cookie' }
     }
     storedCookie = credential.cookie
+    storedEncryptedCookie = credential.encryptedCookie || null
   }
 
   const openParams = buildOpenParams(item)
@@ -135,7 +143,9 @@ export async function acquireViaCloudSession(item, cfg = {}, opts = {}) {
   }
 
   const jar = new CookieJar(storedCookie)
-  const slotOpts = { priority: opts.priority || 'interactive' }
+  // The session cookie is for overleaf.com from this server's own address, so
+  // this acquisition never goes through an outbound proxy.
+  const slotOpts = { priority: opts.priority || 'interactive', egress: 'direct' }
   const call = (url, options) =>
     withHostSlot('overleaf', slotOpts, async () => {
       const response = await requestRaw(url, {
@@ -204,10 +214,17 @@ export async function acquireViaCloudSession(item, cfg = {}, opts = {}) {
       missingFiles: [],
     }
   } catch (err) {
+    // A throttled request is the host refusing this client, not a bad session.
+    // overleaf.com answers rate limits with a plain 403, so a throttle must not
+    // invalidate the cookie even though its status looks like a rejection.
+    if (isTransientCode(err?.code) || isThrottledError(err)) {
+      logWarn('tier1_transient_error', { token: item.token, code: err?.code, err: err?.message })
+      return { acquired: false, reason: 'upstream_busy', code: err?.code, transient: true }
+    }
     const status = err?.status || err?.statusCode
     if (err instanceof SessionRejectedError || status === 401 || status === 403) {
       const reason = err instanceof SessionRejectedError ? err.reason : `upstream_${status}`
-      await SessionCredentialStore.markSessionInvalid(col, reason).catch(markErr =>
+      await SessionCredentialStore.markSessionInvalid(col, reason, storedEncryptedCookie).catch(markErr =>
         logWarn('tier1_mark_session_invalid_failed', { err: markErr.message })
       )
       logWarn('tier1_session_rejected', { token: item.token, reason })

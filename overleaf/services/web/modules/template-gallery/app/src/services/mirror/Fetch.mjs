@@ -1,4 +1,3 @@
-import Settings from '@overleaf/settings'
 import * as GuardedHttps from '../../transport/GuardedHttps.mjs'
 import { withHostSlot } from '../../transport/HostLimiter.mjs'
 import * as BlobStore from '../../storage/BlobStore.mjs'
@@ -12,6 +11,9 @@ export const OVERLEAF_ORIGIN = 'https://www.overleaf.com'
 
 const OVERLEAF_HOSTS = Object.freeze(['www.overleaf.com'])
 const S3_HOSTS = Object.freeze(['writelatex.s3.amazonaws.com'])
+// The official PDF URL redirects to a signed S3 object. Only that host is added
+// to the allow-list; every hop still gets the connect-time address checks.
+const PDF_HOSTS = Object.freeze([...OVERLEAF_HOSTS, ...S3_HOSTS])
 
 const MiB = 1024 * 1024
 const MAX_HTML_BYTES = 8 * MiB
@@ -56,10 +58,6 @@ function transport() {
   }
 }
 
-function config() {
-  return Settings.templateGallery || DEFAULTS
-}
-
 function codedError(code, message) {
   const err = new Error(message)
   err.code = code
@@ -85,10 +83,11 @@ export function overleafUrl(path) {
 export async function fetchOverleafPage(path, opts = {}) {
   const url = overleafUrl(path)
   const { withHostSlot, requestRaw } = transport()
-  return withHostSlot('overleaf', slotOptions(opts), async () => {
+  return withHostSlot('overleaf', slotOptions(opts), async ({ egress } = {}) => {
     let res
     try {
       res = await requestRaw(url, {
+        egress,
         headers: HTML_HEADERS,
         allowedHosts: OVERLEAF_HOSTS,
         maxBytes: MAX_HTML_BYTES,
@@ -100,10 +99,16 @@ export async function fetchOverleafPage(path, opts = {}) {
       throw err
     }
     if (res.truncated) {
-      throw codedError('EBYTECAP', `page exceeds ${MAX_HTML_BYTES} bytes: ${url}`)
+      throw codedError(
+        'EBYTECAP',
+        `page exceeds ${MAX_HTML_BYTES} bytes: ${url}`
+      )
     }
     if (res.status !== 200) {
-      throw codedError('unexpected_status', `unexpected HTTP ${res.status} from ${url}`)
+      throw codedError(
+        'unexpected_status',
+        `unexpected HTTP ${res.status} from ${url}`
+      )
     }
     return { status: 200, html: res.body.toString('utf8'), url: res.url || url }
   })
@@ -116,8 +121,9 @@ export async function fetchOverleafPage(path, opts = {}) {
 export async function storeS3Image(imageUrl, opts = {}) {
   const url = GuardedHttps.validateAllowedHost(imageUrl, S3_HOSTS)
   const { withHostSlot, requestRaw } = transport()
-  const res = await withHostSlot('s3', slotOptions(opts), () =>
+  const res = await withHostSlot('s3', slotOptions(opts), ({ egress } = {}) =>
     requestRaw(url.href, {
+      egress,
       headers: IMAGE_HEADERS,
       allowedHosts: S3_HOSTS,
       maxBytes: MAX_IMAGE_BYTES,
@@ -130,13 +136,16 @@ export async function storeS3Image(imageUrl, opts = {}) {
     throw codedError('EBYTECAP', `image exceeds ${MAX_IMAGE_BYTES} bytes`)
   }
   if (res.status !== 200 || !Buffer.isBuffer(res.body)) {
-    throw codedError('unexpected_status', `unexpected HTTP ${res.status} for image`)
+    throw codedError(
+      'unexpected_status',
+      `unexpected HTTP ${res.status} for image`
+    )
   }
   if (!res.body.subarray(0, JPEG_MAGIC.length).equals(JPEG_MAGIC)) {
     throw codedError('not_jpeg', 'published image is not a JPEG')
   }
   const blob = await BlobStore.putBuffer(res.body, {
-    storageDir: config().storageDir,
+    storageDir: DEFAULTS.storageDir,
     maxBytes: MAX_IMAGE_BYTES,
   })
   return { sha256: blob.sha256, sizeBytes: blob.sizeBytes, mime: 'image/jpeg' }
@@ -148,15 +157,15 @@ export async function storeS3Image(imageUrl, opts = {}) {
  */
 export async function storeOverleafPdf(path, opts = {}) {
   const url = overleafUrl(path)
-  const cfg = config()
-  const maxBytes = cfg.outbound?.maxPdfBytes || DEFAULT_MAX_PDF_BYTES
+  const maxBytes = DEFAULTS.outbound?.maxPdfBytes || DEFAULT_MAX_PDF_BYTES
   const { withHostSlot, fetchStream } = transport()
-  return withHostSlot('overleaf', slotOptions(opts), async () => {
+  return withHostSlot('overleaf', slotOptions(opts), async ({ egress } = {}) => {
     let res
     try {
       res = await fetchStream(url, {
+        egress,
         headers: PDF_HEADERS,
-        allowedHosts: OVERLEAF_HOSTS,
+        allowedHosts: PDF_HOSTS,
         maxBytes,
         timeoutMs: PDF_TIMEOUT_MS,
         signal: opts.signal,
@@ -166,7 +175,10 @@ export async function storeOverleafPdf(path, opts = {}) {
       throw err
     }
     const declared = Number(res.headers?.['content-length'])
-    if (res.status !== 200 || (Number.isFinite(declared) && declared > maxBytes)) {
+    if (
+      res.status !== 200 ||
+      (Number.isFinite(declared) && declared > maxBytes)
+    ) {
       res.stream?.destroy?.()
       throw codedError(
         res.status !== 200 ? 'unexpected_status' : 'EBYTECAP',
@@ -176,7 +188,7 @@ export async function storeOverleafPdf(path, opts = {}) {
       )
     }
     const blob = await BlobStore.putStream(res.stream, {
-      storageDir: cfg.storageDir,
+      storageDir: DEFAULTS.storageDir,
       magic: PDF_MAGIC,
       maxBytes,
     })

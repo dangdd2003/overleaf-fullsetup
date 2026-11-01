@@ -186,7 +186,7 @@ export default function AdminUserListPage() {
     setSuccessMessage(null)
   }
 
-  function handlePageClick(newPage: number) {
+  function handlePageClick(_e: unknown, newPage: number) {
     setPage(newPage)
   }
 

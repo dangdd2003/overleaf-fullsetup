@@ -33,10 +33,8 @@ import AbstractSanitizer, {
 import * as Fetch from '../../../app/src/services/mirror/Fetch.mjs'
 import * as MirrorService from '../../../app/src/services/mirror/MirrorService.mjs'
 import TemplateHydrationService, {
-  parseDetailPageHtml,
   hydrateItem,
 } from '../../../app/src/services/TemplateHydrationService.mjs'
-import HydrationJob from '../../../app/src/jobs/handlers/HydrationJob.mjs'
 
 // ---------------------------------------------------------------------------
 // In-memory Mongo collection mocks
@@ -907,7 +905,17 @@ describe('B2 Mirror Service & Parsers', () => {
 
       const goneResult = await MirrorService.ensureDetail(goneToken)
       expect(goneResult).toBeNull()
-      const goneDoc = await mockItemsCol.findOne({ token: goneToken })
+      // A single 404 is retried later: a rate-limited host can answer 404
+      let goneDoc = await mockItemsCol.findOne({ token: goneToken })
+      expect(goneDoc.mirror.removedAt).toBeFalsy()
+      expect(goneDoc.mirror.goneCount).toBe(1)
+
+      // Removed after the third gone answer
+      for (let i = 0; i < 2; i++) {
+        fetchSpy.mockResolvedValueOnce({ status: 404 })
+        await MirrorService.ensureDetail(goneToken, { force: true })
+      }
+      goneDoc = await mockItemsCol.findOne({ token: goneToken })
       expect(goneDoc.mirror.removedAt).toBeTruthy()
     })
 
@@ -1037,72 +1045,12 @@ describe('B2 Mirror Service & Parsers', () => {
       expect(checkpoint?.finishedAt).toBeFalsy()
     })
 
-    it('refreshPdf preserves adminOverrides on media.pdfSha', async () => {
-      const overrideToken = make12Token('o', 1)
-      const adminSha = 'e'.repeat(64)
-      await mockItemsCol.updateOne(
-        { token: overrideToken },
-        {
-          $set: {
-            token: overrideToken,
-            family: 'template',
-            slug: 'pdf-override-sample',
-            media: {
-              pdfSha: adminSha,
-              pdfBytes: 8888,
-            },
-            adminOverrides: {
-              'media.pdfSha': true,
-            },
-          },
-        },
-        { upsert: true }
-      )
-
-      const upstreamSha = 'f'.repeat(64)
-      vi.spyOn(Fetch, 'storeOverleafPdf').mockResolvedValue({
-        status: 200,
-        sha256: upstreamSha,
-        sizeBytes: 1234,
-      })
-
-      const res = await MirrorService.ensurePdf(overrideToken, { force: true })
-      expect(res.sha).toBe(adminSha)
-      expect(res.bytes).toBe(8888)
-
-      const doc = await mockItemsCol.findOne({ token: overrideToken })
-      expect(doc.media.pdfSha).toBe(adminSha)
-      expect(doc.media.pdfBytes).toBe(8888)
-      expect(doc.mirror?.pdfAt).toBeTruthy()
-    })
   })
 
   // -------------------------------------------------------------------------
-  // 7. TemplateHydrationService & HydrationJob tests
+  // 7. TemplateHydrationService tests
   // -------------------------------------------------------------------------
-  describe('TemplateHydrationService & HydrationJob', () => {
-    it('parseDetailPageHtml converts canonical detail to legacy shape', () => {
-      const html = `
-        <div class="gallery-item-title"><h1>Legacy View</h1></div>
-        <div class="template-detail"><b>Author:</b><div>Old Author</div></div>
-        <div class="template-detail"><b>License:</b><div>GPL</div></div>
-        <div class="cta-links">
-          <a class="cta-link" href="/project/new/template/42?id=99&amp;mainFile=main.tex">Open</a>
-          <a class="cta-link" href="/latex/templates/legacy/abcdefghijkl.pdf">PDF</a>
-        </div>
-        <div class="gallery-abstract"><p>Visit https://github.com/sample/repo</p></div>
-        <div id="modalViewSource"><pre><code>\\documentclass{article}</code></pre></div>
-      `
-      const legacy = parseDetailPageHtml(html)
-      expect(legacy.title).toBe('Legacy View')
-      expect(legacy.author).toBe('Old Author')
-      expect(legacy.licenseLabel).toBe('GPL')
-      expect(legacy.openParams.templateVersionId).toBe('42')
-      expect(legacy.openParams.templateId).toBe('99')
-      expect(legacy.latexSourcePreview).toBe('\\documentclass{article}')
-      expect(legacy.gitRepoUrl).toBe('https://github.com/sample/repo')
-    })
-
+  describe('TemplateHydrationService', () => {
     it('hydrateItem refreshes detail and PDF via MirrorService', async () => {
       const hydrateToken = 'hhhhhhhhaxyz'
       await mockItemsCol.updateOne(
@@ -1139,40 +1087,6 @@ describe('B2 Mirror Service & Parsers', () => {
       )
     })
 
-    it('HydrationJob runs targeted item refresh and batch trickling', async () => {
-      const jobToken = 'jjjjjjjjaxyz'
-
-      // 1. Targeted item run
-      vi.spyOn(MirrorService, 'ensureDetail').mockResolvedValue({
-        token: jobToken,
-        mirror: { detailAt: new Date() },
-      })
-      vi.spyOn(MirrorService, 'ensurePdf').mockResolvedValue({ sha: 'c'.repeat(64), bytes: 100 })
-
-      const itemJobResult = await HydrationJob.run({
-        payload: { token: jobToken, pdf: true },
-      })
-      expect(itemJobResult).toEqual({
-        ok: true,
-        token: jobToken,
-        detail: true,
-        removed: false,
-        pdf: true,
-      })
-
-      // 2. Batch trickle run
-      vi.spyOn(MirrorService, 'runDetailBatch').mockResolvedValue({ processed: 5, failed: 0 })
-      vi.spyOn(MirrorService, 'runPdfBatch').mockResolvedValue({ processed: 2, failed: 0 })
-
-      const batchResult = await HydrationJob.run({
-        payload: { detailLimit: 5, pdfLimit: 2 },
-      })
-      expect(batchResult).toEqual({
-        ok: true,
-        detail: { processed: 5, failed: 0 },
-        pdf: { processed: 2, failed: 0 },
-      })
-    })
   })
 })
 

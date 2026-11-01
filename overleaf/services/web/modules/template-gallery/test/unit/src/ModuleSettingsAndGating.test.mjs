@@ -2,7 +2,8 @@ import fs from 'node:fs'
 import Path from 'node:path'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import Settings from '@overleaf/settings'
-import { DEFAULTS, mergePlain } from '../../../app/src/TemplateGalleryDefaults.mjs'
+import { DEFAULTS } from '../../../app/src/TemplateGalleryDefaults.mjs'
+import { mergePlain } from './support/mergePlain.mjs'
 import { applyModuleSettings } from '../../../app/src/ModuleSettings.mjs'
 
 describe('TemplateGallery ModuleSettings & ModuleGating', () => {
@@ -15,27 +16,6 @@ describe('TemplateGallery ModuleSettings & ModuleGating', () => {
     applyModuleSettings({})
     expect(Settings.enableTemplateGallery).toBe(false)
     expect(Settings.templateGallery).toBeUndefined()
-  })
-
-  it('enables and merges DEFAULTS when TEMPLATE_GALLERY_ENABLED is "true"', () => {
-    Settings.templateGallery = {
-      crawler: { requestDelayMs: 2500 },
-      images: { map: { 'texlive-full:2027.1': 'texlive-full:2027' } },
-    }
-    applyModuleSettings({ TEMPLATE_GALLERY_ENABLED: 'true' })
-    expect(Settings.enableTemplateGallery).toBe(true)
-    expect(Settings.templateGallery.storageDir).toBe(DEFAULTS.storageDir)
-    expect(Settings.templateGallery.crawler.requestDelayMs).toBe(2500)
-    expect(Settings.templateGallery.images.map['texlive-full:2026.1']).toBe('texlive-full:2026')
-    expect(Settings.templateGallery.images.map['texlive-full:2027.1']).toBe('texlive-full:2027')
-  })
-
-  it('mergePlain recursively merges plain objects and replaces arrays', () => {
-    const merged = mergePlain(
-      { a: { x: 1, y: 2 }, arr: [1, 2, 3] },
-      { a: { y: 99 }, arr: [4] }
-    )
-    expect(merged).toEqual({ a: { x: 1, y: 99 }, arr: [4] })
   })
 
   it('registers zero routes when disabled and all expected routes when enabled', async () => {
@@ -78,7 +58,9 @@ describe('TemplateGallery ModuleSettings & ModuleGating', () => {
       () => ({
         default: {
           promises: {
-            createProjectFromZipArchiveWithName: async () => ({ project: { _id: 'p1' } }),
+            createProjectFromZipArchiveWithName: async () => ({
+              project: { _id: 'p1' },
+            }),
           },
         },
       })
@@ -132,14 +114,18 @@ describe('TemplateGallery ModuleSettings & ModuleGating', () => {
       })
     )
 
-    const { default: TemplateGalleryModule } = await import('../../../index.mjs')
+    const { default: TemplateGalleryModule } =
+      await import('../../../index.mjs')
 
     const routes = []
     const fakeRouter = {
       get: (p, ...h) => routes.push({ method: 'GET', path: p, handlers: h }),
       post: (p, ...h) => routes.push({ method: 'POST', path: p, handlers: h }),
-      patch: (p, ...h) => routes.push({ method: 'PATCH', path: p, handlers: h }),
-      delete: (p, ...h) => routes.push({ method: 'DELETE', path: p, handlers: h }),
+      patch: (p, ...h) =>
+        routes.push({ method: 'PATCH', path: p, handlers: h }),
+      delete: (p, ...h) =>
+        routes.push({ method: 'DELETE', path: p, handlers: h }),
+      use: (p, ...h) => routes.push({ method: 'USE', path: p, handlers: h }),
     }
 
     Settings.enableTemplateGallery = false
@@ -150,12 +136,33 @@ describe('TemplateGallery ModuleSettings & ModuleGating', () => {
     Settings.templateGallery = mergePlain(DEFAULTS, {})
     TemplateGalleryModule.router.apply(fakeRouter)
     expect(routes.length).toBeGreaterThanOrEqual(20)
-    expect(routes.some(r => r.method === 'GET' && r.path === '/templates')).toBe(true)
-    expect(routes.some(r => r.method === 'GET' && r.path === '/templates/t/:slug')).toBe(true)
-    expect(routes.some(r => r.method === 'POST' && r.path === '/templates/t/:slug/open')).toBe(true)
-    expect(routes.some(r => r.method === 'POST' && r.path === '/admin/templates/api/crawler/sync')).toBe(true)
-    expect(routes.some(r => r.method === 'POST' && r.path === '/admin/templates/api/credentials/session')).toBe(true)
-    expect(routes.every(r => !r.path.startsWith('/project/new/template'))).toBe(true)
+    expect(
+      routes.some(r => r.method === 'GET' && r.path === '/templates')
+    ).toBe(true)
+    expect(
+      routes.some(r => r.method === 'GET' && r.path === '/templates/t/:slug')
+    ).toBe(true)
+    expect(
+      routes.some(
+        r => r.method === 'POST' && r.path === '/templates/t/:slug/open'
+      )
+    ).toBe(true)
+    expect(
+      routes.some(
+        r =>
+          r.method === 'POST' && r.path === '/admin/templates/api/crawler/sync'
+      )
+    ).toBe(true)
+    expect(
+      routes.some(
+        r =>
+          r.method === 'POST' &&
+          r.path === '/admin/templates/api/credentials/session'
+      )
+    ).toBe(true)
+    expect(routes.every(r => !r.path.startsWith('/project/new/template'))).toBe(
+      true
+    )
   })
 
   it('contains zero unescaped != interpolations in any Pug view', () => {

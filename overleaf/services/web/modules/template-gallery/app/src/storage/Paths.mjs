@@ -21,8 +21,13 @@ export function assertContained(storageDir, targetPath) {
     ? resolvedRoot
     : resolvedRoot + path.sep
 
-  if (!resolvedTarget.startsWith(rootWithSep) && resolvedTarget !== resolvedRoot) {
-    throw new Error(`Path traversal rejected: ${targetPath} is not contained within ${storageDir}`)
+  if (
+    !resolvedTarget.startsWith(rootWithSep) &&
+    resolvedTarget !== resolvedRoot
+  ) {
+    throw new Error(
+      `Path traversal rejected: ${targetPath} is not contained within ${storageDir}`
+    )
   }
   return resolvedTarget
 }
@@ -37,7 +42,12 @@ export function blobPath(storageDir, sha) {
 }
 
 export function tmpPath(storageDir, id = randomUUID(), ext = '.upload') {
-  if (typeof id !== 'string' || id.includes('..') || id.includes('/') || id.includes('\\')) {
+  if (
+    typeof id !== 'string' ||
+    id.includes('..') ||
+    id.includes('/') ||
+    id.includes('\\')
+  ) {
     throw new Error(`Invalid tmp id: ${id}`)
   }
   const full = path.join(storageDir, 'tmp', `${id}${ext}`)
@@ -45,7 +55,12 @@ export function tmpPath(storageDir, id = randomUUID(), ext = '.upload') {
 }
 
 export function scratchPath(storageDir, id = randomUUID(), ext = '.zip') {
-  if (typeof id !== 'string' || id.includes('..') || id.includes('/') || id.includes('\\')) {
+  if (
+    typeof id !== 'string' ||
+    id.includes('..') ||
+    id.includes('/') ||
+    id.includes('\\')
+  ) {
     throw new Error(`Invalid scratch id: ${id}`)
   }
   const full = path.join(storageDir, 'scratch', `${id}${ext}`)
@@ -61,8 +76,25 @@ export function quarantinePath(storageDir, sha, ts = Date.now()) {
   return assertContained(storageDir, full)
 }
 
-export function probePath(storageDir) {
-  const full = path.join(storageDir, '.probe')
+// Directories (relative to storageDir) that must exist before the store is used.
+// catalog/ holds the rebuildable volume snapshot of the Mongo collections.
+export const LAYOUT_SUBDIRS = Object.freeze([
+  'blobs/sha256',
+  'tmp',
+  'scratch',
+  'quarantine',
+  'catalog',
+])
+
+export function layoutDirs(storageDir) {
+  return LAYOUT_SUBDIRS.map(sub =>
+    assertContained(storageDir, path.join(storageDir, sub))
+  )
+}
+
+// Unique per call so concurrent probes (several processes booting) never read each other's marker.
+export function probePath(storageDir, id = randomUUID()) {
+  const full = path.join(storageDir, `.probe-${id}`)
   return assertContained(storageDir, full)
 }
 
@@ -74,4 +106,6 @@ export default {
   scratchPath,
   quarantinePath,
   probePath,
+  layoutDirs,
+  LAYOUT_SUBDIRS,
 }

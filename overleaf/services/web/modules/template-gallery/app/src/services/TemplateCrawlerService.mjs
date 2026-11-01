@@ -4,7 +4,6 @@ import {
   tagsCol,
 } from '../persistence/Collections.mjs'
 import AlgoliaProxyClient from './AlgoliaProxyClient.mjs'
-import Lock from '../jobs/Lock.mjs'
 import { FAMILIES, parseItemUrl } from '../util/GalleryUrls.mjs'
 import { logInfo, logWarn } from '../observability/Log.mjs'
 
@@ -38,24 +37,7 @@ const HIT_ATTRIBUTES = [
   'imageUrl',
 ]
 
-// Fields an admin can take over; once `adminOverrides.<field>` is true the
-// crawler leaves that field alone.
-export const ADMIN_OVERRIDABLE_FIELDS = Object.freeze([
-  'title',
-  'author',
-  'description',
-  'tags',
-  'featured',
-  'official',
-  'brand',
-  'brandVariation',
-])
-
-// Fields written by the pre-mirror crawler that the data model replaced.
-const LEGACY_FIELDS = ['type', 'url', 'imageUrl', 'isTemplate']
-
 const CATALOGUE_DOC_ID = 'catalogue'
-const PAUSE_LOCK_ID = 'crawler'
 
 let activeRun = null
 
@@ -83,12 +65,17 @@ function triState(value) {
 const DATA_URI_REGEX =
   /^data:image\/(?:jpeg|jpg|png|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$/
 
+// Inline thumbnails are copied into every item row, so oversized ones are dropped.
+export const MAX_THUMB_DATA_URI_BYTES = 64 * 1024
+
 /**
  * Algolia's imageUrl is a base64 JPEG data URI wrapped with newlines.
+ * Returns null when it is not one, or is larger than MAX_THUMB_DATA_URI_BYTES.
  */
 export function normalizeDataUri(value) {
   if (typeof value !== 'string' || !value.startsWith('data:image/')) return null
   const compact = value.replace(/\s+/g, '')
+  if (compact.length > MAX_THUMB_DATA_URI_BYTES) return null
   return DATA_URI_REGEX.test(compact) ? compact : null
 }
 
@@ -211,7 +198,10 @@ export async function buildPartitionTree(query, { shouldStop } = {}) {
       return
     }
     if (depth >= MAX_TREE_DEPTH) {
-      throw codedError('catalogue_too_deep', `partition tree too deep at ${filters}`)
+      throw codedError(
+        'catalogue_too_deep',
+        `partition tree too deep at ${filters}`
+      )
     }
     const split = chooseSplit(res.facets, nbHits)
     if (!split) {
@@ -271,14 +261,8 @@ export async function fetchLeafHits(query, filters) {
  * @param {Date} now
  */
 export function buildItemUpsert(doc, existing, now) {
-  const overrides = existing?.adminOverrides || {}
   const $set = { 'mirror.catalogAt': now }
-  for (const [field, value] of Object.entries(doc)) {
-    if (overrides[field] === true && ADMIN_OVERRIDABLE_FIELDS.includes(field)) {
-      continue
-    }
-    $set[field] = value
-  }
+  for (const [field, value] of Object.entries(doc)) $set[field] = value
 
   if (!existing) {
     return {
@@ -288,7 +272,6 @@ export function buildItemUpsert(doc, existing, now) {
           $set,
           $setOnInsert: {
             state: 'published',
-            source: 'crawler',
             stats: { opens: 0, lastOpenedAt: null },
             createdAt: now,
           },
@@ -299,8 +282,6 @@ export function buildItemUpsert(doc, existing, now) {
   }
 
   const $unset = {}
-  for (const field of LEGACY_FIELDS) $unset[field] = ''
-  if (!existing.source) $set.source = 'crawler'
   if (existing.mirror?.removedAt) {
     $unset['mirror.removedAt'] = ''
     $set['mirror.removedRuns'] = 0
@@ -309,10 +290,12 @@ export function buildItemUpsert(doc, existing, now) {
     $unset['mirror.unpublishedByCrawler'] = ''
     if (existing.state === 'unpublished') $set.state = 'published'
   }
+  const update = { $set }
+  if (Object.keys($unset).length > 0) update.$unset = $unset
   return {
     updateOne: {
       filter: { _id: existing._id },
-      update: { $set, $unset },
+      update,
     },
   }
 }
@@ -348,6 +331,46 @@ export function createTagStats() {
   }
 }
 
+const BULK_ERROR_NAMES = new Set(['MongoBulkWriteError', 'BulkWriteError'])
+
+function isDuplicateOnlyBulkError(err) {
+  if (!BULK_ERROR_NAMES.has(err?.name)) return false
+  const result = err.result
+  const raw = result?.getRawResponse?.() || result?.result || result
+  // A partial result can contain duplicate-key errors alongside failed write
+  // concern or other write failures. Its wrapper name/code is not sufficient.
+  if (
+    err.err ||
+    err.writeConcernError ||
+    err.writeConcernErrors?.length ||
+    result?.getWriteConcernError?.() ||
+    raw?.writeConcernError ||
+    raw?.writeConcernErrors?.length
+  ) {
+    return false
+  }
+  const writeErrors = [
+    ...(err.writeErrors || []),
+    ...(result?.getWriteErrors?.() || raw?.writeErrors || []),
+  ]
+  return (
+    (err.code == null || err.code === 11000) &&
+    writeErrors.length > 0 &&
+    writeErrors.every(writeError => writeError.code === 11000)
+  )
+}
+
+// Items whose insert lost a race (duplicate token) were not written. They only
+// get the run stamp, so markRemoved does not count them as missing from the
+// catalogue; the next run updates them.
+async function deferConflicts(col, tokens, startedAt) {
+  const res = await col.updateMany(
+    { token: { $in: tokens }, 'mirror.catalogAt': { $ne: startedAt } },
+    { $set: { 'mirror.catalogAt': startedAt } }
+  )
+  return res?.modifiedCount || 0
+}
+
 async function bulkWriteChunked(col, ops) {
   const totals = { inserted: 0, matched: 0 }
   for (let i = 0; i < ops.length; i += BULK_CHUNK) {
@@ -356,6 +379,33 @@ async function bulkWriteChunked(col, ops) {
     })
     totals.inserted += res?.upsertedCount || 0
     totals.matched += res?.matchedCount || 0
+  }
+  return totals
+}
+
+// Item writes of one catalogue leaf. Conflicting items are deferred (see above).
+async function bulkWriteItems(col, ops, tokens, startedAt) {
+  const totals = { inserted: 0, matched: 0, deferred: 0 }
+  for (let i = 0; i < ops.length; i += BULK_CHUNK) {
+    const chunk = ops.slice(i, i + BULK_CHUNK)
+    let res
+    try {
+      res = await col.bulkWrite(chunk, { ordered: false })
+    } catch (err) {
+      // Unordered writes: a duplicate-key race only fails its own operation.
+      if (!isDuplicateOnlyBulkError(err)) throw err
+      res = err.result
+    }
+    totals.inserted += res?.upsertedCount || 0
+    totals.matched += res?.matchedCount || 0
+    const applied = (res?.matchedCount || 0) + (res?.upsertedCount || 0)
+    if (applied < chunk.length) {
+      totals.deferred += await deferConflicts(
+        col,
+        tokens.slice(i, i + BULK_CHUNK),
+        startedAt
+      )
+    }
   }
   return totals
 }
@@ -370,8 +420,6 @@ async function loadExistingIndex(col) {
         token: 1,
         objectID: 1,
         state: 1,
-        source: 1,
-        adminOverrides: 1,
         'mirror.removedAt': 1,
         'mirror.unpublishedByCrawler': 1,
       },
@@ -400,12 +448,16 @@ async function writeTags(tagStats, now) {
   const ops = entries.map(({ name, counts, titles }) => {
     const $set = { counts, titles, catalogAt: now }
     if (!canonical.get(name)) $set.canonicalTitle = titles[0]
-    return { updateOne: { filter: { _id: name }, update: { $set }, upsert: true } }
+    return {
+      updateOne: { filter: { _id: name }, update: { $set }, upsert: true },
+    }
   })
   await bulkWriteChunked(col, ops)
   await col.updateMany(
     { _id: { $nin: entries.map(entry => entry.name) } },
-    { $set: { counts: { template: 0, example: 0, article: 0 }, catalogAt: now } }
+    {
+      $set: { counts: { template: 0, example: 0, article: 0 }, catalogAt: now },
+    }
   )
   return entries.length
 }
@@ -415,7 +467,6 @@ async function writeTags(tagStats, now) {
 async function markRemoved(col, runStartedAt) {
   const stale = {
     objectID: { $type: 'string' },
-    source: { $ne: 'upload' },
     $or: [
       { 'mirror.catalogAt': { $lt: runStartedAt } },
       { 'mirror.catalogAt': { $exists: false } },
@@ -452,19 +503,17 @@ async function saveCatalogueState(fields) {
   )
 }
 
-async function executeCatalogue({ cfg, shouldStop, query }) {
+async function executeCatalogue({ shouldStop, query }) {
   const startedAt = new Date()
   const algoliaQuery =
     query ||
-    (params =>
-      AlgoliaProxyClient.queryAlgolia(params, cfg, { priority: 'background' }))
+    (params => AlgoliaProxyClient.queryAlgolia(params, { priority: 'background' }))
   let calls = 0
   const runQuery = params => {
     calls++
     return algoliaQuery(params)
   }
-  const stopCheck = async () =>
-    (await isPaused()) || Boolean(shouldStop && (await shouldStop()))
+  const stopCheck = async () => Boolean(shouldStop && (await shouldStop()))
 
   await saveCatalogueState({ status: 'running', startedAt, lastError: null })
 
@@ -478,6 +527,7 @@ async function executeCatalogue({ cfg, shouldStop, query }) {
     let invalid = 0
     let inserted = 0
     let updated = 0
+    let deferred = 0
 
     for (const leaf of tree.leaves) {
       if (await stopCheck()) {
@@ -487,6 +537,7 @@ async function executeCatalogue({ cfg, shouldStop, query }) {
       leafHitTotal += nbHits
 
       const ops = []
+      const opTokens = []
       for (const hit of hits) {
         const objectID = str(hit?.objectID)
         if (seen.has(objectID)) continue
@@ -498,25 +549,37 @@ async function executeCatalogue({ cfg, shouldStop, query }) {
         }
         tagStats.add(doc)
         ops.push(buildItemUpsert(doc, existing.find(doc), startedAt))
+        opTokens.push(doc.token)
       }
-      const res = await bulkWriteChunked(col, ops)
+      const res = await bulkWriteItems(col, ops, opTokens, startedAt)
       inserted += res.inserted
       updated += res.matched
+      deferred += res.deferred
     }
 
-    if (leafHitTotal !== tree.rootNbHits || seen.size !== tree.rootNbHits) {
-      throw codedError(
-        'catalogue_incomplete',
-        `partition leaves cover ${leafHitTotal} hits (${seen.size} unique), root has ${tree.rootNbHits}`
-      )
+    // The index is live: a template added or removed while the leaves were read
+    // moves the totals. Tags and upserts use the hits seen; removals need a
+    // crawl that saw exactly the root's hits, so a drifted run removes nothing
+    // and the next run settles it.
+    const complete =
+      leafHitTotal === tree.rootNbHits && seen.size === tree.rootNbHits
+    if (!complete) {
+      logWarn('catalogue_drift', {
+        leafHitTotal,
+        unique: seen.size,
+        root: tree.rootNbHits,
+      })
     }
 
     const tags = await writeTags(tagStats, startedAt)
-    const { removed, unpublished } = await markRemoved(col, startedAt)
+    const { removed, unpublished } = complete
+      ? await markRemoved(col, startedAt)
+      : { removed: 0, unpublished: 0 }
     const result = {
       total: tree.rootNbHits,
       inserted,
       updated,
+      deferred,
       removed,
       unpublished,
       invalid,
@@ -547,7 +610,7 @@ async function executeCatalogue({ cfg, shouldStop, query }) {
 /**
  * Runs one full catalogue pass. Concurrent callers share the running pass.
  *
- * @param {{ cfg?: object, shouldStop?: () => Promise<boolean>|boolean, query?: Function }} [opts]
+ * @param {{ shouldStop?: () => Promise<boolean>|boolean, query?: Function }} [opts]
  * @returns {Promise<{ total, inserted, updated, removed, unpublished, invalid, tags, leaves, calls }>}
  */
 export function runCatalogue(opts = {}) {
@@ -568,28 +631,9 @@ export async function getCatalogueState() {
   return col.findOne({ _id: CATALOGUE_DOC_ID })
 }
 
-export async function isPaused() {
-  const lock = await Lock.read(PAUSE_LOCK_ID)
-  return Boolean(lock?.paused)
-}
-
-export async function pause(pausedBy = null) {
-  await Lock.pause(PAUSE_LOCK_ID, pausedBy)
-  return getStatus()
-}
-
-export async function resume() {
-  await Lock.resume(PAUSE_LOCK_ID)
-  return getStatus()
-}
-
 export async function getStatus() {
-  const [paused, catalogue] = await Promise.all([
-    isPaused(),
-    getCatalogueState(),
-  ])
+  const catalogue = await getCatalogueState()
   return {
-    paused,
     running: isCatalogueRunning(),
     catalogue: catalogue || { status: 'never_run' },
   }
@@ -597,7 +641,6 @@ export async function getStatus() {
 
 export default {
   MAX_LEAF_HITS,
-  ADMIN_OVERRIDABLE_FIELDS,
   normalizeDataUri,
   normalizeTags,
   transformHit,
@@ -609,8 +652,5 @@ export default {
   runCatalogue,
   isCatalogueRunning,
   getCatalogueState,
-  isPaused,
-  pause,
-  resume,
   getStatus,
 }

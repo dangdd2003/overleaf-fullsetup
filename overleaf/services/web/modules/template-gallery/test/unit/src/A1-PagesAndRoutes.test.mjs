@@ -128,10 +128,26 @@ describe('A1 Pagination', function () {
       leadingEllipsis: false,
       pages: [
         { number: 1, href: '/latex/templates/tagged/cv/page/1', current: true },
-        { number: 2, href: '/latex/templates/tagged/cv/page/2', current: false },
-        { number: 3, href: '/latex/templates/tagged/cv/page/3', current: false },
-        { number: 4, href: '/latex/templates/tagged/cv/page/4', current: false },
-        { number: 5, href: '/latex/templates/tagged/cv/page/5', current: false },
+        {
+          number: 2,
+          href: '/latex/templates/tagged/cv/page/2',
+          current: false,
+        },
+        {
+          number: 3,
+          href: '/latex/templates/tagged/cv/page/3',
+          current: false,
+        },
+        {
+          number: 4,
+          href: '/latex/templates/tagged/cv/page/4',
+          current: false,
+        },
+        {
+          number: 5,
+          href: '/latex/templates/tagged/cv/page/5',
+          current: false,
+        },
       ],
       trailingEllipsis: true,
       next: '/latex/templates/tagged/cv/page/2',
@@ -152,7 +168,9 @@ describe('A1 Pagination', function () {
     expect(p10.first).toBe('/latex/templates/tagged/cv')
     expect(p10.prev).toBe('/latex/templates/tagged/cv/page/9')
     expect(p10.leadingEllipsis).toBe(true)
-    expect(p10.pages.map(p => p.number)).toEqual([6, 7, 8, 9, 10, 11, 12, 13, 14])
+    expect(p10.pages.map(p => p.number)).toEqual([
+      6, 7, 8, 9, 10, 11, 12, 13, 14,
+    ])
     expect(p10.pages.find(p => p.current)?.number).toBe(10)
     expect(p10.trailingEllipsis).toBe(true)
     expect(p10.next).toBe('/latex/templates/tagged/cv/page/11')
@@ -531,18 +549,25 @@ describe('A1 TemplateGalleryRouter & GalleryController', function () {
   it('registers all public gallery routes and never touches /project/new/template', function () {
     const routes = []
     const webRouter = {
-      get: (path, ...handlers) => routes.push({ method: 'GET', path, handlers }),
+      get: (path, ...handlers) =>
+        routes.push({ method: 'GET', path, handlers }),
       post: (path, ...handlers) =>
         routes.push({ method: 'POST', path, handlers }),
       patch: (path, ...handlers) =>
         routes.push({ method: 'PATCH', path, handlers }),
       delete: (path, ...handlers) =>
         routes.push({ method: 'DELETE', path, handlers }),
+      use: vi.fn(),
     }
     TemplateGalleryRouter.apply(webRouter)
 
     const getPaths = routes.filter(r => r.method === 'GET').map(r => r.path)
-    for (const base of ['/latex/templates', '/latex/examples', '/articles', '/gallery']) {
+    for (const base of [
+      '/latex/templates',
+      '/latex/examples',
+      '/articles',
+      '/gallery',
+    ]) {
       expect(getPaths).toContain(base)
       expect(getPaths).toContain(`${base}/recent`)
       expect(getPaths).toContain(`${base}/recent/page/:page`)
@@ -574,18 +599,32 @@ describe('A1 TemplateGalleryRouter & GalleryController', function () {
       capturedRegex = re
     })
     try {
-      TemplateGalleryRouter.apply({ get: vi.fn(), post: vi.fn(), patch: vi.fn(), delete: vi.fn() })
+      TemplateGalleryRouter.apply({
+        get: vi.fn(),
+        post: vi.fn(),
+        patch: vi.fn(),
+        delete: vi.fn(),
+        use: vi.fn(),
+      })
       expect(capturedRegex).toBeInstanceOf(RegExp)
       // Public routes match whitelist
       expect(capturedRegex.test('/latex/templates')).toBe(true)
-      expect(capturedRegex.test('/latex/templates/thesis/gwtjmqdbfxgm')).toBe(true)
+      expect(capturedRegex.test('/latex/templates/thesis/gwtjmqdbfxgm')).toBe(
+        true
+      )
       expect(capturedRegex.test('/templates/t/my-template')).toBe(true)
       expect(capturedRegex.test('/articles')).toBe(true)
       expect(capturedRegex.test('/gallery')).toBe(true)
       // Open routes must NOT match whitelist (must require authentication)
-      expect(capturedRegex.test('/latex/templates/thesis/gwtjmqdbfxgm/open')).toBe(false)
-      expect(capturedRegex.test('/latex/templates/thesis/gwtjmqdbfxgm/open/')).toBe(false)
-      expect(capturedRegex.test('/latex/templates/thesis/gwtjmqdbfxgm/open?cid=123')).toBe(false)
+      expect(
+        capturedRegex.test('/latex/templates/thesis/gwtjmqdbfxgm/open')
+      ).toBe(false)
+      expect(
+        capturedRegex.test('/latex/templates/thesis/gwtjmqdbfxgm/open/')
+      ).toBe(false)
+      expect(
+        capturedRegex.test('/latex/templates/thesis/gwtjmqdbfxgm/open?cid=123')
+      ).toBe(false)
       expect(capturedRegex.test('/templates/t/my-template/open')).toBe(false)
       expect(capturedRegex.test('/templates/t/my-template/open/')).toBe(false)
     } finally {
@@ -796,6 +835,7 @@ describe('A1 TemplateGalleryRouter & GalleryController', function () {
         routes.push({ method: 'POST', path, handlers }),
       patch: vi.fn(),
       delete: vi.fn(),
+      use: vi.fn(),
     }
     TemplateGalleryRouter.apply(webRouter)
     const legacyOpenRoute = routes.find(
@@ -829,11 +869,14 @@ describe('A1 TemplateGalleryRouter & GalleryController', function () {
         routes.push({ method: 'POST', path, handlers }),
       patch: vi.fn(),
       delete: vi.fn(),
+      use: vi.fn(),
     }
     TemplateGalleryRouter.apply(webRouter)
 
     const familyOpen = routes.find(
-      r => r.method === 'POST' && r.path === '/latex/templates/:slug/:token([a-z]{12})/open'
+      r =>
+        r.method === 'POST' &&
+        r.path === '/latex/templates/:slug/:token([a-z]{12})/open'
     )
     expect(familyOpen).toBeDefined()
     // Exactly [requireLogin, OpenController.openTemplate]

@@ -1,16 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import Settings from '@overleaf/settings'
-import { DEFAULTS, mergePlain } from '../../../app/src/TemplateGalleryDefaults.mjs'
+import { DEFAULTS } from '../../../app/src/TemplateGalleryDefaults.mjs'
+import { mergePlain } from './support/mergePlain.mjs'
 import { setCollectionOverrideForTests } from '../../../app/src/persistence/Collections.mjs'
 import Lock from '../../../app/src/jobs/Lock.mjs'
 import JobStore from '../../../app/src/jobs/JobStore.mjs'
-import SandboxGate from '../../../app/src/validation/SandboxGate.mjs'
-import UserDeletion from '../../../app/src/hooks/UserDeletion.mjs'
-import { detectGitRepoUrl } from '../../../app/src/services/tiers/Tier2GitAcquisition.mjs'
 import TemplateSourceAcquisitionService from '../../../app/src/services/TemplateSourceAcquisitionService.mjs'
 import Lifecycle from '../../../app/src/Lifecycle.mjs'
 
-describe('Lock, JobStore, SandboxGate & UserDeletion Hooks', () => {
+describe('Lock, JobStore, Acquisition & Navigation', () => {
   beforeEach(() => {
     Settings.enableTemplateGallery = true
     Settings.templateGallery = mergePlain(DEFAULTS, {})
@@ -67,11 +65,19 @@ describe('Lock, JobStore, SandboxGate & UserDeletion Hooks', () => {
     const mockJobsCol = {
       findOne: vi.fn(async filter => {
         if (filter.dedupeKey) {
-          return jobs.find(j => j.dedupeKey === filter.dedupeKey && (j.state === 'queued' || j.state === 'running')) || null
+          return (
+            jobs.find(
+              j =>
+                j.dedupeKey === filter.dedupeKey &&
+                (j.state === 'queued' || j.state === 'running')
+            ) || null
+          )
         }
         return null
       }),
-      countDocuments: vi.fn(async () => jobs.filter(j => j.state === 'queued').length),
+      countDocuments: vi.fn(
+        async () => jobs.filter(j => j.state === 'queued').length
+      ),
       insertOne: vi.fn(async doc => {
         const stored = { _id: `job-${jobs.length + 1}`, ...doc }
         jobs.push(stored)
@@ -88,7 +94,11 @@ describe('Lock, JobStore, SandboxGate & UserDeletion Hooks', () => {
       { kind: 'validate', itemId: 'item-1', dedupeKey: 'validate:item-1' },
       DEFAULTS
     )
-    expect(j1._id).toBe(j2._id)
+    // enqueue returns { job, deduped }: the second call reuses the queued job
+    expect(j1.deduped).toBe(false)
+    expect(j2.deduped).toBe(true)
+    expect(j1.job._id).toBeDefined()
+    expect(j2.job._id).toBe(j1.job._id)
     expect(jobs).toHaveLength(1)
 
     expect(JobStore.backoffMs(1, 60_000)).toBe(60_000)
@@ -96,50 +106,12 @@ describe('Lock, JobStore, SandboxGate & UserDeletion Hooks', () => {
     expect(JobStore.backoffMs(3, 60_000)).toBe(240_000)
   })
 
-  it('enforces SandboxGate modes (blocked, enforced, acknowledged-unsandboxed)', () => {
-    expect(
-      SandboxGate.check({ validation: { sandboxEnforced: false, allowUnsandboxedAck: false } }, {})
-    ).toEqual({ ok: false, code: 'sandbox-not-enforced' })
-
-    expect(
-      SandboxGate.check({ validation: { sandboxEnforced: true } }, {})
-    ).toEqual({ ok: true, mode: 'enforced' })
-
-    expect(
-      SandboxGate.check(
-        { validation: { sandboxEnforced: false, allowUnsandboxedAck: true } },
-        { unsandboxedAck: { by: 'admin', at: new Date() } }
-      )
-    ).toEqual({ ok: true, mode: 'acknowledged-unsandboxed' })
-  })
-
-  it('nulls user references and cancels queued jobs on UserDeletion.onUserRemoved', async () => {
-    const mockItemsCol = { updateMany: vi.fn(async () => ({ modifiedCount: 1 })) }
-    const mockAuditCol = { updateMany: vi.fn(async () => ({ modifiedCount: 1 })) }
-    const mockJobsCol = { updateMany: vi.fn(async () => ({ modifiedCount: 1 })) }
-    setCollectionOverrideForTests({
-      templateGalleryItems: mockItemsCol,
-      templateGalleryAudit: mockAuditCol,
-      templateGalleryJobs: mockJobsCol,
-    })
-
-    await UserDeletion.onUserRemoved('deleted-user-42')
-    expect(mockItemsCol.updateMany).toHaveBeenCalled()
-    expect(mockAuditCol.updateMany).toHaveBeenCalled()
-    expect(mockJobsCol.updateMany).toHaveBeenCalled()
-  })
-
-  it('detects GitHub & GitLab repo URLs for Tier 2 and installs navigation idempotently', () => {
-    const gh = detectGitRepoUrl('Source at https://github.com/latex-ninja/modern-simple-cv for details.')
-    expect(gh).toMatchObject({
-      host: 'github.com',
-      owner: 'latex-ninja',
-      repo: 'modern-simple-cv',
-    })
-
+  it('installs navigation idempotently', () => {
     Settings.templateLinks = []
     Lifecycle.installNavigation(DEFAULTS)
     Lifecycle.installNavigation(DEFAULTS)
-    expect(Settings.templateLinks.filter(l => l.url === '/latex/templates')).toHaveLength(1)
+    expect(
+      Settings.templateLinks.filter(l => l.url === '/latex/templates')
+    ).toHaveLength(1)
   })
 })

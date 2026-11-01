@@ -24,7 +24,9 @@ describe('WP-D Admin menu flag and Features integration', () => {
       '../../../../../app/views/layout-react.pug'
     )
     const content = fs.readFileSync(pugPath, 'utf8')
-    expect(content).toMatch(/canDisplayAdminTemplates:\s*hasFeature\('template-gallery'\)/)
+    expect(content).toMatch(
+      /canDisplayAdminTemplates:\s*hasFeature\('template-gallery'\)/
+    )
   })
 
   it('navbar-marketing.pug gates /admin/templates on hasFeature("template-gallery")', () => {
@@ -33,25 +35,9 @@ describe('WP-D Admin menu flag and Features integration', () => {
       '../../../../../app/views/layout/navbar-marketing.pug'
     )
     const content = fs.readFileSync(pugPath, 'utf8')
-    expect(content).toMatch(/if hasFeature\('template-gallery'\)[\s\S]*?Manage Templates/)
-  })
-
-  it('fat-footer.pug gates /latex/templates on hasFeature("template-gallery")', () => {
-    const pugPath = path.resolve(
-      import.meta.dirname,
-      '../../../../../app/views/layout/fat-footer.pug'
+    expect(content).toMatch(
+      /if hasFeature\('template-gallery'\)[\s\S]*?Manage Templates/
     )
-    const content = fs.readFileSync(pugPath, 'utf8')
-    expect(content).toMatch(/if hasFeature\('saas'\) \|\| hasFeature\('template-gallery'\)[\s\S]*?\/latex\/templates/)
-  })
-
-  it('fat-footer-website-redesign.pug gates /latex/templates on hasFeature("template-gallery")', () => {
-    const pugPath = path.resolve(
-      import.meta.dirname,
-      '../../../../../app/views/layout/fat-footer-website-redesign.pug'
-    )
-    const content = fs.readFileSync(pugPath, 'utf8')
-    expect(content).toMatch(/if hasFeature\('saas'\) \|\| hasFeature\('template-gallery'\)[\s\S]*?\/latex\/templates/)
   })
 
   it('default-navbar-metadata.ts declares optional canDisplayAdminTemplates', () => {

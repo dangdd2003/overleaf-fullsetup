@@ -1,4 +1,3 @@
-import crypto from 'node:crypto'
 import Path from 'node:path'
 import Settings from '@overleaf/settings'
 import ProjectHelper from '../../../../../app/src/Features/Project/ProjectHelper.mjs'
@@ -50,13 +49,13 @@ function closestAllowedByYear(year, allowedNames) {
  * Resolve the compile image for a template.
  *
  * @param {{ imageBasename?: string, texImage?: string }} [requested]
- * @param {object} [cfg] - Settings.templateGallery (for `images.map`)
+ * @param {object} [cfg] - TemplateGalleryDefaults shape (for `images.map`)
  * @param {Array<string|{imageName: string}>} [allowed] - Settings.allowedImageNames
  * @returns {{ ok: true, imageName: string|null, imageBasename: string|null, source: 'exact'|'mapped'|'closest'|'default'|'none', requested: string|null }}
  */
 export function resolveImage(
   { imageBasename, texImage } = {},
-  cfg = Settings.templateGallery || DEFAULTS,
+  cfg = DEFAULTS,
   allowed = Settings.allowedImageNames
 ) {
   const requestedRaw = imageBasename || texImage
@@ -117,9 +116,8 @@ export function resolveImage(
 }
 
 /**
- * Resolve the CE compiler for an overleaf.com `latexEngine` value (or a
- * compiler name stored on an admin upload). Unknown values fall back to the
- * instance default.
+ * Resolve the CE compiler for an overleaf.com `latexEngine` value. Unknown
+ * values fall back to the instance default.
  *
  * @param {string} [latexEngine]
  * @param {string} [defaultCompiler]
@@ -142,27 +140,9 @@ export function resolveCompiler(
   return { compiler: defaultCompiler, compilerSource: 'default-assumed' }
 }
 
-export function computeCompileHash({ imageName, compiler, mainFile } = {}) {
-  const payload = JSON.stringify({
-    imageName: imageName || '',
-    compiler: compiler || 'pdflatex',
-    mainFile: mainFile || 'main.tex',
-  })
-  return crypto.createHash('sha256').update(payload, 'utf8').digest('hex')
-}
-
-export const resolve = resolveImage
-export const toFullName = imageBasename =>
-  resolveImage({ imageBasename }).imageName
-export const normaliseCompiler = compiler => resolveCompiler(compiler).compiler
-
 const ImageMapper = {
   resolveImage,
-  resolve,
-  toFullName,
   resolveCompiler,
-  normaliseCompiler,
-  computeCompileHash,
 }
 
 export default ImageMapper

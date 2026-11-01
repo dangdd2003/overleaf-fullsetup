@@ -1,6 +1,5 @@
 import fsp from 'node:fs/promises'
 import Path from 'node:path'
-import Settings from '@overleaf/settings'
 import { DEFAULTS } from '../../TemplateGalleryDefaults.mjs'
 import { tmpPath } from '../../storage/Paths.mjs'
 import BlobStore from '../../storage/BlobStore.mjs'
@@ -9,12 +8,7 @@ import ZipInspector from '../../zip/ZipInspector.mjs'
 // Helpers shared by the source acquisition tiers.
 
 export function resolveStorageDir(cfg, override) {
-  return (
-    override ||
-    cfg?.storageDir ||
-    Settings.templateGallery?.storageDir ||
-    DEFAULTS.storageDir
-  )
+  return override || cfg?.storageDir || DEFAULTS.storageDir
 }
 
 export function resolveLimits(cfg) {

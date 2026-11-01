@@ -32,17 +32,17 @@ function makeRes() {
 }
 
 describe('Parity Markup - Footer and CTA Action Buttons', () => {
-  describe('Finding 1: Footer renders fat-footer-website-redesign with Templates link', () => {
+  describe('Finding 1: Footer uses the CE default (thin footer) on gallery pages', () => {
     it.each(['listing.pug', 'tagged.pug', 'detail.pug', 'error.pug'])(
-      '%s declares showThinFooter = false under block vars',
+      '%s does not override showThinFooter under block vars',
       viewFile => {
         const filePath = path.join(VIEWS_DIR, viewFile)
         const content = fs.readFileSync(filePath, 'utf8')
-        expect(content).toMatch(/block vars[\s\S]*?-\s*showThinFooter\s*=\s*false/)
+        expect(content).not.toMatch(/showThinFooter\s*=\s*false/)
       }
     )
 
-    it('GalleryController passes showThinFooter: false in renderListing', async () => {
+    it('GalleryController does not set showThinFooter in renderListing', async () => {
       vi.spyOn(GalleryReadService, 'listPage').mockResolvedValue({
         items: [],
         page: 1,
@@ -56,10 +56,10 @@ describe('Parity Markup - Footer and CTA Action Buttons', () => {
         { path: '/latex/templates', query: {} },
         res
       )
-      expect(res.locals.showThinFooter).toBe(false)
+      expect(res.locals.showThinFooter).toBeUndefined()
     })
 
-    it('GalleryController passes showThinFooter: false in renderTagged', async () => {
+    it('GalleryController does not set showThinFooter in renderTagged', async () => {
       vi.spyOn(GalleryReadService, 'listPage').mockResolvedValue({
         items: [],
         page: 1,
@@ -81,10 +81,10 @@ describe('Parity Markup - Footer and CTA Action Buttons', () => {
         res,
         next
       )
-      expect(res.locals.showThinFooter).toBe(false)
+      expect(res.locals.showThinFooter).toBeUndefined()
     })
 
-    it('GalleryController passes showThinFooter: false in renderDetail', async () => {
+    it('GalleryController does not set showThinFooter in renderDetail', async () => {
       vi.spyOn(SessionManager, 'getLoggedInUserId').mockReturnValue(null)
       vi.spyOn(GalleryReadService, 'getItemByToken').mockResolvedValue({
         token: 'abcdefghijkl',
@@ -113,10 +113,10 @@ describe('Parity Markup - Footer and CTA Action Buttons', () => {
         res,
         next
       )
-      expect(res.locals.showThinFooter).toBe(false)
+      expect(res.locals.showThinFooter).toBeUndefined()
     })
 
-    it('listing.pug renders fat-footer-website-redesign with templates link even if showThinFooter was true in Express locals', () => {
+    it('listing.pug renders the thin CE footer when showThinFooter is true in Express locals', () => {
       const listingPath = path.join(VIEWS_DIR, 'listing.pug')
       const compiled = pug.compileFile(listingPath, {
         basedir: WEB_VIEWS_DIR,
@@ -138,7 +138,7 @@ describe('Parity Markup - Footer and CTA Action Buttons', () => {
         getLoggedInUserId: () => null,
         hasAdminAccess: () => false,
         canRedirectToAdminDomain: () => false,
-        // CE ExpressLocals sets showThinFooter = true by default; block vars in listing.pug must override it
+        // CE ExpressLocals sets showThinFooter = true by default
         showThinFooter: true,
         suppressAnalytics: true,
         ExposedSettings: {},
@@ -160,10 +160,8 @@ describe('Parity Markup - Footer and CTA Action Buttons', () => {
         buildImgPath: () => '',
       })
 
-      expect(html).toContain('website-redesign-fat-footer')
-      expect(html).not.toContain('site-footer')
-      expect(html).toMatch(/href="\/latex\/templates"[^>]*>Templates<\/a>/)
-      expect(html).not.toMatch(/class="[^"]*thin-footer[^"]*"/)
+      expect(html).toContain('site-footer')
+      expect(html).not.toContain('website-redesign-fat-footer')
     })
   })
 
@@ -171,8 +169,12 @@ describe('Parity Markup - Footer and CTA Action Buttons', () => {
     it('_mixins.pug checks hasFeature("registration-page")', () => {
       const mixinsPath = path.join(VIEWS_DIR, '_mixins.pug')
       const content = fs.readFileSync(mixinsPath, 'utf8')
-      expect(content).toMatch(/hasFeature\('registration-page'\)\s*&&\s*!getSessionUser\(\)/)
-      expect(content).not.toMatch(/hasFeature\('registration'\)\s*&&\s*!getSessionUser\(\)/)
+      expect(content).toMatch(
+        /hasFeature\('registration-page'\)\s*&&\s*!getSessionUser\(\)/
+      )
+      expect(content).not.toMatch(
+        /hasFeature\('registration'\)\s*&&\s*!getSessionUser\(\)/
+      )
     })
 
     it('renders "Sign up for free" link for unauthenticated users when registration-page is enabled', () => {

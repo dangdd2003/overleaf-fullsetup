@@ -49,6 +49,7 @@ export async function createZipBufferFromEntries(entries = []) {
  */
 export async function inspect(zipPath, limits = {}, opts = {}) {
   const mergedLimits = { ...DEFAULT_LIMITS, ...limits }
+  const deadline = Date.now() + mergedLimits.maxInspectMs
 
   // 1. Check file existence & stat
   const stat = await fsp.stat(zipPath)
@@ -59,10 +60,13 @@ export async function inspect(zipPath, limits = {}, opts = {}) {
   }
 
   // 2. Magic bytes check
-  const fd = await fsp.open(zipPath, 'r')
   const headerBuf = Buffer.alloc(4)
-  await fd.read(headerBuf, 0, 4, 0)
-  await fd.close()
+  const fd = await fsp.open(zipPath, 'r')
+  try {
+    await fd.read(headerBuf, 0, 4, 0)
+  } finally {
+    await fd.close()
+  }
 
   const isPk =
     (headerBuf[0] === 0x50 && headerBuf[1] === 0x4b && headerBuf[2] === 0x03 && headerBuf[3] === 0x04) ||
@@ -119,6 +123,10 @@ export async function inspect(zipPath, limits = {}, opts = {}) {
 
     zipfile.on('entry', entry => {
       const fileName = entry.fileName
+
+      if (Date.now() > deadline) {
+        return fail(`Inspection exceeded time limit of ${mergedLimits.maxInspectMs} ms`, 'inspect_timeout')
+      }
 
       // Validate fileName security
       // Leading slash, backslash, Windows drive letter, NUL or control chars, length, path traversal

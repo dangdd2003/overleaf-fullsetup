@@ -37,7 +37,7 @@ function buildNotes(item, mainFile, missingFiles) {
     `This project was created from the template "${item.title || 'Untitled'}"` +
       (item.author ? ` by ${item.author}.` : '.'),
   ]
-  if (item.source !== 'upload' && item.token) {
+  if (item.token) {
     lines.push(`Original: https://www.overleaf.com${itemHref(item)}`)
   }
   if (item.licenseLabel) lines.push(`License: ${item.licenseLabel}`)
@@ -53,7 +53,7 @@ function buildNotes(item, mainFile, missingFiles) {
 
 /**
  * @param {object} item
- * @param {object} [cfg] - Settings.templateGallery
+ * @param {object} [cfg] - limit overrides (defaults: TemplateGalleryDefaults)
  * @param {{ storageDir?: string }} [opts]
  */
 export async function acquireViaSynthesis(item, cfg = {}, opts = {}) {

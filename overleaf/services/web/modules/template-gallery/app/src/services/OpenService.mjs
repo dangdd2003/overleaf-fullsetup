@@ -1,6 +1,5 @@
 import fsp from 'node:fs/promises'
 import Path from 'node:path'
-import Settings from '@overleaf/settings'
 import ProjectUploadManager from '../../../../../app/src/Features/Uploads/ProjectUploadManager.mjs'
 import ProjectRootDocManager from '../../../../../app/src/Features/Project/ProjectRootDocManager.mjs'
 import ProjectDetailsHandler from '../../../../../app/src/Features/Project/ProjectDetailsHandler.mjs'
@@ -50,12 +49,11 @@ export async function findOpenableItem(token, { allowUnpublished = false } = {})
 
 function projectAttributes(item) {
   const { compiler } = ImageMapper.resolveCompiler(
-    item.latexEngine || item.compile?.compiler || item.openParams?.latexEngine
+    item.latexEngine || item.openParams?.latexEngine
   )
-  const { imageName } = ImageMapper.resolveImage(
-    { texImage: item.texImage || item.compile?.imageBasename || item.openParams?.texImage },
-    Settings.templateGallery
-  )
+  const { imageName } = ImageMapper.resolveImage({
+    texImage: item.texImage || item.openParams?.texImage,
+  })
   const attributes = { compiler }
   if (imageName) attributes.imageName = imageName
   return attributes
@@ -86,7 +84,7 @@ async function recordOpen(item) {
 /**
  * @param {string} token - gallery item token ([a-z]{12})
  * @param {string} userId - owner of the new project
- * @param {{ cfg?: object, storageDir?: string, allowUnpublished?: boolean, forceAcquire?: boolean }} [opts]
+ * @param {{ storageDir?: string, allowUnpublished?: boolean, forceAcquire?: boolean }} [opts] - `cfg` is accepted and ignored (mirror-only settings are fixed defaults)
  * @returns {Promise<{ projectId: string, acquisitionTier: number, hasMissingDependencies: boolean }>}
  */
 export async function openTemplate(token, userId, opts = {}) {
@@ -97,16 +95,18 @@ export async function openTemplate(token, userId, opts = {}) {
   })
   if (!item) throw codedError('item_not_found', `no openable item ${token}`)
 
-  const cfg = opts.cfg || Settings.templateGallery || DEFAULTS
-  const storageDir = resolveStorageDir(cfg, opts.storageDir)
+  const storageDir = resolveStorageDir(DEFAULTS, opts.storageDir)
 
   const source = await TemplateSourceAcquisitionService.acquire(item, {
-    cfg,
     storageDir,
     force: Boolean(opts.forceAcquire),
   })
   if (!source.acquired) {
-    const err = codedError('source_acquisition_failed', `no source for ${token}`)
+    const errCode =
+      source.transient || source.reason === 'upstream_busy'
+        ? 'upstream_busy'
+        : 'source_acquisition_failed'
+    const err = codedError(errCode, `no source for ${token}`)
     err.reasons = source.reasons
     throw err
   }

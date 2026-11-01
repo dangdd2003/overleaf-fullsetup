@@ -2,9 +2,20 @@ import Settings from '@overleaf/settings'
 import './app/src/ModuleSettings.mjs'
 import TemplateGalleryRouter from './app/src/TemplateGalleryRouter.mjs'
 import Lifecycle from './app/src/Lifecycle.mjs'
-import UserDeletion from './app/src/hooks/UserDeletion.mjs'
+import { addRequiredCleanupHandlerBeforeDrainingConnections } from '../../app/src/infrastructure/GracefulShutdown.mjs'
 
 export const GALLERY_NAV_URL = '/latex/templates'
+
+let shutdownHookInstalled = false
+
+// The final snapshot export must run before Mongo connections are drained.
+function installShutdownHook() {
+  if (shutdownHookInstalled) return
+  shutdownHookInstalled = true
+  addRequiredCleanupHandlerBeforeDrainingConnections('template-gallery', () =>
+    Lifecycle.stop()
+  )
+}
 
 // Mirrors overleaf.com's top-level item:
 // li.subdued > a.nav-link.subdued[href=/latex/templates] "Templates"
@@ -64,19 +75,8 @@ const TemplateGalleryModule = {
   },
   async start() {
     if (!isEnabled()) return
+    installShutdownHook()
     await Lifecycle.start()
-  },
-  hooks: {
-    promises: {
-      async deleteUser(userId) {
-        if (!isEnabled()) return
-        await UserDeletion.onUserRemoved(userId)
-      },
-      async expireDeletedUser(userId) {
-        if (!isEnabled()) return
-        await UserDeletion.onUserRemoved(userId)
-      },
-    },
   },
 }
 

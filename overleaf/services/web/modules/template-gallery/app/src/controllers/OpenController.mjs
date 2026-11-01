@@ -8,6 +8,7 @@ import { RateLimiter } from '../../../../../app/src/infrastructure/RateLimiter.m
 import { acceptsJson } from '../../../../../app/src/infrastructure/RequestContentTypeDetection.mjs'
 import Lifecycle from '../Lifecycle.mjs'
 import OpenService from '../services/OpenService.mjs'
+import { isTransientCode } from '../transport/HostLimiter.mjs'
 import { isValidToken, itemOpenHref } from '../util/GalleryUrls.mjs'
 import { logWarn, logError, incMetric } from '../observability/Log.mjs'
 
@@ -48,6 +49,11 @@ const ERRORS = {
     title: 'Template source unavailable',
     message: 'We could not fetch the files of this template. Please try again later.',
   },
+  upstream_busy: {
+    status: 503,
+    title: 'Template service busy',
+    message: 'The upstream template service is currently busy. Please wait a moment and try again.',
+  },
   gallery_unavailable: UNAVAILABLE,
   bundle_unavailable: UNAVAILABLE,
   bundle_invalid: INVALID,
@@ -70,6 +76,7 @@ const ERRORS = {
 }
 
 export function errorFor(code) {
+  if (isTransientCode(code)) return { code: 'upstream_busy', ...ERRORS.upstream_busy }
   if (ERRORS[code]) return { code, ...ERRORS[code] }
   if (typeof code === 'string' && code.startsWith('image_')) {
     return { code, ...ERRORS.image_unavailable }
@@ -157,10 +164,13 @@ async function _openTemplate(req, res) {
   } catch (err) {
     const { code, status } = errorFor(err?.code)
     incMetric('open_total', { result: code })
-    if (status >= 500) {
+    if (status >= 500 && status !== 503 && status !== 502) {
       logError('open_failed', err, { token, userId: String(userId), code, reasons: err?.reasons })
     } else {
       logWarn('open_rejected', { token, userId: String(userId), code })
+    }
+    if (status === 503) {
+      res.set('Retry-After', '30')
     }
     return sendError(req, res, code)
   }

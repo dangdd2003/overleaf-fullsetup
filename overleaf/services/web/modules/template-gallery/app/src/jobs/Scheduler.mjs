@@ -1,79 +1,102 @@
-import {
-  crawlerStateCol,
-  itemsCol,
-  listingsCol,
-} from '../persistence/Collections.mjs'
+import { crawlerStateCol, listingsCol } from '../persistence/Collections.mjs'
 import TemplateCrawlerService from '../services/TemplateCrawlerService.mjs'
+import * as HostLimiter from '../transport/HostLimiter.mjs'
+import { isTransientCode } from '../transport/HostLimiter.mjs'
 import JobStore from './JobStore.mjs'
-import { isHostIdle } from '../transport/HostLimiter.mjs'
+import Lock from './Lock.mjs'
+import SyncRun from './SyncRun.mjs'
+import SyncSettings from './SyncSettings.mjs'
 import { logInfo, logWarn, logError } from '../observability/Log.mjs'
 
 // Drives the overleaf.com mirror from the process holding the 'crawler'
-// lease (see Runner). One loop, one step at a time, in priority order:
+// lease (see Runner). Nothing is fetched from overleaf.com unless a sync run
+// is active: an admin starts one with "Sync now", or, only when automatic
+// sync is turned on in the settings, one starts every refetchDays days.
 //
-//   1. Algolia catalogue: on an empty mirror, then weekly
-//   2. featured blocks + gallery recent pages 1..3: hourly
-//   3. full gallery recent scan: first run, then weekly, resumable in chunks
-//   4. detail / pdf / tag trickle, only while the overleaf host is idle
-//
-// Admin actions only record a request in the scheduler doc; the leader picks
-// it up on its next step, so exactly one process talks to upstream.
+// A run (jobs/SyncRun.mjs) walks its phases in order, one step at a time:
+//   catalogue  template list from Algolia
+//   new        featured blocks + gallery recent pages 1..3
+//   rescan     full gallery listing walk, in chunks (only when asked for)
+//   details    detail page + PDF of every missing or outdated template, with
+//              as many parallel workers as the host limiter has free lanes
+//   tags       tag pages
+// The run, its phase and its counters are stored in Mongo, so a restart or a
+// new leader resumes it where it stopped. When overleaf.com throttles every
+// lane the run waits for the earliest lane to recover; nothing is marked failed
+// for that. Leadership is checked before every step and inside the pool, so a
+// lost lease stops work at once.
 
 const MINUTE = 60_000
 const HOUR = 60 * MINUTE
 const DAY = 24 * HOUR
 
-export const CATALOGUE_INTERVAL_MS = 7 * DAY
-export const CATALOGUE_RETRY_MS = HOUR
-export const RECENT_HEAD_INTERVAL_MS = HOUR
 export const RECENT_HEAD_PAGES = 3
-export const RECENT_FULL_INTERVAL_MS = 7 * DAY
 export const RECENT_FULL_CHUNK_PAGES = 10
-const TRICKLE_BATCH = 5
-const TRICKLE_KINDS = ['detail', 'pdf', 'tag']
-const IDLE_SLEEP_MS = 5 * MINUTE
-const BUSY_SLEEP_MS = 2_000
+// Workers used when the limiter cannot report its capacity
+const DEFAULT_WORKERS = 4
+const MAX_WORKERS = 32
+const SYNC_BATCH = 200
+const PROGRESS_WRITE_MS = 1_000
+// How often a running step looks for a stop request (read from Mongo), and
+// how often the details pool asks
+const STOP_CHECK_MS = 2_000
+const STOP_WATCH_MS = 1_000
+const TAG_BATCH = 50
+const IDLE_SLEEP_MS = 15_000
+const MIN_WAIT_MS = 5_000
+const DEFAULT_WAIT_MS = 30_000
+const MAX_WAIT_MS = 10 * MINUTE
 const ERROR_SLEEP_MS = MINUTE
 
 const SCHEDULER_DOC_ID = 'scheduler'
 const RECENT_SCAN_ID = 'scan:gallery-recent'
-export const REQUEST_ACTIONS = Object.freeze([
-  'catalogue',
-  'recent',
-  'recent-full',
-  'featured',
-])
+const PAUSE_LOCK_ID = 'crawler'
+export const REQUEST_ACTIONS = Object.freeze(['sync'])
 
 let leaderUntil = 0
 let loop = null
 let stopping = false
 let wake = null
 let currentStep = null
-let trickleCursor = 0
+let migrated = false
 let deps = null
 
 // MirrorService is loaded on first use so the catalogue keeps working even
 // if the mirror cannot load.
 async function getDeps() {
   if (!deps) {
-    deps = { crawler: TemplateCrawlerService, jobs: JobStore, isHostIdle }
+    deps = { crawler: TemplateCrawlerService, jobs: JobStore }
   }
-  if (deps && !deps.mirror) {
+  if (!deps.mirror) {
     const mod = await import('../services/mirror/MirrorService.mjs')
-    if (deps) deps.mirror = mod.default || mod
+    deps.mirror = mod.default || mod
   }
-  return deps || { crawler: TemplateCrawlerService, jobs: JobStore, isHostIdle }
+  return deps
 }
 
 function crawler() {
   return deps?.crawler || TemplateCrawlerService
 }
 
+function runs() {
+  return deps?.runs || SyncRun
+}
+
+function settingsStore() {
+  return deps?.settings || SyncSettings
+}
+
+function limiter() {
+  return deps?.limiter || HostLimiter
+}
+
 /**
- * Replaces collaborators ({ crawler, mirror, jobs, isHostIdle }) in tests.
+ * Replaces collaborators ({ crawler, mirror, jobs, runs, settings, limiter })
+ * in tests.
  */
 export function setDependenciesForTests(overrides) {
   deps = overrides
+  migrated = true
 }
 
 function olderThan(date, ms, now) {
@@ -82,7 +105,9 @@ function olderThan(date, ms, now) {
 
 async function readState() {
   const col = await crawlerStateCol()
-  return (await col.findOne({ _id: SCHEDULER_DOC_ID })) || { _id: SCHEDULER_DOC_ID }
+  return (
+    (await col.findOne({ _id: SCHEDULER_DOC_ID })) || { _id: SCHEDULER_DOC_ID }
+  )
 }
 
 async function updateState(update) {
@@ -95,65 +120,138 @@ async function readRecentScan() {
   return col.findOne({ _id: RECENT_SCAN_ID })
 }
 
+// Clears the state of the old always-on scheduler once per process: its
+// request flags and timers, the pause flag and its progress document.
+async function migrateOnce() {
+  if (migrated) return
+  migrated = true
+  try {
+    await updateState({
+      $unset: {
+        requests: '',
+        recentHeadAt: '',
+        catalogueAttemptAt: '',
+        nextCatalogueAt: '',
+        nextFullScanAt: '',
+      },
+    })
+    await Lock.resume(PAUSE_LOCK_ID)
+    const { configCol } = await import('../persistence/Collections.mjs')
+    await (await configCol()).deleteOne({ _id: 'syncProgress' })
+  } catch (err) {
+    logWarn('mirror_scheduler_migration_failed', { message: err?.message })
+  }
+}
+
 /**
- * Records an admin request; the leader acts on it on its next step.
+ * Starts a sync run now. Refused with code 'invalid_action' for an unknown
+ * action and 'run_active' while a run is active. Failed items are made due
+ * again, so the run retries them.
  *
- * @param {'catalogue'|'recent'|'recent-full'|'featured'} action
+ * @param {'sync'} action
+ * @param {string|null} [requestedBy]
+ * @param {{ rescan?: boolean, trigger?: 'manual'|'auto' }} [opts]
  */
-export async function requestRun(action, requestedBy = null) {
+export async function requestRun(action, requestedBy = null, opts = {}) {
   if (!REQUEST_ACTIONS.includes(action)) {
     const err = new Error(`unknown scheduler action: ${action}`)
     err.code = 'invalid_action'
     throw err
   }
-  await updateState({
-    $set: { [`requests.${action}`]: { at: new Date(), by: requestedBy } },
+  if (await runs().current()) {
+    const err = new Error('a sync is already running')
+    err.code = 'run_active'
+    throw err
+  }
+  const { mirror } = await getDeps()
+  await mirror.retryFailedNow()
+  const run = await runs().start({
+    trigger: opts.trigger || 'manual',
+    requestedBy,
+    rescan: opts.rescan === true,
+    refetchMs: await settingsStore().refetchIntervalMs(),
   })
   wake?.()
-  return { queued: true, action }
+  return { queued: true, action, runId: run.id }
 }
 
-async function clearRequest(action) {
-  await updateState({ $unset: { [`requests.${action}`]: '' } })
+/**
+ * Asks the running sync to stop after the requests in flight.
+ */
+export async function requestStop() {
+  await runs().requestStop()
+  wake?.()
 }
 
-async function catalogueDue(state, now) {
-  if (state.requests?.catalogue) return true
-  if (!olderThan(state.catalogueAttemptAt, CATALOGUE_RETRY_MS, now)) return false
-  const catalogue = await crawler().getCatalogueState()
-  if (olderThan(catalogue?.lastSuccessAt, CATALOGUE_INTERVAL_MS, now)) return true
-  const items = await itemsCol()
-  return (await items.estimatedDocumentCount()) === 0
+// Leadership is checked at every step boundary: a lease lost mid-step stops
+// the loop before the next upstream request instead of finishing the step.
+async function assertLeading(shouldStop) {
+  if (shouldStop && (await shouldStop())) {
+    const err = new Error('mirror scheduler is no longer the leader')
+    err.code = 'scheduler_stopped'
+    throw err
+  }
 }
 
-function recentHeadDue(state, now) {
-  return (
-    Boolean(state.requests?.recent || state.requests?.featured) ||
-    olderThan(state.recentHeadAt, RECENT_HEAD_INTERVAL_MS, now)
+// True once leadership is lost or a stop was requested. The stop request is
+// read from Mongo at most every STOP_CHECK_MS.
+function stopChecker(runId, shouldStop) {
+  let checkAt = 0
+  let stop = false
+  return async () => {
+    if (stop) return true
+    if (shouldStop && (await shouldStop())) return (stop = true)
+    if (Date.now() >= checkAt) {
+      checkAt = Date.now() + STOP_CHECK_MS
+      const run = await runs().current()
+      if (!run || run.id !== runId || run.cancelRequested) stop = true
+    }
+    return stop
+  }
+}
+
+async function autoRunDue() {
+  const settings = await settingsStore().get()
+  if (!settings.autoSync) return false
+  const last = await runs().read()
+  return olderThan(last?.startedAt, settings.refetchDays * DAY, Date.now())
+}
+
+// How long to wait when the host refuses every lane
+function waitForLanesMs() {
+  const readyAt = limiter().earliestReadyAt?.('overleaf')
+  if (!readyAt) return DEFAULT_WAIT_MS
+  return Math.min(
+    MAX_WAIT_MS,
+    Math.max(MIN_WAIT_MS, new Date(readyAt).getTime() - Date.now())
   )
 }
 
-function recentFullStatus(scan, state, now) {
-  const inProgress =
-    scan?.startedAt &&
-    (!scan.finishedAt || new Date(scan.finishedAt) < new Date(scan.startedAt))
-  if (inProgress) return 'resume'
-  if (state.requests?.['recent-full']) return 'start'
-  if (olderThan(scan?.finishedAt, RECENT_FULL_INTERVAL_MS, now)) return 'start'
-  return null
+function isHostRefusal(err, mirror) {
+  return (
+    mirror.isHostRejection?.(err) ||
+    isTransientCode(err?.code) ||
+    err?.hostThrottled === true
+  )
 }
 
-async function runCatalogue(cfg, shouldStop) {
-  await updateState({ $set: { catalogueAttemptAt: new Date() } })
-  await clearRequest('catalogue')
-  return crawler().runCatalogue({ cfg, shouldStop })
+// ---------------------------------------------------------------------------
+// phases: each returns { complete, waitMs?, error? }
+
+async function runCataloguePhase(run, phase, { cfg, isStopped }) {
+  const result = await crawler().runCatalogue({ cfg, shouldStop: isStopped })
+  const total = Number(result?.total) || 0
+  await runs().update(run.id, {
+    phase: phase.name,
+    phaseFields: { total, done: total },
+  })
+  return { complete: true }
 }
 
-async function runRecentHead() {
+async function runNewPhase(run, phase, { shouldStop }) {
   const { mirror } = await getDeps()
-  await clearRequest('recent')
-  await clearRequest('featured')
-  const featured = await mirror.scanFeatured()
+  await mirror.scanFeatured()
+  await assertLeading(shouldStop)
   const recent = await mirror.scanGalleryRecent({
     fromPage: 1,
     toPage: RECENT_HEAD_PAGES,
@@ -164,15 +262,267 @@ async function runRecentHead() {
     err.code = typeof recent.error === 'string' ? recent.error : 'scan_failed'
     throw err
   }
-  await updateState({ $set: { recentHeadAt: new Date() } })
-  return { featured, recent }
+  await runs().update(run.id, {
+    phase: phase.name,
+    phaseFields: { done: Number(recent?.items) || 0 },
+  })
+  return { complete: true }
 }
 
-async function runRecentFullChunk(mode) {
+async function runRescanPhase(run, phase, { shouldStop }) {
+  const mode = phase.done > 0 ? 'resume' : 'start'
+  const res = await runRecentFullChunk(mode, shouldStop)
+  await runs().update(run.id, {
+    phase: phase.name,
+    phaseFields: { done: (phase.done || 0) + (Number(res?.pages) || 0) },
+  })
+  return { complete: Boolean(res?.done) }
+}
+
+async function runTagsPhase(run, phase, { isStopped }) {
+  const { mirror } = await getDeps()
+  const res = await mirror.runTagBatch({
+    limit: TAG_BATCH,
+    shouldStop: isStopped,
+  })
+  const processed = Number(res?.processed) || 0
+  await runs().update(run.id, {
+    phase: phase.name,
+    phaseFields: {
+      done: (phase.done || 0) + processed - (Number(res?.failed) || 0),
+      failed: (phase.failed || 0) + (Number(res?.failed) || 0),
+    },
+  })
+  if (res?.hostRejected) return { complete: false, waitMs: waitForLanesMs() }
+  if (await isStopped()) return { complete: false }
+  return { complete: processed === 0 }
+}
+
+/**
+ * Fetches every template missing its detail or PDF, or synced before the
+ * run's refetchBefore, with one worker per free limiter slot. Ends when
+ * nothing is left, the run is stopped, leadership is lost, or the host
+ * refuses every lane (then the run waits and the step is retried).
+ */
+async function runDetailsPhase(run, phase, { isStopped }) {
+  const { mirror } = await getDeps()
+  const before = new Date(run.refetchBefore)
+  let total = phase.total
+  if (total == null) {
+    total = await mirror.countSyncable({ before })
+    await runs().update(run.id, { phase: phase.name, phaseFields: { total } })
+  }
+  const counters = { done: phase.done || 0, failed: phase.failed || 0 }
+  const workers = Math.min(
+    MAX_WORKERS,
+    Math.max(1, limiter().capacity?.('overleaf') ?? DEFAULT_WORKERS)
+  )
+  const taken = new Set()
+  const inFlight = new Set()
+  let queue = []
+  let exhausted = false
+  let refill = null
+  let blocked = false
+
+  async function nextToken() {
+    while (queue.length === 0 && !exhausted) {
+      refill ??= mirror
+        .nextSyncBatch({ limit: SYNC_BATCH, exclude: [...taken], before })
+        .then(tokens => {
+          queue = tokens.filter(token => !taken.has(token))
+          if (queue.length === 0) exhausted = true
+        })
+        .finally(() => {
+          refill = null
+        })
+      await refill
+    }
+    return queue.shift() ?? null
+  }
+
+  // No lane is free of backoff: wait instead of queueing work in the limiter
+  const lanesBlocked = () => limiter().capacity?.('overleaf') === 0
+
+  async function worker() {
+    while (!blocked && !(await isStopped())) {
+      if (lanesBlocked()) {
+        blocked = true
+        return
+      }
+      const token = await nextToken()
+      if (!token) return
+      taken.add(token)
+      inFlight.add(token)
+      try {
+        await mirror.syncItem(token, { before })
+        counters.done++
+      } catch (err) {
+        if (isHostRefusal(err, mirror)) {
+          // Every lane is refusing: the item stays queued for the next step
+          blocked = true
+        } else {
+          counters.failed++
+        }
+      } finally {
+        inFlight.delete(token)
+      }
+    }
+  }
+
+  const writeProgress = () =>
+    runs().update(run.id, {
+      fields: { inFlight: [...inFlight] },
+      phase: phase.name,
+      phaseFields: {
+        done: counters.done,
+        failed: counters.failed,
+        // Templates found during the run (e.g. by the catalogue) raise the total
+        total: Math.max(total, counters.done + counters.failed + queue.length),
+      },
+    })
+
+  let writing = false
+  const timer = setInterval(() => {
+    if (writing) return
+    writing = true
+    writeProgress()
+      .catch(err =>
+        logWarn('mirror_sync_progress_failed', { message: err?.message })
+      )
+      .finally(() => {
+        writing = false
+      })
+  }, PROGRESS_WRITE_MS)
+  timer.unref?.()
+  // A stop request ends the step at once; requests already sent finish in
+  // the background and their results are still stored on the items
+  let finished = false
+  let stopped = false
+  const watchStop = async () => {
+    while (!finished) {
+      if (await isStopped()) {
+        stopped = true
+        return
+      }
+      await new Promise(resolve => setTimeout(resolve, STOP_WATCH_MS))
+    }
+  }
+  try {
+    await Promise.race([
+      Promise.all(Array.from({ length: workers }, worker)),
+      watchStop(),
+    ])
+  } finally {
+    finished = true
+    clearInterval(timer)
+  }
+  inFlight.clear()
+  await writeProgress()
+  if (stopped) return { complete: false }
+  if (blocked) return { complete: false, waitMs: waitForLanesMs() }
+  return { complete: exhausted && queue.length === 0 }
+}
+
+const PHASE_HANDLERS = {
+  catalogue: runCataloguePhase,
+  new: runNewPhase,
+  rescan: runRescanPhase,
+  details: runDetailsPhase,
+  tags: runTagsPhase,
+}
+
+/**
+ * Performs the next piece of the active sync run, starting an automatic run
+ * first when automatic sync is on and one is due.
+ *
+ * @param {{ cfg: object, shouldStop?: () => Promise<boolean> }} ctx
+ * @returns {Promise<{ step: string, sleepMs: number, result?: any }>}
+ */
+export async function runStep({ cfg, shouldStop }) {
+  await assertLeading(shouldStop)
+  await migrateOnce()
+
+  let run = await runs().current()
+  if (!run) {
+    if (!(await autoRunDue())) return { step: 'idle', sleepMs: IDLE_SLEEP_MS }
+    try {
+      await requestRun('sync', null, { trigger: 'auto' })
+    } catch (err) {
+      if (err?.code !== 'run_active') throw err
+    }
+    run = await runs().current()
+    if (!run) return { step: 'idle', sleepMs: IDLE_SLEEP_MS }
+  }
+
+  if (run.cancelRequested) {
+    await runs().finish(run.id, 'cancelled')
+    logInfo('mirror_sync_cancelled', { runId: run.id })
+    return { step: 'cancelled', sleepMs: 0 }
+  }
+
+  const phase = run.phases.find(
+    p => p.state === 'pending' || p.state === 'running'
+  )
+  if (!phase) {
+    await runs().finish(run.id, 'done')
+    logInfo('mirror_sync_done', { runId: run.id })
+    return { step: 'done', sleepMs: 0 }
+  }
+  if (phase.state === 'pending') {
+    await runs().update(run.id, {
+      phase: phase.name,
+      phaseFields: { state: 'running', startedAt: new Date() },
+    })
+  }
+
+  if (run.waitingUntil) {
+    await runs().update(run.id, { fields: { waitingUntil: null } })
+  }
+  await assertLeading(shouldStop)
+  const isStopped = stopChecker(run.id, shouldStop)
+  const { mirror } = await getDeps()
+  let outcome
+  try {
+    outcome = await PHASE_HANDLERS[phase.name](run, phase, {
+      cfg,
+      shouldStop,
+      isStopped,
+    })
+  } catch (err) {
+    if (err?.code === 'scheduler_stopped') throw err
+    if (err?.code === 'catalogue_stopped') {
+      outcome = { complete: false }
+    } else if (isHostRefusal(err, mirror)) {
+      outcome = { complete: false, waitMs: waitForLanesMs() }
+    } else {
+      // The phase cannot be done; the run goes on with the next one
+      logError('mirror_sync_phase_failed', err, { phase: phase.name })
+      outcome = { complete: true, error: String(err?.message || err) }
+    }
+  }
+  await assertLeading(shouldStop)
+
+  const waitingUntil = outcome.waitMs
+    ? new Date(Date.now() + outcome.waitMs)
+    : null
+  await runs().update(run.id, {
+    fields: { waitingUntil },
+    phase: phase.name,
+    phaseFields: outcome.complete
+      ? {
+          state: outcome.error ? 'failed' : 'done',
+          finishedAt: new Date(),
+          error: outcome.error ?? null,
+        }
+      : {},
+  })
+  return { step: phase.name, sleepMs: outcome.waitMs || 0, result: outcome }
+}
+
+async function runRecentFullChunk(mode, shouldStop) {
   const { mirror } = await getDeps()
   const col = await listingsCol()
   if (mode === 'start') {
-    await clearRequest('recent-full')
     await col.updateOne(
       { _id: RECENT_SCAN_ID },
       { $set: { nextPage: 1, startedAt: new Date(), finishedAt: null } },
@@ -182,13 +532,16 @@ async function runRecentFullChunk(mode) {
   const scan = await readRecentScan()
   const fromPage = Math.max(1, Number(scan?.nextPage) || 1)
   const toPage = fromPage + RECENT_FULL_CHUNK_PAGES - 1
+  await assertLeading(shouldStop)
   const res = await mirror.scanGalleryRecent({
     fromPage,
     toPage,
     priority: 'background',
   })
   if (res?.error) {
-    const err = new Error(`recent full scan failed at page ${fromPage}: ${res.error}`)
+    const err = new Error(
+      `recent full scan failed at page ${fromPage}: ${res.error}`
+    )
     err.code = typeof res.error === 'string' ? res.error : 'scan_failed'
     throw err
   }
@@ -201,7 +554,7 @@ async function runRecentFullChunk(mode) {
 
 /**
  * Queues the periodic gc / integrity jobs when due. Called by the Runner
- * while it holds the validator lease, independent of the crawler switch.
+ * while it holds the 'crawler' lease.
  */
 export async function enqueueMaintenanceIfDue(cfg, now = Date.now()) {
   const jobs = deps?.jobs || JobStore
@@ -213,64 +566,15 @@ export async function enqueueMaintenanceIfDue(cfg, now = Date.now()) {
     ['integrity', 'integrityAt', runner.integrityEveryMs || DAY],
   ]) {
     if (!olderThan(state[field], interval, now)) continue
-    await jobs.enqueue({ kind, dedupeKey: `maintenance:${kind}`, maxAttempts: 1 })
+    await jobs.enqueue({
+      kind,
+      dedupeKey: `maintenance:${kind}`,
+      maxAttempts: 1,
+    })
     await updateState({ $set: { [field]: new Date(now) } })
     queued.push(kind)
   }
   return queued
-}
-
-async function runTrickle() {
-  const { mirror, isHostIdle: hostIdle } = await getDeps()
-  if (!hostIdle('overleaf')) return { busy: true }
-  let processed = 0
-  for (let i = 0; i < TRICKLE_KINDS.length; i++) {
-    const kind = TRICKLE_KINDS[trickleCursor]
-    trickleCursor = (trickleCursor + 1) % TRICKLE_KINDS.length
-    const batch =
-      kind === 'detail'
-        ? mirror.runDetailBatch
-        : kind === 'pdf'
-          ? mirror.runPdfBatch
-          : mirror.runTagBatch
-    const res = await batch({ limit: TRICKLE_BATCH })
-    processed += Number(res?.processed) || 0
-    if (processed > 0) return { kind, ...res }
-  }
-  return { idle: true }
-}
-
-/**
- * Performs the single most urgent piece of mirror work.
- *
- * @param {{ cfg: object, shouldStop?: () => Promise<boolean> }} ctx
- * @returns {Promise<{ step: string, sleepMs: number, result?: any }>}
- */
-export async function runStep({ cfg, shouldStop }) {
-  if (!cfg?.crawler?.enabled) return { step: 'disabled', sleepMs: IDLE_SLEEP_MS }
-  if (await crawler().isPaused()) return { step: 'paused', sleepMs: MINUTE }
-
-  const now = Date.now()
-  const state = await readState()
-
-  if (await catalogueDue(state, now)) {
-    return { step: 'catalogue', sleepMs: 0, result: await runCatalogue(cfg, shouldStop) }
-  }
-  if (recentHeadDue(state, now)) {
-    return { step: 'recent-head', sleepMs: 0, result: await runRecentHead() }
-  }
-  const fullMode = recentFullStatus(await readRecentScan(), state, now)
-  if (fullMode) {
-    return {
-      step: 'recent-full',
-      sleepMs: 0,
-      result: await runRecentFullChunk(fullMode),
-    }
-  }
-  const trickle = await runTrickle()
-  if (trickle.busy) return { step: 'trickle', sleepMs: BUSY_SLEEP_MS, result: trickle }
-  if (trickle.idle) return { step: 'idle', sleepMs: IDLE_SLEEP_MS, result: trickle }
-  return { step: 'trickle', sleepMs: 0, result: trickle }
 }
 
 function isLeader() {
@@ -301,13 +605,18 @@ async function driveLoop(cfg) {
       currentStep = { step: res.step, at: new Date() }
       sleepMs = res.sleepMs
     } catch (err) {
-      currentStep = { step: 'error', at: new Date(), error: err.message }
-      if (err.code === 'circuit_open' || err.code === 'catalogue_stopped') {
-        logWarn('mirror_scheduler_step_stopped', { code: err.code })
+      if (err.code === 'scheduler_stopped') {
+        currentStep = { step: 'standby', at: new Date() }
+        sleepMs = 0
       } else {
-        logError('mirror_scheduler_step_failed', err)
+        currentStep = { step: 'error', at: new Date(), error: err.message }
+        if (err.code === 'circuit_open' || err.code === 'catalogue_stopped') {
+          logWarn('mirror_scheduler_step_stopped', { code: err.code })
+        } else {
+          logError('mirror_scheduler_step_failed', err)
+        }
+        sleepMs = ERROR_SLEEP_MS
       }
-      sleepMs = ERROR_SLEEP_MS
     }
     if (isLeader()) await sleep(sleepMs)
   }
@@ -350,23 +659,20 @@ export async function stop() {
  * Snapshot for the admin status API.
  */
 export async function getStatus() {
-  const [state, recentScan] = await Promise.all([readState(), readRecentScan()])
+  const state = await readState()
   return {
     leader: isLeader(),
     running: Boolean(loop),
     currentStep,
-    recentHeadAt: state.recentHeadAt || null,
-    catalogueAttemptAt: state.catalogueAttemptAt || null,
     gcAt: state.gcAt || null,
     integrityAt: state.integrityAt || null,
-    requests: state.requests || {},
-    recentScan: recentScan || null,
   }
 }
 
 export default {
   REQUEST_ACTIONS,
   requestRun,
+  requestStop,
   enqueueMaintenanceIfDue,
   runStep,
   lead,

@@ -3,9 +3,12 @@ import fs from 'node:fs'
 import Path from 'node:path'
 import { Readable } from 'node:stream'
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { isPublicAddress, validateAllowedHost, guardedLookup } from '../../../app/src/transport/GuardedHttps.mjs'
+import {
+  isPublicAddress,
+  validateAllowedHost,
+  guardedLookup,
+} from '../../../app/src/transport/GuardedHttps.mjs'
 import Paths from '../../../app/src/storage/Paths.mjs'
-import StorageHealth from '../../../app/src/storage/StorageHealth.mjs'
 import BlobStore from '../../../app/src/storage/BlobStore.mjs'
 
 describe('GuardedHttps SSRF & Host Allow-List Protection', () => {
@@ -35,13 +38,31 @@ describe('GuardedHttps SSRF & Host Allow-List Protection', () => {
   })
 
   it('validates allowed hosts and rejects unauthorized hosts, ports, and URL credentials', () => {
-    expect(() => validateAllowedHost('https://www.overleaf.com/latex/templates')).not.toThrow()
-    expect(() => validateAllowedHost('https://SK53GL4JLY-dsn.algolia.net/1/indexes/gallery-production/query')).not.toThrow()
-    expect(() => validateAllowedHost('https://codeload.github.com/owner/repo/zip/refs/heads/main')).not.toThrow()
+    expect(() =>
+      validateAllowedHost('https://www.overleaf.com/latex/templates')
+    ).not.toThrow()
+    expect(() =>
+      validateAllowedHost(
+        'https://SK53GL4JLY-dsn.algolia.net/1/indexes/gallery-production/query'
+      )
+    ).not.toThrow()
+
+    for (const url of [
+      'https://github.com/owner/repo',
+      'https://api.github.com/repos/owner/repo',
+      'https://codeload.github.com/owner/repo/zip/refs/heads/main',
+      'https://gitlab.com/owner/repo/-/archive/main/repo-main.zip',
+    ]) {
+      expect(() => validateAllowedHost(url)).toThrow()
+    }
 
     expect(() => validateAllowedHost('https://evil.example.com/test')).toThrow()
-    expect(() => validateAllowedHost('https://www.overleaf.com:8443/latex/templates')).toThrow()
-    expect(() => validateAllowedHost('https://user:pass@www.overleaf.com/latex/templates')).toThrow()
+    expect(() =>
+      validateAllowedHost('https://www.overleaf.com:8443/latex/templates')
+    ).toThrow()
+    expect(() =>
+      validateAllowedHost('https://user:pass@www.overleaf.com/latex/templates')
+    ).toThrow()
   })
 
   it('guardedLookup rejects hostnames resolving to private IPs', async () => {
@@ -59,7 +80,7 @@ describe('GuardedHttps SSRF & Host Allow-List Protection', () => {
   })
 })
 
-describe('StorageHealth Mount Gate & Content-Addressed BlobStore', () => {
+describe('Content-Addressed BlobStore', () => {
   let tmpDir
 
   beforeEach(async () => {
@@ -72,32 +93,6 @@ describe('StorageHealth Mount Gate & Content-Addressed BlobStore', () => {
     }
   })
 
-  it('decodes mountinfo escapes and enforces dedicated mount vs acceptedParentMounts', () => {
-    const mountinfo = [
-      '36 25 0:31 / / rw,relatime - overlay overlay rw',
-      '37 36 8:1 /data /var/lib/overleaf rw,relatime - ext4 /dev/sda1 rw',
-      '38 37 8:2 /tg /var/lib/overleaf/data/template-gallery\\040test rw - ext4 /dev/sda2 rw',
-    ].join('\n')
-
-    const parsed = StorageHealth.parseMountinfo(mountinfo)
-    expect(parsed).toContain('/var/lib/overleaf')
-    expect(parsed).toContain('/var/lib/overleaf/data/template-gallery test')
-
-    const denied = StorageHealth.checkMountPolicy(
-      '/var/lib/overleaf/data/template-gallery',
-      parsed,
-      { requireDedicatedMount: true, acceptedParentMounts: [] }
-    )
-    expect(denied.ok).toBe(false)
-
-    const acceptedParent = StorageHealth.checkMountPolicy(
-      '/var/lib/overleaf/data/template-gallery',
-      parsed,
-      { requireDedicatedMount: false, acceptedParentMounts: ['/var/lib/overleaf'] }
-    )
-    expect(acceptedParent.ok).toBe(true)
-  })
-
   it('enforces sha256 format and path containment in Paths', () => {
     expect(Paths.isValidSha256('a'.repeat(64))).toBe(true)
     expect(Paths.isValidSha256('xyz')).toBe(false)
@@ -106,7 +101,10 @@ describe('StorageHealth Mount Gate & Content-Addressed BlobStore', () => {
   })
 
   it('stores, verifies, copies, and quarantines tampered blobs in BlobStore', async () => {
-    const pdfBuf = Buffer.from('%PDF-1.5\nHello template preview PDF\n%%EOF', 'utf8')
+    const pdfBuf = Buffer.from(
+      '%PDF-1.5\nHello template preview PDF\n%%EOF',
+      'utf8'
+    )
     const res = await BlobStore.putBuffer(pdfBuf, {
       maxBytes: 1024 * 1024,
       magic: '%PDF-',
