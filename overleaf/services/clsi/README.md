@@ -8,7 +8,7 @@ The Common LaTeX Service Interface (CLSI) provides a RESTful interface to tradit
 - TCP/3048 - reports load information
 - TCP/3049 - HTTP interface to control the CLSI service
 
-These defaults can be modified in `config/settings.defaults.js`.
+These defaults can be modified in `config/settings.defaults.cjs`.
 
 The provided `Dockerfile` builds a Docker image which has the Docker command line tools installed. The configuration in `docker-compose-config.yml` mounts the Docker socket, in order that the CLSI container can talk to the Docker host it is running in. This allows it to spin up `sibling containers` running an image with a TeX distribution installed to perform the actual compiles.
 
@@ -34,6 +34,58 @@ The CLSI can be configured through the following environment variables:
 - `TEXLIVE_OPENOUT_ANY` - Sets the `openout_any` environment variable for TeX Live (see the `\openout` primitive [documentation](http://tug.org/texinfohtml/web2c.html#tex-invocation))
 
 Further environment variables configure the [metrics module](https://github.com/overleaf/metrics-module)
+
+## Extended CE: Sandboxed TeX Live Compiles
+
+This repository can run LaTeX compiles in isolated sibling Docker containers.
+The main Overleaf container sends the compile request to CLSI; CLSI starts or
+reuses a container with the selected TeX Live image, collects the PDF and logs,
+and returns them to the editor. Compile containers run with dropped capabilities,
+`no-new-privileges`, and a restricted seccomp profile.
+
+### Upstream CE comparison
+
+Upstream Overleaf CE does not provide sandboxed compiles. Its documented CE
+baseline runs LaTeX with the privileges of the application container. This
+extension adds the optional sibling-container runner to CE. See the [official
+CE and Server Pro comparison](https://docs.overleaf.com/on-premises/welcome/server-pro-vs.-community-edition).
+
+### Configuration
+
+Enable the runner and select the default TeX Live image in `variable.env`:
+
+| Environment variable                   | Default in this repository          | Purpose                                                                       |
+| :------------------------------------- | :---------------------------------- | :---------------------------------------------------------------------------- |
+| `SANDBOXED_COMPILES`                   | `false`                             | Run compile jobs in sibling containers.                                       |
+| `TEX_LIVE_DOCKER_IMAGE`                | `dangdoan2003/texlive-full:2026`    | Default compile image.                                                        |
+| `ALL_TEX_LIVE_DOCKER_IMAGES`           | 2026, 2025, 2024, 2023, 2022 images | Images users can select.                                                      |
+| `ALL_TEX_LIVE_DOCKER_IMAGE_NAMES`      | `2026 (Latest),2025,2024,2023,2022` | Display names in the same order as the image list.                            |
+| `TEX_LIVE_AUTO_PULL_ENABLED`           | `false`                             | Pull configured images automatically when missing.                            |
+| `SANDBOXED_COMPILES_HOST_DIR_COMPILES` | detected                            | Host-visible compile directory; set if automatic volume-path detection fails. |
+| `SANDBOXED_COMPILES_HOST_DIR_OUTPUT`   | detected                            | Host-visible output directory; set if automatic volume-path detection fails.  |
+
+The CLSI container needs access to the Docker socket to start sibling
+containers. Compile and output directories must be available through the same
+Docker volume and mapped to their host-visible paths when auto-detection is
+not sufficient. The root [New Features Reference](../../../README.md#8-tex-live-compiles--sandbox)
+shows the full image list and deployment configuration.
+
+### Developer design
+
+`CompileManager` sends the selected command, image, and compile group to
+`DockerRunner`. The runner validates the image against the configured allowlist,
+maps the existing compile, output, or cache directory into `/compile`, then
+starts or reuses a sibling container. Compile inputs and outputs remain in
+CLSI's existing disk directories; CLSI does not add MongoDB collections.
+
+Containers are named by project and a fingerprint of their image and run
+options, so matching jobs can reuse one safely. Runs sharing a container are
+queued; successful runs prune stopped sibling containers, and an idle monitor
+removes old ones. Read-only jobs such as SyncTeX and word count get a read-only
+bind mount. The sandbox defaults to no network, no Linux capabilities,
+`no-new-privileges`, and the configured seccomp profile. The compile process
+runs as the configured TeX image user (normally `tex`); Overleaf account roles
+are not passed into the container.
 
 ## Installation
 
@@ -127,18 +179,18 @@ The CLSI is based on a JSON API.
   compile: {
     options: {
       // Which compiler to use. Can be latex, pdflatex, xelatex or lualatex
-      compiler: 'lualatex',
+      compiler: "lualatex",
       // How many seconds to wait before killing the process. Default is 60.
       timeout: 40,
     },
     // The main file to run LaTeX on
-    rootResourcePath: 'main.tex',
+    rootResourcePath: "main.tex",
     // An array of files to include in the compilation. May have either the content
     // passed directly, or a URL where it can be downloaded.
     resources: [
       {
-        path: 'main.tex',
-        content: '\\documentclass{article}\n\\begin{document}\nHello World\n\\end{document}',
+        path: "main.tex",
+        content: "\\documentclass{article}\n\\begin{document}\nHello World\n\\end{document}",
       },
       // ,{
       //     "path": "image.png",
