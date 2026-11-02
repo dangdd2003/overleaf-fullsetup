@@ -73,6 +73,8 @@ export async function start({ trigger, requestedBy = null, rescan, refetchMs }) 
     inFlight: [],
     cancelRequested: false,
     waitingUntil: null,
+    waitReason: null,
+    waitError: null,
     error: null,
     startedAt: now,
     finishedAt: null,
@@ -144,6 +146,8 @@ export async function finish(runId, state, error = null) {
         error,
         inFlight: [],
         waitingUntil: null,
+        waitReason: null,
+        waitError: null,
         finishedAt: now,
         updatedAt: now,
       },
@@ -178,6 +182,9 @@ export function view(run) {
     rescan: Boolean(run.rescan),
     stopping: Boolean(run.cancelRequested) && run.state === 'running',
     waitingUntil: iso(run.waitingUntil),
+    // 'throttled': overleaf.com blocks us; 'unavailable': the route fails
+    waitReason: run.waitingUntil ? run.waitReason || 'throttled' : null,
+    waitError: run.waitingUntil ? run.waitError || null : null,
     error: run.error || null,
     startedAt: iso(run.startedAt),
     finishedAt: iso(run.finishedAt),
@@ -187,6 +194,9 @@ export function view(run) {
       done: phase.done || 0,
       failed: phase.failed || 0,
       total: phase.total ?? null,
+      // Phase failure, or the latest item that failed in it
+      error: phase.error || null,
+      lastError: phase.lastError || null,
     })),
   }
 }

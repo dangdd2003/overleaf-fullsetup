@@ -20,13 +20,13 @@ import { parseTagPage } from './TagParser.mjs'
 import { parseDetailPage } from './DetailParser.mjs'
 import * as Fetch from './Fetch.mjs'
 import { OUTBOUND_BLOCKED } from '../../transport/GuardedHttps.mjs'
-import { isThrottledError } from '../../transport/HostLimiter.mjs'
+import { isThrottledError } from '../../transport/RateGate.mjs'
 import { logInfo, logWarn, incMetric } from '../../observability/Log.mjs'
 
 // Mirrors the official overleaf.com gallery into Mongo + BlobStore:
 // recent order and published ids (listing scan), featured blocks, tag page
 // metadata, item detail (metadata, abstract, main .tex, preview JPEG) and
-// PDFs. Every upstream request is routed through HostLimiter by Fetch.mjs.
+// PDFs. Every upstream request is routed through RateGate by Fetch.mjs.
 
 const HOUR = 3600_000
 const DAY = 24 * HOUR
@@ -125,7 +125,7 @@ async function settle(promise, opts, label) {
     return result
   } catch (err) {
     if (opts.throwOnError) throw err
-    // Limiter refusals are counted by HostLimiter; logging each one would flood public traffic.
+    // RateGate refusals (every route blocked or busy); logging each one would flood public traffic.
     if (!isHostRejection(err)) {
       logWarn('tg.mirror.ensure_failed', {
         label,
@@ -144,19 +144,10 @@ function storageDir() {
   return DEFAULTS.storageDir
 }
 
-function isCircuitOpen(err) {
-  return err?.code === 'circuit_open'
-}
-
-// Limiter refusals (closed circuit, backing off, queue full, reset) and
+// RateGate refusals (every route blocked, no paced slot soon, no route) and
 // throttled answers say nothing about the item itself, so they never start an
 // item backoff.
-const HOST_REJECTIONS = new Set([
-  'circuit_open',
-  'host_backoff',
-  'host_busy',
-  'limiter_reset',
-])
+const HOST_REJECTIONS = new Set(['host_backoff', 'host_busy', 'no_route'])
 
 function isHostRejection(err) {
   return HOST_REJECTIONS.has(err?.code) || isThrottledError(err)
@@ -328,7 +319,7 @@ async function mirrorCardImages(cards, opts = {}) {
         message: err?.message,
       })
       await recordImageFailure(card.token, item, err)
-      if (isCircuitOpen(err) || isHostRejection(err)) return false
+      if (isHostRejection(err)) return false
     }
   })
   return { stored, failed }

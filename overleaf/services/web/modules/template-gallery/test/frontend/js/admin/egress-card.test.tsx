@@ -84,7 +84,7 @@ describe('egress card', function () {
 
   beforeEach(function () {
     window.metaAttributesCache.set('ol-csrfToken', 'test-csrf-token')
-    fetchMock.get(EGRESS_API, { useDirect: false, proxies: [] })
+    fetchMock.get(EGRESS_API, { proxies: [] })
   })
 
   afterEach(function () {

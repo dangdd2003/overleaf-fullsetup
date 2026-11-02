@@ -1,7 +1,6 @@
 import { crawlerStateCol, listingsCol } from '../persistence/Collections.mjs'
 import TemplateCrawlerService from '../services/TemplateCrawlerService.mjs'
-import * as HostLimiter from '../transport/HostLimiter.mjs'
-import { isTransientCode } from '../transport/HostLimiter.mjs'
+import * as RateGate from '../transport/RateGate.mjs'
 import JobStore from './JobStore.mjs'
 import Lock from './Lock.mjs'
 import SyncRun from './SyncRun.mjs'
@@ -18,13 +17,16 @@ import { logInfo, logWarn, logError } from '../observability/Log.mjs'
 //   new        featured blocks + gallery recent pages 1..3
 //   rescan     full gallery listing walk, in chunks (only when asked for)
 //   details    detail page + PDF of every missing or outdated template, with
-//              as many parallel workers as the host limiter has free lanes
+//              three workers per outbound route (transport/RateGate.mjs)
 //   tags       tag pages
+// Every route (each proxy, or direct) sends to overleaf.com at a fixed pace.
+// A route that overleaf.com blocks pauses on its own until the block resets
+// (about 5 minutes) while the other routes keep fetching; a refused item just
+// stays due. The run only waits when every route is blocked or resting, and
+// nothing is marked failed for that.
 // The run, its phase and its counters are stored in Mongo, so a restart or a
-// new leader resumes it where it stopped. When overleaf.com throttles every
-// lane the run waits for the earliest lane to recover; nothing is marked failed
-// for that. Leadership is checked before every step and inside the pool, so a
-// lost lease stops work at once.
+// new leader resumes it where it stopped. Leadership is checked before every
+// step and inside the pool, so a lost lease stops work at once.
 
 const MINUTE = 60_000
 const HOUR = 60 * MINUTE
@@ -32,9 +34,9 @@ const DAY = 24 * HOUR
 
 export const RECENT_HEAD_PAGES = 3
 export const RECENT_FULL_CHUNK_PAGES = 10
-// Workers used when the limiter cannot report its capacity
-const DEFAULT_WORKERS = 4
-const MAX_WORKERS = 32
+// Parallel detail workers per outbound route, and the overall cap
+const WORKERS_PER_ROUTE = 3
+const MAX_WORKERS = 150
 const SYNC_BATCH = 200
 const PROGRESS_WRITE_MS = 1_000
 // How often a running step looks for a stop request (read from Mongo), and
@@ -87,7 +89,7 @@ function settingsStore() {
 }
 
 function limiter() {
-  return deps?.limiter || HostLimiter
+  return deps?.limiter || RateGate
 }
 
 /**
@@ -227,10 +229,47 @@ function waitForLanesMs() {
   )
 }
 
+// Why the run waits: overleaf.com blocks every route ('throttled'), or the
+// routes fail for another reason (proxy errors, network)
+function waitReason() {
+  return limiter().isThrottling?.('overleaf') === true
+    ? 'throttled'
+    : 'unavailable'
+}
+
+function errorText(err) {
+  if (!err) return null
+  const status = err.status ? `HTTP ${err.status}: ` : ''
+  const code = err.code && !String(err.message).includes(err.code) ? `${err.code}: ` : ''
+  return `${status}${code}${err.message || err}`.slice(0, 300)
+}
+
+// What the admin sees while the run waits: how many routes are down and the
+// latest upstream error, e.g. "50/50 routes blocked by overleaf.com. Last
+// error: HTTP 403: ..."
+function waitError(err) {
+  const routes = limiter().getHostStatus?.().overleaf?.routes || []
+  const now = Date.now()
+  const blocked = routes.filter(r => r.blockedUntil && new Date(r.blockedUntil) > now).length
+  const resting = routes.filter(r => r.restUntil && new Date(r.restUntil) > now).length
+  const parts = []
+  if (blocked) parts.push(`${blocked}/${routes.length} routes blocked by overleaf.com`)
+  if (resting) parts.push(`${resting}/${routes.length} routes failing (proxy or network)`)
+  // Prefer the error of a route that is down right now
+  const down = r =>
+    (r.blockedUntil && new Date(r.blockedUntil) > now) ||
+    (r.restUntil && new Date(r.restUntil) > now)
+  const latest =
+    routes.find(r => r.lastError && down(r)) || routes.find(r => r.lastError)
+  const last = errorText(err) || latest?.lastError
+  if (last) parts.push(`Last error: ${last}`)
+  return parts.join('. ') || 'Upstream refused the request'
+}
+
 function isHostRefusal(err, mirror) {
   return (
     mirror.isHostRejection?.(err) ||
-    isTransientCode(err?.code) ||
+    RateGate.isTransientCode(err?.code) ||
     err?.hostThrottled === true
   )
 }
@@ -300,9 +339,11 @@ async function runTagsPhase(run, phase, { isStopped }) {
 
 /**
  * Fetches every template missing its detail or PDF, or synced before the
- * run's refetchBefore, with one worker per free limiter slot. Ends when
- * nothing is left, the run is stopped, leadership is lost, or the host
- * refuses every lane (then the run waits and the step is retried).
+ * run's refetchBefore, with WORKERS_PER_ROUTE workers per outbound route; the
+ * routes pace the requests. An item refused because its routes are blocked is
+ * skipped for this step and stays due. Ends when nothing is left, the run is
+ * stopped, leadership is lost, or every route is blocked (then the run waits
+ * for the first route to come back and the step is retried).
  */
 async function runDetailsPhase(run, phase, { isStopped }) {
   const { mirror } = await getDeps()
@@ -313,16 +354,19 @@ async function runDetailsPhase(run, phase, { isStopped }) {
     await runs().update(run.id, { phase: phase.name, phaseFields: { total } })
   }
   const counters = { done: phase.done || 0, failed: phase.failed || 0 }
+  let lastItemError = phase.lastError || null
+  let lastRefusal = null
+  const routeTotal = Number(limiter().routeCount?.('overleaf')) || 1
   const workers = Math.min(
     MAX_WORKERS,
-    Math.max(1, limiter().capacity?.('overleaf') ?? DEFAULT_WORKERS)
+    Math.max(1, routeTotal * WORKERS_PER_ROUTE)
   )
   const taken = new Set()
   const inFlight = new Set()
   let queue = []
   let exhausted = false
   let refill = null
-  let blocked = false
+  let noRoute = false
 
   async function nextToken() {
     while (queue.length === 0 && !exhausted) {
@@ -340,13 +384,13 @@ async function runDetailsPhase(run, phase, { isStopped }) {
     return queue.shift() ?? null
   }
 
-  // No lane is free of backoff: wait instead of queueing work in the limiter
-  const lanesBlocked = () => limiter().capacity?.('overleaf') === 0
+  // Every route is blocked or resting: wait instead of refusing every item
+  const allRoutesDown = () => limiter().freeRoutes?.('overleaf') === 0
 
   async function worker() {
-    while (!blocked && !(await isStopped())) {
-      if (lanesBlocked()) {
-        blocked = true
+    while (!noRoute && !(await isStopped())) {
+      if (allRoutesDown()) {
+        noRoute = true
         return
       }
       const token = await nextToken()
@@ -357,11 +401,12 @@ async function runDetailsPhase(run, phase, { isStopped }) {
         await mirror.syncItem(token, { before })
         counters.done++
       } catch (err) {
+        // A refusal says nothing about the item: it stays due for a later step
         if (isHostRefusal(err, mirror)) {
-          // Every lane is refusing: the item stays queued for the next step
-          blocked = true
+          lastRefusal = err
         } else {
           counters.failed++
+          lastItemError = `${token}: ${errorText(err)}`
         }
       } finally {
         inFlight.delete(token)
@@ -376,6 +421,7 @@ async function runDetailsPhase(run, phase, { isStopped }) {
       phaseFields: {
         done: counters.done,
         failed: counters.failed,
+        lastError: lastItemError,
         // Templates found during the run (e.g. by the catalogue) raise the total
         total: Math.max(total, counters.done + counters.failed + queue.length),
       },
@@ -419,8 +465,12 @@ async function runDetailsPhase(run, phase, { isStopped }) {
   inFlight.clear()
   await writeProgress()
   if (stopped) return { complete: false }
-  if (blocked) return { complete: false, waitMs: waitForLanesMs() }
-  return { complete: exhausted && queue.length === 0 }
+  if (noRoute) {
+    return { complete: false, waitMs: waitForLanesMs(), refusal: lastRefusal }
+  }
+  // Items skipped after a refusal are still due: run the step again
+  if (!exhausted || queue.length > 0) return { complete: false }
+  return { complete: (await mirror.countSyncable({ before })) === 0 }
 }
 
 const PHASE_HANDLERS = {
@@ -476,7 +526,9 @@ export async function runStep({ cfg, shouldStop }) {
   }
 
   if (run.waitingUntil) {
-    await runs().update(run.id, { fields: { waitingUntil: null } })
+    await runs().update(run.id, {
+      fields: { waitingUntil: null, waitReason: null, waitError: null },
+    })
   }
   await assertLeading(shouldStop)
   const isStopped = stopChecker(run.id, shouldStop)
@@ -493,7 +545,7 @@ export async function runStep({ cfg, shouldStop }) {
     if (err?.code === 'catalogue_stopped') {
       outcome = { complete: false }
     } else if (isHostRefusal(err, mirror)) {
-      outcome = { complete: false, waitMs: waitForLanesMs() }
+      outcome = { complete: false, waitMs: waitForLanesMs(), refusal: err }
     } else {
       // The phase cannot be done; the run goes on with the next one
       logError('mirror_sync_phase_failed', err, { phase: phase.name })
@@ -506,7 +558,11 @@ export async function runStep({ cfg, shouldStop }) {
     ? new Date(Date.now() + outcome.waitMs)
     : null
   await runs().update(run.id, {
-    fields: { waitingUntil },
+    fields: {
+      waitingUntil,
+      waitReason: waitingUntil ? waitReason() : null,
+      waitError: waitingUntil ? waitError(outcome.refusal) : null,
+    },
     phase: phase.name,
     phaseFields: outcome.complete
       ? {
@@ -610,7 +666,7 @@ async function driveLoop(cfg) {
         sleepMs = 0
       } else {
         currentStep = { step: 'error', at: new Date(), error: err.message }
-        if (err.code === 'circuit_open' || err.code === 'catalogue_stopped') {
+        if (err.code === 'host_backoff' || err.code === 'catalogue_stopped') {
           logWarn('mirror_scheduler_step_stopped', { code: err.code })
         } else {
           logError('mirror_scheduler_step_failed', err)

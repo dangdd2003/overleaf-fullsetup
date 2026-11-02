@@ -29,10 +29,7 @@ import { DEFAULTS } from '../../../app/src/TemplateGalleryDefaults.mjs'
 import { mergePlain } from './support/mergePlain.mjs'
 import { setCollectionOverrideForTests } from '../../../app/src/persistence/Collections.mjs'
 import { requestRaw } from '../../../app/src/transport/GuardedHttps.mjs'
-import {
-  resetHostLimiterForTests,
-  setHostLimitsForTests,
-} from '../../../app/src/transport/HostLimiter.mjs'
+import { resetRateGateForTests } from '../../../app/src/transport/RateGate.mjs'
 import { encryptCookie } from '../../../app/src/crypto/SessionCredentialStore.mjs'
 import TemplateSourceAcquisitionService from '../../../app/src/services/TemplateSourceAcquisitionService.mjs'
 import ZipInspector from '../../../app/src/zip/ZipInspector.mjs'
@@ -126,12 +123,7 @@ describe('S-P5 source acquisition backoff', () => {
   beforeEach(async () => {
     tmpDir = await fsp.mkdtemp(Path.join(os.tmpdir(), 'tg-p5-backoff-'))
     cfg = mergePlain(DEFAULTS, { storageDir: tmpDir })
-    resetHostLimiterForTests()
-    setHostLimitsForTests('overleaf', {
-      maxInFlight: 1,
-      reservedInteractive: 0,
-      minIntervalMs: 0,
-    })
+    resetRateGateForTests()
     requestRaw.mockReset()
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(T0)
@@ -142,7 +134,7 @@ describe('S-P5 source acquisition backoff', () => {
     vi.useRealTimers()
     vi.restoreAllMocks()
     setCollectionOverrideForTests(null)
-    resetHostLimiterForTests()
+    resetRateGateForTests()
     await fsp.rm(tmpDir, { recursive: true, force: true })
   })
 

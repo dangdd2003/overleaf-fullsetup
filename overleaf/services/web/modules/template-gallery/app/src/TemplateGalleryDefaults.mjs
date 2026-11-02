@@ -13,8 +13,8 @@ export const DEFAULTS = {
   storageDir: '/var/lib/overleaf/data/template-gallery',
   crawler: {
     // Algolia catalogue weekly, recent listings hourly, detail pages and PDFs
-    // fetched by the parallel sync pool (jobs/Scheduler.mjs). Parallel request
-    // limits per upstream host are in transport/HostLimiter.mjs.
+    // fetched by the parallel sync pool (jobs/Scheduler.mjs). Outbound routes
+    // and per-route pacing are in transport/RateGate.mjs.
     algolia: {
       // public search-only key from <meta name="ol-algolia">; refreshed
       // automatically when Algolia rejects it
@@ -37,11 +37,12 @@ export const DEFAULTS = {
     maxRedirects: 5,
     maxDownloadBytes: 64 * MiB,
     maxPdfBytes: 128 * MiB,
-    // Requests a minute to www.overleaf.com per outbound route (the direct
-    // connection and each proxy), shared by the sync and interactive pages.
-    // One every 2 s: half the 1/s overleaf.com is seen to accept, so a page a
-    // user opens still fits. A full first sync of ~10k templates (~2 requests
-    // each) takes about 11 h on one route; the weekly refetch about 6 h.
+    // Requests a minute to www.overleaf.com per route: each enabled proxy, or
+    // the direct connection when none is. N proxies give N times this rate.
+    // Shared by the sync and interactive pages. A route that overleaf.com
+    // blocks (403, ~5 min) pauses alone; the others keep going. A full first
+    // sync of ~10k templates (~2 requests each) takes about 11 h on one route,
+    // about 15 min on 50 proxies.
     fetchRpm: 30,
   },
   limits: {

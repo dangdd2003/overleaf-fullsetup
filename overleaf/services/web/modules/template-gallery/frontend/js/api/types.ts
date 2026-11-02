@@ -123,6 +123,8 @@ export interface SyncPhase {
   done: number
   failed: number
   total: number | null
+  error: string | null
+  lastError: string | null
 }
 
 export interface SyncRun {
@@ -132,6 +134,8 @@ export interface SyncRun {
   rescan: boolean
   stopping: boolean
   waitingUntil: string | null
+  waitReason: 'throttled' | 'unavailable' | null
+  waitError: string | null
   error: string | null
   startedAt: string | null
   finishedAt: string | null

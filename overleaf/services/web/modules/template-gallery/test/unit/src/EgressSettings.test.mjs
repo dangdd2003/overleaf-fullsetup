@@ -4,7 +4,7 @@ import { setCollectionOverrideForTests } from '../../../app/src/persistence/Coll
 import { createFakeCollection } from './S-P4-support.mjs'
 import * as EgressSettings from '../../../app/src/egress/EgressSettings.mjs'
 import { decryptSecret } from '../../../app/src/crypto/SecretBox.mjs'
-import { isTransientCode } from '../../../app/src/transport/HostLimiter.mjs'
+import { isTransientCode } from '../../../app/src/transport/RateGate.mjs'
 
 const GOOD = {
   label: 'office',
@@ -41,8 +41,8 @@ describe('EgressSettings', () => {
 
   it('defaults to direct only when no document exists', async () => {
     const view = await EgressSettings.view()
-    expect(view).toEqual({ useDirect: true, proxies: [] })
-    expect(EgressSettings.snapshot()).toEqual({ useDirect: true, egresses: [] })
+    expect(view).toEqual({ proxies: [] })
+    expect(EgressSettings.snapshot()).toEqual({ egresses: [] })
   })
 
   it('stores the login encrypted and never the plaintext password', async () => {
@@ -160,11 +160,12 @@ describe('EgressSettings', () => {
     expect(col.docs.length).toBe(0)
   })
 
-  it('refuses a state with no usable egress', async () => {
+  it('allows turning off or deleting the last proxy, falling back to direct', async () => {
     const { proxy } = await EgressSettings.createProxy({ ...GOOD, username: '', password: '' })
-    expect((await EgressSettings.setUseDirect(false)).useDirect).toBe(false)
-    expect(await codeOf(EgressSettings.deleteProxy(proxy.id))).toBe('no_egress')
-    expect(await codeOf(EgressSettings.updateProxy(proxy.id, { enabled: false }))).toBe('no_egress')
+    await EgressSettings.updateProxy(proxy.id, { enabled: false })
+    expect(EgressSettings.snapshot().egresses).toEqual([])
+    await EgressSettings.deleteProxy(proxy.id)
+    expect((await EgressSettings.view()).proxies).toEqual([])
   })
 
   it('updates and deletes by id, reporting not_found for unknown ids', async () => {
@@ -177,7 +178,7 @@ describe('EgressSettings', () => {
   it('writes with a version compare-and-set', async () => {
     await EgressSettings.createProxy(GOOD)
     expect(col.docs[0].version).toBe(1)
-    await EgressSettings.setUseDirect(true)
+    await EgressSettings.createProxy({ ...GOOD, host: 'other.example.net' })
     expect(col.docs[0].version).toBe(2)
   })
 
@@ -189,7 +190,9 @@ describe('EgressSettings', () => {
       col.docs[0].version += 1
       return original.call(col, filter, update, options)
     }
-    expect(await codeOf(EgressSettings.setUseDirect(true))).toBe('version_conflict')
+    expect(
+      await codeOf(EgressSettings.createProxy({ ...GOOD, host: 'other.example.net' }))
+    ).toBe('version_conflict')
   })
 
   it('bulk-adds one proxy per line in a single write', async () => {

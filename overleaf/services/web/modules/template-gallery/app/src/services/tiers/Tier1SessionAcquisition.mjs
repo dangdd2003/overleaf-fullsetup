@@ -6,7 +6,7 @@ import {
   withHostSlot,
   isTransientCode,
   isThrottledError,
-} from '../../transport/HostLimiter.mjs'
+} from '../../transport/RateGate.mjs'
 import { commitZipBuffer, pickMainFile, resolveLimits } from './TierSupport.mjs'
 import { logInfo, logWarn } from '../../observability/Log.mjs'
 

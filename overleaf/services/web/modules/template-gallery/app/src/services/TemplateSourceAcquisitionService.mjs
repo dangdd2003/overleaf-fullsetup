@@ -8,7 +8,7 @@ import {
   sourceTextSha,
 } from './tiers/Tier3SynthesisAcquisition.mjs'
 import { resolveStorageDir } from './tiers/TierSupport.mjs'
-import { isTransientCode } from '../transport/HostLimiter.mjs'
+import { isTransientCode } from '../transport/RateGate.mjs'
 import { logInfo, logWarn } from '../observability/Log.mjs'
 
 // Finds or builds the project zip for a gallery item:

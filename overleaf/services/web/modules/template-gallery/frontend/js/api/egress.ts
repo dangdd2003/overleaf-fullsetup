@@ -9,7 +9,7 @@ const ADMIN_EGRESS_API = "/admin/templates/api/egress";
 export type EgressScheme = "http" | "https" | "socks5" | "socks5h";
 
 export type EgressHealth = {
-  state: "idle" | "ok" | "error" | "backoff" | "circuit_open";
+  state: "idle" | "ok" | "error" | "backoff";
   backoffUntil: string | null;
   lastError: string | null;
   lastSuccessAt: string | null;
@@ -29,7 +29,6 @@ export type EgressProxy = {
 };
 
 export type EgressConfig = {
-  useDirect: boolean;
   proxies: EgressProxy[];
 };
 
@@ -115,10 +114,6 @@ async function egressRequest<T>(
 
 export function getEgress(): Promise<EgressConfig> {
   return egressRequest<EgressConfig>("");
-}
-
-export function setEgressDirect(useDirect: boolean): Promise<EgressConfig> {
-  return egressRequest<EgressConfig>("/direct", "POST", { useDirect });
 }
 
 export function createEgressProxy(

@@ -16,13 +16,6 @@ export function registerEgressRoutes(
 ) {
   webRouter.get(BASE, requireSiteAdminJson, controller.getEgress)
   webRouter.post(
-    `${BASE}/direct`,
-    requireSiteAdminJson,
-    jsonParser,
-    adminWriteRateLimit,
-    controller.setDirect
-  )
-  webRouter.post(
     `${BASE}/proxies`,
     requireSiteAdminJson,
     jsonParser,

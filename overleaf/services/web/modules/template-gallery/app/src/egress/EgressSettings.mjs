@@ -11,8 +11,9 @@ import { logWarn } from '../observability/Log.mjs'
 
 // Outbound proxies for the gallery's requests to overleaf.com, algolia and S3.
 // Config lives in the templateGalleryConfig collection, document 'egressProxies'.
-// A missing document means direct only. Proxy logins are sealed with the same
-// key as the session cookie; nothing returned to the admin contains them.
+// Only these gallery requests use the proxies; with no proxy enabled they go
+// direct. Proxy logins are sealed with the same key as the session cookie;
+// nothing returned to the admin contains them.
 
 export const EGRESS_DOC_ID = 'egressProxies'
 export const MAX_PROXIES = 20
@@ -40,7 +41,6 @@ const LOGIN_IN_TOKEN = /^((?:[a-z][a-z0-9+.-]*:\/\/)?[^:/?#@]*:)[^/?#]*@/i
 
 // In-memory copy read by the host limiter, which needs it synchronously.
 const state = {
-  useDirect: true,
   egresses: [],
   checkedAt: 0,
   refreshing: null,
@@ -185,7 +185,6 @@ function toEgress(proxy) {
 }
 
 function applyDoc(doc) {
-  state.useDirect = doc?.useDirect !== false
   state.egresses = (doc?.proxies || [])
     .filter(proxy => proxy.enabled)
     .flatMap(proxy => {
@@ -197,13 +196,6 @@ function applyDoc(doc) {
       }
     })
   state.checkedAt = Date.now()
-}
-
-// Something usable must remain, or the mirror would have no route at all.
-function ensureUsable({ useDirect, proxies }) {
-  if (!useDirect && !proxies.some(proxy => proxy.enabled)) {
-    throw codedError('no_egress')
-  }
 }
 
 async function readDoc() {
@@ -230,16 +222,16 @@ export function refresh() {
 }
 
 /**
- * Synchronous view for the host limiter: whether direct is on and the enabled
- * proxies, decrypted. Starts a background refresh once the copy is 30 s old.
+ * Synchronous view for the host limiter: the enabled proxies, decrypted.
+ * Starts a background refresh once the copy is 30 s old.
  *
- * @returns {{ useDirect: boolean, egresses: Array<object> }}
+ * @returns {{ egresses: Array<object> }}
  */
 export function snapshot() {
   if (Date.now() - state.checkedAt >= SNAPSHOT_REFRESH_MS) {
     void refresh()
   }
-  return { useDirect: state.useDirect, egresses: state.egresses }
+  return { egresses: state.egresses }
 }
 
 /**
@@ -249,7 +241,6 @@ export async function view() {
   const doc = await readDoc()
   applyDoc(doc)
   return {
-    useDirect: state.useDirect,
     proxies: (doc?.proxies || []).map(toView),
   }
 }
@@ -260,17 +251,14 @@ async function commit(mutate) {
   const col = await configCol()
   const current = await col.findOne({ _id: EGRESS_DOC_ID })
   const base = {
-    useDirect: current?.useDirect !== false,
     proxies: current?.proxies || [],
   }
   const next = mutate(base)
   // Nothing to change: no write, no version bump
   if (next === base) return view()
-  ensureUsable(next)
 
   const version = (current?.version || 0) + 1
   const fields = {
-    useDirect: next.useDirect,
     proxies: next.proxies,
     version,
     updatedAt: new Date(),
@@ -278,7 +266,8 @@ async function commit(mutate) {
   if (current) {
     const result = await col.updateOne(
       { _id: EGRESS_DOC_ID, version: current.version },
-      { $set: fields }
+      // useDirect: left over from the removed direct-connection toggle
+      { $set: fields, $unset: { useDirect: '' } }
     )
     if (result.matchedCount === 0) throw codedError('version_conflict')
   } else {
@@ -291,14 +280,6 @@ async function commit(mutate) {
   }
   applyDoc({ ...fields })
   return view()
-}
-
-/**
- * Turns direct connections on or off. Refused when that would leave no route.
- */
-export function setUseDirect(useDirect) {
-  if (typeof useDirect !== 'boolean') throw codedError('invalid_direct')
-  return commit(base => ({ ...base, useDirect }))
 }
 
 /**
@@ -495,7 +476,6 @@ export async function findProxyEgress(id) {
  * Drops the in-memory copy. Tests only.
  */
 export function resetEgressSettingsForTests() {
-  state.useDirect = true
   state.egresses = []
   state.checkedAt = 0
   state.refreshing = null
@@ -508,7 +488,6 @@ export default {
   refresh,
   snapshot,
   view,
-  setUseDirect,
   createProxy,
   updateProxy,
   createProxiesFromText,

@@ -27,7 +27,7 @@ import {
   isTransientCode,
   isTransientError,
   TRANSIENT_ERROR_CODES,
-} from '../../../app/src/transport/HostLimiter.mjs'
+} from '../../../app/src/transport/RateGate.mjs'
 import { encryptCookie } from '../../../app/src/crypto/SessionCredentialStore.mjs'
 import { acquireViaCloudSession } from '../../../app/src/services/tiers/Tier1SessionAcquisition.mjs'
 import TemplateSourceAcquisitionService from '../../../app/src/services/TemplateSourceAcquisitionService.mjs'
@@ -47,8 +47,7 @@ describe('S-P6 Transient Transport Errors', () => {
         expect(isTransientError({ code })).toBe(true)
       }
       expect(isTransientCode('host_busy')).toBe(true)
-      expect(isTransientCode('host_task_timeout')).toBe(true)
-      expect(isTransientCode('circuit_open')).toBe(true)
+      expect(isTransientCode('host_backoff')).toBe(true)
       expect(isTransientCode('EOUTBOUND_BLOCKED')).toBe(true)
       expect(isTransientCode('other_error')).toBe(false)
       expect(isTransientError(new Error('boom'))).toBe(false)
@@ -56,7 +55,7 @@ describe('S-P6 Transient Transport Errors', () => {
   })
 
   describe('Tier1SessionAcquisition transient errors', () => {
-    it('does not invalidate session credential on host_busy or circuit_open', async () => {
+    it('does not invalidate session credential on host_busy', async () => {
       let markInvalidCalled = false
       const fakeConfig = {
         findOne: async ({ _id }) => {
@@ -202,7 +201,7 @@ describe('S-P6 Transient Transport Errors', () => {
     })
 
     it('OpenController errorFor maps transient codes to 503 upstream_busy', () => {
-      const codes = ['host_busy', 'host_task_timeout', 'circuit_open', 'EOUTBOUND_BLOCKED', 'upstream_busy']
+      const codes = ['host_busy', 'host_backoff', 'EOUTBOUND_BLOCKED', 'upstream_busy']
       for (const code of codes) {
         const errInfo = errorFor(code)
         expect(errInfo.status).toBe(503)

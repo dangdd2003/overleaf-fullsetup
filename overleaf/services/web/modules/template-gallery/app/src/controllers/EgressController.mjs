@@ -1,6 +1,6 @@
 import EgressSettings from '../egress/EgressSettings.mjs'
 import GuardedHttps from '../transport/GuardedHttps.mjs'
-import { getHostStatus } from '../transport/HostLimiter.mjs'
+import { getHostStatus } from '../transport/RateGate.mjs'
 import { logError, logWarn } from '../observability/Log.mjs'
 
 // Admin API for outbound proxies. Error envelope: { error: <code> }, as in
@@ -18,13 +18,11 @@ const STATUS_BY_CODE = Object.freeze({
   invalid_label: 400,
   invalid_flag: 400,
   invalid_login: 400,
-  invalid_direct: 400,
   invalid_text: 400,
   proxy_limit: 400,
   not_found: 404,
   duplicate: 409,
   version_conflict: 409,
-  no_egress: 409,
   secret_not_configured: 409,
 })
 
@@ -48,53 +46,55 @@ function sendError(res, err) {
   return sendCode(res, 500, 'internal')
 }
 
-// Health comes from the limiter lanes that carry each proxy. The lane id is
-// the proxy id. A proxy with no lane yet has never been used. Each host has its
-// own lane for a proxy, so the worst state wins: an idle lane on one host must
-// not hide a failing lane on another.
+// Health comes from the RateGate routes that carry each proxy. The route id is
+// the proxy id. A proxy with no route yet has never been used. Each host has
+// its own route for a proxy, so the worst state wins: an idle route on one host
+// must not hide a blocked route on another.
+//   backoff: upstream blocked the route; it resumes at backoffUntil
+//   error:   the proxy or connection failed; it rests until backoffUntil
 const HEALTH_RANK = Object.freeze({
   idle: 0,
   ok: 1,
   error: 2,
   backoff: 3,
-  circuit_open: 4,
 })
 
-function laneHealth() {
-  const lanes = new Map()
+function routeHealth() {
+  const routes = new Map()
   for (const host of Object.values(getHostStatus())) {
-    for (const lane of host.lanes) {
-      const current = lanes.get(lane.id)
+    for (const route of host.routes) {
+      const current = routes.get(route.id)
       if (
         !current ||
-        HEALTH_RANK[healthOf(lane).state] > HEALTH_RANK[healthOf(current).state]
+        HEALTH_RANK[healthOf(route).state] > HEALTH_RANK[healthOf(current).state]
       ) {
-        lanes.set(lane.id, lane)
+        routes.set(route.id, route)
       }
     }
   }
-  return lanes
+  return routes
 }
 
-function healthOf(lane) {
-  if (!lane) {
+function healthOf(route) {
+  if (!route) {
     return { state: 'idle', backoffUntil: null, lastError: null, lastSuccessAt: null, lastStatus: null }
   }
   let state = 'idle'
-  if (lane.circuit === 'open') state = 'circuit_open'
-  else if (lane.backoffUntil) state = 'backoff'
-  else if (lane.lastSuccessAt) state = 'ok'
-  else if (lane.lastError) state = 'error'
+  if (route.blockedUntil) state = 'backoff'
+  else if (route.restUntil) state = 'error'
+  else if (route.lastError) state = 'error'
+  else if (route.lastSuccessAt) state = 'ok'
+  const until = route.blockedUntil || route.restUntil
   return {
     state,
-    backoffUntil: lane.backoffUntil ? new Date(lane.backoffUntil).toISOString() : null,
-    lastError: lane.lastError ?? null,
-    lastSuccessAt: lane.lastSuccessAt ? new Date(lane.lastSuccessAt).toISOString() : null,
-    lastStatus: lane.lastStatus ?? null,
+    backoffUntil: until ? new Date(until).toISOString() : null,
+    lastError: route.lastError ?? null,
+    lastSuccessAt: route.lastSuccessAt ? new Date(route.lastSuccessAt).toISOString() : null,
+    lastStatus: route.lastStatus ?? null,
   }
 }
 
-function withHealth(proxy, lanes) {
+function withHealth(proxy, routes) {
   return {
     id: proxy.id,
     label: proxy.label,
@@ -104,15 +104,14 @@ function withHealth(proxy, lanes) {
     enabled: proxy.enabled,
     allowPrivate: proxy.allowPrivate,
     hasAuth: proxy.hasAuth,
-    health: healthOf(lanes.get(proxy.id)),
+    health: healthOf(routes.get(proxy.id)),
   }
 }
 
 function viewWithHealth(view) {
-  const lanes = laneHealth()
+  const routes = routeHealth()
   return {
-    useDirect: view.useDirect,
-    proxies: view.proxies.map(proxy => withHealth(proxy, lanes)),
+    proxies: view.proxies.map(proxy => withHealth(proxy, routes)),
   }
 }
 
@@ -129,19 +128,10 @@ export async function getEgress(req, res) {
   }
 }
 
-export async function setDirect(req, res) {
-  try {
-    const view = await EgressSettings.setUseDirect(bodyOf(req).useDirect)
-    return res.status(200).json(viewWithHealth(view))
-  } catch (err) {
-    return sendError(res, err)
-  }
-}
-
 export async function createProxy(req, res) {
   try {
     const { proxy } = await EgressSettings.createProxy(bodyOf(req))
-    return res.status(201).json({ proxy: withHealth(proxy, laneHealth()) })
+    return res.status(201).json({ proxy: withHealth(proxy, routeHealth()) })
   } catch (err) {
     return sendError(res, err)
   }
@@ -167,7 +157,7 @@ export async function createProxiesBulk(req, res) {
 export async function updateProxy(req, res) {
   try {
     const { proxy } = await EgressSettings.updateProxy(req.params.id, bodyOf(req))
-    return res.status(200).json({ proxy: withHealth(proxy, laneHealth()) })
+    return res.status(200).json({ proxy: withHealth(proxy, routeHealth()) })
   } catch (err) {
     return sendError(res, err)
   }
@@ -190,7 +180,7 @@ function probeErrorCode(err) {
 
 /**
  * One GET of the gallery's own origin through this proxy only. No redirects,
- * no limiter slot, so the result is not affected by the sync's backoff.
+ * no rate-gate slot, so the result is not affected by blocked sync routes.
  */
 async function probe(egress) {
   const started = Date.now()
@@ -235,7 +225,6 @@ export async function testProxy(req, res) {
 
 const EgressController = {
   getEgress,
-  setDirect,
   createProxy,
   createProxiesBulk,
   updateProxy,

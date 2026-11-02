@@ -23,7 +23,7 @@ import {
   filterLinks,
   LISTING_DESCRIPTION_KEY,
 } from '../util/GalleryCopy.mjs'
-import { isTransientCode } from '../transport/HostLimiter.mjs'
+import { isTransientCode } from '../transport/RateGate.mjs'
 import { logError } from '../observability/Log.mjs'
 
 const VIEWS_DIR = Path.resolve(import.meta.dirname, '../../views')

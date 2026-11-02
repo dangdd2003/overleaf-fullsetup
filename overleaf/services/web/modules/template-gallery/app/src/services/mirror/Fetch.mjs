@@ -1,11 +1,12 @@
 import * as GuardedHttps from '../../transport/GuardedHttps.mjs'
-import { withHostSlot } from '../../transport/HostLimiter.mjs'
+import { withHostSlot } from '../../transport/RateGate.mjs'
 import * as BlobStore from '../../storage/BlobStore.mjs'
 import { DEFAULTS } from '../../TemplateGalleryDefaults.mjs'
 
-// Every request the mirror makes goes through here: one request per host
-// slot (HostLimiter), strict per-host allow-lists, size caps and content
-// checks before anything reaches the BlobStore.
+// Every request the mirror makes goes through here: one request per route
+// slot (RateGate: paced per route for overleaf.com), strict per-host
+// allow-lists, size caps and content checks before anything reaches the
+// BlobStore.
 
 export const OVERLEAF_ORIGIN = 'https://www.overleaf.com'
 
@@ -39,6 +40,17 @@ const PDF_HEADERS = Object.freeze({ Accept: 'application/pdf,*/*;q=0.8' })
 
 // Upstream answers that mean "this item is gone", not "the host is unwell".
 const GONE_STATUSES = new Set([404, 410])
+
+// S3 answers 403 for a missing object. Only a 403 from www.overleaf.com is its
+// rate block; one from the PDF's S3 hop says the file is not there.
+function isS3Denied(err) {
+  if (err?.status !== 403 || !err.url) return false
+  try {
+    return S3_HOSTS.includes(new URL(err.url).hostname)
+  } catch {
+    return false
+  }
+}
 
 let overrides = null
 
@@ -153,7 +165,8 @@ export async function storeS3Image(imageUrl, opts = {}) {
 
 /**
  * Streams an official item PDF (<item href>.pdf) into the BlobStore.
- * Resolves { status: 200, sha256, sizeBytes } or { status: 404|410 }.
+ * Resolves { status: 200, sha256, sizeBytes }, or { status: 404|410|403 } when
+ * the PDF is gone (403: missing on S3).
  */
 export async function storeOverleafPdf(path, opts = {}) {
   const url = overleafUrl(path)
@@ -171,7 +184,9 @@ export async function storeOverleafPdf(path, opts = {}) {
         signal: opts.signal,
       })
     } catch (err) {
-      if (GONE_STATUSES.has(err?.status)) return { status: err.status }
+      if (GONE_STATUSES.has(err?.status) || isS3Denied(err)) {
+        return { status: err.status }
+      }
       throw err
     }
     const declared = Number(res.headers?.['content-length'])

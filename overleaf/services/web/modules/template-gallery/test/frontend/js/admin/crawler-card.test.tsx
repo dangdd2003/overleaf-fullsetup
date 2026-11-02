@@ -32,6 +32,7 @@ function runningRun(overrides: Partial<SyncRun> = {}): SyncRun {
     rescan: false,
     stopping: false,
     waitingUntil: null,
+    waitReason: null,
     error: null,
     startedAt: new Date().toISOString(),
     finishedAt: null,

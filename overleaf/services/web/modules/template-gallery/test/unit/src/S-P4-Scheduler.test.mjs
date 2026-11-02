@@ -183,8 +183,26 @@ describe('S-P4 scheduler: sync runs', () => {
     const run = await SyncRun.read()
     expect(run.state).toBe('running')
     expect(run.waitingUntil).not.toBeNull()
+    expect(SyncRun.view(run).waitReason).toBe('throttled')
     const details = run.phases.find(phase => phase.name === 'details')
     expect(details).toMatchObject({ state: 'running', failed: 0 })
+  })
+
+  it('says the route is failing, not throttled, when no lane is blocked', async () => {
+    const { mirror, limiter } = fakeDeps({ queue: ['a'] })
+    limiter.isThrottling = vi.fn(() => false)
+    mirror.syncItem.mockRejectedValue(
+      Object.assign(new Error('proxy down'), { code: 'EPROXY_UNREACHABLE' })
+    )
+    await Scheduler.requestRun('sync', 'admin-1')
+    await Scheduler.runStep({ cfg })
+    await Scheduler.runStep({ cfg })
+
+    await Scheduler.runStep({ cfg })
+
+    const run = await SyncRun.read()
+    expect(run.waitingUntil).not.toBeNull()
+    expect(SyncRun.view(run).waitReason).toBe('unavailable')
   })
 
   it('resumes a stored run in its current phase after a restart', async () => {

@@ -6,6 +6,13 @@ data volume, and serves them from there for faster use. There are no custom or
 uploaded templates, no review or publish workflow, and no per-item metadata
 editing.
 
+## Upstream CE comparison
+
+The upstream CE project/template flow does not include this local mirror of
+the overleaf.com public gallery. This module adds the mirrored catalogue,
+cached detail pages and files, and its own sync controls. The normal CE project
+creation flow continues to work when the module is disabled.
+
 ## Activation
 
 The feature gate is off by default.
@@ -32,7 +39,8 @@ the rest through the admin API under `/admin/templates/api`:
   Nothing is fetched from overleaf.com unless a sync is started or auto sync is on.
 - **Egress proxies** (`egress`): optional HTTP, HTTPS, SOCKS5 or SOCKS5H proxies
   for requests to overleaf.com, Algolia and S3. With none configured, requests
-  go direct. Proxy logins are sealed with the session key and never returned.
+  go direct. Only the gallery uses them; the rest of Overleaf is unaffected.
+  Proxy logins are sealed with the session key and never returned.
 - **Session cookie** (`credentials/session`): the overleaf.com session cookie,
   which lets "Open as template" fetch complete projects.
 
@@ -50,6 +58,7 @@ the rest through the admin API under `/admin/templates/api`:
   The run and its phase are stored in Mongo, so a restart or a new leader
   resumes it. A stop request halts work at the next step. Per-host request
   pacing lives in `transport/HostLimiter.mjs`.
+
 - **Open as template:** source acquisition through overleaf.com session replay
   (tier 1), followed by single-file synthesis from the public main source (tier 3).
 - **Garbage collection and integrity:** unreferenced blobs are swept after a
@@ -58,16 +67,48 @@ the rest through the admin API under `/admin/templates/api`:
   one item's details or source, running jobs, host limiter, egress proxies,
   storage and the session cookie.
 
-## Database
+## Developer design
 
-Collections: `templateGalleryItems`, `templateGalleryTags`,
-`templateGalleryListings`, `templateGalleryCrawlerState`,
-`templateGalleryJobs`, `templateGalleryLocks`, `templateGalleryConfig`.
+The web module registers the gallery and admin routes when enabled. Controllers
+use catalogue services for user requests; the sync runner updates MongoDB
+metadata and the content-addressed blob store. Only the cluster leader runs a
+sync, while snapshots let an empty MongoDB restore the catalogue offline.
 
-Items are mirror documents keyed by overleaf.com token. `state` is `published`
-for mirrored items and `unpublished` once the crawler sees the item removed upstream.
+```mermaid
+flowchart LR
+  UI[Gallery and admin pages] --> Router[TemplateGalleryRouter]
+  Router --> Controllers[Gallery / admin controllers]
+  Controllers --> Catalog[Catalogue services]
+  Catalog --> Mongo[(MongoDB catalogue)]
+  Catalog --> Blobs[(Blob store)]
+  Leader[Leader process] --> Sync[SyncRun / crawler]
+  Sync --> Upstream[Overleaf.com, Algolia, S3]
+  Sync --> Mongo
+  Sync --> Blobs
+  Admin[Existing site admin] --> AdminAPI[Admin routes]
+  AdminAPI --> Controllers
+```
 
-Indexes are created at boot by `persistence/Indexes.mjs`. There are no migrations.
+The **Admin Templates** routes require the existing site-admin role. The
+module adds no user or project role; regular users browse and open mirrored
+templates under normal Overleaf project permissions.
+
+### MongoDB collections
+
+| Collection                    | Purpose                                                                                                                                              |
+| :---------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `templateGalleryItems`        | Template metadata and mirror state, keyed by upstream template token. `published` means present in the mirror; `unpublished` means removed upstream. |
+| `templateGalleryTags`         | Tag names and their mirrored template associations.                                                                                                  |
+| `templateGalleryListings`     | Cached catalogue, featured, recent, and tag listing membership/order.                                                                                |
+| `templateGalleryCrawlerState` | Crawl phase and resume cursors.                                                                                                                      |
+| `templateGalleryJobs`         | Sync and per-item job status/results.                                                                                                                |
+| `templateGalleryLocks`        | Cluster coordination and snapshot leases.                                                                                                            |
+| `templateGalleryConfig`       | Admin sync settings, encrypted proxy/session credentials, and usage counters.                                                                        |
+
+Indexes are created at boot by `persistence/Indexes.mjs`; there are no
+migrations. Metadata and job state live in MongoDB. Blobs and catalogue
+snapshots live under `storageDir` on the Overleaf data volume, as described
+below.
 
 ## Storage, backup and restore
 
@@ -109,12 +150,12 @@ atomically. Only one process per cluster exports at a time (Mongo lease `snapsho
 
 On boot, after storage is probed and before indexes are ensured:
 
-| Items in Mongo | Snapshot on volume | Action |
-| --- | --- | --- |
-| empty | present | restore from the snapshot, offline, no upstream traffic |
-| present | absent | backfill: export right away |
-| present | present | nothing |
-| empty | absent | nothing (fresh install) |
+| Items in Mongo | Snapshot on volume | Action                                                  |
+| -------------- | ------------------ | ------------------------------------------------------- |
+| empty          | present            | restore from the snapshot, offline, no upstream traffic |
+| present        | absent             | backfill: export right away                             |
+| present        | present            | nothing                                                 |
+| empty          | absent             | nothing (fresh install)                                 |
 
 Restore verifies every file before inserting anything. A corrupt snapshot is
 logged and ignored. A transient error keeps the module not ready

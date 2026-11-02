@@ -21,7 +21,6 @@ import {
   EgressProxyInput,
   EgressScheme,
   getEgress,
-  setEgressDirect,
   testEgressProxy,
   updateEgressProxy,
 } from '../../../api/egress'
@@ -108,7 +107,6 @@ export default function EgressCard({ onFlash }: EgressCardProps) {
   const [form, setForm] = useState(EMPTY_FORM)
   const [probes, setProbes] = useState<Record<string, ProbeState>>({})
   const [confirmDelete, setConfirmDelete] = useState<EgressProxy | null>(null)
-  const directAction = useAsyncAction()
   const rowAction = useAsyncAction()
   const addAction = useAsyncAction()
   const [bulkMode, setBulkMode] = useState(false)
@@ -209,17 +207,6 @@ export default function EgressCard({ onFlash }: EgressCardProps) {
   function bulkLineReason(code: string): string {
     return t(`template_gallery_admin_egress_bulk_error_${code}`, {
       defaultValue: t('template_gallery_admin_egress_bulk_error_unknown'),
-    })
-  }
-
-  function toggleDirect(useDirect: boolean) {
-    void directAction.run(async () => {
-      await setEgressDirect(useDirect)
-      onFlash({
-        type: 'success',
-        content: t('template_gallery_admin_egress_saved'),
-      })
-      await reload()
     })
   }
 
@@ -327,13 +314,6 @@ export default function EgressCard({ onFlash }: EgressCardProps) {
     >
       <p className="text-muted">{t('template_gallery_admin_egress_help')}</p>
 
-      {directAction.error && (
-        <Notification
-          type="error"
-          content={errorMessage(t, directAction.error)}
-          className="mb-3"
-        />
-      )}
       {rowAction.error && !confirmDelete && (
         <Notification
           type="error"
@@ -342,21 +322,11 @@ export default function EgressCard({ onFlash }: EgressCardProps) {
         />
       )}
 
-      <OLFormCheckbox
-        id={`${idPrefix}-direct`}
-        label={t('template_gallery_admin_egress_direct_label')}
-        checked={config.useDirect}
-        disabled={directAction.busy}
-        onChange={(e: ChangeEvent<HTMLInputElement>) =>
-          toggleDirect(e.target.checked)
-        }
-      />
-
       {config.proxies.length > 0 && (
         <OLTable
           container={false}
           hover
-          className="mt-3 mb-0 align-middle"
+          className="mb-0 align-middle"
         >
           <caption className="visually-hidden">
             {t('template_gallery_admin_egress_title')}

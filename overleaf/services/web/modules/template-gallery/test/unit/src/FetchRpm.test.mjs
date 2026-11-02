@@ -12,15 +12,15 @@ import {
   withHostSlot,
   getHostStatus,
   fetchRpm,
-  resetHostLimiterForTests,
-} from '../../../app/src/transport/HostLimiter.mjs'
+  resetRateGateForTests,
+} from '../../../app/src/transport/RateGate.mjs'
 
 describe('overleaf.com request budget', () => {
   let saved
 
   beforeEach(async () => {
     saved = Settings.templateGalleryFetchRpm
-    resetHostLimiterForTests()
+    resetRateGateForTests()
     // Direct lane only
     setCollectionOverrideForTests({
       templateGalleryConfig: createFakeCollection([]),
@@ -31,7 +31,7 @@ describe('overleaf.com request budget', () => {
 
   afterEach(() => {
     Settings.templateGalleryFetchRpm = saved
-    resetHostLimiterForTests()
+    resetRateGateForTests()
     setCollectionOverrideForTests(null)
     EgressSettings.resetEgressSettingsForTests()
   })
@@ -63,13 +63,13 @@ describe('overleaf.com request budget', () => {
     expect(Settings.templateGalleryFetchRpm).toBe(30)
   })
 
-  it('spaces overleaf.com starts by 60 s / rpm on each lane', async () => {
+  it('reports the overleaf.com budget per route', async () => {
     Settings.templateGalleryFetchRpm = 20
     expect(fetchRpm()).toBe(20)
     await withHostSlot('overleaf', {}, async () => ({ status: 200 }))
     const status = getHostStatus().overleaf
     expect(status.maxPerMinute).toBe(20)
-    expect(status.lanes[0].intervalMs).toBe(3_000)
+    expect(status.routes).toHaveLength(1)
   })
 
   it('leaves other hosts unpaced', () => {

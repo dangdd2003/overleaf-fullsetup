@@ -1,11 +1,12 @@
 import * as GuardedHttps from '../transport/GuardedHttps.mjs'
-import { withHostSlot } from '../transport/HostLimiter.mjs'
+import { withHostSlot } from '../transport/RateGate.mjs'
 import AlgoliaConfigManager from './AlgoliaConfigManager.mjs'
 
 // Server-side Algolia client used by the catalogue crawler. Every HTTP attempt
-// takes its own 'algolia' host slot (<= 4 rps). Only network errors and
-// transient 5xx move on to the next Algolia host; 429/503 are rethrown so the
-// host limiter backs off; 4xx are final, except one key refresh on 401/403.
+// goes out on an 'algolia' route (RateGate; not paced). Only network errors and
+// transient 5xx move on to the next Algolia host; 429/503 are rethrown after
+// RateGate has set that route aside; 4xx are final, except one key refresh on
+// 401/403.
 
 const RETRYABLE_STATUSES = new Set([500, 502, 504])
 
@@ -23,13 +24,12 @@ function isAuthError(err) {
   return err?.status === 401 || err?.status === 403
 }
 
-// Limiter refusals apply to the 'algolia' slot as a whole, so another host
+// RateGate refusals apply to every 'algolia' route, so another Algolia host
 // would be refused the same way.
 const LIMITER_REFUSALS = new Set([
-  'circuit_open',
   'host_backoff',
   'host_busy',
-  'limiter_reset',
+  'no_route',
   'EOUTBOUND_BLOCKED',
 ])
 

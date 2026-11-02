@@ -6,17 +6,7 @@ import Settings from '@overleaf/settings'
 import { DEFAULTS } from '../../../app/src/TemplateGalleryDefaults.mjs'
 import { mergePlain } from './support/mergePlain.mjs'
 import { setCollectionOverrideForTests } from '../../../app/src/persistence/Collections.mjs'
-import HostLimiter, {
-  withHostSlot,
-  isHostIdle,
-  getHostStatus,
-  parseRetryAfterMs,
-  setHostLimitsForTests,
-  resetHostLimiterForTests,
-  BACKOFF_STEPS_MS,
-  CIRCUIT_FAILURE_THRESHOLD,
-  CIRCUIT_OPEN_MS,
-} from '../../../app/src/transport/HostLimiter.mjs'
+import { resetRateGateForTests } from '../../../app/src/transport/RateGate.mjs'
 import TemplateCrawlerService, {
   normalizeDataUri,
   normalizeTags,
@@ -176,195 +166,21 @@ function makeMockCollection(initialDocs = []) {
   }
 }
 
-describe('Work Package B1: Catalogue, Scheduler, HostLimiter, Persistence & Lifecycle', () => {
+describe('Work Package B1: Catalogue, Scheduler, Persistence & Lifecycle', () => {
   beforeEach(() => {
     Settings.enableTemplateGallery = true
     Settings.templateGallery = mergePlain(DEFAULTS, {
       storageDir: path.join(os.tmpdir(), `tg-test-${Date.now()}`),
     })
-    resetHostLimiterForTests()
+    resetRateGateForTests()
   })
 
   afterEach(async () => {
-    resetHostLimiterForTests()
+    resetRateGateForTests()
     setCollectionOverrideForTests(null)
     Scheduler.setDependenciesForTests(null)
     await Scheduler.stop()
     vi.restoreAllMocks()
-  })
-
-  // =========================================================================
-  // 1. HostLimiter tests
-  // =========================================================================
-  describe('HostLimiter transport politeness & circuit breaker', () => {
-    it('executes requests through withHostSlot and updates host status', async () => {
-      setHostLimitsForTests('s3', {
-      maxInFlight: 1,
-      reservedInteractive: 0,
-      minIntervalMs: 0,
-    })
-      const res = await withHostSlot(
-        's3',
-        { priority: 'background' },
-        async () => 'ok-s3'
-      )
-      expect(res).toBe('ok-s3')
-
-      const status = getHostStatus()
-      expect(status.s3).toBeDefined()
-      expect(status.s3.circuit).toBe('closed')
-      expect(status.s3.totals.ok).toBe(1)
-      expect(isHostIdle('s3')).toBe(true)
-    })
-
-    it('parses Retry-After headers from numeric seconds and HTTP dates', () => {
-      expect(parseRetryAfterMs('120')).toBe(120_000)
-      expect(parseRetryAfterMs('0')).toBe(0)
-      expect(parseRetryAfterMs(null)).toBeNull()
-      expect(parseRetryAfterMs('')).toBeNull()
-
-      const futureDate = new Date(Date.now() + 60_000).toUTCString()
-      const parsedMs = parseRetryAfterMs(futureDate)
-      expect(parsedMs).toBeGreaterThan(50_000)
-      expect(parsedMs).toBeLessThanOrEqual(60_000)
-    })
-
-    it('prioritizes interactive queue ahead of background queue', async () => {
-      setHostLimitsForTests('algolia', {
-      maxInFlight: 1,
-      reservedInteractive: 0,
-      minIntervalMs: 0,
-    })
-      const order = []
-      const p1 = withHostSlot(
-        'algolia',
-        { priority: 'background' },
-        async () => {
-          order.push('bg1')
-        }
-      )
-      const p2 = withHostSlot(
-        'algolia',
-        { priority: 'background' },
-        async () => {
-          order.push('bg2')
-        }
-      )
-      const p3 = withHostSlot(
-        'algolia',
-        { priority: 'interactive' },
-        async () => {
-          order.push('interactive')
-        }
-      )
-
-      await Promise.all([p1, p2, p3])
-      // Because p1 starts immediately, p3 jumps ahead of p2
-      expect(order).toEqual(['bg1', 'interactive', 'bg2'])
-    })
-
-    it('backs off on 429 and applies circuit breaker on repeated failures', async () => {
-      setHostLimitsForTests('overleaf', {
-      maxInFlight: 1,
-      reservedInteractive: 0,
-      minIntervalMs: 0,
-    })
-
-      // 1. Test 429 backoff recording
-      const throttleErr = new Error('Too Many Requests')
-      throttleErr.status = 429
-      throttleErr.retryAfterMs = 50
-
-      let caught = null
-      try {
-        await withHostSlot('overleaf', { priority: 'background' }, async () => {
-          throw throttleErr
-        })
-      } catch (err) {
-        caught = err
-      }
-      expect(caught).toBe(throttleErr)
-
-      const statusAfterThrottle = getHostStatus()
-      expect(statusAfterThrottle.overleaf.backoffLevel).toBe(1)
-      expect(statusAfterThrottle.overleaf.consecutiveFailures).toBe(1)
-
-      // 2. Test circuit breaker trigger with 5 consecutive failures
-      resetHostLimiterForTests()
-      setHostLimitsForTests('overleaf', {
-      maxInFlight: 1,
-      reservedInteractive: 0,
-      minIntervalMs: 0,
-    })
-      const serverErr = new Error('500 Server Error')
-      serverErr.status = 500
-
-      for (let i = 0; i < CIRCUIT_FAILURE_THRESHOLD; i++) {
-        let errCaught = null
-        try {
-          await withHostSlot(
-            'overleaf',
-            { priority: 'background' },
-            async () => {
-              throw serverErr
-            }
-          )
-        } catch (e) {
-          errCaught = e
-        }
-        expect(errCaught).toBe(serverErr)
-      }
-
-      const status = getHostStatus()
-      expect(status.overleaf.circuit).toBe('open')
-      expect(status.overleaf.consecutiveFailures).toBe(
-        CIRCUIT_FAILURE_THRESHOLD
-      )
-
-      // Subsequent request should fail immediately with circuit_open
-      let circuitErr = null
-      try {
-        await withHostSlot(
-          'overleaf',
-          { priority: 'background' },
-          async () => 'fail'
-        )
-      } catch (e) {
-        circuitErr = e
-      }
-      expect(circuitErr?.code).toBe('circuit_open')
-    })
-
-    it('resets consecutive failure counter on non-host errors such as 404', async () => {
-      setHostLimitsForTests('s3', {
-      maxInFlight: 1,
-      reservedInteractive: 0,
-      minIntervalMs: 0,
-    })
-      const hostErr = new Error('500 Internal')
-      hostErr.status = 500
-
-      // 3 consecutive failures
-      for (let i = 0; i < 3; i++) {
-        try {
-          await withHostSlot('s3', { priority: 'background' }, async () => {
-            throw hostErr
-          })
-        } catch (_e) {}
-      }
-      expect(getHostStatus().s3.consecutiveFailures).toBe(3)
-
-      // 404 error is a resource error, not a host failure
-      const notFoundErr = new Error('Not Found')
-      notFoundErr.status = 404
-      try {
-        await withHostSlot('s3', { priority: 'background' }, async () => {
-          throw notFoundErr
-        })
-      } catch (_e) {}
-
-      expect(getHostStatus().s3.consecutiveFailures).toBe(0)
-    })
   })
 
   // =========================================================================

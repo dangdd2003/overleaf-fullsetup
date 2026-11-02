@@ -1,5 +1,5 @@
 import * as GuardedHttps from '../transport/GuardedHttps.mjs'
-import { withHostSlot } from '../transport/HostLimiter.mjs'
+import { withHostSlot } from '../transport/RateGate.mjs'
 import { configCol } from '../persistence/Collections.mjs'
 import { DEFAULTS } from '../TemplateGalleryDefaults.mjs'
 

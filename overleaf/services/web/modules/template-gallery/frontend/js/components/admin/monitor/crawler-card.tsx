@@ -111,10 +111,24 @@ export default function CrawlerCard({
               ))}
           </ul>
           {run.waitingUntil && (
-            <p className="text-muted mb-3">
-              {t('template_gallery_admin_sync_waiting')}{' '}
-              <TimeAgo value={run.waitingUntil} />
-            </p>
+            <Notification
+              type="warning"
+              className="mb-3"
+              content={
+                <>
+                  <div className="text-break">
+                    {run.waitError ||
+                      (run.waitReason === 'unavailable'
+                        ? t('template_gallery_admin_sync_waiting_unavailable')
+                        : t('template_gallery_admin_sync_waiting'))}
+                  </div>
+                  <div className="small">
+                    {t('template_gallery_admin_sync_retrying')}{' '}
+                    <TimeAgo value={run.waitingUntil} />
+                  </div>
+                </>
+              }
+            />
           )}
           <OLButton
             variant="secondary"
@@ -129,6 +143,24 @@ export default function CrawlerCard({
         </>
       ) : (
         <>
+          {run && run.state !== 'running' && (run.error || run.phases.some(p => p.error)) && (
+            <Notification
+              type="error"
+              className="mb-3"
+              content={
+                <ul className="list-unstyled mb-0 text-break">
+                  {run.error && <li>{run.error}</li>}
+                  {run.phases
+                    .filter(phase => phase.error)
+                    .map(phase => (
+                      <li key={phase.name}>
+                        {t(PHASE_LABEL_KEYS[phase.name])}: {phase.error}
+                      </li>
+                    ))}
+                </ul>
+              }
+            />
+          )}
           <dl className="row mb-2">
             {run?.finishedAt && run.state !== 'running' && (
               <>
@@ -219,11 +251,15 @@ function PhaseRow({ phase }: { phase: SyncPhase }) {
           <div className="progress-bar" style={{ width: `${percent}%` }} />
         </div>
       )}
+      {phase.error && (
+        <div className="text-danger small mt-1 text-break">{phase.error}</div>
+      )}
       {phase.failed > 0 && (
-        <div className="text-muted small mt-1">
+        <div className="text-muted small mt-1 text-break">
           {t('template_gallery_admin_pass_failed_count', {
             count: phase.failed,
           })}
+          {phase.lastError && <> — {phase.lastError}</>}
         </div>
       )}
     </li>

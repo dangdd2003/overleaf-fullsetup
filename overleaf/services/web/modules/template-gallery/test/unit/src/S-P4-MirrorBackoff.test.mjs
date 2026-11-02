@@ -582,6 +582,39 @@ describe('S-P4 MirrorService: public views and crawl runs respect backoff', () =
       )
     })
 
+    it('a 403 from the S3 hop is a missing PDF, not an overleaf.com block', async () => {
+      Fetch.setFetchOverridesForTests({
+        withHostSlot: (key, opts, fn) => fn(),
+        fetchStream: async () => {
+          throw Object.assign(new Error('HTTP 403'), {
+            status: 403,
+            url: 'https://writelatex.s3.amazonaws.com/exports/x.pdf?sig=1',
+          })
+        },
+      })
+
+      expect(
+        await Fetch.storeOverleafPdf('/latex/templates/sample/abcdefghijkl')
+      ).toEqual({ status: 403 })
+    })
+
+    it('a 403 from www.overleaf.com is still thrown as a block', async () => {
+      Fetch.setFetchOverridesForTests({
+        withHostSlot: (key, opts, fn) => fn(),
+        fetchStream: async () => {
+          throw Object.assign(new Error('HTTP 403'), {
+            status: 403,
+            url: 'https://www.overleaf.com/latex/templates/sample/abcdefghijkl.pdf',
+          })
+        },
+      })
+
+      const err = await rejectionOf(
+        Fetch.storeOverleafPdf('/latex/templates/sample/abcdefghijkl')
+      )
+      expect(err.status).toBe(403)
+    })
+
     it('a blocked PDF is not escalated: its attempt count holds and it is retried hourly', async () => {
       await seedItem({
         mirror: {

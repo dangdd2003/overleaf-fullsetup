@@ -8,7 +8,7 @@ import { RateLimiter } from '../../../../../app/src/infrastructure/RateLimiter.m
 import { acceptsJson } from '../../../../../app/src/infrastructure/RequestContentTypeDetection.mjs'
 import Lifecycle from '../Lifecycle.mjs'
 import OpenService from '../services/OpenService.mjs'
-import { isTransientCode } from '../transport/HostLimiter.mjs'
+import { isTransientCode } from '../transport/RateGate.mjs'
 import { isValidToken, itemOpenHref } from '../util/GalleryUrls.mjs'
 import { logWarn, logError, incMetric } from '../observability/Log.mjs'
 
