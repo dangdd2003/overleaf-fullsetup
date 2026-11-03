@@ -167,6 +167,8 @@ describe('A2 SearchService', function () {
         token: { $type: 'string' },
         family: { $in: ['template', 'example', 'article'] },
         'mirror.removedAt': null,
+        // tombstoned duplicates (dedup) are never searched
+        duplicateOf: null,
         $text: { $search: '"modern" "cv"' },
       })
       expect(call.sort).toEqual({

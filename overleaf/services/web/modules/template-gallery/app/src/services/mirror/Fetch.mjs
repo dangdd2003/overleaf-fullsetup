@@ -77,10 +77,10 @@ function codedError(code, message) {
 }
 
 function slotOptions(opts) {
-  return {
-    priority: opts?.priority === 'interactive' ? 'interactive' : 'background',
-    signal: opts?.signal,
-  }
+  const priority = ['interactive', 'admin'].includes(opts?.priority)
+    ? opts.priority
+    : 'background'
+  return { priority, signal: opts?.signal }
 }
 
 export function overleafUrl(path) {

@@ -369,16 +369,19 @@ export async function getItemBySlug(slug) {
 export async function getSummaryCounts() {
   const col = await itemsCol()
   const filters = syncFilters(await SyncRun.syncingTokens())
-  const count = (filter) => col.countDocuments(filter)
-  const [total, synced, syncing, queued, failed, removed] = await Promise.all([
-    col.estimatedDocumentCount(),
+  // Tombstoned duplicates (dedup) are not part of the mirror's counts; they are reported apart
+  const live = filter => ({ ...filter, duplicateOf: null })
+  const count = (filter) => col.countDocuments(live(filter))
+  const [total, synced, syncing, queued, failed, removed, duplicates] = await Promise.all([
+    col.countDocuments({ duplicateOf: null }),
     count(filters.ok),
     count(filters.syncing),
     count(filters.queued),
     count(filters.failed),
     count(filters.removed),
+    col.countDocuments({ duplicateOf: { $ne: null } }),
   ])
-  return { counts: { total, synced, syncing, queued, failed, removed } }
+  return { counts: { total, synced, syncing, queued, failed, removed, duplicates } }
 }
 
 export default {

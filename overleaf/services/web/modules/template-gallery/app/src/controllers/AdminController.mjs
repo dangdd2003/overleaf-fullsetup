@@ -12,6 +12,7 @@ import TemplateSourceAcquisitionService from '../services/TemplateSourceAcquisit
 import SessionCredentialStore from '../crypto/SessionCredentialStore.mjs'
 import { configCol } from '../persistence/Collections.mjs'
 import { logError } from '../observability/Log.mjs'
+import { refetchReason } from '../transport/RefetchReason.mjs'
 
 const VIEWS_DIR = Path.resolve(import.meta.dirname, '../../views')
 const SYNC_FILTERS = Object.freeze([
@@ -207,24 +208,43 @@ async function currentSync(id, fallback) {
   return CatalogueService.toSyncBlock(fresh)
 }
 
+function retryAtOf(err) {
+  const at = err?.retryAt
+  if (at instanceof Date && !Number.isNaN(at.getTime())) return at.toISOString()
+  return typeof at === 'string' ? at : null
+}
+
 export async function hydrateItem(req, res) {
   try {
     const item = await findItemByIdOrSlug(req.params.id)
     if (!item) return sendNotFound(res)
     const id = String(item._id)
-    let failed = false
+    let failure = null
     try {
       await TemplateHydrationService.hydrateItem(id, { force: true })
     } catch (err) {
-      failed = true
+      failure = err
       logError('tg.admin.hydrate_failed', err)
     }
     const sync = await currentSync(id, item)
-    const status = failed || sync.detailStatus === 'failed' ? 'failed' : 'ok'
-    return res.status(200).json({ status, sync })
+    const failed = Boolean(failure) || sync.detailStatus === 'failed'
+    return res.status(200).json({
+      status: failed ? 'failed' : 'ok',
+      reason: failed ? (failure ? refetchReason(failure) : 'failed') : null,
+      retryAt: failed ? retryAtOf(failure) : null,
+      sync,
+    })
   } catch (err) {
     return sendInternal(res, err)
   }
+}
+
+// The reason for a source refetch that did not produce a zip
+function sourceReason(failure, result) {
+  if (failure) return refetchReason(failure)
+  if (result?.backoff) return 'backoff'
+  const code = result?.code ?? result?.reason
+  return code ? refetchReason({ code }) : 'failed'
 }
 
 export async function refetchSource(req, res) {
@@ -238,12 +258,16 @@ export async function refetchSource(req, res) {
       return sendCode(res, 409, 'source_in_progress')
     }
     let result
+    let failure = null
     try {
+      // The admin asked for this now: it skips the item's acquisition backoff
+      // and waits longer for a route than a public view does.
       result = await TemplateSourceAcquisitionService.acquire(item, {
         force: true,
-        respectBackoff: true,
+        priority: 'admin',
       })
     } catch (err) {
+      failure = err
       logError('tg.admin.source_failed', err)
       result = { status: 'failed' }
     }
@@ -260,8 +284,10 @@ export async function refetchSource(req, res) {
           : result?.backoff
             ? 'backoff'
             : 'failed')
+    const reason = status === 'ok' ? null : sourceReason(failure, result)
+    const retryAt = status === 'backoff' ? result?.retryAt ?? null : null
     const sync = await currentSync(id, item)
-    return res.status(200).json({ status, sync })
+    return res.status(200).json({ status, reason, retryAt, sync })
   } catch (err) {
     return sendInternal(res, err)
   }

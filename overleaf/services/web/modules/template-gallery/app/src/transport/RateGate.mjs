@@ -7,8 +7,13 @@
 //
 // When upstream blocks a route (overleaf.com answers a plain 403 page, about
 // 5 minutes long; 429/503 or Retry-After elsewhere) only that route pauses
-// until the block ends; the request moves to the next free route at once. A
-// route whose proxy or connection fails rests for a minute the same way.
+// until the block ends; the request moves to the next free route at once.
+// A route whose proxy or connection fails (a "route failure": proxy errors,
+// connection resets, timeouts, DNS failures, TLS errors through a tunnel, gateway
+// 502/504) rests briefly after one failure and for a minute after two in a row.
+// The request then retries on another route, a bounded number of times with a
+// short jittered pause. A route failure is flagged `routeFailure`: it says
+// nothing about the item, so callers must not count it against the item.
 // Callers are refused only when no route is left.
 
 import Settings from '@overleaf/settings'
@@ -26,10 +31,21 @@ const HOSTS = Object.freeze({
   s3: { paced: false, blockStatuses: [429, 503], blockMs: MINUTE },
   algolia: { paced: false, blockStatuses: [429, 503], blockMs: MINUTE },
 })
-// A route whose proxy or connection failed rests this long
+// A route rests this long after its second failure in a row
 const ROUTE_REST_MS = MINUTE
-// An interactive caller does not wait longer than this for a paced start
-const INTERACTIVE_MAX_WAIT_MS = 10 * SECOND
+// ...and this briefly after its first, so one reset does not take it out
+const ROUTE_FIRST_REST_MS = 5 * SECOND
+// Longest a caller waits for a paced slot, by priority. Background sync
+// queues behind other background work, so interactive callers do not wait
+// long; an admin refetch is worth a longer wait than a public page view.
+const MAX_WAIT_MS = Object.freeze({
+  background: 5 * SECOND,
+  interactive: 10 * SECOND,
+  admin: MINUTE,
+})
+// A call tries at most this many routes that failed, then gives up
+const MAX_ROUTE_ATTEMPTS = 3
+const RETRY_JITTER_MS = 500
 
 // Codes that mean "not available right now" rather than "this item is bad".
 export const TRANSIENT_ERROR_CODES = Object.freeze([
@@ -45,24 +61,70 @@ export const TRANSIENT_ERROR_CODES = Object.freeze([
 const TRANSIENT = new Set(TRANSIENT_ERROR_CODES)
 const NETWORK_CODES = new Set([
   'ECONNRESET',
-  'ETIMEDOUT',
   'ECONNREFUSED',
+  'ECONNABORTED',
+  'ETIMEDOUT',
   'EAI_AGAIN',
+  'EAI_FAIL',
+  'ENOTFOUND',
+  'ENODATA',
+  'ESERVFAIL',
   'ENETUNREACH',
   'EHOSTUNREACH',
+  'EPIPE',
+  'EPROTO',
+  // Refused by the local address check: for a route this is a bad resolver
+  // answer (for instance a fake-IP DNS), not a fact about the item.
+  'EADDRBLOCKED',
+  'ERR_STREAM_PREMATURE_CLOSE',
 ])
+// TLS and HTTP parser errors that come from the tunnel or the proxy
+const TLS_OR_PARSER_CODE = /^(ERR_TLS|ERR_SSL|ERR_SOCKET|ERR_HTTP|HPE_|CERT_|UNABLE_TO_|SELF_SIGNED|DEPTH_ZERO)/
+const TLS_OR_PARSER_MESSAGES = Object.freeze([
+  'socket hang up',
+  'Client network socket disconnected',
+])
+// Gateway answers from a proxy or CDN in front of overleaf.com. A plain 500
+// is left alone: it can be the item's own fault.
+const GATEWAY_STATUSES = new Set([502, 504, 520, 521, 522, 523, 524, 525, 526])
+
+const routes = new Map()
 
 export function isTransientCode(code) {
   return typeof code === 'string' && TRANSIENT.has(code)
 }
 
+/**
+ * True for a refusal that says nothing about the item: a code in the transient
+ * list, a route failure, or an upstream block.
+ */
 export function isTransientError(err) {
-  return isTransientCode(err?.code)
+  return (
+    isTransientCode(err?.code) ||
+    isRouteFailure(err) ||
+    isThrottledError(err)
+  )
 }
 
 /** True for an upstream block answer: the route was refused, not the item. */
 export function isThrottledError(err) {
   return err?.hostThrottled === true
+}
+
+/**
+ * True when the failure belongs to the route that carried the request (proxy,
+ * connection, DNS on this server, TLS through a tunnel), so another route may
+ * succeed. withHostSlot sets `routeFailure` on the error it finally throws.
+ */
+export function isRouteFailure(err) {
+  if (err?.routeFailure === true) return true
+  const code = err?.code
+  if (typeof code === 'string') {
+    if (code.startsWith('EPROXY_')) return true
+    if (NETWORK_CODES.has(code) || TLS_OR_PARSER_CODE.test(code)) return true
+  }
+  if (TLS_OR_PARSER_MESSAGES.includes(err?.message)) return true
+  return GATEWAY_STATUSES.has(statusOf(err))
 }
 
 /** Requests a minute per route to www.overleaf.com. */
@@ -74,7 +136,6 @@ export function fetchRpm() {
 }
 
 // hostKey -> Map(routeId -> state)
-const routes = new Map()
 
 function codedError(code, message, extra = {}) {
   return Object.assign(new Error(message), { code }, extra)
@@ -87,6 +148,7 @@ function newRoute(id, egress) {
     nextAt: 0,
     blockedUntil: 0,
     restUntil: 0,
+    streak: 0,
     inFlight: 0,
     ok: 0,
     failed: 0,
@@ -97,7 +159,7 @@ function newRoute(id, egress) {
 }
 
 // Routes follow the proxy settings on every call. Direct is used when no
-// proxy is enabled, or when a caller pins it (e.g. a session bound to our IP).
+// proxy is enabled, or when a caller pins it (a session bound to our IP).
 function routesFor(hostKey, pinned = null) {
   if (!HOSTS[hostKey]) throw new Error(`unknown host key: ${hostKey}`)
   const { egresses } = EgressSettings.snapshot()
@@ -137,15 +199,6 @@ function isBlock(hostKey, err) {
   )
 }
 
-function isRouteFailure(err) {
-  const code = err?.code
-  return (
-    err?.message === 'socket hang up' ||
-    (typeof code === 'string' &&
-      (code.startsWith('EPROXY_') || NETWORK_CODES.has(code)))
-  )
-}
-
 function sleep(ms, signal) {
   if (ms <= 0) return Promise.resolve()
   return new Promise((resolve, reject) => {
@@ -157,10 +210,33 @@ function sleep(ms, signal) {
     }
     function onAbort() {
       clearTimeout(timer)
-      reject(signal.reason instanceof Error ? signal.reason : codedError('ABORT_ERR', 'request aborted', { name: 'AbortError' }))
+      reject(
+        signal.reason instanceof Error
+          ? signal.reason
+          : codedError('ABORT_ERR', 'request aborted', { name: 'AbortError' })
+      )
     }
     signal?.addEventListener?.('abort', onAbort, { once: true })
   })
+}
+
+function abortError() {
+  return codedError('ABORT_ERR', 'request aborted', { name: 'AbortError' })
+}
+
+// How long to wait before picking a route again, or null to give up now. A
+// caller waits only for a failed route to come back (or a resting one, when it
+// has not tried anything yet), within its own wait cap and attempt budget.
+function retryDelayMs(list, lastErr, attempts, capMs, now) {
+  if (list.length === 0) return null
+  if (lastErr && (!isRouteFailure(lastErr) || attempts >= MAX_ROUTE_ATTEMPTS)) {
+    return null
+  }
+  const soonest = Math.min(
+    ...list.map(route => Math.max(now, route.blockedUntil, route.restUntil))
+  )
+  const wait = soonest - now
+  return wait <= capMs ? wait : null
 }
 
 function noRouteError(hostKey, list, lastErr) {
@@ -170,8 +246,11 @@ function noRouteError(hostKey, list, lastErr) {
     .map(route => Math.max(route.blockedUntil, route.restUntil))
     .filter(at => at > now)
   if (waits.length === 0) return codedError('no_route', 'no outbound route')
-  return codedError('host_backoff', `${hostKey} is blocking every route`, {
+  // blocked: upstream refused the routes; otherwise they are resting after failures
+  const blocked = list.some(route => route.blockedUntil > now)
+  return codedError('host_backoff', `${hostKey} has no usable route right now`, {
     hostKey,
+    blocked,
     retryAt: new Date(Math.min(...waits)),
   })
 }
@@ -179,33 +258,52 @@ function noRouteError(hostKey, list, lastErr) {
 /**
  * Runs fn({ egress }) on a free route for hostKey ('overleaf' | 's3' |
  * 'algolia'); pass egress to GuardedHttps. For overleaf the start waits for
- * the route's next paced slot. A blocked or failing route is set aside and the
- * call moves to the next route; it rejects when no route is left.
+ * the route's next paced slot. A blocked route is set aside for the block and a
+ * failing route for a short rest; the call moves to the next route at once.
+ * When every route is down it waits briefly for one to come back (bounded by
+ * the priority's wait cap), then rejects with the last error, flagged
+ * `routeFailure` when the cause was the route rather than the item.
  *
  * @param {string} hostKey
- * @param {{ priority?: 'interactive'|'background', signal?: AbortSignal, egress?: string }} [opts]
+ * @param {{ priority?: 'background'|'interactive'|'admin', signal?: AbortSignal, egress?: string }} [opts]
  * @param {({ egress: object|null }) => Promise<any>} fn
  */
 export async function withHostSlot(hostKey, opts, fn) {
   const host = HOSTS[hostKey]
-  const interval = host?.paced ? Math.ceil(MINUTE / fetchRpm()) : 0
-  const interactive = opts?.priority === 'interactive'
+  if (!host) throw new Error(`unknown host key: ${hostKey}`)
+  // A proxy list read from the database must be current before routing: a
+  // fresh process or a proxy saved elsewhere would otherwise route direct.
+  await EgressSettings.ensureLoaded?.()
+  const interval = host.paced ? Math.ceil(MINUTE / fetchRpm()) : 0
+  const priority = Object.hasOwn(MAX_WAIT_MS, opts?.priority) ? opts.priority : 'background'
+  const interactive = priority !== 'background'
+  const maxWaitMs = MAX_WAIT_MS[priority]
   const tried = new Set()
   let lastErr = null
+  let attempts = 0
 
   for (;;) {
-    if (opts?.signal?.aborted) throw codedError('ABORT_ERR', 'request aborted', { name: 'AbortError' })
+    if (opts?.signal?.aborted) throw abortError()
     const now = Date.now()
     const list = routesFor(hostKey, opts?.egress).filter(route =>
       opts?.egress ? route.id === opts.egress : true
     )
     const free = list.filter(route => !tried.has(route.id) && usable(route, now))
-    if (free.length === 0) throw noRouteError(hostKey, list, lastErr)
+    if (free.length === 0) {
+      const delay = retryDelayMs(list, lastErr, attempts, maxWaitMs, now)
+      if (delay == null || opts?.egress) {
+        throw noRouteError(hostKey, list, lastErr)
+      }
+      // Jitter spreads the retries of parallel callers apart
+      await sleep(delay + Math.floor(Math.random() * RETRY_JITTER_MS), opts?.signal)
+      tried.clear()
+      continue
+    }
 
     // The route whose next paced slot comes first
     const route = free.reduce((best, r) => (r.nextAt < best.nextAt ? r : best))
     const startAt = Math.max(now, route.nextAt)
-    if (interactive && startAt - now > INTERACTIVE_MAX_WAIT_MS) {
+    if (interactive && startAt - now > maxWaitMs) {
       throw codedError('host_busy', `${hostKey} has no free slot`, { hostKey })
     }
     route.nextAt = startAt + interval
@@ -217,6 +315,7 @@ export async function withHostSlot(hostKey, opts, fn) {
     try {
       const result = await fn({ egress: route.egress })
       route.ok++
+      route.streak = 0
       route.lastStatus = Number(result?.status) || null
       route.lastError = null
       route.lastSuccessAt = new Date()
@@ -239,7 +338,18 @@ export async function withHostSlot(hostKey, opts, fn) {
           })
         }
       } else if (isRouteFailure(err)) {
-        route.restUntil = Date.now() + ROUTE_REST_MS
+        route.streak++
+        const restMs = route.streak >= 2 ? ROUTE_REST_MS : ROUTE_FIRST_REST_MS
+        route.restUntil = Math.max(route.restUntil, Date.now() + restMs)
+        err.routeFailure = true
+        attempts++
+        logWarn('route_failed', {
+          host: hostKey,
+          route: route.id,
+          code: err?.code ?? null,
+          status: statusOf(err),
+          streak: route.streak,
+        })
       } else {
         throw err
       }
@@ -309,4 +419,3 @@ export function getHostStatus() {
 export function resetRateGateForTests() {
   routes.clear()
 }
-

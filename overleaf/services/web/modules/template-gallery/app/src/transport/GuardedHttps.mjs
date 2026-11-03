@@ -347,26 +347,68 @@ function validateHop(urlOrString, allowedHosts, egress) {
   return url
 }
 
+// Resolver failures on this server. Through a proxy they say nothing about the
+// target, because the proxy can resolve the name itself.
+const LOCAL_DNS_FAILURES = new Set([
+  'EAI_AGAIN',
+  'EAI_FAIL',
+  'ENOTFOUND',
+  'ENODATA',
+  'ESERVFAIL',
+  'ETIMEOUT',
+])
+
+function restrictedAddressError(hostname) {
+  const err = new Error(`SSRF blocked: ${hostname} resolves to restricted address`)
+  err.code = 'EADDRBLOCKED'
+  return err
+}
+
 /**
- * Connects to the target through an egress proxy. The target is resolved with
- * the guarded lookup, the first address is checked again and then pinned, and
- * the tunnel is wrapped in TLS with certificate checks against the hostname.
+ * The address to pin for a proxy hop, or null when the proxy should resolve the
+ * name. Every target is vetted here: the name is resolved with the guarded
+ * lookup, and a private, loopback or link-local answer is refused before the
+ * proxy is contacted, whatever the scheme. HTTP CONNECT and socks5h then send
+ * the vetted name, and the proxy resolves it; plain socks5 has no way to send a
+ * name, so it gets the vetted address. A resolver failure on this server falls
+ * back to the name, because the proxy may still reach the target.
  */
-async function openEgressSocket(url, egress, lookupFn) {
-  const entries = await new Promise((resolve, reject) => {
-    lookupFn(url.hostname, { all: true }, (err, list) =>
-      err ? reject(err) : resolve(list)
-    )
-  })
-  const target = Array.isArray(entries) ? entries[0] : null
-  if (!target || !isPublicAddress(target.address)) {
-    const err = new Error(
-      `SSRF blocked: ${url.hostname} resolves to restricted address`
-    )
-    err.code = 'EADDRBLOCKED'
+async function egressAddress(url, egress, lookupFn) {
+  if (net.isIP(url.hostname)) {
+    if (!isPublicAddress(url.hostname)) throw restrictedAddressError(url.hostname)
+    return url.hostname
+  }
+  let entries
+  try {
+    entries = await new Promise((resolve, reject) => {
+      lookupFn(url.hostname, { all: true }, (err, list) =>
+        err ? reject(err) : resolve(list)
+      )
+    })
+  } catch (err) {
+    if (LOCAL_DNS_FAILURES.has(err?.code)) return null
     throw err
   }
-  const tunnel = await openTunnel(egress, target.address, Number(url.port || 443))
+  const list = Array.isArray(entries) ? entries : []
+  if (list.length === 0 || list.some(entry => !isPublicAddress(entry.address))) {
+    throw restrictedAddressError(url.hostname)
+  }
+  return egress.scheme === 'socks5' ? list[0].address : null
+}
+
+/**
+ * Connects to the target through an egress proxy and returns the tunnel. The
+ * tunnel carries the host name for HTTP CONNECT and socks5h (see
+ * egressAddress). The TLS handshake that follows checks the certificate
+ * against the hostname, whichever way the name was resolved.
+ */
+async function openEgressSocket(url, egress, lookupFn) {
+  const address = await egressAddress(url, egress, lookupFn)
+  const tunnel = await openTunnel(
+    egress,
+    address || url.hostname,
+    Number(url.port || 443)
+  )
   const secure = tls.connect({
     socket: tunnel,
     servername: net.isIP(url.hostname) ? undefined : url.hostname,

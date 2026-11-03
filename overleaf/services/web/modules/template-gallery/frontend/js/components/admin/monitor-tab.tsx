@@ -20,6 +20,7 @@ import { formatDateTime } from '../../utils/format'
 import type { Flash } from '../shared/flash'
 import CrawlerCard from './monitor/crawler-card'
 import StorageCard from './monitor/storage-card'
+import DedupCard from './monitor/dedup-card'
 import SummaryCard from './monitor/summary-card'
 
 // Only the counts and progress are polled, faster while a sync is running. The
@@ -136,6 +137,9 @@ export default function MonitorTab({
               <StorageCard storage={status.storage} />
             </OLCol>
           )}
+          <OLCol xs={12} lg={6}>
+            <DedupCard onFlash={onFlash} />
+          </OLCol>
         </OLRow>
       )}
     </div>

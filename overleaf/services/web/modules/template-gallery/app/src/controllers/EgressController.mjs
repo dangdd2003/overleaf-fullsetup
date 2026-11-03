@@ -33,6 +33,15 @@ const PROBE_ERROR_BY_CODE = Object.freeze({
   EPROXY_PROTOCOL: 'proxy_protocol',
   EADDRBLOCKED: 'address_blocked',
   ETIMEDOUT: 'timeout',
+  ECONNRESET: 'connection_reset',
+  EAI_AGAIN: 'dns_failed',
+  ENOTFOUND: 'dns_failed',
+})
+// The same page request the mirror sends for a detail page (Fetch.mjs)
+const PROBE_HEADERS = Object.freeze({
+  Accept:
+    'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.9',
 })
 
 function sendCode(res, status, code) {
@@ -175,6 +184,7 @@ export async function deleteProxy(req, res) {
 function probeErrorCode(err) {
   if (err?.status === 403) return 'upstream_blocked'
   if (err?.status) return 'unexpected_status'
+  if (String(err?.code || '').startsWith('ERR_TLS')) return 'tls_failed'
   return PROBE_ERROR_BY_CODE[err?.code] || 'unreachable'
 }
 
@@ -188,6 +198,7 @@ async function probe(egress) {
   try {
     const res = await GuardedHttps.requestRaw(PROBE_URL, {
       egress,
+      headers: PROBE_HEADERS,
       allowedHosts: [PROBE_HOST],
       followRedirects: false,
       timeoutMs: PROBE_TIMEOUT_MS,

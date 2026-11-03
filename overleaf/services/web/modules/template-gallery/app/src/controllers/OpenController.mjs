@@ -8,7 +8,7 @@ import { RateLimiter } from '../../../../../app/src/infrastructure/RateLimiter.m
 import { acceptsJson } from '../../../../../app/src/infrastructure/RequestContentTypeDetection.mjs'
 import Lifecycle from '../Lifecycle.mjs'
 import OpenService from '../services/OpenService.mjs'
-import { isTransientCode } from '../transport/RateGate.mjs'
+import { isTransientCode, isTransientError } from '../transport/RateGate.mjs'
 import { isValidToken, itemOpenHref } from '../util/GalleryUrls.mjs'
 import { logWarn, logError, incMetric } from '../observability/Log.mjs'
 
@@ -75,8 +75,10 @@ const ERRORS = {
   },
 }
 
-export function errorFor(code) {
-  if (isTransientCode(code)) return { code: 'upstream_busy', ...ERRORS.upstream_busy }
+export function errorFor(code, err = null) {
+  if (isTransientCode(code) || isTransientError(err)) {
+    return { code: 'upstream_busy', ...ERRORS.upstream_busy }
+  }
   if (ERRORS[code]) return { code, ...ERRORS[code] }
   if (typeof code === 'string' && code.startsWith('image_')) {
     return { code, ...ERRORS.image_unavailable }
@@ -162,7 +164,7 @@ async function _openTemplate(req, res) {
       allowUnpublished: await isSiteAdmin(userId),
     })
   } catch (err) {
-    const { code, status } = errorFor(err?.code)
+    const { code, status } = errorFor(err?.code, err)
     incMetric('open_total', { result: code })
     if (status >= 500 && status !== 503 && status !== 502) {
       logError('open_failed', err, { token, userId: String(userId), code, reasons: err?.reasons })

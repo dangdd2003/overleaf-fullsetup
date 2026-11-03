@@ -8,7 +8,7 @@ import {
   sourceTextSha,
 } from './tiers/Tier3SynthesisAcquisition.mjs'
 import { resolveStorageDir } from './tiers/TierSupport.mjs'
-import { isTransientCode } from '../transport/RateGate.mjs'
+import { isTransientError } from '../transport/RateGate.mjs'
 import { logInfo, logWarn } from '../observability/Log.mjs'
 
 // Finds or builds the project zip for a gallery item:
@@ -41,9 +41,10 @@ function backoffDelayMs(failures) {
 }
 
 // A failed upgrade keeps serving the cached zip. An admin refetch must not
-// report that as a success, so the result carries refetchFailed.
-function servedCached(cached, opts) {
-  return opts.force ? { ...cached, refetchFailed: true } : cached
+// report that as a success, so the result carries refetchFailed and the code
+// of the failure.
+function servedCached(cached, opts, code = null) {
+  return opts.force ? { ...cached, refetchFailed: true, code } : cached
 }
 
 async function cachedSource(item, storageDir) {
@@ -97,13 +98,29 @@ async function canReuse(cached, item) {
 }
 
 // Crawled items only carry Algolia data until their detail page is mirrored;
-// the tiers need the CTA params (Tier 1) and the main file text (Tier 3).
-async function withDetail(item) {
+// the tiers need the CTA params (Tier 1) and the main file text (Tier 3). An
+// admin refetch refreshes the detail page even when the item is in backoff.
+// An admin waits out the RateGate admin slot wait (a minute) plus the fetch.
+const ADMIN_DETAIL_TIMEOUT_MS = 120_000
+
+// Throws for an admin refetch, so a route failure or timeout reaches the admin
+// instead of tiers running on the undetailed item.
+async function withDetail(item, opts = {}) {
   if (!item.token) return item
   if (item.mainText && item.publishedId != null) return item
+  const admin = opts.priority === 'admin'
   try {
-    return (await ensureDetail(item.token, { priority: 'interactive' })) || item
+    const detailOpts = {
+      priority: admin ? 'admin' : 'interactive',
+      force: Boolean(opts.force),
+      ...(admin && {
+        timeoutMs: ADMIN_DETAIL_TIMEOUT_MS,
+        throwOnError: true,
+      }),
+    }
+    return (await ensureDetail(item.token, detailOpts)) || item
   } catch (err) {
+    if (admin) throw err
     logWarn('ensure_detail_failed', {
       token: item.token,
       code: err?.code,
@@ -119,22 +136,25 @@ async function runTiers(item, cfg, opts) {
     [3, acquireViaSynthesis],
   ]
   const reasons = []
-  let hasTransient = false
+  // Codes of the transient failures, so the admin sees which route failed
+  const transientCodes = []
   for (const [tier, acquireFn] of tiers) {
     try {
       const result = await acquireFn(item, cfg, opts)
-      if (result?.acquired) return { result, reasons, transient: false }
+      if (result?.acquired) {
+        return { result, reasons, transient: false, transientCodes }
+      }
       if (
         result?.transient ||
-        isTransientCode(result?.code) ||
+        isTransientError(result) ||
         result?.reason === 'upstream_busy'
       ) {
-        hasTransient = true
+        transientCodes.push(result?.code || 'upstream_busy')
       }
       reasons.push(`tier${tier}:${result?.reason || 'unknown'}`)
     } catch (err) {
-      if (isTransientCode(err?.code)) {
-        hasTransient = true
+      if (isTransientError(err)) {
+        transientCodes.push(err?.code || 'upstream_busy')
       }
       logWarn('tier_attempt_failed', {
         token: item.token,
@@ -144,7 +164,12 @@ async function runTiers(item, cfg, opts) {
       reasons.push(`tier${tier}:error`)
     }
   }
-  return { result: null, reasons, transient: hasTransient }
+  return {
+    result: null,
+    reasons,
+    transient: transientCodes.length > 0,
+    transientCodes,
+  }
 }
 
 async function persist(item, result, attemptedAt) {
@@ -229,26 +254,46 @@ async function acquireUncached(item, opts) {
   }
 
   const attemptedAt = new Date()
-  const detailed = await withDetail(item)
-  const { result, reasons, transient } = await runTiers(detailed, cfg, {
-    ...opts,
-    storageDir,
-  })
+  let detailed
+  try {
+    detailed = await withDetail(item, opts)
+  } catch (err) {
+    if (!isTransientError(err) && err?.code !== 'timeout') throw err
+    logWarn('acquisition_detail_unavailable', {
+      token: item.token,
+      code: err?.code,
+    })
+    return {
+      acquired: false,
+      reason: 'upstream_busy',
+      reasons: [],
+      transient: true,
+      code: err?.code || 'upstream_busy',
+    }
+  }
+  const { result, reasons, transient, transientCodes } = await runTiers(
+    detailed,
+    cfg,
+    { ...opts, storageDir }
+  )
 
   if (!result) {
     if (transient) {
       logWarn('acquisition_transient_failure', { token: item.token, reasons })
-      if (cached) return servedCached(cached, opts)
+      if (cached) {
+        return servedCached(cached, opts, transientCodes[0] || 'upstream_busy')
+      }
       return {
         acquired: false,
         reason: 'upstream_busy',
         reasons,
         transient: true,
+        code: transientCodes[0] || null,
       }
     }
     // keep serving the previous zip; the failed upgrade is backed off too
     await recordFailure(item, attemptedAt, reasons, Boolean(cached))
-    if (cached) return servedCached(cached, opts)
+    if (cached) return servedCached(cached, opts, 'all_tiers_failed')
     logWarn('acquisition_exhausted', { token: item.token, reasons })
     return { acquired: false, reason: 'all_tiers_failed', reasons }
   }

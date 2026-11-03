@@ -5,7 +5,7 @@ import OLButton from '@/shared/components/ol/ol-button'
 import OLSpinner from '@/shared/components/ol/ol-spinner'
 import OLTable from '@/shared/components/ol/ol-table'
 import { hydrateItem } from '../../api/client'
-import { errorMessage } from '../../api/errors'
+import { errorMessage, refetchReasonMessage } from '../../api/errors'
 import type { ItemRow, SyncBlock } from '../../api/types'
 import { DetailStatusBadge } from '../shared/sync-status'
 import type { Flash } from '../shared/flash'
@@ -50,7 +50,11 @@ export default function ItemTable({
       } else {
         onFlash({
           type: 'error',
-          content: t('template_gallery_admin_error_hydration_failed'),
+          content: refetchReasonMessage(
+            t,
+            result.reason,
+            'template_gallery_admin_error_hydration_failed'
+          ),
         })
       }
     } catch (err) {

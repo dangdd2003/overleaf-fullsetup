@@ -3,10 +3,11 @@ import net from 'node:net'
 import tls from 'node:tls'
 import { isPublicAddress } from './GuardedHttps.mjs'
 
-// Opens a raw TCP tunnel to a target IP through one outbound proxy: an HTTP
+// Opens a raw TCP tunnel to a target through one outbound proxy: an HTTP
 // CONNECT proxy (optionally over TLS) or a SOCKS5 proxy. The caller does TLS
 // to the target itself, so the certificate check stays with the target host.
-// The target is always an IP the caller has already checked and pinned.
+// The target is an IP the caller has checked, or the host name, which the
+// proxy resolves (see openTunnel).
 
 export const HANDSHAKE_TIMEOUT_MS = 10_000
 const MAX_HEADER_BYTES = 8 * 1024
@@ -132,9 +133,9 @@ function hostPort(ip, port) {
   return net.isIP(ip) === 6 ? `[${ip}]:${port}` : `${ip}:${port}`
 }
 
-async function httpConnect(socket, proxy, targetIp, targetPort) {
-  const headers = [`CONNECT ${hostPort(targetIp, targetPort)} HTTP/1.1`]
-  headers.push(`Host: ${hostPort(targetIp, targetPort)}`)
+async function httpConnect(socket, proxy, target, targetPort) {
+  const headers = [`CONNECT ${hostPort(target, targetPort)} HTTP/1.1`]
+  headers.push(`Host: ${hostPort(target, targetPort)}`)
   if (proxy.username || proxy.password) {
     const token = Buffer.from(
       `${proxy.username || ''}:${proxy.password || ''}`,
@@ -219,11 +220,29 @@ const SOCKS_REPLY_MESSAGES = Object.freeze({
   8: 'address type not supported',
 })
 
-async function socksConnect(socket, targetIp, targetPort) {
-  const family = net.isIP(targetIp)
-  const address =
-    family === 6 ? expandIPv6(targetIp) : Buffer.from(targetIp.split('.').map(Number))
-  const atyp = family === 6 ? SOCKS_ATYP_IPV6 : SOCKS_ATYP_IPV4
+// The target is an IP literal or a host name. A name is sent as ATYP 0x03, so
+// the proxy resolves it (socks5h, and any target the caller leaves unresolved).
+function socksAddress(target) {
+  const family = net.isIP(target)
+  if (family === 6) return { atyp: SOCKS_ATYP_IPV6, address: expandIPv6(target) }
+  if (family === 4) {
+    return {
+      atyp: SOCKS_ATYP_IPV4,
+      address: Buffer.from(target.split('.').map(Number)),
+    }
+  }
+  const name = Buffer.from(target, 'ascii')
+  if (name.length > 255) {
+    throw tunnelError('EPROXY_CONNECT', 'tunnel target name is too long')
+  }
+  return {
+    atyp: SOCKS_ATYP_DOMAIN,
+    address: Buffer.concat([Buffer.from([name.length]), name]),
+  }
+}
+
+async function socksConnect(socket, target, targetPort) {
+  const { atyp, address } = socksAddress(target)
   const port = Buffer.alloc(2)
   port.writeUInt16BE(targetPort)
   socket.write(
@@ -300,18 +319,34 @@ async function connectProxy(proxy, state) {
   return secure
 }
 
+const HOST_NAME_PATTERN =
+  /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$/i
+
+// An IP literal, or a DNS host name the proxy will resolve. Anything else could
+// alter the CONNECT line, so it is refused before a byte is sent.
+export function isTunnelTarget(target) {
+  const value = String(target ?? '')
+  if (net.isIP(value)) return true
+  return value.length <= 253 && HOST_NAME_PATTERN.test(value)
+}
+
 /**
- * Opens a tunnel to targetIp:targetPort through the proxy. Resolves to a
+ * Opens a tunnel to target:targetPort through the proxy. Resolves to a
  * connected socket, ready for the caller's TLS handshake with the target.
  *
+ * The target is either an IP the caller has already checked, or the host name
+ * itself. A host name is handed to the proxy, which resolves it (HTTP CONNECT
+ * always does; SOCKS5H does; plain SOCKS5 does when the caller could not
+ * resolve it locally). Nothing here touches the local resolver for a name.
+ *
  * @param {{ scheme: string, host: string, port: number, username?: string|null, password?: string|null, allowPrivate?: boolean }} proxy
- * @param {string} targetIp - literal IP the caller has already checked
+ * @param {string} target - IP literal or host name
  * @param {number} targetPort
  * @param {{ timeoutMs?: number }} [opts]
  */
-export async function openTunnel(proxy, targetIp, targetPort, opts = {}) {
-  if (net.isIP(targetIp) === 0) {
-    throw tunnelError('EPROXY_CONNECT', 'tunnel target must be an IP address')
+export async function openTunnel(proxy, target, targetPort, opts = {}) {
+  if (!isTunnelTarget(target)) {
+    throw tunnelError('EPROXY_CONNECT', 'tunnel target is not a valid host')
   }
   const timeoutMs = opts.timeoutMs > 0 ? opts.timeoutMs : HANDSHAKE_TIMEOUT_MS
   const state = { socket: null, tcp: null }
@@ -329,9 +364,9 @@ export async function openTunnel(proxy, targetIp, targetPort, opts = {}) {
     socket.on('error', swallow)
     if (proxy.scheme === 'socks5' || proxy.scheme === 'socks5h') {
       await socksAuthenticate(socket, proxy)
-      await socksConnect(socket, targetIp, targetPort)
+      await socksConnect(socket, target, targetPort)
     } else {
-      await httpConnect(socket, proxy, targetIp, targetPort)
+      await httpConnect(socket, proxy, target, targetPort)
     }
     socket.off('error', swallow)
     return socket

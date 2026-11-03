@@ -448,7 +448,7 @@ describe('CatalogSnapshot', () => {
   })
 
   describe('retention and guards', () => {
-    it('keeps the 3 newest generations', async () => {
+    it('keeps the current generation and one previous', async () => {
       installCollections({ [ITEMS]: makeFakeCollection([ITEM_A]) })
       const generations = []
       for (let i = 0; i < 5; i++) {
@@ -461,7 +461,7 @@ describe('CatalogSnapshot', () => {
 
       expect(await listGenerationDirs()).toEqual(
         generations
-          .slice(-3)
+          .slice(-2)
           .map((generation) => `gen-${generation}`)
           .sort()
       )

@@ -5,6 +5,7 @@ import Notification from '@/shared/components/notification'
 import { ConfirmActionModal } from '../shared/confirm-action-modal'
 import { refetchSource } from '../../api/client'
 import {
+  refetchReasonMessage,
   toTemplateAdminApiError,
   type TemplateAdminApiError,
 } from '../../api/errors'
@@ -51,7 +52,11 @@ export default function SourceCard({ item, onSynced }: SourceCardProps) {
       } else {
         setNotice({
           type: 'error',
-          content: t('template_gallery_admin_error_source_failed'),
+          content: refetchReasonMessage(
+            t,
+            result.reason,
+            'template_gallery_admin_error_source_failed'
+          ),
         })
       }
     } catch (err) {

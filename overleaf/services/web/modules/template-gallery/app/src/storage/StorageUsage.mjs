@@ -10,7 +10,41 @@ const CACHE_MS = 60_000
 let cached = null
 let pending = null
 
-async function walk(dir, totals) {
+// Areas of the mirror folder, by the first path segments of a file.
+export const AREAS = Object.freeze([
+  'blobs',
+  'strayBlobs',
+  'catalog',
+  'tmp',
+  'scratch',
+  'quarantine',
+  'probes',
+  'other',
+])
+
+export function areaOf(relPath) {
+  const parts = relPath.split(path.sep)
+  const [first, second, third] = parts
+  if (parts.length === 1 && first.startsWith('.probe-')) return 'probes'
+  if (first === 'blobs') {
+    // blobs/sha256/<2hex>/<64hex>; anything else under blobs/ is stray
+    const name = parts[parts.length - 1]
+    const valid =
+      parts.length === 4 &&
+      second === 'sha256' &&
+      /^[0-9a-f]{2}$/.test(third) &&
+      /^[0-9a-f]{64}$/.test(name) &&
+      name.startsWith(third)
+    return valid ? 'blobs' : 'strayBlobs'
+  }
+  if (first === 'catalog') return 'catalog'
+  if (first === 'tmp') return 'tmp'
+  if (first === 'scratch') return 'scratch'
+  if (first === 'quarantine') return 'quarantine'
+  return 'other'
+}
+
+async function walk(root, dir, totals) {
   let entries
   try {
     entries = await fs.promises.readdir(dir, { withFileTypes: true })
@@ -20,11 +54,15 @@ async function walk(dir, totals) {
   for (const entry of entries) {
     const fullPath = path.join(dir, entry.name)
     if (entry.isDirectory()) {
-      await walk(fullPath, totals)
+      await walk(root, fullPath, totals)
     } else if (entry.isFile()) {
       try {
-        totals.bytes += (await fs.promises.stat(fullPath)).size
+        const size = (await fs.promises.stat(fullPath)).size
+        const area = areaOf(path.relative(root, fullPath))
+        totals.bytes += size
         totals.files++
+        totals.areas[area].bytes += size
+        totals.areas[area].files++
       } catch {
         // Removed while walking
       }
@@ -33,8 +71,12 @@ async function walk(dir, totals) {
 }
 
 async function measureNow(storageDir) {
-  const totals = { bytes: 0, files: 0 }
-  await walk(storageDir, totals)
+  const totals = {
+    bytes: 0,
+    files: 0,
+    areas: Object.fromEntries(AREAS.map(area => [area, { files: 0, bytes: 0 }])),
+  }
+  await walk(storageDir, storageDir, totals)
   let freeBytes = null
   let totalBytes = null
   try {
@@ -47,6 +89,7 @@ async function measureNow(storageDir) {
   return {
     usedBytes: totals.bytes,
     files: totals.files,
+    areas: totals.areas,
     freeBytes,
     totalBytes,
     measuredAt: new Date(),
@@ -81,4 +124,4 @@ export function resetForTests() {
   pending = null
 }
 
-export default { measure, resetForTests }
+export default { measure, resetForTests, AREAS }

@@ -176,3 +176,56 @@ node modules/template-gallery/scripts/snapshot.mjs import   # load the snapshot;
 1. Restore the data volume from backup (or keep it, if it survived).
 2. Start Overleaf with the module enabled and an empty database.
 3. Boot restores the catalogue from `catalog/current.json`. No overleaf.com traffic is needed.
+
+### Duplicate templates and storage cleanup
+
+The dedup collector (`app/src/storage/DedupCollector.mjs`, job kind `dedup`)
+removes duplicate templates and the files only they used. It runs after every
+sync run that finished, and at least once a day. Admins preview or clean from
+the Monitor tab ("Duplicates and storage"). Nothing is migrated: every field it
+adds is optional, and items without them behave as before.
+
+**Detection.** Published, not removed items are grouped when they share:
+(a) the same PDF (`media.pdfSha`); (b) the same PDF after volatile metadata is
+removed (creation and modification dates, trailer `/ID`, XMP dates and document
+ids), stored as `dedup.pdfNormSha`; or (c) the same preview and the same
+normalized title. Links are joined transitively (union-find). The canonical item
+of a group is the first of: featured or curated, has a source package, more tags,
+more opens, the oldest, the lowest token. Normalization does not decode
+compressed object streams, so a PDF whose metadata sits in one matches only on
+exact bytes. A missed match is the safe side.
+
+**What a run changes.** Each duplicate becomes a tombstone: `duplicateOf` and
+`duplicateAt` are set, the document is kept (so the catalogue sync cannot bring
+it back), and the blob references only it used are unset. The canonical gets
+the duplicate tokens in `dedup.duplicates` and the tags it lacked. Tombstones
+are excluded from the sync pool, the listings, search, counts and tag pages. A
+tombstone's detail, media and open-as-template URLs serve the canonical item.
+Regular GC sweeps the unset blobs after `blobGraceMs`. A purge deletes them at once,
+after re-checking the items and the current snapshot right before each unlink.
+
+**Volume.** Each run also removes stray files under `blobs/`, probe markers,
+empty prefix directories and old scratch trees; re-hashes blobs in budgeted,
+resumable slices (a mismatch is quarantined, as in the integrity job); and prunes
+catalog generations beyond the current one and one previous, under the snapshot
+lease. The hourly GC does the cheap part (strays, probes, empty directories).
+
+**Fingerprints.** Cached on each item as `dedup.{pdfSha, pdfNormSha, status,
+checkedAt}`, recomputed only when `media.pdfSha` changes. A PDF over 32 MB is
+not fingerprinted.
+
+**Dry run.** A preview changes no item and no file. It only caches
+fingerprints. The report is stored in `configCol` under `_id: 'dedup'`.
+
+**Admin API** (under `/admin/templates/api/storage/dedup`):
+- `GET` the last report, live counts, storage areas and any running job.
+- `POST runs` with `{ dryRun, purge }`. `dryRun` defaults to `true`; `purge` applies only to a clean run.
+- `GET duplicates?limit=n` lists tombstones.
+- `POST duplicates/:token/restore` clears the tombstone. The item is marked
+  `dedup.keep` so the next run leaves it alone, and the sync refetches what it lost.
+
+**Caveats.** The canonical's tags and featured slots are rewritten by the
+next catalogue or featured scan, so merged tags can be overwritten. If a
+canonical is later removed upstream, its duplicates stay hidden. A restore
+brings a duplicate back with its files refetched.
+

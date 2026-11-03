@@ -71,9 +71,12 @@ export interface ItemDetailResponse {
   item: ItemDetail
 }
 
-// Hydrate (details) answers synchronously with the new sync block
+// Hydrate (details) answers synchronously with the new sync block. On failure,
+// reason says why (see refetchReasonMessage); retryAt is set for a block.
 export interface DetailsRefetchResult {
   status: 'ok' | 'failed'
+  reason?: string | null
+  retryAt?: string | null
   sync: SyncBlock
 }
 
@@ -81,6 +84,8 @@ export interface DetailsRefetchResult {
 // waiting to retry, so nothing was fetched.
 export interface SourceRefetchResult {
   status: 'ok' | 'failed' | 'backoff'
+  reason?: string | null
+  retryAt?: string | null
   sync: SyncBlock
 }
 

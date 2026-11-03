@@ -4,6 +4,7 @@ import Lock from './Lock.mjs'
 import JobStore from './JobStore.mjs'
 import * as IntegrityJob from './handlers/IntegrityJob.mjs'
 import * as GcJob from './handlers/GcJob.mjs'
+import * as DedupJob from './handlers/DedupJob.mjs'
 import Scheduler from './Scheduler.mjs'
 import { logError, logInfo, logWarn } from '../observability/Log.mjs'
 
@@ -26,6 +27,7 @@ let holdsCrawler = false
 const HANDLERS = {
   integrity: IntegrityJob,
   gc: GcJob,
+  dedup: DedupJob,
 }
 
 /**

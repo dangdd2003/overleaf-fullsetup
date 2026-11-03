@@ -8,6 +8,18 @@ export function isValidSha256(sha) {
   return typeof sha === 'string' && SHA256_REGEX.test(sha)
 }
 
+// A file that belongs in blobs/sha256/<2hex>/<64hex>: the prefix directory must be
+// the first two hex digits of the name. Anything else under blobs/ is stray.
+export function isBlobLocation(prefix, name) {
+  return isValidSha256(name) && typeof prefix === 'string' && name.startsWith(prefix)
+    && prefix.length === 2
+}
+
+// Marker files left by the storage probe at the storage root (`.probe-<id>`).
+export function isProbeName(name) {
+  return typeof name === 'string' && name.startsWith('.probe-')
+}
+
 export function assertContained(storageDir, targetPath) {
   if (!storageDir || typeof storageDir !== 'string') {
     throw new Error('Invalid storageDir')
@@ -100,6 +112,8 @@ export function probePath(storageDir, id = randomUUID()) {
 
 export default {
   isValidSha256,
+  isBlobLocation,
+  isProbeName,
   assertContained,
   blobPath,
   tmpPath,

@@ -103,7 +103,9 @@ async function eachParallel(items, width, fn) {
 async function settle(promise, opts, label) {
   const timeoutMs =
     opts.timeoutMs ??
-    (opts.priority === 'interactive' ? DEFAULT_INTERACTIVE_TIMEOUT_MS : null)
+    (opts.priority === 'interactive' || opts.priority === 'admin'
+      ? DEFAULT_INTERACTIVE_TIMEOUT_MS
+      : null)
   let timer = null
   try {
     if (!timeoutMs) return await promise
@@ -144,13 +146,33 @@ function storageDir() {
   return DEFAULTS.storageDir
 }
 
-// RateGate refusals (every route blocked, no paced slot soon, no route) and
-// throttled answers say nothing about the item itself, so they never start an
-// item backoff.
+// RateGate refusals (every route blocked, no paced slot soon, no route),
+// throttled answers and connect-level failures (the request never reached
+// overleaf.com through that route) say nothing about the item itself, so they
+// never start an item backoff or count as an attempt. A timeout or a reset after
+// the request was accepted is about the item (or the transfer), so it is a
+// normal item failure that backs off and counts as an attempt.
 const HOST_REJECTIONS = new Set(['host_backoff', 'host_busy', 'no_route'])
+const CONNECT_FAILURES = new Set([
+  'ECONNREFUSED',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'EAI_AGAIN',
+  'EAI_FAIL',
+  'ENOTFOUND',
+  'EADDRBLOCKED',
+  'EPROXY_UNREACHABLE',
+  'EPROXY_AUTH',
+  'EPROXY_CONNECT',
+  'EPROXY_PROTOCOL',
+])
 
 function isHostRejection(err) {
-  return HOST_REJECTIONS.has(err?.code) || isThrottledError(err)
+  return (
+    HOST_REJECTIONS.has(err?.code) ||
+    isThrottledError(err) ||
+    CONNECT_FAILURES.has(err?.code)
+  )
 }
 
 function errorSummary(err) {
@@ -269,7 +291,11 @@ async function mirrorImageFor(item, image, opts = {}) {
   if (!image?.url) return null
   const { set, stored } = await downloadImage(image, opts)
   const col = await itemsCol()
-  await col.updateOne({ token: item.token }, { $set: set })
+  // a tombstoned duplicate keeps no blob refs (see DedupCollector)
+  await col.updateOne(
+    { token: item.token, duplicateOf: null },
+    { $set: set }
+  )
   incMetric('mirror_image', { status: 'ok' })
   return stored
 }
@@ -1002,14 +1028,15 @@ async function refreshDetail(
   }
 
   const col = await itemsCol()
+  // duplicateOf: null skips tombstoned duplicates, so a racing write cannot re-attach blob refs
   try {
-    await col.updateOne({ token }, { $set: set })
+    await col.updateOne({ token, duplicateOf: null }, { $set: set })
   } catch (err) {
     if (err?.code !== 11000 || !set.objectID) throw err
     // objectID already claimed by another document: keep everything else.
     delete set.objectID
     delete set.objectIDNum
-    await col.updateOne({ token }, { $set: set })
+    await col.updateOne({ token, duplicateOf: null }, { $set: set })
   }
   incMetric('mirror_detail', { status: 'ok' })
   return findFullItem(token)
@@ -1050,7 +1077,7 @@ export async function ensureDetail(
         return hasDetail ? findFullItem(token) : null
       }
     }
-    return singleFlight(`detail:${token}`, () =>
+    return singleFlight(`detail:${token}:${priority}`, () =>
       refreshDetail(token, { priority })
     )
   })()
@@ -1160,7 +1187,8 @@ async function refreshPdf(token, { priority = 'background' } = {}) {
   }
   set['media.pdfSha'] = res.sha256
   set['media.pdfBytes'] = res.sizeBytes
-  await col.updateOne({ token }, { $set: set })
+  // duplicateOf: null skips tombstoned duplicates (no blob refs on them)
+  await col.updateOne({ token, duplicateOf: null }, { $set: set })
   incMetric('mirror_pdf', { status: 'ok' })
   return { sha: res.sha256, bytes: res.sizeBytes }
 }
@@ -1195,7 +1223,9 @@ export async function ensurePdf(
     if (!force && item.mirror?.pdfAt && !sha) {
       return null
     }
-    return singleFlight(`pdf:${token}`, () => refreshPdf(token, { priority }))
+    return singleFlight(`pdf:${token}:${priority}`, () =>
+      refreshPdf(token, { priority })
+    )
   })()
   return settle(work, opts, `pdf ${token}`)
 }
@@ -1260,6 +1290,8 @@ function defaultBefore() {
 function syncableFilter(before, now = new Date()) {
   return {
     'mirror.removedAt': null,
+    // tombstoned duplicates (dedup) are never fetched again
+    duplicateOf: null,
     $or: [
       {
         'mirror.nextAttemptAt': { $not: { $gt: now } },
@@ -1421,7 +1453,7 @@ export async function ensureMedia(token, kind, opts = {}) {
     // must wait out its backoff before the detail page is fetched again.
     if (!force && imageBackedOff(item)) return null
 
-    await singleFlight(`detail:${token}`, () =>
+    await singleFlight(`detail:${token}:${priority}`, () =>
       refreshDetail(token, {
         priority,
         forceImage: true,

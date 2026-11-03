@@ -54,6 +54,22 @@ export function toTemplateAdminApiError(err: unknown): TemplateAdminApiError {
   )
 }
 
+// Message for a refetch that did not succeed. The server names the reason
+// (a route that failed, an upstream block, the item itself); each reason has
+// its own translated text, and an unknown or missing one falls back to the
+// given key.
+export function refetchReasonMessage(
+  t: TFunction,
+  reason: string | null | undefined,
+  fallbackKey: string
+): string {
+  const fallback = t(fallbackKey)
+  if (!reason) return fallback
+  return t(`template_gallery_admin_refetch_reason_${reason}`, {
+    defaultValue: fallback,
+  })
+}
+
 // Server messages are never shown raw: the UI only displays translated text
 // for the code, and falls back to the generic message for unknown codes.
 export function errorMessage(t: TFunction, err: unknown): string {

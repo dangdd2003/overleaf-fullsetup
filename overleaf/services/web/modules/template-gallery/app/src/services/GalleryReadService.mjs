@@ -51,6 +51,7 @@ const MEDIA_PROJECTION = Object.freeze({
   objectID: 1,
   media: 1,
   thumbDataUri: 1,
+  duplicateOf: 1,
 })
 
 const TAG_NAME_MAX = 100
@@ -71,8 +72,9 @@ function visibilityFilter({ includeUnpublished = false } = {}) {
   return includeUnpublished ? {} : { state: 'published' }
 }
 
+// Tombstoned duplicates (duplicateOf set) are never listed or counted.
 function listingFilter(scope, tagName = null) {
-  const filter = { state: 'published', 'mirror.removedAt': null }
+  const filter = { state: 'published', 'mirror.removedAt': null, duplicateOf: null }
   const family = familyForScope(scope)
   if (family) filter.family = family
   if (tagName) filter['tags.name'] = tagName
@@ -294,8 +296,10 @@ export async function getTagView({ scope, tagName, page = 1, count }) {
  * callers only see published items; site admins see every state. Detail
  * fields missing from the mirror are fetched on demand, bounded by a timeout.
  */
-export async function getItemByToken(token, { includeUnpublished = false } = {}) {
-  if (!isValidToken(token)) return null
+export async function getItemByToken(requestedToken, { includeUnpublished = false } = {}) {
+  if (!isValidToken(requestedToken)) return null
+  const token = await servedToken(requestedToken, { includeUnpublished })
+  if (!token) return null
   const col = await itemsCol()
   const filter = { token, ...visibilityFilter({ includeUnpublished }) }
   const item = await col.findOne(filter, { projection: DETAIL_PROJECTION })
@@ -314,13 +318,39 @@ export async function getItemByToken(token, { includeUnpublished = false } = {})
 /**
  * Small projection used by the thumbnail/preview/PDF handlers.
  */
-export async function getMediaItem(token, { includeUnpublished = false } = {}) {
-  if (!isValidToken(token)) return null
+export async function getMediaItem(requestedToken, { includeUnpublished = false } = {}) {
+  if (!isValidToken(requestedToken)) return null
+  const token = await servedToken(requestedToken, { includeUnpublished })
+  if (!token) return null
   const col = await itemsCol()
   return col.findOne(
     { token, ...visibilityFilter({ includeUnpublished }) },
     { projection: MEDIA_PROJECTION }
   )
+}
+
+/**
+ * The token whose content a request is served from. A tombstoned duplicate
+ * serves its canonical item (one hop, so a chain or a cycle cannot loop).
+ * Returns null when the item is missing or its canonical is not visible.
+ */
+async function servedToken(token, { includeUnpublished = false } = {}) {
+  const col = await itemsCol()
+  const item = await col.findOne(
+    { token, ...visibilityFilter({ includeUnpublished }) },
+    { projection: { token: 1, duplicateOf: 1 } }
+  )
+  if (!item) return null
+  if (!item.duplicateOf) return token
+  const canonical = await col.findOne(
+    {
+      token: item.duplicateOf,
+      duplicateOf: null,
+      ...visibilityFilter({ includeUnpublished }),
+    },
+    { projection: { token: 1 } }
+  )
+  return canonical?.token ?? null
 }
 
 /**
@@ -353,12 +383,19 @@ export async function findLegacyItemBySlug(slug) {
   const [item] = await col
     .find(
       { slug: value, state: 'published' },
-      { projection: { _id: 0, token: 1, family: 1, slug: 1 } }
+      { projection: { _id: 0, token: 1, family: 1, slug: 1, duplicateOf: 1 } }
     )
     .sort(LISTING_SORT)
     .limit(1)
     .toArray()
-  return item || null
+  if (!item) return null
+  if (!item.duplicateOf) return { token: item.token, family: item.family, slug: item.slug }
+  // A duplicate's legacy link leads to its canonical item
+  const canonical = await col.findOne(
+    { token: item.duplicateOf, state: 'published', duplicateOf: null },
+    { projection: { _id: 0, token: 1, family: 1, slug: 1 } }
+  )
+  return canonical || null
 }
 
 export default {

@@ -7,6 +7,7 @@ import GalleryController from './controllers/GalleryController.mjs'
 import * as OpenController from './controllers/OpenController.mjs'
 import * as SearchController from './controllers/SearchController.mjs'
 import AdminController from './controllers/AdminController.mjs'
+import * as StorageController from './controllers/StorageController.mjs'
 import { registerEgressRoutes } from './EgressRoutes.mjs'
 import GalleryReadService from './services/GalleryReadService.mjs'
 import requireSiteAdminJson from './middleware/requireSiteAdminJson.mjs'
@@ -201,6 +202,31 @@ export function apply(webRouter) {
     requireSiteAdminJson,
     adminWriteRateLimit,
     AdminController.stopCrawlerSync
+  )
+
+  // Storage: duplicate templates (dedup collector) and the volume it cleans
+  webRouter.get(
+    '/admin/templates/api/storage/dedup',
+    requireSiteAdminJson,
+    StorageController.getDedupStatus
+  )
+  webRouter.post(
+    '/admin/templates/api/storage/dedup/runs',
+    requireSiteAdminJson,
+    credentialJsonParser,
+    adminWriteRateLimit,
+    StorageController.runDedup
+  )
+  webRouter.get(
+    '/admin/templates/api/storage/dedup/duplicates',
+    requireSiteAdminJson,
+    StorageController.listDuplicates
+  )
+  webRouter.post(
+    '/admin/templates/api/storage/dedup/duplicates/:token/restore',
+    requireSiteAdminJson,
+    adminWriteRateLimit,
+    StorageController.restoreDuplicate
   )
 
   // Outbound proxies used for requests to overleaf.com, Algolia and S3

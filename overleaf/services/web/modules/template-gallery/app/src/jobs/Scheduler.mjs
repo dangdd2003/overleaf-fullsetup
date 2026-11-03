@@ -630,7 +630,39 @@ export async function enqueueMaintenanceIfDue(cfg, now = Date.now()) {
     await updateState({ $set: { [field]: new Date(now) } })
     queued.push(kind)
   }
+  const lastSync = await lastFinishedSyncAt()
+  if (dedupDue(state, runner, now, lastSync)) {
+    await jobs.enqueue({
+      kind: 'dedup',
+      dedupeKey: 'maintenance:dedup',
+      maxAttempts: 1,
+    })
+    const $set = { dedupAt: new Date(now) }
+    if (lastSync) $set.dedupSyncSeenAt = lastSync
+    await updateState({ $set })
+    queued.push('dedup')
+  }
   return queued
+}
+
+// The dedup pass runs after every sync run that finished since the last pass,
+// and at least every dedupEveryMs (daily by default) otherwise.
+function dedupDue(state, runner, now, lastSync) {
+  if (lastSync && (!state.dedupSyncSeenAt || new Date(lastSync) > new Date(state.dedupSyncSeenAt))) {
+    return true
+  }
+  return !state.dedupAt || olderThan(state.dedupAt, runner.dedupEveryMs || DAY, now)
+}
+
+// Finish time of the latest sync run that is no longer running, or null.
+async function lastFinishedSyncAt() {
+  try {
+    const run = await runs().read()
+    if (!run || run.state === 'running' || !run.finishedAt) return null
+    return new Date(run.finishedAt)
+  } catch {
+    return null
+  }
 }
 
 function isLeader() {

@@ -5,6 +5,7 @@ import Notification from '@/shared/components/notification'
 import { ConfirmActionModal } from '../shared/confirm-action-modal'
 import { hydrateItem } from '../../api/client'
 import {
+  refetchReasonMessage,
   toTemplateAdminApiError,
   type TemplateAdminApiError,
 } from '../../api/errors'
@@ -53,7 +54,11 @@ export default function MirrorCard({ item, onSynced }: MirrorCardProps) {
             }
           : {
               type: 'error',
-              content: t('template_gallery_admin_error_hydration_failed'),
+              content: refetchReasonMessage(
+                t,
+                result.reason,
+                'template_gallery_admin_error_hydration_failed'
+              ),
             }
       )
     } catch (err) {

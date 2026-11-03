@@ -23,7 +23,7 @@ import {
   filterLinks,
   LISTING_DESCRIPTION_KEY,
 } from '../util/GalleryCopy.mjs'
-import { isTransientCode } from '../transport/RateGate.mjs'
+import { isTransientError } from '../transport/RateGate.mjs'
 import { logError } from '../observability/Log.mjs'
 
 const VIEWS_DIR = Path.resolve(import.meta.dirname, '../../views')
@@ -379,7 +379,7 @@ function serveImage(kind) {
       if (kind === 'thumb' && sendDataUri(res, item.thumbDataUri)) return
       return res.sendStatus(404)
     } catch (err) {
-      if (isTransientCode(err?.code)) {
+      if (isTransientError(err)) {
         if (!res.headersSent) return res.sendStatus(404)
       }
       logError('tg.media.failed', err, { kind, token: req.params?.token })
@@ -417,7 +417,7 @@ export async function servePdf(req, res, next) {
       },
     })
   } catch (err) {
-    if (isTransientCode(err?.code)) {
+    if (isTransientError(err)) {
       return next()
     }
     logError('tg.pdf.failed', err, { token: req.params?.token })

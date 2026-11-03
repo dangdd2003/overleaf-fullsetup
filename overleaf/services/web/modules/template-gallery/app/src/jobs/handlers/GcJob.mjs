@@ -8,6 +8,7 @@ import {
 } from '../../storage/BlobRefs.mjs'
 import { DEFAULTS } from '../../TemplateGalleryDefaults.mjs'
 import { logWarn } from '../../observability/Log.mjs'
+import { cleanVolume } from '../../storage/VolumeAudit.mjs'
 
 let snapshotLoader = () => import('../../storage/CatalogSnapshot.mjs')
 
@@ -137,6 +138,15 @@ export async function run(job, ctx = {}) {
   // 2b. Drop quarantined blobs older than QUARANTINE_MAX_AGE_MS (kept for inspection first)
   const quarantineCleaned = await cleanQuarantine(storageDir, now)
 
+  // 2c. Stray files under blobs/, probe markers, empty prefix dirs, old scratch
+  // leftovers. No blob re-hash here (the dedup job does that, budgeted).
+  let volumeFreed = null
+  try {
+    volumeFreed = (await cleanVolume(storageDir, { now, verifyBudgetBytes: 0 })).total
+  } catch (err) {
+    logWarn('gc_volume_cleanup_failed', { error: err?.message })
+  }
+
   // 3. Collect every sha256 an item still references
   const colItems = await itemsCol()
   const referencedShas = new Set()
@@ -219,6 +229,7 @@ export async function run(job, ctx = {}) {
     blobsSwept,
     blobSweepSkipped: sweepSkipReason,
     quarantineCleaned,
+    volumeFreed,
     updatedAt: new Date(),
   }
 
@@ -231,6 +242,7 @@ export async function run(job, ctx = {}) {
     blobsSwept,
     blobSweepSkipped: sweepSkipReason,
     quarantineCleaned,
+    volumeFreed,
     totalBlobBytes,
     totalBlobCount,
   }

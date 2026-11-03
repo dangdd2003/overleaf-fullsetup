@@ -34,7 +34,8 @@ import { logWarn } from '../observability/Log.mjs'
 
 const FORMAT = 1
 const ITEMS_COLLECTION = 'templateGalleryItems'
-const KEEP_GENERATIONS = 3
+// current + one previous generation: the previous one is the rollback copy for a corrupt current.json
+const KEEP_GENERATIONS = 2
 const INSERT_BATCH_SIZE = 500
 const STALE_TMP_MS = 60 * 60_000
 const DUPLICATE_KEY_CODE = 11000
@@ -1020,9 +1021,22 @@ export async function* iterateSnapshotDocs(collectionName, storageDir) {
  * @param {string} [storageDir]
  * @returns {Promise<Set<string>>}
  */
-export async function snapshotBlobRefs(storageDir) {
+export async function snapshotBlobRefs(storageDir, opts = {}) {
   const dir = resolveStorageDir(storageDir)
   const shas = new Set()
+  if (opts.currentOnly) {
+    const manifest = await readCurrentManifest(dir)
+    if (!manifest) return shas
+    const itemsInfo = manifest.collections[ITEMS_COLLECTION]
+    if (!itemsInfo) return shas
+    for await (const doc of iterateCollectionFile(
+      generationDirOf(dir, manifest.generation),
+      itemsInfo
+    )) {
+      for (const ref of blobRefsOf(doc)) shas.add(ref.sha)
+    }
+    return shas
+  }
   const generations = await listRetainedGenerations(dir)
   for (const generation of generations) {
     const genDir = generationDirOf(dir, generation)
@@ -1046,9 +1060,62 @@ export async function snapshotBlobRefs(storageDir) {
   return shas
 }
 
+/**
+ * Retention of catalog generations: the generation current.json points to and
+ * the newest KEEP_GENERATIONS - 1 others are kept, the rest are removed.
+ * Callers hold the Mongo 'snapshot' lease so no export is writing a generation.
+ *
+ * @param {string} [storageDir]
+ * @returns {Promise<{ kept: string[], removed: Array<{ generation: string, files: number, bytes: number }> }>}
+ */
+export async function pruneGenerationsNow(storageDir) {
+  const dir = resolveStorageDir(storageDir)
+  const generations = await listRetainedGenerations(dir)
+  const pointer = await readJsonOrNull(pointerPathOf(dir))
+  const pointerGen = GENERATION_RE.test(pointer?.generation ?? '')
+    ? pointer.generation
+    : generations[0] ?? null
+  const keep = new Set([pointerGen, ...generations.slice(0, KEEP_GENERATIONS)].filter(Boolean))
+  const removed = []
+  for (const generation of generations) {
+    if (keep.has(generation)) continue
+    const genDir = generationDirOf(dir, generation)
+    const stats = await measureTree(genDir)
+    await fs.promises.rm(genDir, { recursive: true, force: true })
+    removed.push({ generation, ...stats })
+  }
+  return { kept: [...keep], removed }
+}
+
+/** @param {string} root */
+async function measureTree(root) {
+  let files = 0
+  let bytes = 0
+  const walk = async (dir) => {
+    let entries = []
+    try {
+      entries = await fs.promises.readdir(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name)
+      if (entry.isDirectory()) {
+        await walk(full)
+      } else if (entry.isFile()) {
+        files++
+        bytes += (await fs.promises.stat(full).catch(() => ({ size: 0 }))).size
+      }
+    }
+  }
+  await walk(root)
+  return { files, bytes }
+}
+
 export default {
   ensureStoreIdentity,
   exportSnapshot,
+  pruneGenerationsNow,
   readCurrentManifest,
   hasSnapshotGenerations,
   importSnapshot,

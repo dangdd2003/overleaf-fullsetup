@@ -46,6 +46,9 @@ const ITEM_INDEXES = [
     keys: { 'integrity.lastCheckedAt': 1 },
     options: { name: 'integrity_lastCheckedAt' },
   },
+  // dedup: tombstones are excluded from every read path; PDFs are grouped by hash
+  { keys: { duplicateOf: 1 }, options: { name: 'duplicateOf_1' } },
+  { keys: { 'media.pdfSha': 1 }, options: { name: 'media_pdfSha_1' } },
   {
     keys: {
       title: 'text',

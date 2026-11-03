@@ -208,7 +208,7 @@ async function readDoc() {
  */
 export function refresh() {
   if (!state.refreshing) {
-    state.checkedAt = Date.now()
+    // checkedAt is set by applyDoc, once the copy is actually read
     state.refreshing = readDoc()
       .then(applyDoc)
       .catch(err => {
@@ -230,6 +230,33 @@ export function refresh() {
 export function snapshot() {
   if (Date.now() - state.checkedAt >= SNAPSHOT_REFRESH_MS) {
     void refresh()
+  }
+  return { egresses: state.egresses }
+}
+
+/**
+ * Waits for a current copy before a request is routed. A process that has not
+ * read the proxies yet (after a restart), or whose copy is older than
+ * SNAPSHOT_REFRESH_MS (a proxy saved by another process), would otherwise send
+ * the request direct, or through a proxy that was just removed.
+ *
+ * @returns {Promise<{ egresses: Array<object> }>}
+ */
+export async function ensureLoaded() {
+  if (
+    state.checkedAt === 0 ||
+    Date.now() - state.checkedAt >= SNAPSHOT_REFRESH_MS
+  ) {
+    // Joins an in-flight load, so concurrent callers wait for the same read
+    await refresh()
+    // The first read failed: there is no copy to route with, and proxies may
+    // be configured, so fail closed. checkedAt stays 0, so the next call retries.
+    if (state.checkedAt === 0) {
+      throw codedError(
+        'EPROXY_CONFIG_UNAVAILABLE',
+        'egress proxy settings could not be loaded'
+      )
+    }
   }
   return { egresses: state.egresses }
 }
@@ -486,6 +513,7 @@ export default {
   MAX_PROXIES,
   SNAPSHOT_REFRESH_MS,
   refresh,
+  ensureLoaded,
   snapshot,
   view,
   createProxy,

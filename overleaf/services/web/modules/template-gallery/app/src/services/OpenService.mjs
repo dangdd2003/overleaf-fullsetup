@@ -35,6 +35,18 @@ function codedError(code, message) {
  */
 export async function findOpenableItem(token, { allowUnpublished = false } = {}) {
   if (!token || typeof token !== 'string') return null
+  const item = await findItemDoc(token, { allowUnpublished })
+  if (!item?.duplicateOf) return item
+  // A tombstoned duplicate opens its canonical item (one hop)
+  const col = await itemsCol()
+  return col.findOne({
+    token: item.duplicateOf,
+    duplicateOf: null,
+    ...(allowUnpublished ? {} : { state: 'published' }),
+  })
+}
+
+async function findItemDoc(token, { allowUnpublished }) {
   const col = await itemsCol()
   if (isValidToken(token)) {
     const filter = allowUnpublished ? { token } : { token, state: 'published' }

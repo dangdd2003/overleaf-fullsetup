@@ -174,6 +174,7 @@ function clampInt(value, { min, max, fallback }) {
 function baseFilter() {
   return {
     state: 'published',
+    duplicateOf: null,
     token: { $type: 'string' },
     family: { $in: GalleryUrls.FAMILIES },
     'mirror.removedAt': null,

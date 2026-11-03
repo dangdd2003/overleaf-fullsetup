@@ -19,13 +19,17 @@ const HYDRATE_TIMEOUT_MS = 120_000
  * @returns {Promise<object|null>} raw templateGalleryItems document
  */
 export async function hydrateItem(id, opts = {}) {
-  const found = await findItemDoc(id, { token: 1 })
+  const found = await findItemDoc(id, { token: 1, duplicateOf: 1 })
   if (!found) return null
   const col = await itemsCol()
-  if (!isValidToken(found.token)) return col.findOne({ _id: found._id })
+  // a tombstoned duplicate is not refreshed: its blob refs were unset on purpose
+  if (found.duplicateOf || !isValidToken(found.token)) {
+    return col.findOne({ _id: found._id })
+  }
 
   const ensureOpts = {
-    priority: 'interactive',
+    // 'admin' waits longer for a route slot than a public page view does
+    priority: opts.force ? 'admin' : 'interactive',
     force: Boolean(opts.force),
     timeoutMs: opts.timeoutMs ?? HYDRATE_TIMEOUT_MS,
     throwOnError: true,

@@ -4,7 +4,7 @@ import SessionCredentialStore from '../../crypto/SessionCredentialStore.mjs'
 import { requestRaw } from '../../transport/GuardedHttps.mjs'
 import {
   withHostSlot,
-  isTransientCode,
+  isTransientError,
   isThrottledError,
 } from '../../transport/RateGate.mjs'
 import { commitZipBuffer, pickMainFile, resolveLimits } from './TierSupport.mjs'
@@ -217,9 +217,16 @@ export async function acquireViaCloudSession(item, cfg = {}, opts = {}) {
     // A throttled request is the host refusing this client, not a bad session.
     // overleaf.com answers rate limits with a plain 403, so a throttle must not
     // invalidate the cookie even though its status looks like a rejection.
-    if (isTransientCode(err?.code) || isThrottledError(err)) {
+    // A route failure or a throttle is the connection, not the session.
+    if (isTransientError(err)) {
       logWarn('tier1_transient_error', { token: item.token, code: err?.code, err: err?.message })
-      return { acquired: false, reason: 'upstream_busy', code: err?.code, transient: true }
+      return {
+        acquired: false,
+        reason: 'upstream_busy',
+        // A throttle is reported as its own code, not as the HTTP status
+        code: isThrottledError(err) ? 'upstream_blocked' : err?.code,
+        transient: true,
+      }
     }
     const status = err?.status || err?.statusCode
     if (err instanceof SessionRejectedError || status === 401 || status === 403) {
