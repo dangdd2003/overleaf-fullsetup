@@ -77,6 +77,11 @@ hub="${DOCKER_USERNAME}/${image}"
 ghcr="${GHCR}/${GHCR_NS}/${image}"
 cache_ref="${hub}:buildcache"
 
+# Keep-alive for Travis's 10-minute no-output limit, without buffering build logs
+( while sleep 300; do echo "[keep-alive] still building ${image} ($(date +%H:%M:%S))"; done ) &
+keepalive=$!
+trap 'kill "$keepalive" 2>/dev/null || true; docker logout >/dev/null 2>&1 || true; docker logout "$GHCR" >/dev/null 2>&1 || true' EXIT
+
 # No layer caching between Travis VMs, so keep a registry cache next to the image
 docker buildx build \
   --file "$file" \

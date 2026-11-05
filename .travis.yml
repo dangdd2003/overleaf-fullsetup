@@ -6,10 +6,10 @@ version: ~> 1.0
 
 os: linux
 arch: amd64
-dist: noble
+dist: jammy
 # minimal image: skip the default Ruby toolchain setup
 language: minimal
-# Docker 28.x with buildx ships on noble; no engine reinstall needed
+# Docker 28.x ships on jammy; no engine reinstall needed
 services:
   - docker
 
@@ -26,26 +26,40 @@ env:
     - GHCR=ghcr.io
     - TEXLIVE_MIRROR=https://mirror.ctan.org/systems/texlive/tlnet
     - NODE_VERSION=v24.20.0
+    - BUILDX_VERSION=v0.19.3
+
+before_install:
+  # buildx is not listed on the Travis image pages; install the CLI plugin only if missing
+  - |
+    if ! docker buildx version >/dev/null 2>&1; then
+      mkdir -p ~/.docker/cli-plugins
+      curl -fsSL -o ~/.docker/cli-plugins/docker-buildx \
+        "https://github.com/docker/buildx/releases/download/${BUILDX_VERSION}/buildx-${BUILDX_VERSION}.linux-amd64"
+      chmod +x ~/.docker/cli-plugins/docker-buildx
+    fi
 
 before_script:
   - docker version
   - docker buildx version
+  # default VM has ~50 GB disk; images here are several GB
+  - df -h /
 
 stages:
   - name: base
   - name: images
 
+# Public repos: 50 min per job. Build output streams live; ci/travis-build.sh
+# prints a keep-alive line so quiet steps don't hit the 10-min no-output kill
+# (travis_wait is avoided because it buffers all output until the end).
 jobs:
-  fast_finish: true
   include:
     - stage: base
       name: sharelatex-base
-      # TeX Live install is quiet for long stretches; guard the 10-minute no-output limit
-      script: travis_wait 50 ./ci/travis-build.sh base
+      script: ./ci/travis-build.sh base
     - stage: images
       name: sharelatex
-      script: travis_wait 50 ./ci/travis-build.sh full
+      script: ./ci/travis-build.sh full
     - name: sharelatex-slim
-      script: travis_wait 50 ./ci/travis-build.sh slim
+      script: ./ci/travis-build.sh slim
     - name: git-bridge
       script: ./ci/travis-build.sh git-bridge
