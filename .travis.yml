@@ -1,53 +1,68 @@
+# Travis CI fallback for .github/workflows/build-and-push.yaml.
+# Builds from the vendored ./overleaf monorepo (not upstream overleaf/overleaf).
+# Secrets (DOCKER_TOKEN, GHCR_TOKEN) live in Repository Settings >
+# Environment Variables; see ci/travis-build.sh.
+version: ~> 1.0
+
 os: linux
 arch: amd64
 dist: jammy
+# minimal image: skip the default Ruby toolchain setup
+language: minimal
+# Docker 28.x ships on jammy; no engine reinstall needed
 services:
   - docker
 
+git:
+  depth: 1
+  submodules: false
+
+# Secrets are not exposed to PR builds, and pushes should only come from main
+if: branch = main AND type IN (push, cron, api)
+
 env:
   global:
-    - TZ: "Asia/Ho_Chi_Minh"
-    - TEXLIVE_MIRROR: "https://mirrors.mit.edu/CTAN/systems/texlive/tlnet"
-    - BASE_IMAGE: sharelatex-base
-    - FULL_IMAGE: sharelatex
-    - GHCR: ghcr.io
-  # update docker
+    - TZ=Asia/Ho_Chi_Minh
+    - DOCKER_USERNAME=dangdoan2003
+    - GHCR=ghcr.io
+    - TEXLIVE_MIRROR=https://mirror.ctan.org/systems/texlive/tlnet
+    - NODE_VERSION=v24.20.0
+    - BUILDX_VERSION=v0.19.3
+
 before_install:
-  - for pkg in docker.io docker-doc docker-compose docker-compose-v2 podman-docker containerd runc; do sudo apt-get remove $pkg; done
-  - sudo apt-get update
-  - sudo apt-get install ca-certificates curl
-  - sudo install -m 0755 -d /etc/apt/keyrings
-  - sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-  - sudo chmod a+r /etc/apt/keyrings/docker.asc
-  - echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-  - sudo apt-get update
+  # buildx is not listed on the Travis image pages; install the CLI plugin only if missing
+  - |
+    if ! docker buildx version >/dev/null 2>&1; then
+      mkdir -p ~/.docker/cli-plugins
+      curl -fsSL -o ~/.docker/cli-plugins/docker-buildx \
+        "https://github.com/docker/buildx/releases/download/${BUILDX_VERSION}/buildx-${BUILDX_VERSION}.linux-amd64"
+      chmod +x ~/.docker/cli-plugins/docker-buildx
+    fi
 
-  # install newest docker version
-install:
-  - sudo apt-get install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-  - sudo systemctl start docker
+before_script:
   - docker version
+  - docker buildx version
+  # default VM has ~50 GB disk; images here are several GB
+  - df -h /
 
+stages:
+  - name: base
+  - name: images
+
+# Public repos: 50 min per job. Build output streams live; ci/travis-build.sh
+# prints a keep-alive line so quiet steps don't hit the 10-min no-output kill
+# (travis_wait is avoided because it buffers all output until the end).
 jobs:
   include:
-    - stage: Build full image and push
-      script:
-        - git clone https://github.com/overleaf/overleaf
-        - git clone https://$GITHUB_USERNAME:$GITHUB_TOKEN@github.com/$GITHUB_USERNAME/overleaf-fullsetup.git
-        - cp overleaf-fullsetup/Dockerfile overleaf/server-ce/Dockerfile
-        - rm -rf overleaf-fullsetup
-        - cd overleaf
-        - docker build --build-arg BUILDKIT_INLINE_CACHE=1 --build-arg TEXLIVE_MIRROR=$TEXLIVE_MIRROR --file ./server-ce/Dockerfile-base --pull --cache-from $DOCKER_USERNAME/$BASE_IMAGE:latest --tag $DOCKER_USERNAME/$BASE_IMAGE:latest --tag $DOCKER_USERNAME/$BASE_IMAGE:$(date +"%Y-%m-%d") --tag $GHCR/$GITHUB_USERNAME/$BASE_IMAGE:latest --tag $GHCR/$GITHUB_USERNAME/$BASE_IMAGE:$(date +"%Y-%m-%d") .
-        - docker build --build-arg BUILDKIT_INLINE_CACHE=1 --build-arg MONOREPO_REVISION=$(git rev-parse HEAD) --build-arg OVERLEAF_BASE_TAG=$DOCKER_USERNAME/$BASE_IMAGE:latest --progress=plain --file ./server-ce/Dockerfile --pull --cache-from $DOCKER_USERNAME/$FULL_IMAGE:latest --tag $DOCKER_USERNAME/$FULL_IMAGE:latest --tag $DOCKER_USERNAME/$FULL_IMAGE:$(date +"%Y-%m-%d") --tag $GHCR/$GITHUB_USERNAME/$FULL_IMAGE:latest --tag $GHCR/$GITHUB_USERNAME/$FULL_IMAGE:$(date +"%Y-%m-%d") .
-        - echo "$DOCKER_TOKEN" | docker login -u $DOCKER_USERNAME --password-stdin
-        - echo "$GITHUB_TOKEN" | docker login $GHCR -u $GITHUB_USERNAME --password-stdin
-        - docker push $DOCKER_USERNAME/$BASE_IMAGE:latest
-        - docker push $DOCKER_USERNAME/$BASE_IMAGE:$(date +"%Y-%m-%d")
-        - docker push $DOCKER_USERNAME/$FULL_IMAGE:latest
-        - docker push $DOCKER_USERNAME/$FULL_IMAGE:$(date +"%Y-%m-%d")
-        - docker push $GHCR/$GITHUB_USERNAME/$BASE_IMAGE:latest
-        - docker push $GHCR/$GITHUB_USERNAME/$BASE_IMAGE:$(date +"%Y-%m-%d")
-        - docker push $GHCR/$GITHUB_USERNAME/$FULL_IMAGE:latest
-        - docker push $GHCR/$GITHUB_USERNAME/$FULL_IMAGE:$(date +"%Y-%m-%d")
-        - docker logout
-        - docker logout $GHCR
+    - stage: base
+      name: sharelatex-base
+      script: ./ci/travis-build.sh base
+    - stage: images
+      name: sharelatex
+      script: ./ci/travis-build.sh full
+    - stage: images
+      name: sharelatex-slim
+      script: ./ci/travis-build.sh slim
+    - stage: images
+      name: git-bridge
+      script: ./ci/travis-build.sh git-bridge
