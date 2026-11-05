@@ -8,6 +8,9 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: false
@@ -74,12 +77,11 @@ jobs:
   build-base:
     name: Build Sharelatex Base Image
     needs: detect-changes
-    if: always() && (github.event_name != 'push' || needs.detect-changes.outputs.base == 'true')
+    if: ${{ !cancelled() && (github.event_name != 'push' || needs.detect-changes.outputs.base == 'true') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-      id-token: write
     outputs:
       date: ${{ steps.build_env.outputs.date }}
       monorepo_revision: ${{ steps.build_env.outputs.MONOREPO_REVISION }}
@@ -92,6 +94,7 @@ jobs:
         id: build_env
         run: |
           echo "date=$(TZ=Asia/Ho_Chi_Minh date +"%Y-%m-%d")" >> "$GITHUB_OUTPUT"
+          echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
           echo "MONOREPO_REVISION=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           NODE_VER="${{ vars.NODE_VERSION || '24.20.0' }}"
           echo "NODE_VERSION=${NODE_VER#v}" >> "$GITHUB_OUTPUT"
@@ -130,8 +133,8 @@ jobs:
           cache-from: type=gha,scope=sharelatex-base
           cache-to: type=gha,mode=max,scope=sharelatex-base
           tags: |
-            ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.BASE_IMAGE_NAME }}:latest
-            ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.BASE_IMAGE_NAME }}:${{ steps.build_env.outputs.date }}
+            ${{ env.REGISTRY1 }}/${{ steps.build_env.outputs.owner }}/${{ env.BASE_IMAGE_NAME }}:latest
+            ${{ env.REGISTRY1 }}/${{ steps.build_env.outputs.owner }}/${{ env.BASE_IMAGE_NAME }}:${{ steps.build_env.outputs.date }}
             ${{ vars.DOCKER_USERNAME }}/${{ env.BASE_IMAGE_NAME }}:latest
             ${{ vars.DOCKER_USERNAME }}/${{ env.BASE_IMAGE_NAME }}:${{ steps.build_env.outputs.date }}
           push: true
@@ -139,12 +142,11 @@ jobs:
   build-full:
     name: Build Sharelatex Full Image
     needs: [detect-changes, build-base]
-    if: always() && needs.build-base.result != 'failure' && (github.event_name != 'push' || needs.detect-changes.outputs.base == 'true' || needs.detect-changes.outputs.app == 'true')
+    if: ${{ !cancelled() && needs.build-base.result != 'failure' && (github.event_name != 'push' || needs.detect-changes.outputs.base == 'true' || needs.detect-changes.outputs.app == 'true') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-      id-token: write
 
     steps:
       - name: Checkout repository
@@ -154,6 +156,7 @@ jobs:
         id: build_env
         run: |
           echo "date=$(TZ=Asia/Ho_Chi_Minh date +"%Y-%m-%d")" >> "$GITHUB_OUTPUT"
+          echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
           echo "MONOREPO_REVISION=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           NODE_VER="${{ vars.NODE_VERSION || '24.20.0' }}"
           echo "NODE_VERSION=${NODE_VER#v}" >> "$GITHUB_OUTPUT"
@@ -185,19 +188,19 @@ jobs:
             OVERLEAF_BASE_TAG=${{ vars.DOCKER_USERNAME }}/${{ env.BASE_IMAGE_NAME }}:latest
             MONOREPO_REVISION=${{ steps.build_env.outputs.MONOREPO_REVISION }}
             TEXLIVE_MIRROR=${{ vars.TEXLIVE_MIRROR || 'https://mirror.ctan.org/systems/texlive/tlnet' }}
-            NODE_VERSION=${{ vars.NODE_VERSION || 'v24.20.0' }}
+            NODE_VERSION=v${{ steps.build_env.outputs.NODE_VERSION }}
           no-cache: ${{ github.event_name != 'push' }}
           # gha is the main cache; inline cache in the pushed :latest (GHCR + Docker Hub) keeps the tlmgr layer past gha eviction
           cache-from: |
             type=gha,scope=sharelatex-full
-            type=registry,ref=${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.FULL_IMAGE_NAME }}:latest
+            type=registry,ref=${{ env.REGISTRY1 }}/${{ steps.build_env.outputs.owner }}/${{ env.FULL_IMAGE_NAME }}:latest
             type=registry,ref=${{ vars.DOCKER_USERNAME }}/${{ env.FULL_IMAGE_NAME }}:latest
           cache-to: |
             type=gha,mode=max,scope=sharelatex-full
             type=inline
           tags: |
-            ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.FULL_IMAGE_NAME }}:latest
-            ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.FULL_IMAGE_NAME }}:${{ steps.build_env.outputs.date }}
+            ${{ env.REGISTRY1 }}/${{ steps.build_env.outputs.owner }}/${{ env.FULL_IMAGE_NAME }}:latest
+            ${{ env.REGISTRY1 }}/${{ steps.build_env.outputs.owner }}/${{ env.FULL_IMAGE_NAME }}:${{ steps.build_env.outputs.date }}
             ${{ vars.DOCKER_USERNAME }}/${{ env.FULL_IMAGE_NAME }}:latest
             ${{ vars.DOCKER_USERNAME }}/${{ env.FULL_IMAGE_NAME }}:${{ steps.build_env.outputs.date }}
           push: true
@@ -205,12 +208,11 @@ jobs:
   build-slim:
     name: Build Sharelatex Slim Image
     needs: [detect-changes, build-base]
-    if: always() && needs.build-base.result != 'failure' && (github.event_name != 'push' || needs.detect-changes.outputs.base == 'true' || needs.detect-changes.outputs.app == 'true')
+    if: ${{ !cancelled() && needs.build-base.result != 'failure' && (github.event_name != 'push' || needs.detect-changes.outputs.base == 'true' || needs.detect-changes.outputs.app == 'true') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-      id-token: write
 
     steps:
       - name: Checkout repository
@@ -220,6 +222,7 @@ jobs:
         id: build_env
         run: |
           echo "date=$(TZ=Asia/Ho_Chi_Minh date +"%Y-%m-%d")" >> "$GITHUB_OUTPUT"
+          echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
           echo "MONOREPO_REVISION=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           NODE_VER="${{ vars.NODE_VERSION || '24.20.0' }}"
           echo "NODE_VERSION=${NODE_VER#v}" >> "$GITHUB_OUTPUT"
@@ -250,13 +253,13 @@ jobs:
             BUILDKIT_INLINE_CACHE=1
             OVERLEAF_BASE_TAG=${{ vars.DOCKER_USERNAME }}/${{ env.BASE_IMAGE_NAME }}:latest
             MONOREPO_REVISION=${{ steps.build_env.outputs.MONOREPO_REVISION }}
-            NODE_VERSION=${{ vars.NODE_VERSION || 'v24.20.0' }}
+            NODE_VERSION=v${{ steps.build_env.outputs.NODE_VERSION }}
           no-cache: ${{ github.event_name != 'push' }}
           cache-from: type=gha,scope=sharelatex-slim
           cache-to: type=gha,mode=max,scope=sharelatex-slim
           tags: |
-            ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.SLIM_IMAGE_NAME }}:latest
-            ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.SLIM_IMAGE_NAME }}:${{ steps.build_env.outputs.date }}
+            ${{ env.REGISTRY1 }}/${{ steps.build_env.outputs.owner }}/${{ env.SLIM_IMAGE_NAME }}:latest
+            ${{ env.REGISTRY1 }}/${{ steps.build_env.outputs.owner }}/${{ env.SLIM_IMAGE_NAME }}:${{ steps.build_env.outputs.date }}
             ${{ vars.DOCKER_USERNAME }}/${{ env.SLIM_IMAGE_NAME }}:latest
             ${{ vars.DOCKER_USERNAME }}/${{ env.SLIM_IMAGE_NAME }}:${{ steps.build_env.outputs.date }}
           push: true
@@ -264,12 +267,11 @@ jobs:
   build-texlive-full:
     name: Build TeX Live Full (${{ matrix.year }})
     needs: detect-changes
-    if: always() && (github.event_name != 'push' || needs.detect-changes.outputs.texlive == 'true')
+    if: ${{ !cancelled() && (github.event_name != 'push' || needs.detect-changes.outputs.texlive == 'true') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -293,6 +295,7 @@ jobs:
         id: build_env
         run: |
           echo "date=$(TZ=Asia/Ho_Chi_Minh date +"%Y-%m-%d")" >> "$GITHUB_OUTPUT"
+          echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
           
           # Dynamic mirror URLs with verified HTTPS archives
           DEFAULT_ACTIVE_MIRROR="${{ vars.TEXLIVE_MIRROR || 'https://mirror.ctan.org/systems/texlive/tlnet' }}"
@@ -341,23 +344,22 @@ jobs:
             TEXLIVE_MIRROR=${{ steps.build_env.outputs.mirror }}
             TEXLIVE_INSTALLER_URL=${{ steps.build_env.outputs.installer }}
           tags: |
-            ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.TEXLIVE_FULL_IMAGE_NAME }}:${{ matrix.year }}
-            ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.TEXLIVE_FULL_IMAGE_NAME }}:${{ matrix.year }}_${{ steps.build_env.outputs.date }}
+            ${{ env.REGISTRY1 }}/${{ steps.build_env.outputs.owner }}/${{ env.TEXLIVE_FULL_IMAGE_NAME }}:${{ matrix.year }}
+            ${{ env.REGISTRY1 }}/${{ steps.build_env.outputs.owner }}/${{ env.TEXLIVE_FULL_IMAGE_NAME }}:${{ matrix.year }}_${{ steps.build_env.outputs.date }}
             ${{ vars.DOCKER_USERNAME }}/${{ env.TEXLIVE_FULL_IMAGE_NAME }}:${{ matrix.year }}
             ${{ vars.DOCKER_USERNAME }}/${{ env.TEXLIVE_FULL_IMAGE_NAME }}:${{ matrix.year }}_${{ steps.build_env.outputs.date }}
-            ${{ matrix.is_latest && format('{0}/{1}/{2}:latest', env.REGISTRY1, github.actor, env.TEXLIVE_FULL_IMAGE_NAME) || '' }}
+            ${{ matrix.is_latest && format('{0}/{1}/{2}:latest', env.REGISTRY1, steps.build_env.outputs.owner, env.TEXLIVE_FULL_IMAGE_NAME) || '' }}
             ${{ matrix.is_latest && format('{0}/{1}:latest', vars.DOCKER_USERNAME, env.TEXLIVE_FULL_IMAGE_NAME) || '' }}
           push: true
 
   build-git-bridge:
     name: Build Git Bridge Image
     needs: detect-changes
-    if: always() && (github.event_name != 'push' || needs.detect-changes.outputs.gitbridge == 'true')
+    if: ${{ !cancelled() && (github.event_name != 'push' || needs.detect-changes.outputs.gitbridge == 'true') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-      id-token: write
 
     steps:
       - name: Checkout repository
@@ -367,6 +369,7 @@ jobs:
         id: build_env
         run: |
           echo "date=$(TZ=Asia/Ho_Chi_Minh date +"%Y-%m-%d")" >> "$GITHUB_OUTPUT"
+          echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
           echo "MONOREPO_REVISION=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           NODE_VER="${{ vars.NODE_VERSION || '24.20.0' }}"
           echo "NODE_VERSION=${NODE_VER#v}" >> "$GITHUB_OUTPUT"
@@ -402,8 +405,8 @@ jobs:
           cache-from: type=gha,scope=git-bridge
           cache-to: type=gha,mode=max,scope=git-bridge
           tags: |
-            ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.GIT_BRIDGE_IMAGE_NAME }}:latest
-            ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.GIT_BRIDGE_IMAGE_NAME }}:${{ steps.build_env.outputs.date }}
+            ${{ env.REGISTRY1 }}/${{ steps.build_env.outputs.owner }}/${{ env.GIT_BRIDGE_IMAGE_NAME }}:latest
+            ${{ env.REGISTRY1 }}/${{ steps.build_env.outputs.owner }}/${{ env.GIT_BRIDGE_IMAGE_NAME }}:${{ steps.build_env.outputs.date }}
             ${{ vars.DOCKER_USERNAME }}/${{ env.GIT_BRIDGE_IMAGE_NAME }}:latest
             ${{ vars.DOCKER_USERNAME }}/${{ env.GIT_BRIDGE_IMAGE_NAME }}:${{ steps.build_env.outputs.date }}
           push: true
@@ -411,12 +414,11 @@ jobs:
   build-overleaf-browser:
     name: Build Overleaf Browser Image
     needs: detect-changes
-    if: always() && (github.event_name != 'push' || needs.detect-changes.outputs.overleafbrowser == 'true')
+    if: ${{ !cancelled() && (github.event_name != 'push' || needs.detect-changes.outputs.overleafbrowser == 'true') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-      id-token: write
     defaults:
       run:
         working-directory: ./overleaf/services/overleaf-browser
@@ -429,6 +431,7 @@ jobs:
         id: build_env
         run: |
           echo "date=$(TZ=Asia/Ho_Chi_Minh date +"%Y-%m-%d")" >> "$GITHUB_OUTPUT"
+          echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
           echo "MONOREPO_REVISION=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           NODE_VER="${{ vars.NODE_VERSION || '24.20.0' }}"
           echo "NODE_VERSION=${NODE_VER#v}" >> "$GITHUB_OUTPUT"
@@ -522,8 +525,8 @@ jobs:
           labels: |
             org.opencontainers.image.revision=${{ steps.build_env.outputs.MONOREPO_REVISION }}
           tags: |
-            ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.OVERLEAF_BROWSER_IMAGE_NAME }}:latest
-            ${{ env.REGISTRY1 }}/${{ github.actor }}/${{ env.OVERLEAF_BROWSER_IMAGE_NAME }}:${{ steps.build_env.outputs.date }}
+            ${{ env.REGISTRY1 }}/${{ steps.build_env.outputs.owner }}/${{ env.OVERLEAF_BROWSER_IMAGE_NAME }}:latest
+            ${{ env.REGISTRY1 }}/${{ steps.build_env.outputs.owner }}/${{ env.OVERLEAF_BROWSER_IMAGE_NAME }}:${{ steps.build_env.outputs.date }}
             ${{ vars.DOCKER_USERNAME }}/${{ env.OVERLEAF_BROWSER_IMAGE_NAME }}:latest
             ${{ vars.DOCKER_USERNAME }}/${{ env.OVERLEAF_BROWSER_IMAGE_NAME }}:${{ steps.build_env.outputs.date }}
           push: true
