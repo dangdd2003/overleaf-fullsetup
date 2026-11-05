@@ -2,6 +2,7 @@ import * as GuardedHttps from '../../transport/GuardedHttps.mjs'
 import { withHostSlot } from '../../transport/RateGate.mjs'
 import * as BlobStore from '../../storage/BlobStore.mjs'
 import { DEFAULTS } from '../../TemplateGalleryDefaults.mjs'
+import * as cheerio from 'cheerio'
 
 // Every request the mirror makes goes through here: one request per route
 // slot (RateGate: paced per route for overleaf.com), strict per-host
@@ -83,6 +84,62 @@ function slotOptions(opts) {
   return { priority, signal: opts?.signal }
 }
 
+// A CDN or login redirect can return HTTP 200 without returning the requested
+// gallery page. Classify it inside the route slot: a challenge must pause that
+// route and try another one before the detail parser sees the response.
+function assertGalleryResponse(html, url) {
+  const $ = cheerio.load(html)
+  // Only page headings count; footer notices and source/abstract text are not
+  // evidence that the requested page failed.
+  const heading = [
+    $('title').first().text().trim(),
+    $('h1').first().text().trim(),
+  ]
+  const challenge =
+    $(
+      'script[src*="/cdn-cgi/challenge-platform/"], #challenge-form, #cf-challenge-running'
+    ).length > 0 ||
+    /\b_cf_chl_opt\b/.test(
+      $('script:not([src])')
+        .map((_, script) => $(script).html())
+        .get()
+        .join('\n')
+    ) ||
+    heading.some(text =>
+      /^(just a moment|attention required|verify (?:that )?you are human|checking your browser|access denied)(?:[.!…\s]|$)/i.test(
+        text
+      )
+    )
+  let code
+  let status
+  let message
+  if (challenge) {
+    code = 'upstream_challenge'
+    status = 403
+    message =
+      'Overleaf returned a browser verification page instead of the gallery page'
+  } else if (
+    /^\/(?:login|user\/login)(?:\/|$)/.test(new URL(url).pathname) ||
+    ($('form[action*="/login"] input[type="password"]').length > 0 &&
+      heading.some(text => /^(?:log\s*in|sign\s*in)(?:\s|$)/i.test(text)))
+  ) {
+    code = 'upstream_login'
+    status = 401
+    message = 'Overleaf redirected the gallery request to a login page'
+  } else if (
+    heading.some(text =>
+      /^(?:500\s*[-:]?\s*)?(?:internal server error|service unavailable|bad gateway|gateway timeout|something went wrong)(?:[.!…\s]|$)/i.test(
+        text
+      )
+    )
+  ) {
+    code = 'upstream_error_page'
+    status = 500
+    message = 'Overleaf returned an error page instead of the gallery page'
+  }
+  if (code) throw Object.assign(codedError(code, message), { status, url })
+}
+
 export function overleafUrl(path) {
   return new URL(path, OVERLEAF_ORIGIN).href
 }
@@ -95,35 +152,42 @@ export function overleafUrl(path) {
 export async function fetchOverleafPage(path, opts = {}) {
   const url = overleafUrl(path)
   const { withHostSlot, requestRaw } = transport()
-  return withHostSlot('overleaf', slotOptions(opts), async ({ egress } = {}) => {
-    let res
-    try {
-      res = await requestRaw(url, {
-        egress,
-        headers: HTML_HEADERS,
-        allowedHosts: OVERLEAF_HOSTS,
-        maxBytes: MAX_HTML_BYTES,
-        timeoutMs: PAGE_TIMEOUT_MS,
-        signal: opts.signal,
-      })
-    } catch (err) {
-      if (GONE_STATUSES.has(err?.status)) return { status: err.status }
-      throw err
+  return withHostSlot(
+    'overleaf',
+    slotOptions(opts),
+    async ({ egress } = {}) => {
+      let res
+      try {
+        res = await requestRaw(url, {
+          egress,
+          headers: HTML_HEADERS,
+          allowedHosts: OVERLEAF_HOSTS,
+          maxBytes: MAX_HTML_BYTES,
+          timeoutMs: PAGE_TIMEOUT_MS,
+          signal: opts.signal,
+        })
+      } catch (err) {
+        if (GONE_STATUSES.has(err?.status)) return { status: err.status }
+        throw err
+      }
+      if (res.truncated) {
+        throw codedError(
+          'EBYTECAP',
+          `page exceeds ${MAX_HTML_BYTES} bytes: ${url}`
+        )
+      }
+      if (res.status !== 200) {
+        throw codedError(
+          'unexpected_status',
+          `unexpected HTTP ${res.status} from ${url}`
+        )
+      }
+      const html = res.body.toString('utf8')
+      const finalUrl = res.url || url
+      assertGalleryResponse(html, finalUrl)
+      return { status: 200, html, url: finalUrl }
     }
-    if (res.truncated) {
-      throw codedError(
-        'EBYTECAP',
-        `page exceeds ${MAX_HTML_BYTES} bytes: ${url}`
-      )
-    }
-    if (res.status !== 200) {
-      throw codedError(
-        'unexpected_status',
-        `unexpected HTTP ${res.status} from ${url}`
-      )
-    }
-    return { status: 200, html: res.body.toString('utf8'), url: res.url || url }
-  })
+  )
 }
 
 /**
@@ -172,43 +236,47 @@ export async function storeOverleafPdf(path, opts = {}) {
   const url = overleafUrl(path)
   const maxBytes = DEFAULTS.outbound?.maxPdfBytes || DEFAULT_MAX_PDF_BYTES
   const { withHostSlot, fetchStream } = transport()
-  return withHostSlot('overleaf', slotOptions(opts), async ({ egress } = {}) => {
-    let res
-    try {
-      res = await fetchStream(url, {
-        egress,
-        headers: PDF_HEADERS,
-        allowedHosts: PDF_HOSTS,
-        maxBytes,
-        timeoutMs: PDF_TIMEOUT_MS,
-        signal: opts.signal,
-      })
-    } catch (err) {
-      if (GONE_STATUSES.has(err?.status) || isS3Denied(err)) {
-        return { status: err.status }
+  return withHostSlot(
+    'overleaf',
+    slotOptions(opts),
+    async ({ egress } = {}) => {
+      let res
+      try {
+        res = await fetchStream(url, {
+          egress,
+          headers: PDF_HEADERS,
+          allowedHosts: PDF_HOSTS,
+          maxBytes,
+          timeoutMs: PDF_TIMEOUT_MS,
+          signal: opts.signal,
+        })
+      } catch (err) {
+        if (GONE_STATUSES.has(err?.status) || isS3Denied(err)) {
+          return { status: err.status }
+        }
+        throw err
       }
-      throw err
+      const declared = Number(res.headers?.['content-length'])
+      if (
+        res.status !== 200 ||
+        (Number.isFinite(declared) && declared > maxBytes)
+      ) {
+        res.stream?.destroy?.()
+        throw codedError(
+          res.status !== 200 ? 'unexpected_status' : 'EBYTECAP',
+          res.status !== 200
+            ? `unexpected HTTP ${res.status} from ${url}`
+            : `PDF of ${declared} bytes exceeds ${maxBytes}`
+        )
+      }
+      const blob = await BlobStore.putStream(res.stream, {
+        storageDir: DEFAULTS.storageDir,
+        magic: PDF_MAGIC,
+        maxBytes,
+      })
+      return { status: 200, sha256: blob.sha256, sizeBytes: blob.sizeBytes }
     }
-    const declared = Number(res.headers?.['content-length'])
-    if (
-      res.status !== 200 ||
-      (Number.isFinite(declared) && declared > maxBytes)
-    ) {
-      res.stream?.destroy?.()
-      throw codedError(
-        res.status !== 200 ? 'unexpected_status' : 'EBYTECAP',
-        res.status !== 200
-          ? `unexpected HTTP ${res.status} from ${url}`
-          : `PDF of ${declared} bytes exceeds ${maxBytes}`
-      )
-    }
-    const blob = await BlobStore.putStream(res.stream, {
-      storageDir: DEFAULTS.storageDir,
-      magic: PDF_MAGIC,
-      maxBytes,
-    })
-    return { status: 200, sha256: blob.sha256, sizeBytes: blob.sizeBytes }
-  })
+  )
 }
 
 export default {

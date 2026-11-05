@@ -9,8 +9,8 @@ const MiB = 1024 * KiB
 const HOUR = 3600_000
 
 export const DEFAULTS = {
-  // Sub-folder of the main Overleaf data volume (one volume, one backup)
-  storageDir: '/var/lib/overleaf/data/template-gallery',
+  // Its own Docker volume, separate from the main Overleaf /var/lib/overleaf volume
+  storageDir: '/var/lib/template-gallery',
   crawler: {
     // Algolia catalogue weekly, recent listings hourly, detail pages and PDFs
     // fetched by the parallel sync pool (jobs/Scheduler.mjs). Outbound routes

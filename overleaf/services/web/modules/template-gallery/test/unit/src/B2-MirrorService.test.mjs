@@ -72,11 +72,21 @@ function matchesFilter(doc, query) {
       continue
     }
     const val = getDeep(doc, k)
-    if (v && typeof v === 'object' && !Array.isArray(v) && !(v instanceof Date)) {
+    if (
+      v &&
+      typeof v === 'object' &&
+      !Array.isArray(v) &&
+      !(v instanceof Date)
+    ) {
       if ('$ne' in v && val === v.$ne) return false
-      if ('$in' in v && (!Array.isArray(v.$in) || !v.$in.includes(val))) return false
+      if ('$in' in v && (!Array.isArray(v.$in) || !v.$in.includes(val)))
+        return false
       if ('$type' in v) {
-        if (v.$type === 'number' && (typeof val !== 'number' || !Number.isFinite(val))) return false
+        if (
+          v.$type === 'number' &&
+          (typeof val !== 'number' || !Number.isFinite(val))
+        )
+          return false
       }
       if ('$gt' in v && !(val > v.$gt)) return false
       if ('$lt' in v && !(val < v.$lt)) return false
@@ -85,7 +95,8 @@ function matchesFilter(doc, query) {
       }
       continue
     }
-    if (val !== v) return false
+    // Mongo's { field: null } also matches documents without that field.
+    if (v === null ? val != null : val !== v) return false
   }
   return true
 }
@@ -188,7 +199,12 @@ function createMockCollection(initialDocs = []) {
         delete newDoc._isInsert
         const key = newDoc._id ?? newDoc.token ?? Math.random().toString()
         docs.set(String(key), newDoc)
-        return { acknowledged: true, matchedCount: 0, upsertedCount: 1, upsertedId: key }
+        return {
+          acknowledged: true,
+          matchedCount: 0,
+          upsertedCount: 1,
+          upsertedId: key,
+        }
       }
       return { acknowledged: true, matchedCount: 0, modifiedCount: 0 }
     },
@@ -206,7 +222,9 @@ describe('B2 Mirror Service & Parsers', () => {
   let mockListingsCol
 
   beforeEach(async () => {
-    tmpStorageDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'tg-b2-test-'))
+    tmpStorageDir = await fs.promises.mkdtemp(
+      path.join(os.tmpdir(), 'tg-b2-test-')
+    )
     Settings.templateGallery = {
       ...DEFAULTS,
       storageDir: tmpStorageDir,
@@ -228,7 +246,9 @@ describe('B2 Mirror Service & Parsers', () => {
     Fetch.setFetchOverridesForTests(null)
     vi.restoreAllMocks()
     if (tmpStorageDir) {
-      await fs.promises.rm(tmpStorageDir, { recursive: true, force: true }).catch(() => {})
+      await fs.promises
+        .rm(tmpStorageDir, { recursive: true, force: true })
+        .catch(() => {})
     }
   })
 
@@ -237,7 +257,8 @@ describe('B2 Mirror Service & Parsers', () => {
   // -------------------------------------------------------------------------
   describe('ListingParser', () => {
     it('parsePublishedImage extracts publishedId and full URL for S3 images', () => {
-      const valid = 'https://writelatex.s3.amazonaws.com/published_ver/12345.jpeg?X-Amz-Signature=test'
+      const valid =
+        'https://writelatex.s3.amazonaws.com/published_ver/12345.jpeg?X-Amz-Signature=test'
       expect(parsePublishedImage(valid)).toEqual({
         publishedId: 12345,
         url: valid,
@@ -249,8 +270,14 @@ describe('B2 Mirror Service & Parsers', () => {
         url: 'https://writelatex.s3.amazonaws.com/published_ver/67890.jpg',
       })
 
-      expect(parsePublishedImage('https://evil.com/published_ver/12345.jpeg')).toBeNull()
-      expect(parsePublishedImage('https://writelatex.s3.amazonaws.com/other/12345.jpeg')).toBeNull()
+      expect(
+        parsePublishedImage('https://evil.com/published_ver/12345.jpeg')
+      ).toBeNull()
+      expect(
+        parsePublishedImage(
+          'https://writelatex.s3.amazonaws.com/other/12345.jpeg'
+        )
+      ).toBeNull()
       expect(parsePublishedImage(null)).toBeNull()
       expect(parsePublishedImage('')).toBeNull()
       expect(parsePublishedImage('not-a-url')).toBeNull()
@@ -285,7 +312,8 @@ describe('B2 Mirror Service & Parsers', () => {
         author: 'Jane Doe',
         description: 'A sample curriculum vitae',
         publishedId: 11020,
-        imageUrl: 'https://writelatex.s3.amazonaws.com/published_ver/11020.jpeg',
+        imageUrl:
+          'https://writelatex.s3.amazonaws.com/published_ver/11020.jpeg',
         badges: ['top-pick', 'official'],
       })
 
@@ -447,6 +475,54 @@ describe('B2 Mirror Service & Parsers', () => {
       const noCta = '<div class="gallery-item-title"><h1>Title Only</h1></div>'
       expect(parseDetailPage(noCta)).toBeNull()
     })
+
+    it('recovers a changed title layout and skips invalid CTA links', () => {
+      const detail = parseDetailPage(`
+        <main><h1>Recovered template</h1></main>
+        <a href="https://example.com/project/new/template/99">Foreign link</a>
+        <a href="/project/new/template/invalid">Invalid link</a>
+        <a href="/project/new/template/9007199254740992">Unsafe version id</a>
+        <a href="/project/new/template/42?mainFile=main.tex">Open</a>
+        <div id="modalViewSource"><pre>\\documentclass{article}</pre></div>
+      `)
+      expect(detail.title).toBe('Recovered template')
+      expect(detail.cta.publishedId).toBe(42)
+      expect(detail.mainText).toBe('\\documentclass{article}')
+    })
+
+    it('recovers metadata and GET form CTA without gallery presentation classes', () => {
+      const detail = parseDetailPage(`
+        <meta property="og:title" content="Metadata title">
+        <meta itemprop="image" content="https://writelatex.s3.amazonaws.com/published_ver/42.jpeg">
+        <main><dl><dt>Author:</dt><dd>Example author</dd><dt>License:</dt><dd>MIT</dd></dl></main>
+        <form action="/project/new/template/42" method="GET">
+          <input name="mainFile" value="paper.tex"><input name="latexEngine" value="xelatex">
+        </form>
+      `)
+      expect(detail.title).toBe('Metadata title')
+      expect(detail.author).toBe('Example author')
+      expect(detail.licenseLabel).toBe('MIT')
+      expect(detail.cta).toMatchObject({
+        publishedId: 42,
+        mainFile: 'paper.tex',
+        latexEngine: 'xelatex',
+      })
+      expect(detail.preview.publishedId).toBe(42)
+    })
+
+    it('rejects missing required fields with actionable diagnostics', () => {
+      expect(() =>
+        parseDetailPage('<h1>Unexpected page</h1>', { throwOnError: true })
+      ).toThrow(/valid Open as Template link/)
+      expect(
+        parseDetailPage(
+          '<h1>Unexpected page</h1><form method="post" action="/project/new/template/42"></form>'
+        )
+      ).toBeNull()
+      expect(
+        parseOpenTemplateHref('https://example.com/project/new/template/42')
+      ).toBeNull()
+    })
   })
 
   // -------------------------------------------------------------------------
@@ -454,7 +530,9 @@ describe('B2 Mirror Service & Parsers', () => {
   // -------------------------------------------------------------------------
   describe('TagParser', () => {
     it('tagNameFromHref extracts and decodes tag slug from varied href formats', () => {
-      expect(tagNameFromHref('/latex/templates/tagged/academic-journal')).toBe('academic-journal')
+      expect(tagNameFromHref('/latex/templates/tagged/academic-journal')).toBe(
+        'academic-journal'
+      )
       expect(tagNameFromHref('/latex/examples/tagged/cv/page/3')).toBe('cv')
       expect(tagNameFromHref('/articles/tagged/resum%C3%A9')).toBe('resumé')
       expect(tagNameFromHref('/latex/templates/recent')).toBeNull()
@@ -462,8 +540,12 @@ describe('B2 Mirror Service & Parsers', () => {
     })
 
     it('tagTitleFromHeading extracts suffix after em-dash separator', () => {
-      expect(tagTitleFromHeading('LaTeX templates — CVs and résumés')).toBe('CVs and résumés')
-      expect(tagTitleFromHeading('Gallery — Academic Journals')).toBe('Academic Journals')
+      expect(tagTitleFromHeading('LaTeX templates — CVs and résumés')).toBe(
+        'CVs and résumés'
+      )
+      expect(tagTitleFromHeading('Gallery — Academic Journals')).toBe(
+        'Academic Journals'
+      )
       expect(tagTitleFromHeading('No Separator Heading')).toBeNull()
       expect(tagTitleFromHeading('')).toBeNull()
     })
@@ -486,7 +568,9 @@ describe('B2 Mirror Service & Parsers', () => {
       expect(parsedKnown.known).toBe(true)
       expect(parsedKnown.title).toBe('Academic Journals')
       expect(parsedKnown.summary).toBe('Curated academic journal templates.')
-      expect(parsedKnown.related).toEqual([{ name: 'peer-review', title: 'Peer Review' }])
+      expect(parsedKnown.related).toEqual([
+        { name: 'peer-review', title: 'Peer Review' },
+      ])
       expect(parsedKnown.cards).toHaveLength(1)
 
       // Fallback page rendered when requested tag does not match active filter
@@ -509,19 +593,25 @@ describe('B2 Mirror Service & Parsers', () => {
   // -------------------------------------------------------------------------
   describe('AbstractSanitizer', () => {
     it('resolveAbstractHref localizes overleaf gallery links and preserves external links', () => {
-      const localItem = resolveAbstractHref('https://www.overleaf.com/latex/templates/sample-slug/abcdefghijkl')
+      const localItem = resolveAbstractHref(
+        'https://www.overleaf.com/latex/templates/sample-slug/abcdefghijkl'
+      )
       expect(localItem).toEqual({
         href: '/latex/templates/sample-slug/abcdefghijkl',
         external: false,
       })
 
-      const localTag = resolveAbstractHref('https://www.overleaf.com/latex/templates/tagged/cv')
+      const localTag = resolveAbstractHref(
+        'https://www.overleaf.com/latex/templates/tagged/cv'
+      )
       expect(localTag).toEqual({
         href: '/latex/templates/tagged/cv',
         external: false,
       })
 
-      const external = resolveAbstractHref('https://github.com/latex-ninja/template')
+      const external = resolveAbstractHref(
+        'https://github.com/latex-ninja/template'
+      )
       expect(external).toEqual({
         href: 'https://github.com/latex-ninja/template',
         external: true,
@@ -535,7 +625,11 @@ describe('B2 Mirror Service & Parsers', () => {
 
       // Dangerous schemes and credentials rejected
       expect(resolveAbstractHref('javascript:alert(1)')).toBeNull()
-      expect(resolveAbstractHref('data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==')).toBeNull()
+      expect(
+        resolveAbstractHref(
+          'data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg=='
+        )
+      ).toBeNull()
       expect(resolveAbstractHref('https://user:pass@example.com')).toBeNull()
       expect(resolveAbstractHref('')).toBeNull()
     })
@@ -572,12 +666,17 @@ describe('B2 Mirror Service & Parsers', () => {
         </div>
       `
       const clean = sanitizeAbstractHtml(html)
-      expect(clean).toContain('<a href="/latex/templates/cv/abcdefghijkl">CV Template</a>')
-      expect(clean).toContain('<a href="https://github.com/user/repo" rel="nofollow noopener">GitHub source</a>')
+      expect(clean).toContain(
+        '<a href="/latex/templates/cv/abcdefghijkl">CV Template</a>'
+      )
+      expect(clean).toContain(
+        '<a href="https://github.com/user/repo" rel="nofollow noopener">GitHub source</a>'
+      )
     })
 
     it('sanitizeAbstractHtml allows safe formatting tags and returns empty string for blank content', () => {
-      const formatting = '<p>Text with <strong>bold</strong>, <em>italic</em>, <code>code</code>.</p>'
+      const formatting =
+        '<p>Text with <strong>bold</strong>, <em>italic</em>, <code>code</code>.</p>'
       expect(sanitizeAbstractHtml(formatting)).toBe(formatting)
 
       expect(sanitizeAbstractHtml('')).toBe('')
@@ -649,13 +748,17 @@ describe('B2 Mirror Service & Parsers', () => {
       expect(err403.statusCode).toBe(403)
       expect(err403.retryAfterMs).toBeNull()
 
-      const err429 = httpError(429, 'https://www.overleaf.com/api', { 'retry-after': '45' })
+      const err429 = httpError(429, 'https://www.overleaf.com/api', {
+        'retry-after': '45',
+      })
       expect(err429.status).toBe(429)
       expect(err429.statusCode).toBe(429)
       expect(err429.retryAfterMs).toBe(45_000)
 
       // Capitalized header variant
-      const err429Cap = httpError(429, 'https://www.overleaf.com/api', { 'Retry-After': '90' })
+      const err429Cap = httpError(429, 'https://www.overleaf.com/api', {
+        'Retry-After': '90',
+      })
       expect(err429Cap.retryAfterMs).toBe(90_000)
     })
   })
@@ -681,8 +784,12 @@ describe('B2 Mirror Service & Parsers', () => {
     }
 
     it('scanGalleryRecent ordering: full scan assigns strictly descending recentOrder across pages', async () => {
-      const p1Cards = Array.from({ length: 9 }, (_, i) => makeCardHtml(make12Token('a', i))).join('\n')
-      const p2Cards = Array.from({ length: 9 }, (_, i) => makeCardHtml(make12Token('b', i))).join('\n')
+      const p1Cards = Array.from({ length: 9 }, (_, i) =>
+        makeCardHtml(make12Token('a', i))
+      ).join('\n')
+      const p2Cards = Array.from({ length: 9 }, (_, i) =>
+        makeCardHtml(make12Token('b', i))
+      ).join('\n')
       const featToken = make12Token('f', 0)
 
       const page1Html = `
@@ -703,7 +810,8 @@ describe('B2 Mirror Service & Parsers', () => {
       `
 
       vi.spyOn(Fetch, 'fetchOverleafPage').mockImplementation(async path => {
-        if (path.includes('page/2')) return { status: 200, html: page2Html, url: path }
+        if (path.includes('page/2'))
+          return { status: 200, html: page2Html, url: path }
         return { status: 200, html: page1Html, url: path }
       })
 
@@ -717,21 +825,39 @@ describe('B2 Mirror Service & Parsers', () => {
       expect(scanResult.items).toBe(18)
       expect(scanResult.done).toBe(true)
 
-      const firstPageItem = await mockItemsCol.findOne({ token: make12Token('a', 0) })
-      const lastPage1Item = await mockItemsCol.findOne({ token: make12Token('a', 8) })
-      const firstPage2Item = await mockItemsCol.findOne({ token: make12Token('b', 0) })
-      const lastPage2Item = await mockItemsCol.findOne({ token: make12Token('b', 8) })
+      const firstPageItem = await mockItemsCol.findOne({
+        token: make12Token('a', 0),
+      })
+      const lastPage1Item = await mockItemsCol.findOne({
+        token: make12Token('a', 8),
+      })
+      const firstPage2Item = await mockItemsCol.findOne({
+        token: make12Token('b', 0),
+      })
+      const lastPage2Item = await mockItemsCol.findOne({
+        token: make12Token('b', 8),
+      })
 
-      expect(firstPageItem.recentOrder).toBeGreaterThan(lastPage1Item.recentOrder)
-      expect(lastPage1Item.recentOrder).toBeGreaterThan(firstPage2Item.recentOrder)
-      expect(firstPage2Item.recentOrder).toBeGreaterThan(lastPage2Item.recentOrder)
+      expect(firstPageItem.recentOrder).toBeGreaterThan(
+        lastPage1Item.recentOrder
+      )
+      expect(lastPage1Item.recentOrder).toBeGreaterThan(
+        firstPage2Item.recentOrder
+      )
+      expect(firstPage2Item.recentOrder).toBeGreaterThan(
+        lastPage2Item.recentOrder
+      )
 
       // Featured items saved to listings collection
-      const featuredListing = await mockListingsCol.findOne({ _id: 'featured:gallery' })
+      const featuredListing = await mockListingsCol.findOne({
+        _id: 'featured:gallery',
+      })
       expect(featuredListing.tokens).toContain(featToken)
 
       // Checkpoint recorded
-      const checkpoint = await mockListingsCol.findOne({ _id: 'scan:gallery-recent' })
+      const checkpoint = await mockListingsCol.findOne({
+        _id: 'scan:gallery-recent',
+      })
       expect(checkpoint.finishedAt).toBeTruthy()
     })
 
@@ -798,7 +924,8 @@ describe('B2 Mirror Service & Parsers', () => {
         </div>
       `
       vi.spyOn(Fetch, 'fetchOverleafPage').mockImplementation(async path => {
-        if (path === '/latex/templates') return { status: 200, html: templatesHtml, url: path }
+        if (path === '/latex/templates')
+          return { status: 200, html: templatesHtml, url: path }
         return { status: 200, html: galleryHtml, url: path }
       })
 
@@ -830,8 +957,12 @@ describe('B2 Mirror Service & Parsers', () => {
       const doc1 = await MirrorService.ensureTag('templates', 'cv')
       expect(doc1._id).toBe('cv')
       expect(doc1.canonicalTitle).toBe('Curricula Vitae')
-      expect(doc1.byScope.templates.summary).toBe('A curated list of CV templates.')
-      expect(doc1.byScope.templates.related).toEqual([{ name: 'resumes', title: 'Resumes' }])
+      expect(doc1.byScope.templates.summary).toBe(
+        'A curated list of CV templates.'
+      )
+      expect(doc1.byScope.templates.related).toEqual([
+        { name: 'resumes', title: 'Resumes' },
+      ])
       expect(fetchSpy).toHaveBeenCalledTimes(1)
 
       // Second call without force should hit cache and not invoke fetch
@@ -919,6 +1050,99 @@ describe('B2 Mirror Service & Parsers', () => {
       expect(goneDoc.mirror.removedAt).toBeTruthy()
     })
 
+    it('a gone (404) page settles to null for background refreshes but throws for interactive and admin', async () => {
+      const token = make12Token('x', 4)
+      await mockItemsCol.updateOne(
+        { token },
+        { $set: { token, family: 'template', slug: 'gone-priority' } },
+        { upsert: true }
+      )
+      vi.spyOn(Fetch, 'fetchOverleafPage').mockResolvedValue({ status: 404 })
+
+      // Background (batch and sync) callers count a gone page as settled, not failed
+      await expect(
+        MirrorService.ensureDetail(token, { force: true, throwOnError: true })
+      ).resolves.toBeNull()
+      expect((await mockItemsCol.findOne({ token })).mirror.goneCount).toBe(1)
+
+      const interactive = await MirrorService.ensureDetail(token, {
+        priority: 'interactive',
+        force: true,
+        throwOnError: true,
+      }).catch(err => err)
+      expect(interactive.code).toBe('unexpected_status')
+      expect(interactive.status).toBe(404)
+
+      const admin = await MirrorService.ensureDetail(token, {
+        priority: 'admin',
+        force: true,
+        throwOnError: true,
+      }).catch(err => err)
+      expect(admin.code).toBe('unexpected_status')
+      expect(admin.status).toBe(404)
+    })
+
+    it('failed manual refresh preserves cached content and recovers despite backoff', async () => {
+      const token = make12Token('r', 3)
+      const detailAt = new Date(Date.now() - 86_400_000).toISOString()
+      await mockItemsCol.updateOne(
+        { token },
+        {
+          $set: {
+            token,
+            family: 'template',
+            slug: 'recovery',
+            title: 'Cached title',
+            abstractHtml: '<p>Cached abstract</p>',
+            mainText: 'Cached source',
+            mirror: { detailAt, detailHash: 'old-hash' },
+          },
+        },
+        { upsert: true }
+      )
+      const fetchSpy = vi.spyOn(Fetch, 'fetchOverleafPage').mockResolvedValue({
+        status: 200,
+        html: '<h1>Unexpected page</h1>',
+      })
+      const failure = await MirrorService.ensureDetail(token, {
+        force: true,
+        throwOnError: true,
+      }).catch(err => err)
+      expect(failure.code).toBe('detail_unparseable')
+      expect(failure.retryAt.getTime()).toBeGreaterThan(Date.now())
+      const failed = await mockItemsCol.findOne({ token })
+      expect(failed.abstractHtml).toBe('<p>Cached abstract</p>')
+      expect(failed.mainText).toBe('Cached source')
+      expect(failed.mirror.detailAt).toBe(detailAt)
+      expect(failed.mirror.attempts).toBe(1)
+      expect(failed.mirror.lastError).toContain('valid Open as Template link')
+      fetchSpy.mockResolvedValue({
+        status: 200,
+        html: '<main><h1>Recovered</h1><a href="/project/new/template/42">Open</a></main>',
+      })
+      const recovered = await MirrorService.ensureDetail(token, {
+        force: true,
+        throwOnError: true,
+      })
+      expect(fetchSpy).toHaveBeenCalledTimes(2)
+      expect(recovered.mirror.attempts).toBe(0)
+      expect(recovered.mirror.nextAttemptAt).toBeNull()
+      expect(recovered.mirror.lastError).toBeNull()
+
+      fetchSpy.mockResolvedValue({ status: 404 })
+      const gone = await MirrorService.ensureDetail(token, {
+        priority: 'admin',
+        force: true,
+        throwOnError: true,
+      }).catch(err => err)
+      expect(gone.code).toBe('unexpected_status')
+      expect(gone.status).toBe(404)
+      expect(gone.retryAt.getTime()).toBeGreaterThan(Date.now())
+      expect((await mockItemsCol.findOne({ token })).mirror.detailAt).toBe(
+        recovered.mirror.detailAt
+      )
+    })
+
     it('ensurePdf fetches and records PDF metadata, reuses existing blob when present', async () => {
       const pdfToken = make12Token('p', 0)
 
@@ -982,10 +1206,12 @@ describe('B2 Mirror Service & Parsers', () => {
         resolveFetch = resolve
       })
 
-      const fetchSpy = vi.spyOn(Fetch, 'fetchOverleafPage').mockImplementation(async () => {
-        await pendingPromise
-        return { status: 200, html: detailHtml, url: '/test' }
-      })
+      const fetchSpy = vi
+        .spyOn(Fetch, 'fetchOverleafPage')
+        .mockImplementation(async () => {
+          await pendingPromise
+          return { status: 200, html: detailHtml, url: '/test' }
+        })
 
       // Launch 3 concurrent ensureDetail calls
       const p1 = MirrorService.ensureDetail(flightToken)
@@ -1041,10 +1267,11 @@ describe('B2 Mirror Service & Parsers', () => {
       expect(scanResult.done).toBe(false)
       expect(scanResult.error).toBeTruthy()
 
-      const checkpoint = await mockListingsCol.findOne({ _id: 'scan:gallery-recent' })
+      const checkpoint = await mockListingsCol.findOne({
+        _id: 'scan:gallery-recent',
+      })
       expect(checkpoint?.finishedAt).toBeFalsy()
     })
-
   })
 
   // -------------------------------------------------------------------------
@@ -1075,7 +1302,9 @@ describe('B2 Mirror Service & Parsers', () => {
         bytes: 5000,
       })
 
-      const hydrated = await hydrateItem(hydrateToken, { cachePdfPreviews: true })
+      const hydrated = await hydrateItem(hydrateToken, {
+        cachePdfPreviews: true,
+      })
       expect(hydrated.token).toBe(hydrateToken)
       expect(MirrorService.ensureDetail).toHaveBeenCalledWith(
         hydrateToken,
@@ -1083,10 +1312,12 @@ describe('B2 Mirror Service & Parsers', () => {
       )
       expect(MirrorService.ensurePdf).toHaveBeenCalledWith(
         hydrateToken,
-        expect.objectContaining({ priority: 'interactive', throwOnError: false })
+        expect.objectContaining({
+          priority: 'interactive',
+          throwOnError: false,
+        })
       )
     })
-
   })
 })
 

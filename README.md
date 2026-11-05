@@ -58,13 +58,14 @@ It remains 100% backward-compatible with upstream Overleaf CE. Every extension i
 
 Stateful data across all services is mapped cleanly to persistent directories or Docker volumes:
 
-| Host Directory / Volume    | Target Container Path | Purpose                                                                                                                                             |
-| :------------------------- | :-------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `./data/overleaf`          | `/var/lib/overleaf`   | Overleaf uploaded assets, project files, SQLite caches, AI transcripts, and Template Gallery blobs and catalogue snapshot (`data/template-gallery`) |
-| `./data/overleaf/log`      | `/var/log/overleaf`   | Service application and access logs                                                                                                                 |
-| `./data/mongo`             | `/data/db`            | MongoDB replica set database storage                                                                                                                |
-| `./data/redis`             | `/data`               | Redis in-memory datastore persistence files                                                                                                         |
-| `./data/browser-profile`   | `/data/profile`       | Ephemeral user profile storage for the `overleaf-browser` service (commented out by default)                                                       |
+| Host Directory / Volume          | Target Container Path       | Purpose                                                                                      |
+| :------------------------------- | :-------------------------- | :------------------------------------------------------------------------------------------- |
+| `./data/overleaf`                | `/var/lib/overleaf`         | Overleaf uploaded assets, project files, SQLite caches, and AI transcripts                   |
+| Docker volume `template-gallery` | `/var/lib/template-gallery` | Template Gallery blobs and catalogue snapshots                                               |
+| `./data/overleaf/log`            | `/var/log/overleaf`         | Service application and access logs                                                          |
+| `./data/mongo`                   | `/data/db`                  | MongoDB replica set database storage                                                         |
+| `./data/redis`                   | `/data`                     | Redis in-memory datastore persistence files                                                  |
+| `./data/browser-profile`         | `/data/profile`             | Ephemeral user profile storage for the `overleaf-browser` service (commented out by default) |
 
 ### Running the Browser Service (Optional for AI Web Fetch)
 
@@ -575,7 +576,21 @@ Module guide: [Legal Page](overleaf/services/web/modules/legal/README.md).
 
 ### 11. Template Gallery
 
-A local mirror of the overleaf.com template gallery, served at `/latex/templates` (the old `/templates` URLs redirect there). It syncs templates from overleaf.com and serves cached content from the data volume. Admins manage sync and outbound proxies from the Templates page. Off by default. See the [module documentation](overleaf/services/web/modules/template-gallery/README.md).
+A local mirror of the overleaf.com template gallery, served at `/latex/templates` (the old `/templates` URLs redirect there). It syncs templates from overleaf.com and serves cached content from `/var/lib/template-gallery`. That path is its own Docker volume (`template-gallery`), separate from the main Overleaf volume, so the large mirror is backed up on its own. Admins manage sync and outbound proxies from the Templates page. Off by default. See the [module documentation](overleaf/services/web/modules/template-gallery/README.md).
+
+**Upgrading from an earlier version** that stored the gallery at `./data/overleaf/data/template-gallery`. Skip this if you never enabled `TEMPLATE_GALLERY_ENABLED`. Run these from the compose directory, with the new image already pulled:
+
+```bash
+docker compose stop overleaf
+docker compose run --rm --no-deps --entrypoint sh \
+  -v ./data/overleaf/data/template-gallery:/from:ro \
+  overleaf -c 'cp -a /from/. /var/lib/template-gallery/'
+docker compose up -d overleaf
+# after checking the Templates admin page shows storage healthy and items intact:
+rm -rf ./data/overleaf/data/template-gallery
+```
+
+`cp -a` keeps file ownership and permissions. The old folder is only removed after you have checked that the Templates admin page shows storage healthy and the items intact.
 
 | Environment Variable         | Default | Description                                                                                                                        |
 | :--------------------------- | :------ | :--------------------------------------------------------------------------------------------------------------------------------- |

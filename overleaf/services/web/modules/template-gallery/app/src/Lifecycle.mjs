@@ -82,7 +82,7 @@ export async function start(cfg = DEFAULTS) {
   readinessState.snapshot = null
 
   try {
-    // 1. Storage health check. Creates the storage tree (including catalog/) on the data volume.
+    // 1. Storage health check. Creates the storage tree (including catalog/) in its own storage directory.
     const storageRes = await StorageHealth.probe(cfg)
     readinessState.storageOk = Boolean(storageRes?.ok)
 

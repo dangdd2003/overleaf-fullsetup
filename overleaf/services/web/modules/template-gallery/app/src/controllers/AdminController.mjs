@@ -123,7 +123,7 @@ export async function getStatus(req, res) {
   try {
     const [storageOk, catalogue, settings, lastRun, usage] = await Promise.all([
       StorageHealth.probe().then(
-        (probe) => Boolean(probe?.ok),
+        probe => Boolean(probe?.ok),
         () => false
       ),
       TemplateCrawlerService.getCatalogueState(),
@@ -168,9 +168,7 @@ export async function getStatusSummary(req, res) {
 
 export async function listItems(req, res) {
   try {
-    const sync = SYNC_FILTERS.includes(req.query?.sync)
-      ? req.query.sync
-      : 'all'
+    const sync = SYNC_FILTERS.includes(req.query?.sync) ? req.query.sync : 'all'
     const result = await CatalogueService.listAdmin({
       q: queryString(req.query?.q),
       sync,
@@ -231,7 +229,7 @@ export async function hydrateItem(req, res) {
     return res.status(200).json({
       status: failed ? 'failed' : 'ok',
       reason: failed ? (failure ? refetchReason(failure) : 'failed') : null,
-      retryAt: failed ? retryAtOf(failure) : null,
+      retryAt: failed ? retryAtOf(failure) || sync.nextAttemptAt : null,
       sync,
     })
   } catch (err) {
@@ -285,7 +283,7 @@ export async function refetchSource(req, res) {
             ? 'backoff'
             : 'failed')
     const reason = status === 'ok' ? null : sourceReason(failure, result)
-    const retryAt = status === 'backoff' ? result?.retryAt ?? null : null
+    const retryAt = status === 'backoff' ? (result?.retryAt ?? null) : null
     const sync = await currentSync(id, item)
     return res.status(200).json({ status, reason, retryAt, sync })
   } catch (err) {
@@ -340,7 +338,10 @@ export async function saveSyncSettings(req, res) {
     })
     return res.status(200).json(saved)
   } catch (err) {
-    if (err?.code === 'invalid_refetch_days' || err?.code === 'invalid_auto_sync') {
+    if (
+      err?.code === 'invalid_refetch_days' ||
+      err?.code === 'invalid_auto_sync'
+    ) {
       return sendCode(res, 400, err.code)
     }
     return sendInternal(res, err)
@@ -363,7 +364,10 @@ export async function saveSessionCookie(req, res) {
   if (!cookie) return sendCode(res, 400, 'invalid_cookie')
   try {
     const col = await configCol()
-    const saved = await SessionCredentialStore.saveSessionCredential(col, cookie)
+    const saved = await SessionCredentialStore.saveSessionCredential(
+      col,
+      cookie
+    )
     return res.status(200).json({
       configured: true,
       updatedAt: iso(saved?.updatedAt),

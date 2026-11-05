@@ -5,7 +5,7 @@ import Notification from '@/shared/components/notification'
 import { ConfirmActionModal } from '../shared/confirm-action-modal'
 import { hydrateItem } from '../../api/client'
 import {
-  refetchReasonMessage,
+  detailsRefetchFailureMessage,
   toTemplateAdminApiError,
   type TemplateAdminApiError,
 } from '../../api/errors'
@@ -54,11 +54,7 @@ export default function MirrorCard({ item, onSynced }: MirrorCardProps) {
             }
           : {
               type: 'error',
-              content: refetchReasonMessage(
-                t,
-                result.reason,
-                'template_gallery_admin_error_hydration_failed'
-              ),
+              content: detailsRefetchFailureMessage(t, result),
             }
       )
     } catch (err) {
@@ -96,6 +92,19 @@ export default function MirrorCard({ item, onSynced }: MirrorCardProps) {
         {sync.detailStatus === 'failed' && sync.lastError && (
           <DetailRow label={t('template_gallery_admin_item_last_error')}>
             {sync.lastError}
+          </DetailRow>
+        )}
+        {sync.detailStatus === 'failed' && sync.hydratedAt && (
+          <DetailRow label={t('template_gallery_admin_cached_details')}>
+            {t('template_gallery_admin_cached_details_retained')}
+          </DetailRow>
+        )}
+        {sync.detailStatus === 'failed' && sync.nextAttemptAt && (
+          <DetailRow label={t('template_gallery_admin_next_retry')}>
+            <RelativeDate value={sync.nextAttemptAt} />
+            <div className="text-muted mt-1">
+              {t('template_gallery_admin_retry_during_sync')}
+            </div>
           </DetailRow>
         )}
       </dl>

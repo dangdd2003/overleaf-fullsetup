@@ -1,9 +1,9 @@
 # Template Gallery Module (`template-gallery`)
 
 A mirror of the overleaf.com template gallery. It fetches the same catalogue,
-detail pages, previews and PDFs as overleaf.com, keeps them on the Overleaf
-data volume, and serves them from there for faster use. There are no custom or
-uploaded templates, no review or publish workflow, and no per-item metadata
+detail pages, previews and PDFs as overleaf.com, keeps them in its own Docker
+volume (`template-gallery`, mounted at `/var/lib/template-gallery`), and serves them from there for faster use.
+There are no custom or uploaded templates, no review or publish workflow, and no per-item metadata
 editing.
 
 ## Upstream CE comparison
@@ -67,6 +67,22 @@ the rest through the admin API under `/admin/templates/api`:
   one item's details or source, running jobs, host limiter, egress proxies,
   storage and the session cookie.
 
+### Detail refresh failures
+
+Refresh classifies upstream browser verification, sign-in redirects and error
+pages before parsing template details. Browser verification uses the existing
+route backoff and tries another configured route when one is available.
+The parser accepts template headings or page title metadata, validated official
+template links or GET forms, and definition-list metadata as well as the original
+gallery markup. It does not turn cached catalogue metadata into a successful
+refresh when the upstream template cannot be parsed.
+
+A failed parse keeps the last successful details and files, records the missing
+required fields, and returns the next eligible retry time. Admin notices explain
+the failure and whether cached details remain available. The retry time makes
+the item eligible for a later sync; it does not start a sync on its own. Manual
+refresh bypasses the item's retry delay, while outbound route limits still apply.
+
 ## Developer design
 
 The web module registers the gallery and admin routes when enabled. Controllers
@@ -107,14 +123,34 @@ templates under normal Overleaf project permissions.
 
 Indexes are created at boot by `persistence/Indexes.mjs`; there are no
 migrations. Metadata and job state live in MongoDB. Blobs and catalogue
-snapshots live under `storageDir` on the Overleaf data volume, as described
+snapshots live under `storageDir` in the `template-gallery` volume, as described
 below.
 
 ## Storage, backup and restore
 
 Everything the gallery keeps on disk lives under `storageDir` (default
-`/var/lib/overleaf/data/template-gallery`). The main data volume is the single
-backup unit.
+`/var/lib/template-gallery`). That path is its own Docker named volume,
+`template-gallery`, not part of the main `/var/lib/overleaf` volume. It is the
+backup unit for the gallery, so back it up separately from `/var/lib/overleaf`.
+
+**Migrating from `/var/lib/overleaf/data/template-gallery`.** Earlier versions
+stored the gallery inside the main Overleaf volume. The layout is unchanged.
+Skip this if you never enabled `TEMPLATE_GALLERY_ENABLED`. Run these from the
+compose directory, with the new image already pulled:
+
+```bash
+docker compose stop overleaf
+docker compose run --rm --no-deps --entrypoint sh \
+  -v ./data/overleaf/data/template-gallery:/from:ro \
+  overleaf -c 'cp -a /from/. /var/lib/template-gallery/'
+docker compose up -d overleaf
+# after checking the Templates admin page shows storage healthy and items intact:
+rm -rf ./data/overleaf/data/template-gallery
+```
+
+`cp -a` keeps file ownership and permissions. The old folder is only removed
+after you have checked that the Templates admin page shows storage healthy and
+the items intact.
 
 ### Layout
 
@@ -173,7 +209,7 @@ node modules/template-gallery/scripts/snapshot.mjs import   # load the snapshot;
 
 ### Restoring after a database loss
 
-1. Restore the data volume from backup (or keep it, if it survived).
+1. Restore the `template-gallery` volume from backup (or keep it, if it survived).
 2. Start Overleaf with the module enabled and an empty database.
 3. Boot restores the catalogue from `catalog/current.json`. No overleaf.com traffic is needed.
 

@@ -5,7 +5,9 @@ import {
   errorMessage,
   parseErrorBody,
   TemplateAdminApiError,
+  detailsRefetchFailureMessage,
 } from '../../../../frontend/js/api/errors'
+import type { DetailsRefetchResult } from '../../../../frontend/js/api/types'
 
 // Same interpolation syntax as frontend/js/i18n.ts, with the real en.json,
 // so the assertions check the translated strings a user would see
@@ -89,6 +91,75 @@ describe('template-gallery admin API errors', function () {
         'The request failed.'
       )
       expect(errorMessage(i18n.t, undefined)).to.equal('The request failed.')
+    })
+  })
+
+  describe('failed detail refresh', function () {
+    function failure(): DetailsRefetchResult {
+      return {
+        status: 'failed',
+        reason: 'challenge',
+        sync: {
+          crawledAt: null,
+          hydratedAt: null,
+          detailStatus: 'failed',
+          sourceStatus: 'pending',
+          source: 'none',
+          acquisitionTier: null,
+          failures: 1,
+          lastError: 'upstream_challenge',
+          nextAttemptAt: null,
+          removedAt: null,
+        },
+      }
+    }
+
+    it('explains a verification page without claiming uncached details exist', function () {
+      const message = detailsRefetchFailureMessage(i18n.t, failure())
+      expect(message).to.include('browser verification page')
+      expect(message).not.to.include('Previously mirrored')
+      expect(message).not.to.include('Eligible')
+    })
+
+    it('preserves the cached-content outcome and the persisted retry time', function () {
+      const result = failure()
+      result.sync.hydratedAt = '2026-01-01T00:00:00.000Z'
+      result.sync.nextAttemptAt = '2026-01-02T00:00:00.000Z'
+      const message = detailsRefetchFailureMessage(i18n.t, result)
+      expect(message).to.include(
+        'Previously mirrored details are still available.'
+      )
+      expect(message).to.include('Eligible for another sync attempt after')
+      expect(message).to.include('2nd Jan 2026')
+    })
+
+    it('prefers the response retry time and ignores malformed dates', function () {
+      const result = failure()
+      result.retryAt = '2026-01-03T00:00:00.000Z'
+      result.sync.nextAttemptAt = '2026-01-02T00:00:00.000Z'
+      expect(detailsRefetchFailureMessage(i18n.t, result)).to.include(
+        '3rd Jan 2026'
+      )
+      result.retryAt = 'invalid'
+      expect(detailsRefetchFailureMessage(i18n.t, result)).not.to.include(
+        'Invalid date'
+      )
+    })
+
+    it('translates login and upstream errors separately from unsupported pages', function () {
+      const result = failure()
+      result.reason = 'login_required'
+      expect(detailsRefetchFailureMessage(i18n.t, result)).to.include(
+        'sign-in page'
+      )
+      result.reason = 'upstream_error'
+      expect(detailsRefetchFailureMessage(i18n.t, result)).to.include(
+        'error page'
+      )
+      result.reason = 'unparseable'
+      expect(detailsRefetchFailureMessage(i18n.t, result)).to.include(
+        'repeating refresh will not repair'
+      )
     })
   })
 })

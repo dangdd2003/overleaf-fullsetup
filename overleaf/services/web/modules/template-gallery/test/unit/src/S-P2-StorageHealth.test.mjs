@@ -94,7 +94,7 @@ describe('S-P2 StorageHealth (single volume, no mount gate)', () => {
   })
 
   it('carries no storage limits or mount settings in the defaults', () => {
-    expect(DEFAULTS.storageDir).toBe('/var/lib/overleaf/data/template-gallery')
+    expect(DEFAULTS.storageDir).toBe('/var/lib/template-gallery')
     expect(DEFAULTS).not.toHaveProperty('storage')
   })
 })

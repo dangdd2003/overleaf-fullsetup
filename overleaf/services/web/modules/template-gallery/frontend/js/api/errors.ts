@@ -1,4 +1,6 @@
 import type { TFunction } from 'i18next'
+import { formatDate } from '@/utils/dates'
+import type { DetailsRefetchResult } from './types'
 
 const GENERIC_KEY = 'template_gallery_admin_error_generic'
 const LOGIN_REQUIRED_KEY = 'template_gallery_admin_error_login_required'
@@ -68,6 +70,33 @@ export function refetchReasonMessage(
   return t(`template_gallery_admin_refetch_reason_${reason}`, {
     defaultValue: fallback,
   })
+}
+
+// Include the outcome of a failed refresh and when another sync may try it.
+// A retry timestamp is eligibility, not a promise that automatic sync is on.
+export function detailsRefetchFailureMessage(
+  t: TFunction,
+  result: DetailsRefetchResult
+): string {
+  const messages = [
+    refetchReasonMessage(
+      t,
+      result.reason,
+      'template_gallery_admin_error_hydration_failed'
+    ),
+  ]
+  if (result.sync.hydratedAt) {
+    messages.push(t('template_gallery_admin_cached_details_retained'))
+  }
+  const retryAt = result.retryAt || result.sync.nextAttemptAt
+  if (retryAt && Number.isFinite(new Date(retryAt).getTime())) {
+    messages.push(
+      t('template_gallery_admin_details_retry_at', {
+        date: formatDate(retryAt),
+      })
+    )
+  }
+  return messages.join(' ')
 }
 
 // Server messages are never shown raw: the UI only displays translated text

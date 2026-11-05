@@ -5,8 +5,8 @@ import { layoutDirs, probePath } from './Paths.mjs'
 import { DEFAULTS } from '../TemplateGalleryDefaults.mjs'
 
 /**
- * Probes the storage directory. The store is a sub-folder of the main Overleaf
- * data volume, so there is no mount requirement: the probe creates the layout
+ * Probes the storage directory. The store is meant to be its own Docker volume,
+ * but no mount is required: the probe creates the layout
  * (blobs/sha256, tmp, scratch, quarantine, catalog) and checks that a probe
  * file can be written, read back and removed.
  *

@@ -8,6 +8,7 @@ services:
       - "./variable.env"
     volumes:
       - "./data/overleaf:/var/lib/overleaf"
+      - "template-gallery:/var/lib/template-gallery"
       - "./data/overleaf/log:/var/log/overleaf"
       - "/etc/localtime:/etc/localtime:ro"
     stop_grace_period: 30s
@@ -118,3 +119,6 @@ services:
   #     - "/var/run/docker.sock:/tmp/docker.sock:ro"
   #     - "/etc/letsencrypt:/etc/letsencrypt:ro"
   #     - "./nginx.conf:/etc/nginx/nginx.conf:ro"
+
+volumes:
+  template-gallery:

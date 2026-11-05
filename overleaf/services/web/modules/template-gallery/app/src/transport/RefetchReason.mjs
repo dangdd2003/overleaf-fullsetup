@@ -9,7 +9,10 @@ import {
   isTransientCode,
 } from './RateGate.mjs'
 
-const SOURCE_UNAVAILABLE_CODES = new Set(['all_tiers_failed', 'missing_main_text'])
+const SOURCE_UNAVAILABLE_CODES = new Set([
+  'all_tiers_failed',
+  'missing_main_text',
+])
 
 /**
  * @param {object|null} err - the thrown error, or { code } from a tier result
@@ -17,6 +20,11 @@ const SOURCE_UNAVAILABLE_CODES = new Set(['all_tiers_failed', 'missing_main_text
  */
 export function refetchReason(err) {
   const code = err?.code
+  // A successful HTTP response may still contain a challenge, login or error
+  // page. Keep these distinct from transport failures and layout mismatches.
+  if (code === 'upstream_challenge') return 'challenge'
+  if (code === 'upstream_login') return 'login_required'
+  if (code === 'upstream_error_page') return 'upstream_error'
   if (
     isThrottledError(err) ||
     code === 'upstream_blocked' ||

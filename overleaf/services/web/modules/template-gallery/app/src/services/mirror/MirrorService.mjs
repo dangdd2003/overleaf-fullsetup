@@ -292,10 +292,7 @@ async function mirrorImageFor(item, image, opts = {}) {
   const { set, stored } = await downloadImage(image, opts)
   const col = await itemsCol()
   // a tombstoned duplicate keeps no blob refs (see DedupCollector)
-  await col.updateOne(
-    { token: item.token, duplicateOf: null },
-    { $set: set }
-  )
+  await col.updateOne({ token: item.token, duplicateOf: null }, { $set: set })
   incMetric('mirror_image', { status: 'ok' })
   return stored
 }
@@ -860,6 +857,7 @@ async function recordFailure(token, step, attempts, err) {
   const blocked = err?.code === OUTBOUND_BLOCKED
   const count = blocked ? Math.max(0, attempts - 1) : attempts
   const delayMs = blocked ? RETRY_DELAYS_MS[0] : retryDelayMs(attempts)
+  const nextAttemptAt = new Date(Date.now() + delayMs)
   const col = await itemsCol()
   await col.updateOne(
     { token },
@@ -867,10 +865,11 @@ async function recordFailure(token, step, attempts, err) {
       $set: {
         [fields.attempts]: count,
         [fields.lastError]: errorSummary(err),
-        [fields.nextAttemptAt]: new Date(Date.now() + delayMs),
+        [fields.nextAttemptAt]: nextAttemptAt,
       },
     }
   )
+  if (!err.retryAt) err.retryAt = nextAttemptAt
 }
 
 // One-time reset (marker in the listings collection, so it is idempotent and
@@ -971,12 +970,7 @@ async function refreshDetail(
   try {
     page = await Fetch.fetchOverleafPage(itemHref(item), { priority })
     if (page.status === 200) {
-      detail = parseDetailPage(page.html)
-      if (!detail) {
-        const err = new Error('detail page did not match the expected layout')
-        err.code = 'detail_unparseable'
-        throw err
-      }
+      detail = parseDetailPage(page.html, { throwOnError: true })
     }
   } catch (err) {
     await recordFailure(token, 'detail', attempts, err)
@@ -986,7 +980,19 @@ async function refreshDetail(
 
   if (page.status !== 200) {
     await recordGone(token, item)
-    return null
+    // Background refreshes settle a gone page to null. Interactive and admin
+    // refreshes throw, so an admin never gets a success response merely
+    // because a cached item remains.
+    if (priority === 'background') return null
+    const err = new Error(
+      `The upstream template page returned HTTP ${page.status}`
+    )
+    err.code = 'unexpected_status'
+    err.status = page.status
+    if ((Number(item.mirror?.goneCount) || 0) + 1 < GONE_CONFIRMATIONS) {
+      err.retryAt = new Date(Date.now() + RETRY_DELAYS_MS[0])
+    }
+    throw err
   }
 
   const now = new Date()
@@ -1427,11 +1433,7 @@ export async function ensureMedia(token, kind, opts = {}) {
     // Thumbnail and preview are the same published image.
     const other = MEDIA_KINDS[kind]
     const otherSha = item.media?.[`${other}Sha`]
-    if (
-      !force &&
-      otherSha &&
-      (await blobExists(otherSha))
-    ) {
+    if (!force && otherSha && (await blobExists(otherSha))) {
       const mime = item.media[`${other}Mime`] || 'image/jpeg'
       const col = await itemsCol()
       await col.updateOne(
