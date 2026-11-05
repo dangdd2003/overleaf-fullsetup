@@ -39,7 +39,6 @@ case "$target" in
     file=./overleaf/server-ce/Dockerfile
     build_args+=(
       --build-arg "OVERLEAF_BASE_TAG=${BASE_REF}"
-      --build-arg "MONOREPO_REVISION=${REVISION}"
       --build-arg "TEXLIVE_MIRROR=${TEXLIVE_MIRROR}"
       --build-arg "NODE_VERSION=${NODE_VERSION}"
     )
@@ -49,7 +48,6 @@ case "$target" in
     file=./overleaf/server-ce/Dockerfile.slim
     build_args+=(
       --build-arg "OVERLEAF_BASE_TAG=${BASE_REF}"
-      --build-arg "MONOREPO_REVISION=${REVISION}"
       --build-arg "NODE_VERSION=${NODE_VERSION}"
     )
     ;;

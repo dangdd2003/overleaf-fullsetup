@@ -59,7 +59,9 @@ jobs:
     - stage: images
       name: sharelatex
       script: ./ci/travis-build.sh full
-    - name: sharelatex-slim
+    - stage: images
+      name: sharelatex-slim
       script: ./ci/travis-build.sh slim
-    - name: git-bridge
+    - stage: images
+      name: git-bridge
       script: ./ci/travis-build.sh git-bridge
