@@ -314,6 +314,52 @@ describe('McpClient', function () {
     })
   })
 
+  describe('SSE line splitting', function () {
+    it('reads one long line delivered in many chunks as the same event', async function () {
+      const longName = 'x'.repeat(1_000_000)
+      const message = `event: message\ndata: ${JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        result: {
+          serverInfo: { name: longName },
+          protocolVersion: LEGACY_PROTOCOL_VERSION,
+        },
+      })}\n\n`
+      let initSent
+      const initWasSent = new Promise(resolve => {
+        initSent = resolve
+      })
+      const fakeFetch = async (url, opts) => {
+        if (opts.method === 'GET') {
+          async function* generateSse() {
+            yield Buffer.from('event: endpoint\ndata: /mcp/messages\n\n')
+            await initWasSent
+            // Many small chunks, so the one long data line spans them all
+            for (let i = 0; i < message.length; i += 1024) {
+              yield Buffer.from(message.slice(i, i + 1024))
+            }
+          }
+          return {
+            status: 200,
+            ok: true,
+            headers: new Map([['content-type', 'text/event-stream']]),
+            body: generateSse(),
+          }
+        }
+        initSent()
+        return { status: 202, ok: true, headers: new Map(), text: async () => '' }
+      }
+      const client = new McpClient({
+        url: 'https://mcp.example.com/sse',
+        transport: 'sse',
+        fetch: fakeFetch,
+      })
+      await client.connect()
+      expect(client.serverInfo.name).to.equal(longName)
+      await client.close()
+    })
+  })
+
   describe('Bounds on what a server sends', function () {
     const jsonResponse = body => ({
       status: 200,

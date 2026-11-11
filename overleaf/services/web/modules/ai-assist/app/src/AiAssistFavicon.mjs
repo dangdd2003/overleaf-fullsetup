@@ -91,12 +91,30 @@ function attribute(tag, pattern) {
 }
 
 /**
+ * The `<link ...>` tags in `html`. Each tag runs to the next `>`, and a scan
+ * stops once no `>` remains: searching for `<link` and then for a `>` that may
+ * be absent would rescan the rest of the page for every unclosed opener.
+ */
+function linkTags(html) {
+  const opener = /<link\b/gi
+  const tags = []
+  let open
+  while ((open = opener.exec(html))) {
+    const close = html.indexOf('>', open.index)
+    if (close < 0) break
+    tags.push(html.slice(open.index, close + 1))
+    opener.lastIndex = close + 1
+  }
+  return tags
+}
+
+/**
  * The icons a page declares, best first: rel="icon" before apple-touch-icon,
  * and among those the size nearest the 32px a row needs.
  */
 export function iconLinksIn(html, baseUrl) {
   const icons = []
-  for (const [tag] of String(html).matchAll(/<link\b[^>]*>/gi)) {
+  for (const tag of linkTags(String(html))) {
     const rel = (attribute(tag, REL_ATTRIBUTE) || '').toLowerCase().split(/\s+/)
     const rank = rel.includes('icon')
       ? 0

@@ -183,6 +183,8 @@ const EXA_LIVECRAWL_MODES = ["always", "fallback", "never", "auto"];
 const TINYFISH_MAX_RESULTS = 20;
 const TINYFISH_DOMAIN_TYPES = ["web", "news", "research_paper"];
 const MAX_SNIPPET_CHARS = 600;
+/** Longer search queries are refused: no real query is this long. */
+const MAX_SEARCH_QUERY_CHARS = 1000;
 /** Unread page ranges a web_fetch result lists; the count covers the rest. */
 const MAX_UNREAD_RANGES = 8;
 const RECENCY_VALUES = ["day", "week", "month", "year"];
@@ -230,7 +232,8 @@ export function searchCacheText(query) {
     String(query ?? "")
       .toLowerCase()
       .replace(/(?<=[\p{L}\p{N}])[-_]+(?=[\p{L}\p{N}])/gu, " ")
-      .replace(/[,;!?]+|\.+(?=\s|$)/gu, " "),
+      // A dot run is matched from its first dot only, so a long run is scanned once.
+      .replace(/[,;!?]+|(?<!\.)\.+(?=\s|$)/gu, " "),
   );
 }
 
@@ -272,7 +275,7 @@ function bestSnippet(text, queryOrTerms, max = MAX_SNIPPET_CHARS) {
   const plain = collapse(
     String(text ?? "")
       .replace(/\{%[^%]*%\}/g, " ")
-      .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+      .replace(/!?\[([^[\]]*)\]\((?:[^()[\]]|\([^()[\]]*\))*\)/g, "$1")
       .replace(/^#{1,6}\s+/gm, ""),
   );
   if (plain.length <= max) return plain;
@@ -1809,9 +1812,11 @@ export class AiAssistWebTools {
               "Web search is not set up. Read pages with web_fetch instead.",
           };
         }
-        const key = searchCacheText(
-          typeof args?.query === "string" ? args.query : "",
-        );
+        const rawQuery = typeof args?.query === "string" ? args.query : "";
+        if (rawQuery.length > MAX_SEARCH_QUERY_CHARS) {
+          return { error: "Search query is too long. Shorten it and try again." };
+        }
+        const key = searchCacheText(rawQuery);
         const repeated = Boolean(key) && this.searchedQueries.has(key);
         const result = await this._shared(key, () =>
           this.search(args, { signal, cacheTextKey: key }),

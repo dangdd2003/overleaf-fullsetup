@@ -76,8 +76,23 @@ export class AiAssistRunController {
   }
 
   /**
+   * The logged-in user's id as a string, or null when the session holds no
+   * user or an id that is not an ObjectId. Sessions may hold an ObjectId;
+   * runs store the initiating id as a string.
+   */
+  #sessionUserId(req) {
+    const id = SessionManager.getLoggedInUserId(req.session)
+    return id && /^[0-9a-f]{24}$/i.test(String(id)) ? String(id) : null
+  }
+
+  /**
    * The run named in the request, or null after answering 404 when it does not
-   * exist or 403 when it belongs to another project.
+   * exist or 403 when it belongs to another project or initiating user.
+   *
+   * A run is private to the user who started it, like the chat it belongs to:
+   * it runs on that user's provider settings and counts against their
+   * concurrent-run limit, so other project members can neither watch nor
+   * steer it.
    */
   async #loadRun(req, res) {
     const run = await this.store.getRun(req.params.runId)
@@ -90,17 +105,30 @@ export class AiAssistRunController {
       res.status(403).json({ error: 'Cross-project run access forbidden' })
       return null
     }
+    // createRun always records an owner, so a run without one is never reachable
+    const userId = this.#sessionUserId(req)
+    if (!userId || !run.userId || userId !== run.userId) {
+      res.status(403).json({ error: 'Run access forbidden' })
+      return null
+    }
     return run
   }
 
   /**
    * The legacy run routes name no project, so the project routes' middleware
    * has nothing to check there. The run's own project is checked here instead:
-   * a run is only streamed, stopped or approved by someone who can reach its
-   * project. Answers 403 and returns false otherwise.
+   * its owner keeps access only while they can still reach that project.
+   * Answers 403 and returns false otherwise.
    */
   async #canReachLegacyRun(req, res, run, { write }) {
-    const userId = SessionManager.getLoggedInUserId(req.session)
+    // Only the run's owner may reach it, whatever access the project grants
+    // anyone else, so the check does not rely on the caller having run #loadRun
+    const sessionUserId = this.#sessionUserId(req)
+    if (!sessionUserId || sessionUserId !== run.userId) {
+      res.status(403).json({ error: 'Run access forbidden' })
+      return false
+    }
+    const userId = run.userId
     const token = TokenAccessHandler.getRequestToken(req, run.projectId)
     const allowed = write
       ? await this.authorization.canUserWriteProjectContent(
@@ -117,11 +145,11 @@ export class AiAssistRunController {
 
   createRun = async (req, res) => {
     const projectId = req.params.Project_id || req.params.project_id
-    const loggedInUserId = SessionManager.getLoggedInUserId(req.session)
-    const userId =
-      loggedInUserId && /^[0-9a-f]{24}$/i.test(String(loggedInUserId))
-        ? String(loggedInUserId)
-        : null
+    // Every run needs an owner: only that user can reach it afterwards
+    const userId = this.#sessionUserId(req)
+    if (!userId) {
+      return res.status(403).json({ error: 'Run access forbidden' })
+    }
     const { transcript, mode, chatId } = req.body || {}
     let providerSettings = req.body?.providerSettings
     const needsStoredProviderKey =
@@ -130,7 +158,7 @@ export class AiAssistRunController {
       !providerSettings.apiKey ||
       providerSettings.apiKey === '••••••••'
 
-    if (userId && needsStoredProviderKey) {
+    if (needsStoredProviderKey) {
       try {
         const internal = await defaultUserSettingsStore.getInternalUserSettings(userId)
         if (internal.provider?.type) {
@@ -226,7 +254,7 @@ export class AiAssistRunController {
             p?.bearerToken === '••••••••'
         ))
 
-    if (userId && needsStoredWebKeys) {
+    if (needsStoredWebKeys) {
       try {
         const internal = await defaultUserSettingsStore.getInternalUserSettings(userId)
         if (internal.webSearch) {
@@ -264,7 +292,7 @@ export class AiAssistRunController {
         .slice(0, 50)
     }
 
-    if (userId && this.manager.countActiveRunsForUser?.(userId) >= MAX_CONCURRENT_RUNS_PER_USER) {
+    if (this.manager.countActiveRunsForUser?.(userId) >= MAX_CONCURRENT_RUNS_PER_USER) {
       return res.status(429).json({
         error: 'Too many concurrent runs in progress',
         code: 'tooManyRuns',
@@ -320,124 +348,133 @@ export class AiAssistRunController {
     res.setHeader?.('X-Accel-Buffering', 'no')
     res.flushHeaders?.()
 
-    // 1. Subscribe FIRST to avoid missing any live events
-    const channel = `ai-assist:run:${runId}:channel`
-    let lastSentSeq = sinceSeq
-    const liveBuffer = []
-    let subscribed = false
-    let unsubscribe = null
-    let keepAliveTimer = null
+    // Once headers are out, an error cannot become a JSON reply: release the
+    // subscription and watcher, then end the stream.
+    let cleanup = () => {}
+    try {
+      // 1. Subscribe FIRST to avoid missing any live events
+      const channel = `ai-assist:run:${runId}:channel`
+      let lastSentSeq = sinceSeq
+      const liveBuffer = []
+      let subscribed = false
+      let unsubscribe = null
+      let keepAliveTimer = null
 
-    const onMessage = message => {
-      if (!subscribed) {
-        liveBuffer.push(message)
+      const onMessage = message => {
+        if (!subscribed) {
+          liveBuffer.push(message)
+          return
+        }
+        try {
+          const parsed = JSON.parse(message)
+          if (parsed.seq <= lastSentSeq) return
+          lastSentSeq = parsed.seq
+          res.write(`data: ${message}\n\n`)
+          if (
+            parsed.event?.type === 'turnFinished' ||
+            parsed.event?.type === 'error'
+          ) {
+            cleanup()
+            res.end()
+          }
+        } catch {}
+      }
+
+      let watcherRegistered = false
+      let closed = false
+      // `watch=0` is a panel following a chat it is not showing, to save the
+      // reply when it lands. It keeps the run from being reaped, but cannot
+      // compile or approve, so the run does not count it as an editor watching.
+      const watch = req.query?.watch === '0' ? { follower: true } : undefined
+      const watchArgs = watch ? [runId, watch] : [runId]
+
+      const releaseWatcher = () => {
+        if (closed) return
+        closed = true
+        if (watcherRegistered) {
+          watcherRegistered = false
+          void this.store.removeWatcher(...watchArgs).catch(() => {})
+        }
+      }
+
+      cleanup = () => {
+        if (keepAliveTimer) {
+          clearInterval(keepAliveTimer)
+          keepAliveTimer = null
+        }
+        if (unsubscribe) {
+          unsubscribe()
+          unsubscribe = null
+        }
+        releaseWatcher()
+      }
+
+      req.on('close', cleanup)
+      unsubscribe = await this.subscriber.subscribe(channel, onMessage)
+
+      if (closed) {
+        // The client left while we were subscribing. Unwind without ever
+        // incrementing, so the count cannot drift upward. cleanup() already ran
+        // once with no unsubscribe handle; run it again to release the channel.
+        cleanup()
+        res.end()
         return
       }
-      try {
-        const parsed = JSON.parse(message)
-        if (parsed.seq <= lastSentSeq) return
-        lastSentSeq = parsed.seq
-        res.write(`data: ${message}\n\n`)
-        if (
-          parsed.event?.type === 'turnFinished' ||
-          parsed.event?.type === 'error'
-        ) {
-          cleanup()
-          res.end()
+
+      await this.store.addWatcher(...watchArgs)
+      if (closed) {
+        await this.store.removeWatcher(...watchArgs).catch(() => {})
+        res.end()
+        return
+      }
+      watcherRegistered = true
+
+      const keepAliveSeconds = Settings.aiAssist?.streamKeepAliveSeconds ?? 15
+      if (keepAliveSeconds > 0) {
+        keepAliveTimer = setInterval(() => {
+          if (closed || res.writableEnded) return
+          // Lines starting with ':' are SSE comments: EventSource ignores them,
+          // proxies see traffic.
+          res.write(': keepalive\n\n')
+        }, keepAliveSeconds * 1000)
+        keepAliveTimer.unref?.()
+      }
+
+      // 2. Send existing catch-up events
+      const existingEvents = await this.store.getEvents(runId, sinceSeq)
+      for (const item of existingEvents) {
+        if (item.seq > lastSentSeq) {
+          lastSentSeq = item.seq
+          res.write(`data: ${JSON.stringify(item)}\n\n`)
         }
-      } catch {}
-    }
-
-    let watcherRegistered = false
-    let closed = false
-    // `watch=0` is a panel following a chat it is not showing, to save the
-    // reply when it lands. It keeps the run from being reaped, but cannot
-    // compile or approve, so the run does not count it as an editor watching.
-    const watch = req.query?.watch === '0' ? { follower: true } : undefined
-    const watchArgs = watch ? [runId, watch] : [runId]
-
-    const releaseWatcher = () => {
-      if (closed) return
-      closed = true
-      if (watcherRegistered) {
-        watcherRegistered = false
-        void this.store.removeWatcher(...watchArgs).catch(() => {})
       }
-    }
 
-    const cleanup = () => {
-      if (keepAliveTimer) {
-        clearInterval(keepAliveTimer)
-        keepAliveTimer = null
+      // 3. Flush buffered live messages that arrived during catch-up query
+      subscribed = true
+      for (const msg of liveBuffer) {
+        onMessage(msg)
       }
-      if (unsubscribe) {
-        unsubscribe()
-        unsubscribe = null
+      // Everything the run sent before this connection is out. A panel opening
+      // a chat mid-run shows that at once, and animates only what comes next.
+      if (!closed && !res.writableEnded) {
+        res.write(`data: ${JSON.stringify({ caughtUp: true })}\n\n`)
       }
-      releaseWatcher()
-    }
 
-    req.on('close', cleanup)
-    unsubscribe = await this.subscriber.subscribe(channel, onMessage)
-
-    if (closed) {
-      // The client left while we were subscribing. Unwind without ever
-      // incrementing, so the count cannot drift upward. cleanup() already ran
-      // once with no unsubscribe handle; run it again to release the channel.
+      const freshRun = await this.store.getRun(runId)
+      if (
+        freshRun &&
+        (freshRun.status === 'done' ||
+          freshRun.status === 'stopped' ||
+          freshRun.status === 'error' ||
+          freshRun.status === 'interrupted')
+      ) {
+        cleanup()
+        res.end()
+      }
+    } catch (err) {
       cleanup()
-      res.end()
-      return
-    }
-
-    await this.store.addWatcher(...watchArgs)
-    if (closed) {
-      await this.store.removeWatcher(...watchArgs).catch(() => {})
-      res.end()
-      return
-    }
-    watcherRegistered = true
-
-    const keepAliveSeconds = Settings.aiAssist?.streamKeepAliveSeconds ?? 15
-    if (keepAliveSeconds > 0) {
-      keepAliveTimer = setInterval(() => {
-        if (closed || res.writableEnded) return
-        // Lines starting with ':' are SSE comments: EventSource ignores them,
-        // proxies see traffic.
-        res.write(': keepalive\n\n')
-      }, keepAliveSeconds * 1000)
-      keepAliveTimer.unref?.()
-    }
-
-    // 2. Send existing catch-up events
-    const existingEvents = await this.store.getEvents(runId, sinceSeq)
-    for (const item of existingEvents) {
-      if (item.seq > lastSentSeq) {
-        lastSentSeq = item.seq
-        res.write(`data: ${JSON.stringify(item)}\n\n`)
-      }
-    }
-
-    // 3. Flush buffered live messages that arrived during catch-up query
-    subscribed = true
-    for (const msg of liveBuffer) {
-      onMessage(msg)
-    }
-    // Everything the run sent before this connection is out. A panel opening
-    // a chat mid-run shows that at once, and animates only what comes next.
-    if (!closed && !res.writableEnded) {
-      res.write(`data: ${JSON.stringify({ caughtUp: true })}\n\n`)
-    }
-
-    const freshRun = await this.store.getRun(runId)
-    if (
-      freshRun &&
-      (freshRun.status === 'done' ||
-        freshRun.status === 'stopped' ||
-        freshRun.status === 'error' ||
-        freshRun.status === 'interrupted')
-    ) {
-      cleanup()
-      res.end()
+      logger.error({ err, runId }, '[AiAssist] Run stream failed')
+      if (!res.writableEnded) res.end()
     }
   }
 
@@ -525,6 +562,9 @@ export class AiAssistRunController {
       (!text.trim() && !commandBlock && !hasImages)
     ) {
       return res.status(400).json({ error: 'text must be a non-empty string' })
+    }
+    if (contextText != null && typeof contextText !== 'string') {
+      return res.status(400).json({ error: 'contextText must be a string' })
     }
 
     const maxBytes = maxTranscriptBytes()

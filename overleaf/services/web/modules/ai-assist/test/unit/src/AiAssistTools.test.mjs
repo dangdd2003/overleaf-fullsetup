@@ -1004,6 +1004,31 @@ describe('AiAssistTools', function () {
       expect(mockDocUpdater.getDocument.called).to.equal(false)
     })
 
+    it('bounds concurrent document reads when the flush fails', async function () {
+      mockDocUpdater.flushProjectToMongo = sinon.stub().rejects(new Error('flush failed'))
+      const docs = {}
+      for (let i = 0; i < 100; i++) {
+        docs[`/s${i}.tex`] = { _id: `doc-${i}`, name: `s${i}.tex`, lines: ['text'] }
+      }
+      mockEntityHandler.getAllDocs = sinon.stub().resolves(docs)
+      let inFlight = 0
+      let maxInFlight = 0
+      mockDocUpdater.getDocument = sinon.stub().callsFake(async () => {
+        inFlight++
+        maxInFlight = Math.max(maxInFlight, inFlight)
+        await new Promise(resolve => setTimeout(resolve, 1))
+        inFlight--
+        return { lines: ['text'] }
+      })
+
+      const snapshot = await tools._getSnapshot('p1')
+
+      expect(mockDocUpdater.getDocument.callCount).to.equal(100)
+      expect(maxInFlight).to.be.greaterThan(1)
+      expect(maxInFlight).to.be.at.most(8)
+      expect(snapshot.docs).to.have.length(100)
+    })
+
     it('falls back to per-document reads when flushing is unavailable', async function () {
       const snapshot = await tools._getSnapshot('p1')
       expect(
@@ -1218,6 +1243,39 @@ describe('AiAssistTools', function () {
         ctx
       )
       expect(res.error).to.include('regular expression')
+    })
+
+    it('clamps contextLines and truncates long lines in hits', async function () {
+      const long = 'x'.repeat(5000)
+      mockEntityHandler.getAllDocs = sinon.stub().resolves({
+        '/main.tex': {
+          _id: 'doc-1',
+          name: 'main.tex',
+          lines: [
+            ...Array.from({ length: 19 }, (_, i) => `before ${i}`),
+            `context ${long}`,
+            `hello ${long}`,
+            ...Array.from({ length: 20 }, (_, i) => `after ${i}`),
+          ],
+        },
+      })
+
+      const res = await tools.execute(
+        'search_text',
+        { query: 'hello', contextLines: 1000 },
+        ctx
+      )
+
+      const hit = res.hits[0]
+      expect(hit.before).to.have.length(5)
+      expect(hit.after).to.have.length(5)
+      expect(hit.text).to.equal(
+        `hello ${long}`.slice(0, 2000) + '... [truncated]'
+      )
+      expect(hit.before[4]).to.equal(
+        `context ${long}`.slice(0, 300) + '... [truncated]'
+      )
+      expect(hit.after[0]).to.equal('after 0')
     })
   })
 

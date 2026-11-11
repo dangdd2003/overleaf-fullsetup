@@ -37,17 +37,52 @@ const VOLATILE_PATTERNS = Object.freeze([
   [/\/(CreationDate|ModDate)\s*<[0-9a-fA-F\s]*>/g, '/$1<>'],
   // trailer /ID [<...> <...>], random per save
   [/\/ID\s*\[\s*<[0-9a-fA-F]*>\s*<[0-9a-fA-F]*>\s*\]/g, '/ID[]'],
-  // XMP date and document id elements
-  [
-    /<(xmp:(?:CreateDate|ModifyDate|MetadataDate)|xmpMM:(?:DocumentID|InstanceID|OriginalDocumentID))(\s[^>]*)?>[\s\S]*?<\/\1>/g,
-    '',
-  ],
-  // and the attribute form
-  [
-    /\b(xmp:(?:CreateDate|ModifyDate|MetadataDate)|xmpMM:(?:DocumentID|InstanceID|OriginalDocumentID))="[^"]*"/g,
-    '',
-  ],
 ])
+
+// XMP date and document id elements, <name ...>...</name>. Not a regex: a lazy
+// `[\s\S]*?</name>` scans to the end of the file for every opener that has no
+// closer, which is quadratic on a crafted PDF.
+const XMP_ELEMENT_OPEN =
+  /<(xmp:(?:CreateDate|ModifyDate|MetadataDate)|xmpMM:(?:DocumentID|InstanceID|OriginalDocumentID))(?=[\s>])/g
+
+function stripXmpElements(text) {
+  const parts = []
+  const closeAt = new Map() // name -> index of the next </name> (cached, scanned forward only)
+  const noCloser = new Set()
+  let copied = 0
+  let gtAt = -1 // index of the next '>' (cached, scanned forward only)
+  XMP_ELEMENT_OPEN.lastIndex = 0
+  let match
+  while ((match = XMP_ELEMENT_OPEN.exec(text)) !== null) {
+    const name = match[1]
+    const from = match.index + match[0].length
+    if (gtAt < from) {
+      gtAt = text.indexOf('>', from)
+      // no '>' left, so no later opener has an end either
+      if (gtAt === -1) break
+    }
+    // no closer after one opener means none after any later opener of the same name
+    if (noCloser.has(name)) continue
+    const bodyStart = gtAt + 1
+    if (!closeAt.has(name) || closeAt.get(name) < bodyStart) {
+      const close = text.indexOf(`</${name}>`, bodyStart)
+      if (close === -1) {
+        noCloser.add(name)
+        continue
+      }
+      closeAt.set(name, close)
+    }
+    const end = closeAt.get(name) + name.length + 3
+    parts.push(text.slice(copied, match.index))
+    copied = end
+    XMP_ELEMENT_OPEN.lastIndex = end
+  }
+  parts.push(text.slice(copied))
+  return parts.join('')
+}
+
+// and the attribute form
+const XMP_ATTRIBUTE = /\b(xmp:(?:CreateDate|ModifyDate|MetadataDate)|xmpMM:(?:DocumentID|InstanceID|OriginalDocumentID))="[^"]*"/g
 
 /**
  * The PDF with its volatile metadata removed.
@@ -60,6 +95,7 @@ export function normalizePdf(buffer) {
   for (const [pattern, replacement] of VOLATILE_PATTERNS) {
     text = text.replace(pattern, replacement)
   }
+  text = stripXmpElements(text).replace(XMP_ATTRIBUTE, '')
   return Buffer.from(text, 'latin1')
 }
 

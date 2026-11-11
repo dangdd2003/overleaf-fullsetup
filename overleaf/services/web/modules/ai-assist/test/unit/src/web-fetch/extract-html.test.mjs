@@ -124,3 +124,17 @@ describe('HTML extraction', function () {
     expect(narrow).to.include('| a | b |')
   })
 })
+
+describe('embeddedText meta description', function () {
+  it('reads the description from a meta tag', function () {
+    const html = '<html><head><meta name="description" content="A short summary."></head></html>'
+    expect(embeddedText(html)).to.equal('A short summary.')
+  })
+
+  it('finishes in linear time on one unclosed meta tag', function () {
+    const html = `<meta ${'name="description" '.repeat(20000)}`
+    const started = Date.now()
+    embeddedText(html)
+    expect(Date.now() - started).to.be.below(1000)
+  })
+})

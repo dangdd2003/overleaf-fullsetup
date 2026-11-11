@@ -1,4 +1,5 @@
 import Settings from '@overleaf/settings'
+import { expressify } from '@overleaf/promise-utils'
 
 export default {
   applyNonCsrfRouter(webRouter) {
@@ -57,21 +58,21 @@ export default {
       '/ai-assist/providers/models',
       AuthenticationController.requireLogin(),
       providerLimit,
-      AiAssistProviderController.listModels
+      expressify(AiAssistProviderController.listModels)
     )
 
     webRouter.post(
       '/ai-assist/providers/test',
       AuthenticationController.requireLogin(),
       providerLimit,
-      AiAssistProviderController.test
+      expressify(AiAssistProviderController.test)
     )
 
     webRouter.post(
       '/ai-assist/providers/chat',
       AuthenticationController.requireLogin(),
       providerLimit,
-      AiAssistProviderController.chat
+      expressify(AiAssistProviderController.chat)
     )
 
     // Text only: the AI inside the editor, which never gets tools
@@ -79,7 +80,7 @@ export default {
       '/ai-assist/providers/editor',
       AuthenticationController.requireLogin(),
       providerLimit,
-      AiAssistProviderController.editorText
+      expressify(AiAssistProviderController.editorText)
     )
 
     if (Settings.aiAssist?.webToolsEnabled) {
@@ -87,7 +88,7 @@ export default {
         '/ai-assist/web-search/test',
         AuthenticationController.requireLogin(),
         providerLimit,
-        AiAssistProviderController.testWebSearch
+        expressify(AiAssistProviderController.testWebSearch)
       )
 
       // Site icons for web result rows, fetched here because most sites only
@@ -97,7 +98,7 @@ export default {
         '/ai-assist/favicon',
         AuthenticationController.requireLogin(),
         faviconLimit,
-        AiAssistFavicon.serve
+        expressify(AiAssistFavicon.serve)
       )
 
       // web_search / web_fetch for the compile-log fix, which runs in the page
@@ -107,13 +108,13 @@ export default {
         '/ai-assist/projects/:Project_id/web-tools',
         AuthenticationController.requireLogin(),
         AuthorizationMiddleware.ensureUserCanReadProject,
-        AiAssistWebToolsController.specs
+        expressify(AiAssistWebToolsController.specs)
       )
       webRouter.post(
         '/ai-assist/projects/:Project_id/web-tools/:name',
         AuthenticationController.requireLogin(),
         AuthorizationMiddleware.ensureUserCanReadProject,
-        AiAssistWebToolsController.execute
+        expressify(AiAssistWebToolsController.execute)
       )
     }
 
@@ -123,28 +124,28 @@ export default {
       AuthenticationController.requireLogin(),
       AuthorizationMiddleware.ensureUserCanWriteProjectContent,
       runLimit,
-      AiAssistRunController.createRun
+      expressify(AiAssistRunController.createRun)
     )
 
     webRouter.get(
       '/ai-assist/projects/:Project_id/runs/:runId/stream',
       AuthenticationController.requireLogin(),
       AuthorizationMiddleware.ensureUserCanReadProject,
-      AiAssistRunController.streamRun
+      expressify(AiAssistRunController.streamRun)
     )
 
     webRouter.post(
       '/ai-assist/projects/:Project_id/runs/:runId/stop',
       AuthenticationController.requireLogin(),
       AuthorizationMiddleware.ensureUserCanWriteProjectContent,
-      AiAssistRunController.stopRun
+      expressify(AiAssistRunController.stopRun)
     )
 
     webRouter.post(
       '/ai-assist/projects/:Project_id/runs/:runId/approve',
       AuthenticationController.requireLogin(),
       AuthorizationMiddleware.ensureUserCanWriteProjectContent,
-      AiAssistRunController.approve
+      expressify(AiAssistRunController.approve)
     )
 
     // A message typed while the run is still going: injected into the live run
@@ -153,7 +154,7 @@ export default {
       '/ai-assist/projects/:Project_id/runs/:runId/message',
       AuthenticationController.requireLogin(),
       AuthorizationMiddleware.ensureUserCanWriteProjectContent,
-      AiAssistRunController.queueMessage
+      expressify(AiAssistRunController.queueMessage)
     )
 
     // Takes such a message back before the run has read it
@@ -161,7 +162,7 @@ export default {
       '/ai-assist/projects/:Project_id/runs/:runId/message/:messageId',
       AuthenticationController.requireLogin(),
       AuthorizationMiddleware.ensureUserCanWriteProjectContent,
-      AiAssistRunController.unqueueMessage
+      expressify(AiAssistRunController.unqueueMessage)
     )
 
     // Has the run answer such a message now, cutting short the reply it is
@@ -170,14 +171,14 @@ export default {
       '/ai-assist/projects/:Project_id/runs/:runId/message/:messageId/now',
       AuthenticationController.requireLogin(),
       AuthorizationMiddleware.ensureUserCanWriteProjectContent,
-      AiAssistRunController.sendQueuedNow
+      expressify(AiAssistRunController.sendQueuedNow)
     )
 
     webRouter.post(
       '/ai-assist/projects/:Project_id/runs/:runId/mode',
       AuthenticationController.requireLogin(),
       AuthorizationMiddleware.ensureUserCanWriteProjectContent,
-      AiAssistRunController.setMode
+      expressify(AiAssistRunController.setMode)
     )
 
     // The editor reports the outcome of a compile the run asked it to do.
@@ -185,7 +186,7 @@ export default {
       '/ai-assist/projects/:Project_id/runs/:runId/compile',
       AuthenticationController.requireLogin(),
       AuthorizationMiddleware.ensureUserCanWriteProjectContent,
-      AiAssistRunController.compileResult
+      expressify(AiAssistRunController.compileResult)
     )
 
     // Chat history: one JSON file per conversation, scoped to the logged-in user.
@@ -196,42 +197,42 @@ export default {
       '/ai-assist/projects/:Project_id/chats',
       AuthenticationController.requireLogin(),
       AuthorizationMiddleware.ensureUserCanReadProject,
-      AiAssistChatHistoryController.list
+      expressify(AiAssistChatHistoryController.list)
     )
 
     webRouter.get(
       '/ai-assist/projects/:Project_id/chats/:chatId',
       AuthenticationController.requireLogin(),
       AuthorizationMiddleware.ensureUserCanReadProject,
-      AiAssistChatHistoryController.get
+      expressify(AiAssistChatHistoryController.get)
     )
 
     webRouter.put(
       '/ai-assist/projects/:Project_id/chats/:chatId',
       AuthenticationController.requireLogin(),
       AuthorizationMiddleware.ensureUserCanReadProject,
-      AiAssistChatHistoryController.save
+      expressify(AiAssistChatHistoryController.save)
     )
 
     webRouter.delete(
       '/ai-assist/projects/:Project_id/chats/:chatId',
       AuthenticationController.requireLogin(),
       AuthorizationMiddleware.ensureUserCanReadProject,
-      AiAssistChatHistoryController.delete
+      expressify(AiAssistChatHistoryController.delete)
     )
 
     webRouter.patch(
       '/ai-assist/projects/:Project_id/chats/:chatId',
       AuthenticationController.requireLogin(),
       AuthorizationMiddleware.ensureUserCanReadProject,
-      AiAssistChatHistoryController.rename
+      expressify(AiAssistChatHistoryController.rename)
     )
 
     webRouter.post(
       '/ai-assist/projects/:Project_id/chats/:chatId/generate-title',
       AuthenticationController.requireLogin(),
       AuthorizationMiddleware.ensureUserCanReadProject,
-      AiAssistChatHistoryController.generateTitle
+      expressify(AiAssistChatHistoryController.generateTitle)
     )
 
     // Checkpoint & rewind endpoints
@@ -242,14 +243,14 @@ export default {
       '/ai-assist/projects/:Project_id/chats/:chatId/rewind/check',
       AuthenticationController.requireLogin(),
       AuthorizationMiddleware.ensureUserCanWriteProjectContent,
-      AiAssistCheckpointController.check
+      expressify(AiAssistCheckpointController.check)
     )
 
     webRouter.post(
       '/ai-assist/projects/:Project_id/chats/:chatId/rewind',
       AuthenticationController.requireLogin(),
       AuthorizationMiddleware.ensureUserCanWriteProjectContent,
-      AiAssistCheckpointController.rewind
+      expressify(AiAssistCheckpointController.rewind)
     )
 
     // Copies a chat's checkpoints to a forked chat so its code can be rewound
@@ -257,7 +258,7 @@ export default {
       '/ai-assist/projects/:Project_id/chats/:chatId/checkpoints/fork',
       AuthenticationController.requireLogin(),
       AuthorizationMiddleware.ensureUserCanWriteProjectContent,
-      AiAssistCheckpointController.fork
+      expressify(AiAssistCheckpointController.fork)
     )
 
     // Language suggestions' results, shared by a project's collaborators
@@ -268,14 +269,14 @@ export default {
       '/ai-assist/projects/:Project_id/language-checks/lookup',
       AuthenticationController.requireLogin(),
       AuthorizationMiddleware.ensureUserCanReadProject,
-      AiAssistLanguageCheckController.lookup
+      expressify(AiAssistLanguageCheckController.lookup)
     )
 
     webRouter.post(
       '/ai-assist/projects/:Project_id/language-checks',
       AuthenticationController.requireLogin(),
       AuthorizationMiddleware.ensureUserCanWriteProjectContent,
-      AiAssistLanguageCheckController.save
+      expressify(AiAssistLanguageCheckController.save)
     )
 
     // Composer preferences (effort level, thinking switch), per user.
@@ -285,13 +286,13 @@ export default {
     webRouter.get(
       '/ai-assist/preferences',
       AuthenticationController.requireLogin(),
-      AiAssistPreferencesController.get
+      expressify(AiAssistPreferencesController.get)
     )
 
     webRouter.put(
       '/ai-assist/preferences',
       AuthenticationController.requireLogin(),
-      AiAssistPreferencesController.save
+      expressify(AiAssistPreferencesController.save)
     )
 
     // User AI provider and web search settings (encrypted at rest on server)
@@ -305,14 +306,14 @@ export default {
     webRouter.get(
       '/ai-assist/settings',
       AuthenticationController.requireLogin(),
-      AiAssistUserSettingsController.get
+      expressify(AiAssistUserSettingsController.get)
     )
 
     webRouter.put(
       '/ai-assist/settings',
       AuthenticationController.requireLogin(),
       settingsLimit,
-      AiAssistUserSettingsController.save
+      expressify(AiAssistUserSettingsController.save)
     )
 
     if (Settings.aiAssist?.enabled) {
@@ -322,56 +323,56 @@ export default {
       webRouter.get(
         '/ai-assist/connectors',
         AuthenticationController.requireLogin(),
-        ConnectorController.list
+        expressify(ConnectorController.list)
       )
 
       webRouter.post(
         '/ai-assist/connectors/probe',
         AuthenticationController.requireLogin(),
         connectorProbeLimit,
-        ConnectorController.probe
+        expressify(ConnectorController.probe)
       )
 
       webRouter.post(
         '/ai-assist/connectors',
         AuthenticationController.requireLogin(),
-        ConnectorController.create
+        expressify(ConnectorController.create)
       )
 
       webRouter.post(
         '/ai-assist/connectors/import',
         AuthenticationController.requireLogin(),
-        ConnectorController.import
+        expressify(ConnectorController.import)
       )
 
       webRouter.patch(
         '/ai-assist/connectors/:id',
         AuthenticationController.requireLogin(),
-        ConnectorController.update
+        expressify(ConnectorController.update)
       )
 
       webRouter.delete(
         '/ai-assist/connectors/:id',
         AuthenticationController.requireLogin(),
-        ConnectorController.remove
+        expressify(ConnectorController.remove)
       )
 
       webRouter.post(
         '/ai-assist/connectors/:id/authorize',
         AuthenticationController.requireLogin(),
-        ConnectorController.authorize
+        expressify(ConnectorController.authorize)
       )
 
       webRouter.post(
         '/ai-assist/connectors/:id/refresh',
         AuthenticationController.requireLogin(),
-        ConnectorController.refresh
+        expressify(ConnectorController.refresh)
       )
 
       webRouter.post(
         '/ai-assist/connectors/:id/disconnect',
         AuthenticationController.requireLogin(),
-        ConnectorController.disconnect
+        expressify(ConnectorController.disconnect)
       )
 
       webRouter.get(
@@ -383,7 +384,7 @@ export default {
         '/ai-assist/connectors/:connectorId/icon',
         AuthenticationController.requireLogin(),
         connectorIconLimit,
-        ConnectorController.icon
+        expressify(ConnectorController.icon)
       )
     }
 
@@ -391,19 +392,19 @@ export default {
     webRouter.get(
       '/ai-assist/runs/:runId/stream',
       AuthenticationController.requireLogin(),
-      AiAssistRunController.streamRun
+      expressify(AiAssistRunController.streamRun)
     )
 
     webRouter.post(
       '/ai-assist/runs/:runId/stop',
       AuthenticationController.requireLogin(),
-      AiAssistRunController.stopRun
+      expressify(AiAssistRunController.stopRun)
     )
 
     webRouter.post(
       '/ai-assist/runs/:runId/approve',
       AuthenticationController.requireLogin(),
-      AiAssistRunController.approve
+      expressify(AiAssistRunController.approve)
     )
   },
 }

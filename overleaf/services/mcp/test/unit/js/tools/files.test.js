@@ -608,6 +608,24 @@ describe('file tools', function () {
       expect(result.isError).to.be.true
       expect(client.post.called).to.be.false
     })
+
+    it('refuses a call with more edits than the per-call cap', async function () {
+      const edits = Array.from({ length: 501 }, (_, i) => ({ oldString: `a${i}`, newString: 'b' }))
+      const result = await server.call('edit_file', { projectId: 'p1', path: '/main.tex', edits })
+      expect(result.isError).to.be.true
+      expect(client.post.called).to.be.false
+    })
+
+    it('refuses an oldString past the length cap', async function () {
+      const result = await server.call('edit_file', {
+        projectId: 'p1',
+        path: '/main.tex',
+        oldString: 'x'.repeat(1000001),
+        newString: 'b',
+      })
+      expect(result.isError).to.be.true
+      expect(client.post.called).to.be.false
+    })
   })
 
   describe('edit_lines', function () {

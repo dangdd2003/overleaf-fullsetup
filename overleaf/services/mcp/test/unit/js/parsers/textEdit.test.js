@@ -6,6 +6,7 @@ import {
   lineLookup,
   nearestWindow,
   numberLines,
+  readBraceGroup,
 } from '../../../../src/parsers/textEdit.js'
 
 const PATH = '/main.tex'
@@ -186,6 +187,32 @@ describe('textEdit', function () {
 
     it('numberLines prefixes each line with its number', function () {
       expect(numberLines(['x', 'y'], 7)).to.equal('7\tx\n8\ty')
+    })
+  })
+
+  describe('readBraceGroup', function () {
+    it('reads a balanced group and skips escaped braces', function () {
+      const text = 'x{a\\}b{c}}y'
+      expect(readBraceGroup(text, 1)).to.deep.equal({ content: 'a\\}b{c}', endIndex: 9 })
+    })
+
+    it('returns null for an unclosed group, with the same answer on every repeat', function () {
+      const text = '\\ref{ x ' + 'y'.repeat(50)
+      expect(readBraceGroup(text, 5)).to.be.null
+      expect(readBraceGroup(text, 5)).to.be.null
+      expect(readBraceGroup(text, 0)).to.be.null
+      expect(readBraceGroup('{a}', 0)).to.deep.equal({ content: 'a', endIndex: 2 })
+    })
+
+    it('finishes thousands of unclosed openers well inside the time bound', function () {
+      const text = '\\ref{ x \n'.repeat(8000) + 'p '.repeat(20000)
+      const started = Date.now()
+      let found = 0
+      for (const match of text.matchAll(/\\ref\{/g)) {
+        if (readBraceGroup(text, match.index + 4)) found++
+      }
+      expect(found).to.equal(0)
+      expect(Date.now() - started).to.be.below(1000)
     })
   })
 })

@@ -66,7 +66,6 @@ const MAX_BOXES_BEFORE_MERGE = 200
 const FOOTER_FROM = 0.9
 // Pages paired by text when the counts differ need this word overlap.
 const MIN_PAGE_SIMILARITY = 0.3
-const TILE_TARGET_PIXELS = 1_150_000
 const REMEMBER_MAX_BYTES = 96 * 1024 * 1024
 const REMEMBER_TEXT_CHARS = 4000
 const COMMAND_TIMEOUT_MS = 60_000
@@ -76,6 +75,8 @@ const BUILD_ID = /^[0-9a-f]+-[0-9a-f]+$/
 // page and the pixels of all of them are capped. Text pairing builds a table of
 // the two page counts, so it is capped too.
 const MAX_PAGE_PIXELS = 16_000_000
+// The annotated grid is downscaled past this many pixels (gaps not counted).
+const MAX_GRID_PIXELS = 16_000_000
 const MAX_DIFF_PIXELS = 64_000_000
 const MAX_DIFF_PAGES = 40
 const MAX_PAIRING_PAGES = 400
@@ -1282,12 +1283,13 @@ export function createPdfVisualDiff({
     })
     const cols = Math.min(tiles.length, 3)
     const rows = Math.ceil(tiles.length / cols)
-    const first = tiles[0].raster
-    const sized = Math.max(
+    // Every cell is as large as the largest tile, so the grid is sized from that.
+    const cellWidth = Math.max(...tiles.map(tile => tile.raster.width))
+    const cellHeight = Math.max(...tiles.map(tile => tile.raster.height))
+    const scale = Math.min(
       1,
-      Math.sqrt(TILE_TARGET_PIXELS / (cols * rows * first.width * first.height))
+      Math.sqrt(MAX_GRID_PIXELS / (cols * rows * cellWidth * cellHeight))
     )
-    const scale = Math.min(1, sized)
     const rendered = tiles.map(tile => ({
       raster: annotate(
         grayOf(tile.raster),

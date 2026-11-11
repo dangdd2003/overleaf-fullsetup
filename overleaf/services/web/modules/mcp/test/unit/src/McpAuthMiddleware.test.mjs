@@ -32,6 +32,10 @@ vi.mock(
   '../../../../../app/src/Features/PersonalAccessToken/PersonalAccessTokenManager.mjs',
   () => ({ default: { validateToken }, validateToken })
 )
+const getUser = vi.fn()
+vi.mock('../../../../../app/src/Features/User/UserGetter.mjs', () => ({
+  default: { promises: { getUser } },
+}))
 const { requireMcpAuth } = await import(
   '../../../app/src/McpAuthMiddleware.mjs'
 )
@@ -66,6 +70,8 @@ function ctx(headers = {}) {
 
 beforeEach(() => {
   validateToken.mockReset()
+  getUser.mockReset()
+  getUser.mockResolvedValue({ _id: 'user_jwt_123', suspended: false })
 })
 
 describe('requireMcpAuth', () => {
@@ -283,6 +289,45 @@ describe('requireMcpAuth', () => {
       expect(res.statusCode).toBe(401)
       expect(res.body.code).toBe('unauthorized')
       expect(next).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('JWT owner checks', () => {
+    async function signFor(sub) {
+      return OAuth2KeyManager.signJwt({
+        sub,
+        scope: 'mcp',
+        iss: 'http://127.0.0.1:3000',
+        aud: 'http://127.0.0.1:3000/mcp',
+        exp: Math.floor(Date.now() / 1000) + 3600,
+      })
+    }
+
+    it('401 for a valid JWT whose owner is suspended', async () => {
+      getUser.mockResolvedValue({ _id: 'user_s', suspended: true })
+      const token = await signFor('user_s')
+      const { req, res, next } = ctx({ authorization: `Bearer ${token}` })
+      await requireMcpAuth(req, res, next)
+      expect(res.statusCode).toBe(401)
+      expect(res.body.code).toBe('unauthorized')
+      expect(next).not.toHaveBeenCalled()
+    })
+
+    it('401 for a valid JWT whose owner no longer exists', async () => {
+      getUser.mockResolvedValue(null)
+      const token = await signFor('user_gone')
+      const { req, res, next } = ctx({ authorization: `Bearer ${token}` })
+      await requireMcpAuth(req, res, next)
+      expect(res.statusCode).toBe(401)
+      expect(next).not.toHaveBeenCalled()
+    })
+
+    it('reads only the suspended flag of the owner', async () => {
+      const token = await signFor('user_jwt_123')
+      const { req, res, next } = ctx({ authorization: `Bearer ${token}` })
+      await requireMcpAuth(req, res, next)
+      expect(next).toHaveBeenCalled()
+      expect(getUser).toHaveBeenCalledWith('user_jwt_123', { suspended: 1 })
     })
   })
 

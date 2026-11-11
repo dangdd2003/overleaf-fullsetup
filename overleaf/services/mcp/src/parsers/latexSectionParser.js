@@ -1,4 +1,4 @@
-import { escapeRegex, lineLookup, readBraceGroup } from './textEdit.js'
+import { escapeRegex, findCloser, lineLookup, readBraceGroup } from './textEdit.js'
 
 const SECTION_LEVELS = new Map([
   ['part', 0],
@@ -73,17 +73,8 @@ function skipOptional(text, index) {
   let i = index
   while (i < text.length && /\s/.test(text[i])) i++
   if (text[i] === '[') {
-    let depth = 1
-    i++
-    while (i < text.length && depth > 0) {
-      if (text[i] === '\\') {
-        i += 2
-        continue
-      }
-      if (text[i] === '[') depth++
-      else if (text[i] === ']') depth--
-      i++
-    }
+    const found = findCloser(text, i, '[', ']')
+    i = found.index === -1 ? found.end : found.index + 1
     while (i < text.length && /\s/.test(text[i])) i++
   }
   return i

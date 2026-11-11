@@ -1,5 +1,6 @@
 import { describe, it, beforeEach, afterEach, vi, expect } from 'vitest'
 import { Readable } from 'node:stream'
+import { promisifyMultiResult } from '@overleaf/promise-utils'
 
 const modulePath =
   '../../../app/src/GoogleDriveSyncManager.mjs'
@@ -1918,6 +1919,46 @@ describe('GoogleDriveSyncManager', function () {
       )
     })
 
+    it('imports nested folders with the importing user through the native mkdirp promise contract', async function () {
+      GoogleDriveClient.listFiles.mockImplementation(async (_userId, query) => ({
+        files: query.startsWith(`'${projectFolderId}'`)
+          ? [{ id: 'chapters-folder', name: 'chapters', mimeType: 'application/vnd.google-apps.folder' }]
+          : query.startsWith("'chapters-folder'")
+            ? [{ id: 'sections-folder', name: 'sections', mimeType: 'application/vnd.google-apps.folder' }]
+            : [{ id: driveFileId, name: 'intro.tex', mimeType: 'text/plain' }],
+        nextPageToken: null,
+      }))
+      GoogleDriveClient.downloadFileBuffer.mockResolvedValue(Buffer.from('Introduction'))
+      EditorController.promises.upsertDocWithPath.mockResolvedValue({ doc: { _id: docId } })
+
+      const mkdirp = vi.fn(function (projectId, path, userId, callback) {
+        callback(null, [], { _id: 'imported-folder' })
+      })
+      EditorController.promises.mkdirp.mockImplementation(
+        promisifyMultiResult(mkdirp, ['newFolders', 'lastFolder'])
+      )
+
+      try {
+        const result = await GoogleDriveSyncManager.downloadDriveFolderToOverleaf(
+          projectId, userId, projectFolderId
+        )
+
+        expect(result.success).toBe(true)
+        expect(mkdirp).toHaveBeenCalledTimes(2)
+        for (const folderPath of ['/chapters', '/chapters/sections']) {
+          expect(mkdirp).toHaveBeenCalledWith(
+            projectId, folderPath, new MockObjectId(userId), expect.any(Function)
+          )
+        }
+        expect(EditorController.promises.upsertDocWithPath).toHaveBeenCalledWith(
+          projectId, '/chapters/sections/intro.tex', ['Introduction'],
+          'google-drive', new MockObjectId(userId)
+        )
+      } finally {
+        EditorController.promises.mkdirp.mockReset()
+      }
+    })
+
     it('downloadDriveFolderToOverleaf imports files and automatically sets root doc', async function () {
       GoogleDriveClient.listFiles.mockResolvedValue({
         files: [
@@ -2502,6 +2543,148 @@ describe('GoogleDriveSyncManager', function () {
       )
     })
 
+    it('defers a change and keeps the page token when the Overleaf lookup fails', async function () {
+      db.googleDriveUserCredentials.findOne.mockResolvedValue({
+        user_id: new MockObjectId(userId),
+        rootFolderId,
+        startPageToken: 'token-700',
+      })
+      GoogleDriveClient.getChanges.mockResolvedValue({
+        changes: [
+          {
+            fileId: 'deferred-file-id',
+            removed: false,
+            file: {
+              id: 'deferred-file-id',
+              name: 'main.tex',
+              mimeType: 'text/plain',
+              parents: [projectFolderId],
+              trashed: false,
+              md5Checksum: 'deferred-md5',
+            },
+          },
+        ],
+        nextPageToken: null,
+        newStartPageToken: 'token-701',
+      })
+      db.googleDriveProjectStates.find.mockReturnValue({
+        toArray: vi.fn().mockResolvedValue([
+          {
+            projectId: new MockObjectId(projectId),
+            userId: new MockObjectId(userId),
+            driveFolderId: projectFolderId,
+            folderName: 'My Project',
+            folderMap: {},
+            fileMap: {},
+          },
+        ]),
+      })
+      DocstoreManager.promises.getAllDocs.mockRejectedValue(
+        new Error('docstore down')
+      )
+      ProjectEntityHandler.promises.getAllEntities.mockResolvedValue({
+        docs: [],
+        files: [],
+      })
+      GoogleDriveClient.downloadFileBuffer.mockResolvedValue(
+        Buffer.from('drive text', 'utf8')
+      )
+
+      const res = await GoogleDriveSyncManager.pollUserChanges(userId)
+
+      expect(res.success).toBe(true)
+      expect(EditorController.promises.upsertDocWithPath).not.toHaveBeenCalled()
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ path: 'main.tex' }),
+        expect.stringContaining('deferring')
+      )
+      expect(db.googleDriveUserCredentials.updateOne).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          $set: expect.objectContaining({ startPageToken: 'token-701' }),
+        })
+      )
+    })
+
+    it('reloads the project lookup for a later change after an earlier change wrote to the project', async function () {
+      db.googleDriveUserCredentials.findOne.mockResolvedValue({
+        user_id: new MockObjectId(userId),
+        rootFolderId,
+        startPageToken: 'token-800',
+      })
+      GoogleDriveClient.getChanges.mockResolvedValue({
+        changes: [
+          {
+            fileId: 'first-file-id',
+            removed: false,
+            file: {
+              id: 'first-file-id',
+              name: 'first.tex',
+              mimeType: 'text/plain',
+              parents: [projectFolderId],
+              trashed: false,
+              md5Checksum: 'first-md5',
+            },
+          },
+          {
+            fileId: 'second-file-id',
+            removed: false,
+            file: {
+              id: 'second-file-id',
+              name: 'second.tex',
+              mimeType: 'text/plain',
+              parents: [projectFolderId],
+              trashed: false,
+              md5Checksum: 'second-md5',
+            },
+          },
+        ],
+        nextPageToken: null,
+        newStartPageToken: 'token-802',
+      })
+      db.googleDriveProjectStates.find.mockReturnValue({
+        toArray: vi.fn().mockResolvedValue([
+          {
+            projectId: new MockObjectId(projectId),
+            userId: new MockObjectId(userId),
+            driveFolderId: projectFolderId,
+            folderName: 'My Project',
+            folderMap: {},
+            fileMap: {},
+          },
+        ]),
+      })
+      DocstoreManager.promises.getAllDocs.mockResolvedValue([])
+      ProjectEntityHandler.promises.getAllEntities.mockResolvedValue({
+        docs: [],
+        files: [],
+      })
+      GoogleDriveClient.downloadFileBuffer.mockResolvedValue(
+        Buffer.from('content', 'utf8')
+      )
+      EditorController.promises.upsertDocWithPath.mockResolvedValue({
+        doc: { _id: 'doc-id', rev: 1 },
+      })
+
+      const res = await GoogleDriveSyncManager.pollUserChanges(userId)
+
+      expect(res.success).toBe(true)
+      expect(EditorController.promises.upsertDocWithPath).toHaveBeenCalledTimes(
+        2
+      )
+      // The first write invalidates the project entry, so the second change
+      // loads the tree again rather than using the pre-write listing.
+      expect(
+        ProjectEntityHandler.promises.getAllEntities
+      ).toHaveBeenCalledTimes(2)
+      expect(db.googleDriveUserCredentials.updateOne).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          $set: expect.objectContaining({ startPageToken: 'token-802' }),
+        })
+      )
+    })
+
     it('dynamically discovers unknown parent subfolder hierarchy using GoogleDriveClient.getFileMetadata', async function () {
       const unknownSubfolderId = 'unknown-subfolder-999'
 
@@ -2543,6 +2726,11 @@ describe('GoogleDriveSyncManager', function () {
         ]),
       }
       db.googleDriveProjectStates.find.mockReturnValue(cursorMock)
+      DocstoreManager.promises.getAllDocs.mockResolvedValue([])
+      ProjectEntityHandler.promises.getAllEntities.mockResolvedValue({
+        docs: [],
+        files: [],
+      })
 
       GoogleDriveClient.getFileMetadata.mockResolvedValue({
         id: unknownSubfolderId,
@@ -2613,6 +2801,11 @@ describe('GoogleDriveSyncManager', function () {
         ]),
       }
       db.googleDriveProjectStates.find.mockReturnValue(cursorMock)
+      DocstoreManager.promises.getAllDocs.mockResolvedValue([])
+      ProjectEntityHandler.promises.getAllEntities.mockResolvedValue({
+        docs: [],
+        files: [],
+      })
 
       GoogleDriveClient.downloadFileBuffer.mockResolvedValue(
         Buffer.from('PNG_BYTES')

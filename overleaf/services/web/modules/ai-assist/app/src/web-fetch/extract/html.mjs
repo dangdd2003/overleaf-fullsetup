@@ -126,8 +126,10 @@ const JSON_LD_OPEN =
   /<script\b[^<>]*type\s*=\s*["']application\/ld\+json["'][^<>]*>/i
 const APP_DATA_OPEN =
   /<script\b[^<>]*id\s*=\s*["'](?:__NEXT_DATA__|__NUXT_DATA__)["'][^<>]*>/i
+// A meta tag is matched up to its `>` within a fixed length, and only then searched for the description.
+const META_OPEN = /<meta\b[^<>]{0,2048}>/gi
 const DESCRIPTION =
-  /<meta\b[^<>]*(?:name|property)\s*=\s*["'](?:og:description|description)["'][^<>]*content\s*=\s*["']([^"']*)["']/i
+  /(?:name|property)\s*=\s*["'](?:og:description|description)["'][^<>]*content\s*=\s*["']([^"']*)["']/i
 
 /**
  * The text of each `<script>` that `open` starts, up to its `</script>`. A
@@ -239,8 +241,13 @@ export function embeddedText(html) {
     longStrings(parseJson(raw), strings, new Set())
     candidates.push(strings.join('\n\n'))
   }
-  const description = DESCRIPTION.exec(html)?.[1]
-  if (description) candidates.push(htmlText(description))
+  for (const tag of html.match(META_OPEN) ?? []) {
+    const description = DESCRIPTION.exec(tag)?.[1]
+    if (description) {
+      candidates.push(htmlText(description))
+      break
+    }
+  }
   return candidates.reduce(
     (best, text) => (text.length > best.length ? text : best),
     ''

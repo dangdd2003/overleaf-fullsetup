@@ -1,10 +1,15 @@
-import { forwardRef } from 'react'
+import { forwardRef, lazy, Suspense } from 'react'
 import RailTab from '@/features/ide-react/components/rail/rail-tab'
-import { AgentPanel } from './components/agent/agent-panel'
 import { AiRailIcon } from './components/ai-rail-icon'
 import getMeta from '@/utils/meta'
 import { useAiDock } from './hooks/use-ai-dock'
 import '../../../stylesheets/ai-assist.scss'
+
+const AgentPanel = lazy(() =>
+  import(
+    /* webpackChunkName: "ai-assist-agent-panel" */ './components/agent/agent-panel'
+  ).then(m => ({ default: m.AgentPanel }))
+)
 
 const AiRailTab = forwardRef<HTMLButtonElement, any>((props, ref) => {
   const { dock, isRightOpen, toggleRightOpen } = useAiDock()
@@ -41,7 +46,11 @@ function LeftRailAgentPanel() {
   if (dock === 'right') {
     return null
   }
-  return <AgentPanel dock="left" />
+  return (
+    <Suspense fallback={null}>
+      <AgentPanel dock="left" />
+    </Suspense>
+  )
 }
 
 export default {

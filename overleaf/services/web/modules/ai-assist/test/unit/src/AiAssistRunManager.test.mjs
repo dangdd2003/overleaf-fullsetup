@@ -1172,6 +1172,28 @@ describe('AiAssistRunManager', function () {
     expect(combined).to.equal('x'.repeat(100))
   })
 
+  it('flushes a short pending text tail on the timer while the stream is open', async function () {
+    let tailWrittenDuringStream = false
+    mockClient.streamChat.callsFake(async function* () {
+      yield { type: 'text', text: 'tail' }
+      // The provider is still streaming: the tail must reach the store anyway
+      await new Promise(resolve => setTimeout(resolve, 200))
+      tailWrittenDuringStream = mockStore.appendEvent
+        .getCalls()
+        .some(c => c.args[1]?.type === 'text' && c.args[1].text === 'tail')
+    })
+
+    await manager.startRun({
+      runId: 'run-tail',
+      projectId: 'p1',
+      userId: 'u1',
+      transcript: [{ role: 'user', content: 'test' }],
+      providerSettings: { type: 'openai', apiKey: 'k' },
+    })
+
+    expect(tailWrittenDuringStream).to.equal(true)
+  })
+
   it('coalesces streamed thinking chunks and keeps thinking/text order', async function () {
     mockClient.streamChat.callsFake(async function* () {
       for (let i = 0; i < 30; i++) yield { type: 'thinking', text: 't' }

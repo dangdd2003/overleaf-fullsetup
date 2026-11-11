@@ -1785,7 +1785,6 @@ async function _importDriveFolderIntoProject(projectId, userId, driveFolderId) {
       await EditorController.promises.mkdirp(
         projectId,
         toElementPath(cleanPath),
-        'google-drive',
         userObjectId
       )
     }
@@ -2161,6 +2160,67 @@ async function pollUserChanges(userId) {
 }
 
 /**
+ * Per-poll lookup cache entry for a project, created on first use. Each part
+ * is loaded at most once per poll; callers drop the whole entry with
+ * `cache.delete(String(projectId))` before writing to that project.
+ *
+ * @param {Map<string, object>} cache
+ * @param {string|ObjectId} projectId
+ * @returns {object}
+ */
+function _pollProjectEntry(cache, projectId) {
+  const key = String(projectId)
+  if (!cache.has(key)) {
+    cache.set(key, {})
+  }
+  return cache.get(key)
+}
+
+/**
+ * @param {Map<string, object>} cache
+ * @param {string|ObjectId} projectId
+ * @returns {Promise<{ docsByPath: Map<string, object>, filesByPath: Map<string, object> }>}
+ */
+async function _getPollProjectEntities(cache, projectId) {
+  const entry = _pollProjectEntry(cache, projectId)
+  if (!entry.entities) {
+    const entities =
+      await ProjectEntityHandler.promises.getAllEntities(projectId)
+    const docsByPath = new Map()
+    for (const d of entities.docs || []) {
+      const p = normalizePath(d.path)
+      if (!docsByPath.has(p)) docsByPath.set(p, d)
+    }
+    const filesByPath = new Map()
+    for (const f of entities.files || []) {
+      const p = normalizePath(f.path)
+      if (!filesByPath.has(p)) filesByPath.set(p, f)
+    }
+    entry.entities = { docsByPath, filesByPath }
+  }
+  return entry.entities
+}
+
+/**
+ * @param {Map<string, object>} cache
+ * @param {string|ObjectId} projectId
+ * @returns {Promise<Map<string, object>>} doc contents keyed by doc id string
+ */
+async function _getPollProjectDocsById(cache, projectId) {
+  const entry = _pollProjectEntry(cache, projectId)
+  if (!entry.docsById) {
+    const allDocs = await DocstoreManager.promises.getAllDocs(projectId)
+    const docsById = new Map()
+    for (const d of allDocs || []) {
+      const id = d._id?.toString()
+      if (!docsById.has(id)) docsById.set(id, d)
+    }
+    entry.docsById = docsById
+  }
+  return entry.docsById
+}
+
+/**
  * Does the poll itself. Callers must hold the user's poll lease.
  *
  * @param {string|ObjectId} userId
@@ -2247,6 +2307,11 @@ async function _pollUserChangesLeased(userId, userObjectId) {
     const projectByFolderId = {}
     const projectByFileId = {}
     const folderMap = {}
+    // Overleaf tree and doc lookups for this poll, see _pollProjectEntry.
+    const pollProjectCache = new Map()
+    // Set when a change could not be checked against Overleaf state. Its page
+    // token is then not saved, so the next poll fetches it again.
+    let deferredChanges = false
 
     for (const st of projectStates) {
       if (st.driveFolderId) {
@@ -2349,6 +2414,7 @@ async function _pollUserChangesLeased(userId, userObjectId) {
               { projectId: st.projectId, filePath, fileId },
               'Deleting Overleaf entity due to Google Drive file deletion'
             )
+            pollProjectCache.delete(String(st.projectId))
             try {
               await EditorController.promises.deleteEntityWithPath(
                 st.projectId,
@@ -2436,18 +2502,16 @@ async function _pollUserChangesLeased(userId, userObjectId) {
 
           if (!entityId || !entityType) {
             try {
-              const entities =
-                await ProjectEntityHandler.promises.getAllEntities(projectId)
-              const docEntry = (entities.docs || []).find(
-                d => normalizePath(d.path) === oldPath
+              const entities = await _getPollProjectEntities(
+                pollProjectCache,
+                projectId
               )
+              const docEntry = entities.docsByPath.get(oldPath)
               if (docEntry) {
                 entityId = docEntry.doc?._id
                 entityType = 'doc'
               } else {
-                const fileEntry = (entities.files || []).find(
-                  f => normalizePath(f.path) === oldPath
-                )
+                const fileEntry = entities.filesByPath.get(oldPath)
                 if (fileEntry) {
                   entityId = fileEntry.file?._id
                   entityType = 'file'
@@ -2470,6 +2534,7 @@ async function _pollUserChangesLeased(userId, userObjectId) {
           const oldName = path.posix.basename(oldPath)
           const newName = path.posix.basename(cleanPath)
 
+          pollProjectCache.delete(String(projectId))
           if (oldDir !== newDir) {
             const newFolderId = await _ensureFolderPathInOverleaf(
               projectId,
@@ -2567,16 +2632,17 @@ async function _pollUserChangesLeased(userId, userObjectId) {
 
         let ovEntity = null
         try {
-          const allDocs = await DocstoreManager.promises.getAllDocs(projectId)
-          const entities =
-            await ProjectEntityHandler.promises.getAllEntities(projectId)
-          const docEntry = (entities.docs || []).find(
-            d => normalizePath(d.path) === cleanPath
+          const allDocs = await _getPollProjectDocsById(
+            pollProjectCache,
+            projectId
           )
+          const entities = await _getPollProjectEntities(
+            pollProjectCache,
+            projectId
+          )
+          const docEntry = entities.docsByPath.get(cleanPath)
           if (docEntry) {
-            const docContent = (allDocs || []).find(
-              d => d._id?.toString() === docEntry.doc?._id?.toString()
-            )
+            const docContent = allDocs.get(docEntry.doc?._id?.toString())
             ovEntity = {
               type: 'doc',
               id: docEntry.doc?._id,
@@ -2584,9 +2650,7 @@ async function _pollUserChangesLeased(userId, userObjectId) {
               rev: docContent?.rev ?? 0,
             }
           } else {
-            const fileEntry = (entities.files || []).find(
-              f => normalizePath(f.path) === cleanPath
-            )
+            const fileEntry = entities.filesByPath.get(cleanPath)
             if (fileEntry) {
               ovEntity = {
                 type: 'file',
@@ -2596,10 +2660,14 @@ async function _pollUserChangesLeased(userId, userObjectId) {
             }
           }
         } catch (checkErr) {
-          logger.debug(
-            { checkErr },
-            'Could not check entity conflict state in pollUserChanges'
+          // Local state is unknown, so applying the Drive copy could overwrite
+          // unsynced Overleaf edits. Skip this change and retry it next poll.
+          logger.warn(
+            { checkErr, projectId, path: cleanPath },
+            'Could not check entity conflict state in pollUserChanges, deferring change'
           )
+          deferredChanges = true
+          continue
         }
 
         const mapped = lastMappedForFile
@@ -2634,6 +2702,7 @@ async function _pollUserChangesLeased(userId, userObjectId) {
         }
 
         if (driveChanged && localChanged) {
+          pollProjectCache.delete(String(projectId))
           const conflictPath = generateConflictPath(cleanPath)
           logger.warn(
             { projectId, path: cleanPath, conflictPath },
@@ -2734,6 +2803,7 @@ async function _pollUserChangesLeased(userId, userObjectId) {
             { $set: { fileMap: updatedMap, lastSyncedAt: new Date() } }
           )
         } else if (isBinaryFile(cleanPath, file.mimeType)) {
+          pollProjectCache.delete(String(projectId))
           const tempDir = process.env.TMPDIR || os.tmpdir()
           const tempFilePath = path.join(
             tempDir,
@@ -2790,6 +2860,7 @@ async function _pollUserChangesLeased(userId, userObjectId) {
             { $set: { fileMap: updatedMap, lastSyncedAt: new Date() } }
           )
         } else {
+          pollProjectCache.delete(String(projectId))
           try {
             const driveBuffer = await GoogleDriveClient.downloadFileBuffer(userId, file.id, _maxImportBytes())
             const driveContent = driveBuffer.toString('utf8')
@@ -2844,7 +2915,10 @@ async function _pollUserChangesLeased(userId, userObjectId) {
       }
     }
 
-    if (newStartPageToken) {
+    // Keep the old token when a change was deferred, so the next poll fetches
+    // it again. Changes applied in this poll are then seen again, and the
+    // checksum check skips those that carry an md5Checksum.
+    if (newStartPageToken && !deferredChanges) {
       await db.googleDriveUserCredentials.updateOne(
         { user_id: userObjectId },
         {

@@ -1,7 +1,13 @@
 import { Readable } from 'node:stream'
 import express from 'express'
 import logger from '@overleaf/logger'
-import { createMcpExpressApp } from '@modelcontextprotocol/express'
+import {
+  createMcpExpressApp,
+  hostHeaderValidation,
+  localhostHostValidation,
+  localhostOriginValidation,
+  originValidation,
+} from '@modelcontextprotocol/express'
 import { toNodeHandler } from '@modelcontextprotocol/node'
 import { createMcpHandler } from '@modelcontextprotocol/server'
 import { createMcpServerFactory, listToolMetadata } from './server.js'
@@ -93,6 +99,29 @@ function createPreBodyGate(config) {
     }
     next()
   }
+}
+
+/**
+ * The Host and Origin checks createMcpExpressApp applies, for the MCP endpoint.
+ * The endpoint runs them ahead of its auth, so they mirror the SDK's conditions:
+ * the configured lists, or loopback-only checks when the host is loopback.
+ *
+ * @param {object} config
+ * @param {string[]} allowedHosts expanded host list
+ * @returns {import('express').RequestHandler[]}
+ */
+function createMcpEndpointGuards(config, allowedHosts) {
+  const host = config.host === undefined ? '127.0.0.1' : config.host
+  const loopback = ['127.0.0.1', 'localhost', '::1'].includes(host)
+  const guards = []
+  if (allowedHosts.length) guards.push(hostHeaderValidation(allowedHosts))
+  else if (loopback) guards.push(localhostHostValidation())
+  if (config.allowedOrigins.length) {
+    guards.push(originValidation(originHostnames(config.allowedOrigins)))
+  } else if (loopback) {
+    guards.push(localhostOriginValidation())
+  }
+  return guards
 }
 
 /**
@@ -367,13 +396,12 @@ export function originHostnames(origins) {
 export function createHttpApp({ config, client }) {
   const handler = createMcpHandler(createMcpServerFactory({ client, siteUrl: config.siteUrl }))
   const allowedHosts = expandHosts(config.allowedHosts)
-  // The SDK app parses JSON on every request before its own checks run, so
-  // the gate below sits in front of it, on the MCP endpoint only.
+  // Uploads travel as base64 inside JSON, so the SDK's default 100kb cap
+  // would refuse most files. Limit request body size to maxBodyMb.
+  const jsonLimit = `${config.maxBodyMb ?? 70}mb`
   const sdkApp = createMcpExpressApp({
     host: config.host,
-    // Uploads travel as base64 inside JSON, so the SDK's default 100kb cap
-    // would refuse most files. Limit request body size to maxBodyMb.
-    jsonLimit: `${config.maxBodyMb ?? 70}mb`,
+    jsonLimit,
     ...(allowedHosts.length ? { allowedHosts } : {}),
     ...(config.allowedOrigins.length
       ? { allowedOrigins: originHostnames(config.allowedOrigins) }
@@ -384,11 +412,27 @@ export function createHttpApp({ config, client }) {
   // is the client address from X-Forwarded-For, not the proxy's, or the
   // per-IP gate below would count every user as one.
   app.set('trust proxy', 'loopback')
-  // Exact path only, so an endpoint mounted at '/' does not gate every route.
-  app.all(config.endpointPath, createPreBodyGate(config))
-  app.use(sdkApp)
   app.locals.client = client
   app.locals.config = config
+
+  // The MCP endpoint is answered before sdkApp is mounted. sdkApp parses JSON
+  // for every request before its checks run, so the endpoint would buffer a
+  // whole body before its token was checked. Here the rate gate, Host and
+  // Origin checks, and auth run first, and only then is the body parsed.
+  // Exact path only, so an endpoint mounted at '/' does not gate every route.
+  const node = toNodeHandler(handler)
+  const authMiddleware = requireBearerToken(client, { config })
+  app.all(
+    config.endpointPath,
+    createPreBodyGate(config),
+    ...createMcpEndpointGuards(config, allowedHosts),
+    authMiddleware,
+    express.json({ limit: jsonLimit }),
+    (req, res) => {
+      void node(req, res, req.body)
+    }
+  )
+  app.use(sdkApp)
 
   // RFC 9728 §3.1 puts the metadata for resource `https://host/mcp` at
   // `/.well-known/oauth-protected-resource/mcp` — the suffix is inserted before
@@ -444,11 +488,6 @@ export function createHttpApp({ config, client }) {
     }
   }
 
-  const node = toNodeHandler(handler)
-  const authMiddleware = requireBearerToken(client, { config })
-  app.all(config.endpointPath, authMiddleware, (req, res) => {
-    void node(req, res, req.body)
-  })
   return { app }
 }
 

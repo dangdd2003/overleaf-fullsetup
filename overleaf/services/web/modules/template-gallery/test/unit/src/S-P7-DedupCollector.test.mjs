@@ -200,6 +200,23 @@ describe('S-P7 DedupCollector', () => {
     expect(report.freed.byCategory.blobPurge.files).toBe(1)
   })
 
+  it('purge queries the items per sha only for the blobs it is about to delete', async () => {
+    const docs = await buildFixtures()
+    const env = setup(dir)
+    env.items.docs = docs
+    const findOne = vi.spyOn(env.items, 'findOne')
+
+    await DedupCollector.runDedup({ storageDir: dir, dryRun: false, purge: true, yieldMs: 0 })
+
+    // imgD is still referenced and is decided from the one pass, so it is not queried one by one
+    const queried = new Set(
+      findOne.mock.calls
+        .filter(([filter]) => filter.$or)
+        .flatMap(([filter]) => filter.$or.map(clause => Object.values(clause)[0]))
+    )
+    expect([...queried]).toEqual([fixtures.pdfB])
+  })
+
   it('purge keeps a blob the current snapshot still references, and retries it on a later run', async () => {
     const docs = await buildFixtures()
     const env = setup(dir, { snapshot: new Set([fixtures.pdfB]) })

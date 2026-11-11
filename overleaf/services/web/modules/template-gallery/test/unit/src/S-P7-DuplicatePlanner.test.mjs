@@ -62,6 +62,20 @@ describe('S-P7 PDF normalization', () => {
     const b = fakePdf({ body: 'BT (Goodbye) Tj ET' })
     expect(Planner.pdfNormSha(a)).not.toBe(Planner.pdfNormSha(b))
   })
+
+  it('normalizes a PDF with many unclosed XMP elements in linear time', () => {
+    // 200k openers with no closer: a lazy regex would scan to the end for each one
+    const pdf = Buffer.from('%PDF-1.4\n' + '<xmp:CreateDate>'.repeat(200000) + '\n%%EOF')
+    const started = Date.now()
+    const out = Planner.normalizePdf(pdf)
+    expect(Date.now() - started).toBeLessThan(2000)
+    expect(out.toString('latin1')).toBe(pdf.toString('latin1'))
+  })
+
+  it('still removes a closed XMP element that follows an unclosed one', () => {
+    const pdf = Buffer.from('<xmp:CreateDate>x<xmp:ModifyDate>y</xmp:ModifyDate>')
+    expect(Planner.normalizePdf(pdf).toString('latin1')).toBe('<xmp:CreateDate>x')
+  })
 })
 
 describe('S-P7 title normalization', () => {

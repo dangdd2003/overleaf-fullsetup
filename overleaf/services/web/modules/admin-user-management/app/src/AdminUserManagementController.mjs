@@ -35,6 +35,24 @@ import AuthenticationManager from '../../../../app/src/Features/Authentication/A
 
 const __dirname = Path.dirname(fileURLToPath(import.meta.url))
 
+const PASSWORD_LINK_TTL_SECONDS = 7 * 24 * 60 * 60
+
+/**
+ * A one-week password link for a user, in the token shape
+ * PasswordResetHandler.getUserForPasswordResetToken reads ({ user_id, email }).
+ */
+async function createPasswordSetupLink(userId, email) {
+  const token = await OneTimeTokenHandler.promises.getNewToken(
+    'password',
+    { user_id: userId.toString(), email },
+    { expiresIn: PASSWORD_LINK_TTL_SECONDS }
+  )
+  return {
+    url: `${Settings.siteUrl || ''}/user/password/set?passwordResetToken=${token}&email=${encodeURIComponent(email)}`,
+    expiresAt: new Date(Date.now() + PASSWORD_LINK_TTL_SECONDS * 1000),
+  }
+}
+
 // Batch endpoints do work per item (deletes, bcrypt hashes, session sweeps),
 // so one request is bounded.
 const MAX_BATCH_SIZE = 500
@@ -206,15 +224,9 @@ export const AdminUserManagementController = {
         return res.status(404).json({ error: 'user_not_found' })
       }
 
-      const ONE_WEEK_IN_SECONDS = 7 * 24 * 60 * 60
-      const token = await OneTimeTokenHandler.promises.getNewToken(
-        'password',
-        { user_id: user._id.toString(), email: user.email },
-        { expiresIn: ONE_WEEK_IN_SECONDS }
-      )
-
-      const resetUrl = `${Settings.siteUrl}/user/password/set?passwordResetToken=${token}&email=${encodeURIComponent(user.email)}`
-      const expiresAt = new Date(Date.now() + ONE_WEEK_IN_SECONDS * 1000).toISOString()
+      const link = await createPasswordSetupLink(user._id, user.email)
+      const resetUrl = link.url
+      const expiresAt = link.expiresAt.toISOString()
 
       await UserAuditLogHandler.promises.addEntry(
         new ObjectId(userId),
@@ -946,14 +958,8 @@ export const AdminUserManagementController = {
           )
           passwordSet = true
         } else {
-          const tokenHandler =
-            OneTimeTokenHandler.promises || OneTimeTokenHandler
-          const ONE_WEEK_IN_SECONDS = 7 * 24 * 60 * 60
-          const token = await (
-            tokenHandler.getNewToken || OneTimeTokenHandler.getNewToken
-          )('password', newUser._id, { expiresIn: ONE_WEEK_IN_SECONDS })
-          const siteUrl = Settings.siteUrl || ''
-          setupUrl = `${siteUrl}/user/password/set?token=${token}`
+          setupUrl = (await createPasswordSetupLink(newUser._id, parsedEmail))
+            .url
         }
 
         const auditLogHandler =

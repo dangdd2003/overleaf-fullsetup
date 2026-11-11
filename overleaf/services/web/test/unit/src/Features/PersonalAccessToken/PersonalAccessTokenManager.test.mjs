@@ -273,6 +273,63 @@ describe('PersonalAccessTokenManager', () => {
       expect(result).toBeNull()
     })
 
+    it('returns null for a suspended token owner', async () => {
+      mockUser.suspended = true
+      expect(await validateToken(validToken)).toBeNull()
+    })
+
+    it('does not record use of a token whose owner is suspended', async () => {
+      mockUser.suspended = true
+      mockFindRecord.lastUsedAt = new Date('2000-01-01T00:00:00Z')
+      let saved = false
+      mockFindRecord.save = async function () {
+        saved = true
+      }
+      expect(await validateToken(validToken)).toBeNull()
+      expect(saved).toBe(false)
+      expect(mockFindRecord.lastUsedAt).toEqual(new Date('2000-01-01T00:00:00Z'))
+    })
+
+    it('requests the suspension field when fetching the token owner', async () => {
+      let capturedProjection
+      UserGetter.promises.getUser = async (queryId, projection) => {
+        capturedProjection = projection
+        return mockUser
+      }
+
+      await validateToken(validToken)
+      expect(capturedProjection).toEqual({ email: 1, emails: 1, suspended: 1 })
+    })
+
+    it('rejects suspended owners through the callback UserGetter fallback', async () => {
+      const originalPromises = UserGetter.promises
+      const originalGetUser = UserGetter.getUser
+      let capturedProjection
+      mockUser.suspended = true
+      UserGetter.promises = undefined
+      UserGetter.getUser = (queryId, projection, callback) => {
+        capturedProjection = projection
+        callback(null, mockUser)
+      }
+      try {
+        expect(await validateToken(validToken)).toBeNull()
+        expect(capturedProjection).toEqual({ email: 1, emails: 1, suspended: 1 })
+      } finally {
+        UserGetter.promises = originalPromises
+        UserGetter.getUser = originalGetUser
+      }
+    })
+
+    it('preserves scopes for an explicitly unsuspended token owner', async () => {
+      mockUser.suspended = false
+      mockFindRecord.scopes = ['mcp', 'git_bridge']
+      expect(await validateToken(validToken)).toEqual({
+        userId,
+        email: userEmail,
+        scopes: ['mcp', 'git_bridge'],
+      })
+    })
+
     it('returns multiple scopes as an array', async () => {
       mockFindRecord.scopes = ['git_bridge', 'mcp']
       const result = await PersonalAccessTokenManager.validateToken(validToken)

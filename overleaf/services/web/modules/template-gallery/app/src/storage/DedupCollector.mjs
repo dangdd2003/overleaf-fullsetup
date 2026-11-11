@@ -260,6 +260,17 @@ async function applyPlan(plan, now, yieldMs) {
   return { ...out, unsetShas: [...out.unsetShas] }
 }
 
+// Every sha referenced by an item, read in one pass over the items
+async function referencedShas(col, excludedTokens) {
+  const referenced = new Set()
+  const cursor = col.find(HAS_BLOB_REF_FILTER, { projection: { token: 1, ...BLOB_REF_PROJECTION } })
+  for await (const doc of cursor) {
+    if (excludedTokens.has(doc.token)) continue
+    for (const ref of blobRefsOf(doc)) referenced.add(ref.sha)
+  }
+  return referenced
+}
+
 /**
  * Bytes that GC or a purge can reclaim for these shas: not referenced by any item
  * (other than the excluded tombstones) and not referenced by any retained snapshot generation.
@@ -274,12 +285,7 @@ async function estimateReclaimable(storageDir, shas, excludedTokens) {
     return null
   }
   const col = await itemsCol()
-  const referenced = new Set()
-  const cursor = col.find(HAS_BLOB_REF_FILTER, { projection: { token: 1, ...BLOB_REF_PROJECTION } })
-  for await (const doc of cursor) {
-    if (excludedTokens.has(doc.token)) continue
-    for (const ref of blobRefsOf(doc)) referenced.add(ref.sha)
-  }
+  const referenced = await referencedShas(col, excludedTokens)
   const out = { files: 0, bytes: 0 }
   for (const sha of new Set(shas)) {
     if (referenced.has(sha) || snapshotRefs.has(sha)) continue
@@ -313,13 +319,16 @@ async function purgeBlobs({ storageDir, shas, now, yieldMs }) {
   const work = shas.filter(isValidSha256)
   const batch = work.slice(0, PURGE_MAX_PER_RUN)
   out.pending = work.slice(PURGE_MAX_PER_RUN)
+  // One pass for the first check: the blob fields have no index, so a query per sha scans the items
+  const referenced = batch.length > 0 ? await referencedShas(col, new Set()) : new Set()
+  // Live query, used for the re-check right before each unlink
+  const inUse = sha =>
+    col.findOne(
+      { $or: BLOB_REF_FIELDS.map(ref => ({ [ref.path]: sha })) },
+      { projection: { _id: 1 } }
+    )
   for (const sha of batch) {
-    const inUse = () =>
-      col.findOne(
-        { $or: BLOB_REF_FIELDS.map(ref => ({ [ref.path]: sha })) },
-        { projection: { _id: 1 } }
-      )
-    if (await inUse()) {
+    if (referenced.has(sha)) {
       out.stillReferenced++
       continue
     }
@@ -341,7 +350,7 @@ async function purgeBlobs({ storageDir, shas, now, yieldMs }) {
       continue
     }
     // Re-check right before the unlink: the item or the blob may have changed since
-    if (await inUse()) {
+    if (await inUse(sha)) {
       out.stillReferenced++
       continue
     }

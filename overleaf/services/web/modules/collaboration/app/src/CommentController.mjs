@@ -1,4 +1,5 @@
 import { expressify } from '@overleaf/promise-utils'
+import logger from '@overleaf/logger'
 import Modules from '../../../../app/src/infrastructure/Modules.mjs'
 import ChatApiHandler from '../../../../app/src/Features/Chat/ChatApiHandler.mjs'
 import EditorRealTimeController from '../../../../app/src/Features/Editor/EditorRealTimeController.mjs'
@@ -52,15 +53,23 @@ async function sendComment(req, res) {
     message
   )
 
-  await Modules.promises.hooks.fire('commentMessageSent', {
-    projectId,
-    threadId,
-    userId,
-    content,
-    messageId: message.id || message._id,
-  })
-
   res.json(message)
+
+  // Notifications run after the response; a failure must not fail the comment.
+  Modules.promises.hooks
+    .fire('commentMessageSent', {
+      projectId,
+      threadId,
+      userId,
+      content,
+      messageId: message.id || message._id,
+    })
+    .catch(err => {
+      logger.error(
+        { err, projectId, threadId },
+        'failed to run commentMessageSent hooks'
+      )
+    })
 }
 
 // The /doc/:doc_id/ variants also update the comment range held by

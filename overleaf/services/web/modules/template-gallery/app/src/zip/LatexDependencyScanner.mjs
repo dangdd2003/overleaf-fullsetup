@@ -143,6 +143,9 @@ export function stripLatexComments(source) {
 export function scanLatexDependencies(texSource, providedFiles = [], opts = {}) {
   const checkPackages = opts.checkPackages !== false
   const cleanSource = stripLatexComments(texSource || '')
+  // Command arguments are bounded to 1024 characters (1024 in each regex below).
+  // Without the bound, an unclosed `{` makes the regex scan to the end of the
+  // file for every such command, which is quadratic on a crafted main.tex.
 
   const providedNormalized = new Set(
     (providedFiles || []).map(f => String(f).trim().replace(/^\.\//, '').toLowerCase())
@@ -156,7 +159,7 @@ export function scanLatexDependencies(texSource, providedFiles = [], opts = {}) 
   const missingFiles = []
 
   // 1. \documentclass[...]{name}
-  const docClassMatch = /\\documentclass(?:\s*\[[^\]]*\])?\s*\{([^}]+)\}/.exec(cleanSource)
+  const docClassMatch = /\\documentclass(?:\s*\[[^\]]{0,1024}\])?\s*\{([^}]{1,1024})\}/.exec(cleanSource)
   if (docClassMatch) {
     documentClass = docClassMatch[1].trim()
     const clsFile = `${documentClass}.cls`.toLowerCase()
@@ -166,7 +169,7 @@ export function scanLatexDependencies(texSource, providedFiles = [], opts = {}) 
   }
 
   // 2. \usepackage[...]{pkg1,pkg2}
-  const usepackageRegex = /\\usepackage(?:\s*\[[^\]]*\])?\s*\{([^}]+)\}/g
+  const usepackageRegex = /\\usepackage(?:\s*\[[^\]]{0,1024}\])?\s*\{([^}]{1,1024})\}/g
   let match
   while ((match = usepackageRegex.exec(cleanSource)) !== null) {
     const rawList = match[1].split(',')
@@ -189,7 +192,7 @@ export function scanLatexDependencies(texSource, providedFiles = [], opts = {}) 
   }
 
   // 3. \input{path} and \include{path}
-  const inputRegex = /\\(?:input|include)\s*\{([^}]+)\}/g
+  const inputRegex = /\\(?:input|include)\s*\{([^}]{1,1024})\}/g
   while ((match = inputRegex.exec(cleanSource)) !== null) {
     const target = match[1].trim()
     if (!target || isMacroTarget(target)) continue
@@ -204,7 +207,7 @@ export function scanLatexDependencies(texSource, providedFiles = [], opts = {}) 
   }
 
   // 4. \includegraphics[...]{path}
-  const graphicsRegex = /\\includegraphics(?:\s*\[[^\]]*\])?\s*\{([^}]+)\}/g
+  const graphicsRegex = /\\includegraphics(?:\s*\[[^\]]{0,1024}\])?\s*\{([^}]{1,1024})\}/g
   const standardExts = ['.png', '.jpg', '.jpeg', '.pdf', '.eps']
   while ((match = graphicsRegex.exec(cleanSource)) !== null) {
     const target = match[1].trim()
@@ -230,7 +233,7 @@ export function scanLatexDependencies(texSource, providedFiles = [], opts = {}) 
   }
 
   // 5. \bibliography{file1,file2} and \addbibresource{file.bib}
-  const bibRegex = /\\(?:bibliography|addbibresource(?:\s*\[[^\]]*\])?)\s*\{([^}]+)\}/g
+  const bibRegex = /\\(?:bibliography|addbibresource(?:\s*\[[^\]]{0,1024}\])?)\s*\{([^}]{1,1024})\}/g
   while ((match = bibRegex.exec(cleanSource)) !== null) {
     const rawList = match[1].split(',')
     for (const rawBib of rawList) {

@@ -861,6 +861,22 @@ function stubToolMessage(message) {
   };
 }
 
+// Token estimates of messages already sized, by message object. Messages are
+// never changed after they are sized: the run only appends, and a trim or an
+// image elision builds a new object. So each model step reuses the estimate of
+// every older message instead of counting the whole conversation again. The
+// estimate depends on the provider and model that price it, so they are kept too.
+const messageTokenEstimates = new WeakMap();
+
+function cachedMessageTokens(message, pricing) {
+  const key = `${pricing.provider}|${pricing.model}`;
+  const cached = messageTokenEstimates.get(message);
+  if (cached?.key === key) return cached.tokens;
+  const tokens = estimateMessageTokens(message, pricing);
+  messageTokenEstimates.set(message, { key, tokens });
+  return tokens;
+}
+
 export function applyContextBudget({
   system,
   messages,
@@ -883,7 +899,7 @@ export function applyContextBudget({
   // The same estimate the context breakdown uses (estimateRequestTokens).
   const pricing = { provider, model };
   const framing = messageFramingTokens(provider);
-  const sizeOf = (message) => estimateMessageTokens(message, pricing) + framing;
+  const sizeOf = (message) => cachedMessageTokens(message, pricing) + framing;
   const sizes = working.map(sizeOf);
   let total =
     estimateRequestTokens({ system, tools, provider, model }) +
@@ -1462,7 +1478,7 @@ export class AiAssistRunManager {
     let flushTimer = null;
     let flushChain = Promise.resolve();
     const FLUSH_MS = 16;
-    const FLUSH_CHARS = 8;
+    const FLUSH_CHARS = 256;
 
     const write = (event) => {
       flushChain = flushChain.then(() => this.store.appendEvent(runId, event));

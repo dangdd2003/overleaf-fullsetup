@@ -36,6 +36,10 @@ const MAX_SHOWN_CHANGES = 20
  * applied to the new text. One retry; a second conflict is reported.
  */
 const MAX_EDIT_ATTEMPTS = 2
+/** Edits one edit_file call may carry; a call past this is refused before any work. */
+const MAX_EDITS_PER_CALL = 500
+/** Longest oldString or newString in an edit_file call, in characters. */
+const MAX_EDIT_STRING_LENGTH = 1000000
 
 const pathParam = z
   .string()
@@ -676,9 +680,11 @@ export function registerFileTools(server, { client, staticToken }) {
               oldString: z
                 .string()
                 .min(1)
+                .max(MAX_EDIT_STRING_LENGTH)
                 .describe('Exact text to find, without line-number prefixes'),
               newString: z
                 .string()
+                .max(MAX_EDIT_STRING_LENGTH)
                 .describe('Replacement; "" deletes oldString'),
               replaceAll: z
                 .boolean()
@@ -687,15 +693,18 @@ export function registerFileTools(server, { client, staticToken }) {
             })
           )
           .min(1)
+          .max(MAX_EDITS_PER_CALL)
           .optional()
           .describe('Edits applied in order; preferred for several changes'),
         oldString: z
           .string()
           .min(1)
+          .max(MAX_EDIT_STRING_LENGTH)
           .optional()
           .describe('Shorthand for one edit: the exact text to find'),
         newString: z
           .string()
+          .max(MAX_EDIT_STRING_LENGTH)
           .optional()
           .describe('Shorthand for one edit: the replacement; "" deletes'),
         replaceAll: z

@@ -10,6 +10,9 @@ const ALLOWED_SCOPES = ['git_bridge', 'mcp']
 // this, to avoid a DB write on every authenticated request.
 const LAST_USED_THROTTLE_MS = 60 * 1000
 
+// The owner fields a token check reads
+const TOKEN_OWNER_FIELDS = { email: 1, emails: 1, suspended: 1 }
+
 /**
  * Creates a new personal access token for git operations.
  * Sets 1-year expiration.
@@ -80,6 +83,21 @@ async function validateToken(rawToken) {
     return null
   }
 
+  // Check the owner first so a rejected token never counts as used
+  let user = null
+  if (UserGetter.promises?.getUser) {
+    user = await UserGetter.promises.getUser(record.user_id, TOKEN_OWNER_FIELDS)
+  } else if (typeof UserGetter.getUser === 'function') {
+    user = await new Promise(resolve => {
+      UserGetter.getUser(record.user_id, TOKEN_OWNER_FIELDS, (err, u) =>
+        resolve(u)
+      )
+    })
+  }
+  if (!user || user.suspended) {
+    return null
+  }
+
   const stale =
     !record.lastUsedAt ||
     Date.now() - new Date(record.lastUsedAt).getTime() > LAST_USED_THROTTLE_MS
@@ -94,23 +112,6 @@ async function validateToken(rawToken) {
         { $set: { lastUsedAt: now } }
       )
     }
-  }
-
-  let user = null
-  if (UserGetter.promises?.getUser) {
-    user = await UserGetter.promises.getUser(record.user_id, {
-      email: 1,
-      emails: 1,
-    })
-  } else if (typeof UserGetter.getUser === 'function') {
-    user = await new Promise(resolve => {
-      UserGetter.getUser(record.user_id, { email: 1, emails: 1 }, (err, u) =>
-        resolve(u)
-      )
-    })
-  }
-  if (!user) {
-    return null
   }
 
   const scopes = Array.isArray(record.scopes)

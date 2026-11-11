@@ -40,9 +40,15 @@ export const ThinkingBlock: FC<{
   )
   const displayText = revealLive && expanded ? revealedText : thinking
 
+  // Rendered only while expanded: collapsed blocks never show this HTML
   const html = useMemo(
-    () => renderMarkdown(displayText, undefined, undefined, { isThinking: true }),
-    [displayText]
+    () =>
+      expanded
+        ? renderMarkdown(displayText, undefined, undefined, {
+            isThinking: true,
+          })
+        : null,
+    [displayText, expanded]
   )
 
   const fadeState = useRef<FadeState | null>(
@@ -50,7 +56,7 @@ export const ThinkingBlock: FC<{
   )
 
   useLayoutEffect(() => {
-    if (!expanded) return
+    if (!expanded || html === null) return
     const container = contentRef.current
     if (!container) return
 

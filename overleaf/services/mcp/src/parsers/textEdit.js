@@ -33,6 +33,81 @@ export function lineLookup(text) {
   }
 }
 
+/** closers[i] for an opener the whole-text walk never reaches, because it is escaped. */
+const UNREACHED = -2
+/** Returned as the index when no closer matches. */
+const NEVER_CLOSED = -1
+/** The last text indexed per opener character, see findCloser. */
+const closerTables = new Map()
+
+/** Scan from an opener for its matching closer, following backslash escapes. */
+function scanCloser(text, openIndex, open, close) {
+  let depth = 0
+  let i = openIndex
+  for (; i < text.length; i++) {
+    const ch = text[i]
+    if (ch === '\\') {
+      i++
+      continue
+    }
+    if (ch === open) depth++
+    else if (ch === close) {
+      depth--
+      if (depth === 0) return { index: i, end: i }
+    }
+  }
+  return { index: NEVER_CLOSED, end: i }
+}
+
+/**
+ * Pair every opener in text with its closer in one walk. Each pairing is the
+ * one scanCloser finds from that opener, since the walk and the scan agree on
+ * escapes wherever the walk is not inside one.
+ */
+function indexClosers(text, open, close) {
+  const closers = new Int32Array(text.length).fill(UNREACHED)
+  const pending = []
+  let i = 0
+  for (; i < text.length; i++) {
+    const ch = text[i]
+    if (ch === '\\') {
+      i++
+      continue
+    }
+    if (ch === open) {
+      closers[i] = NEVER_CLOSED
+      pending.push(i)
+    } else if (ch === close && pending.length > 0) {
+      closers[pending.pop()] = i
+    }
+  }
+  return { closers, end: i }
+}
+
+/**
+ * Find the closer matching the opener at openIndex. Returns { index, end }:
+ * index is the closer's position, or NEVER_CLOSED with end set to where the
+ * scan stopped. An unclosed opener scans to the end of the text, so the first
+ * failure on a text indexes every opener in it; later lookups are O(1).
+ */
+export function findCloser(text, openIndex, open, close) {
+  const cached = closerTables.get(open)
+  if (cached?.text === text) {
+    // An equal text in a new string is kept, so later lookups compare by
+    // identity instead of by content
+    cached.text = text
+    const at = cached.closers[openIndex]
+    if (at === NEVER_CLOSED) return { index: NEVER_CLOSED, end: cached.end }
+    if (at !== UNREACHED) return { index: at, end: at }
+    return scanCloser(text, openIndex, open, close)
+  }
+  const found = scanCloser(text, openIndex, open, close)
+  if (found.index === NEVER_CLOSED) {
+    closerTables.set(open, { text, ...indexClosers(text, open, close) })
+  }
+  return found
+}
+
 /**
  * Read a balanced {...} group starting at openIndex.
  *
@@ -40,20 +115,9 @@ export function lineLookup(text) {
  */
 export function readBraceGroup(text, openIndex) {
   if (text[openIndex] !== '{') return null
-  let depth = 0
-  for (let i = openIndex; i < text.length; i++) {
-    const ch = text[i]
-    if (ch === '\\') {
-      i++
-      continue
-    }
-    if (ch === '{') depth++
-    else if (ch === '}') {
-      depth--
-      if (depth === 0) return { content: text.slice(openIndex + 1, i), endIndex: i }
-    }
-  }
-  return null
+  const { index } = findCloser(text, openIndex, '{', '}')
+  if (index === NEVER_CLOSED) return null
+  return { content: text.slice(openIndex + 1, index), endIndex: index }
 }
 
 /**

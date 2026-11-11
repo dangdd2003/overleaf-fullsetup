@@ -19,7 +19,7 @@ const {
     promises: { getThread: vi.fn() },
   }
   const mockUserGetter = {
-    promises: { getUser: vi.fn() },
+    promises: { getUser: vi.fn(), getUsers: vi.fn() },
   }
   const mockNotificationsHandler = {
     promises: { createNotification: vi.fn() },
@@ -82,6 +82,17 @@ const {
 describe('CommentNotificationHandler', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    // Batch lookup answers from the per-user getUser mock so existing per-user
+    // expectations still apply
+    mockUserGetter.promises.getUsers.mockImplementation(async ids => {
+      const users = await Promise.all(
+        ids.map(async id => {
+          const user = await mockUserGetter.promises.getUser(id)
+          return user && { ...user, _id: id }
+        })
+      )
+      return users.filter(Boolean)
+    })
   })
 
   describe('extractMentions', () => {
@@ -254,6 +265,47 @@ describe('CommentNotificationHandler', () => {
       // should still return mentioned members
       expect(recipients).toHaveLength(1)
       expect(mockLogger.warn).toHaveBeenCalled()
+    })
+  })
+
+  describe('resolveRecipients with a large project', () => {
+    it('loads members in one batch query and skips per-user getUser calls', async () => {
+      const authorId = 'aaaaaaaaaaaaaaaaaaaaaaaa'
+      const memberIds = Array.from(
+        { length: 200 },
+        (_, i) => i.toString(16).padStart(24, '0')
+      )
+      mockProjectGetter.promises.getProject.mockResolvedValue({
+        _id: 'pppppppppppppppppppppppp',
+        owner_ref: authorId,
+        collaberator_refs: memberIds,
+        readOnly_refs: [],
+        reviewer_refs: [],
+      })
+      mockChatApiHandler.promises.getThread.mockResolvedValue({ messages: [] })
+      mockUserGetter.promises.getUsers.mockImplementation(async ids =>
+        ids.map(id => ({ _id: id }))
+      )
+      mockNotificationPreferences.getUserProjectPreferences.mockResolvedValue({
+        commentOnOwnProject: true,
+        commentOnInvitedProject: true,
+        repliesOnParticipatingThread: true,
+        muteAllNotifications: false,
+      })
+
+      const recipients = await resolveRecipients(
+        'pppppppppppppppppppppppp',
+        'thread456',
+        authorId,
+        'no mentions'
+      )
+
+      expect(recipients).toHaveLength(200)
+      expect(mockUserGetter.promises.getUsers).toHaveBeenCalledTimes(1)
+      expect(mockUserGetter.promises.getUsers.mock.calls[0][0]).toEqual(
+        expect.arrayContaining(memberIds)
+      )
+      expect(mockUserGetter.promises.getUser).not.toHaveBeenCalled()
     })
   })
 

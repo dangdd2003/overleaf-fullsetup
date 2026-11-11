@@ -124,6 +124,7 @@ function createMockReqRes(overrides = {}) {
 describe('CommentController', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockModules.promises.hooks.fire.mockResolvedValue([])
   })
 
   describe('getThreads', () => {
@@ -225,6 +226,50 @@ describe('CommentController', () => {
           messageId: 'msg1',
         }
       )
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'msg1' })
+      )
+    })
+  })
+
+  describe('sendComment notifications', () => {
+    function setupSend() {
+      mockSessionManager.getLoggedInUserId.mockReturnValue('u1')
+      mockChatApiHandler.promises.sendComment.mockResolvedValue({
+        id: 'msg1',
+        user_id: 'u1',
+        content: 'hello',
+      })
+      mockUserInfoManager.promises.getPersonalInfo.mockResolvedValue({
+        _id: 'u1',
+        first_name: 'Alice',
+      })
+      return createMockReqRes({
+        req: {
+          params: { project_id: 'proj1', thread_id: 't1' },
+          body: { content: 'hello' },
+        },
+      })
+    }
+
+    it('responds without waiting for the commentMessageSent hooks', async () => {
+      mockModules.promises.hooks.fire.mockReturnValue(new Promise(() => {}))
+      const { req, res } = setupSend()
+
+      await CommentController.sendComment(req, res)
+
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'msg1' })
+      )
+    })
+
+    it('does not fail the comment when the hooks reject', async () => {
+      mockModules.promises.hooks.fire.mockRejectedValue(new Error('boom'))
+      const { req, res } = setupSend()
+
+      await CommentController.sendComment(req, res)
+      await new Promise(resolve => setImmediate(resolve))
+
       expect(res.json).toHaveBeenCalledWith(
         expect.objectContaining({ id: 'msg1' })
       )

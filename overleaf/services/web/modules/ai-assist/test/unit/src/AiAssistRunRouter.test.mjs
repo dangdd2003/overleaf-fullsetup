@@ -153,3 +153,39 @@ describe('AiAssistRunRouter', function () {
     expect(forkRoute).to.have.length(4)
   })
 })
+
+describe('AiAssistRunRouter async handlers', function () {
+  it('passes a rejected controller promise to next instead of leaving the request hanging', async function () {
+    const { default: AiAssistRunController } = await import(
+      '../../../app/src/AiAssistRunController.mjs'
+    )
+    // Set after the import: ModuleSettings rebuilds aiAssist when it loads
+    const origEnabled = Settings.aiAssist?.enabled
+    Settings.aiAssist = { ...(Settings.aiAssist || {}), enabled: true }
+    const stopRun = sinon
+      .stub(AiAssistRunController, 'stopRun')
+      .rejects(new Error('boom'))
+    try {
+      const webRouter = {
+        get: sinon.stub(),
+        post: sinon.stub(),
+        put: sinon.stub(),
+        patch: sinon.stub(),
+        delete: sinon.stub(),
+      }
+      await routerModule.apply(webRouter)
+      const route = webRouter.post.args.find(
+        call => call[0] === '/ai-assist/projects/:Project_id/runs/:runId/stop'
+      )
+      const handler = route.at(-1)
+      const error = await new Promise(resolve => {
+        handler({ params: {}, session: {} }, {}, resolve)
+      })
+      expect(error.message).to.equal('boom')
+      expect(stopRun.called).to.be.true
+    } finally {
+      stopRun.restore()
+      Settings.aiAssist.enabled = origEnabled
+    }
+  }, 20000)
+})

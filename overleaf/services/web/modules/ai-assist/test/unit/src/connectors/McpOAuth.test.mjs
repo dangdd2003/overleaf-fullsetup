@@ -202,6 +202,44 @@ describe('McpOAuth', function () {
       expect(as.issuer).to.equal('https://as.example.com/tenant')
     })
 
+    it('skips metadata that names a different issuer, and accepts one that differs only by a trailing slash', async function () {
+      const { fetch } = respondWith({
+        'https://as.example.com/.well-known/oauth-authorization-server': {
+          body: { ...AS_METADATA, issuer: 'https://evil.example.com' },
+        },
+        'https://as.example.com/.well-known/openid-configuration': {
+          body: { ...AS_METADATA, issuer: 'https://as.example.com/' },
+        },
+      })
+
+      const as = await discoverAuthorizationServerMetadata({
+        issuer: 'https://as.example.com',
+        fetch,
+      })
+
+      expect(as.token_endpoint).to.equal('https://as.example.com/token')
+      expect(as.issuer).to.equal('https://as.example.com/')
+    })
+
+    it('throws when the only metadata document names a different issuer', async function () {
+      const { fetch } = respondWith({
+        'https://as.example.com/.well-known/oauth-authorization-server': {
+          body: { ...AS_METADATA, issuer: 'https://evil.example.com' },
+        },
+      })
+
+      let error = null
+      try {
+        await discoverAuthorizationServerMetadata({
+          issuer: 'https://as.example.com',
+          fetch,
+        })
+      } catch (err) {
+        error = err
+      }
+      expect(error.message).to.match(/Failed to discover/)
+    })
+
     it('throws when no metadata document can be found', async function () {
       const { fetch } = respondWith({})
 

@@ -656,3 +656,24 @@ describe('Work Package C: Open Flow, Controller & Tier 3', () => {
   })
 
 })
+
+describe('LatexDependencyScanner argument bounds', () => {
+  it('still reads package, input and graphics lists of a normal document', () => {
+    const scan = scanLatexDependencies(
+      '\\documentclass[11pt]{article}\n\\usepackage[utf8]{inputenc}\n\\usepackage{amsmath,graphicx}\n\\input{chapters/intro}\n\\includegraphics[width=3cm]{fig/plot.png}\n',
+      ['chapters/intro.tex', 'fig/plot.png']
+    )
+    expect(scan.documentClass).toBe('article')
+    expect(scan.referencedPackages).toEqual(['inputenc', 'amsmath', 'graphicx'])
+    expect(scan.inputs).toEqual(['chapters/intro'])
+    expect(scan.graphics).toEqual(['fig/plot.png'])
+    expect(scan.missingFiles).toEqual([])
+  })
+
+  it('scans a main.tex with thousands of unclosed \\usepackage{ quickly', () => {
+    const src = '\\documentclass{article}\n' + '\\usepackage{'.repeat(20000)
+    const started = Date.now()
+    scanLatexDependencies(src, [])
+    expect(Date.now() - started).toBeLessThan(2000)
+  })
+})

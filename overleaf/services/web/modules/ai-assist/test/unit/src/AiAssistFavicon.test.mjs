@@ -494,3 +494,18 @@ describe('AiAssistFavicon', function () {
     expect(unsure.headers['Cache-Control']).to.equal('no-store')
   })
 })
+
+describe('iconLinksIn on crafted HTML', function () {
+  it('finishes in linear time on many unclosed link openers', function () {
+    const html = '<link '.repeat(80000)
+    const started = Date.now()
+    expect(iconLinksIn(html, 'https://example.test/')).to.deep.equal([])
+    expect(Date.now() - started).to.be.below(1000)
+  })
+
+  it('still reads a link tag longer than a few hundred characters', function () {
+    const html = `<link rel="icon" href="/icon.png" data-pad="${'x'.repeat(3000)}">`
+    const icons = iconLinksIn(html, 'https://example.test/')
+    expect(icons).to.deep.equal(['https://example.test/icon.png'])
+  })
+})

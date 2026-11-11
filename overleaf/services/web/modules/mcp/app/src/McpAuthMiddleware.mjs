@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import logger from '@overleaf/logger'
 import PersonalAccessTokenManager from '../../../../app/src/Features/PersonalAccessToken/PersonalAccessTokenManager.mjs'
+import UserGetter from '../../../../app/src/Features/User/UserGetter.mjs'
 import OAuth2KeyManager from './OAuth2/OAuth2KeyManager.mjs'
 import { OauthAccessToken } from '../../../../app/src/models/OauthAccessToken.mjs'
 import McpErrors from './McpErrors.mjs'
@@ -65,6 +66,13 @@ async function requireMcpAuth(req, res, next) {
         }
       }
       if (payload && payload.sub) {
+        // A suspended or deleted owner ends access even while the token verifies
+        const owner = await UserGetter.promises.getUser(payload.sub, {
+          suspended: 1,
+        })
+        if (!owner || owner.suspended) {
+          throw new Error('MCP token owner is missing or suspended')
+        }
         const scopes = typeof payload.scope === 'string'
           ? payload.scope.split(' ').filter(Boolean)
           : Array.isArray(payload.scope)

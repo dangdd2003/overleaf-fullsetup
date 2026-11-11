@@ -68,7 +68,7 @@ describe('AiAssistModeEndpoints', () => {
     it('sets mode on valid request', async () => {
       const mockManager = { setMode: sinon.stub().resolves() }
       const mockStore = {
-        getRun: sinon.stub().resolves({ runId: 'run-1', projectId }),
+        getRun: sinon.stub().resolves({ runId: 'run-1', projectId, userId }),
       }
       const controller = new AiAssistRunController({
         manager: mockManager,
@@ -78,6 +78,7 @@ describe('AiAssistModeEndpoints', () => {
       const req = {
         params: { Project_id: projectId, runId: 'run-1' },
         body: { mode: 'plan' },
+        session: { user: { _id: userId } },
       }
       const res = {
         json: sinon.spy(),
@@ -93,7 +94,7 @@ describe('AiAssistModeEndpoints', () => {
     it('returns 400 for invalid mode', async () => {
       const mockManager = { setMode: sinon.stub().resolves() }
       const mockStore = {
-        getRun: sinon.stub().resolves({ runId: 'run-1', projectId }),
+        getRun: sinon.stub().resolves({ runId: 'run-1', projectId, userId }),
       }
       const controller = new AiAssistRunController({
         manager: mockManager,
@@ -103,6 +104,7 @@ describe('AiAssistModeEndpoints', () => {
       const req = {
         params: { Project_id: projectId, runId: 'run-1' },
         body: { mode: 'super_invalid_mode' },
+        session: { user: { _id: userId } },
       }
       const res = {
         json: sinon.spy(),

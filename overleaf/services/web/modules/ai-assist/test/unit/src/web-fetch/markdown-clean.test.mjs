@@ -131,3 +131,12 @@ describe('cleanMarkdown', function () {
     expect(cleanMarkdown(once)).to.equal(once)
   })
 })
+
+describe('cleanMarkdown on crafted links', function () {
+  it('finishes in linear time on long runs of unclosed brackets', function () {
+    const started = Date.now()
+    cleanMarkdown('['.repeat(200000), 'https://example.test/')
+    cleanMarkdown('[a]('.repeat(50000), 'https://example.test/')
+    expect(Date.now() - started).to.be.below(1000)
+  })
+})

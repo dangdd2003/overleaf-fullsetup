@@ -57,7 +57,6 @@ export class AiAssistRunStore {
     await rclient.sadd(ACTIVE_RUNS_KEY, runId)
     await rclient.expire(ACTIVE_RUNS_KEY, RUN_TTL_SECONDS)
     await rclient.expire(key, RUN_TTL_SECONDS)
-    await rclient.expire(this._eventsKey(runId), RUN_TTL_SECONDS)
   }
 
   async getRun(runId) {
@@ -220,13 +219,18 @@ export class AiAssistRunStore {
     const rclient = this.getClient()
     if (!rclient) return 0
     const seqKey = `${this._key(runId)}:seq`
+    const eventsKey = this._eventsKey(runId)
     const seq = await rclient.incr(seqKey)
     const payload = JSON.stringify({ seq, event })
     if (event?.type !== 'turnFinished') {
       this.touchHeartbeat(runId).catch(() => {})
     }
+    // The seq key and events list are created here, so they take their TTL
+    // here too; sent together, the EXPIREs add no round trip
     await Promise.all([
-      rclient.rpush(this._eventsKey(runId), payload),
+      rclient.expire(seqKey, RUN_TTL_SECONDS),
+      rclient.rpush(eventsKey, payload),
+      rclient.expire(eventsKey, RUN_TTL_SECONDS),
       rclient.publish(this._channel(runId), payload),
     ])
     return seq

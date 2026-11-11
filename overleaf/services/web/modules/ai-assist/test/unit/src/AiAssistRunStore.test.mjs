@@ -96,3 +96,29 @@ describe('AiAssistRunStore mode support', () => {
     expect(Number(run.zeroSince)).to.be.greaterThan(0)
   })
 })
+
+describe('AiAssistRunStore event retention', () => {
+  it('gives the seq key and events list the run TTL when it writes an event', async () => {
+    const expires = []
+    const store = new AiAssistRunStore({
+      incr: async () => 1,
+      rpush: async () => 1,
+      publish: async () => 1,
+      hincrby: async () => 1,
+      hset: async () => 1,
+      expire: async (key, ttl) => {
+        expires.push([key, ttl])
+        return 1
+      },
+    })
+
+    await store.appendEvent('run_ttl', { type: 'text', text: 'hi' })
+
+    const seqExpire = expires.find(([key]) => key === 'ai-assist:run:run_ttl:seq')
+    const eventsExpire = expires.find(
+      ([key]) => key === 'ai-assist:run:run_ttl:events'
+    )
+    expect(seqExpire?.[1]).to.be.above(0)
+    expect(eventsExpire?.[1]).to.equal(seqExpire[1])
+  })
+})

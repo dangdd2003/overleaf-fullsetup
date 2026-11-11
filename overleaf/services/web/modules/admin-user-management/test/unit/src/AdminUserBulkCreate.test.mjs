@@ -347,7 +347,7 @@ describe('AdminUserBulkCreate Controller', () => {
       expect(AuthenticationManager.hashPassword).not.toHaveBeenCalled()
       expect(OneTimeTokenHandler.promises.getNewToken).toHaveBeenCalledWith(
         'password',
-        mockCreatedUser._id,
+        { user_id: mockCreatedUser._id.toString(), email: mockCreatedUser.email },
         { expiresIn: 7 * 24 * 60 * 60 }
       )
       expect(UserAuditLogHandler.promises.addEntry).toHaveBeenCalledWith(
@@ -374,7 +374,7 @@ describe('AdminUserBulkCreate Controller', () => {
             isAdmin: false,
             passwordSet: false,
             setupUrl:
-              'https://overleaf.example.com/user/password/set?token=token-xyz-123',
+              'https://overleaf.example.com/user/password/set?passwordResetToken=token-xyz-123&email=bob%40example.com',
           },
         ],
         skipped: [],
@@ -543,7 +543,7 @@ describe('AdminUserBulkCreate Controller', () => {
             isAdmin: false,
             passwordSet: false,
             setupUrl:
-              'https://overleaf.example.com/user/password/set?token=tok456',
+              'https://overleaf.example.com/user/password/set?passwordResetToken=tok456&email=valid2%40example.com',
           },
         ],
         skipped: [

@@ -16,7 +16,8 @@ const STOPWORDS = new Set(
 
 /** A backslash before ASCII punctuation is a Markdown escape: `\_`, `\\`, `\[`. */
 const MARKDOWN_ESCAPE = /\\([!-/:-@[-`{-~])/g
-const MARKDOWN_LINK = /!?\[([^\]]*)\]\([^)]*\)/g
+// A target holds one level of nested parentheses and no brackets, so a run of unclosed brackets is scanned in linear time.
+const MARKDOWN_LINK = /!?\[([^[\]]*)\]\((?:[^()[\]]|\([^()[\]]*\))*\)/g
 
 /**
  * Text as find compares it. Case, Markdown escapes, code and bold markers,

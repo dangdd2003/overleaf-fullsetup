@@ -4089,3 +4089,11 @@ describe('AiAssistWebTools', function () {
     })
   })
 })
+
+describe('searchCacheText on crafted queries', function () {
+  it('finishes in linear time on a long run of dots', function () {
+    const started = Date.now()
+    searchCacheText('.'.repeat(200000) + 'x')
+    expect(Date.now() - started).to.be.below(1000)
+  })
+})

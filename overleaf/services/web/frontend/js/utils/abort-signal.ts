@@ -1,25 +1,15 @@
 import './abortsignal-polyfill'
 
 export const signalWithTimeout = (signal?: AbortSignal, timeout?: number) => {
-  const controller = new AbortController()
+  const signals: AbortSignal[] = []
   if (signal) {
-    if (signal.aborted) {
-      controller.abort((signal as any).reason)
-      return controller.signal
-    }
-    signal.addEventListener(
-      'abort',
-      () => controller.abort((signal as any).reason),
-      { once: true }
-    )
+    signals.push(signal)
   }
   if (typeof timeout === 'number') {
-    const timer = setTimeout(() => {
-      controller.abort(new DOMException('TimeoutError', 'TimeoutError'))
-    }, timeout)
-    controller.signal.addEventListener('abort', () => clearTimeout(timer), {
-      once: true,
-    })
+    signals.push(AbortSignal.timeout(timeout))
   }
-  return controller.signal
+  if (signals.length === 0) {
+    return new AbortController().signal
+  }
+  return AbortSignal.any(signals)
 }

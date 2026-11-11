@@ -326,6 +326,45 @@ describe('requireBearerToken', function () {
     })
   })
 
+  describe('MCP endpoint authentication before the body is parsed', function () {
+    const config = {
+      host: '127.0.0.1',
+      port: 0,
+      endpointPath: '/mcp',
+      internalUrl: '',
+      resourceUri: 'https://overleaf.example.com/mcp',
+      authServerUrl: 'https://overleaf.example.com',
+      allowedHosts: [],
+      allowedOrigins: [],
+    }
+    let server
+    let baseUrl
+
+    before(async function () {
+      const { app } = createHttpApp({ config, client: null })
+      server = http.createServer(app)
+      await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+      baseUrl = `http://127.0.0.1:${server.address().port}`
+    })
+
+    after(async function () {
+      if (server) await new Promise(resolve => server.close(resolve))
+    })
+
+    it('refuses an unvalidated token with 401 before a malformed body is parsed', async function () {
+      const res = await fetch(`${baseUrl}/mcp`, {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer olp_0123456789abcdef',
+          'content-type': 'application/json',
+        },
+        body: '{not json',
+      })
+      expect(res.status).to.equal(401)
+      expect(res.headers.get('www-authenticate')).to.include('Bearer')
+    })
+  })
+
   describe('expandHosts', function () {
     it('normalises hostnames and preserves entries without redundant ports', function () {
       const input = [

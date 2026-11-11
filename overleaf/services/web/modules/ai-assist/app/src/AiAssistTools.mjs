@@ -1,4 +1,5 @@
 import logger from '@overleaf/logger'
+import { promiseMapWithLimit } from '@overleaf/promise-utils'
 import DocumentUpdaterHandler from '../../../../app/src/Features/DocumentUpdater/DocumentUpdaterHandler.mjs'
 import ProjectEntityHandler from '../../../../app/src/Features/Project/ProjectEntityHandler.mjs'
 import ProjectGetter from '../../../../app/src/Features/Project/ProjectGetter.mjs'
@@ -40,12 +41,23 @@ import {
 // enough that a user typing alongside the agent is seen on the next step;
 // read_file and edit_file still read the live document.
 const SNAPSHOT_TTL_MS = 5000
+// Bounds the document-updater requests made when the flush fails.
+const SNAPSHOT_READ_CONCURRENCY = 8
 const MAX_FILE_ROWS = 400
 const MAX_READ_LINES = 1000
 // Without from/to, read_file returns a window instead of a whole long file:
 // the result stays in the conversation and is re-sent on every later step.
 const DEFAULT_READ_LINES = 500
 const MAX_SEARCH_HITS = 50
+// Search results are re-sent on every later step, so each hit carries only a
+// few lines of context, and each line is cut at a fixed length. The hit line
+// keeps more: a LaTeX paragraph is often one long line, and the match can sit
+// far into it.
+const MAX_SEARCH_CONTEXT_LINES = 5
+const MAX_SEARCH_HIT_CHARS = 2000
+const MAX_SEARCH_CONTEXT_CHARS = 300
+const truncateSearchLine = (text, max) =>
+  text.length > max ? `${text.slice(0, max)}... [truncated]` : text
 const MAX_REMEMBERED_COMPILES = 100
 const MAX_PDF_QUERY_CHARS = 200
 // CLSI build ids and server ids, as McpCompileController validates them. A
@@ -1150,8 +1162,10 @@ export class AiAssistTools {
     const listed = await this._getDocsList(projectId)
     const docs = flushed
       ? listed
-      : await Promise.all(
-          listed.map(async doc => {
+      : await promiseMapWithLimit(
+          SNAPSHOT_READ_CONCURRENCY,
+          listed,
+          async doc => {
             try {
               const fetched = await this.docUpdater.getDocument(
                 projectId,
@@ -1163,7 +1177,7 @@ export class AiAssistTools {
               // keep the docstore copy
             }
             return doc
-          })
+          }
         )
 
     let rootPath = null
@@ -2281,7 +2295,10 @@ export class AiAssistTools {
           ? snapshot.docs.filter(doc => matchesGlob(doc.path, pattern))
           : snapshot.docs
         const contextLines = Number.isFinite(Number(args.contextLines))
-          ? Math.max(0, Math.floor(Number(args.contextLines)))
+          ? Math.min(
+              MAX_SEARCH_CONTEXT_LINES,
+              Math.max(0, Math.floor(Number(args.contextLines)))
+            )
           : 1
 
         let found
@@ -2332,14 +2349,22 @@ export class AiAssistTools {
             return {
               path,
               line,
-              text: lines[line - 1] ?? '',
+              text: truncateSearchLine(
+                lines[line - 1] ?? '',
+                MAX_SEARCH_HIT_CHARS
+              ),
               ...(contextLines > 0
                 ? {
-                    before: lines.slice(
-                      Math.max(0, line - 1 - contextLines),
-                      line - 1
-                    ),
-                    after: lines.slice(line, line + contextLines),
+                    before: lines
+                      .slice(Math.max(0, line - 1 - contextLines), line - 1)
+                      .map(text =>
+                        truncateSearchLine(text, MAX_SEARCH_CONTEXT_CHARS)
+                      ),
+                    after: lines
+                      .slice(line, line + contextLines)
+                      .map(text =>
+                        truncateSearchLine(text, MAX_SEARCH_CONTEXT_CHARS)
+                      ),
                   }
                 : {}),
             }

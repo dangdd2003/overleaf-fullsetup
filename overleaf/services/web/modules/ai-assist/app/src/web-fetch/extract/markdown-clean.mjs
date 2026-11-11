@@ -11,7 +11,8 @@ import { collapse } from '../util.mjs'
 
 const FENCE_LINE = /^\s{0,3}(`{3,}|~{3,})(.*)$/
 const INVISIBLE = /[​-‍⁠﻿­]/g
-const MARKDOWN_LINK = /\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/g
+// Labels and targets stop at the next `[`, so a run of unclosed brackets is scanned in linear time.
+const MARKDOWN_LINK = /\[([^[\]]*)\]\((https?:\/\/[^)\s[]+)\)/g
 /** Shorter repeated blocks ("Share", "Reply") are left alone. */
 const MIN_DUPLICATE_CHARS = 40
 /** A block with this many links, mostly link text, is navigation. */
@@ -151,7 +152,7 @@ export function cleanMarkdown(text, baseUrl) {
     let body = block.text.replace(INVISIBLE, '').normalize('NFC')
     if (baseUrl) {
       body = body.replace(
-        /\[([^\]]*)\]\(([^)\s]+)\)/g,
+        /\[([^[\]]*)\]\(([^)\s[]+)\)/g,
         (whole, label, href) => {
           try {
             const resolved = new URL(href, baseUrl)

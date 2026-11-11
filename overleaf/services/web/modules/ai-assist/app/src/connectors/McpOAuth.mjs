@@ -143,6 +143,10 @@ export async function discoverProtectedResourceMetadata({
   }
 }
 
+function trimTrailingSlashes(value) {
+  return value.replace(/\/+$/, '')
+}
+
 export async function discoverAuthorizationServerMetadata({
   issuer,
   fetch = connectorFetch,
@@ -161,9 +165,20 @@ export async function discoverAuthorizationServerMetadata({
         `${parsed.origin}/.well-known/openid-configuration`,
       ]
 
+  let mismatch = null
   for (const candidate of candidates) {
     try {
       const json = await getJson(fetch, candidate)
+      // RFC 8414 3.3: a document that names another issuer is not this one's.
+      // A trailing slash is not a different issuer.
+      if (
+        json?.issuer &&
+        trimTrailingSlashes(String(json.issuer)) !==
+          trimTrailingSlashes(issuer)
+      ) {
+        mismatch = mismatch || String(json.issuer)
+        continue
+      }
       // Only web addresses: the endpoints come from a server we do not trust
       const authorization = isHttpUrl(json?.authorization_endpoint)
         ? json.authorization_endpoint
@@ -196,7 +211,10 @@ export async function discoverAuthorizationServerMetadata({
     } catch {}
   }
   throw new Error(
-    `Failed to discover OAuth authorization server metadata for issuer: ${issuer}`
+    `Failed to discover OAuth authorization server metadata for issuer: ${issuer}` +
+      (mismatch
+        ? `. Issuer mismatch: expected ${issuer}, got ${mismatch}`
+        : '')
   )
 }
 
@@ -220,7 +238,9 @@ export async function discover({
   if (asIssuer) {
     try {
       as = await discoverAuthorizationServerMetadata({ issuer: asIssuer, fetch })
-    } catch {}
+    } catch (err) {
+      if (String(err?.message).includes('Issuer mismatch')) throw err
+    }
   }
   return { prm, as, preset: presetFor(url) }
 }

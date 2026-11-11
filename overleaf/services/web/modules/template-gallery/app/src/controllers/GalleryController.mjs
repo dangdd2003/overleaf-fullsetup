@@ -330,6 +330,8 @@ function streamBlob(req, res, { sha, mime, cacheControl, extraHeaders = {} }) {
       res.destroy(err)
     }
   })
+  // A client that disconnects mid-transfer leaves the file descriptor open otherwise
+  res.on('close', () => stream.destroy())
   stream.pipe(res)
 }
 

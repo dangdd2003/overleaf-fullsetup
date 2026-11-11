@@ -4,6 +4,8 @@ import sinon from 'sinon'
 import Settings from '@overleaf/settings'
 import { AiAssistRunController } from '../../../app/src/AiAssistRunController.mjs'
 
+const USER_ID = '0123456789abcdef01234567'
+
 describe('AiAssistRunController', function () {
   let controller
   let mockManager
@@ -22,7 +24,7 @@ describe('AiAssistRunController', function () {
     mockStore = {
       getRun: sinon
         .stub()
-        .resolves({ runId: 'run-1', projectId: 'p1', status: 'running' }),
+        .resolves({ runId: 'run-1', projectId: 'p1', userId: USER_ID, status: 'running' }),
       getEvents: sinon
         .stub()
         .resolves([{ seq: 1, event: { type: 'text', text: 'hi' } }]),
@@ -56,7 +58,7 @@ describe('AiAssistRunController', function () {
   it('creates run and responds with runId', async function () {
     const req = {
       params: { Project_id: 'proj-1' },
-      session: { user: { _id: 'user-1' } },
+      session: { user: { _id: USER_ID } },
       body: {
         transcript: [{ role: 'user', content: 'test' }],
         providerSettings: { type: 'openai', apiKey: 'key', model: 'gpt-4o' },
@@ -96,6 +98,7 @@ describe('AiAssistRunController', function () {
       await controller.queueMessage(
         {
           params: { Project_id: 'p1', runId: 'run-1' },
+          session: { user: { _id: USER_ID } },
           body: { id: 'q1', text: 'also check refs', contextText: '<ctx/>' },
         },
         res
@@ -117,6 +120,7 @@ describe('AiAssistRunController', function () {
       await controller.queueMessage(
         {
           params: { Project_id: 'p1', runId: 'run-1' },
+          session: { user: { _id: USER_ID } },
           body: {
             id: 'q1',
             text: 'check this figure',
@@ -145,11 +149,13 @@ describe('AiAssistRunController', function () {
         runId: 'run-1',
         projectId: 'p1',
         status: 'done',
+        userId: USER_ID,
       })
       const res = reply()
       await controller.queueMessage(
         {
           params: { Project_id: 'p1', runId: 'run-1' },
+          session: { user: { _id: USER_ID } },
           body: { id: 'q1', text: 'too late' },
         },
         res
@@ -162,7 +168,7 @@ describe('AiAssistRunController', function () {
     it('rejects an empty message and a cross-project run', async function () {
       const empty = reply()
       await controller.queueMessage(
-        { params: { Project_id: 'p1', runId: 'run-1' }, body: { text: '   ' } },
+        { params: { Project_id: 'p1', runId: 'run-1' }, session: { user: { _id: USER_ID } }, body: { text: '   ' } },
         empty
       )
       expect(empty.statusCode).to.equal(400)
@@ -179,12 +185,28 @@ describe('AiAssistRunController', function () {
       expect(mockManager.queueMessage.called).to.be.false
     })
 
+    it('rejects a non-string contextText with 400 before sizing it', async function () {
+      const res = reply()
+      await controller.queueMessage(
+        {
+          params: { Project_id: 'p1', runId: 'run-1' },
+          session: { user: { _id: USER_ID } },
+          body: { id: 'q1', text: 'hi', contextText: { nested: true } },
+        },
+        res
+      )
+
+      expect(res.statusCode).to.equal(400)
+      expect(mockManager.queueMessage.called).to.be.false
+    })
+
     it('answers 409 when a run still marked running has stopped reading its queue', async function () {
       mockManager.queueMessage.resolves(false)
       const res = reply()
       await controller.queueMessage(
         {
           params: { Project_id: 'p1', runId: 'run-1' },
+          session: { user: { _id: USER_ID } },
           body: { id: 'q1', text: 'just as it finished' },
         },
         res
@@ -197,7 +219,7 @@ describe('AiAssistRunController', function () {
       const takeBack = async () => {
         const res = reply()
         await controller.unqueueMessage(
-          { params: { Project_id: 'p1', runId: 'run-1', messageId: 'q1' } },
+          { params: { Project_id: 'p1', runId: 'run-1', messageId: 'q1' }, session: { user: { _id: USER_ID } } },
           res
         )
         return res
@@ -226,6 +248,7 @@ describe('AiAssistRunController', function () {
           runId: 'run-1',
           projectId: 'p1',
           status: 'stopped',
+          userId: USER_ID,
         })
         const res = await takeBack()
         expect(res.statusCode).to.equal(409)
@@ -268,6 +291,7 @@ describe('AiAssistRunController', function () {
             messageId: 'q1',
             ...params,
           },
+          session: { user: { _id: USER_ID } },
         },
         res
       )
@@ -297,6 +321,7 @@ describe('AiAssistRunController', function () {
           runId: 'run-1',
           projectId: 'p1',
           status,
+          userId: USER_ID,
         })
         const res = await sendNow()
         expect(res.statusCode, status).to.equal(409)
@@ -331,7 +356,7 @@ describe('AiAssistRunController', function () {
   })
 
   it('handles stop run requests', async function () {
-    const req = { params: { runId: 'run-1' } }
+    const req = { params: { runId: 'run-1' }, session: { user: { _id: USER_ID } } }
     const res = { json: sinon.stub(), status: sinon.stub().returnsThis() }
 
     await controller.stopRun(req, res)
@@ -340,6 +365,7 @@ describe('AiAssistRunController', function () {
   })
 
   it('refuses a legacy stop from someone who cannot write the run project', async function () {
+    mockStore.getRun.resolves({ projectId: 'p1', userId: 'a'.repeat(24) })
     mockAuthorization.canUserWriteProjectContent.resolves(false)
     const req = {
       params: { runId: 'run-1' },
@@ -355,7 +381,25 @@ describe('AiAssistRunController', function () {
     )).to.be.true
   })
 
+  it('refuses to start a run without a logged-in ObjectId user', async function () {
+    const res = { json: sinon.stub(), status: sinon.stub().returnsThis() }
+    await controller.createRun(
+      {
+        params: { Project_id: 'proj-1' },
+        session: { user: { _id: 'not-an-object-id' } },
+        body: {
+          transcript: [{ role: 'user', content: 'test' }],
+          providerSettings: { type: 'openai', apiKey: 'key', model: 'gpt-4o' },
+        },
+      },
+      res
+    )
+    expect(res.status.calledWith(403)).to.be.true
+    expect(mockManager.startRun.called).to.be.false
+  })
+
   it('refuses a legacy stream from someone who cannot read the run project', async function () {
+    mockStore.getRun.resolves({ projectId: 'p1', userId: 'a'.repeat(24) })
     mockAuthorization.canUserReadProject.resolves(false)
     const req = {
       params: { runId: 'run-1' },
@@ -379,6 +423,7 @@ describe('AiAssistRunController', function () {
     const req = {
       params: { runId: 'run-1' },
       body: { accepted: true },
+      session: { user: { _id: USER_ID } },
     }
     const res = { json: sinon.stub(), status: sinon.stub().returnsThis() }
 
@@ -391,7 +436,7 @@ describe('AiAssistRunController', function () {
   it('rejects createRun with 400 when providerSettings.baseUrl is internal service', async function () {
     const req = {
       params: { Project_id: 'proj-1' },
-      session: { user: { _id: 'user-1' } },
+      session: { user: { _id: USER_ID } },
       body: {
         transcript: [{ role: 'user', content: 'test' }],
         providerSettings: {
@@ -414,7 +459,7 @@ describe('AiAssistRunController', function () {
   it('generates runId with 128-bit hex entropy', async function () {
     const req = {
       params: { Project_id: 'proj-1' },
-      session: { user: { _id: 'user-1' } },
+      session: { user: { _id: USER_ID } },
       body: {
         transcript: [{ role: 'user', content: 'test' }],
         providerSettings: { type: 'openai', apiKey: 'key' },
@@ -434,7 +479,7 @@ describe('AiAssistRunController', function () {
     const req = {
       params: { Project_id: 'attacker-proj', runId: 'run-1' },
       query: {},
-      session: { user: { _id: 'user-1' } },
+      session: { user: { _id: USER_ID } },
       on: sinon.stub(),
     }
     const res = {
@@ -451,7 +496,7 @@ describe('AiAssistRunController', function () {
   it('rejects stopRun with 403 when route Project_id does not match run.projectId', async function () {
     const req = {
       params: { Project_id: 'mismatched-proj', runId: 'run-1' },
-      session: { user: { _id: 'user-1' } },
+      session: { user: { _id: USER_ID } },
     }
     const res = { json: sinon.stub(), status: sinon.stub().returnsThis() }
 
@@ -465,7 +510,7 @@ describe('AiAssistRunController', function () {
     const req = {
       params: { Project_id: 'p1', runId: 'run-1' },
       query: { since: 'abc' },
-      session: { user: { _id: 'user-1' } },
+      session: { user: { _id: USER_ID } },
       on: sinon.stub(),
     }
     const res = {
@@ -491,7 +536,7 @@ describe('AiAssistRunController', function () {
     const req = {
       params: { Project_id: 'mismatched-proj', runId: 'run-1' },
       body: { accepted: true },
-      session: { user: { _id: 'user-1' } },
+      session: { user: { _id: USER_ID } },
     }
     const res = { json: sinon.stub(), status: sinon.stub().returnsThis() }
 
@@ -505,7 +550,7 @@ describe('AiAssistRunController', function () {
     const req = {
       params: { Project_id: 'p1', runId: 'run-1' },
       query: {},
-      session: { user: { _id: 'user-1' } },
+      session: { user: { _id: USER_ID } },
       on: sinon.stub().callsFake((event, handler) => {
         if (event === 'close') closeHandler = handler
       }),
@@ -533,7 +578,7 @@ describe('AiAssistRunController', function () {
     const req = {
       params: { Project_id: 'p1', runId: 'run-1' },
       query: { watch: '0' },
-      session: { user: { _id: 'user-1' } },
+      session: { user: { _id: USER_ID } },
       on: sinon.stub().callsFake((event, handler) => {
         if (event === 'close') closeHandler = handler
       }),
@@ -567,7 +612,7 @@ describe('AiAssistRunController', function () {
     const req = {
       params: { Project_id: 'p1', runId: 'run-1' },
       query: {},
-      session: { user: { _id: 'user-1' } },
+      session: { user: { _id: USER_ID } },
       on: sinon.stub().callsFake((event, handler) => {
         if (event === 'close') closeHandler = handler
       }),
@@ -599,7 +644,7 @@ describe('AiAssistRunController', function () {
     const req = {
       params: { Project_id: 'p1', runId: 'run-1' },
       query: { since: '0' },
-      session: { user: { _id: 'user-1' } },
+      session: { user: { _id: USER_ID } },
       on: sinon.stub(),
     }
     const res = {
@@ -624,12 +669,13 @@ describe('AiAssistRunController', function () {
     mockStore.getRun.resolves({
       runId: 'run-1',
       projectId: 'p1',
+      userId: USER_ID,
       status: 'running',
     })
     const req = {
       params: { Project_id: 'p1', runId: 'run-1' },
       query: {},
-      session: { user: { _id: 'user-1' } },
+      session: { user: { _id: USER_ID } },
       on: sinon.stub(),
     }
     const res = {
@@ -654,7 +700,7 @@ describe('AiAssistRunController', function () {
     const largeText = 'x'.repeat(500000)
     const req = {
       params: { Project_id: 'proj-1' },
-      session: { user: { _id: 'user-1' } },
+      session: { user: { _id: USER_ID } },
       body: {
         transcript: [{ role: 'user', content: largeText }],
         providerSettings: { type: 'openai', apiKey: 'key' },
@@ -675,7 +721,7 @@ describe('AiAssistRunController', function () {
     const hugeText = 'x'.repeat(33 * 1024 * 1024)
     const req = {
       params: { Project_id: 'proj-1' },
-      session: { user: { _id: 'user-1' } },
+      session: { user: { _id: USER_ID } },
       body: {
         transcript: [{ role: 'user', content: hugeText }],
         providerSettings: { type: 'openai', apiKey: 'key' },
@@ -696,7 +742,7 @@ describe('AiAssistRunController', function () {
     const req = {
       params: { Project_id: 'p1', runId: 'run-1' },
       query: {},
-      session: { user: { _id: 'user-1' } },
+      session: { user: { _id: USER_ID } },
       on: sinon.stub(),
     }
     const res = {
@@ -722,7 +768,7 @@ describe('AiAssistRunController', function () {
       const req = {
         params: { Project_id: 'p1', runId: 'run-1' },
         query: {},
-        session: { user: { _id: 'user-1' } },
+        session: { user: { _id: USER_ID } },
         on: sinon.stub().callsFake((event, handler) => {
           if (event === 'close') closeHandler = handler
         }),
@@ -751,7 +797,7 @@ describe('AiAssistRunController', function () {
   describe('web search settings', function () {
     const request = webSearchSettings => ({
       params: { Project_id: 'proj-1' },
-      session: { user: { _id: 'user-1' } },
+      session: { user: { _id: USER_ID } },
       body: {
         transcript: [{ role: 'user', content: 'test' }],
         providerSettings: { type: 'openai', apiKey: 'key', model: 'gpt-4o' },
@@ -877,5 +923,56 @@ describe('AiAssistRunController', function () {
         Settings.aiAssist.serverWebSearch = origServer
       }
     })
+  })
+})
+
+describe('AiAssistRunController streamRun after headers are sent', function () {
+  it('ends the stream and releases the subscription when a read fails mid-stream', async function () {
+    const release = sinon.stub()
+    const subscriber = {
+      subscribe: sinon.stub().resolves(release),
+    }
+    const store = {
+      getRun: sinon
+        .stub()
+        .resolves({ runId: 'run-2', projectId: 'p1', userId: USER_ID, status: 'running' }),
+      getEvents: sinon.stub().rejects(new Error('redis went away')),
+      addWatcher: sinon.stub().resolves(1),
+      removeWatcher: sinon.stub().resolves(0),
+    }
+    const controller = new AiAssistRunController({
+      manager: { startRun: sinon.stub().resolves() },
+      store,
+      subscriber,
+      authorization: {
+        canUserReadProject: sinon.stub().resolves(true),
+        canUserWriteProjectContent: sinon.stub().resolves(true),
+      },
+    })
+    const res = {
+      headersSent: false,
+      writableEnded: false,
+      setHeader() {},
+      flushHeaders() {
+        this.headersSent = true
+      },
+      write() {},
+      end() {
+        this.writableEnded = true
+      },
+    }
+    const req = {
+      params: { Project_id: 'p1', runId: 'run-2' },
+      query: {},
+      session: { user: { _id: USER_ID } },
+      on() {},
+    }
+
+    await controller.streamRun(req, res)
+
+    expect(res.writableEnded).to.be.true
+    // The watcher taken for this stream is released, not left counted
+    expect(store.removeWatcher.calledOnce).to.be.true
+    expect(release.called).to.be.true
   })
 })

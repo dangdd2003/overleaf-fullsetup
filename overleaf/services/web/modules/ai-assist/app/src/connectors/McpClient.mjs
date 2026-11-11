@@ -214,18 +214,26 @@ async function parseSseStream(bodyStream, onMessage) {
   // ends its event often arrive in different reads. The decoder keeps a
   // multi-byte character split across chunks whole.
   const decoder = new StringDecoder('utf8')
-  let buffer = ''
+  // The unfinished line so far, as pieces, so each chunk is searched only for
+  // its own line breaks and a long line is joined once when it completes
+  let pending = []
+  let pendingChars = 0
   let eventName = 'message'
   const dataParts = []
   let eventChars = 0
   for await (const chunk of bodyStream) {
-    buffer += typeof chunk === 'string' ? chunk : decoder.write(chunk)
-    if (buffer.length + eventChars > MAX_SSE_EVENT_CHARS) {
+    const text = typeof chunk === 'string' ? chunk : decoder.write(chunk)
+    if (pendingChars + text.length + eventChars > MAX_SSE_EVENT_CHARS) {
       throw new Error('SSE event exceeds the size limit')
     }
-    const lines = buffer.split(/\r?\n/)
-    buffer = lines.pop() ?? ''
-    for (const line of lines) {
+    let start = 0
+    let newline = text.indexOf('\n', start)
+    while (newline !== -1) {
+      pending.push(text.slice(start, newline))
+      let line = pending.join('')
+      pending = []
+      pendingChars = 0
+      if (line.endsWith('\r')) line = line.slice(0, -1)
       if (line === '') {
         if (dataParts.length > 0) {
           onMessage({ event: eventName, data: dataParts.join('\n') })
@@ -240,6 +248,13 @@ async function parseSseStream(bodyStream, onMessage) {
         dataParts.push(data)
         eventChars += data.length
       }
+      start = newline + 1
+      newline = text.indexOf('\n', start)
+    }
+    if (start < text.length) {
+      const rest = text.slice(start)
+      pending.push(rest)
+      pendingChars += rest.length
     }
   }
 }

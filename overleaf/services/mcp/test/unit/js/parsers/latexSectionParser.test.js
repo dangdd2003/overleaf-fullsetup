@@ -233,4 +233,19 @@ describe('latexSectionParser', function () {
       expect(notes[0].text).to.equal('finish')
     })
   })
+
+  describe('unclosed optional arguments', function () {
+    it('finishes thousands of unclosed [ arguments well inside the time bound', function () {
+      const text = '\\section[ '.repeat(8000) + 'x'.repeat(200000)
+      const started = Date.now()
+      expect(parseSections(text)).to.deep.equal([])
+      expect(Date.now() - started).to.be.below(1000)
+    })
+
+    it('still reads a section whose optional argument closes', function () {
+      const sections = parseSections('\\section[short]{Intro}\nbody')
+      expect(sections).to.have.length(1)
+      expect(sections[0].title).to.equal('Intro')
+    })
+  })
 })
