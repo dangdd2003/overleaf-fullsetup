@@ -533,15 +533,21 @@ const GoogleDriveController = {
         })
       }
 
+      const syncStartedAt = new Date()
       const result = await GoogleDriveSyncManager.syncProject(projectId, userId)
 
       // A full reconcile subsumes every queued path, so the outbound worker
-      // has nothing left to do for this project.
+      // has nothing left to do for this project unless newer edits landed.
       await db.googleDriveProjectStates.updateOne(
         {
           projectId: ObjectId.isValid(projectId)
             ? new ObjectId(projectId)
             : projectId,
+          $or: [
+            { outboundDirtyAt: { $lte: syncStartedAt } },
+            { outboundDirtyAt: null },
+            { outboundDirtyAt: { $exists: false } },
+          ],
         },
         { $set: { pendingChanges: {} }, $unset: { outboundDirtyAt: '' } }
       )

@@ -80,7 +80,14 @@ describe('GoogleDriveBulkSyncWorker', () => {
       ['project-2', 'user-1'],
     ])
     expect(db.googleDriveProjectStates.updateOne).toHaveBeenCalledWith(
-      { projectId: 'project-1' },
+      {
+        projectId: 'project-1',
+        $or: [
+          { outboundDirtyAt: { $lte: expect.any(Date) } },
+          { outboundDirtyAt: null },
+          { outboundDirtyAt: { $exists: false } },
+        ],
+      },
       { $set: { pendingChanges: {} }, $unset: { outboundDirtyAt: '' } }
     )
     expect(db.googleDriveBulkSyncJobs.updateOne).toHaveBeenCalledWith(
@@ -164,6 +171,23 @@ describe('GoogleDriveBulkSyncWorker', () => {
       ([, update]) => update.$set?.status === 'completed'
     )
     expect(completed).toBe(false)
+  })
+
+  it('guards pendingChanges clearing with a timestamp captured before syncProject runs', async () => {
+    const job = makeJob(['queued'])
+    let duringSyncTime
+    GoogleDriveSyncManager.syncProject.mockImplementation(async () => {
+      await new Promise(resolve => setTimeout(resolve, 10))
+      duringSyncTime = new Date()
+      return { success: true }
+    })
+
+    await GoogleDriveBulkSyncWorker.processJob(job)
+
+    const [filter] = db.googleDriveProjectStates.updateOne.mock.calls[0]
+    const cutoff = filter.$or[0].outboundDirtyAt.$lte
+    expect(cutoff).toBeInstanceOf(Date)
+    expect(cutoff.getTime()).toBeLessThanOrEqual(duringSyncTime.getTime())
   })
 
   it('kick claims queued jobs', async () => {

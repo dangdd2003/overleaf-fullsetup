@@ -7,6 +7,7 @@ import ProjectEntityHandler from '../../../../app/src/Features/Project/ProjectEn
 import DocstoreManager from '../../../../app/src/Features/Docstore/DocstoreManager.mjs'
 import HistoryManager from '../../../../app/src/Features/History/HistoryManager.mjs'
 import { classifySyncEntry, isExcludedSyncPath } from './Exclusions.mjs'
+import SyncEngine from './SyncEngine.mjs'
 
 // Caps on how much of a project or repo one sync may hold and copy. Fixed in
 // code: exceeding either fails the sync with a 413 `project_too_large` error.
@@ -42,6 +43,7 @@ function _isRepoManaged(entry) {
   const { verdict } = classifySyncEntry(entry.relPath, {
     sizeBytes: entry.sizeBytes,
     symlinkTarget: entry.symlinkTarget,
+    isSymlink: entry.isSymlink,
   })
   return verdict === 'skip'
 }
@@ -59,9 +61,10 @@ function _safePath(baseDir, relPath) {
  * existing component on the way, the file included, must be a real file or
  * directory: a symlink in the working tree can point anywhere on the server,
  * and writing through it would overwrite that target. The lexical check in
- * _safePath does not see symlinks.
+ * _safePath does not see symlinks. Index-recorded symlinks must also remain
+ * untouched when Git has checked them out as regular files.
  */
-export async function resolveSafeWritePath(repoDir, relPath) {
+export async function resolveSafeWritePath(repoDir, relPath, symlinkPaths) {
   const absPath = _safePath(repoDir, relPath)
   if (!absPath) return null
   // Apply the same path exclusions in both directions. In particular, project
@@ -69,9 +72,13 @@ export async function resolveSafeWritePath(repoDir, relPath) {
   // or hooks, which subsequent Git commands would trust. Check the resolved
   // relative path so leading slashes and dot segments cannot bypass the rule.
   if (isExcludedSyncPath(path.relative(repoDir, absPath))) return null
+  symlinkPaths ??= await SyncEngine.promises.getSymlinkPaths(repoDir)
   let current = repoDir
   for (const part of path.relative(repoDir, absPath).split(path.sep)) {
     current = path.join(current, part)
+    if (symlinkPaths.has(path.relative(repoDir, current).split(path.sep).join('/'))) {
+      return null
+    }
     const stat = await fs.lstat(current).catch(() => null)
     if (!stat) break
     if (stat.isSymbolicLink()) return null
@@ -92,6 +99,7 @@ async function materializeProject(projectId, destDir) {
     )
   }
   const manifest = []
+  const symlinkPaths = await SyncEngine.promises.getSymlinkPaths(destDir)
   let totalBytes = 0
 
   const docs = await DocstoreManager.promises.getAllDocs(projectId)
@@ -101,7 +109,7 @@ async function materializeProject(projectId, destDir) {
   }
 
   for (const { path: relPath, doc } of entities.docs || []) {
-    const absPath = await resolveSafeWritePath(destDir, relPath)
+    const absPath = await resolveSafeWritePath(destDir, relPath, symlinkPaths)
     if (!absPath) continue
     const docData = docsById.get(String(doc._id))
     const lines = docData?.lines !== undefined ? docData.lines : []
@@ -114,7 +122,7 @@ async function materializeProject(projectId, destDir) {
   }
 
   for (const { path: relPath, file } of entities.files || []) {
-    const absPath = await resolveSafeWritePath(destDir, relPath)
+    const absPath = await resolveSafeWritePath(destDir, relPath, symlinkPaths)
     if (!absPath) continue
     await fs.mkdir(path.dirname(absPath), { recursive: true })
     const { stream } = await HistoryManager.promises.requestBlobWithProjectId(
@@ -141,7 +149,7 @@ async function materializeProject(projectId, destDir) {
   }
 
   // remove on-disk files that no longer exist in Overleaf
-  const onDisk = await readProjectTree(destDir)
+  const onDisk = await readProjectTree(destDir, symlinkPaths)
   const manifestSet = new Set(manifest.map(p => p.replace(/\\/g, '/')))
   for (const entry of onDisk) {
     if (manifestSet.has(entry.relPath.replace(/\\/g, '/'))) continue
@@ -155,7 +163,8 @@ async function materializeProject(projectId, destDir) {
   return manifest
 }
 
-async function readProjectTree(repoDir) {
+async function readProjectTree(repoDir, symlinkPaths) {
+  symlinkPaths ??= await SyncEngine.promises.getSymlinkPaths(repoDir)
   const limits = _limits()
   const entries = []
   let totalBytes = 0
@@ -168,6 +177,8 @@ async function readProjectTree(repoDir) {
       if (dirent.isSymbolicLink()) {
         const target = await fs.readlink(absPath)
         entries.push({ relPath, sizeBytes: 0, symlinkTarget: target })
+      } else if (symlinkPaths.has(relPath)) {
+        entries.push({ relPath, sizeBytes: 0, symlinkTarget: null, isSymlink: true })
       } else if (dirent.isDirectory()) {
         await walk(absPath, relPath)
       } else if (dirent.isFile()) {

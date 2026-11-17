@@ -24,6 +24,7 @@ const STATUS_BY_CODE = Object.freeze({
   duplicate: 409,
   version_conflict: 409,
   secret_not_configured: 409,
+  invalid_credentials: 400,
 })
 
 const PROBE_ERROR_BY_CODE = Object.freeze({

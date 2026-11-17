@@ -7,8 +7,8 @@ import { OauthAccessToken } from '../../../../../app/src/models/OauthAccessToken
  * token does not identify one.
  *
  * An access token must verify before its grant_id is trusted. Otherwise anyone
- * could delete someone else's grant by forging a JWT. An expired access token
- * does not resolve; the client can revoke with its refresh token instead.
+ * could delete someone else's grant by forging a JWT. Expiration is ignored so
+ * revoking an expired access token still revokes its grant and refresh token.
  */
 async function grantFilterForToken(token) {
   if (token.startsWith('oar_')) {
@@ -18,8 +18,12 @@ async function grantFilterForToken(token) {
 
   if (token.split('.').length === 3) {
     try {
-      const payload = await OAuth2KeyManager.verifyJwt(token)
-      return payload.grant_id ? { _id: payload.grant_id } : null
+      const payload = await OAuth2KeyManager.verifyJwt(token, undefined, {
+        ignoreExpiration: true,
+      })
+      return typeof payload.grant_id === 'string' && payload.grant_id
+        ? { _id: payload.grant_id }
+        : null
     } catch {
       return null
     }

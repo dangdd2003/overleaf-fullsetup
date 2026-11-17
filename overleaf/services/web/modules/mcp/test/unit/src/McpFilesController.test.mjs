@@ -717,6 +717,32 @@ describe('McpFilesController.writeDoc', () => {
     expect(r.body.lineCount).toBe(1)
   })
 
+  it('normalizes CRLF and bare CR line endings when writing a doc', async () => {
+    ProjectEntityHandler.promises.getAllEntities.mockResolvedValue({
+      docs: [],
+      files: [],
+      folders: [],
+    })
+    EditorController.promises.upsertDocWithPath.mockResolvedValue({
+      doc: { _id: 'd1' },
+    })
+    const req = {
+      mcpUserId: 'u1',
+      params: { projectId: 'p1' },
+      body: { path: 'main.tex', content: 'line1\r\nline2\rline3\nline4' },
+    }
+    const r = res()
+    await McpFilesController.writeDoc(req, r)
+    expect(EditorController.promises.upsertDocWithPath).toHaveBeenCalledWith(
+      'p1',
+      '/main.tex',
+      ['line1', 'line2', 'line3', 'line4'],
+      'mcp',
+      'u1'
+    )
+    expect(r.body.lineCount).toBe(4)
+  })
+
   it('refuses to write over a binary file at the same path', async () => {
     ProjectEntityHandler.promises.getAllEntities.mockResolvedValue({
       docs: [],

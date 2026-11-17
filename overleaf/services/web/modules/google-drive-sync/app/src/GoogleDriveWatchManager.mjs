@@ -25,6 +25,7 @@ function _getWebhookSecret() {
   // channel tokens for every user.
   const secret =
     Settings.googleDrive?.webhookSecret ||
+    Settings.googleDrive?.tokenEncryptionSecret ||
     Settings.security?.sessionSecret ||
     Settings.encryption?.userOAuthTokensSecret
   if (!secret) {

@@ -12,9 +12,13 @@ describe('GoogleDriveWatchManager', () => {
     encryption: {
       userOAuthTokensSecret: 'default-secret-key-for-test-only',
     },
+    security: {
+      sessionSecret: 'session-secret-for-test',
+    },
     googleDrive: {
       webhookUrl: 'https://overleaf.example.com/google-drive/webhook',
       webhookSecret: '',
+      tokenEncryptionSecret: '',
     },
   }
 
@@ -93,6 +97,19 @@ describe('GoogleDriveWatchManager', () => {
         '60d5ecb8b392d40015b6d5a2'
       )
       expect(token1).not.toBe(token2)
+    })
+
+    it('prefers tokenEncryptionSecret over sessionSecret when webhookSecret is not set', () => {
+      Settings.googleDrive.webhookSecret = ''
+      Settings.googleDrive.tokenEncryptionSecret = 'drive-token-secret-xyz'
+      const tokenWithDriveSecret =
+        GoogleDriveWatchManager.deriveChannelToken(userId)
+
+      Settings.googleDrive.tokenEncryptionSecret = ''
+      const tokenWithSessionSecret =
+        GoogleDriveWatchManager.deriveChannelToken(userId)
+
+      expect(tokenWithDriveSecret).not.toBe(tokenWithSessionSecret)
     })
   })
 

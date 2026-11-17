@@ -37,38 +37,42 @@ export const AdminProjectManagementController = {
     res.redirect(`/admin/project/${projectId}`)
   },
 
-  async renderProjectDetail(req, res) {
-    const { projectId } = req.params
-    if (!OBJECT_ID_RE.test(projectId)) {
-      return res.redirect('/admin/project?error=not_found')
+  async renderProjectDetail(req, res, next) {
+    try {
+      const { projectId } = req.params
+      if (!OBJECT_ID_RE.test(projectId)) {
+        return res.redirect('/admin/project?error=not_found')
+      }
+
+      const project = await ProjectGetter.promises.getProject(projectId, {
+        name: 1,
+        owner_ref: 1,
+        lastUpdated: 1,
+      })
+      if (!project) {
+        return res.redirect('/admin/project?error=not_found')
+      }
+
+      const [owner, memberIds] = await Promise.all([
+        UserGetter.promises.getUser(project.owner_ref, { email: 1 }),
+        CollaboratorsGetter.promises.getMemberIds(projectId),
+      ])
+
+      res.render(Path.resolve(__dirname, '../views/project_detail'), {
+        project: {
+          id: project._id.toString(),
+          name: project.name,
+          lastUpdated: project.lastUpdated,
+        },
+        ownerEmail: owner ? owner.email : '(unknown)',
+        // getMemberIds includes the owner, so exclude them from the count
+        collaboratorCount: Math.max(0, (memberIds || []).length - 1),
+        success: req.query.success || null,
+        error: req.query.error || null,
+      })
+    } catch (err) {
+      return next(err)
     }
-
-    const project = await ProjectGetter.promises.getProject(projectId, {
-      name: 1,
-      owner_ref: 1,
-      lastUpdated: 1,
-    })
-    if (!project) {
-      return res.redirect('/admin/project?error=not_found')
-    }
-
-    const [owner, memberIds] = await Promise.all([
-      UserGetter.promises.getUser(project.owner_ref, { email: 1 }),
-      CollaboratorsGetter.promises.getMemberIds(projectId),
-    ])
-
-    res.render(Path.resolve(__dirname, '../views/project_detail'), {
-      project: {
-        id: project._id.toString(),
-        name: project.name,
-        lastUpdated: project.lastUpdated,
-      },
-      ownerEmail: owner ? owner.email : '(unknown)',
-      // getMemberIds includes the owner, so exclude them from the count
-      collaboratorCount: Math.max(0, (memberIds || []).length - 1),
-      success: req.query.success || null,
-      error: req.query.error || null,
-    })
   },
 
   async transferOwnership(req, res) {
@@ -87,11 +91,16 @@ export const AdminProjectManagementController = {
     try {
       const newOwner = await UserGetter.promises.getUserByAnyEmail(
         newOwnerEmail,
-        { _id: 1 }
+        { _id: 1, holdingAccount: 1, suspended: 1 }
       )
       if (!newOwner) {
         return res.redirect(
           `/admin/project/${projectId}?error=user_not_found`
+        )
+      }
+      if (newOwner.holdingAccount || newOwner.suspended) {
+        return res.redirect(
+          `/admin/project/${projectId}?error=invalid_target_user`
         )
       }
 

@@ -348,5 +348,25 @@ describe('AdminUserBatchActive', () => {
         failed: [],
       })
     })
+
+    it('counts users, not sessions, whatever removeSessionsFromRedis returns', async () => {
+      req.body = {
+        userIds: [user1Id, user2Id, callerId],
+      }
+
+      UserSessionsManager.promises.removeSessionsFromRedis
+        .mockResolvedValueOnce(3)
+        .mockResolvedValueOnce(0)
+        .mockResolvedValueOnce(undefined)
+      UserAuditLogHandler.promises.addEntry.mockResolvedValue(true)
+
+      await AdminUserManagementController.batchRevokeUserSessions(req, res)
+
+      expect(res.json).toHaveBeenCalledWith({
+        success: true,
+        totalRevoked: 3,
+        failed: [],
+      })
+    })
   })
 })

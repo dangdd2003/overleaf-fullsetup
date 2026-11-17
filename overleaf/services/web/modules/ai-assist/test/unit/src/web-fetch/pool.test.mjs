@@ -1,4 +1,4 @@
-import { describe, it, afterEach } from 'vitest'
+import { describe, it, afterEach, vi } from 'vitest'
 import { expect } from 'chai'
 import {
   ExtractWorkerPool,
@@ -136,5 +136,47 @@ describe('ExtractWorkerPool', function () {
     expect((await crashed).kind).to.equal('content')
     const res = await next
     expect(res).to.deep.equal({ ok: true })
+  })
+
+  it('does not spawn worker threads until runExtractJob is called and unrefs workers', async function () {
+    const spawned = []
+    class FakeWorker {
+      constructor() {
+        this.handlers = new Map()
+        this.unrefCalled = false
+        spawned.push(this)
+      }
+      unref() {
+        this.unrefCalled = true
+      }
+      on(event, fn) {
+        this.handlers.set(event, fn)
+      }
+      postMessage(msg) {
+        this.handlers.get('message')?.({
+          id: msg.id,
+          success: true,
+          result: { ok: true },
+        })
+      }
+      async terminate() {}
+    }
+
+    vi.resetModules()
+    vi.doMock('node:worker_threads', () => ({ Worker: FakeWorker }))
+    try {
+      const freshPool = await import(
+        '../../../../app/src/web-fetch/extract/pool.mjs'
+      )
+      expect(spawned).to.have.lengthOf(0)
+
+      const result = await freshPool.runExtractJob({ kind: 'ok' })
+      expect(result).to.deep.equal({ ok: true })
+      expect(spawned.length).to.be.greaterThan(0)
+      expect(spawned.every(w => w.unrefCalled)).to.be.true
+    } finally {
+      vi.doUnmock('node:worker_threads')
+      vi.resetModules()
+    }
   })
 })

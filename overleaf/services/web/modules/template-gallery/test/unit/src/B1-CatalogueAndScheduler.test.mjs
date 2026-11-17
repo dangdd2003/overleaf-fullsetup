@@ -374,6 +374,20 @@ describe('Work Package B1: Catalogue, Scheduler, Persistence & Lifecycle', () =>
       )
     })
 
+    it('Indexes.ensureAll creates admin_list_title and admin_summary_counts compound indexes', async () => {
+      const itemsMock = makeMockCollection()
+      const jobsMock = makeMockCollection()
+      setCollectionOverrideForTests({
+        templateGalleryItems: itemsMock,
+        templateGalleryJobs: jobsMock,
+      })
+      const report = await Indexes.ensureAll()
+      expect(report.essentialOk).toBe(true)
+      const names = itemsMock.createIndex.mock.calls.map(([, opts]) => opts?.name)
+      expect(names).toContain('admin_list_title')
+      expect(names).toContain('admin_summary_counts')
+    })
+
   })
 
   // =========================================================================

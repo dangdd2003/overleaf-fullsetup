@@ -18,6 +18,8 @@ block content
 								.alert.alert-danger(role='alert') Please enter the new owner's email address.
 							if error === 'user_not_found'
 								.alert.alert-danger(role='alert') No user was found with that email address.
+							if error === 'invalid_target_user'
+								.alert.alert-danger(role='alert') Cannot transfer ownership to a suspended or holding account.
 							if error === 'transfer_failed'
 								.alert.alert-danger(role='alert') Ownership transfer failed. See the server logs for details.
 

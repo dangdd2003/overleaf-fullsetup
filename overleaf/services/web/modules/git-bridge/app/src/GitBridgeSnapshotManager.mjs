@@ -15,6 +15,26 @@ import fsPromises from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 
+const _pushLocks = new Map()
+
+/**
+ * Serializes async work per projectId so concurrent pushes to the same project
+ * do not interleave downloads, writes, or entity deletions.
+ */
+function _withPushLock(projectId, fn) {
+  const key = String(projectId)
+  const prev = _pushLocks.get(key) || Promise.resolve()
+  const next = prev.then(fn)
+  const tail = next.catch(() => {})
+  _pushLocks.set(key, tail)
+  tail.then(() => {
+    if (_pushLocks.get(key) === tail) {
+      _pushLocks.delete(key)
+    }
+  })
+  return next
+}
+
 /**
  * Origin of the git-bridge service that sends pushes. The file URLs and the
  * postback URL in a push point back at git-bridge, so anything else is refused.
@@ -553,6 +573,12 @@ const GitBridgeSnapshotManager = {
   },
 
   async processPush(projectId, user, files, postbackUrl) {
+    return _withPushLock(projectId, () =>
+      this._runProcessPush(projectId, user, files, postbackUrl)
+    )
+  },
+
+  async _runProcessPush(projectId, user, files, postbackUrl) {
     const userId = typeof user === 'object' && user !== null ? user._id : user
     // The postback is sent only to git-bridge. Any other URL is dropped.
     const trustedPostbackUrl = isGitBridgeUrl(postbackUrl) ? postbackUrl : null
@@ -595,7 +621,9 @@ const GitBridgeSnapshotManager = {
 
         // Download updated file content from git-bridge raw URL. The URL is not
         // in the error: it carries a key.
-        const response = await fetch(file.url)
+        const response = await fetch(file.url, {
+          signal: AbortSignal.timeout(60_000),
+        })
         if (!response.ok) {
           throw new Error(`Failed to fetch ${filePath} from git-bridge`)
         }
@@ -702,26 +730,13 @@ const GitBridgeSnapshotManager = {
 
       // 2. Fetch authoritative entity list from project document
       const existingPaths = []
-      try {
-        const entities =
-          await ProjectEntityHandler.promises.getAllEntities(projectId)
-        for (const { path: docPath } of entities.docs || []) {
-          const fp = docPath.startsWith('/') ? docPath : `/${docPath}`
+      const entities =
+        await ProjectEntityHandler.promises.getAllEntities(projectId)
+      for (const list of [entities.docs, entities.files, entities.folders]) {
+        for (const { path: entityPath } of list || []) {
+          const fp = entityPath.startsWith('/') ? entityPath : `/${entityPath}`
           existingPaths.push(fp)
         }
-        for (const { path: filePath } of entities.files || []) {
-          const fp = filePath.startsWith('/') ? filePath : `/${filePath}`
-          existingPaths.push(fp)
-        }
-        for (const { path: folderPath } of entities.folders || []) {
-          const fp = folderPath.startsWith('/') ? folderPath : `/${folderPath}`
-          existingPaths.push(fp)
-        }
-      } catch (err) {
-        logger.warn(
-          { err, projectId },
-          'could not fetch project entities for deletion comparison'
-        )
       }
 
       // git-bridge sends files only, never folders. A folder that holds a pushed

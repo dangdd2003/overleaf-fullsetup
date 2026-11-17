@@ -4,6 +4,7 @@ import path from 'node:path'
 import os from 'node:os'
 
 const calls = { upsertDoc: [], upsertFile: [], delete: [] }
+let symlinkPaths = new Set()
 
 const editorControllerMock = () => ({
   default: {
@@ -24,6 +25,7 @@ const editorControllerMock = () => ({
 const syncEngineMock = () => ({
   default: {
     promises: {
+      getSymlinkPaths: async () => symlinkPaths,
       writeFileFromRepo: async (repoDir, relPath) => ({
         tmpPath: `/tmp/fake/${relPath}`,
         tmpDir: '/tmp/fake',
@@ -53,6 +55,7 @@ describe('SyncFileOps', function () {
   let repoDir
 
   beforeEach(async function () {
+    symlinkPaths = new Set()
     calls.upsertDoc.length = 0
     calls.upsertFile.length = 0
     calls.delete.length = 0
@@ -106,5 +109,44 @@ describe('SyncFileOps', function () {
   it('collects warnings for excluded entries during import', async function () {
     const warnings = await SyncFileOps.promises.applyImportTree('proj1', 'user1', repoDir)
     expect(warnings.map(w => w.code)).to.deep.equal(['github_large_files_error'])
+  })
+
+  it.each(['applyChangeSet', 'applyImportTree'])(
+    '%s skips Git symlinks checked out as regular files',
+    async function (method) {
+      symlinkPaths.add('new.tex')
+      symlinkPaths.add('img.png')
+      const warnings = await SyncFileOps.promises[method](
+        'proj1', 'user1', repoDir,
+        [{ type: 'A', path: 'new.tex' }, { type: 'M', path: 'img.png' }]
+      )
+      expect(warnings).toContainEqual({ path: 'new.tex', code: 'github_symlink_error' })
+      expect(warnings).toContainEqual({ path: 'img.png', code: 'github_symlink_error' })
+      expect(calls.upsertDoc).to.have.length(0)
+      expect(calls.upsertFile).to.have.length(0)
+    }
+  )
+
+  it('refuses paths containing an intermediate symlink directory', async function () {
+    const outsideDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ghsync-outside-'))
+    try {
+      await fs.writeFile(path.join(outsideDir, 'secret.tex'), 'secret data\n')
+      await fs.symlink(outsideDir, path.join(repoDir, 'linked-dir'))
+
+      const warnings = await SyncFileOps.promises.applyChangeSet(
+        'proj1',
+        'user1',
+        repoDir,
+        [{ type: 'A', path: 'linked-dir/secret.tex' }]
+      )
+
+      expect(warnings).to.deep.equal([
+        { path: 'linked-dir/secret.tex', code: 'github_symlink_error' },
+      ])
+      expect(calls.upsertDoc).to.have.length(0)
+      expect(calls.upsertFile).to.have.length(0)
+    } finally {
+      await fs.rm(outsideDir, { recursive: true, force: true })
+    }
   })
 })

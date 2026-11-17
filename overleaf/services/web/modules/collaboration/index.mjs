@@ -11,6 +11,11 @@ import PermissionsController from '../../app/src/Features/Authorization/Permissi
 import RateLimiterMiddleware from '../../app/src/Features/Security/RateLimiterMiddleware.mjs'
 import { RateLimiter } from '../../app/src/infrastructure/RateLimiter.mjs'
 
+async function deleteNotificationPreferences(query) {
+  const { db } = await import('../../app/src/infrastructure/mongodb.mjs')
+  await db.notificationsPreferences.deleteMany(query)
+}
+
 function isEnabled() {
   return Boolean(Settings.enableCollaboration)
 }
@@ -152,6 +157,20 @@ const CollaborationModule = {
       async commentMessageSent(...args) {
         if (!isEnabled()) return
         return handleCommentMessageSent(...args)
+      },
+      async deleteUser(userId) {
+        if (!isEnabled() || !userId) return
+        await deleteNotificationPreferences({ user_id: userId.toString() })
+      },
+      async expireDeletedUser(userId) {
+        if (!isEnabled() || !userId) return
+        await deleteNotificationPreferences({ user_id: userId.toString() })
+      },
+      async projectExpired(projectId) {
+        if (!isEnabled() || !projectId) return
+        await deleteNotificationPreferences({
+          project_id: projectId.toString(),
+        })
       },
     },
   },

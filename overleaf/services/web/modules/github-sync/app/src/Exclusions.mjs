@@ -32,7 +32,7 @@ export function isExcludedSyncPath(relPath) {
   )
 }
 
-export function classifySyncEntry(relPath, { sizeBytes, symlinkTarget } = {}) {
+export function classifySyncEntry(relPath, { sizeBytes, symlinkTarget, isSymlink } = {}) {
   const normalized = relPath.replace(/\\/g, '/')
   const segments = normalized.split('/')
   if (segments.includes('.git')) {
@@ -41,7 +41,7 @@ export function classifySyncEntry(relPath, { sizeBytes, symlinkTarget } = {}) {
   if (isExcludedSyncPath(normalized)) {
     return { verdict: 'skip', code: 'github_workflow_files_error' }
   }
-  if (symlinkTarget) {
+  if (isSymlink || symlinkTarget) {
     return { verdict: 'skip', code: 'github_symlink_error' }
   }
   if (sizeBytes != null && sizeBytes > MAX_SYNC_FILE_SIZE) {

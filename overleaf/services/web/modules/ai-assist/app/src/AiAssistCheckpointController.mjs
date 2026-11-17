@@ -1,3 +1,4 @@
+import { normalizeProjectPath } from './AiAssistProjectPath.mjs'
 import logger from '@overleaf/logger'
 import Settings from '@overleaf/settings'
 import './ModuleSettings.mjs'
@@ -58,7 +59,8 @@ export class AiAssistCheckpointController {
     // The project's docs are read at most once, and only if a file needs them
     let allDocs = null
     for (const [filePath, fileInfo] of Object.entries(checkpointFiles || {})) {
-      const normalizedPath = filePath.replace(/^\//, '')
+      const normalizedPath = normalizeProjectPath(filePath)
+      if (!normalizedPath) continue
       let docId = fileInfo.docId
 
       if (!docId && this.entityHandler?.getDocIdByPath) {
@@ -91,7 +93,7 @@ export class AiAssistCheckpointController {
         } catch {}
       }
 
-      currentFiles[filePath] = content
+      currentFiles[normalizedPath] = content
     }
     return currentFiles
   }
@@ -125,7 +127,8 @@ export class AiAssistCheckpointController {
   }
 
   async #restoreFile(ids, filePath, fileInfo, restoredFiles) {
-    const normalizedPath = filePath.replace(/^\//, '')
+    const normalizedPath = normalizeProjectPath(filePath)
+    if (!normalizedPath) throw new Error('invalid checkpoint path')
     const docId = await this.#resolveDocId(
       ids.projectId,
       normalizedPath,
@@ -159,7 +162,7 @@ export class AiAssistCheckpointController {
           )
         } catch {}
       }
-      restoredFiles.push(filePath)
+      restoredFiles.push(normalizedPath)
       return
     }
 
@@ -184,7 +187,7 @@ export class AiAssistCheckpointController {
     } else {
       throw new Error('document no longer exists')
     }
-    restoredFiles.push(filePath)
+    restoredFiles.push(normalizedPath)
   }
 
   check = async (req, res) => {

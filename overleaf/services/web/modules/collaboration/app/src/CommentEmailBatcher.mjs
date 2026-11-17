@@ -154,6 +154,7 @@ async function flushQueue(userId, projectId) {
     ])
     if (recipient?.email && !recipient.suspended && project) {
       const comments = []
+      const authorsById = new Map()
       for (const raw of values) {
         const comment = JSON.parse(raw)
         // Re-evaluate membership, mute/preferences, and current thread state
@@ -166,7 +167,14 @@ async function flushQueue(userId, projectId) {
         )
         if (!eligible.some((entry) => entry.user._id.toString() === userId))
           continue
-        const author = await UserGetter.promises.getUser(comment.authorId)
+        let author = authorsById.get(comment.authorId)
+        if (!authorsById.has(comment.authorId)) {
+          author = await UserGetter.promises.getUser(comment.authorId, {
+            first_name: 1,
+            last_name: 1,
+          })
+          authorsById.set(comment.authorId, author)
+        }
         comments.push({
           ...comment,
           authorName: author?.first_name

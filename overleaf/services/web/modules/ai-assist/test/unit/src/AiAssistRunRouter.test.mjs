@@ -111,6 +111,16 @@ describe('AiAssistRunRouter', function () {
     expect(webRouter.delete.args.map(call => call[0])).to.include(
       '/ai-assist/projects/:Project_id/chats/:chatId'
     )
+    const generateTitleRoute = webRouter.post.args.find(
+      call =>
+        call[0] ===
+        '/ai-assist/projects/:Project_id/chats/:chatId/generate-title'
+    )
+    const providerModelsRoute = webRouter.post.args.find(
+      call => call[0] === '/ai-assist/providers/models'
+    )
+    expect(generateTitleRoute).to.have.length(5)
+    expect(generateTitleRoute[3]).to.equal(providerModelsRoute[2])
   })
 
   it('registers the routes for messages sent into a running run', async function () {

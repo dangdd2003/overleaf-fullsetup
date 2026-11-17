@@ -2439,6 +2439,94 @@
         }
       }
     },
+    "/api/v0/mcp/profile": {
+      "get": {
+        "operationId": "getMcpProfile",
+        "summary": "Get your profile",
+        "description": "Returns your profile: an opaque `id` derived from your user id (stable, and not your Overleaf user id), plus `name` (first and last name) and `email` when they are set. Requires a token with the mcp scope.",
+        "tags": [
+          "MCP Projects"
+        ],
+        "x-feature": "mcp",
+        "security": [
+          {
+            "mcpBearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Profile with id, and name and email when set.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpProfileResponse"
+                },
+                "example": {
+                  "id": "olp_profile_3f2a9c1e7b8d4a6f0e5c2b1a9d8e7f6c5b4a3928170615243342516273849506",
+                  "name": "Ada Lovelace",
+                  "email": "ada@example.com"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, unknown, expired or wrong-scope token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Token lacks the mcp scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The user no longer exists.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited, see Retry-After.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "example": 30
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpError"
+                },
+                "example": {
+                  "code": "rate_limited",
+                  "message": "rate limit exceeded",
+                  "hint": "Wait 30 seconds before retrying."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v0/mcp/projects/{projectId}": {
       "get": {
         "operationId": "getProject",
@@ -12709,6 +12797,28 @@
             "type": "string",
             "description": "Text content of the document. Missing content is stored as an empty document.",
             "example": "@article{key2026, title={Example}}\n"
+          }
+        }
+      },
+      "McpProfileResponse": {
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Opaque profile id derived from the user id.",
+            "example": "olp_profile_3f2a9c1e7b8d4a6f0e5c2b1a9d8e7f6c5b4a3928170615243342516273849506"
+          },
+          "name": {
+            "type": "string",
+            "description": "First and last name, when set."
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "description": "Account email, when set."
           }
         }
       },

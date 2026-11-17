@@ -296,6 +296,35 @@ describe('GitHubPassportStrategy createStrategy', function () {
     expect(mockPassport.use).toHaveBeenCalledOnce()
     const strategy = mockPassport.use.mock.calls[0][0]
     expect(strategy.name).to.equal('github-sync')
+    expect(strategy.options.authorizationURL).to.equal('https://github.com/login/oauth/authorize')
+    expect(strategy.options.tokenURL).to.equal('https://github.com/login/oauth/access_token')
+  })
+
+  it('derives authorizationURL and tokenURL from Settings.githubSync.gitBase', async function () {
+    vi.resetModules()
+    mockAll(() => ({
+      default: {
+        siteUrl: 'https://overleaf.test',
+        enableGithubSync: true,
+        githubSync: {
+          gitBase: 'https://ghe.internal.example///',
+          apiBase: 'https://ghe.internal.example/api/v3',
+          clientId: 'test-client-id',
+          clientSecret: 'test-client-secret',
+        },
+      },
+      __esModule: true,
+    }))
+    const { createStrategy } = await import('../../../app/src/GitHubPassportStrategy.mjs')
+    const mockPassport = { use: vi.fn() }
+    createStrategy(mockPassport)
+    const strategy = mockPassport.use.mock.calls[0][0]
+    expect(strategy.options.authorizationURL).to.equal(
+      'https://ghe.internal.example/login/oauth/authorize'
+    )
+    expect(strategy.options.tokenURL).to.equal(
+      'https://ghe.internal.example/login/oauth/access_token'
+    )
   })
 
   it('no-ops when enableGithubSync is false', async function () {

@@ -46,4 +46,49 @@ describe('AutoPullManager', () => {
     expect(await imageExists('x:1')).to.equal(true)
     expect(ctx.dockerOpts).to.deep.equal({ host: '10.0.0.5', port: 2375 })
   })
+
+  it('should include TEXLIVE_IMAGE and ALLOWED_IMAGES in checkAndPullImages', async ctx => {
+    const pulled = []
+    vi.doMock('dockerode', () => ({
+      default: class Docker {
+        constructor() {
+          this.modem = {
+            followProgress: (_stream, onFinished) => onFinished(null, []),
+          }
+        }
+        pull(name, cb) {
+          pulled.push(name)
+          cb(null, {})
+        }
+        getImage() {
+          return { inspect: async () => ({}) }
+        }
+      },
+    }))
+
+    const origEnv = {
+      TEX_LIVE_DOCKER_IMAGE: process.env.TEX_LIVE_DOCKER_IMAGE,
+      ALL_TEX_LIVE_DOCKER_IMAGES: process.env.ALL_TEX_LIVE_DOCKER_IMAGES,
+      TEXLIVE_IMAGE: process.env.TEXLIVE_IMAGE,
+      ALLOWED_IMAGES: process.env.ALLOWED_IMAGES,
+    }
+    delete process.env.TEX_LIVE_DOCKER_IMAGE
+    delete process.env.ALL_TEX_LIVE_DOCKER_IMAGES
+    process.env.TEXLIVE_IMAGE = 'repo/texlive-slim:1'
+    process.env.ALLOWED_IMAGES = 'repo/texlive-slim:1, repo/texlive-full:2'
+
+    try {
+      const { checkAndPullImages } = await import(modulePath)
+      await checkAndPullImages()
+      expect(pulled).to.deep.equal([
+        'repo/texlive-slim:1',
+        'repo/texlive-full:2',
+      ])
+    } finally {
+      for (const [k, v] of Object.entries(origEnv)) {
+        if (v === undefined) delete process.env[k]
+        else process.env[k] = v
+      }
+    }
+  })
 })

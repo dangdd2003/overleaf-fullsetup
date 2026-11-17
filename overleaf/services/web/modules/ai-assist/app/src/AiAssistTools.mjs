@@ -1,3 +1,4 @@
+import { normalizeProjectPath } from './AiAssistProjectPath.mjs'
 import logger from '@overleaf/logger'
 import { promiseMapWithLimit } from '@overleaf/promise-utils'
 import DocumentUpdaterHandler from '../../../../app/src/Features/DocumentUpdater/DocumentUpdaterHandler.mjs'
@@ -1237,11 +1238,15 @@ export class AiAssistTools {
     }
   }
 
+  _normalizePath(filePath) {
+    return normalizeProjectPath(filePath)
+  }
+
   async _resolveDoc(projectId, targetPath) {
-    if (!targetPath || typeof targetPath !== 'string' || !targetPath.trim()) {
+    const normalized = this._normalizePath(targetPath)
+    if (!normalized) {
       return null
     }
-    const normalized = targetPath.trim().replace(/^\//, '')
     if (this.entityHandler.getDocIdByPath) {
       try {
         const docId = await this.entityHandler.getDocIdByPath(
@@ -1649,12 +1654,7 @@ export class AiAssistTools {
 
   _traversalError(args) {
     if (args?.path && typeof args.path === 'string') {
-      const normalized = args.path.replace(/\\/g, '/').replace(/^\/+/, '')
-      if (
-        normalized.startsWith('../') ||
-        normalized.includes('/../') ||
-        normalized === '..'
-      ) {
+      if (this._normalizePath(args.path) === null) {
         return 'Path traversal forbidden: file path cannot reference parent directories.'
       }
     }
@@ -2220,7 +2220,7 @@ export class AiAssistTools {
       case 'read_file': {
         const doc = await this._resolveDoc(projectId, args.path)
         if (!doc) {
-          const wanted = String(args.path || '').replace(/^\//, '')
+          const wanted = this._normalizePath(args.path) || ''
           const files = await this._getFilesList(projectId).catch(() => [])
           if (files.some(file => file.path === wanted)) {
             return {
@@ -2428,12 +2428,20 @@ export class AiAssistTools {
 
       case 'create_file': {
         const lines = (args.content || '').split('\n')
-        const normalizedPath = (args.path || '').replace(/^\//, '')
+        const normalizedPath = this._normalizePath(args.path)
+        if (!normalizedPath) {
+          return {
+            error:
+              normalizedPath === null
+                ? 'Path traversal forbidden: file path cannot reference parent directories.'
+                : "Parameter 'path' is required for create_file.",
+          }
+        }
         const created = docId => {
           this._rememberEdit(projectId, normalizedPath, 1, lines.length)
           return {
             status: 'applied',
-            path: args.path,
+            path: normalizedPath,
             docId,
             newText: args.content,
             startLine: 1,

@@ -319,19 +319,9 @@ async function purgeBlobs({ storageDir, shas, now, yieldMs }) {
   const work = shas.filter(isValidSha256)
   const batch = work.slice(0, PURGE_MAX_PER_RUN)
   out.pending = work.slice(PURGE_MAX_PER_RUN)
-  // One pass for the first check: the blob fields have no index, so a query per sha scans the items
-  const referenced = batch.length > 0 ? await referencedShas(col, new Set()) : new Set()
-  // Live query, used for the re-check right before each unlink
-  const inUse = sha =>
-    col.findOne(
-      { $or: BLOB_REF_FIELDS.map(ref => ({ [ref.path]: sha })) },
-      { projection: { _id: 1 } }
-    )
+  // Check snapshot retention, file existence, and minimum age before scanning DB
+  const aged = []
   for (const sha of batch) {
-    if (referenced.has(sha)) {
-      out.stillReferenced++
-      continue
-    }
     if (snapshotRefs.has(sha)) {
       out.keptForSnapshot++
       out.pending.push(sha)
@@ -347,6 +337,21 @@ async function purgeBlobs({ storageDir, shas, now, yieldMs }) {
     if (now - stat.mtimeMs < PURGE_MIN_AGE_MS) {
       out.tooYoung++
       out.pending.push(sha)
+      continue
+    }
+    aged.push({ sha, file })
+  }
+  // One pass for the first check: the blob fields have no index, so a query per sha scans the items
+  const referenced = aged.length > 0 ? await referencedShas(col, new Set()) : new Set()
+  // Live query, used for the re-check right before each unlink
+  const inUse = sha =>
+    col.findOne(
+      { $or: BLOB_REF_FIELDS.map(ref => ({ [ref.path]: sha })) },
+      { projection: { _id: 1 } }
+    )
+  for (const { sha, file } of aged) {
+    if (referenced.has(sha)) {
+      out.stillReferenced++
       continue
     }
     // Re-check right before the unlink: the item or the blob may have changed since
@@ -590,14 +595,18 @@ export async function restoreDuplicate(token) {
   const col = await itemsCol()
   const item = await col.findOne(
     { token, duplicateOf: { $ne: null } },
-    { projection: { token: 1, duplicateOf: 1 } }
+    { projection: { token: 1, duplicateOf: 1, 'media.thumbSha': 1, 'media.previewSha': 1 } }
   )
   if (!item) return { restored: false, reason: 'not_a_duplicate' }
+  const set = { 'dedup.keep': true, 'dedup.restoredAt': new Date() }
+  if (!item.media?.thumbSha || !item.media?.previewSha) {
+    set['mirror.detailAt'] = null
+  }
   await col.updateOne(
     { token, duplicateOf: item.duplicateOf },
     {
       $unset: { duplicateOf: '', duplicateAt: '' },
-      $set: { 'dedup.keep': true, 'dedup.restoredAt': new Date() },
+      $set: set,
     }
   )
   await col.updateOne(

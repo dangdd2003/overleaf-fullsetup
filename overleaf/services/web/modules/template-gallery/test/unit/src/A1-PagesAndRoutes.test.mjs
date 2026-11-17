@@ -362,6 +362,7 @@ describe('A1 GalleryReadService', function () {
       'mirror.removedAt': null,
       family: 'template',
       'tags.name': 'cv',
+      duplicateOf: null,
     })
     expect(cursor._sort).toEqual({ recentOrder: -1, objectIDNum: -1 })
     expect(cursor._skip).toBe(9)
@@ -519,6 +520,8 @@ describe('A1 GalleryReadService', function () {
     const mockItems = {
       findOne: vi
         .fn()
+        // servedToken lookup, then the item itself, then the hydrated re-read
+        .mockResolvedValueOnce({ token: 'fqrcrzrkynpp' })
         .mockResolvedValueOnce(unhydrated)
         .mockResolvedValueOnce(hydrated),
     }

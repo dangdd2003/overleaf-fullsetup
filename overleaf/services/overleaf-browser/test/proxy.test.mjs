@@ -562,3 +562,19 @@ test(
     }
   }
 )
+
+test('direct CONNECT waits for upstream TCP connection and returns 502 on ECONNREFUSED', async () => {
+  // Bind and close an ephemeral port to obtain a port that refuses connections
+  const temp = net.createServer()
+  const unusedPort = await listen(temp)
+  await new Promise((resolve) => temp.close(resolve))
+
+  const { proxy } = proxyFor(unusedPort)
+  const port = await listen(proxy)
+  try {
+    const statusLine = await connectThrough(port, `example.test:${unusedPort}`)
+    assert.match(statusLine, /^HTTP\/1\.1 502/)
+  } finally {
+    proxy.close()
+  }
+})

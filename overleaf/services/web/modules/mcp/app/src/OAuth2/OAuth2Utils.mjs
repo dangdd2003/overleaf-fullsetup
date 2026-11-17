@@ -49,12 +49,15 @@ export function mcpAudience(baseUrl) {
   return `${baseUrl}/mcp`
 }
 
+// Underscores are allowed: container service names such as overleaf_web use them
+const HOST_PATTERN = /^(?:[A-Za-z0-9._-]+|\[[0-9a-fA-F:]+\])(?::\d{1,5})?$/
+
 export function getBaseUrl(req) {
   if (Settings.siteUrl) {
     return Settings.siteUrl.replace(/\/+$/, '')
   }
   const host = req?.get ? req.get('host') : req?.headers?.host
-  if (host) {
+  if (typeof host === 'string' && HOST_PATTERN.test(host)) {
     const protocol = req?.protocol || 'http'
     return `${protocol}://${host}`
   }

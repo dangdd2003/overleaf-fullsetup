@@ -284,30 +284,33 @@ function startProjectLockHeartbeat(locks) {
   return () => clearInterval(timer)
 }
 
+function _splitDriveDocLines(buffer) {
+  return (buffer.toString('utf8') || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .split('\n')
+}
+
 /**
- * Acquires locks for several projects, all or nothing. Throws if any is busy,
- * releasing the ones already taken, so the caller's work is retried later.
+ * Acquires locks for as many of the given projects as are free. Busy projects
+ * are returned separately so callers can apply changes to the unlocked ones
+ * and defer changes targeting busy projects until the next poll.
  *
  * @param {Array<string|ObjectId>} projectIds
- * @returns {Promise<Array<{projectId: string|ObjectId, token: string}>>} the held locks
+ * @returns {Promise<{ lockedIds: Array<{projectId: string|ObjectId, token: string}>, busyProjectIds: Set<string> }>}
  */
-async function _acquireProjectLocks(projectIds) {
-  const acquired = []
+async function _acquireAvailableProjectLocks(projectIds) {
+  const lockedIds = []
+  const busyProjectIds = new Set()
   for (const projectId of projectIds) {
     const token = await acquireProjectLock(projectId)
     if (token) {
-      acquired.push({ projectId, token })
-      continue
+      lockedIds.push({ projectId, token })
+    } else {
+      busyProjectIds.add(String(projectId))
     }
-    await Promise.all(
-      acquired.map(lock => releaseProjectLock(lock.projectId, lock.token))
-    )
-    throw new OError(
-      'Google Drive project is busy; inbound changes will be retried',
-      { projectId }
-    )
   }
-  return acquired
+  return { lockedIds, busyProjectIds }
 }
 
 /**
@@ -872,7 +875,8 @@ async function resolveDriveFolderHierarchy(
   folderId,
   rootFolderId,
   projectStates,
-  folderMap
+  folderMap,
+  busyProjectIds = null
 ) {
   if (!folderId || folderId === rootFolderId) {
     return null
@@ -916,7 +920,8 @@ async function resolveDriveFolderHierarchy(
       parentId,
       rootFolderId,
       projectStates,
-      folderMap
+      folderMap,
+      busyProjectIds
     )
 
     if (parentEntry && parentEntry.state) {
@@ -927,12 +932,14 @@ async function resolveDriveFolderHierarchy(
       const entry = { state: parentEntry.state, relativePath: relPath }
       folderMap[folderId] = entry
 
-      try {
-        await db.googleDriveProjectStates.updateOne(
-          { projectId: _toObjectId(parentEntry.state.projectId) },
-          { $set: { [`folderMap.${folderId}`]: relPath } }
-        )
-      } catch {}
+      if (!busyProjectIds?.has(String(parentEntry.state.projectId))) {
+        try {
+          await db.googleDriveProjectStates.updateOne(
+            { projectId: _toObjectId(parentEntry.state.projectId) },
+            { $set: { [`folderMap.${folderId}`]: relPath } }
+          )
+        } catch {}
+      }
 
       return entry
     }
@@ -1471,6 +1478,25 @@ async function getOrCreateProjectFolder(
  */
 async function syncProject(projectId, userId, driveFolderId = null) {
   const projectObjectId = _toObjectId(projectId)
+  const project = await ProjectGetter.promises.getProject(projectId)
+  if (!project) {
+    throw new OError('Project not found for sync', { projectId })
+  }
+  // A project unlinked because its Drive folder was trashed must not be
+  // re-linked by a sync, which would create a fresh Drive folder.
+  const unlinkedState = await db.googleDriveProjectStates.findOne({
+    projectId: projectObjectId,
+  })
+  if (unlinkedState?.unlinked) {
+    throw _forbidden('Google Drive folder for this project was removed', {
+      projectId,
+      unlinkReason: unlinkedState.unlinkReason,
+    })
+  }
+  if (userId) {
+    await _assertUserMaySyncProject(projectId, project, userId)
+  }
+
   const lockToken = await acquireProjectLock(projectId)
   if (!lockToken) {
     throw new OError('Could not acquire project lock for Google Drive sync', {
@@ -1479,27 +1505,9 @@ async function syncProject(projectId, userId, driveFolderId = null) {
   }
   const locks = [{ projectId, token: lockToken }]
   const stopHeartbeat = startProjectLockHeartbeat(locks)
+  let stubDeleted = false
 
   try {
-    const project = await ProjectGetter.promises.getProject(projectId)
-    if (!project) {
-      throw new OError('Project not found for sync', { projectId })
-    }
-    // A project unlinked because its Drive folder was trashed must not be
-    // re-linked by a sync, which would create a fresh Drive folder.
-    const unlinkedState = await db.googleDriveProjectStates.findOne({
-      projectId: projectObjectId,
-    })
-    if (unlinkedState?.unlinked) {
-      throw _forbidden('Google Drive folder for this project was removed', {
-        projectId,
-        unlinkReason: unlinkedState.unlinkReason,
-      })
-    }
-    if (userId) {
-      await _assertUserMaySyncProject(projectId, project, userId)
-    }
-
     const effectiveUserId = userId || project.owner_ref
     const userObjectId = _toObjectId(effectiveUserId)
 
@@ -1549,6 +1557,7 @@ async function syncProject(projectId, userId, driveFolderId = null) {
     const fileMap = { ...(state.fileMap || {}) }
 
     // 1. Flush Redis doc edits to Mongo before reading (safe read-only flush)
+    const syncFlushStartedAt = new Date()
     await DocumentUpdaterHandler.promises.flushProjectToMongo(projectId)
 
     // Gather all entities from Overleaf (PURE READ-ONLY - ZERO WRITES TO OVERLEAF)
@@ -1709,22 +1718,45 @@ async function syncProject(projectId, userId, driveFolderId = null) {
       }
     )
 
+    await db.googleDriveProjectStates.updateOne(
+      {
+        projectId: projectObjectId,
+        $or: [
+          { outboundDirtyAt: { $lte: syncFlushStartedAt } },
+          { outboundDirtyAt: null },
+          { outboundDirtyAt: { $exists: false } },
+        ],
+      },
+      { $set: { pendingChanges: {} }, $unset: { outboundDirtyAt: '' } }
+    )
+
     return { success: true, syncedAt: new Date() }
   } catch (err) {
     logger.error({ err, projectId }, 'Error during Google Drive project sync')
-    await db.googleDriveProjectStates.updateOne(
-      { projectId: projectObjectId },
-      {
-        $set: {
-          syncStatus: 'error',
-          lastError: err.message || 'Sync error',
-        },
-      }
-    )
+    const deleteRes = await db.googleDriveProjectStates.deleteOne?.({
+      projectId: projectObjectId,
+      driveFolderId: { $exists: false },
+      syncSuspended: { $ne: true },
+    })
+    if (deleteRes?.deletedCount) {
+      stubDeleted = true
+    } else {
+      await db.googleDriveProjectStates.updateOne(
+        { projectId: projectObjectId },
+        {
+          $set: {
+            syncStatus: 'error',
+            lastError: err.message || 'Sync error',
+          },
+        }
+      )
+    }
     throw err
   } finally {
     stopHeartbeat()
-    await releaseProjectLock(projectId, lockToken)
+    if (!stubDeleted) {
+      await releaseProjectLock(projectId, lockToken)
+    }
   }
 }
 
@@ -1774,6 +1806,8 @@ async function downloadDriveFolderToOverleaf(projectId, userId, driveFolderId) {
 async function _importDriveFolderIntoProject(projectId, userId, driveFolderId) {
   const projectObjectId = _toObjectId(projectId)
   const userObjectId = _toObjectId(userId)
+
+  await DocumentUpdaterHandler.promises?.flushProjectToMongo?.(projectId)
 
   const driveFiles = await listDriveFilesRecursively(userId, driveFolderId)
 
@@ -1832,10 +1866,7 @@ async function _importDriveFolderIntoProject(projectId, userId, driveFolderId) {
       }
     } else {
       const driveBuffer = await GoogleDriveClient.downloadFileBuffer(userId, driveFile.id, _maxImportBytes())
-      const driveContent = (driveBuffer.toString('utf8') || '')
-        .replace(/\r\n/g, '\n')
-        .replace(/\r/g, '\n')
-      const driveLines = driveContent.split('\n')
+      const driveLines = _splitDriveDocLines(driveBuffer)
       const res = await EditorController.promises.upsertDocWithPath(
         projectId,
         toElementPath(relPath),
@@ -2177,6 +2208,21 @@ function _pollProjectEntry(cache, projectId) {
 }
 
 /**
+ * Flushes live editor state in document-updater's Redis to Mongo at most once
+ * per project cache entry so poll lookups see the latest Overleaf content.
+ *
+ * @param {object} entry
+ * @param {string|ObjectId} projectId
+ * @returns {Promise<void>}
+ */
+async function _ensurePollProjectFlushed(entry, projectId) {
+  if (!entry.flushed) {
+    await DocumentUpdaterHandler.promises?.flushProjectToMongo?.(projectId)
+    entry.flushed = true
+  }
+}
+
+/**
  * @param {Map<string, object>} cache
  * @param {string|ObjectId} projectId
  * @returns {Promise<{ docsByPath: Map<string, object>, filesByPath: Map<string, object> }>}
@@ -2184,6 +2230,7 @@ function _pollProjectEntry(cache, projectId) {
 async function _getPollProjectEntities(cache, projectId) {
   const entry = _pollProjectEntry(cache, projectId)
   if (!entry.entities) {
+    await _ensurePollProjectFlushed(entry, projectId)
     const entities =
       await ProjectEntityHandler.promises.getAllEntities(projectId)
     const docsByPath = new Map()
@@ -2209,6 +2256,7 @@ async function _getPollProjectEntities(cache, projectId) {
 async function _getPollProjectDocsById(cache, projectId) {
   const entry = _pollProjectEntry(cache, projectId)
   if (!entry.docsById) {
+    await _ensurePollProjectFlushed(entry, projectId)
     const allDocs = await DocstoreManager.promises.getAllDocs(projectId)
     const docsById = new Map()
     for (const d of allDocs || []) {
@@ -2294,14 +2342,15 @@ async function _pollUserChangesLeased(userId, userObjectId) {
     }
   }
 
-  // Lock every project this apply may write to, so no sync, outbound flush or
-  // other poll interleaves with it and overwrites fileMap. If any is busy the
-  // whole poll throws before changing anything; the page token has not moved,
-  // so the same changes are retried later.
-  const lockedIds = await _acquireProjectLocks(
+  // Lock every non-busy project so no sync, outbound flush or other poll
+  // interleaves with it and overwrites fileMap. Changes targeting any busy
+  // project set deferredChanges = true and stay queued via the unchanged page
+  // token while unlocked projects still apply normally.
+  const { lockedIds, busyProjectIds } = await _acquireAvailableProjectLocks(
     projectStates.map(st => st.projectId)
   )
-  const stopHeartbeat = startProjectLockHeartbeat(lockedIds)
+  const stopHeartbeat =
+    lockedIds.length > 0 ? startProjectLockHeartbeat(lockedIds) : () => {}
 
   try {
     const projectByFolderId = {}
@@ -2369,6 +2418,10 @@ async function _pollUserChangesLeased(userId, userObjectId) {
             // stop syncing it, but keep every Overleaf file untouched.
             const st = projectByFolderId[fileId]
             if (st) {
+              if (busyProjectIds.has(String(st.projectId))) {
+                deferredChanges = true
+                continue
+              }
               logger.info(
                 { projectId: st.projectId, userId },
                 'Google Drive project folder trashed or deleted: unlinking project, Overleaf files kept'
@@ -2384,9 +2437,14 @@ async function _pollUserChangesLeased(userId, userObjectId) {
             file.parents[0],
             rootFolderId,
             projectStates,
-            folderMap
+            folderMap,
+            busyProjectIds
           )
           if (parentFolderEntry && parentFolderEntry.state) {
+            if (busyProjectIds.has(String(parentFolderEntry.state.projectId))) {
+              deferredChanges = true
+              continue
+            }
             const relPath = parentFolderEntry.relativePath
               ? `${parentFolderEntry.relativePath}/${_sanitizeDriveName(file.name)}`
               : _sanitizeDriveName(file.name)
@@ -2410,6 +2468,10 @@ async function _pollUserChangesLeased(userId, userObjectId) {
         if (mapping) {
           const { state: st, path: filePath } = mapping
           if (!isIgnoredFile(filePath)) {
+            if (busyProjectIds.has(String(st.projectId))) {
+              deferredChanges = true
+              continue
+            }
             logger.info(
               { projectId: st.projectId, filePath, fileId },
               'Deleting Overleaf entity due to Google Drive file deletion'
@@ -2456,7 +2518,8 @@ async function _pollUserChangesLeased(userId, userObjectId) {
               parentId,
               rootFolderId,
               projectStates,
-              folderMap
+              folderMap,
+              busyProjectIds
             )
             if (folderEntry && folderEntry.state) {
               targetState = folderEntry.state
@@ -2490,6 +2553,13 @@ async function _pollUserChangesLeased(userId, userObjectId) {
         }
 
         const projectId = targetState.projectId
+        if (
+          busyProjectIds.has(String(projectId)) ||
+          (mapping?.state && busyProjectIds.has(String(mapping.state.projectId)))
+        ) {
+          deferredChanges = true
+          continue
+        }
 
         // Handle rename or move for a known Drive file ID
         if (mapping && normalizePath(mapping.path) !== cleanPath) {
@@ -2739,8 +2809,7 @@ async function _pollUserChangesLeased(userId, userObjectId) {
           } else {
             try {
               const driveBuffer = await GoogleDriveClient.downloadFileBuffer(userId, file.id, _maxImportBytes())
-              const driveContent = driveBuffer.toString('utf8')
-              const driveLines = driveContent.split('\n')
+              const driveLines = _splitDriveDocLines(driveBuffer)
               await EditorController.promises.upsertDocWithPath(
                 projectId,
                 toElementPath(conflictPath),
@@ -2863,8 +2932,7 @@ async function _pollUserChangesLeased(userId, userObjectId) {
           pollProjectCache.delete(String(projectId))
           try {
             const driveBuffer = await GoogleDriveClient.downloadFileBuffer(userId, file.id, _maxImportBytes())
-            const driveContent = driveBuffer.toString('utf8')
-            const driveLines = driveContent.split('\n')
+            const driveLines = _splitDriveDocLines(driveBuffer)
 
             const upsertRes = await EditorController.promises.upsertDocWithPath(
               projectId,
@@ -2934,6 +3002,7 @@ async function _pollUserChangesLeased(userId, userObjectId) {
       success: true,
       processedCount: allChanges.length,
       newStartPageToken,
+      ...(deferredChanges ? { deferredChanges: true } : {}),
     }
   } finally {
     stopHeartbeat()

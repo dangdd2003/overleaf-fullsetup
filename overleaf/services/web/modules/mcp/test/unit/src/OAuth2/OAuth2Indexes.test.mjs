@@ -1,7 +1,11 @@
 import { describe, it } from 'vitest'
 import { expect } from 'chai'
 import { OauthApplicationSchema } from '../../../../../../app/src/models/OauthApplication.mjs'
-import { GRANT_INDEXES } from '../../../../app/src/OAuth2/OAuth2GrantExpiry.mjs'
+import {
+  APPLICATION_INDEXES,
+  AUTHORIZATION_CODE_INDEXES,
+  GRANT_INDEXES,
+} from '../../../../app/src/OAuth2/OAuth2GrantExpiry.mjs'
 
 // Dynamic Client Registration made these collections hot: every /oauth/authorize
 // looks a client up by `id`, and every refresh looks a token up by
@@ -30,6 +34,29 @@ describe('OAuth2 collection indexes', () => {
   it('indexes oauthAccessTokens by refreshToken used at refresh time', () => {
     expect(GRANT_INDEXES.map(({ key }) => key)).to.deep.include({
       refreshToken: 1,
+    })
+  })
+
+  it('defines unique sparse id index on oauthApplications', () => {
+    expect(APPLICATION_INDEXES).to.deep.include({
+      key: { id: 1 },
+      name: 'id_1',
+      unique: true,
+      sparse: true,
+    })
+  })
+
+  it('defines unique authorizationCode index and TTL expiresAt index on oauthAuthorizationCodes', () => {
+    expect(AUTHORIZATION_CODE_INDEXES).to.deep.include({
+      key: { authorizationCode: 1 },
+      name: 'authorizationCode_1',
+      unique: true,
+    })
+    expect(AUTHORIZATION_CODE_INDEXES).to.deep.include({
+      key: { expiresAt: 1 },
+      name: 'expiresAt_1',
+      partialFilterExpression: { expiresAt: { $exists: true } },
+      expireAfterSeconds: 0,
     })
   })
 })

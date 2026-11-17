@@ -136,4 +136,81 @@ describe('AiAssistChatHistoryController', function () {
     expect(mockStore.saveChatTitle.calledOnce).to.be.true
     expect(mockStore.saveChatTitle.firstCall.args[3]).to.equal('Auto Title')
   })
+
+  it('resolves stored masked apiKey only when type and origin match in generateTitle', async function () {
+    const userSettingsStore = {
+      getInternalUserSettings: sinon.stub().resolves({
+        provider: {
+          type: 'openai',
+          baseUrl: 'https://api.openai.com/v1',
+          apiKey: 'sk-title-secret',
+          model: 'gpt-4o-mini',
+        },
+        fastProvider: {
+          type: 'anthropic',
+          baseUrl: 'https://api.anthropic.com',
+          apiKey: 'sk-ant-fast',
+          model: 'claude-3-5-haiku-20241022',
+        },
+      }),
+    }
+    controller = new AiAssistChatHistoryController({
+      store: mockStore,
+      clientFactory: mockClientFactory,
+      userSettingsStore,
+    })
+
+    const resOk = mockRes()
+    await controller.generateTitle(
+      mockReq({
+        body: {
+          providerSettings: {
+            type: 'openai',
+            baseUrl: 'https://api.openai.com',
+            apiKey: '••••••••',
+          },
+          prompt: 'Hello',
+        },
+      }),
+      resOk
+    )
+    expect(resOk.statusCode).to.equal(200)
+    expect(mockClientFactory.firstCall.args[0].apiKey).to.equal(
+      'sk-title-secret'
+    )
+
+    mockClientFactory.resetHistory()
+    const resMismatch = mockRes()
+    await controller.generateTitle(
+      mockReq({
+        body: {
+          providerSettings: {
+            type: 'openai',
+            baseUrl: 'https://evil.example.com/v1',
+            apiKey: '••••••••',
+          },
+          prompt: 'Hello',
+        },
+      }),
+      resMismatch
+    )
+    expect(mockClientFactory.firstCall.args[0].apiKey).to.equal('')
+
+    mockClientFactory.resetHistory()
+    const resFast = mockRes()
+    await controller.generateTitle(
+      mockReq({
+        body: {
+          providerSettings: {
+            type: 'anthropic',
+            baseUrl: 'https://api.anthropic.com/v1',
+            apiKey: '••••••••',
+          },
+          prompt: 'Hello',
+        },
+      }),
+      resFast
+    )
+    expect(mockClientFactory.firstCall.args[0].apiKey).to.equal('sk-ant-fast')
+  })
 })

@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process'
+import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -105,11 +106,21 @@ async function cloneRepo(repoDir, httpsUrl, branch, token) {
   await _withAuth(token, async env => {
     await runGit(
       path.dirname(repoDir),
-      ['clone', '--branch', branch, '--single-branch', httpsUrl, repoDir],
+      [
+        'clone',
+        '-c',
+        'core.symlinks=false',
+        '--branch',
+        branch,
+        '--single-branch',
+        httpsUrl,
+        repoDir,
+      ],
       { env }
     )
   })
   await setConfig(repoDir, 'core.fileMode', 'false')
+  await setConfig(repoDir, 'core.symlinks', 'false')
 }
 
 async function createRepo(repoDir, httpsUrl, defaultBranch) {
@@ -117,6 +128,7 @@ async function createRepo(repoDir, httpsUrl, defaultBranch) {
   await runGit(repoDir, ['init', '-b', defaultBranch])
   await runGit(repoDir, ['remote', 'add', 'origin', httpsUrl])
   await setConfig(repoDir, 'core.fileMode', 'false')
+  await setConfig(repoDir, 'core.symlinks', 'false')
 }
 
 async function fetchOrigin(repoDir, token) {
@@ -181,11 +193,12 @@ async function pushRef(repoDir, localRef, remoteRef, token) {
 
 async function pushRescueBranch(repoDir, token) {
   const now = new Date()
-  const pad = n => String(n).padStart(2, '0')
+  const pad = (n, width = 2) => String(n).padStart(width, '0')
   const stamp =
     `${now.getUTCFullYear()}-${pad(now.getUTCMonth() + 1)}-` +
     `${pad(now.getUTCDate())}-${pad(now.getUTCHours())}-` +
-    `${pad(now.getUTCMinutes())}-${pad(now.getUTCSeconds())}`
+    `${pad(now.getUTCMinutes())}-${pad(now.getUTCSeconds())}-` +
+    `${pad(now.getUTCMilliseconds(), 3)}-${crypto.randomBytes(3).toString('hex')}`
   const branchName = `${RESCUE_BRANCH_PREFIX}${stamp}`
   await runGit(repoDir, ['branch', branchName, 'HEAD'])
   await pushRef(repoDir, branchName, branchName, token)
@@ -244,6 +257,22 @@ async function ensureRepoExists(repoDir) {
   }
 }
 
+async function getSymlinkPaths(repoDir) {
+  if (!(await ensureRepoExists(repoDir))) return new Set()
+  // With core.symlinks=false the checkout contains ordinary files, but the
+  // index still records symbolic links with mode 120000. Use NUL delimiters
+  // so tabs, newlines and non-ASCII characters in paths remain intact.
+  const { stdout } = await runGit(repoDir, ['ls-files', '--stage', '-z'])
+  const paths = new Set()
+  for (const entry of stdout.split('\0')) {
+    const separator = entry.indexOf('\t')
+    if (separator !== -1 && entry.startsWith('120000 ')) {
+      paths.add(entry.slice(separator + 1))
+    }
+  }
+  return paths
+}
+
 const SyncEngine = {
   GIT_OP_TIMEOUT_MS,
   RESCUE_BRANCH_PREFIX,
@@ -263,6 +292,7 @@ const SyncEngine = {
     writeFileFromRepo,
     deleteRepoDir,
     ensureRepoExists,
+    getSymlinkPaths,
     writeAskpassScript,
   },
 }

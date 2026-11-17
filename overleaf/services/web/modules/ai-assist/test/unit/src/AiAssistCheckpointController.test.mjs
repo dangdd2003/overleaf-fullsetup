@@ -402,7 +402,7 @@ describe('AiAssistCheckpointController', function () {
 
       await controller.rewind(req, res)
       expect(res.statusCode).to.equal(200)
-      expect(res.body.restoredFiles).to.deep.equal(['/gone.tex'])
+      expect(res.body.restoredFiles).to.deep.equal(['gone.tex'])
       expect(res.body.failedFiles).to.deep.equal([])
       expect(mockEditorController.promises.upsertDocWithPath.calledOnce).to.be.true
       expect(mockEditorController.promises.upsertDocWithPath.firstCall.args).to.deep.equal([
