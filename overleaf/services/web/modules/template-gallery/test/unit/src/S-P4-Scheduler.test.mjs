@@ -7,7 +7,13 @@ import { createFakeCollection, rejectionOf } from './S-P4-support.mjs'
 const DAY = 24 * 60 * 60 * 1000
 const cfg = { crawler: { enabled: true } }
 
-function fakeDeps({ queue = [], settings = {}, capacity = 6 } = {}) {
+function fakeDeps({
+  queue = [],
+  settings = {},
+  routes = 2,
+  freeRoutes = routes,
+  throttling = false,
+} = {}) {
   const pending = [...queue]
   const crawler = {
     getCatalogueState: vi.fn(async () => ({ lastSuccessAt: new Date() })),
@@ -28,7 +34,9 @@ function fakeDeps({ queue = [], settings = {}, capacity = 6 } = {}) {
     isHostRejection: err => err?.code === 'host_backoff',
   }
   const limiter = {
-    capacity: vi.fn(() => capacity),
+    routeCount: vi.fn(() => routes),
+    freeRoutes: vi.fn(() => freeRoutes),
+    isThrottling: vi.fn(() => throttling),
     earliestReadyAt: vi.fn(() => new Date(Date.now() + 60_000)),
   }
   const syncSettings = {
@@ -126,9 +134,9 @@ describe('S-P4 scheduler: sync runs', () => {
     )
   })
 
-  it('uses one worker per free limiter slot', async () => {
+  it('runs WORKERS_PER_ROUTE workers for each outbound route', async () => {
     const queue = Array.from({ length: 30 }, (_, i) => `t${i}`)
-    const { mirror } = fakeDeps({ queue, capacity: 5 })
+    const { mirror } = fakeDeps({ queue, routes: 2 })
     let running = 0
     let peak = 0
     const sync = mirror.syncItem.getMockImplementation()
@@ -143,7 +151,7 @@ describe('S-P4 scheduler: sync runs', () => {
     await Scheduler.requestRun('sync', 'admin-1')
     await runToEnd()
 
-    expect(peak).toBe(5)
+    expect(peak).toBe(6)
   })
 
   it('refuses a second "Sync now" while a run is active', async () => {
@@ -168,7 +176,11 @@ describe('S-P4 scheduler: sync runs', () => {
   })
 
   it('waits for the limiter instead of failing items when the host refuses every lane', async () => {
-    const { mirror } = fakeDeps({ queue: ['a', 'b', 'c'] })
+    const { mirror } = fakeDeps({
+      queue: ['a', 'b', 'c'],
+      freeRoutes: 0,
+      throttling: true,
+    })
     mirror.syncItem.mockRejectedValue(
       Object.assign(new Error('backing off'), { code: 'host_backoff' })
     )
@@ -189,8 +201,7 @@ describe('S-P4 scheduler: sync runs', () => {
   })
 
   it('says the route is failing, not throttled, when no lane is blocked', async () => {
-    const { mirror, limiter } = fakeDeps({ queue: ['a'] })
-    limiter.isThrottling = vi.fn(() => false)
+    const { mirror } = fakeDeps({ queue: ['a'], freeRoutes: 0 })
     mirror.syncItem.mockRejectedValue(
       Object.assign(new Error('proxy down'), { code: 'EPROXY_UNREACHABLE' })
     )
@@ -272,7 +283,7 @@ describe('S-P4 scheduler: sync runs', () => {
   })
 
   it('waits without taking items while every lane is backing off', async () => {
-    const { mirror } = fakeDeps({ queue: ['a', 'b'], capacity: 0 })
+    const { mirror } = fakeDeps({ queue: ['a', 'b'], routes: 0, freeRoutes: 0 })
     await Scheduler.requestRun('sync', 'admin-1')
     await Scheduler.runStep({ cfg })
     await Scheduler.runStep({ cfg })

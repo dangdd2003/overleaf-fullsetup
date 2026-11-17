@@ -41,15 +41,23 @@ function handlerWith({ connector, loadError, fetchIconBytes, resolveOriginIcon, 
     if (!found.icon) res.status(404).end()
     else res.status(200).end()
   })
+  const fetchIconBytesStub = fetchIconBytes || sinon.stub().resolves(null)
+  const resolveOriginIconStub =
+    resolveOriginIcon || sinon.stub().resolves({ icon: null, sure: true })
   const handler = createConnectorIconHandler({
     loadConnector,
-    fetchIconBytes: fetchIconBytes || sinon.stub().resolves(null),
-    resolveOriginIcon:
-      resolveOriginIcon || sinon.stub().resolves({ icon: null, sure: true }),
+    fetchIconBytes: fetchIconBytesStub,
+    resolveOriginIcon: resolveOriginIconStub,
     sendIcon,
     cache: cache || new IconCache(),
   })
-  return { handler, loadConnector, sendIcon, fetchIconBytes, resolveOriginIcon }
+  return {
+    handler,
+    loadConnector,
+    sendIcon,
+    fetchIconBytes: fetchIconBytesStub,
+    resolveOriginIcon: resolveOriginIconStub,
+  }
 }
 
 function run(handler, connectorId = CONNECTOR_ID) {

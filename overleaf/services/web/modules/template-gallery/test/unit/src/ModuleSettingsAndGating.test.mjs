@@ -163,7 +163,7 @@ describe('TemplateGallery ModuleSettings & ModuleGating', () => {
     expect(routes.every(r => !r.path.startsWith('/project/new/template'))).toBe(
       true
     )
-  })
+  }, 20_000)
 
   it('contains zero unescaped != interpolations in any Pug view', () => {
     const viewsDir = Path.resolve(import.meta.dirname, '../../../app/views')

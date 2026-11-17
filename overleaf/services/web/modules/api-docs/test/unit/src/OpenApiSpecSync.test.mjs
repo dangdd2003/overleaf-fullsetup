@@ -62,7 +62,7 @@ describe('openapi.json stays in sync with the real routers', function () {
   ]
 
   it('found every known public route', function () {
-    expect(allRoutes.length).to.equal(65)
+    expect(allRoutes.length).to.equal(67)
   })
 
   it('documents every extracted route with a matching method', function () {

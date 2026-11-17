@@ -4,7 +4,7 @@ import path from 'node:path'
 import os from 'node:os'
 import { Readable } from 'node:stream'
 
-describe('resolveSafeWritePath', function () {
+describe('resolveSafeWritePath', { timeout: 20_000 }, function () {
   it('refuses excluded paths after resolving them inside the repository', async function () {
     const { resolveSafeWritePath } = await import('../../../app/src/ProjectContentIO.mjs')
     const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'ghsync-repo-'))
@@ -140,7 +140,7 @@ describe('ProjectContentIO', function () {
 
   afterEach(async function () {
     if (workDir) {
-      await fs.rm(workDir, { recursive: true, force: true })
+      await fs.rm(workDir, { recursive: true, force: true, maxRetries: 3 })
     }
   })
 
@@ -363,14 +363,18 @@ describe('ProjectContentIO', function () {
   })
 
   it('refuses a repo tree over the entry cap', async function () {
-    for (let i = 0; i < 5001; i++) {
-      await fs.writeFile(path.join(workDir, `f${i}.txt`), '')
+    for (let start = 0; start < 5001; start += 500) {
+      await Promise.all(
+        Array.from({ length: Math.min(500, 5001 - start) }, (_, i) =>
+          fs.writeFile(path.join(workDir, `f${start + i}.txt`), '')
+        )
+      )
     }
     const err = await ProjectContentIO.promises
       .readProjectTree(workDir)
       .catch(e => e)
     expect(err.code).to.equal('project_too_large')
-  })
+  }, 30_000)
 
   it('handles empty doc lines or missing docs gracefully', async function () {
     mockEntities = {

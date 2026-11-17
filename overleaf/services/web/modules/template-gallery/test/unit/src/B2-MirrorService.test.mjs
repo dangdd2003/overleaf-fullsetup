@@ -1060,9 +1060,12 @@ describe('B2 Mirror Service & Parsers', () => {
       vi.spyOn(Fetch, 'fetchOverleafPage').mockResolvedValue({ status: 404 })
 
       // Background (batch and sync) callers count a gone page as settled, not failed
-      await expect(
-        MirrorService.ensureDetail(token, { force: true, throwOnError: true })
-      ).resolves.toBeNull()
+      expect(
+        await MirrorService.ensureDetail(token, {
+          force: true,
+          throwOnError: true,
+        })
+      ).toBeNull()
       expect((await mockItemsCol.findOne({ token })).mirror.goneCount).toBe(1)
 
       const interactive = await MirrorService.ensureDetail(token, {

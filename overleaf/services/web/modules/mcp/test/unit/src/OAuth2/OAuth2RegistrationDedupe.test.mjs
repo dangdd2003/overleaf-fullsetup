@@ -83,7 +83,7 @@ describe('OAuth2RegistrationController deduplication', () => {
     ])
   })
 
-  it('matches only on the full metadata: name, redirect URI set, grant set and public auth', async () => {
+  it('matches only on the full metadata: name, redirect URI set, grant set, scope set and public auth', async () => {
     const findOne = vi.spyOn(OauthApplication, 'findOne').mockResolvedValue(null)
     const create = vi
       .spyOn(OauthApplication, 'create')
@@ -110,10 +110,31 @@ describe('OAuth2RegistrationController deduplication', () => {
         $all: ['refresh_token', 'authorization_code'],
         $size: 2,
       },
+      scopes: { $all: ['mcp'], $size: 1 },
       clientSecret: null,
     })
     // The stored row holds the deduplicated set, so it can match the filter.
     expect(create.mock.calls[0][0].redirectUris).to.deep.equal([uri, other])
+    expect(res.statusCode).to.equal(201)
+  })
+
+  it('does not reuse a registration that requests different scopes', async () => {
+    const findOne = vi.spyOn(OauthApplication, 'findOne').mockResolvedValue(null)
+    const create = vi
+      .spyOn(OauthApplication, 'create')
+      .mockImplementation(async doc => doc)
+
+    const res = mockRes()
+    await OAuth2RegistrationController.register(
+      { body: { ...registration, scope: 'mcp offline_access' } },
+      res
+    )
+
+    expect(findOne.mock.calls[0][0].scopes).to.deep.equal({
+      $all: ['mcp', 'offline_access'],
+      $size: 2,
+    })
+    expect(create.mock.calls[0][0].scopes).to.deep.equal(['mcp', 'offline_access'])
     expect(res.statusCode).to.equal(201)
   })
 
