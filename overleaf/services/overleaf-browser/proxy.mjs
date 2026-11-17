@@ -128,6 +128,40 @@ function readHandshake(
   socket.resume()
 }
 
+/** Connects a TCP socket directly, resolving only once connected or rejecting on error/timeout. */
+function connectSocket(options, timeoutMs = EGRESS_LIMITS.connectTimeoutMs) {
+  return new Promise((resolve, reject) => {
+    const socket = net.connect(options)
+    let settled = false
+
+    const cleanup = () => {
+      clearTimeout(timer)
+      socket.removeListener('connect', onConnect)
+      socket.removeListener('error', onError)
+    }
+    const onError = (err) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      socket.destroy()
+      reject(err || new Error('Connection failed'))
+    }
+    const onConnect = () => {
+      if (settled) return
+      settled = true
+      cleanup()
+      resolve(socket)
+    }
+    const timer = setTimeout(
+      () => onError(new Error('Connection timeout')),
+      timeoutMs
+    )
+    timer.unref?.()
+    socket.once('error', onError)
+    socket.once('connect', onConnect)
+  })
+}
+
 /** Connects to destination through an upstream SOCKS5 proxy (RFC 1928 / 1929). */
 function connectSocks5Tunnel({ proxy, targetHost, targetPort, timeoutMs }) {
   return new Promise((resolve, reject) => {
@@ -409,11 +443,14 @@ export function createEgressProxy({
   // Dial destination: directly or through configured upstream proxy
   async function openUpstreamSocket(targetHost, targetPort, resolvedAddress) {
     if (!upstream) {
-      return net.connect({
-        host: resolvedAddress.address,
-        port: targetPort,
-        family: resolvedAddress.family,
-      })
+      return connectSocket(
+        {
+          host: resolvedAddress.address,
+          port: targetPort,
+          family: resolvedAddress.family,
+        },
+        limits.connectTimeoutMs
+      )
     }
     if (upstream.type === 'socks5') {
       return connectSocks5Tunnel({

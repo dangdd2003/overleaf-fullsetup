@@ -5,7 +5,12 @@ import './ModuleSettings.mjs'
 import defaultManager from './AiAssistRunManager.mjs'
 import defaultStore, { TERMINAL_STATUSES } from './AiAssistRunStore.mjs'
 import defaultSubscriber from './AiAssistRunSubscriber.mjs'
-import defaultUserSettingsStore from './AiAssistUserSettingsStore.mjs'
+import defaultUserSettingsStore, {
+  MASKED_SECRET,
+  applyStoredProviderSecret,
+  resolveStoredWebSearchSettings,
+  stripMaskedProviderSecret,
+} from './AiAssistUserSettingsStore.mjs'
 import {
   normalizeProviderBaseUrl,
   validateSafeProviderBaseUrl,
@@ -68,11 +73,13 @@ export class AiAssistRunController {
     store = defaultStore,
     subscriber = defaultSubscriber,
     authorization = AuthorizationManager.promises,
+    userSettingsStore = defaultUserSettingsStore,
   } = {}) {
     this.manager = manager
     this.store = store
     this.subscriber = subscriber
     this.authorization = authorization
+    this.userSettingsStore = userSettingsStore
   }
 
   /**
@@ -156,20 +163,18 @@ export class AiAssistRunController {
       !providerSettings ||
       !providerSettings.type ||
       !providerSettings.apiKey ||
-      providerSettings.apiKey === '••••••••'
+      providerSettings.apiKey === MASKED_SECRET
 
+    let internal = null
     if (needsStoredProviderKey) {
       try {
-        const internal = await defaultUserSettingsStore.getInternalUserSettings(userId)
-        if (internal.provider?.type) {
-          if (!providerSettings || !providerSettings.type) {
-            providerSettings = internal.provider
-          } else if (!providerSettings.apiKey || providerSettings.apiKey === '••••••••') {
-            providerSettings = { ...providerSettings, apiKey: internal.provider.apiKey }
-          }
-        }
+        internal = await this.userSettingsStore.getInternalUserSettings(userId)
+        providerSettings = applyStoredProviderSecret(providerSettings, internal, {
+          slot: 'provider',
+        })
       } catch {}
     }
+    providerSettings = stripMaskedProviderSecret(providerSettings)
 
     if (
       !transcript ||
@@ -240,43 +245,16 @@ export class AiAssistRunController {
       } catch (err) {
         return res.status(400).json({ error: err.message })
       }
-      providerSettings = { ...providerSettings, baseUrl }
+      const { baseURL: _omitBaseURL, ...rest } = providerSettings
+      providerSettings = { ...rest, baseUrl }
     }
 
-    let clientWebSearchSettings = req.body?.webSearchSettings
-    const needsStoredWebKeys =
-      clientWebSearchSettings?.sourceMode === 'custom' &&
-      (!clientWebSearchSettings.providers ||
-        Object.keys(clientWebSearchSettings.providers).length === 0 ||
-        Object.values(clientWebSearchSettings.providers).some(
-          p =>
-            (Array.isArray(p?.apiKeys) && p.apiKeys.includes('••••••••')) ||
-            p?.bearerToken === '••••••••'
-        ))
-
-    if (needsStoredWebKeys) {
-      try {
-        const internal = await defaultUserSettingsStore.getInternalUserSettings(userId)
-        if (internal.webSearch) {
-          if (!clientWebSearchSettings || Object.keys(clientWebSearchSettings.providers || {}).length === 0) {
-            clientWebSearchSettings = internal.webSearch
-          } else if (internal.webSearch.providers) {
-            for (const [name, p] of Object.entries(clientWebSearchSettings.providers || {})) {
-              const storedP = internal.webSearch.providers[name]
-              if (storedP) {
-                if (Array.isArray(p.apiKeys)) {
-                  p.apiKeys = p.apiKeys.map((k, idx) => k === '••••••••' ? (storedP.apiKeys?.[idx] || k) : k)
-                  if (p.apiKeys.length === 0 && storedP.apiKeys?.length) p.apiKeys = storedP.apiKeys
-                }
-                if (p.bearerToken === '••••••••' && storedP.bearerToken) {
-                  p.bearerToken = storedP.bearerToken
-                }
-              }
-            }
-          }
-        }
-      } catch {}
-    }
+    const clientWebSearchSettings = await resolveStoredWebSearchSettings(
+      req.body?.webSearchSettings,
+      this.userSettingsStore,
+      userId,
+      internal
+    )
 
     let webSearchSettings
     try {

@@ -27,6 +27,10 @@ describe('GoogleDriveImportWorker', () => {
     googleDriveProjectStates: {
       findOne: vi.fn(),
       updateOne: vi.fn(),
+      deleteOne: vi.fn(),
+    },
+    projects: {
+      findOne: vi.fn(),
     },
   }
 
@@ -66,6 +70,8 @@ describe('GoogleDriveImportWorker', () => {
     vi.clearAllMocks()
     db.googleDriveImportJobs.updateOne.mockResolvedValue({ matchedCount: 1 })
     db.googleDriveProjectStates.findOne.mockResolvedValue(null)
+    db.googleDriveProjectStates.deleteOne.mockResolvedValue({ deletedCount: 1 })
+    db.projects.findOne.mockResolvedValue({ _id: 'existing-proj-1' })
     GoogleDriveSyncManager.syncProject.mockResolvedValue({ success: true })
     GoogleDriveSyncManager._createProjectFromDriveFolder.mockResolvedValue({
       projectId: 'new-project-id',
@@ -104,6 +110,31 @@ describe('GoogleDriveImportWorker', () => {
     const finalUpdate = guardedUpdates().at(-1)[1]
     expect(finalUpdate.$set.status).toBe('completed')
     expect(finalUpdate.$unset).toEqual({ active: '', leaseExpiresAt: '' })
+  })
+
+  it('deletes stale googleDriveProjectStates and re-imports when linked project is missing or deleted', async () => {
+    const job = makeJob(['queued'])
+    db.googleDriveProjectStates.findOne.mockResolvedValueOnce({
+      _id: 'stale-state-1',
+      projectId: 'deleted-proj-1',
+      driveFolderId: 'folder-0',
+    })
+    db.projects.findOne.mockResolvedValueOnce(null)
+
+    await GoogleDriveImportWorker.processJob(job)
+
+    expect(db.googleDriveProjectStates.deleteOne).toHaveBeenCalledWith({
+      _id: 'stale-state-1',
+    })
+    expect(
+      GoogleDriveSyncManager.downloadDriveFolderToOverleaf
+    ).not.toHaveBeenCalled()
+    expect(
+      GoogleDriveSyncManager._createProjectFromDriveFolder
+    ).toHaveBeenCalledWith('user-1', 'user-1', {
+      id: 'folder-0',
+      name: 'Folder 0',
+    })
   })
 
   it('records failed folder and continues with the rest', async () => {

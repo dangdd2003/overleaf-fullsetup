@@ -5,6 +5,7 @@ import {
   invalid,
   isTrueParam,
   parseIntParam,
+  splitLines,
 } from '../../../app/src/McpRequestParams.mjs'
 
 function res() {
@@ -81,5 +82,11 @@ describe('ACCESS_BUCKETS', () => {
     const names = ACCESS_BUCKETS.map(([bucket]) => bucket)
     expect(new Set(names).size).toBe(names.length)
     expect(names[0]).toBe('owned')
+  })
+})
+
+describe('splitLines', () => {
+  it('normalizes CRLF and bare CR before splitting on LF', () => {
+    expect(splitLines('a\r\nb\rc\nd\r\n')).toEqual(['a', 'b', 'c', 'd', ''])
   })
 })

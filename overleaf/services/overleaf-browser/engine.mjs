@@ -251,6 +251,7 @@ export function visibleText(html) {
 /** A raw HTML answer that is a bot check rather than the page. */
 export function isChallengeBody(contentType, body) {
   if (!/html/i.test(String(contentType ?? ''))) return false
+  if (!body || body.length > 256 * 1024) return false
   const html = body.toString('utf8')
   return isChallenge(html, visibleText(html))
 }
@@ -380,6 +381,7 @@ export class BrowserEngine {
     launcher = null,
     sandboxCheck = checkSandbox,
     sandboxTimeoutMs = 5_000,
+    maxReadsBeforeRestart = MAX_READS_BEFORE_RESTART,
   } = {}) {
     this.profileDir = profileDir
     this.proxyUrl = proxyUrl
@@ -387,10 +389,12 @@ export class BrowserEngine {
     this.launcher = launcher
     this.sandboxCheck = sandboxCheck
     this.sandboxTimeoutMs = sandboxTimeoutMs
+    this.maxReadsBeforeRestart = maxReadsBeforeRestart
     this.context = null
     this.starting = null
-    this.busyCount = 0
-    this.readCount = 0
+    this.closing = null
+    this.activeReads = 0
+    this.reads = 0
   }
 
   version() {
@@ -401,15 +405,22 @@ export class BrowserEngine {
     await this._context()
   }
 
-  /** One launch at a time: a read that arrives during a launch waits for it. */
+  /** One launch at a time: a read that arrives during a launch or close waits for it. */
   async _context() {
-    if (this.context) return this.context
-    if (!this.starting) {
-      this.starting = this._launch().finally(() => {
-        this.starting = null
-      })
+    while (true) {
+      if (this.closing) {
+        await this.closing
+        continue
+      }
+      if (this.context) return this.context
+      if (!this.starting) {
+        this.starting = this._launch().finally(() => {
+          this.starting = null
+        })
+      }
+      const context = await this.starting
+      if (!this.closing && this.context === context) return context
     }
-    return this.starting
   }
 
   async _launch() {
@@ -469,28 +480,47 @@ export class BrowserEngine {
     return context
   }
 
-  /** Chrome is relaunched after MAX_READS_BEFORE_RESTART reads, once idle. */
-  async _finish() {
-    this.busyCount--
-    this.readCount++
-    if (this.readCount >= MAX_READS_BEFORE_RESTART && this.busyCount === 0) {
-      this.readCount = 0
+  /** Chrome is relaunched after maxReadsBeforeRestart reads, once idle. */
+  async _finish({ countRead = true } = {}) {
+    this.activeReads--
+    if (countRead) this.reads++
+    if (
+      this.reads >= this.maxReadsBeforeRestart &&
+      this.activeReads === 0
+    ) {
+      this.reads = 0
       await this.close()
     }
   }
 
-  async raw(url, { signal } = {}) {
+  async _withPage(signal, fn) {
     if (signal?.aborted) throw cancelled()
-    const context = await this._context()
-    this.busyCount++
+    this.activeReads++
+    let countRead = false
     let page = null
     let stopWatching = () => {}
     try {
+      const context = await this._context()
+      if (signal?.aborted) throw cancelled()
+      countRead = true
       page = await context.newPage()
       stopWatching = watchAbort(signal, () => {
         page.close().catch(() => {})
       })
       if (signal?.aborted) throw cancelled()
+      return await fn(page)
+    } catch (err) {
+      if (signal?.aborted) throw cancelled()
+      throw err
+    } finally {
+      stopWatching()
+      await page?.close().catch(() => {})
+      await this._finish({ countRead })
+    }
+  }
+
+  async raw(url, { signal } = {}) {
+    return this._withPage(signal, async page => {
       await page.route('**/*', routeRaw)
 
       const navigated = navigationUrl(url)
@@ -537,28 +567,11 @@ export class BrowserEngine {
         truncated,
         challenge: isChallengeBody(contentType, body),
       }
-    } catch (err) {
-      if (signal?.aborted) throw cancelled()
-      throw err
-    } finally {
-      stopWatching()
-      await page?.close().catch(() => {})
-      await this._finish()
-    }
+    })
   }
 
   async render(url, { signal } = {}) {
-    if (signal?.aborted) throw cancelled()
-    const context = await this._context()
-    this.busyCount++
-    let page = null
-    let stopWatching = () => {}
-    try {
-      page = await context.newPage()
-      stopWatching = watchAbort(signal, () => {
-        page.close().catch(() => {})
-      })
-      if (signal?.aborted) throw cancelled()
+    return this._withPage(signal, async page => {
       await page.route('**/*', routeRender)
 
       const downloadPromise = page
@@ -629,19 +642,21 @@ export class BrowserEngine {
         truncated,
         challenge,
       }
-    } catch (err) {
-      if (signal?.aborted) throw cancelled()
-      throw err
-    } finally {
-      stopWatching()
-      await page?.close().catch(() => {})
-      await this._finish()
-    }
+    })
   }
 
   async close() {
-    const context = this.context
-    this.context = null
-    if (context) await context.close().catch(() => {})
+    if (this.closing) return this.closing
+    this.closing = (async () => {
+      if (this.starting) {
+        await this.starting.catch(() => {})
+      }
+      const context = this.context
+      this.context = null
+      if (context) await context.close().catch(() => {})
+    })().finally(() => {
+      this.closing = null
+    })
+    return this.closing
   }
 }

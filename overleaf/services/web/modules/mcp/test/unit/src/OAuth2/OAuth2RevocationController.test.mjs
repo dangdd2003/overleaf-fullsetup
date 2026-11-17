@@ -150,7 +150,7 @@ describe('OAuth2RevocationController', () => {
     expect(res.statusCode).to.equal(200)
   })
 
-  it('does not resolve an expired access token; the refresh token revokes instead', async () => {
+  it('revokes the grant named by an expired access token', async () => {
     const deleteSpy = vi
       .spyOn(OauthAccessToken, 'deleteOne')
       .mockResolvedValue({ deletedCount: 1 })
@@ -161,7 +161,50 @@ describe('OAuth2RevocationController', () => {
     })
 
     const res = createMockRes()
-    await OAuth2RevocationController.revoke({ body: { token } }, res)
+    await OAuth2RevocationController.revoke(
+      { body: { token, client_id: 'client_1' } },
+      res
+    )
+    expect(deleteSpy.mock.calls).to.have.lengthOf(1)
+    expect(deleteSpy.mock.calls[0][0]).to.deep.equal({
+      _id: '65f0c0ffee0000000000abce',
+      client_id: 'client_1',
+    })
+    expect(res.statusCode).to.equal(200)
+  })
+
+  it('does not revoke for a forged expired access token', async () => {
+    const deleteSpy = vi
+      .spyOn(OauthAccessToken, 'deleteOne')
+      .mockResolvedValue({ deletedCount: 1 })
+    const { privateKey } = crypto.generateKeyPairSync('rsa', {
+      modulusLength: 2048,
+    })
+    const payload = Buffer.from(
+      JSON.stringify({
+        sub: 'attacker',
+        grant_id: 'victim_grant',
+        exp: Math.floor(Date.now() / 1000) - 10,
+      })
+    ).toString('base64url')
+    const header = Buffer.from(
+      JSON.stringify({ alg: 'RS256', typ: 'JWT' })
+    ).toString('base64url')
+    const signature = crypto
+      .createSign('SHA256')
+      .update(`${header}.${payload}`)
+      .sign(privateKey, 'base64url')
+
+    const res = createMockRes()
+    await OAuth2RevocationController.revoke(
+      {
+        body: {
+          token: `${header}.${payload}.${signature}`,
+          client_id: 'client_1',
+        },
+      },
+      res
+    )
     expect(deleteSpy.mock.calls.length).to.equal(0)
     expect(res.statusCode).to.equal(200)
   })

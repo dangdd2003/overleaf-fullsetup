@@ -923,4 +923,161 @@ describe('AiAssistProviderController', function () {
       expect(JSON.parse(res.written.at(-1)).error.code).to.equal('providerError')
     })
   })
+
+  describe('stored secret origin isolation', function () {
+    const SESSION = { user: { _id: '607f1f77bcf86cd799439099' } }
+
+    it('reuses stored provider apiKey only when type and baseUrl origin match', async function () {
+      const clientFactory = sinon.stub().returns({
+        listModels: sinon.stub().resolves([]),
+      })
+      const userSettingsStore = {
+        getInternalUserSettings: sinon.stub().resolves({
+          provider: {
+            type: 'openai',
+            baseUrl: 'https://api.openai.com/v1',
+            apiKey: 'sk-stored-secret',
+            model: 'gpt-4o',
+          },
+        }),
+      }
+      const controller = new AiAssistProviderController({
+        clientFactory,
+        userSettingsStore,
+      })
+
+      await controller.listModels(
+        {
+          session: SESSION,
+          body: {
+            providerSettings: {
+              type: 'openai',
+              baseUrl: 'https://api.openai.com',
+              apiKey: '••••••••',
+            },
+          },
+        },
+        fakeRes()
+      )
+      expect(clientFactory.firstCall.args[0].apiKey).to.equal('sk-stored-secret')
+
+      clientFactory.resetHistory()
+      await controller.listModels(
+        {
+          session: SESSION,
+          body: {
+            providerSettings: {
+              type: 'openai',
+              baseUrl: 'https://attacker.example.com/v1',
+              apiKey: '••••••••',
+            },
+          },
+        },
+        fakeRes()
+      )
+      expect(clientFactory.firstCall.args[0].apiKey).to.equal('')
+
+      clientFactory.resetHistory()
+      await controller.listModels(
+        {
+          session: SESSION,
+          body: {
+            providerSettings: {
+              type: 'anthropic',
+              baseUrl: 'https://api.openai.com',
+              apiKey: '',
+            },
+          },
+        },
+        fakeRes()
+      )
+      expect(clientFactory.firstCall.args[0].apiKey).to.equal('')
+    })
+
+    it('reuses stored webSearch secrets in testWebSearch only when origins match', async function () {
+      const webSearchTester = sinon.stub().resolves({
+        latencyMs: 10,
+        anySuccess: true,
+        providers: [],
+      })
+      const userSettingsStore = {
+        getInternalUserSettings: sinon.stub().resolves({
+          webSearch: {
+            sourceMode: 'custom',
+            providers: {
+              mcp: {
+                enabled: true,
+                serverUrls: ['https://mcp.example.com/v1'],
+                bearerToken: 'secret-mcp-token',
+              },
+              tavily: {
+                enabled: true,
+                apiKeys: ['tvly-secret'],
+              },
+            },
+          },
+        }),
+      }
+      const controller = new AiAssistProviderController({
+        webSearchTester,
+        userSettingsStore,
+      })
+
+      const resOk = fakeRes()
+      await controller.testWebSearch(
+        {
+          session: SESSION,
+          body: {
+            webSearchSettings: {
+              sourceMode: 'custom',
+              providers: {
+                mcp: {
+                  enabled: true,
+                  serverUrls: ['https://mcp.example.com/v2'],
+                  bearerToken: '••••••••',
+                },
+              },
+            },
+          },
+        },
+        resOk
+      )
+      expect(resOk.statusCode).to.equal(200)
+      expect(webSearchTester.firstCall.args[0].providers.mcp.bearerToken).to.equal(
+        'secret-mcp-token'
+      )
+
+      webSearchTester.resetHistory()
+      const resBlocked = fakeRes()
+      await controller.testWebSearch(
+        {
+          session: SESSION,
+          body: {
+            webSearchSettings: {
+              sourceMode: 'custom',
+              providers: {
+                mcp: {
+                  enabled: true,
+                  serverUrls: ['https://attacker.example.com'],
+                  bearerToken: '••••••••',
+                },
+                tavily: {
+                  enabled: true,
+                  baseUrl: 'https://attacker.example.com',
+                  apiKeys: ['••••••••'],
+                },
+              },
+            },
+          },
+        },
+        resBlocked
+      )
+      expect(
+        webSearchTester.firstCall.args[0].providers.mcp.bearerToken
+      ).to.be.undefined
+      expect(webSearchTester.firstCall.args[0].providers.tavily.apiKeys).to.deep.equal(
+        []
+      )
+    })
+  })
 })

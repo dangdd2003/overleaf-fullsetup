@@ -24,6 +24,7 @@ import {
   invalid,
   isTrueParam,
   parseIntParam,
+  splitLines,
 } from './McpRequestParams.mjs'
 
 // Most projects a single multi-project zip may bundle. Each one costs an access
@@ -563,7 +564,7 @@ async function writeDoc(req, res) {
       { hint: 'Check the path with list_files, then create the document.' }
     )
   }
-  const lines = content.split('\n')
+  const lines = splitLines(content)
   const { doc } = await EditorController.promises.upsertDocWithPath(
     projectId,
     target,

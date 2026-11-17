@@ -374,6 +374,13 @@ export async function saveSessionCookie(req, res) {
       invalid: false,
     })
   } catch (err) {
+    if (err?.code === 'secret_not_configured') {
+      return res.status(400).json({
+        ok: false,
+        error: 'secret_not_configured',
+        message: err.message,
+      })
+    }
     return sendInternal(res, err)
   }
 }

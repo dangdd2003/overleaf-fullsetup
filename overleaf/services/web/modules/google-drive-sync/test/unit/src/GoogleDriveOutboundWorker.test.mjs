@@ -22,6 +22,7 @@ describe('GoogleDriveOutboundWorker', () => {
   const db = {
     googleDriveProjectStates: {
       find: vi.fn(),
+      findOne: vi.fn(),
       updateOne: vi.fn(),
     },
   }
@@ -298,6 +299,68 @@ describe('GoogleDriveOutboundWorker', () => {
         projectId,
         'lock-token'
       )
+    })
+
+    it('re-fetches fresh state after acquiring lock and picks up newly queued changes', async () => {
+      const staleState = stateWith({
+        'a%2Etex': { op: 'upsert', entityType: 'doc', entityId: 'doc-a' },
+      })
+      const newerDirtyAt = new Date(Date.now() - 1000)
+      db.googleDriveProjectStates.findOne.mockResolvedValue(
+        stateWith(
+          {
+            'a%2Etex': { op: 'upsert', entityType: 'doc', entityId: 'doc-a' },
+            'b%2Etex': { op: 'upsert', entityType: 'doc', entityId: 'doc-b' },
+          },
+          { outboundDirtyAt: newerDirtyAt }
+        )
+      )
+
+      await GoogleDriveOutboundWorker.flushProject(staleState)
+
+      expect(
+        GoogleDriveSyncManager.handleOutboundDocUpdate
+      ).toHaveBeenCalledWith(projectId, 'doc-a', 'a.tex', undefined)
+      expect(
+        GoogleDriveSyncManager.handleOutboundDocUpdate
+      ).toHaveBeenCalledWith(projectId, 'doc-b', 'b.tex', undefined)
+      const clearCall = db.googleDriveProjectStates.updateOne.mock.calls.find(
+        ([, update]) => update.$unset?.outboundDirtyAt !== undefined
+      )
+      expect(clearCall[0]).toEqual({
+        projectId,
+        outboundDirtyAt: newerDirtyAt,
+      })
+    })
+
+    it('guards pendingChanges key unset on queuedAt so concurrent same-file edits are not dropped', async () => {
+      const t1 = new Date('2026-11-17T00:00:00Z')
+      const state = stateWith(
+        {
+          'main%2Etex': {
+            op: 'upsert',
+            entityType: 'doc',
+            entityId: 'doc-1',
+            queuedAt: t1,
+          },
+        },
+        { outboundDirtyAt: t1 }
+      )
+      // Simulate concurrent edit bumping queuedAt before unset runs
+      db.googleDriveProjectStates.updateOne.mockResolvedValue({
+        matchedCount: 0,
+      })
+
+      await GoogleDriveOutboundWorker.flushProject(state)
+
+      expect(db.googleDriveProjectStates.updateOne).toHaveBeenCalledWith(
+        { projectId, 'pendingChanges.main%2Etex.queuedAt': t1 },
+        { $unset: { 'pendingChanges.main%2Etex': '' } }
+      )
+      const clearedDirtyAt = db.googleDriveProjectStates.updateOne.mock.calls.some(
+        ([, update]) => update.$unset?.outboundDirtyAt !== undefined
+      )
+      expect(clearedDirtyAt).toBe(false)
     })
 
     describe('outbound divergence check', () => {

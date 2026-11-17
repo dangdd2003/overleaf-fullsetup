@@ -6,6 +6,7 @@ import * as CatalogSnapshot from './storage/CatalogSnapshot.mjs'
 import * as CatalogSync from './storage/CatalogSync.mjs'
 import Runner from './jobs/Runner.mjs'
 import Scheduler from './jobs/Scheduler.mjs'
+import { warnIfFallbackSecret } from './crypto/SessionCredentialStore.mjs'
 import { logInfo, logWarn, logError } from './observability/Log.mjs'
 
 let ready = false
@@ -80,6 +81,7 @@ export function installNavigation() {
 export async function start(cfg = DEFAULTS) {
   readinessState.lastCheckedAt = new Date()
   readinessState.snapshot = null
+  warnIfFallbackSecret()
 
   try {
     // 1. Storage health check. Creates the storage tree (including catalog/) in its own storage directory.

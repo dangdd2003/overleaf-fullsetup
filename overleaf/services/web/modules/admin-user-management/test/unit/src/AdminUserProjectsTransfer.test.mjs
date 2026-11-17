@@ -248,6 +248,28 @@ describe('AdminUserProjectsTransfer Controller', () => {
       expect(OwnershipTransferHandler.promises.transferOwnership).not.toHaveBeenCalled()
     })
 
+    it.each([
+      { holdingAccount: true, suspended: false },
+      { holdingAccount: false, suspended: true },
+    ])(
+      'returns 400 invalid_target_user when destination user has %o',
+      async flags => {
+        getUserById.mockResolvedValue({
+          _id: toUserId,
+          email: 'dest@example.com',
+          ...flags,
+        })
+
+        await AdminUserManagementController.transferProject(req, res)
+
+        expect(res.status).toHaveBeenCalledWith(400)
+        expect(res.json).toHaveBeenCalledWith({ error: 'invalid_target_user' })
+        expect(
+          OwnershipTransferHandler.promises.transferOwnership
+        ).not.toHaveBeenCalled()
+      }
+    )
+
     it('calls OwnershipTransferHandler.promises.transferOwnership and returns { success: true, projectId, newOwnerId }', async () => {
       getUserById.mockResolvedValue({
         _id: toUserId,
@@ -361,6 +383,28 @@ describe('AdminUserProjectsTransfer Controller', () => {
       expect(res.json).toHaveBeenCalledWith({ error: 'user_not_found' })
       expect(OwnershipTransferHandler.promises.transferAllProjectsToUser).not.toHaveBeenCalled()
     })
+
+    it.each([
+      { holdingAccount: true, suspended: false },
+      { holdingAccount: false, suspended: true },
+    ])(
+      'returns 400 invalid_target_user when destination user has %o',
+      async flags => {
+        getUserById.mockResolvedValue({
+          _id: toUserId,
+          email: 'dest@example.com',
+          ...flags,
+        })
+
+        await AdminUserManagementController.transferAllProjects(req, res)
+
+        expect(res.status).toHaveBeenCalledWith(400)
+        expect(res.json).toHaveBeenCalledWith({ error: 'invalid_target_user' })
+        expect(
+          OwnershipTransferHandler.promises.transferAllProjectsToUser
+        ).not.toHaveBeenCalled()
+      }
+    )
 
     it('calls OwnershipTransferHandler.promises.transferAllProjectsToUser and returns { success: true, transferredCount, newTagName }', async () => {
       getUserById.mockResolvedValue({

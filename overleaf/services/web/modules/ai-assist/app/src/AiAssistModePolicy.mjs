@@ -1,3 +1,5 @@
+import path from 'node:path'
+
 export const MODES = ['manual', 'acceptEdits', 'plan']
 export const DEFAULT_MODE = 'manual'
 
@@ -77,10 +79,17 @@ export const SETTINGS_TOOLS = new Set([
 
 export const PLAN_TOOL = 'present_plan'
 
-export function isInstructionPath(path) {
-  if (typeof path !== 'string') return false
-  const normalized = path.replace(/^\/+/, '').trim().toLowerCase()
-  return normalized === 'agents.md'
+export function isInstructionPath(filePath) {
+  if (typeof filePath !== 'string') return false
+  const cleaned = filePath.trim().replace(/\\/g, '/')
+  if (!cleaned) return false
+  const normalized = path.posix
+    .normalize(cleaned)
+    .replace(/^(?:\.\/|\/)+/, '')
+    .replace(/\/+$/, '')
+  if (!normalized || normalized === '.') return false
+  // Only the root AGENTS.md is loaded as instructions
+  return normalized.toLowerCase() === 'agents.md'
 }
 
 export function isConnectorTool(name) {

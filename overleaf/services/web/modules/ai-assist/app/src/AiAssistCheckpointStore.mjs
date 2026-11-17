@@ -1,3 +1,4 @@
+import { normalizeProjectPath } from './AiAssistProjectPath.mjs'
 import fs from 'node:fs/promises'
 import Path from 'node:path'
 import crypto from 'node:crypto'
@@ -113,7 +114,9 @@ async function writeCheckpoint(file, checkpoint) {
 
 async function readCheckpoint(file) {
   try {
-    return JSON.parse(await fs.readFile(file, 'utf8'))
+    const checkpoint = JSON.parse(await fs.readFile(file, 'utf8'))
+    checkpoint.files = normalizeCheckpointFiles(checkpoint.files)
+    return checkpoint
   } catch (err) {
     if (err.code === 'ENOENT') return null
     throw err
@@ -134,11 +137,14 @@ export async function saveCheckpoint(
     const existingFiles = existing?.files || {}
     const incomingFiles = data?.files ? data.files : data
     const mergedFiles = { ...existingFiles }
+    const seen = new Set(Object.keys(mergedFiles))
 
     if (incomingFiles && typeof incomingFiles === 'object') {
       for (const [filePath, fileInfo] of Object.entries(incomingFiles)) {
-        if (!mergedFiles[filePath]) {
-          mergedFiles[filePath] = {
+        const key = normalizeProjectPath(filePath)
+        if (key && !seen.has(key)) {
+          seen.add(key)
+          mergedFiles[key] = {
             originalContent: fileInfo?.originalContent ?? '',
             docId: fileInfo?.docId ? String(fileInfo.docId) : null,
             isNew: Boolean(fileInfo?.isNew),
@@ -236,8 +242,15 @@ async function loadCheckpointIndex(projectId, userId, chatId) {
 
 const REWIND_MAX_MESSAGES = 500
 
-function normalizeFilePath(filePath) {
-  return String(filePath).replace(/^\//, '')
+// Older checkpoints may contain backslashes, leading slashes or ./ segments.
+// Preserve the first snapshot when multiple spellings name the same file.
+function normalizeCheckpointFiles(files) {
+  const normalized = {}
+  for (const [filePath, info] of Object.entries(files || {})) {
+    const key = normalizeProjectPath(filePath)
+    if (key && !Object.hasOwn(normalized, key)) normalized[key] = info
+  }
+  return normalized
 }
 
 // Ordered user message ids from M onward. An explicit transcript order from
@@ -286,10 +299,10 @@ export async function getRewindCheckpoint(
   for (const id of ids) {
     const checkpoint = await getCheckpoint(projectId, userId, chatId, id)
     for (const [filePath, fileInfo] of Object.entries(checkpoint?.files || {})) {
-      const key = normalizeFilePath(filePath)
-      if (seen.has(key)) continue
+      const key = normalizeProjectPath(filePath)
+      if (!key || seen.has(key)) continue
       seen.add(key)
-      files[filePath] = fileInfo
+      files[key] = fileInfo
     }
   }
 
@@ -305,13 +318,26 @@ function extractFileContent(val) {
   return String(val)
 }
 
-function getFileContent(currentFiles, targetPath) {
-  if (!currentFiles || typeof currentFiles !== 'object') return null
-  const norm = targetPath.replace(/^\//, '')
-  if (currentFiles[norm] !== undefined) return extractFileContent(currentFiles[norm])
-  if (currentFiles['/' + norm] !== undefined) return extractFileContent(currentFiles['/' + norm])
-  if (currentFiles[targetPath] !== undefined) return extractFileContent(currentFiles[targetPath])
-  return null
+// Looks up current files by normalized path. The normalized index is built
+// once, on the first key that misses an exact match, and keeps the first entry
+// for each path.
+function currentFileLookup(currentFiles) {
+  if (!currentFiles || typeof currentFiles !== 'object') return () => null
+  let byNormalizedPath = null
+  return targetPath => {
+    const norm = normalizeProjectPath(targetPath)
+    if (Object.hasOwn(currentFiles, norm)) return extractFileContent(currentFiles[norm])
+    if (!byNormalizedPath) {
+      byNormalizedPath = new Map()
+      for (const [filePath, content] of Object.entries(currentFiles)) {
+        const key = normalizeProjectPath(filePath)
+        if (!byNormalizedPath.has(key)) byNormalizedPath.set(key, content)
+      }
+    }
+    return byNormalizedPath.has(norm)
+      ? extractFileContent(byNormalizedPath.get(norm))
+      : null
+  }
 }
 
 export async function checkRewind(
@@ -342,10 +368,11 @@ export async function checkRewind(
   let insertions = 0
   let deletions = 0
 
-  for (const [filePath, fileInfo] of Object.entries(checkpoint.files)) {
+  const getFileContent = currentFileLookup(currentFiles)
+  for (const [filePath, fileInfo] of Object.entries(normalizeCheckpointFiles(checkpoint.files))) {
     const originalContent = fileInfo?.originalContent ?? ''
     const isNew = Boolean(fileInfo?.isNew)
-    const currentContent = getFileContent(currentFiles, filePath)
+    const currentContent = getFileContent(filePath)
 
     if (isNew) {
       if (currentContent !== null) {

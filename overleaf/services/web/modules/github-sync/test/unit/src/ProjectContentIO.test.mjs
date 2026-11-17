@@ -58,6 +58,7 @@ describe('ProjectContentIO', function () {
   let mockEntities
   let mockDocs
   let mockBlobStreams
+  let symlinkPaths
 
   beforeEach(async function () {
     workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ghsync-io-test-'))
@@ -78,6 +79,10 @@ describe('ProjectContentIO', function () {
     }
 
     vi.resetModules()
+    symlinkPaths = new Set()
+    vi.doMock('../../../app/src/SyncEngine.mjs', () => ({
+      default: { promises: { getSymlinkPaths: async () => symlinkPaths } },
+    }))
 
     const projectEntityHandlerMock = {
       default: {
@@ -223,6 +228,36 @@ describe('ProjectContentIO', function () {
     expect(link.symlinkTarget).to.equal('target.txt')
     expect(link.sizeBytes).to.equal(0)
   })
+
+  it('classifies Git symlinks checked out as regular files', async function () {
+    symlinkPaths.add('link.tex')
+    await fs.writeFile(path.join(workDir, 'link.tex'), '../target.tex')
+    const tree = await ProjectContentIO.promises.readProjectTree(workDir)
+    expect(tree).to.deep.equal([
+      { relPath: 'link.tex', sizeBytes: 0, symlinkTarget: null, isSymlink: true },
+    ])
+  })
+
+  it.each(['docs', 'files'])(
+    'preserves Git symlink contents during materialization of %s and pruning',
+    async function (entityType) {
+      symlinkPaths.add('main.tex')
+      symlinkPaths.add('img/logo.png')
+      symlinkPaths.add('unimported.tex')
+      await fs.mkdir(path.join(workDir, 'img'))
+      for (const relPath of symlinkPaths) {
+        await fs.writeFile(path.join(workDir, relPath), '../target')
+      }
+      mockEntities[entityType === 'docs' ? 'files' : 'docs'] = []
+
+      const manifest = await ProjectContentIO.promises.materializeProject('proj1', workDir)
+
+      expect(manifest).to.deep.equal([])
+      for (const relPath of symlinkPaths) {
+        expect(await fs.readFile(path.join(workDir, relPath), 'utf8')).to.equal('../target')
+      }
+    }
+  )
 
   it('skips .git directory and internal git files in readProjectTree', async function () {
     const gitDir = path.join(workDir, '.git')

@@ -66,20 +66,24 @@ export const AdminUserManagementController = {
     res.render(Path.resolve(__dirname, '../views/user_list'))
   },
 
-  async renderUserDetailPage(req, res) {
-    const { userId } = req.params
-    if (!ObjectId.isValid(userId)) {
-      return res.status(404).render('general/404')
-    }
+  async renderUserDetailPage(req, res, next) {
+    try {
+      const { userId } = req.params
+      if (!ObjectId.isValid(userId)) {
+        return res.status(404).render('general/404')
+      }
 
-    const targetUser = await getUserById(userId)
-    if (!targetUser) {
-      return res.status(404).render('general/404')
-    }
+      const targetUser = await getUserById(userId)
+      if (!targetUser) {
+        return res.status(404).render('general/404')
+      }
 
-    res.render(Path.resolve(__dirname, '../views/user_detail'), {
-      targetUserId: userId,
-    })
+      res.render(Path.resolve(__dirname, '../views/user_detail'), {
+        targetUserId: userId,
+      })
+    } catch (err) {
+      return next(err)
+    }
   },
 
   async getActiveUsers(req, res) {
@@ -141,14 +145,17 @@ export const AdminUserManagementController = {
         return res.status(400).json({ error: 'invalid_user_id' })
       }
 
-      const { first_name, last_name } = req.body
+      const { first_name, last_name } = req.body || {}
       const firstNameSafe = typeof first_name === 'string' ? first_name.trim().slice(0, 100) : ''
       const lastNameSafe = typeof last_name === 'string' ? last_name.trim().slice(0, 100) : ''
 
-      await db.users.updateOne(
+      const result = await db.users.updateOne(
         { _id: new ObjectId(userId) },
         { $set: { first_name: firstNameSafe, last_name: lastNameSafe } }
       )
+      if (result?.matchedCount === 0) {
+        throw new NotFoundError('user_not_found')
+      }
 
       await UserAuditLogHandler.promises.addEntry(
         new ObjectId(userId),
@@ -161,6 +168,9 @@ export const AdminUserManagementController = {
       const updatedUser = await getUserById(userId)
       res.json({ success: true, user: updatedUser })
     } catch (err) {
+      if (err instanceof NotFoundError) {
+        return res.status(404).json({ error: err.message })
+      }
       logger.error({ err, body: req.body }, 'Failed to update user profile')
       res.status(500).json({ error: 'failed_to_update_profile' })
     }
@@ -183,10 +193,13 @@ export const AdminUserManagementController = {
 
       await ensureCanModifyAdmin(callerUserId, userId, newIsAdmin)
 
-      await db.users.updateOne(
+      const result = await db.users.updateOne(
         { _id: new ObjectId(userId) },
         { $set: { isAdmin: newIsAdmin } }
       )
+      if (result?.matchedCount === 0) {
+        throw new NotFoundError('user_not_found')
+      }
 
       if (!newIsAdmin) {
         await UserSessionsManager.promises.removeSessionsFromRedis({
@@ -209,6 +222,9 @@ export const AdminUserManagementController = {
       }
       if (err instanceof ForbiddenError) {
         return res.status(403).json({ error: err.message })
+      }
+      if (err instanceof NotFoundError) {
+        return res.status(404).json({ error: err.message })
       }
       logger.error({ err, userId: req.params.userId }, 'Failed to update admin status')
       res.status(500).json({ error: 'failed_to_update_admin_status' })
@@ -674,6 +690,9 @@ export const AdminUserManagementController = {
       if (!destinationUser) {
         return res.status(404).json({ error: 'user_not_found' })
       }
+      if (destinationUser.holdingAccount || destinationUser.suspended) {
+        return res.status(400).json({ error: 'invalid_target_user' })
+      }
 
       // transferOwnership does not check its fromUserId, so check it here
       const owned = await Project.exists({
@@ -753,6 +772,9 @@ export const AdminUserManagementController = {
       const destinationUser = await getUserById(destinationUserId)
       if (!destinationUser) {
         return res.status(404).json({ error: 'user_not_found' })
+      }
+      if (destinationUser.holdingAccount || destinationUser.suspended) {
+        return res.status(400).json({ error: 'invalid_target_user' })
       }
 
       const handler =
@@ -1113,6 +1135,7 @@ export const AdminUserManagementController = {
             {}
           )
 
+          // Counts users: the list page reports "sessions for N selected user(s)"
           totalRevoked++
         } catch (err) {
           logger.error({ err, userId }, 'Failed to revoke user session in batch')

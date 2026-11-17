@@ -4,6 +4,7 @@ import path from 'node:path'
 import os from 'node:os'
 import { describe, it, beforeEach, afterEach } from 'vitest'
 import { expect } from 'chai'
+import Settings from '@overleaf/settings'
 import OAuth2KeyManager from '../../../../app/src/OAuth2/OAuth2KeyManager.mjs'
 
 // Every access token carries an exp, so test payloads do too.
@@ -190,5 +191,55 @@ describe('OAuth2KeyManager', () => {
     }
     expect(err).to.exist
     expect(err.message).to.match(/not a number/)
+  })
+
+  it('allows expired JWT when ignoreExpiration is true while still checking signature and issuer', async () => {
+    const origSiteUrl = Settings.siteUrl
+    Settings.siteUrl = undefined
+    try {
+      const expiredPayload = {
+        sub: 'user_123',
+        iss: 'http://localhost:3000',
+        aud: 'http://localhost:3000/mcp',
+        grant_id: 'grant_1',
+        exp: Math.floor(Date.now() / 1000) - 60,
+      }
+      const token = await OAuth2KeyManager.signJwt(expiredPayload)
+      const req = {
+        protocol: 'http',
+        get: h => (h === 'host' ? 'localhost:3000' : ''),
+      }
+
+      const verified = await OAuth2KeyManager.verifyJwt(token, req, {
+        ignoreExpiration: true,
+      })
+      expect(verified.grant_id).to.equal('grant_1')
+
+      const [h, p, s] = token.split('.')
+      const tampered = `${h}.${p}.${s.slice(0, -4)}XXXX`
+      let sigErr
+      try {
+        await OAuth2KeyManager.verifyJwt(tampered, req, { ignoreExpiration: true })
+      } catch (e) {
+        sigErr = e
+      }
+      expect(sigErr?.message).to.match(/Invalid JWT signature/i)
+
+      const wrongHostReq = {
+        protocol: 'https',
+        get: h => (h === 'host' ? 'other.example.com' : ''),
+      }
+      let issErr
+      try {
+        await OAuth2KeyManager.verifyJwt(token, wrongHostReq, {
+          ignoreExpiration: true,
+        })
+      } catch (e) {
+        issErr = e
+      }
+      expect(issErr?.message).to.match(/Invalid JWT issuer/i)
+    } finally {
+      Settings.siteUrl = origSiteUrl
+    }
   })
 })

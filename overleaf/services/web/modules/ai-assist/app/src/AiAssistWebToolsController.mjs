@@ -8,7 +8,9 @@ import {
 } from './AiAssistWebTools.mjs'
 import { renderToolResult } from './AiAssistToolRender.mjs'
 import { resolveWebSearchSettings } from './AiAssistRunController.mjs'
-import defaultUserSettingsStore from './AiAssistUserSettingsStore.mjs'
+import defaultUserSettingsStore, {
+  resolveStoredWebSearchSettings,
+} from './AiAssistUserSettingsStore.mjs'
 
 // Earlier web calls of one fix run; a fix is capped far below this
 const MAX_KNOWN_CALLS = 50
@@ -65,49 +67,23 @@ export class AiAssistWebToolsController {
         contextWindow,
         prefetch: PREFETCH_RESULTS,
       }),
+    userSettingsStore = defaultUserSettingsStore,
   } = {}) {
     this.webToolsFactory = webToolsFactory
+    this.userSettingsStore = userSettingsStore
   }
 
   async _tools(req, res) {
-    let clientSettings = req.body?.webSearchSettings
     const loggedIn = SessionManager.getLoggedInUserId(req.session)
     const userId =
       loggedIn && /^[0-9a-f]{24}$/i.test(String(loggedIn))
         ? String(loggedIn)
         : null
-    const needsStoredKeys =
-      clientSettings?.sourceMode === 'custom' &&
-      (!clientSettings.providers ||
-        Object.keys(clientSettings.providers).length === 0 ||
-        Object.values(clientSettings.providers).some(
-          p =>
-            (Array.isArray(p?.apiKeys) && p.apiKeys.includes('••••••••')) ||
-            p?.bearerToken === '••••••••'
-        ))
-    if (userId && needsStoredKeys) {
-      try {
-        const internal = await defaultUserSettingsStore.getInternalUserSettings(userId)
-        if (internal.webSearch) {
-          if (!clientSettings || !clientSettings.providers || Object.keys(clientSettings.providers).length === 0) {
-            clientSettings = internal.webSearch
-          } else if (internal.webSearch.providers) {
-            for (const [name, p] of Object.entries(clientSettings.providers || {})) {
-              const storedP = internal.webSearch.providers[name]
-              if (storedP) {
-                if (Array.isArray(p.apiKeys)) {
-                  p.apiKeys = p.apiKeys.map((k, idx) => k === '••••••••' ? (storedP.apiKeys?.[idx] || k) : k)
-                  if (p.apiKeys.length === 0 && storedP.apiKeys?.length) p.apiKeys = storedP.apiKeys
-                }
-                if (p.bearerToken === '••••••••' && storedP.bearerToken) {
-                  p.bearerToken = storedP.bearerToken
-                }
-              }
-            }
-          }
-        }
-      } catch {}
-    }
+    const clientSettings = await resolveStoredWebSearchSettings(
+      req.body?.webSearchSettings,
+      this.userSettingsStore,
+      userId
+    )
     let settings
     try {
       settings = resolveWebSearchSettings(clientSettings)

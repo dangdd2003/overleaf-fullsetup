@@ -1,4 +1,11 @@
-import { db } from '../../../../app/src/infrastructure/mongodb.mjs'
+import mongodb from 'mongodb-legacy'
+import * as mongo from '../../../../app/src/infrastructure/mongodb.mjs'
+
+const { db } = mongo
+const ObjectId = Object.keys(mongo).includes('ObjectId')
+  ? mongo.ObjectId
+  : mongodb.ObjectId
+const OBJECT_ID_RE = /^[0-9a-f]{24}$/i
 
 export class BadRequestError extends Error {
   constructor(message) {
@@ -38,12 +45,27 @@ export async function ensureCanModifyAdmin(callerUserId, targetUserId, newIsAdmi
   }
 
   if (!newIsAdmin) {
-    const activeAdminCount = await db.users.countDocuments({
-      isAdmin: true,
-      suspended: { $ne: true },
-    })
-    if (activeAdminCount <= 1) {
-      throw new ForbiddenError('cannot_modify_last_admin')
+    let targetIsActiveAdmin = true
+    if (typeof db.users?.findOne === 'function') {
+      const targetQuery =
+        OBJECT_ID_RE.test(String(targetUserId)) && ObjectId
+          ? { _id: new ObjectId(String(targetUserId)) }
+          : { _id: targetUserId }
+      const targetUser = await db.users.findOne(targetQuery, {
+        projection: { isAdmin: 1, suspended: 1 },
+      })
+      if (targetUser && (!targetUser.isAdmin || targetUser.suspended)) {
+        targetIsActiveAdmin = false
+      }
+    }
+    if (targetIsActiveAdmin) {
+      const activeAdminCount = await db.users.countDocuments({
+        isAdmin: true,
+        suspended: { $ne: true },
+      })
+      if (activeAdminCount <= 1) {
+        throw new ForbiddenError('cannot_modify_last_admin')
+      }
     }
   }
 }
@@ -57,7 +79,7 @@ export async function ensureCanDeleteUser(callerUserId, targetUser) {
     throw new BadRequestError('cannot_delete_self')
   }
 
-  if (targetUser.isAdmin) {
+  if (targetUser.isAdmin && !targetUser.suspended) {
     const activeAdminCount = await db.users.countDocuments({
       isAdmin: true,
       suspended: { $ne: true },

@@ -11,6 +11,13 @@ function isEnabled() {
   return Boolean(Settings.enableGitBridge || Settings.enableMcp)
 }
 
+async function deleteTokensForUser(userId) {
+  const { PersonalAccessToken } = await import(
+    '../../app/src/models/PersonalAccessToken.mjs'
+  )
+  await PersonalAccessToken.deleteMany({ user_id: userId })
+}
+
 /** @type {WebModule} */
 const PersonalAccessTokenModule = {
   name: 'personal-access-token',
@@ -38,16 +45,18 @@ const PersonalAccessTokenModule = {
       async listPersonalAccessTokens(userId) {
         if (!isEnabled()) return []
         const { default: PersonalAccessTokenManager } = await import(
-          '../../../../app/src/Features/PersonalAccessToken/PersonalAccessTokenManager.mjs'
+          '../../app/src/Features/PersonalAccessToken/PersonalAccessTokenManager.mjs'
         )
         return PersonalAccessTokenManager.listTokens(userId)
       },
       async cleanupPersonalAccessTokens(userId) {
-        if (!isEnabled()) return
-        const { PersonalAccessToken } = await import(
-          '../../../../app/src/models/PersonalAccessToken.mjs'
-        )
-        await PersonalAccessToken.deleteMany({ user_id: userId })
+        await deleteTokensForUser(userId)
+      },
+      async deleteUser(userId) {
+        await deleteTokensForUser(userId)
+      },
+      async expireDeletedUser(userId) {
+        await deleteTokensForUser(userId)
       },
     },
   },

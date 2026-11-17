@@ -78,10 +78,25 @@ async function _importOneFolder(job, entry) {
   const userId = job.userId.toString()
 
   // Check if this Drive folder is already linked to an Overleaf project
-  const existingState = await db.googleDriveProjectStates.findOne({
+  let existingState = await db.googleDriveProjectStates.findOne({
     userId: job.userId,
     driveFolderId: entry.folderId,
   })
+
+  if (existingState?.projectId && typeof db.projects?.findOne === 'function') {
+    const existingProject = await db.projects.findOne(
+      { _id: existingState.projectId },
+      { projection: { _id: 1, deleted: 1 } }
+    )
+    if (!existingProject || existingProject.deleted) {
+      await db.googleDriveProjectStates.deleteOne?.(
+        existingState._id
+          ? { _id: existingState._id }
+          : { projectId: existingState.projectId }
+      )
+      existingState = null
+    }
+  }
 
   if (existingState) {
     // Already linked: run sync with lock retry

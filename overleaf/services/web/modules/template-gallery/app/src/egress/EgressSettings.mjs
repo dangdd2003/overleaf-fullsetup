@@ -141,17 +141,30 @@ function loginForCreate(input) {
 // Login after an update. Omitted fields keep the stored value; an empty
 // password clears the login entirely.
 function loginForUpdate(input, current) {
-  if (input.username === undefined && input.password === undefined) {
+  const hasUser = input.username !== undefined
+  const hasPass = input.password !== undefined
+  if (!hasUser && !hasPass) {
     return current.authEnc ?? null
   }
   if (input.password === '') return null
-  const stored = current.authEnc ? openLogin(current.authEnc) : {}
-  const username =
-    input.username !== undefined
-      ? String(input.username ?? '').trim()
-      : stored.username || ''
-  const password =
-    input.password !== undefined ? input.password : stored.password || ''
+  if (hasUser && hasPass) {
+    const username = String(input.username ?? '').trim()
+    const password = input.password
+    if (!username && !password) return null
+    return sealLogin(username, password)
+  }
+  let stored = {}
+  if (current.authEnc) {
+    try {
+      stored = openLogin(current.authEnc)
+    } catch {
+      throw codedError('invalid_credentials')
+    }
+  }
+  const username = hasUser
+    ? String(input.username ?? '').trim()
+    : stored.username || ''
+  const password = hasPass ? input.password : stored.password || ''
   if (!username && !password) return null
   return sealLogin(username, password)
 }
@@ -496,7 +509,13 @@ export function deleteProxy(id) {
 export async function findProxyEgress(id) {
   const doc = await readDoc()
   const proxy = (doc?.proxies || []).find(item => item.id === id)
-  return proxy ? toEgress(proxy) : null
+  if (!proxy) return null
+  try {
+    return toEgress(proxy)
+  } catch (err) {
+    logWarn('tg_egress_unreadable', { id: proxy.id, err: err.message })
+    throw codedError('invalid_credentials')
+  }
 }
 
 /**

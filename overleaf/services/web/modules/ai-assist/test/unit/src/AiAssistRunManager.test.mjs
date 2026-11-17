@@ -3148,6 +3148,70 @@ describe('AiAssistRunManager', function () {
       expect(toolMessage.content).to.include('<web_results query="siunitx">')
     })
 
+    it('deduplicates concurrent identical web_fetch calls in the parallel prefetch batch', async function () {
+      const webTools = {
+        getToolSpecs: () => [
+          {
+            name: 'web_fetch',
+            description: 'd',
+            parameters: {
+              type: 'object',
+              properties: {
+                url: { type: 'string' },
+                page: { type: 'integer' },
+                find: { type: 'string' },
+              },
+            },
+          },
+        ],
+        execute: sinon.stub().callsFake(async (_name, args) => ({
+          source: 1,
+          url: args.url,
+          page: args.page ?? 1,
+          ...(args.find ? { find: args.find, matches: [] } : { content: 'ok' }),
+        })),
+      }
+      manager = new AiAssistRunManager({
+        store: mockStore,
+        tools: mockTools,
+        clientFactory: () => mockClient,
+        webToolsFactory: () => webTools,
+      })
+      let turn = 0
+      mockClient.streamChat.callsFake(async function* () {
+        turn++
+        if (turn === 1) {
+          yield {
+            type: 'tool_call',
+            id: 'f1',
+            name: 'web_fetch',
+            args: { url: 'https://example.com/doc', page: 1 },
+          }
+          yield {
+            type: 'tool_call',
+            id: 'f2',
+            name: 'web_fetch',
+            args: { url: 'https://www.example.com/doc/', page: 1 },
+          }
+          yield {
+            type: 'tool_call',
+            id: 'f3',
+            name: 'web_fetch',
+            args: { url: 'https://example.com/doc', page: 2 },
+          }
+        } else {
+          yield { type: 'text', text: 'Done.' }
+        }
+      })
+
+      await start('run-web-dedup', {
+        webSearchSettings: { type: 'ollama', apiKey: 'k' },
+      })
+
+      // f1 and f2 are identical after URL normalization, while f3 requests page 2
+      expect(webTools.execute.callCount).to.equal(2)
+    })
+
     describe('web call budget', function () {
       const NUDGE = `That is ${WEB_CALL_NUDGE} web calls for this request.`
       let webTools
@@ -4197,6 +4261,57 @@ describe('AiAssistRunManager', function () {
       expect(mockCheckpointStore.saveCheckpoint.firstCall.args[3]).to.equal(
         'u_queued_42'
       )
+    })
+
+    it('resolves originalContent when entityHandler.getAllDocs returns an object map', async function () {
+      let callCount = 0
+      mockClient.streamChat.callsFake(async function* () {
+        callCount++
+        if (callCount === 1) {
+          yield {
+            type: 'tool_call',
+            id: 'e1',
+            name: 'edit_file',
+            args: { path: '/main.tex', oldText: 'hello', newText: 'world' },
+          }
+        } else {
+          yield { type: 'text', text: 'Done.' }
+        }
+      })
+
+      mockTools.entityHandler = {
+        getAllDocs: sinon.stub().resolves({
+          '/main.tex': { _id: 'doc_obj_1', lines: ['hello', 'from map'] },
+        }),
+      }
+      mockTools.checkEdit = sinon.stub().resolves({
+        status: 'ok',
+        path: 'main.tex',
+        oldText: 'hello',
+        newText: 'world',
+      })
+      mockTools.execute.resolves({ status: 'applied', path: 'main.tex' })
+
+      await manager.startRun({
+        runId: 'run-chk-obj',
+        projectId: 'p1',
+        userId: 'u1',
+        chatId: 'chat_123',
+        mode: 'acceptEdits',
+        transcript: [{ id: 'u0', role: 'user', text: 'edit' }],
+        providerSettings: provider,
+      })
+
+      expect(mockCheckpointStore.saveCheckpoint.calledOnce).to.be.true
+      expect(mockCheckpointStore.saveCheckpoint.firstCall.args[4]).to.deep.equal({
+        files: {
+          'main.tex': {
+            originalContent: 'hello\nfrom map',
+            docId: 'doc_obj_1',
+            isNew: false,
+          },
+        },
+      })
     })
   })
 

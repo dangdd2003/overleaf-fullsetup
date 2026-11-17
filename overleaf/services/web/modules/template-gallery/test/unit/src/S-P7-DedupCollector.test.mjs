@@ -339,4 +339,43 @@ describe('S-P7 DedupCollector', () => {
     expect(status.report.duplicates.applied).toBe(2)
     expect(status.lastRunAt).toBeInstanceOf(Date)
   })
+
+  it('purge skips DB scans for blobs that are missing or younger than PURGE_MIN_AGE_MS', async () => {
+    const youngSha = (await BlobStore.putBuffer(Buffer.from('young-blob'), { storageDir: dir })).sha256
+    const missingSha = sha('missing-blob')
+    const env = setup(dir)
+    env.items.docs = [
+      { _id: '1', token: 'aaaaaaaaaaaa', state: 'published', mirror: { removedAt: null }, duplicateOf: null, title: 'Only' },
+    ]
+    await env.config.insertOne({ _id: 'dedup', pendingPurge: [youngSha, missingSha] })
+    const findSpy = vi.spyOn(env.items, 'find')
+    const findOneSpy = vi.spyOn(env.items, 'findOne')
+
+    const report = await DedupCollector.runDedup({ storageDir: dir, dryRun: false, purge: true, yieldMs: 0 })
+
+    expect(report.purged.tooYoung).toBe(1)
+    expect(report.purged.deleted).toBe(0)
+    expect(blobExists(dir, youngSha)).toBe(true)
+    // Neither referencedShas (HAS_BLOB_REF_FILTER) nor per-sha inUse ($or) ran
+    expect(findSpy.mock.calls.some(([filter]) => filter?.$or)).toBe(false)
+    expect(findOneSpy.mock.calls.some(([filter]) => filter?.$or)).toBe(false)
+  })
+
+  it('restoreDuplicate resets mirror.detailAt only when preview media was unset', async () => {
+    const docs = await buildFixtures()
+    const env = setup(dir)
+    env.items.docs = docs
+    for (const d of env.items.docs) d.mirror = { ...d.mirror, detailAt: new Date('2025-01-01T00:00:00Z') }
+    await DedupCollector.runDedup({ storageDir: dir, dryRun: false, yieldMs: 0 })
+
+    // bbbbbbbbbbbb shared imgI with canonical so its media stayed intact
+    await DedupCollector.restoreDuplicate('bbbbbbbbbbbb')
+    const restoredB = env.items.peek(doc => doc.token === 'bbbbbbbbbbbb')
+    expect(restoredB.mirror.detailAt).toEqual(new Date('2025-01-01T00:00:00Z'))
+
+    // dddddddddddd had its own imgD unset when tombstoned, so detailAt is cleared for re-sync
+    await DedupCollector.restoreDuplicate('dddddddddddd')
+    const restoredD = env.items.peek(doc => doc.token === 'dddddddddddd')
+    expect(restoredD.mirror.detailAt).toBeNull()
+  })
 })

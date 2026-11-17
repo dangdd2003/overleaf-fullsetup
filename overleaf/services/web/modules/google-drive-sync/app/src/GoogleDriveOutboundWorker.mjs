@@ -164,27 +164,48 @@ const GoogleDriveOutboundWorker = {
     ])
 
     try {
+      // Re-fetch after acquiring the lock so edits queued since flushAll()'s
+      // cursor read are seen, along with the current outboundDirtyAt timestamp.
+      const freshState = await db.googleDriveProjectStates.findOne?.({
+        projectId,
+      })
+      const activeState = freshState || state
+      const activePending = activeState.pendingChanges || {}
+      const activeKeys = Object.keys(activePending)
+      if (activeKeys.length === 0) {
+        return
+      }
+
       // Oldest first, so a delete queued before a re-add is applied in order.
-      const ordered = keys.sort((a, b) => {
-        const at = new Date(pending[a]?.queuedAt || 0).getTime()
-        const bt = new Date(pending[b]?.queuedAt || 0).getTime()
+      const ordered = activeKeys.sort((a, b) => {
+        const at = new Date(activePending[a]?.queuedAt || 0).getTime()
+        const bt = new Date(activePending[b]?.queuedAt || 0).getTime()
         return at - bt
       })
 
       for (const key of ordered) {
-        const entry = pending[key]
+        const entry = activePending[key]
         const filePath = GoogleDriveSyncManager.decodePathKey(key)
+        const queuedAtFilter =
+          entry?.queuedAt != null
+            ? { projectId, [`pendingChanges.${key}.queuedAt`]: entry.queuedAt }
+            : { projectId }
 
         try {
-          const res = await _applyChange(projectId, filePath, entry, state)
+          const res = await _applyChange(projectId, filePath, entry, activeState)
           if (res?.diverged) {
             allSucceeded = false
             continue
           }
-          await db.googleDriveProjectStates.updateOne(
-            { projectId },
+          const unsetRes = await db.googleDriveProjectStates.updateOne(
+            queuedAtFilter,
             { $unset: { [`pendingChanges.${key}`]: '' } }
           )
+          // If a newer edit to the same file landed during upload, preserve it
+          // and keep outboundDirtyAt so the next flush cycle picks it up.
+          if (entry?.queuedAt != null && unsetRes?.matchedCount === 0) {
+            allSucceeded = false
+          }
         } catch (err) {
           allSucceeded = false
           const attempts = (entry.attempts || 0) + 1
@@ -196,7 +217,7 @@ const GoogleDriveOutboundWorker = {
               'GoogleDriveOutboundWorker: dropping change after max attempts'
             )
             await db.googleDriveProjectStates.updateOne(
-              { projectId },
+              queuedAtFilter,
               { $unset: { [`pendingChanges.${key}`]: '' } }
             )
           } else {
@@ -205,7 +226,7 @@ const GoogleDriveOutboundWorker = {
               'GoogleDriveOutboundWorker: change failed, will retry'
             )
             await db.googleDriveProjectStates.updateOne(
-              { projectId },
+              queuedAtFilter,
               {
                 $set: {
                   [`pendingChanges.${key}.attempts`]: attempts,
@@ -225,13 +246,13 @@ const GoogleDriveOutboundWorker = {
 
       if (allSucceeded) {
         await GoogleDriveSyncManager.clearSyncFailure(projectId)
-        await db.googleDriveProjectStates.updateOne(
-          { projectId },
-          {
-            $set: { syncStatus: 'idle', lastSyncedAt: new Date() },
-            $unset: { outboundDirtyAt: '' },
-          }
-        )
+        const clearFilter = activeState.outboundDirtyAt
+          ? { projectId, outboundDirtyAt: activeState.outboundDirtyAt }
+          : { projectId }
+        await db.googleDriveProjectStates.updateOne(clearFilter, {
+          $set: { syncStatus: 'idle', lastSyncedAt: new Date() },
+          $unset: { outboundDirtyAt: '' },
+        })
       }
     } finally {
       stopHeartbeat()

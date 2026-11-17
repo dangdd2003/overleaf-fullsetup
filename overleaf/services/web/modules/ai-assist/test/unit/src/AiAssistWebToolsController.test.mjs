@@ -144,4 +144,79 @@ describe('AiAssistWebToolsController', function () {
       50
     )
   })
+
+  it('reuses stored webSearch secrets only when provider origins match', async function () {
+    const userSettingsStore = {
+      getInternalUserSettings: sinon.stub().resolves({
+        webSearch: {
+          sourceMode: 'custom',
+          providers: {
+            mcp: {
+              enabled: true,
+              serverUrls: ['https://mcp.example.com/v1'],
+              bearerToken: 'mcp-secret',
+            },
+            tavily: {
+              enabled: true,
+              apiKeys: ['tvly-secret'],
+            },
+          },
+        },
+      }),
+    }
+    controller = new AiAssistWebToolsController({
+      webToolsFactory: factory,
+      userSettingsStore,
+    })
+
+    await controller.specs(
+      req(
+        {},
+        {
+          webSearchSettings: {
+            sourceMode: 'custom',
+            providers: {
+              mcp: {
+                enabled: true,
+                serverUrls: ['https://mcp.example.com/v2'],
+                bearerToken: '••••••••',
+              },
+            },
+          },
+        }
+      ),
+      res()
+    )
+    expect(factory.firstCall.args[0].providers.mcp.bearerToken).to.equal(
+      'mcp-secret'
+    )
+
+    factory.resetHistory()
+    await controller.specs(
+      req(
+        {},
+        {
+          webSearchSettings: {
+            sourceMode: 'custom',
+            providers: {
+              mcp: {
+                enabled: true,
+                serverUrls: ['https://evil.example.com'],
+                bearerToken: '••••••••',
+              },
+              tavily: {
+                enabled: true,
+                apiKeys: ['••••••••'],
+              },
+            },
+          },
+        }
+      ),
+      res()
+    )
+    expect(factory.firstCall.args[0].providers.mcp.bearerToken).to.be.undefined
+    expect(factory.firstCall.args[0].providers.tavily.apiKeys).to.deep.equal([
+      'tvly-secret',
+    ])
+  })
 })

@@ -19,10 +19,29 @@ import { logWarn, logError, incMetric } from '../observability/Log.mjs'
 
 const VIEWS_DIR = Path.resolve(import.meta.dirname, '../../views')
 
-export const openRateLimiter = new RateLimiter(
-  'template-gallery-open',
-  Settings.templateGallery?.rateLimits?.open || { points: 20, duration: 60 }
-)
+let openRateLimiterInstance = null
+
+function getOpenRateLimiter() {
+  if (!openRateLimiterInstance) {
+    openRateLimiterInstance = new RateLimiter(
+      'template-gallery-open',
+      Settings.templateGallery?.rateLimits?.open || { points: 20, duration: 60 }
+    )
+  }
+  return openRateLimiterInstance
+}
+
+export const openRateLimiter = {
+  consume(key, points, options) {
+    return getOpenRateLimiter().consume(key, points, options)
+  },
+  delete(key) {
+    return getOpenRateLimiter().delete(key)
+  },
+  getOptions() {
+    return getOpenRateLimiter().getOptions()
+  },
+}
 
 const NOT_FOUND = {
   status: 404,

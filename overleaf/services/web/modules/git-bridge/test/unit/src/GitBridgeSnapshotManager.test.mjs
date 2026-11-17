@@ -1003,7 +1003,11 @@ describe('GitBridgeSnapshotManager', function () {
           postbacks.push('http://gitbridge:9000/postback')
           return {}
         })
-      setMockProject(async () => ({ _id: projectId, version: 1, rootFolder: [] }))
+      setMockProject(async () => ({
+        _id: projectId,
+        version: 1,
+        rootFolder: [{ _id: 'root-id', name: 'rootFolder', docs: [], fileRefs: [], folders: [] }],
+      }))
       DocstoreManager.promises.getAllDocVersions = async () => []
 
       try {
@@ -1031,7 +1035,11 @@ describe('GitBridgeSnapshotManager', function () {
       fetchNothing.impl = async (url, opts) => {
         postbacks.push({ url, json: opts?.json })
       }
-      setMockProject(async () => ({ _id: projectId, version: 1, rootFolder: [] }))
+      setMockProject(async () => ({
+        _id: projectId,
+        version: 1,
+        rootFolder: [{ _id: 'root-id', name: 'rootFolder', docs: [], fileRefs: [], folders: [] }],
+      }))
       DocstoreManager.promises.getAllDocVersions = async () => []
 
       await GitBridgeSnapshotManager.processPush(
@@ -1122,6 +1130,174 @@ describe('GitBridgeSnapshotManager', function () {
 
       expect(deletedPaths).not.toContain('/chapters')
       expect(deletedPaths).not.toContain('/chapters/intro.tex')
+    })
+
+    it('passes an AbortSignal timeout when fetching pushed files', async function () {
+      let seenSignal
+      setMockProject(async () => ({
+        _id: projectId,
+        version: 1,
+        rootFolder: [{ _id: 'root-id', name: 'rootFolder', docs: [], fileRefs: [], folders: [] }],
+      }))
+      DocstoreManager.promises.getAllDocVersions = async () => []
+      EditorController.promises.upsertDocWithPath = async () => {}
+      globalThis.fetch = async (_url, opts) => {
+        seenSignal = opts?.signal
+        return {
+          ok: true,
+          arrayBuffer: async () => Buffer.from('hello'),
+        }
+      }
+
+      await GitBridgeSnapshotManager.processPush(
+        projectId,
+        userId,
+        [{ name: 'main.tex', url: 'http://git-bridge/raw/main.tex' }],
+        null
+      )
+
+      expect(seenSignal).toBeInstanceOf(AbortSignal)
+    })
+
+    it('propagates getAllEntities failure and sends an error postback instead of upToDate', async function () {
+      const postbacks = []
+      nock('http://git-bridge')
+        .post('/postback/test-key')
+        .reply(200, (_uri, requestBody) => {
+          postbacks.push(requestBody)
+          return {}
+        })
+      EditorController.promises.upsertDocWithPath = async () => {}
+      globalThis.fetch = async () => ({
+        ok: true,
+        arrayBuffer: async () => Buffer.from('hello'),
+      })
+      // ProjectGetter.promises.getProject returning null makes
+      // ProjectEntityHandler.promises.getAllEntities reject with NotFoundError.
+      setMockProject(async () => null)
+
+      const err = await GitBridgeSnapshotManager.processPush(
+        projectId,
+        userId,
+        [{ name: 'main.tex', url: 'http://git-bridge/raw/main.tex' }],
+        'http://git-bridge/postback/test-key'
+      ).catch(e => e)
+
+      expect(err).toBeInstanceOf(Error)
+      expect(err.message).toMatch(/project not found/i)
+      expect(postbacks).toEqual([
+        { code: 'error', message: err.message },
+      ])
+    })
+
+    it('serializes concurrent processPush calls per projectId while allowing different projects in parallel', async function () {
+      const events = []
+      let releaseFirst
+      const firstGate = new Promise(resolve => {
+        releaseFirst = resolve
+      })
+
+      setMockProject(async pId => ({
+        _id: pId,
+        version: 1,
+        rootFolder: [{ _id: 'root-id', name: 'rootFolder', docs: [], fileRefs: [], folders: [] }],
+      }))
+      DocstoreManager.promises.getAllDocVersions = async () => []
+      EditorController.promises.upsertDocWithPath = async () => {}
+
+      let callNum = 0
+      globalThis.fetch = async url => {
+        const id = ++callNum
+        events.push(`start:${id}:${url}`)
+        if (id === 1) {
+          await firstGate
+        }
+        events.push(`end:${id}:${url}`)
+        return {
+          ok: true,
+          arrayBuffer: async () => Buffer.from('content'),
+        }
+      }
+
+      const serialProjectId = `${projectId}-serial`
+      const otherProjectId = `${projectId}-other`
+      const p1 = GitBridgeSnapshotManager.processPush(
+        serialProjectId,
+        userId,
+        [{ name: 'a.tex', url: 'http://git-bridge/raw/push1.tex' }],
+        null
+      )
+      const p2 = GitBridgeSnapshotManager.processPush(
+        serialProjectId,
+        userId,
+        [{ name: 'b.tex', url: 'http://git-bridge/raw/push2.tex' }],
+        null
+      )
+      const pOther = GitBridgeSnapshotManager.processPush(
+        otherProjectId,
+        userId,
+        [{ name: 'c.tex', url: 'http://git-bridge/raw/other.tex' }],
+        null
+      )
+
+      try {
+        // Wait until push1 (blocking) and other-project push (not blocked) have started
+        await pOther
+        expect(events).toContain('start:1:http://git-bridge/raw/push1.tex')
+        expect(events).toContain('start:2:http://git-bridge/raw/other.tex')
+        expect(events).toContain('end:2:http://git-bridge/raw/other.tex')
+        // push2 on the same project must not start before push1 completes
+        expect(events).not.toContain('start:3:http://git-bridge/raw/push2.tex')
+      } finally {
+        releaseFirst()
+      }
+      await Promise.all([p1, p2])
+
+      const end1Idx = events.indexOf('end:1:http://git-bridge/raw/push1.tex')
+      const start2Idx = events.indexOf('start:3:http://git-bridge/raw/push2.tex')
+      expect(end1Idx).toBeGreaterThan(-1)
+      expect(start2Idx).toBeGreaterThan(end1Idx)
+    })
+
+    it('does not wedge the per-project queue when an earlier push fails', async function () {
+      const recoverProjectId = `${projectId}-recover`
+      setMockProject(async () => ({
+        _id: recoverProjectId,
+        version: 1,
+        rootFolder: [{ _id: 'root-id', name: 'rootFolder', docs: [], fileRefs: [], folders: [] }],
+      }))
+      DocstoreManager.promises.getAllDocVersions = async () => []
+      EditorController.promises.upsertDocWithPath = async () => {}
+
+      let attempt = 0
+      globalThis.fetch = async () => {
+        attempt++
+        if (attempt === 1) {
+          return { ok: false }
+        }
+        return {
+          ok: true,
+          arrayBuffer: async () => Buffer.from('recovered'),
+        }
+      }
+
+      const firstErr = GitBridgeSnapshotManager.processPush(
+        recoverProjectId,
+        userId,
+        [{ name: 'a.tex', url: 'http://git-bridge/raw/a.tex' }],
+        null
+      ).catch(e => e)
+      const secondOk = GitBridgeSnapshotManager.processPush(
+        recoverProjectId,
+        userId,
+        [{ name: 'b.tex', url: 'http://git-bridge/raw/b.tex' }],
+        null
+      )
+
+      const [err, result] = await Promise.all([firstErr, secondOk])
+      expect(err).toBeInstanceOf(Error)
+      expect(result).toBeUndefined()
+      expect(attempt).toBe(2)
     })
   })
 })

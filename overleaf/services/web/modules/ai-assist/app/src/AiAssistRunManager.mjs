@@ -1,3 +1,4 @@
+import { normalizeProjectPath } from "./AiAssistProjectPath.mjs";
 import crypto from "node:crypto";
 import logger from "@overleaf/logger";
 import Settings from "@overleaf/settings";
@@ -516,6 +517,17 @@ function fetchedPageKey(args) {
   const raw = typeof args?.url === "string" ? args.url.trim() : "";
   if (!raw) return "";
   return cacheKeyFor(/^[a-z][a-z0-9+.-]*:/i.test(raw) ? raw : `https://${raw}`);
+}
+
+/** Canonical batch dedup key for concurrent identical web_fetch calls. */
+function webFetchBatchKey(args) {
+  const pageKey = fetchedPageKey(args);
+  if (!pageKey) return "";
+  const find = typeof args?.find === "string" ? args.find.trim() : "";
+  const query = typeof args?.query === "string" ? args.query.trim() : "";
+  const section = typeof args?.section === "string" ? args.section.trim() : "";
+  const page = find || query ? "" : (args?.page ?? 1);
+  return JSON.stringify([pageKey, find, query, page, section]);
 }
 
 /**
@@ -1183,7 +1195,8 @@ export class AiAssistRunManager {
     if (!this.checkpointStore || !chatId || !activeUserMessageId) return;
     const filePath = args?.path;
     if (!filePath || typeof filePath !== "string") return;
-    const normalizedPath = filePath.replace(/^\//, "");
+    const normalizedPath = normalizeProjectPath(filePath);
+    if (!normalizedPath) return;
 
     try {
       if (toolName === "create_file") {
@@ -1210,7 +1223,7 @@ export class AiAssistRunManager {
             activeUserMessageId,
             {
               files: {
-                [filePath]: {
+                [normalizedPath]: {
                   originalContent: "",
                   docId: null,
                   isNew: true,
@@ -1225,17 +1238,26 @@ export class AiAssistRunManager {
       let doc = null;
       if (typeof this.tools?._resolveDoc === "function") {
         try {
-          doc = await this.tools._resolveDoc(projectId, filePath);
+          doc = await this.tools._resolveDoc(projectId, normalizedPath);
         } catch {}
       } else if (this.tools?.entityHandler?.getAllDocs) {
         try {
           const all = await this.tools.entityHandler.getAllDocs(projectId);
-          doc = Array.isArray(all)
-            ? all.find(
+          if (Array.isArray(all)) {
+            doc =
+              all.find(
                 (d) =>
-                  (d.path || d.name || "").replace(/^\//, "") === normalizedPath
-              )
-            : null;
+                  normalizeProjectPath(d?.path || d?.name || "") ===
+                  normalizedPath
+              ) || null;
+          } else if (all && typeof all === "object") {
+            const match = Object.entries(all).find(
+              ([docPath, d]) =>
+                normalizeProjectPath(docPath || d?.path || d?.name || "") ===
+                normalizedPath
+            );
+            doc = match ? match[1] : null;
+          }
         } catch {}
       }
 
@@ -1263,7 +1285,7 @@ export class AiAssistRunManager {
         activeUserMessageId,
         {
           files: {
-            [filePath]: {
+            [normalizedPath]: {
               originalContent,
               docId: docId ? String(docId) : null,
               isNew: false,
@@ -2305,17 +2327,27 @@ export class AiAssistRunManager {
           leadingReads.push(call);
         }
         if (leadingReads.length > 1) {
+          const inflightWebFetch = new Map();
           await Promise.all(
             leadingReads.map(async (call) => {
-              try {
-                const value = await runTool(call);
-                prefetched.set(call, { result: value, isError: false });
-              } catch (err) {
-                prefetched.set(call, {
-                  result: toolFailure(err),
-                  isError: true,
-                });
+              const fetchKey =
+                call.name === "web_fetch" ? webFetchBatchKey(call.args) : "";
+              let promise = fetchKey ? inflightWebFetch.get(fetchKey) : null;
+              if (!promise) {
+                promise = runTool(call).then(
+                  (value) => ({ result: value, isError: false }),
+                  (err) => ({ result: toolFailure(err), isError: true }),
+                );
+                if (fetchKey) inflightWebFetch.set(fetchKey, promise);
               }
+              const settled = await promise;
+              prefetched.set(call, {
+                result:
+                  settled.result && typeof settled.result === "object"
+                    ? { ...settled.result }
+                    : settled.result,
+                isError: settled.isError,
+              });
             }),
           );
         }

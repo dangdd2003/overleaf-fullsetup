@@ -174,7 +174,7 @@ const OAuth2KeyManager = {
    * accepted here just because it carries the `mcp` scope and a valid
    * signature.
    */
-  async verifyJwt(jwtString, req) {
+  async verifyJwt(jwtString, req, { ignoreExpiration = false } = {}) {
     if (typeof jwtString !== 'string') {
       throw new Error('JWT must be a string')
     }
@@ -210,7 +210,7 @@ const OAuth2KeyManager = {
     if (typeof payload.exp !== 'number') {
       throw new Error('JWT exp claim is missing or not a number')
     }
-    if (payload.exp < now) {
+    if (!ignoreExpiration && payload.exp < now) {
       throw new Error('JWT has expired')
     }
     if (payload.nbf && payload.nbf > now) {

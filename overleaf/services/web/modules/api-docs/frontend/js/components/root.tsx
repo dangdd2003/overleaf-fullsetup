@@ -118,7 +118,9 @@ function useActiveAnchor(ids: string[], scrollRef: RefObject<HTMLElement>) {
     }
 
     onHashChange()
-    update()
+    if (!linked) {
+      update()
+    }
     root.addEventListener('scroll', onScroll, { passive: true })
     window.addEventListener('hashchange', onHashChange)
     return () => {
@@ -231,14 +233,14 @@ function ApiDocsPage() {
     ],
     [sections]
   )
-  const activeAnchor = useActiveAnchor(anchorIds, scrollRef)
-
   // The page renders after the browser has tried the fragment, so scroll again
   useEffect(() => {
     if (spec) {
       scrollToHash()
     }
   }, [spec])
+
+  const activeAnchor = useActiveAnchor(anchorIds, scrollRef)
 
   const schemeCount = Object.keys(spec?.components?.securitySchemes || {}).length
   const hasAuth = schemeCount > 0

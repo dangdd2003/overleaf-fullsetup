@@ -266,6 +266,99 @@ describe('CommentNotificationHandler', () => {
       expect(recipients).toHaveLength(1)
       expect(mockLogger.warn).toHaveBeenCalled()
     })
+
+    it('excludes suspended users even when mentioned', async () => {
+      mockUserGetter.promises.getUser.mockResolvedValue({
+        _id: memberId,
+        first_name: 'Suspended',
+        suspended: true,
+      })
+      const recipients = await resolveRecipients(
+        projectId,
+        threadId,
+        authorId,
+        `@[${memberId}]`
+      )
+      expect(recipients).toHaveLength(0)
+    })
+
+    it('excludes mentioned user when mentionsInThread is false', async () => {
+      mockNotificationPreferences.getUserProjectPreferences.mockResolvedValue({
+        commentOnOwnProject: true,
+        commentOnInvitedProject: false,
+        repliesOnParticipatingThread: true,
+        mentionsInThread: false,
+        muteAllNotifications: false,
+      })
+      const recipients = await resolveRecipients(
+        projectId,
+        threadId,
+        authorId,
+        `@[${memberId}]`
+      )
+      expect(recipients).toHaveLength(0)
+    })
+
+    it('honors repliesOnAuthoredThread: false for thread author even when repliesOnParticipatingThread is true', async () => {
+      mockChatApiHandler.promises.getThread.mockResolvedValue({
+        messages: [{ user_id: memberId }],
+      })
+      mockNotificationPreferences.getUserProjectPreferences.mockResolvedValue({
+        commentOnOwnProject: true,
+        commentOnInvitedProject: false,
+        repliesOnAuthoredThread: false,
+        repliesOnParticipatingThread: true,
+        muteAllNotifications: false,
+      })
+      const recipients = await resolveRecipients(
+        projectId,
+        threadId,
+        authorId,
+        'reply to authored thread'
+      )
+      expect(recipients).toHaveLength(0)
+    })
+
+    it('notifies thread author when repliesOnAuthoredThread is true even if repliesOnParticipatingThread is false', async () => {
+      mockChatApiHandler.promises.getThread.mockResolvedValue({
+        messages: [{ user_id: memberId }],
+      })
+      mockNotificationPreferences.getUserProjectPreferences.mockResolvedValue({
+        commentOnOwnProject: true,
+        commentOnInvitedProject: false,
+        repliesOnAuthoredThread: true,
+        repliesOnParticipatingThread: false,
+        muteAllNotifications: false,
+      })
+      const recipients = await resolveRecipients(
+        projectId,
+        threadId,
+        authorId,
+        'reply to authored thread'
+      )
+      expect(recipients).toHaveLength(1)
+      expect(recipients[0].user._id).toBe(memberId)
+    })
+
+    it('excludes non-author thread participant when repliesOnParticipatingThread is false', async () => {
+      mockChatApiHandler.promises.getThread.mockResolvedValue({
+        messages: [{ user_id: authorId }, { user_id: memberId }],
+      })
+      mockNotificationPreferences.getUserProjectPreferences.mockResolvedValue({
+        commentOnOwnProject: true,
+        commentOnInvitedProject: false,
+        repliesOnAuthoredThread: true,
+        repliesOnParticipatingThread: false,
+        muteAllNotifications: false,
+      })
+      const recipients = await resolveRecipients(
+        projectId,
+        threadId,
+        authorId,
+        'reply to participated thread'
+      )
+      expect(recipients).toHaveLength(0)
+    })
   })
 
   describe('resolveRecipients with a large project', () => {

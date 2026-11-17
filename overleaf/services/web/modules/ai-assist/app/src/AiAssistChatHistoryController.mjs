@@ -9,15 +9,22 @@ import defaultStore, {
 } from './AiAssistChatHistoryStore.mjs'
 import { createProviderClient } from './AiAssistProviders.mjs'
 import { generateChatTitle } from './AiAssistChatTitler.mjs'
+import defaultUserSettingsStore, {
+  MASKED_SECRET,
+  applyStoredProviderSecret,
+  stripMaskedProviderSecret,
+} from './AiAssistUserSettingsStore.mjs'
 import SessionManager from '../../../../app/src/Features/Authentication/SessionManager.mjs'
 
 export class AiAssistChatHistoryController {
   constructor({
     store = defaultStore,
     clientFactory = createProviderClient,
+    userSettingsStore = defaultUserSettingsStore,
   } = {}) {
     this.store = store
     this.clientFactory = clientFactory
+    this.userSettingsStore = userSettingsStore
   }
 
   #ids(req, res) {
@@ -159,14 +166,43 @@ export class AiAssistChatHistoryController {
   generateTitle = async (req, res) => {
     const ids = this.#ids(req, res)
     if (!ids) return
-    const { providerSettings, prompt } = req.body || {}
-    if (!providerSettings) {
+    const { prompt } = req.body || {}
+    let providerSettings = req.body?.providerSettings
+    if (!providerSettings || typeof providerSettings !== 'object') {
+      return res.status(400).json({ error: 'Missing providerSettings' })
+    }
+    const needsStored =
+      !providerSettings.type ||
+      !providerSettings.apiKey ||
+      providerSettings.apiKey === MASKED_SECRET
+    if (ids.userId && needsStored) {
+      try {
+        const internal = await this.userSettingsStore.getInternalUserSettings(
+          ids.userId
+        )
+        const requestedSlot = req.body?.slot || providerSettings?.slot
+        const slot =
+          requestedSlot === 'fastProvider' ? 'fastProvider' : 'provider'
+        const fallbackSlots = requestedSlot
+          ? []
+          : [slot === 'provider' ? 'fastProvider' : 'provider']
+        providerSettings = applyStoredProviderSecret(providerSettings, internal, {
+          slot,
+          fallbackSlots,
+        })
+      } catch {}
+    }
+    providerSettings = stripMaskedProviderSecret(providerSettings)
+    if (!providerSettings?.type) {
       return res.status(400).json({ error: 'Missing providerSettings' })
     }
     try {
       // A title is a few words; it runs at the provider's default effort
+      const { baseURL: _omitBaseURL, ...restSettings } = providerSettings
+      const rawBaseUrl = providerSettings.baseUrl || providerSettings.baseURL
       const client = this.clientFactory({
-        ...providerSettings,
+        ...restSettings,
+        ...(rawBaseUrl ? { baseUrl: rawBaseUrl } : {}),
         reasoningEffort: undefined,
         thinking: undefined,
       })

@@ -59,12 +59,17 @@ export function createStrategy(passport) {
     return
   }
 
+  const gitBase = (Settings.githubSync?.gitBase || 'https://github.com').replace(
+    /\/+$/,
+    ''
+  )
+
   class GitHubStrategy extends OAuth2Strategy {
     constructor() {
       super(
         {
-          authorizationURL: 'https://github.com/login/oauth/authorize',
-          tokenURL: 'https://github.com/login/oauth/access_token',
+          authorizationURL: `${gitBase}/login/oauth/authorize`,
+          tokenURL: `${gitBase}/login/oauth/access_token`,
           clientID: Settings.githubSync.clientId,
           clientSecret: Settings.githubSync.clientSecret,
           callbackURL:

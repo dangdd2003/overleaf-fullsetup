@@ -49,6 +49,20 @@ const ITEM_INDEXES = [
   // dedup: tombstones are excluded from every read path; PDFs are grouped by hash
   { keys: { duplicateOf: 1 }, options: { name: 'duplicateOf_1' } },
   { keys: { 'media.pdfSha': 1 }, options: { name: 'media_pdfSha_1' } },
+  // matches the admin list sort; its filters never constrain duplicateOf
+  {
+    keys: { title: 1, _id: 1 },
+    options: { name: 'admin_list_title' },
+  },
+  {
+    keys: {
+      duplicateOf: 1,
+      'mirror.removedAt': 1,
+      'mirror.detailAt': 1,
+      'mirror.attempts': 1,
+    },
+    options: { name: 'admin_summary_counts' },
+  },
   {
     keys: {
       title: 'text',

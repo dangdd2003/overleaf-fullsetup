@@ -4,6 +4,7 @@ export interface NotificationPreferencesSchema {
   commentOnInvitedProject?: boolean
   repliesOnAuthoredThread?: boolean
   repliesOnParticipatingThread?: boolean
+  mentionsInThread?: boolean
   commentResolvedOnAuthoredThread?: boolean
   commentResolvedOnParticipatingThread?: boolean
   commentReopenedOnAuthoredThread?: boolean

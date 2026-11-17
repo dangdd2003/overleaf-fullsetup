@@ -21,6 +21,7 @@ import {
   hasDotSegment,
   invalid,
   parseIntParam,
+  splitLines,
 } from './McpRequestParams.mjs'
 
 const NAME_COLLATOR = new Intl.Collator(undefined, { sensitivity: 'base' })
@@ -399,7 +400,7 @@ async function createProject(req, res) {
       await EditorController.promises.upsertDocWithPath(
         project._id,
         path,
-        String(f.content ?? '').split('\n'),
+        splitLines(f.content ?? ''),
         'mcp',
         userId
       )

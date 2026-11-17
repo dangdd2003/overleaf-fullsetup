@@ -232,6 +232,7 @@ export default {
       '/ai-assist/projects/:Project_id/chats/:chatId/generate-title',
       AuthenticationController.requireLogin(),
       AuthorizationMiddleware.ensureUserCanReadProject,
+      providerLimit,
       expressify(AiAssistChatHistoryController.generateTitle)
     )
 

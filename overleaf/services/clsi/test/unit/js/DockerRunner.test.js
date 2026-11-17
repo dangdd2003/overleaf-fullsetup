@@ -47,6 +47,11 @@ describe('DockerRunner', () => {
           },
         }),
         existsSync: sinon.stub().returns(false),
+        promises: {
+          stat: sinon.stub().resolves({ mode: 0o777 }),
+          chmod: sinon.stub().resolves(),
+          readdir: sinon.stub().resolves([]),
+        },
       }),
     }))
 
@@ -566,35 +571,45 @@ describe('DockerRunner', () => {
           .callsArgWith(3, null, (ctx.output = { stdout: 'mock-output' }))
       })
 
-      it('should default WorkingDir to /compile when cwd is null', ctx => {
-        ctx.DockerRunner.run(
-          ctx.project_id,
-          ctx.command,
-          ctx.directory,
-          ctx.image,
-          ctx.timeout,
-          ctx.env,
-          ctx.compileGroup,
-          null,
-          ctx.callback
-        )
+      it('should default WorkingDir to /compile when cwd is null', async ctx => {
+        await new Promise(resolve => {
+          ctx.DockerRunner.run(
+            ctx.project_id,
+            ctx.command,
+            ctx.directory,
+            ctx.image,
+            ctx.timeout,
+            ctx.env,
+            ctx.compileGroup,
+            null,
+            (...args) => {
+              ctx.callback(...args)
+              resolve()
+            }
+          )
+        })
         const options =
           ctx.DockerRunner._runAndWaitForContainer.lastCall.args[0]
         expect(options.WorkingDir).to.equal('/compile')
       })
 
-      it('should join cwd onto /compile when provided', ctx => {
-        ctx.DockerRunner.run(
-          ctx.project_id,
-          ctx.command,
-          ctx.directory,
-          ctx.image,
-          ctx.timeout,
-          ctx.env,
-          ctx.compileGroup,
-          'subdir/nested',
-          ctx.callback
-        )
+      it('should join cwd onto /compile when provided', async ctx => {
+        await new Promise(resolve => {
+          ctx.DockerRunner.run(
+            ctx.project_id,
+            ctx.command,
+            ctx.directory,
+            ctx.image,
+            ctx.timeout,
+            ctx.env,
+            ctx.compileGroup,
+            'subdir/nested',
+            (...args) => {
+              ctx.callback(...args)
+              resolve()
+            }
+          )
+        })
         const options =
           ctx.DockerRunner._runAndWaitForContainer.lastCall.args[0]
         expect(options.WorkingDir).to.equal('/compile/subdir/nested')
@@ -818,6 +833,7 @@ describe('DockerRunner', () => {
     it('should not drive the same container twice at once', async ctx => {
       ctx.runInBackground()
       ctx.runInBackground()
+      await new Promise(resolve => setImmediate(resolve))
       ctx.DockerRunner._runAndWaitForContainer.callCount.should.equal(1)
       ctx.pending[0](null, { stdout: '' })
       await new Promise(resolve => process.nextTick(resolve))
@@ -827,6 +843,7 @@ describe('DockerRunner', () => {
     it('should kill the containers of in-flight runs', async ctx => {
       ctx.container.kill = sinon.stub().yields()
       ctx.runInBackground()
+      await new Promise(resolve => setImmediate(resolve))
       await new Promise(resolve =>
         ctx.DockerRunner.kill(ctx.project_id, resolve)
       )
@@ -1404,6 +1421,86 @@ describe('DockerRunner', () => {
           })
         })
       })
+    })
+  })
+
+  describe('compiling optimizations', () => {
+    it('should make compile directories writable asynchronously using fs.promises', async ctx => {
+      const subDir = Path.join(ctx.directory, 'chapters')
+      const texFile = Path.join(subDir, 'intro.tex')
+      ctx.fs.promises.stat
+        .withArgs(ctx.directory)
+        .resolves({ mode: 0o755 })
+      ctx.fs.promises.stat.withArgs(subDir).resolves({ mode: 0o755 })
+      ctx.fs.promises.stat.withArgs(texFile).resolves({ mode: 0o644 })
+      ctx.fs.promises.readdir.withArgs(ctx.directory, { withFileTypes: true }).resolves([
+        { name: 'chapters', isDirectory: () => true, isFile: () => false },
+      ])
+      ctx.fs.promises.readdir.withArgs(subDir, { withFileTypes: true }).resolves([
+        { name: 'intro.tex', isDirectory: () => false, isFile: () => true },
+      ])
+      ctx.DockerRunner._runAndWaitForContainer = sinon
+        .stub()
+        .callsArgWith(3, null, { stdout: 'ok' })
+
+      await new Promise((resolve, reject) => {
+        ctx.DockerRunner.run(
+          ctx.project_id,
+          ['latexmk'],
+          ctx.directory,
+          ctx.image,
+          ctx.timeout,
+          ctx.env,
+          ctx.compileGroup,
+          null,
+          err => (err ? reject(err) : resolve())
+        )
+      })
+
+      expect(ctx.fs.promises.chmod.calledWith(ctx.directory, 0o777)).to.equal(true)
+      expect(ctx.fs.promises.chmod.calledWith(subDir, 0o777)).to.equal(true)
+      expect(ctx.fs.promises.chmod.calledWith(texFile, 0o666)).to.equal(true)
+    })
+
+    it('should timeout stalled listContainers calls in destroyOldContainers', ctx => {
+      vi.useFakeTimers()
+      try {
+        ctx.listContainers = sinon.stub()
+        ctx.Docker.prototype.listContainers = ctx.listContainers
+        const cb = sinon.stub()
+        ctx.DockerRunner.destroyOldContainers(cb)
+        expect(cb.called).to.equal(false)
+        vi.advanceTimersByTime(60 * 1000)
+        expect(cb.calledOnce).to.equal(true)
+        expect(cb.args[0][0].dockerTimeout).to.equal(true)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('should apply deadline to listContainers in _pruneSiblingContainers', ctx => {
+      vi.useFakeTimers()
+      try {
+        let capturedCb
+        ctx.listContainers = sinon.stub().callsFake((_opts, cb) => {
+          capturedCb = cb
+        })
+        ctx.Docker.prototype.listContainers = ctx.listContainers
+        ctx.DockerRunner._destroyContainer = sinon.stub()
+        ctx.DockerRunner._pruneSiblingContainers(ctx.project_id, 'keep')
+        expect(ctx.listContainers.calledOnce).to.equal(true)
+        vi.advanceTimersByTime(60 * 1000)
+        // Late response after deadline must be ignored
+        capturedCb(null, [
+          {
+            Names: [`/sandbox-compiler-${ctx.project_id}-${'a'.repeat(32)}`],
+            State: 'exited',
+          },
+        ])
+        expect(ctx.DockerRunner._destroyContainer.called).to.equal(false)
+      } finally {
+        vi.useRealTimers()
+      }
     })
   })
 })

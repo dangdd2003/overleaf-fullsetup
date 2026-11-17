@@ -3,7 +3,9 @@ import ChatApiHandler from '../../../../app/src/Features/Chat/ChatApiHandler.mjs
 import UserGetter from '../../../../app/src/Features/User/UserGetter.mjs'
 import NotificationsHandler from '../../../../app/src/Features/Notifications/NotificationsHandler.mjs'
 import CommentEmailBatcher from './CommentEmailBatcher.mjs'
-import { getUserProjectPreferences } from './NotificationPreferencesController.mjs'
+import NotificationPreferencesController, {
+  getUserProjectPreferences,
+} from './NotificationPreferencesController.mjs'
 import logger from '@overleaf/logger'
 import { promiseMapWithLimit } from '@overleaf/promise-utils'
 
@@ -49,8 +51,9 @@ export async function resolveRecipients(
   )
 
   const participantIds = new Set()
+  let thread = null
   try {
-    const thread = await ChatApiHandler.promises.getThread(projectId, threadId)
+    thread = await ChatApiHandler.promises.getThread(projectId, threadId)
     if (thread && Array.isArray(thread.messages)) {
       thread.messages.forEach(msg => {
         const uid = msg.user_id?.toString()
@@ -84,31 +87,57 @@ export async function resolveRecipients(
   })
   const usersById = new Map(users.map(user => [user._id.toString(), user]))
 
-  const candidates = await promiseMapWithLimit(
-    PREFERENCE_LOOKUP_CONCURRENCY,
-    targetIds,
-    async userId => {
-      const user = usersById.get(userId)
-      if (!user) return null
-      const preferences = await getUserProjectPreferences(userId, projectId)
-      return { userId, user, preferences }
-    }
-  )
+  const activeTargetIds = targetIds.filter(userId => {
+    const user = usersById.get(userId)
+    return user && !user.suspended
+  })
+
+  let preferencesByUserId
+  if (
+    typeof NotificationPreferencesController?.getUsersProjectPreferences ===
+    'function'
+  ) {
+    preferencesByUserId =
+      await NotificationPreferencesController.getUsersProjectPreferences(
+        activeTargetIds,
+        projectId
+      )
+  } else {
+    const entries = await promiseMapWithLimit(
+      PREFERENCE_LOOKUP_CONCURRENCY,
+      activeTargetIds,
+      async userId => [
+        userId,
+        await getUserProjectPreferences(userId, projectId),
+      ]
+    )
+    preferencesByUserId = new Map(entries)
+  }
 
   const recipients = []
 
-  for (const candidate of candidates) {
-    if (!candidate) continue
-    const { userId, user, preferences } = candidate
+  for (const userId of targetIds) {
+    const user = usersById.get(userId)
+    if (!user || user.suspended) continue
+
+    const preferences = preferencesByUserId.get(userId)
     if (preferences && preferences.muteAllNotifications) continue
 
     const isMention = validMentionedIds.has(userId)
+    if (isMention && preferences?.mentionsInThread === false) continue
 
     if (!isMention && preferences) {
       const isOwner = project.owner_ref?.toString() === userId
       const isParticipant = participantIds.has(userId)
+      const isThreadAuthor =
+        thread?.messages?.[0]?.user_id != null &&
+        String(thread.messages[0].user_id) === userId
 
-      if (isParticipant && !preferences.repliesOnParticipatingThread) {
+      if (isThreadAuthor) {
+        if (preferences.repliesOnAuthoredThread === false) {
+          continue
+        }
+      } else if (isParticipant && !preferences.repliesOnParticipatingThread) {
         continue
       }
       if (isOwner && !preferences.commentOnOwnProject && !isParticipant) {

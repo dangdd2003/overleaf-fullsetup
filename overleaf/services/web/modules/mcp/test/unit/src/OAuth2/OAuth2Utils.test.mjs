@@ -83,7 +83,41 @@ describe('OAuth2Utils', () => {
         const req = { protocol: 'https', get: h => (h === 'host' ? 'a.test' : '') }
         expect(getBaseUrl(req)).to.equal('https://a.test')
         expect(getBaseUrl({ headers: { host: 'b.test' } })).to.equal('http://b.test')
+        expect(getBaseUrl({ protocol: 'https', headers: { host: 'a.test:8443' } })).to.equal(
+          'https://a.test:8443'
+        )
+        expect(getBaseUrl({ headers: { host: '[::1]:3000' } })).to.equal(
+          'http://[::1]:3000'
+        )
+        expect(getBaseUrl({ headers: { host: '[2001:db8::1]' } })).to.equal(
+          'http://[2001:db8::1]'
+        )
         expect(getBaseUrl({})).to.equal('http://localhost:3000')
+      } finally {
+        Settings.siteUrl = original
+      }
+    })
+
+    it('rejects malformed or injected host headers and falls back to localhost', () => {
+      const original = Settings.siteUrl
+      try {
+        Settings.siteUrl = undefined
+        const badHosts = [
+          'evil.com/path',
+          'user@evil.com',
+          'evil.com?x=1',
+          'evil.com#frag',
+          'evil.com\r\nX-Injected: 1',
+          'evil.com:123456',
+          'bad host',
+          '   ',
+        ]
+        for (const host of badHosts) {
+          expect(
+            getBaseUrl({ protocol: 'https', headers: { host } }),
+            host
+          ).to.equal('http://localhost:3000')
+        }
       } finally {
         Settings.siteUrl = original
       }

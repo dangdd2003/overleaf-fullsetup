@@ -246,7 +246,7 @@ const AdminUserSelfServiceEmailsController = {
 
       const primaryEmailData = user.emails?.find(e => e.email === user.email)
       const deleteOldEmail =
-        req.query['delete-unconfirmed-primary'] !== undefined &&
+        req.query?.['delete-unconfirmed-primary'] !== undefined &&
         primaryEmailData &&
         !primaryEmailData.confirmedAt
 
@@ -265,6 +265,14 @@ const AdminUserSelfServiceEmailsController = {
         true,
         deleteOldEmail
       )
+
+      if (deleteOldEmail) {
+        await userUpdater.removeEmailAddress(
+          userId,
+          primaryEmailData.email,
+          auditLog
+        )
+      }
 
       SessionManager.setInSessionUser(req.session, { email: parsedEmail })
       const sessionUser = SessionManager.getSessionUser(req.session)

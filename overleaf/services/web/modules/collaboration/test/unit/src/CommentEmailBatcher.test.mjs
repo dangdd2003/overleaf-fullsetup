@@ -238,4 +238,18 @@ describe('durable comment digest worker', () => {
     )
     expect(mocks.sendEmail).not.toHaveBeenCalled()
   })
+
+  it('caches author lookups across multiple comments in the same batch', async () => {
+    const secondComment = { ...comment, content: 'follow-up' }
+    mocks.client.eval.mockResolvedValueOnce([
+      'ready',
+      JSON.stringify(comment),
+      JSON.stringify(secondComment),
+    ])
+    await batcher.flushQueue('recipient', 'project')
+    expect(mocks.sendEmail).toHaveBeenCalledOnce()
+    expect(
+      mocks.getUser.mock.calls.filter(([id]) => id === 'author')
+    ).toHaveLength(1)
+  })
 })

@@ -11,6 +11,7 @@ vi.mock('../../../../../app/src/infrastructure/mongodb.mjs', () => ({
   db: {
     users: {
       countDocuments: vi.fn(),
+      findOne: vi.fn(),
     },
   },
 }))
@@ -60,6 +61,30 @@ describe('AdminUserGuards', () => {
       ).to.be.fulfilled
       expect(db.users.countDocuments).not.toHaveBeenCalled()
     })
+
+    it('allows setting isAdmin=false on a non-admin or suspended admin even when only one active admin exists', async () => {
+      db.users.countDocuments.mockResolvedValue(1)
+
+      db.users.findOne.mockResolvedValueOnce({ isAdmin: false, suspended: false })
+      await expect(
+        ensureCanModifyAdmin('admin-1', 'user-2', false)
+      ).to.be.fulfilled
+
+      db.users.findOne.mockResolvedValueOnce({ isAdmin: true, suspended: true })
+      await expect(
+        ensureCanModifyAdmin('admin-1', 'admin-suspended', false)
+      ).to.be.fulfilled
+      expect(db.users.countDocuments).not.toHaveBeenCalled()
+    })
+
+    it('still blocks demoting an active admin when only one active admin exists', async () => {
+      db.users.findOne.mockResolvedValue({ isAdmin: true, suspended: false })
+      db.users.countDocuments.mockResolvedValue(1)
+
+      await expect(
+        ensureCanModifyAdmin('admin-1', 'admin-2', false)
+      ).to.be.rejectedWith(ForbiddenError, 'cannot_modify_last_admin')
+    })
   })
 
   describe('ensureCanDeleteUser', () => {
@@ -77,6 +102,16 @@ describe('AdminUserGuards', () => {
       await expect(
         ensureCanDeleteUser('admin-1', targetAdmin)
       ).to.be.rejectedWith(ForbiddenError, 'cannot_modify_last_admin')
+    })
+
+    it('allows deleting a suspended administrator even when only one active admin exists', async () => {
+      db.users.countDocuments.mockResolvedValue(1)
+      const suspendedAdmin = { _id: 'admin-2', isAdmin: true, suspended: true }
+
+      await expect(
+        ensureCanDeleteUser('admin-1', suspendedAdmin)
+      ).resolves.not.toThrow()
+      expect(db.users.countDocuments).not.toHaveBeenCalled()
     })
 
     it('allows deleting an administrator when multiple active admins exist', async () => {

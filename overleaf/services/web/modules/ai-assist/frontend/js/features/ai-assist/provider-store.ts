@@ -142,7 +142,11 @@ export async function initServerSettings(): Promise<void> {
   return syncPromise;
 }
 
-if (typeof window !== "undefined" && process.env.NODE_ENV !== "test") {
+if (
+  typeof window !== "undefined" &&
+  process.env.NODE_ENV !== "test" &&
+  Boolean(getMeta("ol-aiAssistEnabled"))
+) {
   void initServerSettings();
 }
 

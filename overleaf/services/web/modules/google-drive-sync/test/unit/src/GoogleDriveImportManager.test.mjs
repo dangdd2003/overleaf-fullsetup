@@ -8,6 +8,7 @@ describe('GoogleDriveImportManager', () => {
   let GoogleDriveImportManager
 
   const userId = new ObjectId()
+  const existingProjectId = new ObjectId()
   const folderA = { id: 'folder-1', name: 'Thesis' }
   const folderB = { id: 'folder-2', name: 'Paper' }
   const rootFolderId = 'root-folder-123'
@@ -24,6 +25,10 @@ describe('GoogleDriveImportManager', () => {
       updateMany: vi.fn(),
     },
     googleDriveProjectStates: {
+      find: vi.fn(),
+      deleteMany: vi.fn(),
+    },
+    projects: {
       find: vi.fn(),
     },
   }
@@ -47,11 +52,15 @@ describe('GoogleDriveImportManager', () => {
     db.googleDriveProjectStates.find.mockReturnValue({
       toArray: vi.fn().mockResolvedValue([
         {
-          projectId: new ObjectId(),
+          projectId: existingProjectId,
           driveFolderId: folderA.id,
           lastSyncedAt: new Date('2026-09-01'),
         },
       ]),
+    })
+    db.googleDriveProjectStates.deleteMany.mockResolvedValue({ deletedCount: 0 })
+    db.projects.find.mockReturnValue({
+      toArray: vi.fn().mockResolvedValue([{ _id: existingProjectId }]),
     })
     const mod = await import(modulePath)
     GoogleDriveImportManager = mod.default
@@ -75,6 +84,46 @@ describe('GoogleDriveImportManager', () => {
         linked: false,
         projectId: null,
         lastSyncedAt: null,
+      })
+    })
+
+    it('hides stale googleDriveProjectStates without deleting them when project does not exist or is marked deleted', async () => {
+      const deletedProjId = new ObjectId()
+      const activeProjId = new ObjectId()
+      db.googleDriveProjectStates.find.mockReturnValue({
+        toArray: vi.fn().mockResolvedValue([
+          {
+            _id: new ObjectId(),
+            projectId: deletedProjId,
+            driveFolderId: folderA.id,
+            folderName: folderA.name,
+          },
+          {
+            _id: new ObjectId(),
+            projectId: activeProjId,
+            driveFolderId: folderB.id,
+            folderName: folderB.name,
+          },
+        ]),
+      })
+      db.projects.find.mockReturnValue({
+        toArray: vi.fn().mockResolvedValue([
+          { _id: deletedProjId, deleted: true },
+          { _id: activeProjId },
+        ]),
+      })
+
+      const folders =
+        await GoogleDriveImportManager.listImportableFolders(userId)
+
+      expect(db.googleDriveProjectStates.deleteMany).not.toHaveBeenCalled()
+      expect(folders.find(f => f.folderId === folderA.id)).toMatchObject({
+        linked: false,
+        projectId: null,
+      })
+      expect(folders.find(f => f.folderId === folderB.id)).toMatchObject({
+        linked: true,
+        projectId: activeProjId.toString(),
       })
     })
   })

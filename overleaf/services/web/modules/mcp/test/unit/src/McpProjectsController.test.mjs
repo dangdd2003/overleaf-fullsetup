@@ -556,6 +556,43 @@ describe('McpProjectsController.createProject', () => {
     expect(r.body.details).toEqual({ projectId: 'pStuck' })
   })
 
+  it('normalizes CRLF and bare CR line endings in initialFiles and mainTex', async () => {
+    ProjectCreationHandler.promises.createBasicProject.mockResolvedValue({
+      _id: 'pCrlf',
+      name: 'Paper',
+    })
+    ProjectEntityHandler.promises.getAllEntities.mockResolvedValue(
+      tree({ docs: [['d1', 'main.tex']] })
+    )
+    const r = res()
+    await McpProjectsController.createProject(
+      {
+        mcpUserId: 'u1',
+        body: {
+          name: 'Paper',
+          initialFiles: [{ path: 'refs.bib', content: 'x\r\ny\rz' }],
+          mainTex: 'a\r\nb',
+        },
+      },
+      r
+    )
+    expect(EditorController.promises.upsertDocWithPath).toHaveBeenNthCalledWith(
+      1,
+      'pCrlf',
+      '/refs.bib',
+      ['x', 'y', 'z'],
+      'mcp',
+      'u1'
+    )
+    expect(EditorController.promises.upsertDocWithPath).toHaveBeenLastCalledWith(
+      'pCrlf',
+      '/main.tex',
+      ['a', 'b'],
+      'mcp',
+      'u1'
+    )
+  })
+
   it('leaves the root document unset for an empty project with no main.tex', async () => {
     ProjectCreationHandler.promises.createBlankProject.mockResolvedValue({
       _id: 'pE',

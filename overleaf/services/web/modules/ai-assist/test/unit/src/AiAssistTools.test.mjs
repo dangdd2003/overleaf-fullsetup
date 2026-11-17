@@ -1825,9 +1825,15 @@ describe('AiAssistTools', function () {
     expect(customTools.projectGetter.getProject.called).to.be.false
   })
 
-  it('rejects path traversal attempts in read_file and edit_file', async function () {
+  it('rejects path traversal attempts in read_file, edit_file, and create_file', async function () {
     const customTools = new AiAssistTools()
-    const badPaths = ['../../etc/passwd', '../secret.tex', '/../root.tex']
+    const badPaths = [
+      '../../etc/passwd',
+      '../secret.tex',
+      '/../root.tex',
+      'a/../AGENTS.md',
+      'chapters/..',
+    ]
 
     for (const path of badPaths) {
       const readResult = await customTools.execute(
@@ -1853,7 +1859,41 @@ describe('AiAssistTools', function () {
       expect(editResult.error, `edit_file should reject ${path}`).to.include(
         'traversal'
       )
+
+      const createResult = await customTools.execute(
+        'create_file',
+        { path, content: 'x' },
+        {
+          projectId: '507f1f77bcf86cd799439012',
+          userId: '507f1f77bcf86cd799439011',
+        }
+      )
+      expect(createResult.error, `create_file should reject ${path}`).to.include(
+        'traversal'
+      )
     }
+  })
+
+  it('normalizes leading ./ segments consistently across create_file and edit_file', async function () {
+    const validUserId = '012345678901234567890123'
+    const createRes = await tools.execute(
+      'create_file',
+      { path: './chapters/new.tex', content: 'hi' },
+      { projectId: 'p1', userId: validUserId }
+    )
+    expect(createRes.status).to.equal('applied')
+    expect(createRes.path).to.equal('chapters/new.tex')
+    expect(mockEditorController.addDoc.firstCall.args[2]).to.equal(
+      'chapters/new.tex'
+    )
+
+    const editRes = await tools.execute(
+      'edit_file',
+      { path: './main.tex', oldText: 'target text', newText: 'updated' },
+      { projectId: 'p1', userId: validUserId }
+    )
+    expect(editRes.status).to.equal('applied')
+    expect(editRes.path).to.equal('main.tex')
   })
 
   describe('edit planning', function () {

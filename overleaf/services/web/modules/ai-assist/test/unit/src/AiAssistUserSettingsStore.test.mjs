@@ -2,7 +2,10 @@ import { describe, it, beforeEach, afterEach, vi } from 'vitest'
 import { expect } from 'chai'
 import Settings from '@overleaf/settings'
 import { AiAssistUserSettingsModel } from '../../../app/src/AiAssistUserSettingsModel.mjs'
-import store from '../../../app/src/AiAssistUserSettingsStore.mjs'
+import store, {
+  canReuseStoredProviderSecret,
+  canReuseStoredWebProviderSecret,
+} from '../../../app/src/AiAssistUserSettingsStore.mjs'
 import { open } from '../../../app/src/connectors/ConnectorCrypto.mjs'
 
 const USER_ID = '607f1f77bcf86cd799439099'
@@ -221,5 +224,164 @@ describe('AiAssistUserSettingsStore', function () {
     const internal = await store.getInternalUserSettings(USER_ID)
     expect(internal.provider.baseUrl).to.equal('https://api.openai.com/v1')
     expect(internal.fastProvider.baseUrl).to.equal('https://api.anthropic.com')
+  })
+
+  describe('secret reuse origin guards', function () {
+    it('allows reusing provider secret only when type and normalized baseUrl origin match', function () {
+      const stored = {
+        type: 'openai',
+        baseUrl: 'https://api.openai.com/v1',
+        apiKey: 'sk-real',
+      }
+      expect(
+        canReuseStoredProviderSecret(
+          { type: 'openai', baseUrl: 'https://api.openai.com/v1' },
+          stored
+        )
+      ).to.be.true
+      expect(
+        canReuseStoredProviderSecret({ type: 'openai', baseUrl: '' }, stored)
+      ).to.be.true
+      expect(
+        canReuseStoredProviderSecret(
+          { type: 'openai', baseUrl: 'https://evil.example.com/v1' },
+          stored
+        )
+      ).to.be.false
+      expect(
+        canReuseStoredProviderSecret(
+          { type: 'anthropic', baseUrl: 'https://api.openai.com' },
+          stored
+        )
+      ).to.be.false
+      expect(
+        canReuseStoredProviderSecret(
+          { type: 'openai', baseUrl: 'http://api.openai.com/v1' },
+          stored
+        )
+      ).to.be.false
+      expect(
+        canReuseStoredProviderSecret(
+          {
+            type: 'openai',
+            baseUrl: 'https://api.openai.com/v1',
+            baseURL: 'https://evil.example.com/v1',
+          },
+          stored
+        )
+      ).to.be.false
+    })
+
+    it('clears stored provider apiKey when masked key is saved with a different origin or type', async function () {
+      await store.saveUserSettings(USER_ID, {
+        provider: {
+          type: 'openai',
+          baseUrl: 'https://api.openai.com/v1',
+          apiKey: 'sk-initial-secret',
+          model: 'gpt-4o',
+        },
+      })
+
+      await store.saveUserSettings(USER_ID, {
+        provider: {
+          type: 'openai',
+          baseUrl: 'https://attacker.example.com/v1',
+          apiKey: '••••••••',
+          model: 'gpt-4o',
+        },
+      })
+
+      expect(userSettingsDoc.provider.apiKey).to.be.null
+      const internal = await store.getInternalUserSettings(USER_ID)
+      expect(internal.provider.apiKey).to.equal('')
+    })
+
+    it('checks webSearch provider URL origins before reusing masked secrets', function () {
+      expect(
+        canReuseStoredWebProviderSecret(
+          { enabled: true, apiKeys: ['••••••••'] },
+          { enabled: true, apiKeys: ['tvly-secret'] }
+        )
+      ).to.be.true
+
+      expect(
+        canReuseStoredWebProviderSecret(
+          {
+            enabled: true,
+            baseUrl: 'https://evil.example.com',
+            apiKeys: ['••••••••'],
+          },
+          { enabled: true, apiKeys: ['tvly-secret'] }
+        )
+      ).to.be.false
+
+      expect(
+        canReuseStoredWebProviderSecret(
+          {
+            enabled: true,
+            serverUrls: ['https://mcp.example.com/v2'],
+            bearerToken: '••••••••',
+          },
+          {
+            enabled: true,
+            serverUrls: ['https://mcp.example.com/v1'],
+            bearerToken: 'tok',
+          }
+        )
+      ).to.be.true
+
+      expect(
+        canReuseStoredWebProviderSecret(
+          {
+            enabled: true,
+            serverUrls: ['https://mcp.example.com', 'https://evil.example.com'],
+            bearerToken: '••••••••',
+          },
+          {
+            enabled: true,
+            serverUrls: ['https://mcp.example.com'],
+            bearerToken: 'tok',
+          }
+        )
+      ).to.be.false
+    })
+
+    it('clears stored webSearch secrets when masked tokens are saved with mismatched URLs', async function () {
+      await store.saveUserSettings(USER_ID, {
+        webSearch: {
+          sourceMode: 'custom',
+          providers: {
+            mcp: {
+              enabled: true,
+              serverUrls: ['https://mcp.example.com'],
+              bearerToken: 'bearer-secret-3',
+            },
+            tavily: { enabled: true, apiKeys: ['tvly-secret-1'] },
+          },
+        },
+      })
+
+      await store.saveUserSettings(USER_ID, {
+        webSearch: {
+          sourceMode: 'custom',
+          providers: {
+            mcp: {
+              enabled: true,
+              serverUrls: ['https://attacker.example.com'],
+              bearerToken: '••••••••',
+            },
+            tavily: {
+              enabled: true,
+              baseUrl: 'https://attacker.example.com',
+              apiKeys: ['••••••••'],
+            },
+          },
+        },
+      })
+
+      const internal = await store.getInternalUserSettings(USER_ID)
+      expect(internal.webSearch.providers.mcp.bearerToken).to.be.null
+      expect(internal.webSearch.providers.tavily.apiKeys).to.deep.equal([])
+    })
   })
 })

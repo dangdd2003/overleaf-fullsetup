@@ -171,6 +171,33 @@ describe('AiAssistCheckpointStore', function () {
       expect(checkpoint.files['other.tex'].originalContent).to.equal('other original')
     })
 
+    it('deduplicates leading-slash spellings within the same turn in saveCheckpoint', async function () {
+      await saveCheckpoint(PROJECT, USER, CHAT_ID, MSG_ID_1, {
+        files: {
+          '/main.tex': {
+            originalContent: 'first version',
+            docId: 'doc_1',
+            isNew: false,
+          },
+        },
+      })
+      await saveCheckpoint(PROJECT, USER, CHAT_ID, MSG_ID_1, {
+        files: {
+          'main.tex': {
+            originalContent: 'second version',
+            docId: 'doc_1',
+            isNew: false,
+          },
+        },
+      })
+
+      const checkpoint = await getCheckpoint(PROJECT, USER, CHAT_ID, MSG_ID_1)
+      expect(Object.keys(checkpoint.files)).to.deep.equal(['main.tex'])
+      expect(checkpoint.files['main.tex'].originalContent).to.equal(
+        'first version'
+      )
+    })
+
     it('preserves createdAt and updates updatedAt on subsequent saves', async function () {
       const first = await saveCheckpoint(PROJECT, USER, CHAT_ID, MSG_ID_1, {
         files: { 'a.tex': { originalContent: 'A', docId: '1' } },
@@ -281,7 +308,7 @@ describe('AiAssistCheckpointStore', function () {
       })
 
       expect(res.canRewind).to.be.true
-      expect(res.filesChanged).to.deep.equal(['/src/main.tex'])
+      expect(res.filesChanged).to.deep.equal(['src/main.tex'])
     })
 
     it('handles isNew files correctly', async function () {
@@ -455,8 +482,8 @@ describe('AiAssistCheckpointStore', function () {
       })
 
       const res = await getRewindCheckpoint(PROJECT, USER, CHAT_ID, MSG_ID_1)
-      expect(Object.keys(res.files)).to.deep.equal(['/main.tex'])
-      expect(res.files['/main.tex'].originalContent).to.equal('first')
+      expect(Object.keys(res.files)).to.deep.equal(['main.tex'])
+      expect(res.files['main.tex'].originalContent).to.equal('first')
     })
   })
 

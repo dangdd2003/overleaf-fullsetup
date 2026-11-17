@@ -19,6 +19,9 @@ const DEFAULT_SCOPES = [
 
 const REFRESH_BUFFER_MS = 5 * 60 * 1000 // 5 minutes
 const STATE_MAX_AGE_MS = 15 * 60 * 1000 // 15 minutes
+const OAUTH_FETCH_TIMEOUT_MS = 30_000
+
+const _inFlightRefreshes = new Map()
 
 /**
  * Derives a 32-byte key for AES-256-GCM from the sessionSecret or provided secret.
@@ -335,12 +338,14 @@ async function handleOAuthCallback(userId, code, state) {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: tokenParams.toString(),
+    signal: AbortSignal.timeout(OAUTH_FETCH_TIMEOUT_MS),
   })
 
   const userInfo = await fetchJson(GOOGLE_USERINFO_URL, {
     headers: {
       Authorization: `Bearer ${tokenData.access_token}`,
     },
+    signal: AbortSignal.timeout(OAUTH_FETCH_TIMEOUT_MS),
   })
 
   const encryptedAccessToken = encryptToken(tokenData.access_token)
@@ -386,6 +391,7 @@ async function handleOAuthCallback(userId, code, state) {
     updateDoc,
     { upsert: true }
   )
+  _inFlightRefreshes.delete(String(userId))
 
   logger.info(
     { userId, googleEmail: userInfo.email },
@@ -408,34 +414,7 @@ async function handleOAuthCallback(userId, code, state) {
   }
 }
 
-/**
- * Retrieves a valid, decrypted access token for a user, automatically refreshing
- * the token if it is expired or expiring within 5 minutes.
- *
- * @param {string} userId
- * @returns {Promise<string>} Decrypted access token
- */
-async function getValidAccessToken(userId) {
-  const userObjectId = _toObjectId(userId)
-  const creds = await db.googleDriveUserCredentials.findOne({
-    user_id: userObjectId,
-  })
-
-  if (!creds || !creds.encryptedAccessToken) {
-    throw new OError('Google Drive account not linked for user', { userId })
-  }
-
-  const now = Date.now()
-  const expiryTime = creds.tokenExpiry
-    ? new Date(creds.tokenExpiry).getTime()
-    : 0
-  const isExpiring = !creds.tokenExpiry || expiryTime - now < REFRESH_BUFFER_MS
-
-  if (!isExpiring) {
-    return decryptToken(creds.encryptedAccessToken)
-  }
-
-  // Token is expired or expiring soon; refresh it
+async function _refreshAccessToken(userId, userObjectId, creds) {
   if (!creds.encryptedRefreshToken) {
     throw new OError(
       'No refresh token available to refresh Google Drive access token',
@@ -458,6 +437,7 @@ async function getValidAccessToken(userId) {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: refreshParams.toString(),
+    signal: AbortSignal.timeout(OAUTH_FETCH_TIMEOUT_MS),
   })
 
   const newEncryptedAccessToken = encryptToken(refreshData.access_token)
@@ -485,6 +465,55 @@ async function getValidAccessToken(userId) {
 }
 
 /**
+ * Retrieves a valid, decrypted access token for a user, automatically refreshing
+ * the token if it is expired or expiring within 5 minutes.
+ *
+ * @param {string} userId
+ * @returns {Promise<string>} Decrypted access token
+ */
+async function getValidAccessToken(userId) {
+  const userKey = String(userId)
+  if (_inFlightRefreshes.has(userKey)) {
+    return _inFlightRefreshes.get(userKey)
+  }
+
+  const userObjectId = _toObjectId(userId)
+  const creds = await db.googleDriveUserCredentials.findOne({
+    user_id: userObjectId,
+  })
+
+  if (!creds || !creds.encryptedAccessToken) {
+    throw new OError('Google Drive account not linked for user', { userId })
+  }
+
+  const now = Date.now()
+  const expiryTime = creds.tokenExpiry
+    ? new Date(creds.tokenExpiry).getTime()
+    : 0
+  const isExpiring = !creds.tokenExpiry || expiryTime - now < REFRESH_BUFFER_MS
+
+  if (!isExpiring) {
+    return decryptToken(creds.encryptedAccessToken)
+  }
+
+  if (_inFlightRefreshes.has(userKey)) {
+    return _inFlightRefreshes.get(userKey)
+  }
+
+  const refreshPromise = _refreshAccessToken(
+    userId,
+    userObjectId,
+    creds
+  ).finally(() => {
+    if (_inFlightRefreshes.get(userKey) === refreshPromise) {
+      _inFlightRefreshes.delete(userKey)
+    }
+  })
+  _inFlightRefreshes.set(userKey, refreshPromise)
+  return refreshPromise
+}
+
+/**
  * Unlinks a user's Google Drive account by revoking credentials and deleting
  * their record from the database.
  *
@@ -492,6 +521,7 @@ async function getValidAccessToken(userId) {
  * @returns {Promise<{ success: boolean }>}
  */
 async function unlinkAccount(userId) {
+  _inFlightRefreshes.delete(String(userId))
   const userObjectId = _toObjectId(userId)
   const creds = await db.googleDriveUserCredentials.findOne({
     user_id: userObjectId,
@@ -514,6 +544,7 @@ async function unlinkAccount(userId) {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
           body: new URLSearchParams({ token: tokenToRevoke }).toString(),
+          signal: AbortSignal.timeout(OAUTH_FETCH_TIMEOUT_MS),
         })
       } catch (err) {
         logger.warn(
@@ -534,6 +565,7 @@ async function unlinkAccount(userId) {
   }
 
   await db.googleDriveUserCredentials.deleteOne({ user_id: userObjectId })
+  await db.googleDriveProjectStates?.deleteMany?.({ userId: userObjectId })
 
   // Queued bulk and import jobs would otherwise keep failing folder by folder
   // against credentials that no longer exist.

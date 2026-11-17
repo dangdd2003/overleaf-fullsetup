@@ -1,6 +1,10 @@
 import net from 'node:net'
-import { describe, it, expect, afterEach } from 'vitest'
-import { requestRaw, OUTBOUND_BLOCKED } from '../../../app/src/transport/GuardedHttps.mjs'
+import tls from 'node:tls'
+import https from 'node:https'
+import { EventEmitter } from 'node:events'
+import { describe, it, expect, afterEach, vi } from 'vitest'
+import { requestRaw, fetchStream, OUTBOUND_BLOCKED } from '../../../app/src/transport/GuardedHttps.mjs'
+import { isRouteFailure } from '../../../app/src/transport/RateGate.mjs'
 
 // Egress checks run before any proxy socket is opened. The fake proxy counts
 // connections so a refusal can be shown to happen before the proxy is touched.
@@ -9,6 +13,7 @@ const HOST = 'gallery.test.example'
 const servers = []
 
 afterEach(() => {
+  vi.restoreAllMocks()
   while (servers.length) servers.pop().close()
 })
 
@@ -176,5 +181,91 @@ describe('GuardedHttps egress option', () => {
     expect(err.code).not.toBe('EAI_AGAIN')
     expect(err.code).not.toBe('EADDRBLOCKED')
     expect(proxy.connections).toBe(1)
+  })
+
+  it('tags closed TLS handshakes with ECONNRESET so RateGate classifies them as route failures', async () => {
+    const proxy = await countingProxy(socket => {
+      socket.end('HTTP/1.1 200 Connection established\r\n\r\n')
+    })
+    const err = await requestRaw(`https://${HOST}/x`, {
+      egress: egressFor(proxy.port),
+      allowedHosts: [HOST],
+      lookupFn: lookupTo('93.184.216.34'),
+      timeoutMs: 3000,
+    }).catch(e => e)
+    expect(err.code).toBe('ECONNRESET')
+    expect(isRouteFailure(err)).toBe(true)
+  })
+
+  it('rejects with ETIMEDOUT and closes the tunnel when target TLS handshake times out', async () => {
+    let proxySocketClosed = false
+    const proxy = await countingProxy(socket => {
+      socket.on('close', () => {
+        proxySocketClosed = true
+      })
+      socket.write('HTTP/1.1 200 Connection established\r\n\r\n')
+    })
+    const err = await requestRaw(`https://${HOST}/x`, {
+      egress: egressFor(proxy.port),
+      allowedHosts: [HOST],
+      lookupFn: lookupTo('93.184.216.34'),
+      timeoutMs: 80,
+    }).catch(e => e)
+    expect(err.code).toBe('ETIMEDOUT')
+    expect(isRouteFailure(err)).toBe(true)
+    for (let i = 0; i < 20 && !proxySocketClosed; i++) {
+      await new Promise(r => setTimeout(r, 10))
+    }
+    expect(proxySocketClosed).toBe(true)
+  })
+
+  it('aborts immediately before contacting proxy when signal is already aborted', async () => {
+    const proxy = await countingProxy()
+    const ac = new AbortController()
+    ac.abort()
+    const err = await requestRaw(`https://${HOST}/x`, {
+      egress: egressFor(proxy.port),
+      allowedHosts: [HOST],
+      lookupFn: lookupTo('93.184.216.34'),
+      signal: ac.signal,
+    }).catch(e => e)
+    expect(err.code).toBe('ABORT_ERR')
+    expect(proxy.connections).toBe(0)
+  })
+
+  it('destroys tunnel if transport.request throws synchronously in requestRaw and fetchStream', async () => {
+    const proxy = await countingProxy(socket => {
+      socket.write('HTTP/1.1 200 Connection established\r\n\r\n')
+    })
+    const fakeSecure = Object.assign(new EventEmitter(), {
+      destroyed: false,
+      destroy() {
+        this.destroyed = true
+      },
+    })
+    vi.spyOn(tls, 'connect').mockImplementation(() => {
+      queueMicrotask(() => fakeSecure.emit('secureConnect'))
+      return fakeSecure
+    })
+    vi.spyOn(https, 'request').mockImplementation(() => {
+      throw new Error('sync request failure')
+    })
+
+    const err1 = await requestRaw(`https://${HOST}/x`, {
+      egress: egressFor(proxy.port),
+      allowedHosts: [HOST],
+      lookupFn: lookupTo('93.184.216.34'),
+    }).catch(e => e)
+    expect(err1.message).toBe('sync request failure')
+    expect(fakeSecure.destroyed).toBe(true)
+
+    fakeSecure.destroyed = false
+    const err2 = await fetchStream(`https://${HOST}/x`, {
+      egress: egressFor(proxy.port),
+      allowedHosts: [HOST],
+      lookupFn: lookupTo('93.184.216.34'),
+    }).catch(e => e)
+    expect(err2.message).toBe('sync request failure')
+    expect(fakeSecure.destroyed).toBe(true)
   })
 })

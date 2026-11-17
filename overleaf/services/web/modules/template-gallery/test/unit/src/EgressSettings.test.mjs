@@ -330,4 +330,36 @@ describe('EgressSettings', () => {
     )
     expect(allowed.added).toHaveLength(1)
   })
+
+  it('allows updating both username and password after sessionSecret rotation without decrypting old credentials', async () => {
+    const { proxy } = await EgressSettings.createProxy(GOOD)
+    // Rotate sessionSecret so old authEnc is undecryptable
+    Settings.security = { sessionSecret: 'rotated-new-session-secret' }
+
+    const { proxy: updated } = await EgressSettings.updateProxy(proxy.id, {
+      username: 'bob',
+      password: 'new-password',
+    })
+    expect(updated.hasAuth).toBe(true)
+    await EgressSettings.refresh()
+    expect(EgressSettings.snapshot().egresses[0]).toMatchObject({
+      username: 'bob',
+      password: 'new-password',
+    })
+  })
+
+  it('rejects partial credential update and findProxyEgress with invalid_credentials after sessionSecret rotation', async () => {
+    const { proxy } = await EgressSettings.createProxy(GOOD)
+    Settings.security = { sessionSecret: 'rotated-new-session-secret' }
+
+    expect(
+      await codeOf(EgressSettings.updateProxy(proxy.id, { username: 'bob' }))
+    ).toBe('invalid_credentials')
+    expect(
+      await codeOf(EgressSettings.updateProxy(proxy.id, { password: 'only-pass' }))
+    ).toBe('invalid_credentials')
+    expect(await codeOf(EgressSettings.findProxyEgress(proxy.id))).toBe(
+      'invalid_credentials'
+    )
+  })
 })

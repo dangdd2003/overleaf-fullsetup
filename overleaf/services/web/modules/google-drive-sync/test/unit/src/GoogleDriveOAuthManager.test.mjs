@@ -35,6 +35,9 @@ describe('GoogleDriveOAuthManager', function () {
     googleDriveImportJobs: {
       updateMany: vi.fn().mockResolvedValue({}),
     },
+    googleDriveProjectStates: {
+      deleteMany: vi.fn().mockResolvedValue({}),
+    },
     googleDriveUserCredentials: {
       findOne: vi.fn(),
       updateOne: vi.fn(),
@@ -602,6 +605,51 @@ describe('GoogleDriveOAuthManager', function () {
       expect(error).toBeDefined()
       expect(error.message).toMatch(/refresh token/i)
     })
+
+    it('coalesces concurrent token refreshes for the same user and passes timeout signal', async function () {
+      const refreshToken = '1//refresh-token-concurrent'
+      const newAccessToken = 'ya29.coalesced-token'
+      const encryptedRefreshToken =
+        GoogleDriveOAuthManager.encryptToken(refreshToken)
+      const tokenExpiry = new Date(Date.now() - 10 * 60 * 1000)
+
+      db.googleDriveUserCredentials.findOne.mockResolvedValue({
+        user_id: userId,
+        encryptedAccessToken: 'expired-token',
+        encryptedRefreshToken,
+        tokenExpiry,
+      })
+
+      let resolveFetch
+      fetchUtils.fetchJson.mockImplementation(
+        () =>
+          new Promise(resolve => {
+            resolveFetch = resolve
+          })
+      )
+      db.googleDriveUserCredentials.updateOne.mockResolvedValue({
+        acknowledged: true,
+      })
+
+      const p1 = GoogleDriveOAuthManager.getValidAccessToken(userId)
+      const p2 = GoogleDriveOAuthManager.getValidAccessToken(
+        new MockObjectId(userId)
+      )
+
+      await vi.waitFor(() => {
+        expect(fetchUtils.fetchJson).toHaveBeenCalledTimes(1)
+      })
+      expect(fetchUtils.fetchJson.mock.calls[0][1].signal).toBeInstanceOf(
+        AbortSignal
+      )
+
+      resolveFetch({ access_token: newAccessToken, expires_in: 3600 })
+      const [t1, t2] = await Promise.all([p1, p2])
+
+      expect(t1).toBe(newAccessToken)
+      expect(t2).toBe(newAccessToken)
+      expect(fetchUtils.fetchJson).toHaveBeenCalledTimes(1)
+    })
   })
 
   describe('unlinkAccount', function () {
@@ -629,6 +677,7 @@ describe('GoogleDriveOAuthManager', function () {
       expect(revokeOpts.body).toBe(
         new URLSearchParams({ token: accessToken }).toString()
       )
+      expect(revokeOpts.signal).toBeInstanceOf(AbortSignal)
 
       expect(GoogleDriveWatchManager.stopChannel).toHaveBeenCalledTimes(1)
       expect(GoogleDriveWatchManager.stopChannel).toHaveBeenCalledWith(userId)
@@ -637,6 +686,11 @@ describe('GoogleDriveOAuthManager', function () {
       const deleteQuery =
         db.googleDriveUserCredentials.deleteOne.mock.calls[0][0]
       expect(deleteQuery.user_id.toString()).toBe(userId)
+
+      expect(db.googleDriveProjectStates.deleteMany).toHaveBeenCalledTimes(1)
+      const stateDeleteQuery =
+        db.googleDriveProjectStates.deleteMany.mock.calls[0][0]
+      expect(stateDeleteQuery.userId.toString()).toBe(userId)
 
       expect(GoogleDriveBulkSyncManager.cancelActiveJobs).toHaveBeenCalledTimes(
         1

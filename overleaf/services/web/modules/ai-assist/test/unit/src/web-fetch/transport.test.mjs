@@ -1,6 +1,8 @@
 import { describe, it } from 'vitest'
 import { expect } from 'chai'
 import sinon from 'sinon'
+import http from 'node:http'
+import zlib from 'node:zlib'
 import {
   BROWSER_HEADERS,
   fetchPublicUrl,
@@ -114,5 +116,70 @@ describe('transport', function () {
 
     expect(fakeRequestOnce.calledOnce).to.be.true
     expect(res.body.toString('utf8')).to.equal('node fallback content')
+  })
+
+  it('truncates oversized gzipped responses and cleans up the decompression stream', async function () {
+    const compressed = zlib.gzipSync(Buffer.alloc(256 * 1024, 'A'))
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200, {
+        'Content-Type': 'text/plain',
+        'Content-Encoding': 'gzip',
+      })
+      res.end(compressed)
+    })
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+    const { port } = server.address()
+    const localLookup = (_host, opts, cb) => {
+      const callback = typeof opts === 'function' ? opts : cb
+      if (typeof opts === 'object' && opts?.all) {
+        return callback(null, [{ address: '127.0.0.1', family: 4 }])
+      }
+      return callback(null, '127.0.0.1', 4)
+    }
+
+    try {
+      const res = await fetchPublicUrl(`http://example.com:${port}/bomb`, {
+        maxBytes: 1024,
+        lookup: localLookup,
+      })
+      expect(res.truncated).to.be.true
+      expect(res.body.length).to.equal(1024)
+    } finally {
+      await new Promise(resolve => server.close(resolve))
+    }
+  })
+
+  it('propagates compressed response errors to the caller instead of leaving an unhandled stream error', async function () {
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200, {
+        'Content-Type': 'text/plain',
+        'Content-Encoding': 'gzip',
+      })
+      res.write(Buffer.from('not-valid-gzip-data'))
+      res.end()
+    })
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+    const { port } = server.address()
+    const localLookup = (_host, opts, cb) => {
+      const callback = typeof opts === 'function' ? opts : cb
+      if (typeof opts === 'object' && opts?.all) {
+        return callback(null, [{ address: '127.0.0.1', family: 4 }])
+      }
+      return callback(null, '127.0.0.1', 4)
+    }
+
+    try {
+      let caught = null
+      try {
+        await fetchPublicUrl(`http://example.com:${port}/bad-gzip`, {
+          lookup: localLookup,
+        })
+      } catch (err) {
+        caught = err
+      }
+      expect(caught).to.exist
+    } finally {
+      await new Promise(resolve => server.close(resolve))
+    }
   })
 })

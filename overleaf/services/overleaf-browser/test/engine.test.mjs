@@ -187,6 +187,10 @@ test('isChallengeBody spots a bot check in raw HTML but not in a long article or
     ),
     false
   )
+  const oversizedChallenge = Buffer.from(
+    `<html><head><title>Just a moment...</title></head><body>${'a'.repeat(256 * 1024)}</body></html>`
+  )
+  assert.equal(isChallengeBody('text/html', oversizedChallenge), false)
 })
 
 test('visibleText drops tags and script or style bodies and keeps the text', () => {
@@ -523,6 +527,113 @@ test('BrowserEngine polls until sandbox check succeeds during renderer startup',
     assert.equal(closed, false)
     assert.notEqual(engine.context, null)
     await engine.close()
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true })
+  }
+})
+
+test('BrowserEngine deduplicates concurrent close() and blocks _context() until close completes', async () => {
+  const tmp = tmpProfile()
+  try {
+    let launches = 0
+    let contextCloses = 0
+    let releaseClose
+    const firstContext = {
+      on: () => {},
+      close: () =>
+        new Promise(resolve => {
+          contextCloses++
+          releaseClose = resolve
+        }),
+      newPage: async () => ({ close: async () => {} }),
+    }
+    const secondContext = {
+      on: () => {},
+      close: async () => {},
+      newPage: async () => ({ close: async () => {} }),
+    }
+    const engine = new BrowserEngine({
+      profileDir: tmp,
+      sandboxCheck: SANDBOXED,
+      launcher: async () => {
+        launches++
+        return launches === 1 ? firstContext : secondContext
+      },
+    })
+
+    await engine.init()
+    const c1 = engine.close()
+    const c2 = engine.close()
+    let relaunchedEarly = false
+    const ctxPromise = engine._context().then(ctx => {
+      relaunchedEarly = true
+      return ctx
+    })
+
+    await new Promise(resolve => setTimeout(resolve, 10))
+    assert.equal(contextCloses, 1)
+    assert.equal(relaunchedEarly, false)
+
+    releaseClose()
+    await Promise.all([c1, c2])
+    const newCtx = await ctxPromise
+    assert.equal(newCtx, secondContext)
+    assert.equal(launches, 2)
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true })
+  }
+})
+
+test('BrowserEngine defers restart close until activeReads reaches 0', async () => {
+  const tmp = tmpProfile()
+  try {
+    let closes = 0
+    let releaseFirstGoto
+    let firstGotoStarted
+    const firstStartedPromise = new Promise(resolve => {
+      firstGotoStarted = resolve
+    })
+    const makePage = () => ({
+      route: async () => {},
+      goto: async url => {
+        if (url === 'https://example.com/1') {
+          firstGotoStarted()
+          await new Promise(resolve => {
+            releaseFirstGoto = resolve
+          })
+        }
+        return {
+          body: async () => Buffer.from('<html><body>ok</body></html>'),
+          headers: () => ({ 'content-type': 'text/html' }),
+          status: () => 200,
+        }
+      },
+      close: async () => {},
+      url: () => 'https://example.com/',
+    })
+    const engine = new BrowserEngine({
+      profileDir: tmp,
+      sandboxCheck: SANDBOXED,
+      maxReadsBeforeRestart: 1,
+      launcher: async () => ({
+        on: () => {},
+        close: async () => {
+          closes++
+        },
+        newPage: async () => makePage(),
+      }),
+    })
+
+    const r1 = engine.raw('https://example.com/1')
+    await firstStartedPromise
+    const r2 = engine.raw('https://example.com/2')
+    await r2
+    // r1 is still active, so r2 finishing must not close Chrome mid-read
+    assert.equal(closes, 0)
+
+    releaseFirstGoto()
+    await r1
+    assert.equal(closes, 1)
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true })
   }
