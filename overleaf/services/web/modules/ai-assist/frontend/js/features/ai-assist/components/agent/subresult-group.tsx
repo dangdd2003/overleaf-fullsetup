@@ -13,6 +13,12 @@ import { ConnectorAuthCard } from './connector-auth-card'
 import { DiffStats, sumDiffStats } from './diff-stats'
 import { DiffStatBadge } from './diff-stat-badge'
 import {
+  humanizeServer,
+  isMcpToolName,
+  mcpServerSegment,
+  mcpToolLabel,
+} from '../../agent/mcp-tool-output'
+import {
   subresultExpansionStore,
   thinkingSignature,
   toolCallSignature,
@@ -68,6 +74,26 @@ function renderApprovalCard(
         key={pendingCall.id}
         toolName={pendingCall.name}
         args={args}
+        onDecision={onDecision}
+      />
+    )
+  }
+  // A page the model fetched that no message or result gave: the same
+  // permission prompt as a connector tool, without "don't ask again" (the
+  // server does not keep that for web pages)
+  if (
+    pendingCall.name === 'web_fetch' ||
+    (approvalContext?.kind === 'connector' &&
+      approvalContext.connector?.connectorId === 'web')
+  ) {
+    return (
+      <ConnectorApprovalCard
+        key={pendingCall.id}
+        connectorName={approvalContext?.connector?.connectorName || 'Web'}
+        toolName={pendingCall.name || 'web_fetch'}
+        toolTitle={approvalContext?.connector?.toolTitle}
+        args={args}
+        allowAlways={false}
         onDecision={onDecision}
       />
     )
@@ -216,6 +242,21 @@ export function summariseToolCallActions(
   }
   if (counts['present_plan']) {
     parts.push('presented plan')
+  }
+  // Connector calls, by connector: "used Github (3)"
+  const connectorCounts = new Map<string, number>()
+  for (const [name, n] of Object.entries(counts)) {
+    if (!isMcpToolName(name)) continue
+    const server = humanizeServer(mcpServerSegment(name)) || 'connector'
+    connectorCounts.set(server, (connectorCounts.get(server) ?? 0) + n)
+  }
+  for (const [server, n] of connectorCounts) {
+    parts.push(`used ${server}${n > 1 ? ` (${n})` : ''}`)
+  }
+  const connectorReads =
+    (counts['read_connector_result'] ?? 0) + (counts['search_connector_tools'] ?? 0)
+  if (connectorReads > 0 && connectorCounts.size === 0) {
+    parts.push('used connectors')
   }
   for (const [tool, noun] of [
     ['edit_file', 'edit'],
@@ -423,6 +464,7 @@ export const SubresultGroup: FC<{
         i.call.name === 'create_file' ||
         i.call.name.startsWith('configure_') ||
         i.call.name.startsWith('mcp__') ||
+        i.call.name === 'web_fetch' ||
         i.call.name === 'present_plan')
   )
 
@@ -512,6 +554,11 @@ export const SubresultGroup: FC<{
           case 'web_fetch':
             return target ? `Fetch ${target}…` : 'Fetching…'
           default: {
+            if (isMcpToolName(inFlightCall.name)) {
+              const server = humanizeServer(mcpServerSegment(inFlightCall.name))
+              const tool = mcpToolLabel(inFlightCall.name)
+              return `${tool}${server ? ` · ${server}` : ''}…`
+            }
             const s = summarise(inFlightCall, t)
             const act = s.action && !s.action.startsWith('Running') ? s.action : inFlightCall.name
             return `${act}${target ? ` ${target}` : ''}…`

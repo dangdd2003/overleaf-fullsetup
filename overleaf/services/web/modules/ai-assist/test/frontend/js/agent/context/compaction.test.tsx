@@ -93,6 +93,19 @@ const reply = (id: string, text: string): TranscriptEntry => ({
 
 describe('compaction', function () {
   describe('renderCompactionMessage', function () {
+    it('says messages follow verbatim only when a tail is kept', function () {
+      const withTail = renderCompactionMessage(compactEntry({ tail: true } as Partial<CompactEntry>))
+      expect(withTail).to.include('follow verbatim after this block')
+      const noTail = renderCompactionMessage(compactEntry({ tail: false } as Partial<CompactEntry>))
+      expect(noTail).to.include('no message follows verbatim')
+      expect(noTail).to.include('<current_work>')
+    })
+
+    it('reads an older entry with tailFromId as having a tail', function () {
+      const text = renderCompactionMessage(compactEntry({ tailFromId: 'u5' }))
+      expect(text).to.include('follow verbatim after this block')
+    })
+
     it('renders the block the server sends, summary then ledger', function () {
       const text = renderCompactionMessage(compactEntry())
       expect(text.split('\n')[0]).to.equal(

@@ -180,7 +180,10 @@ export function parseFetchUrl(raw) {
   if (parsed.username || parsed.password) {
     throw webError('Web addresses with a username or password cannot be fetched.')
   }
-  const host = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase()
+  const host = parsed.hostname
+    .replace(/^\[|\]$/g, '')
+    .replace(/\.+$/, '')
+    .toLowerCase()
   if (
     (net.isIP(host) && !isPublicAddress(host)) ||
     host === 'localhost' ||

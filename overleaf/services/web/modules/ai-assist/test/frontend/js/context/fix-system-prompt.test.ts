@@ -9,11 +9,12 @@ import { SYSTEM_PROMPT } from '../../../../frontend/js/features/ai-assist/agent/
 import { buildRequest } from '../../../../frontend/js/features/ai-assist/agent/context/build-request'
 
 describe('FIX_SYSTEM_PROMPT', function () {
-  it('is substantially smaller than the rail prompt', function () {
-    // The whole point: a one-click fix should not pay for the rail's manual on
-    // orienting, inserting content and compiling. If this ever creeps back up
-    // to the rail's size, the optimisation has been undone.
-    expect(FIX_SYSTEM_PROMPT.length).to.be.lessThan(SYSTEM_PROMPT.length * 0.75)
+  it('stays small: a one-click fix should not pay for the rail manual', function () {
+    // The whole point: a one-click fix does not carry the rail's manual on
+    // orienting, inserting content and compiling. The rail's default prompt is
+    // short now (system-prompt.ts), so the bound is absolute.
+    expect(FIX_SYSTEM_PROMPT.length).to.be.lessThan(3000)
+    expect(FIX_SYSTEM_PROMPT.length).to.be.greaterThan(SYSTEM_PROMPT.length * 0.5)
   })
 
   it('drops the rail machinery a local fix cannot use', function () {

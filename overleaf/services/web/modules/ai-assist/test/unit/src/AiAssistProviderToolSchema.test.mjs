@@ -40,7 +40,17 @@ const TOOLS = [
  * Captures the request body of the first call, then ends the stream so the
  * generator finishes without a network round trip.
  */
-function capturingFetch(capture) {
+// Each provider's own end-of-reply frame. A stream that ends without one is a
+// truncated reply, which the client now reports as an error.
+const END = {
+  openai: 'data: [DONE]\n\n',
+  gemini:
+    'data: {"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}]}\n\n',
+  anthropic: 'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+  ollama: '{"done":true,"done_reason":"stop"}\n',
+}
+
+function capturingFetch(capture, endFrame = END.openai) {
   return async (url, options) => {
     capture.url = url
     capture.body = JSON.parse(options.body)
@@ -48,7 +58,7 @@ function capturingFetch(capture) {
       ok: true,
       status: 200,
       body: (async function* () {
-        yield new TextEncoder().encode('data: [DONE]\n\n')
+        yield new TextEncoder().encode(endFrame)
       })(),
     }
   }
@@ -133,7 +143,7 @@ describe('provider tool schemas on the wire', function () {
       const client = new GoogleServerClient({
         apiKey: 'k',
         model: 'gemini-2.0-flash',
-        fetchFn: capturingFetch(capture),
+        fetchFn: capturingFetch(capture, END.gemini),
       })
 
       await drain(client)
@@ -148,7 +158,7 @@ describe('provider tool schemas on the wire', function () {
       const client = new GoogleServerClient({
         apiKey: 'k',
         model: 'gemini-2.0-flash',
-        fetchFn: capturingFetch(capture),
+        fetchFn: capturingFetch(capture, END.gemini),
       })
 
       await drain(client)
@@ -167,7 +177,7 @@ describe('provider tool schemas on the wire', function () {
         type: 'anthropic',
         apiKey: 'k',
         model: 'claude-sonnet-5',
-        fetchFn: capturingFetch(capture),
+        fetchFn: capturingFetch(capture, END.anthropic),
       })
 
       await drain(client)
@@ -183,7 +193,7 @@ describe('provider tool schemas on the wire', function () {
         type: 'anthropic',
         apiKey: 'k',
         model: 'claude-sonnet-5',
-        fetchFn: capturingFetch(capture),
+        fetchFn: capturingFetch(capture, END.anthropic),
       })
 
       await drain(client)
@@ -202,7 +212,7 @@ describe('provider tool schemas on the wire', function () {
       const client = new OllamaServerClient({
         model: 'llama3',
         baseURL: 'http://203.0.113.20:11434',
-        fetchFn: capturingFetch(capture),
+        fetchFn: capturingFetch(capture, END.ollama),
       })
 
       await drain(client)

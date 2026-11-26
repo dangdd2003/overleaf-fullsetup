@@ -91,6 +91,10 @@ describe('completion: Automatic', function () {
 
   afterEach(function () {
     window.dispatchEvent(new Event('focus'))
+    // jsdom runs animation frames on an interval it starts with the
+    // setInterval of the moment: let the fake one finish them before the
+    // clock goes, or every later frame in the run waits on a dead interval
+    clock.tick(100)
     clock.restore()
     fetchMock.removeRoutes().clearHistory()
     customLocalStorage.clear()
@@ -297,16 +301,24 @@ describe('completion: Automatic', function () {
 
   it('sends nothing while the author is away from the page', async function () {
     const view = makeView(TEXT)
-    window.dispatchEvent(new Event('blur'))
-    await clock.tickAsync(0)
-    type(view, ',')
-    await clock.tickAsync(1000)
-    expect(requests()).to.equal(0)
-    window.dispatchEvent(new Event('focus'))
-    type(view, ' ')
-    await clock.tickAsync(300)
-    expect(requests()).to.equal(1)
-    view.destroy()
+    // Whether the page has the focus is jsdom's, left by earlier tests: the
+    // window losing it is what this test is about
+    const hasFocus = sinon.stub(document, 'hasFocus').returns(false)
+    try {
+      window.dispatchEvent(new Event('blur'))
+      await clock.tickAsync(0)
+      type(view, ',')
+      await clock.tickAsync(1000)
+      expect(requests()).to.equal(0)
+      hasFocus.returns(true)
+      window.dispatchEvent(new Event('focus'))
+      type(view, ' ')
+      await clock.tickAsync(300)
+      expect(requests()).to.equal(1)
+    } finally {
+      hasFocus.restore()
+      view.destroy()
+    }
   })
 
   it('closes a LaTeX autocomplete list left open where no command is typed, and asks', async function () {

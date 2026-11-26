@@ -3,9 +3,12 @@ import ToggleSetting from '@/features/ide-settings/components/toggle-setting'
 import DropdownSetting from '@/features/ide-settings/components/dropdown-setting'
 import type { SettingsSection } from '@/features/ide-settings/context/types'
 import { isWritingToolsAvailable } from '../../writing-tools/availability'
+import { INLINE_SUGGESTIONS_CHANGED_EVENT } from '../../provider-store'
 import {
   COMPLETION_DELAYS,
   CompletionMode,
+  InlineSuggestionsPreferences,
+  readInlineSuggestionsPreferences,
 } from '../../inline-suggestion/preferences'
 import { useInlineSuggestionsPreferences } from './use-inline-suggestions-preferences'
 
@@ -60,14 +63,16 @@ function CompletionDelaySetting() {
   )
 }
 
-/**
- * Registered in `settingsModalEditorTabSections`: upstream renders it in
- * the Editor tab, after Tools. The delay row exists only while Automatic
- * is chosen.
- */
-export default function useAiAssistanceSection(): SettingsSection | null {
-  const { t } = useTranslation()
-  const [preferences] = useInlineSuggestionsPreferences()
+export function subscribeInlineSuggestions(onChange: () => void): () => void {
+  window.addEventListener(INLINE_SUGGESTIONS_CHANGED_EVENT, onChange)
+  return () =>
+    window.removeEventListener(INLINE_SUGGESTIONS_CHANGED_EVENT, onChange)
+}
+
+export function buildAiAssistanceSection(
+  t: (key: string, defaultValue: string) => string,
+  preferences: InlineSuggestionsPreferences = readInlineSuggestionsPreferences()
+): SettingsSection | null {
   if (!isWritingToolsAvailable()) return null
   return {
     key: 'ai-assistance',
@@ -80,4 +85,16 @@ export default function useAiAssistanceSection(): SettingsSection | null {
         : []),
     ],
   }
+}
+
+/**
+ * Registered in `settingsModalEditorTabSections`: upstream renders it in
+ * the Editor tab, after Tools. The delay row exists only while Automatic
+ * is chosen.
+ */
+export default function useAiAssistanceSection(): SettingsSection | null {
+  const { t } = useTranslation()
+  const enabled = isWritingToolsAvailable()
+  const [preferences] = useInlineSuggestionsPreferences(enabled)
+  return buildAiAssistanceSection(t, preferences)
 }

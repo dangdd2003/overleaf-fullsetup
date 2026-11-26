@@ -172,7 +172,9 @@ describe('renderToolResult for labels, defects and visual diff', function () {
       line: 40,
       endLine: 44,
     })
-    expect(text).to.equal('Block B3 on page 2 is main.tex lines 40-44.')
+    expect(text).to.equal(
+      '<tool_output source="pdf" trust="untrusted">\nBlock B3 on page 2 is main.tex lines 40-44.\n</tool_output>'
+    )
   })
 
   it('renders the visual diff summary and says when nothing changed', function () {

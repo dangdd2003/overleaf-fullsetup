@@ -609,6 +609,7 @@ describe('AgentPanel', function () {
     const closeStub = sinon.stub()
     function FakeEventSource(this: any) {
       this.close = closeStub
+      this.addEventListener = () => {}
       Object.defineProperty(this, 'onmessage', {
         set(_fn) {},
       })
@@ -651,6 +652,7 @@ describe('AgentPanel', function () {
     const closeStub = sinon.stub()
     function FakeEventSource(this: any) {
       this.close = closeStub
+      this.addEventListener = () => {}
       Object.defineProperty(this, 'onmessage', {
         set(fn) {
           messageHandler = fn

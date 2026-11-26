@@ -100,12 +100,28 @@ export function detectTextKind(text: string): 'prose' | 'latex' {
  * the text unless given (JSON is always given). Every provider tokenises
  * differently, so this is a rough count, not a tokenizer.
  */
+// Letters outside ASCII (CJK, Cyrillic, Arabic, ...): about one token each,
+// as the server's AiAssistContextUsage.mjs counts them.
+const NON_ASCII = /[^\x00-\x7F]/
+const WIDE_LETTER = /(?![\x00-\x7F])\p{L}/gu
+
+function tokensAt(text: string, ratio: number): number {
+  if (!NON_ASCII.test(text)) return Math.ceil(text.length / ratio)
+  let wide = 0
+  let wideUnits = 0
+  for (const match of text.matchAll(WIDE_LETTER)) {
+    wide++
+    wideUnits += match[0].length
+  }
+  return Math.ceil((text.length - wideUnits) / ratio) + wide
+}
+
 export function estimateTokens(
   text: string,
   ref: TokenizerModel = {},
   kind: TextKind = detectTextKind(text)
 ): number {
-  return Math.ceil(text.length / charsPerToken(kind, ref))
+  return tokensAt(text, charsPerToken(kind, ref))
 }
 
 /** Tokens of a JSON document: the serialised value, at the JSON ratio. */

@@ -1,3 +1,4 @@
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import { spawn } from 'node:child_process'
 import {
@@ -114,19 +115,27 @@ export async function curlFetch(
     spawnFn = spawn,
   } = {}
 ) {
+  if (signal?.aborted) {
+    throw webError('Request was cancelled', { kind: 'network' })
+  }
   const parsed = parseFetchUrl(rawUrl)
   const port = parsed.port || (parsed.protocol === 'https:' ? '443' : '80')
   // URL keeps the brackets of an IPv6 literal; the lookup and --resolve want it bare
-  const host = parsed.hostname.replace(/^\[|\]$/g, '')
+  const host = parsed.hostname.replace(/^\[|\]$/g, '').replace(/\.+$/, '')
 
   const addresses = await resolveAddresses(host, lookup)
+  if (signal?.aborted) {
+    throw webError('Request was cancelled', { kind: 'network' })
+  }
   const resolveHost = host.includes(':') ? `[${host}]` : host
   const resolveArg = `${resolveHost}:${port}:${addresses.join(',')}`
 
   const timeoutSec = Math.max(1, Math.round(timeoutMs / 1000))
+  const metaSentinel = `AI_CURL_META_${crypto.randomBytes(12).toString('hex')}:`
 
   const args = [
     '-q',
+    '-g',
     '--impersonate',
     'chrome150',
     '--compressed',
@@ -134,6 +143,8 @@ export async function curlFetch(
     '--noproxy',
     '*',
     '--proto',
+    '=http,https',
+    '--proto-redir',
     '=http,https',
     '--max-redirs',
     '0',
@@ -148,7 +159,9 @@ export async function curlFetch(
     '-D',
     '/dev/stderr',
     '-w',
-    '%{stderr}%{json}\n',
+    `%{stderr}${metaSentinel}%{json}\n`,
+    // End of options: the URL can never be read as a curl flag
+    '--',
     parsed.toString(),
   ]
 
@@ -190,6 +203,7 @@ export async function curlFetch(
         )
       )
     }, timeoutMs + KILL_GRACE_MS)
+    deadlineTimer.unref?.()
 
     const cleanup = () => {
       clearTimeout(deadlineTimer)
@@ -208,6 +222,8 @@ export async function curlFetch(
 
     if (signal) {
       if (signal.aborted) {
+        isSettled = true
+        cleanup()
         try {
           child.kill()
         } catch {}
@@ -266,9 +282,9 @@ export async function curlFetch(
       const lines = stderrText.trim().split('\n')
       for (let i = lines.length - 1; i >= 0; i--) {
         const line = lines[i].trim()
-        if (line.startsWith('{') && line.endsWith('}')) {
+        if (line.startsWith(metaSentinel)) {
           try {
-            meta = JSON.parse(line)
+            meta = JSON.parse(line.slice(metaSentinel.length))
             break
           } catch {}
         }

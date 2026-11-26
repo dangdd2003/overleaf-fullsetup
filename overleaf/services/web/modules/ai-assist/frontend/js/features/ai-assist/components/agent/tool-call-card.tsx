@@ -44,6 +44,7 @@ import {
   isMcpToolName,
   mcpArgSummary,
   mcpServerSegment,
+  mcpToolLabel,
   READ_CONNECTOR_RESULT,
   SEARCH_CONNECTOR_TOOLS,
 } from '../../agent/mcp-tool-output'
@@ -405,11 +406,8 @@ function summariseCall(
       case 'search_connector_tools':
         return t('ai_assist_tool_search_connector_tools', 'Loaded connector tools')
       default:
-        if (call.name.startsWith('mcp__')) {
-          const parts = call.name.split('__')
-          const tool = parts.slice(2).join('__') || parts[1] || call.name
-          return `Called ${tool}`
-        }
+        // The connector's tool, readably: `web_search` as "Web search"
+        if (isMcpToolName(call.name)) return mcpToolLabel(call.name)
         // A call stored before a rename. Its name is the only honest thing we
         // can say about it, so say that rather than mislabelling it.
         return call.name
@@ -438,6 +436,9 @@ function summariseCall(
   }
 
   if (!('result' in call)) {
+    // A connector call says which tool it is while it runs; the row's glimmer
+    // already says that it is running
+    if (isMcpToolName(call.name)) return { action: getToolBaseAction() }
     return {
       action: t('ai_assist_tool_running', 'Running…'),
       target:

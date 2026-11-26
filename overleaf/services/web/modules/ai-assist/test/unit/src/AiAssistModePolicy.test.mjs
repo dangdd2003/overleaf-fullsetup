@@ -175,8 +175,9 @@ describe('AiAssistModePolicy connector tools', function () {
   })
 
   it('lets a standing allow run an ordinary connector tool without asking', function () {
-    expect(decide('manual', 'mcp__docs__x', { permission: 'allow', readOnly: true })).to.equal('allow')
-    expect(decide('acceptEdits', 'mcp__docs__x', { permission: 'allow' })).to.equal('allow')
+    const reads = { permission: 'allow', readOnly: true, destructive: false }
+    expect(decide('manual', 'mcp__docs__x', reads)).to.equal('allow')
+    expect(decide('acceptEdits', 'mcp__docs__x', reads)).to.equal('allow')
   })
 
   it('still asks for a destructive connector tool, even with a standing allow', function () {
@@ -214,3 +215,37 @@ describe('AiAssistModePolicy connector tools', function () {
   })
 })
 
+
+describe('ModePolicy hardening', function () {
+  it('asks for a connector tool that gives no destructive hint', function () {
+    expect(decide('manual', 'mcp__docs__x', { permission: 'allow' })).to.equal('ask')
+  })
+
+  it('asks for an unknown tool outside plan mode, and refuses it in plan mode', function () {
+    expect(decide('manual', 'mystery_tool')).to.equal('ask')
+    expect(decide('acceptEdits', 'mystery_tool')).to.equal('ask')
+    expect(decide('plan', 'mystery_tool')).to.equal('deny')
+  })
+
+  it('allows web_fetch only for a URL or host already seen', function () {
+    const knownUrls = new Set(['https://example.org/a', 'docs.example.com'])
+    const ask = (args) => decide('acceptEdits', 'web_fetch', {}, { args, knownUrls })
+    expect(ask({ url: 'https://example.org/a' })).to.equal('allow')
+    expect(ask({ url: 'https://docs.example.com/page?x=1' })).to.equal('allow')
+    expect(ask({ url: 'https://evil.test/' })).to.equal('ask')
+    // no context: unknown, so it asks
+    expect(decide('manual', 'web_fetch')).to.equal('ask')
+  })
+
+  it('asks in plan mode for a web_fetch to an unseen URL', function () {
+    expect(decide('plan', 'web_fetch', {}, { args: { url: 'https://x.test' }, knownUrls: new Set() })).to.equal('ask')
+  })
+
+  it('asks for AGENTS.md edits in every mode, whatever the spelling of the path', function () {
+    for (const path of ['AGENTS.md', './agents.md', '/AGENTS.md']) {
+      expect(decide('acceptEdits', 'edit_file', { path })).to.equal('ask')
+      expect(decide('acceptEdits', 'create_file', { path })).to.equal('ask')
+    }
+    expect(decide('acceptEdits', 'edit_file', { path: 'chapters/AGENTS.md' })).to.equal('allow')
+  })
+})

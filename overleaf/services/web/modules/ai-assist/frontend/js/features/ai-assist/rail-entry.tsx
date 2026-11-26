@@ -1,11 +1,11 @@
-import { forwardRef, lazy, Suspense } from 'react'
+import { forwardRef } from 'react'
 import RailTab from '@/features/ide-react/components/rail/rail-tab'
 import { AiRailIcon } from './components/ai-rail-icon'
 import getMeta from '@/utils/meta'
 import { useAiDock } from './hooks/use-ai-dock'
-import '../../../stylesheets/ai-assist.scss'
+import { aiAssistEnabled, lazyComponent } from './entry/gate'
 
-const AgentPanel = lazy(() =>
+const AgentPanel = lazyComponent(() =>
   import(
     /* webpackChunkName: "ai-assist-agent-panel" */ './components/agent/agent-panel'
   ).then(m => ({ default: m.AgentPanel }))
@@ -41,16 +41,19 @@ const AiRailTab = forwardRef<HTMLButtonElement, any>((props, ref) => {
 
 AiRailTab.displayName = 'AiRailTab'
 
-function LeftRailAgentPanel() {
+function EnabledLeftRailAgentPanel() {
   const { dock } = useAiDock()
   if (dock === 'right') {
     return null
   }
-  return (
-    <Suspense fallback={null}>
-      <AgentPanel dock="left" />
-    </Suspense>
-  )
+  return <AgentPanel dock="left" />
+}
+
+function LeftRailAgentPanel() {
+  if (!aiAssistEnabled() || getMeta('ol-showAiFeatures') === false) {
+    return null
+  }
+  return <EnabledLeftRailAgentPanel />
 }
 
 export default {

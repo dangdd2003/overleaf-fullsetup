@@ -49,22 +49,21 @@ export const editFileTool: AgentTool = {
         oldText: {
           type: 'string',
           description:
-            'The exact text to replace, unique within the file. Pass an empty string "" to append newText to the end of the file. Pass full file content if replacing the entire file.',
+            'The exact text to replace. Required here: pass the snippet from the file, or an empty string "" to append content to the end of the file. Pass full file content if replacing the entire file.',
         },
         newText: {
           type: 'string',
           description:
-            'The replacement text (or text to append if oldText is empty). Pass an empty string "" to delete oldText.',
+            'Replacement text (or text to append if oldText is empty). Pass an empty string "" to delete.',
         },
         startLine: {
           type: 'number',
           description:
-            'Optional 1-based start line to constrain anchor search for ambiguous or repetitive LaTeX blocks.',
+            '1-based first line, as numbered by read_file. With oldText, narrows where to look for it.',
         },
         endLine: {
           type: 'number',
-          description:
-            'Optional 1-based end line to constrain anchor search for ambiguous or repetitive LaTeX blocks.',
+          description: '1-based last line, inclusive. See startLine.',
         },
       },
       required: ['path', 'oldText', 'newText'],

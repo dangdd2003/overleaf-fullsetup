@@ -39,7 +39,12 @@ export const getReferencesTool: AgentTool = {
     const pick = {
       labels: { labels: refs.labels, duplicateLabels: refs.duplicateLabels },
       refs: { refs: refs.refs },
-      citations: { citations: refs.citations, bibKeys: refs.bibKeys },
+      citations: {
+        citations: refs.citations,
+        bibKeys: refs.bibKeys,
+        duplicateBibKeys: refs.duplicateBibKeys,
+        incompleteBibEntries: refs.incompleteBibEntries,
+      },
       all: refs,
     }[kind] ?? refs
 
@@ -50,7 +55,11 @@ export const getReferencesTool: AgentTool = {
     return {
       ...('refs' in pick ? { refs: filterUnresolved(pick.refs as any[]) } : {}),
       ...('citations' in pick
-        ? { citations: filterUnresolved(pick.citations as any[]) }
+        ? {
+            citations: filterUnresolved(pick.citations as any[]),
+            duplicateBibKeys: pick.duplicateBibKeys,
+            incompleteBibEntries: pick.incompleteBibEntries,
+          }
         : {}),
       ...('labels' in pick
         ? { labels: pick.labels, duplicateLabels: pick.duplicateLabels }
@@ -83,6 +92,19 @@ export const getReferencesTool: AgentTool = {
     }
     if (result.bibKeys) {
       lines.push(...result.bibKeys.map((b: any) => `bib ${b.key}  ${b.path}:${b.line}`))
+    }
+    if (Array.isArray(result.duplicateBibKeys)) {
+      lines.push(
+        ...result.duplicateBibKeys.map((k: string) => `DUPLICATE bib key ${k}`)
+      )
+    }
+    if (Array.isArray(result.incompleteBibEntries)) {
+      lines.push(
+        ...result.incompleteBibEntries.map(
+          (e: any) =>
+            `INCOMPLETE bib @${e.key} (${e.type})  ${e.path}:${e.line}  missing: ${e.missing.join(', ')}`
+        )
+      )
     }
     return lines.length > 0
       ? lines.join('\n')

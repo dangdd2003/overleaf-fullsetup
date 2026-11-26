@@ -10,7 +10,7 @@ import { hostOf, safeHttpHref } from '../../agent/web-sources'
 import { describeWebFailure } from '../../agent/web-errors'
 import { isConnectorToolName } from '../../agent/mcp-tool-output'
 import { McpToolDetail } from './mcp-tool-detail'
-import { SiteIcon } from './site-icon'
+import { WebPageRow } from './web-page-row'
 import { CopyToClipboard } from '@/shared/components/copy-to-clipboard'
 import { ImageLightbox } from './image-lightbox'
 import {
@@ -130,44 +130,6 @@ function DiffResultView({
  * One web page as a row, the way Claude.ai lists search results: the site's
  * icon, the page title, and the domain on the right, the whole row a link.
  */
-function WebPageRow({
-  url,
-  title,
-  hint,
-}: {
-  url: string
-  title?: string
-  hint?: string
-}) {
-  const href = safeHttpHref(url)
-  const body = (
-    <>
-      <SiteIcon url={url} />
-      <span className="ai-assist-web-row-title">{title || hostOf(url)}</span>
-      <span className="ai-assist-web-row-meta">{hostOf(url)}</span>
-    </>
-  )
-  // The URL came from a model or a web page: a non-http(s) one is never a link
-  if (!href) {
-    return (
-      <span className="ai-assist-web-row" title={hint || title || url}>
-        {body}
-      </span>
-    )
-  }
-  return (
-    <a
-      className="ai-assist-web-row"
-      href={href}
-      target="_blank"
-      rel="noopener noreferrer"
-      title={hint || title || url}
-    >
-      {body}
-    </a>
-  )
-}
-
 /** A fetched page's address: a link when it is plain http(s), text otherwise. */
 function PageAddress({ url }: { url: string }) {
   const href = safeHttpHref(url)
@@ -1461,6 +1423,12 @@ function ReferencesDetail({
   const duplicateLabels = Array.isArray(result.duplicateLabels)
     ? result.duplicateLabels
     : []
+  const duplicateBibKeys = Array.isArray(result.duplicateBibKeys)
+    ? result.duplicateBibKeys
+    : []
+  const incompleteBibEntries = Array.isArray(result.incompleteBibEntries)
+    ? result.incompleteBibEntries
+    : []
   const refs = Array.isArray(result.refs) ? result.refs : []
   const citations = Array.isArray(result.citations) ? result.citations : []
   const bibKeys = Array.isArray(result.bibKeys) ? result.bibKeys : []
@@ -1468,6 +1436,8 @@ function ReferencesDetail({
   const totalItems =
     labels.length +
     duplicateLabels.length +
+    duplicateBibKeys.length +
+    incompleteBibEntries.length +
     refs.length +
     citations.length +
     bibKeys.length
@@ -1485,6 +1455,45 @@ function ReferencesDetail({
       {duplicateLabels.length > 0 && (
         <div className="ai-assist-refs-warning">
           <strong>Duplicate labels:</strong> {duplicateLabels.join(', ')}
+        </div>
+      )}
+
+      {duplicateBibKeys.length > 0 && (
+        <div className="ai-assist-refs-warning">
+          <strong>Duplicate bib keys:</strong> {duplicateBibKeys.join(', ')}
+        </div>
+      )}
+
+      {incompleteBibEntries.length > 0 && (
+        <div className="ai-assist-refs-section">
+          <div className="ai-assist-refs-section-title">
+            Incomplete Bib Entries ({incompleteBibEntries.length})
+          </div>
+          <div className="ai-assist-refs-list">
+            {incompleteBibEntries.map((entry: any, idx: number) => (
+              <div key={`inc-bib-${idx}`} className="ai-assist-ref-item is-unresolved">
+                <span className="ai-assist-ref-cmd">@{entry.key}</span>
+                <span
+                  role="button"
+                  tabIndex={0}
+                  className="ai-assist-file-link"
+                  onClick={() => entry.path && openFile(entry.path, entry.line)}
+                  onKeyDown={e =>
+                    e.key === 'Enter' &&
+                    entry.path &&
+                    openFile(entry.path, entry.line)
+                  }
+                >
+                  {entry.path}:{entry.line ?? '?'}
+                </span>
+                {Array.isArray(entry.missing) && entry.missing.length > 0 && (
+                  <span className="ai-assist-ref-badge unresolved">
+                    missing {entry.missing.join(', ')}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

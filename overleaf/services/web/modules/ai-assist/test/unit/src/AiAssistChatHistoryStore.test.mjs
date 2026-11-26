@@ -10,6 +10,7 @@ import store, {
   reorganizePromptToTitle,
 } from '../../../app/src/AiAssistChatHistoryStore.mjs'
 import { generateChatTitle } from '../../../app/src/AiAssistChatTitler.mjs'
+import { ChatQuotaError } from '../../../app/src/AiAssistChatHistoryStore.mjs'
 
 const PROJECT = '0123456789abcdef01234567'
 const USER = 'abcdef0123456789abcdef01'
@@ -420,5 +421,119 @@ describe('AiAssistChatHistoryStore', function () {
       const res2 = await store.truncateChat(PROJECT, USER, 'trunc-miss', 'u999')
       expect(res2).to.be.null
     })
+  })
+})
+
+describe('AiAssistChatHistoryStore storage', function () {
+  let dir
+  let origDir
+  let origQuota
+  const OTHER_PROJECT = 'fedcba9876543210fedcba98'
+  const OTHER_USER = '111111111111111111111111'
+  const turn = (id, text) => [{ id, role: 'user', text }]
+
+  beforeEach(async function () {
+    dir = await fs.mkdtemp(Path.join(os.tmpdir(), 'ai-chats-quota-'))
+    Settings.aiAssist = Settings.aiAssist || {}
+    origDir = Settings.aiAssist.chatHistoryDir
+    origQuota = Settings.aiAssist.maxChatBytesPerUser
+    Settings.aiAssist.chatHistoryDir = dir
+  })
+
+  afterEach(async function () {
+    Settings.aiAssist.chatHistoryDir = origDir
+    Settings.aiAssist.maxChatBytesPerUser = origQuota
+    await fs.rm(dir, { recursive: true, force: true })
+  })
+
+  it('refuses a save that takes the user past the byte quota, and lets shrinking saves through', async function () {
+    const big = turn('u0', 'x'.repeat(4000))
+    await store.saveChat(PROJECT, USER, 'a', big)
+    Settings.aiAssist.maxChatBytesPerUser = 6000
+    let refused
+    try {
+      await store.saveChat(OTHER_PROJECT, USER, 'b', turn('u0', 'y'.repeat(4000)))
+    } catch (err) {
+      refused = err
+    }
+    expect(refused).to.be.instanceOf(ChatQuotaError)
+    expect(refused.code).to.equal('QUOTA_EXCEEDED')
+    expect(
+      await fs.access(Path.join(dir, `${OTHER_PROJECT}-${USER}`, 'b.json')).then(
+        () => true,
+        () => false
+      )
+    ).to.equal(false)
+    // Another user is counted separately
+    await store.saveChat(OTHER_PROJECT, OTHER_USER, 'b', turn('u0', 'y'.repeat(4000)))
+    // Shrinking the existing chat is always allowed
+    await store.saveChat(PROJECT, USER, 'a', turn('u0', 'z'))
+    await store.saveChat(OTHER_PROJECT, USER, 'b', turn('u0', 'y'.repeat(100)))
+  })
+
+  it('counts bytes across projects, and frees them on delete', async function () {
+    Settings.aiAssist.maxChatBytesPerUser = 5000
+    await store.saveChat(PROJECT, USER, 'a', turn('u0', 'x'.repeat(2500)))
+    expect(
+      await store
+        .saveChat(OTHER_PROJECT, USER, 'b', turn('u0', 'y'.repeat(2500)))
+        .then(
+          () => null,
+          err => err
+        )
+    ).to.be.instanceOf(ChatQuotaError)
+    await store.deleteChat(PROJECT, USER, 'a')
+    await store.saveChat(OTHER_PROJECT, USER, 'b', turn('u0', 'y'.repeat(2500)))
+    expect(await store.listChats(OTHER_PROJECT, USER)).to.have.length(1)
+  })
+
+  it('deletes every chat of one user and leaves the others', async function () {
+    await store.saveChat(PROJECT, USER, 'a', turn('u0', 'a'))
+    await store.saveChat(OTHER_PROJECT, USER, 'b', turn('u0', 'b'))
+    await store.saveChat(PROJECT, OTHER_USER, 'c', turn('u0', 'c'))
+    await store.deleteUserChats(USER)
+    await store.deleteUserChats(USER)
+    expect(await store.listChats(PROJECT, USER)).to.deep.equal([])
+    expect(await store.listChats(OTHER_PROJECT, USER)).to.deep.equal([])
+    expect(await store.listChats(PROJECT, OTHER_USER)).to.have.length(1)
+  })
+
+  it('deletes every chat of one project, of every user', async function () {
+    await store.saveChat(PROJECT, USER, 'a', turn('u0', 'a'))
+    await store.saveChat(PROJECT, OTHER_USER, 'c', turn('u0', 'c'))
+    await store.saveChat(OTHER_PROJECT, USER, 'b', turn('u0', 'b'))
+    await store.deleteProjectChats(PROJECT)
+    await store.deleteProjectChats(PROJECT)
+    expect(await store.listChats(PROJECT, USER)).to.deep.equal([])
+    expect(await store.listChats(PROJECT, OTHER_USER)).to.deep.equal([])
+    expect(await store.listChats(OTHER_PROJECT, USER)).to.have.length(1)
+  })
+
+  it('never follows a symlink out of the data directory', async function () {
+    const outside = await fs.mkdtemp(Path.join(os.tmpdir(), 'ai-outside-'))
+    try {
+      await fs.writeFile(Path.join(outside, 'keep.txt'), 'keep')
+      await fs.symlink(outside, Path.join(dir, `${PROJECT}-${USER}`))
+      await store.deleteUserChats(USER)
+      await store.deleteProjectChats(PROJECT)
+      expect(await fs.readFile(Path.join(outside, 'keep.txt'), 'utf8')).to.equal('keep')
+    } finally {
+      await fs.rm(outside, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects ids that are not ObjectId hex', async function () {
+    const failure = async promise => {
+      try {
+        await promise
+      } catch (err) {
+        return err.message
+      }
+      return null
+    }
+    expect(await failure(store.deleteUserChats('../x'))).to.equal('invalid user id')
+    expect(await failure(store.deleteProjectChats('nope'))).to.equal(
+      'invalid project id'
+    )
   })
 })

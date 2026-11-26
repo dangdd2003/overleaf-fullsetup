@@ -6,7 +6,12 @@ import { pipeline } from 'node:stream'
 import dns from 'node:dns'
 import os from 'node:os'
 import Settings from '@overleaf/settings'
+import logger from '@overleaf/logger'
 import { dockerHostGateway, isRunningInDocker } from '../DockerHost.mjs'
+
+// What a refused destination says to the user and the model. The detail (which
+// address, which rule) goes to the server log only, never to a reply.
+const DESTINATION_REFUSED = 'destination not allowed'
 
 export class ConnectorHeaders {
   constructor(init) {
@@ -115,18 +120,32 @@ const SELF_HOSTNAMES = new Set([
   'instance-data',
 ])
 
+function normalizeHost(raw) {
+  return String(raw ?? '')
+    .replace(/^\[|\]$/g, '')
+    .replace(/\.+$/, '')
+    .toLowerCase()
+}
+
 // Overleaf's own backing services (docstore, filestore, clsi, history,
 // mongo, redis, ...) answer without authentication, so a connector must not
 // reach them even when they run as sibling containers on the LAN.
 function internalServiceHosts() {
   const hosts = new Set()
+  const addHost = raw => {
+    const host = normalizeHost(raw)
+    if (!host) return
+    hosts.add(host)
+    if (net.isIP(host)) hosts.add(normalizeAddress(host))
+  }
   const addUrl = url => {
     if (typeof url !== 'string') return
     // mongodb://user:pass@a:1,b:2/db may list several hosts
     const authority = /^[a-z][a-z0-9+.-]*:\/\/(?:[^@/]*@)?([^/?#]*)/i.exec(url)
     for (const entry of authority ? authority[1].split(',') : []) {
-      const host = entry.replace(/:\d+$/, '').replace(/^\[|\]$/g, '')
-      if (host) hosts.add(host.toLowerCase())
+      const bracketed = /^\[([^\]]+)\](?::\d+)?$/.exec(entry)
+      const rawHost = bracketed ? bracketed[1] : entry.replace(/:\d+$/, '')
+      addHost(rawHost)
     }
   }
   for (const api of Object.values(Settings.apis || {})) addUrl(api?.url)
@@ -134,7 +153,7 @@ function internalServiceHosts() {
   // The browser sidecar answers any page request made with its token
   addUrl(Settings.aiAssist?.browser?.url)
   for (const redis of Object.values(Settings.redis || {})) {
-    if (typeof redis?.host === 'string') hosts.add(redis.host.toLowerCase())
+    if (typeof redis?.host === 'string') addHost(redis.host)
   }
   return hosts
 }
@@ -147,14 +166,20 @@ async function internalServiceAddresses() {
     return internalAddressCache.addresses
   }
   const addresses = new Set()
+  const recordIp = ip => {
+    const lower = String(ip ?? '').toLowerCase()
+    if (!lower) return
+    addresses.add(lower)
+    addresses.add(normalizeAddress(lower))
+  }
   await Promise.all(
     [...internalServiceHosts()].map(async host => {
-      if (net.isIP(host)) return addresses.add(host)
+      if (net.isIP(host)) return recordIp(host)
       try {
         for (const { address } of await dns.promises.lookup(host, {
           all: true,
         })) {
-          addresses.add(address.toLowerCase())
+          recordIp(address)
         }
       } catch {}
     })
@@ -166,16 +191,77 @@ async function internalServiceAddresses() {
 function interfaceAddresses() {
   const addresses = new Set()
   for (const list of Object.values(os.networkInterfaces())) {
-    for (const entry of list || []) addresses.add(entry.address.toLowerCase())
+    for (const entry of list || []) {
+      addresses.add(entry.address.toLowerCase())
+      addresses.add(normalizeAddress(entry.address))
+    }
   }
   return addresses
 }
 
-/** An IP address as the checks compare it: lower case, unwrapped from IPv4-mapped forms. */
+/** The eight 16-bit groups of an IPv6 address, or null when it does not parse. */
+function ipv6Groups(raw) {
+  let text = raw
+  const dotted = /(\d{1,3}(?:\.\d{1,3}){3})$/.exec(text)
+  if (dotted) {
+    const o = dotted[1].split('.').map(Number)
+    text = `${text.slice(0, dotted.index)}${((o[0] << 8) | o[1]).toString(16)}:${((o[2] << 8) | o[3]).toString(16)}`
+  }
+  const halves = text.split('::')
+  if (halves.length > 2) return null
+  const head = halves[0] ? halves[0].split(':') : []
+  const tail = halves.length === 2 && halves[1] ? halves[1].split(':') : []
+  let groups
+  if (halves.length === 2) {
+    const fill = 8 - head.length - tail.length
+    if (fill < 1) return null
+    groups = [...head, ...Array(fill).fill('0'), ...tail]
+  } else {
+    groups = head
+  }
+  if (groups.length !== 8) return null
+  const values = groups.map(g => parseInt(g, 16))
+  return values.every(v => Number.isInteger(v) && v >= 0 && v <= 0xffff)
+    ? values
+    : null
+}
+
+/**
+ * The IPv4 address an IPv6 address carries in its tail: IPv4-mapped
+ * (::ffff:a.b.c.d / 0:0:0:0:0:ffff:x:y), 6to4 (2002::/16), Teredo
+ * (2001:0::/32, client address inverted), and well-known NAT64 (64:ff9b::/96).
+ * The check runs on the address inside, so a wrapper cannot hide a private one.
+ */
+function embeddedIPv4(groups) {
+  const dotted = (hi, lo) =>
+    [hi >> 8, hi & 255, lo >> 8, lo & 255].join('.')
+  if (
+    groups[0] === 0 &&
+    groups[1] === 0 &&
+    groups[2] === 0 &&
+    groups[3] === 0 &&
+    groups[4] === 0 &&
+    groups[5] === 0xffff
+  ) {
+    return dotted(groups[6], groups[7])
+  }
+  if (groups[0] === 0x2002) return dotted(groups[1], groups[2])
+  if (groups[0] === 0x2001 && groups[1] === 0) {
+    return dotted((~groups[6]) & 0xffff, (~groups[7]) & 0xffff)
+  }
+  if (
+    groups[0] === 0x64 &&
+    groups[1] === 0xff9b &&
+    groups.slice(2, 6).every(g => g === 0)
+  ) {
+    return dotted(groups[6], groups[7])
+  }
+  return null
+}
+
+/** An IP address as the checks compare it: lower case, unwrapped from IPv4-mapped and tunnel forms. */
 function normalizeAddress(address) {
-  let raw = String(address ?? '')
-    .replace(/^\[|\]$/g, '')
-    .toLowerCase()
+  let raw = normalizeHost(address)
   const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(raw)
   if (mapped) raw = mapped[1]
   // A URL writes ::ffff:127.0.0.1 as ::ffff:7f00:1: the same address, unwrapped
@@ -184,6 +270,11 @@ function normalizeAddress(address) {
     const high = parseInt(mappedHex[1], 16)
     const low = parseInt(mappedHex[2], 16)
     raw = `${high >> 8}.${high & 255}.${low >> 8}.${low & 255}`
+  }
+  if (net.isIPv6(raw)) {
+    const groups = ipv6Groups(raw)
+    const inner = groups ? embeddedIPv4(groups) : null
+    if (inner) raw = inner
   }
   return raw
 }
@@ -194,11 +285,30 @@ export function isSelfAddress(address) {
   const family = net.isIP(raw)
   if (!family) return true
   if (SELF_ADDRESSES.check(raw, family === 4 ? 'ipv4' : 'ipv6')) return true
+  // RFC 8215 local-use NAT64 (64:ff9b:1::/48) can embed a loopback/self IPv4
+  if (family === 6) {
+    const groups = ipv6Groups(raw)
+    if (
+      groups &&
+      groups[0] === 0x64 &&
+      groups[1] === 0xff9b &&
+      groups[2] === 0x1
+    ) {
+      const inner = [
+        groups[6] >> 8,
+        groups[6] & 255,
+        groups[7] >> 8,
+        groups[7] & 255,
+      ].join('.')
+      if (SELF_ADDRESSES.check(inner, 'ipv4')) return true
+    }
+  }
   return interfaceAddresses().has(raw)
 }
 
 // Private and LAN addresses. A user-supplied connector, search endpoint or
-// provider may never reach one; admin-configured server URLs are exempt.
+// provider may never reach one; admin-configured server endpoints are exempt
+// only when the caller explicitly passes allowAdminEndpoint / trustedEndpoint.
 const PRIVATE_ADDRESSES = new net.BlockList()
 for (const [prefix, bits] of [
   ['10.0.0.0', 8],
@@ -206,11 +316,21 @@ for (const [prefix, bits] of [
   ['192.168.0.0', 16],
   // Carrier-grade NAT, which a cloud provider may place a host behind
   ['100.64.0.0', 10],
+  // IETF protocol assignments & benchmarking
+  ['192.0.0.0', 24],
+  ['198.18.0.0', 15],
 ]) {
   PRIVATE_ADDRESSES.addSubnet(prefix, bits, 'ipv4')
 }
-PRIVATE_ADDRESSES.addSubnet('fc00::', 7, 'ipv6')
-PRIVATE_ADDRESSES.addSubnet('fe80::', 10, 'ipv6')
+for (const [prefix, bits] of [
+  ['fc00::', 7],
+  ['fe80::', 10],
+  ['fec0::', 10],
+  ['100::', 64],
+  ['64:ff9b:1::', 48],
+]) {
+  PRIVATE_ADDRESSES.addSubnet(prefix, bits, 'ipv6')
+}
 
 /** True for a private or LAN address, including the docker host gateway. */
 export function isPrivateAddress(address) {
@@ -224,46 +344,28 @@ export function isPrivateAddress(address) {
   return PRIVATE_ADDRESSES.check(raw, family === 4 ? 'ipv4' : 'ipv6')
 }
 
-// Server-side URLs an admin configures in the environment. A private address
-// is trusted only when the admin named it there; a user-typed URL never is.
+// Server-side web-search URLs an admin configures in the environment. A private
+// address is trusted only at the exact 'host:port' the admin named, and only
+// when the caller explicitly passes allowAdminEndpoint: true.
 const ADMIN_URL_ENV_NAMES = [
   'AI_ASSIST_SEARXNG_URLS',
   'AI_ASSIST_FIRECRAWL_SELFHOSTED_URLS',
   'AI_ASSIST_MCP_URLS',
-  'AI_ASSIST_BROWSER_URL',
 ]
 
-/** The hosts (names or IP literals) of the admin-configured server URLs. */
-function adminTrustedHosts() {
-  const hosts = new Set()
+/** Exact 'host:port' endpoints of the admin-configured server web-search URLs. */
+function adminTrustedEndpoints() {
+  const endpoints = new Set()
   for (const name of ADMIN_URL_ENV_NAMES) {
     for (const raw of String(process.env[name] || '').split(',')) {
       try {
-        const host = new URL(raw.trim()).hostname
-          .replace(/^\[|\]$/g, '')
-          .toLowerCase()
-        if (host) hosts.add(host)
+        const parsed = new URL(raw.trim())
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') continue
+        endpoints.add(endpointOf(parsed))
       } catch {}
     }
   }
-  return hosts
-}
-
-/** True when the admin named the hostname, or the address it resolved to. */
-function isAdminTrustedPrivateDestination(hostname, address) {
-  const trusted = adminTrustedHosts()
-  const host = String(hostname ?? '')
-    .replace(/^\[|\]$/g, '')
-    .toLowerCase()
-  return trusted.has(host) || trusted.has(normalizeAddress(address))
-}
-
-/** True when dialling `address` for `hostname` is a private destination the admin did not name. */
-function privateDestinationRefused(hostname, address) {
-  return (
-    isPrivateAddress(address) &&
-    !isAdminTrustedPrivateDestination(hostname, address)
-  )
+  return endpoints
 }
 
 /** The origin of a URL, or null when it does not parse. */
@@ -275,7 +377,45 @@ export function originOf(url) {
   }
 }
 
-export function validateConnectorUrl(rawUrl) {
+/** 'host:port' of a URL, lower case, with the scheme's default port when none is written. */
+function endpointOf(parsed) {
+  const host = normalizeHost(parsed.hostname)
+  const port = parsed.port || (parsed.protocol === 'https:' ? '443' : '80')
+  return `${host}:${port}`
+}
+
+/**
+ * The private endpoints an admin trusts for providers, from
+ * Settings.aiAssist.trustedProviderHosts ('host:port' each). Only the private
+ * check is lifted for them: loopback, this server, and the metadata services
+ * stay refused whatever is listed.
+ */
+export function trustedProviderEndpoints() {
+  const endpoints = new Set()
+  for (const entry of Settings.aiAssist?.trustedProviderHosts || []) {
+    const match = /^(\[[^\]]+\]|[^:\s]+):(\d{1,5})$/.exec(String(entry).trim())
+    if (!match) continue
+    try {
+      const parsed = new URL(`http://${match[1]}:${Number(match[2])}`)
+      endpoints.add(endpointOf(parsed))
+    } catch {
+      const host = normalizeHost(match[1])
+      if (host) endpoints.add(`${host}:${Number(match[2])}`)
+    }
+  }
+  return endpoints
+}
+
+/**
+ * Checks a URL before it is dialled. `trusted` lets a provider reach an
+ * admin-trusted private 'host:port' (see trustedProviderEndpoints).
+ * `allowAdminEndpoint` lets server-mode web search reach an exact 'host:port'
+ * configured in ADMIN_URL_ENV_NAMES.
+ */
+export function validateConnectorUrl(
+  rawUrl,
+  { trusted = false, allowAdminEndpoint = false } = {}
+) {
   let parsed
   try {
     parsed = new URL(String(rawUrl).trim())
@@ -287,24 +427,35 @@ export function validateConnectorUrl(rawUrl) {
       `Invalid protocol ${parsed.protocol}: only http and https are allowed`
     )
   }
-  const host = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase()
+  if (parsed.username || parsed.password) {
+    throw new Error('URLs with embedded credentials are not allowed')
+  }
+  const host = normalizeHost(parsed.hostname)
+  const endpoint = endpointOf(parsed)
+  const internalHosts = internalServiceHosts()
   if (
     SELF_HOSTNAMES.has(host) ||
-    internalServiceHosts().has(host) ||
+    internalHosts.has(host) ||
+    (net.isIP(host) && internalHosts.has(normalizeAddress(host))) ||
     host.endsWith('.localhost') ||
     (net.isIP(host) && isSelfAddress(host))
   ) {
-    throw new Error(`${host} points at this Overleaf server`)
+    logger.warn({ host }, '[AiAssist] connector URL refused: points at this server')
+    throw new Error(DESTINATION_REFUSED)
   }
   // A name is checked when it is dialled, at the address it resolves to; an
   // address written out is checked here
-  if (net.isIP(host) && privateDestinationRefused(host, host)) {
-    throw new Error(`${host} is a private network address. Only user-supplied URLs are restricted, so a private address is refused.`)
+  const trustedHere =
+    (trusted && trustedProviderEndpoints().has(endpoint)) ||
+    (allowAdminEndpoint && adminTrustedEndpoints().has(endpoint))
+  if (net.isIP(host) && !trustedHere && isPrivateAddress(host)) {
+    logger.warn({ host }, '[AiAssist] connector URL refused: private address')
+    throw new Error(DESTINATION_REFUSED)
   }
   return { parsed }
 }
 
-/** `dns.lookup` that refuses an answer pointing back at this server, or at a private address the admin did not name. */
+/** `dns.lookup` that refuses an answer pointing back at this server, or at an untrusted private address. */
 export function connectorLookup(hostname, options, callback) {
   if (typeof options === 'function') {
     callback = options
@@ -312,7 +463,15 @@ export function connectorLookup(hostname, options, callback) {
   } else if (typeof options === 'number') {
     options = { family: options }
   }
-  dns.lookup(hostname, { ...options, all: true }, (err, addresses) => {
+  // A provider or server-web-search call names its 'host:port' so an
+  // admin-trusted private one passes
+  const { trustedEndpoint, adminEndpoint, ...lookupOptions } = options ?? {}
+  const trustedHere =
+    (typeof trustedEndpoint === 'string' &&
+      trustedProviderEndpoints().has(trustedEndpoint)) ||
+    (typeof adminEndpoint === 'string' &&
+      adminTrustedEndpoints().has(adminEndpoint))
+  dns.lookup(hostname, { ...lookupOptions, all: true }, (err, addresses) => {
     if (err) return callback(err)
     const list = Array.isArray(addresses) ? addresses : []
     internalServiceAddresses().then(internal => {
@@ -320,19 +479,23 @@ export function connectorLookup(hostname, options, callback) {
         entry =>
           isSelfAddress(entry.address) ||
           internal.has(entry.address.toLowerCase()) ||
-          privateDestinationRefused(hostname, entry.address)
+          internal.has(normalizeAddress(entry.address)) ||
+          (!trustedHere && isPrivateAddress(entry.address))
       )
       if (list.length === 0 || blocked) {
-        const where = blocked ? ` (${blocked.address})` : ''
-        const message =
-          blocked && isPrivateAddress(blocked.address)
-            ? `${hostname} resolves to a private network address${where}. Private addresses are refused.`
-            : `${hostname} resolves to this Overleaf server${where}`
-        const error = new Error(message)
+        logger.warn(
+          {
+            hostname,
+            address: blocked?.address ?? null,
+            private: blocked ? isPrivateAddress(blocked.address) : false,
+          },
+          '[AiAssist] connector destination refused'
+        )
+        const error = new Error(DESTINATION_REFUSED)
         error.code = 'EADDRBLOCKED'
         return callback(error)
       }
-      if (options?.all) return callback(null, list)
+      if (lookupOptions?.all) return callback(null, list)
       callback(null, list[0].address, list[0].family)
     }, callback)
   })
@@ -359,7 +522,8 @@ const DEFAULT_MAX_RESPONSE_BYTES = 32 * 1024 * 1024
  *
  * Options: method, headers, body, signal, redirect ('manual' returns a redirect
  * unfollowed), timeoutMs (socket idle), deadlineMs (wall clock for the whole
- * call, redirects and body reads included), maxResponseBytes, lookup.
+ * call, redirects and body reads included), maxResponseBytes, lookup,
+ * trustedEndpoint (a provider call: admin-trusted private endpoints allowed).
  */
 export async function connectorFetch(url, options = {}) {
   const maxResponseBytes = options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES
@@ -397,167 +561,239 @@ export async function connectorFetch(url, options = {}) {
 
   const visited = new Set()
   let redirectCount = 0
+  const trusted = options.trustedEndpoint === true
+  const allowAdminEndpoint = options.allowAdminEndpoint === true
 
-  while (true) {
-    const { parsed: currentUrl } = validateConnectorUrl(currentUrlStr)
-
-    if (visited.has(currentUrl.href)) {
-      stopDeadline()
-      throw new Error(`Redirect loop detected: ${currentUrl.href}`)
-    }
-    visited.add(currentUrl.href)
-
-    const response = await new Promise((resolve, reject) => {
-      const transport = currentUrl.protocol === 'https:' ? https : http
-      const reqHeaders = currentHeaders.raw()
-
-      const reqOptions = {
-        method: currentMethod,
-        headers: reqHeaders,
-        agent: false,
-        signal,
-        lookup,
-      }
-
-      const req = transport.request(currentUrl, reqOptions, res => {
-        const status = res.statusCode ?? 0
-        const isRedirect =
-          REDIRECT_STATUSES.has(status) &&
-          res.headers.location &&
-          options.redirect !== 'manual'
-
-        if (isRedirect) {
-          res.resume()
-          redirectCount++
-          if (redirectCount > 20) {
-            stopDeadline()
-            return reject(new Error('Too many redirects'))
-          }
-
-          const nextUrl = new URL(res.headers.location, currentUrl)
-
-          // Never forward credentials (Authorization, cookies, the
-          // connector's custom API-key headers) to a different origin
-          if (nextUrl.origin !== currentUrl.origin) {
-            for (const name of [...currentHeaders.keys()]) {
-              if (!CROSS_ORIGIN_SAFE_HEADERS.has(name)) {
-                currentHeaders.delete(name)
-              }
-            }
-          }
-
-          if (status === 303) {
-            currentMethod = 'GET'
-            currentBody = undefined
-          } else if (
-            (status === 301 || status === 302) &&
-            currentMethod === 'POST'
-          ) {
-            currentMethod = 'GET'
-            currentBody = undefined
-          }
-
-          currentUrlStr = nextUrl.href
-          return resolve({ redirect: true })
-        }
-
-        let bodyStream = res
-        const encoding = String(res.headers['content-encoding'] || '')
-          .trim()
-          .toLowerCase()
-        let decoder = null
-        if (encoding === 'gzip' || encoding === 'x-gzip') {
-          decoder = zlib.createGunzip()
-        } else if (encoding === 'deflate') {
-          decoder = zlib.createInflate()
-        } else if (encoding === 'br') {
-          decoder = zlib.createBrotliDecompress()
-        }
-        if (decoder) {
-          // pipeline, unlike pipe, carries a socket error on to the decoder
-          // so a reader of the body fails instead of waiting forever.
-          bodyStream = pipeline(res, decoder, () => {})
-        }
-
-        let cachedText
-        const responseHeaders = new ConnectorHeaders(res.headers)
-        const responseObj = {
-          status,
-          statusText: res.statusMessage || '',
-          ok: status >= 200 && status < 300,
-          headers: responseHeaders,
-          url: currentUrl.href,
-          body: bodyStream,
-          async text() {
-            if (cachedText !== undefined) return cachedText
-            const chunks = []
-            let size = 0
-            for await (const chunk of bodyStream) {
-              const buf =
-                typeof chunk === 'string' ? Buffer.from(chunk) : chunk
-              size += buf.length
-              if (maxResponseBytes > 0 && size > maxResponseBytes) {
-                bodyStream.destroy()
-                throw new Error(
-                  `Response body exceeds ${maxResponseBytes} bytes`
-                )
-              }
-              chunks.push(buf)
-            }
-            cachedText = Buffer.concat(chunks).toString('utf8')
-            return cachedText
-          },
-          async json() {
-            const txt = await this.text()
-            return JSON.parse(txt)
-          },
-        }
-
-        // The deadline reaches the body too: a stream past it fails with the
-        // deadline error rather than hanging
-        const onDeadline = () => res.destroy(deadline.signal.reason)
-        deadline.signal.addEventListener('abort', onDeadline, { once: true })
-        res.once('close', () => {
-          deadline.signal.removeEventListener('abort', onDeadline)
-          stopDeadline()
-        })
-
-        resolve(responseObj)
+  try {
+    while (true) {
+      const { parsed: currentUrl } = validateConnectorUrl(currentUrlStr, {
+        trusted,
+        allowAdminEndpoint,
       })
 
-      if (options.timeoutMs) {
-        req.setTimeout(options.timeoutMs, () => {
-          req.destroy(new Error(`Request timed out after ${options.timeoutMs}ms`))
-        })
+      if (visited.has(currentUrl.href)) {
+        throw new Error(`Redirect loop detected: ${currentUrl.href}`)
+      }
+      visited.add(currentUrl.href)
+
+      // Node skips custom `lookup` for IP literals, so check internal service IPs
+      // explicitly before opening the socket.
+      const host = normalizeHost(currentUrl.hostname)
+      if (net.isIP(host)) {
+        const internal = await internalServiceAddresses()
+        if (internal.has(host) || internal.has(normalizeAddress(host))) {
+          logger.warn({ host }, '[AiAssist] connector URL refused: internal service IP')
+          throw new Error(DESTINATION_REFUSED)
+        }
       }
 
-      req.on('error', err =>
-        reject(
-          deadline.signal.aborted && !options.signal?.aborted
-            ? deadline.signal.reason
-            : err
-        )
-      )
+      const response = await new Promise((resolve, reject) => {
+        const transport = currentUrl.protocol === 'https:' ? https : http
+        const reqHeaders = currentHeaders.raw()
 
-      if (currentBody) {
-        if (typeof currentBody === 'string' || Buffer.isBuffer(currentBody)) {
-          req.write(currentBody)
-          req.end()
-        } else if (typeof currentBody.pipe === 'function') {
-          currentBody.pipe(req)
+        // The lookup learns which 'host:port' it serves, for the trust check
+        const endpoint =
+          trusted || allowAdminEndpoint ? endpointOf(currentUrl) : null
+        const lookupForCall = endpoint
+          ? (hostname, lookupOptions, cb) =>
+              lookup(
+                hostname,
+                {
+                  ...(lookupOptions && typeof lookupOptions === 'object'
+                    ? lookupOptions
+                    : {}),
+                  ...(trusted ? { trustedEndpoint: endpoint } : {}),
+                  ...(allowAdminEndpoint ? { adminEndpoint: endpoint } : {}),
+                },
+                cb
+              )
+          : lookup
+
+        const reqOptions = {
+          method: currentMethod,
+          headers: reqHeaders,
+          agent: false,
+          signal,
+          lookup: lookupForCall,
+        }
+
+        const req = transport.request(currentUrl, reqOptions, res => {
+          const status = res.statusCode ?? 0
+          const isRedirect =
+            REDIRECT_STATUSES.has(status) &&
+            res.headers.location &&
+            options.redirect !== 'manual'
+
+          if (isRedirect) {
+            res.resume()
+            redirectCount++
+            if (redirectCount > 20) {
+              return reject(new Error('Too many redirects'))
+            }
+
+            let nextUrl
+            try {
+              nextUrl = new URL(res.headers.location, currentUrl)
+            } catch {
+              return reject(new Error('Invalid redirect location'))
+            }
+
+            // Never forward credentials (Authorization, cookies, the
+            // connector's custom API-key headers) or a POST/PUT body to a
+            // different origin
+            if (nextUrl.origin !== currentUrl.origin) {
+              for (const name of [...currentHeaders.keys()]) {
+                if (!CROSS_ORIGIN_SAFE_HEADERS.has(name)) {
+                  currentHeaders.delete(name)
+                }
+              }
+              if (
+                (status === 307 || status === 308) &&
+                currentBody !== undefined
+              ) {
+                return reject(
+                  new Error('Cross-origin redirect with request body refused')
+                )
+              }
+            }
+
+            if (status === 303) {
+              currentMethod = 'GET'
+              currentBody = undefined
+              currentHeaders.delete('content-length')
+              currentHeaders.delete('content-type')
+            } else if (
+              (status === 301 || status === 302) &&
+              currentMethod === 'POST'
+            ) {
+              currentMethod = 'GET'
+              currentBody = undefined
+              currentHeaders.delete('content-length')
+              currentHeaders.delete('content-type')
+            }
+
+            currentUrlStr = nextUrl.href
+            return resolve({ redirect: true })
+          }
+
+          let bodyStream = res
+          const encoding = String(res.headers['content-encoding'] || '')
+            .trim()
+            .toLowerCase()
+          let decoder = null
+          if (encoding === 'gzip' || encoding === 'x-gzip') {
+            decoder = zlib.createGunzip()
+          } else if (encoding === 'deflate') {
+            decoder = zlib.createInflate()
+          } else if (encoding === 'br') {
+            decoder = zlib.createBrotliDecompress()
+          }
+          if (decoder) {
+            // pipeline, unlike pipe, carries a socket error on to the decoder
+            // so a reader of the body fails instead of waiting forever.
+            bodyStream = pipeline(res, decoder, () => {})
+          }
+
+          let cachedText
+          const responseHeaders = new ConnectorHeaders(res.headers)
+          const responseObj = {
+            status,
+            statusText: res.statusMessage || '',
+            ok: status >= 200 && status < 300,
+            headers: responseHeaders,
+            url: currentUrl.href,
+            body: bodyStream,
+            async text() {
+              if (cachedText !== undefined) return cachedText
+              const chunks = []
+              let size = 0
+              for await (const chunk of bodyStream) {
+                const buf =
+                  typeof chunk === 'string' ? Buffer.from(chunk) : chunk
+                size += buf.length
+                if (maxResponseBytes > 0 && size > maxResponseBytes) {
+                  bodyStream.destroy()
+                  throw new Error(
+                    `Response body exceeds ${maxResponseBytes} bytes`
+                  )
+                }
+                chunks.push(buf)
+              }
+              cachedText = Buffer.concat(chunks).toString('utf8')
+              return cachedText
+            },
+            async json() {
+              const txt = await this.text()
+              return JSON.parse(txt)
+            },
+          }
+
+          // The deadline reaches the body too: a stream past it fails with the
+          // deadline error rather than hanging
+          const onDeadline = () => res.destroy(deadline.signal.reason)
+          deadline.signal.addEventListener('abort', onDeadline, { once: true })
+          res.once('close', () => {
+            deadline.signal.removeEventListener('abort', onDeadline)
+            stopDeadline()
+          })
+
+          resolve(responseObj)
+        })
+
+        if (options.timeoutMs) {
+          req.setTimeout(options.timeoutMs, () => {
+            // ETIMEDOUT: the retry layer treats it as a timed-out connection
+            const error = new Error(
+              `Request timed out after ${options.timeoutMs}ms`
+            )
+            error.code = 'ETIMEDOUT'
+            req.destroy(error)
+          })
+        }
+
+        req.on('error', err =>
+          reject(
+            deadline.signal.aborted && !options.signal?.aborted
+              ? deadline.signal.reason
+              : err
+          )
+        )
+
+        if (currentBody) {
+          if (typeof currentBody === 'string' || Buffer.isBuffer(currentBody)) {
+            req.write(currentBody)
+            req.end()
+          } else if (typeof currentBody.pipe === 'function') {
+            currentBody.pipe(req)
+          } else {
+            req.write(String(currentBody))
+            req.end()
+          }
         } else {
-          req.write(String(currentBody))
           req.end()
         }
-      } else {
-        req.end()
-      }
-    })
+      })
 
-    if (!response.redirect) {
-      return response
+      if (!response.redirect) {
+        return response
+      }
     }
+  } catch (err) {
+    stopDeadline()
+    throw err
   }
+}
+
+/**
+ * The socket's idle limit for a provider call. It is a backstop behind the
+ * stream idle timer and the connect timer (both in AiAssistProviders), so it
+ * never fires first: at least the stream idle limit, and at least the connect
+ * limit, which a slow header wait (Ollama loading a model) can need.
+ */
+export function providerSocketTimeoutMs() {
+  const idleMs = (Settings.aiAssist?.streamIdleSeconds ?? 300) * 1000
+  const connectMs = (Settings.aiAssist?.requestTimeoutSeconds ?? 180) * 1000
+  return Math.max(idleMs, connectMs)
 }
 
 /**
@@ -567,9 +803,11 @@ export async function connectorFetch(url, options = {}) {
  * refused unless the caller asks to follow it.
  */
 export async function providerFetch(url, init = {}) {
-  const { redirect = 'error', ...rest } = init
+  const { redirect = 'error', timeoutMs = providerSocketTimeoutMs(), ...rest } = init
   const response = await connectorFetch(url, {
     ...rest,
+    timeoutMs,
+    trustedEndpoint: true,
     redirect: redirect === 'follow' ? undefined : 'manual',
   })
   if (

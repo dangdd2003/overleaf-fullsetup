@@ -111,7 +111,7 @@ describe('SubresultGroup while a run is starting', function () {
     expect(container.querySelector('.ai-assist-subresult-group')).to.equal(null)
   })
 
-  it('renders nothing for a live group with only running calls before any complete', function () {
+  it('shows the active call for a live group with only running calls before any complete', function () {
     const { container } = render(
       <SubresultGroup
         items={[running('read_file', { path: 'main.tex' })]}
@@ -120,7 +120,12 @@ describe('SubresultGroup while a run is starting', function () {
       />
     )
 
-    expect(container.querySelector('.ai-assist-subresult-group')).to.equal(null)
+    const group = container.querySelector('.ai-assist-subresult-group')
+    expect(group).to.exist
+    expect(group!.classList.contains('is-active')).to.be.true
+    expect(
+      container.querySelector('.ai-assist-subresult-group-title')!.textContent
+    ).to.contain('Read main.tex')
   })
 
   it('shows the accumulating tally of completed calls mid-run, with no verb', function () {

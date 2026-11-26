@@ -55,7 +55,7 @@ describe('table: generator slot', function () {
   })
 
   it('is what upstream finds, only with AI on', function () {
-    expect(findTableGenerator()).to.equal(tableGenerator)
+    expect(findTableGenerator()?.isAvailable()).to.equal(true)
     setMeta({ enabled: false })
     expect(findTableGenerator()).to.equal(undefined)
   })

@@ -81,6 +81,10 @@ export function scopeDecision(scope, toolName, options = {}) {
 
   if (READ_ONLY_TOOLS.has(toolName)) return 'allow'
 
+  // A fetch reads, and changes nothing in the project. decide() still asks
+  // before a URL the conversation has not shown, whatever the scope.
+  if (toolName === 'web_fetch') return 'allow'
+
   if (
     scope === 'edit' &&
     (FILE_EDIT_TOOLS.has(toolName) || toolName === 'compile_project')

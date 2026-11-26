@@ -183,6 +183,10 @@ export async function* runAgent({
   // for the run: the model hears it as a tool result, and is not allowed to
   // put a second diff in front of a user who just said no.
   const rejectedEditPaths: string[] = []
+  // Set once the provider has sent a native tool call in this run. Such a
+  // model does not need its tool calls rescued from fenced text, and a
+  // fenced block it writes is then prose, not a call.
+  let nativeToolCallSeen = false
 
   while (true) {
     // Tool results added during this run count against the window too, so
@@ -200,6 +204,13 @@ export async function* runAgent({
 
     let text = ''
     const calls: ToolCall[] = []
+    // What the model was shown as tool output: a block repeating it is an echo
+    const toolOutputs = messages.flatMap(message =>
+      message.role === 'tool' && typeof message.content === 'string'
+        ? [message.content]
+        : []
+    )
+    const rescueOptions = { toolOutputs }
     let inThinkTag = false
     let held = ''
     let convertedThisTurn = false
@@ -227,9 +238,10 @@ export async function* runAgent({
               const startIdx = raw.indexOf('<think>')
               if (startIdx === -1) {
                 held += raw
-                const found = convertedThisTurn
-                  ? null
-                  : extractFencedToolCall(held, tools)
+                const found =
+                  convertedThisTurn || nativeToolCallSeen
+                    ? null
+                    : extractFencedToolCall(held, tools, rescueOptions)
                 if (found) {
                   if (found.before) yield { type: 'text', text: found.before }
                   text += found.before
@@ -237,6 +249,8 @@ export async function* runAgent({
                   convertedThisTurn = true
                   held = found.after
                 } else if (
+                  !convertedThisTurn &&
+                  !nativeToolCallSeen &&
                   held.includes('```json') &&
                   !held.slice(held.indexOf('```json') + 7).includes('```')
                 ) {
@@ -279,6 +293,7 @@ export async function* runAgent({
             }
           }
         } else if (chunk.type === 'tool_call') {
+          nativeToolCallSeen = true
           const id = chunk.id || nextToolCallId('call')
           calls.push({ id, name: chunk.name, args: chunk.args })
         } else if (chunk.type === 'stop') {
@@ -311,8 +326,8 @@ export async function* runAgent({
       text += held
     }
 
-    if (calls.length === 0 && !convertedThisTurn) {
-      const rescued = parseWholeMessageToolCall(text, tools)
+    if (calls.length === 0 && !convertedThisTurn && !nativeToolCallSeen) {
+      const rescued = parseWholeMessageToolCall(text, tools, rescueOptions)
       if (rescued) {
         calls.push(rescued)
         text = ''

@@ -1,6 +1,6 @@
 import crypto from 'node:crypto'
 import Settings from '@overleaf/settings'
-import { connectorFetch } from './ConnectorFetch.mjs'
+import { connectorFetch, originOf } from './ConnectorFetch.mjs'
 import { seal, open } from './ConnectorCrypto.mjs'
 import {
   ConnectorModel,
@@ -100,9 +100,30 @@ async function getJson(fetch, url) {
   }
 }
 
+function validResourceForConnector(resource, connectorUrl) {
+  if (typeof resource !== 'string' || !resource) return false
+  try {
+    const resUrl = new URL(resource)
+    const connUrl = new URL(connectorUrl)
+    if (resUrl.origin !== connUrl.origin) return false
+    const resPath = resUrl.pathname.replace(/\/+$/, '') || '/'
+    const connPath = connUrl.pathname.replace(/\/+$/, '') || '/'
+    return (
+      connPath === resPath ||
+      resPath === '/' ||
+      connPath.startsWith(`${resPath}/`)
+    )
+  } catch {
+    return false
+  }
+}
+
 function normalizePrm(json, url) {
+  const resource = validResourceForConnector(json.resource, url)
+    ? json.resource
+    : url
   return {
-    resource: json.resource || url,
+    resource,
     authorization_servers: Array.isArray(json.authorization_servers)
       ? json.authorization_servers
       : [],
@@ -269,9 +290,22 @@ function sharedClientContext(issuer) {
   return `aiAssistOAuthClients:${issuer}:${redirectUri()}:clientSecret`
 }
 
+/**
+ * A secret-carrying POST (registration, token) is never followed to another
+ * place: a redirect would resend the body and any credentials to it. A 3xx is
+ * an error here, not a hop.
+ */
+function refuseRedirect(res) {
+  if (res.status >= 300 && res.status < 400) {
+    res.body?.destroy?.()
+    throw new Error(`OAuth endpoint redirected (HTTP ${res.status}), which is refused`)
+  }
+}
+
 async function registerDcrClient(as, fetch) {
   const res = await fetch(as.registration_endpoint, {
     method: 'POST',
+    redirect: 'manual',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify({
       client_name: CLIENT_NAME,
@@ -283,6 +317,7 @@ async function registerDcrClient(as, fetch) {
     }),
     timeoutMs: 10_000,
   })
+  refuseRedirect(res)
   if (!res.ok) {
     throw new Error(
       `Automatic registration failed with HTTP ${res.status}: ${await res.text()}`
@@ -477,6 +512,7 @@ export async function startAuthorization({
     stateHash,
     connector_id: connector._id,
     user_id: connector.user_id,
+    connectorOrigin: originOf(connector.url) || '',
     verifier: seal(verifier, `aiAssistOAuthStates:${stateHash}:verifier`),
     redirectUri: redirectUri(),
     clientId,
@@ -488,6 +524,13 @@ export async function startAuthorization({
   await connector.save()
 
   const authUrl = new URL(authorizationEndpoint)
+  const extraParams = oauth.extraParams?.length
+    ? oauth.extraParams
+    : preset?.oauth.extraParams || []
+  for (const p of extraParams) {
+    if (p.name && p.value) authUrl.searchParams.set(p.name, p.value)
+  }
+  // Core OAuth 2.1 parameters are set last so extraParams cannot override them.
   authUrl.searchParams.set('response_type', 'code')
   authUrl.searchParams.set('client_id', clientId)
   authUrl.searchParams.set('redirect_uri', redirectUri())
@@ -497,12 +540,6 @@ export async function startAuthorization({
   if (scope) authUrl.searchParams.set('scope', scope)
   if (oauth.resource && !preset?.omitResource) {
     authUrl.searchParams.set('resource', oauth.resource)
-  }
-  const extraParams = oauth.extraParams?.length
-    ? oauth.extraParams
-    : preset?.oauth.extraParams || []
-  for (const p of extraParams) {
-    if (p.name && p.value) authUrl.searchParams.set(p.name, p.value)
   }
 
   return { authorizationUrl: authUrl.toString() }
@@ -535,10 +572,12 @@ async function tokenRequest({ connector, credentials, tokenUrl, params, fetch })
 
   const res = await fetch(tokenUrl, {
     method: 'POST',
+    redirect: 'manual',
     headers,
     body: body.toString(),
     timeoutMs: 30_000,
   })
+  refuseRedirect(res)
   const text = await res.text()
   let json = null
   try {
@@ -623,6 +662,12 @@ export async function handleCallback({
     user_id: pending.user_id,
   }).exec()
   if (!connector) throw new Error('Connector not found')
+  if (
+    pending.connectorOrigin &&
+    originOf(connector.url) !== pending.connectorOrigin
+  ) {
+    throw new Error('Connector URL changed during sign-in; start sign-in again')
+  }
 
   const verifier = open(
     pending.verifier,
@@ -744,9 +789,16 @@ async function awaitRenewal(connector, sent) {
 }
 
 /** One renewal, made while holding the lease. */
-async function renewWithLease(connector, fetch) {
+async function renewWithLease(connector, fetch, beforeAccessToken = null) {
   // Read again under the lease: a renewal that just ended may have rotated it
   const credentials = await loadCredentials(connector._id)
+  if (
+    beforeAccessToken &&
+    credentials.tokens?.access_token &&
+    credentials.tokens.access_token !== beforeAccessToken
+  ) {
+    return credentials.tokens.access_token
+  }
   const refreshToken = credentials.tokens?.refresh_token
   const tokenUrl =
     connector.oauth?.tokenUrl || credentials.tokens?.token_endpoint
@@ -771,7 +823,20 @@ async function renewWithLease(connector, fetch) {
     )
     connector.status = 'connected'
     connector.lastError = undefined
-    await connector.save()
+    await ConnectorModel.updateOne(
+      { _id: connector._id },
+      {
+        $set: {
+          status: 'connected',
+          'oauth.expiresAt': connector.oauth.expiresAt,
+          'oauth.hasRefreshToken': connector.oauth.hasRefreshToken,
+          ...(connector.oauth.grantedScopes
+            ? { 'oauth.grantedScopes': connector.oauth.grantedScopes }
+            : {}),
+        },
+        $unset: { lastError: '' },
+      }
+    ).exec()
     return tokens.access_token
   } catch (err) {
     if (err.code === 'invalid_grant') {
@@ -789,7 +854,16 @@ async function renewWithLease(connector, fetch) {
       connector.oauth.expiresAt = null
       connector.oauth.hasRefreshToken = false
       connector.status = 'needs_auth'
-      await connector.save()
+      await ConnectorModel.updateOne(
+        { _id: connector._id },
+        {
+          $set: {
+            status: 'needs_auth',
+            'oauth.expiresAt': null,
+            'oauth.hasRefreshToken': false,
+          },
+        }
+      ).exec()
     }
     throw err
   }
@@ -813,7 +887,7 @@ async function doRefresh(connector, fetch) {
     until = renewed.until
   }
   try {
-    return await renewWithLease(connector, fetch)
+    return await renewWithLease(connector, fetch, before?.access_token ?? null)
   } finally {
     await releaseRefreshLease(connector, until)
   }

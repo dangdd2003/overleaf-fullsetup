@@ -181,5 +181,11 @@ async function save(userId, preferences) {
   })
 }
 
-export default { get, save }
+/** Deletes a user's saved preferences. Safe to repeat. */
+async function remove(userId) {
+  const file = fileFor(userId)
+  await withFileLock(file, () => fs.rm(file, { force: true }))
+}
+
+export default { get, save, remove }
 

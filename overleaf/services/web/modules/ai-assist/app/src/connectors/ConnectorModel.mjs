@@ -157,6 +157,7 @@ const OAuthStateSchema = new Schema(
     stateHash: { type: String, required: true, unique: true },
     connector_id: { type: ObjectId, required: true },
     user_id: { type: ObjectId, ref: 'User', required: true },
+    connectorOrigin: String,
     verifier: { type: String, required: true },
     redirectUri: String,
     clientId: String,

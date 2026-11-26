@@ -1,5 +1,6 @@
 import { describe, it, beforeEach, afterEach } from 'vitest'
 import { expect } from 'chai'
+import crypto from 'node:crypto'
 import Settings from '@overleaf/settings'
 import {
   seal,
@@ -35,6 +36,61 @@ describe('ConnectorCrypto', function () {
     expect(parts[2]).to.match(/^[0-9a-f]{24}$/) // 12-byte IV
     expect(parts[3]).to.match(/^[0-9a-f]{32}$/) // 16-byte GCM tag
     expect(parts[4]).to.match(/^[0-9a-f]+$/)
+  })
+
+  it('derives the key id with an HMAC of the key, not a plain hash of it', function () {
+    const sealed = seal({ token: 'id' }, CONTEXT)
+    const key = Buffer.from(
+      crypto.hkdfSync(
+        'sha256',
+        Buffer.from(SECRET_A, 'utf8'),
+        Buffer.from('overleaf-ai-connectors-salt', 'utf8'),
+        Buffer.from('connectors-encryption-key', 'utf8'),
+        32
+      )
+    )
+    const hmacId = crypto
+      .createHmac('sha256', key)
+      .update('ai-assist-key-id')
+      .digest('hex')
+      .slice(0, 8)
+    const plainId = crypto.createHash('sha256').update(key).digest('hex').slice(0, 8)
+
+    expect(sealed.split(':')[1]).to.equal(hmacId)
+    expect(sealed.split(':')[1]).to.not.equal(plainId)
+  })
+
+  it('opens a seal in the earlier format, whose key id was a plain hash of the key', function () {
+    // Written the way the previous version sealed: SHA-256 of the key as the id
+    const key = Buffer.from(
+      crypto.hkdfSync(
+        'sha256',
+        Buffer.from(SECRET_A, 'utf8'),
+        Buffer.from('overleaf-ai-connectors-salt', 'utf8'),
+        Buffer.from('connectors-encryption-key', 'utf8'),
+        32
+      )
+    )
+    const legacyId = crypto.createHash('sha256').update(key).digest('hex').slice(0, 8)
+    const iv = crypto.randomBytes(12)
+    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv)
+    cipher.setAAD(Buffer.from(CONTEXT, 'utf8'))
+    const ciphertext = Buffer.concat([
+      cipher.update(JSON.stringify({ token: 'legacy' }), 'utf8'),
+      cipher.final(),
+    ])
+    const legacy = [
+      'v2',
+      legacyId,
+      iv.toString('hex'),
+      cipher.getAuthTag().toString('hex'),
+      ciphertext.toString('hex'),
+    ].join(':')
+
+    expect(open(legacy, CONTEXT)).to.deep.equal({ token: 'legacy' })
+    // Still the same secret, but not sealed in the current format: re-seal it
+    expect(isStale(legacy)).to.be.true
+    expect(() => open(legacy, OTHER_CONTEXT)).to.throw(ConnectorSecretUnavailableError)
   })
 
   it('round-trips strings, nested JSON and falsy values', function () {

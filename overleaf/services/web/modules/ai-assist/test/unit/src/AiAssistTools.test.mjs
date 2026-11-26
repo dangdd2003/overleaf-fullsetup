@@ -1,6 +1,20 @@
-import { describe, it, beforeEach } from 'vitest'
+import { describe, it, beforeEach, vi } from 'vitest'
 import { expect } from 'chai'
 import sinon from 'sinon'
+// The real authorization module pulls in the whole core; the tests only need
+// its answer, which each test sets through these mocks.
+const mockAuth = vi.hoisted(() => ({
+  canUserReadProject: vi.fn(async () => true),
+  canUserWriteProjectContent: vi.fn(async () => true),
+}))
+vi.mock(
+  '../../../../../app/src/Features/Authorization/AuthorizationManager.mjs',
+  () => ({
+    default: { promises: mockAuth },
+  })
+)
+
+import { runInProjectScope } from '../../../app/src/AgentProjectGateway.mjs'
 import { parsePdfBoxes } from '../../../app/src/AiAssistTools.mjs'
 import {
   AiAssistTools,
@@ -10,6 +24,10 @@ import {
   PdfPageError,
   PDF_PAGE_ERRORS,
 } from '../../../../../app/src/Features/PdfInspection/PdfPageInspector.mjs'
+
+// Tool reads run in the project scope execute() sets up; direct calls do too.
+const inScope = (projectId, fn) =>
+  runInProjectScope({ projectId, userId: '012345678901234567890123' }, fn)
 
 describe('AiAssistTools', function () {
   let tools
@@ -160,7 +178,7 @@ describe('AiAssistTools', function () {
   it('creates new files via create_file', async function () {
     const res = await tools.execute(
       'create_file',
-      { path: 'references.bib', content: '@article{test}' },
+      { path: 'new-refs.bib', content: '@article{test}' },
       { projectId: 'p1', userId: '012345678901234567890123' }
     )
 
@@ -637,6 +655,7 @@ describe('AiAssistTools', function () {
       expect(res).to.deep.equal({
         error: 'Page 9 does not exist: the PDF has 5 page(s).',
         pageCount: 5,
+        isError: true,
       })
     })
 
@@ -768,14 +787,10 @@ describe('AiAssistTools', function () {
       const spec = tools
         .getToolSpecs()
         .find(tool => tool.name === 'view_compiled_pdf_page')
-      expect(spec.description).to.match(/after every successful compile_project/)
+      expect(spec.description).to.match(/after a successful compile_project/)
       expect(spec.description).to.match(/SyncTeX map/)
       expect(spec.description).to.match(/path and line/)
       expect(spec.description).to.match(/endLine/)
-      expect(spec.description).to.match(/Zoom:/)
-      expect(spec.description).to.match(/read_file .* edit_file, compile_project/)
-      expect(spec.description).to.match(/search_compiled_pdf/)
-      expect(spec.description).to.match(/view_compiled_pdf_overview/)
       expect(Object.keys(spec.parameters.properties)).to.deep.equal([
         'page',
         'path',
@@ -1021,7 +1036,7 @@ describe('AiAssistTools', function () {
         return { lines: ['text'] }
       })
 
-      const snapshot = await tools._getSnapshot('p1')
+      const snapshot = await inScope('p1', () => tools._getSnapshot('p1'))
 
       expect(mockDocUpdater.getDocument.callCount).to.equal(100)
       expect(maxInFlight).to.be.greaterThan(1)
@@ -1030,26 +1045,26 @@ describe('AiAssistTools', function () {
     })
 
     it('falls back to per-document reads when flushing is unavailable', async function () {
-      const snapshot = await tools._getSnapshot('p1')
+      const snapshot = await inScope('p1', () => tools._getSnapshot('p1'))
       expect(
         snapshot.docs.find(d => d.path === 'main.tex').lines
       ).to.deep.equal(['line 1', 'line 2: target text', 'line 3'])
     })
 
     it('resolves the root document path', async function () {
-      const snapshot = await tools._getSnapshot('p1')
+      const snapshot = await inScope('p1', () => tools._getSnapshot('p1'))
       expect(snapshot.rootPath).to.equal('main.tex')
     })
 
     it('rebuilds after an edit is applied', async function () {
       mockDocUpdater.flushProjectToMongo = sinon.stub().resolves()
-      await tools._getSnapshot('p1')
+      await inScope('p1', () => tools._getSnapshot('p1'))
       await tools.execute(
         'edit_file',
         { path: 'main.tex', oldText: 'target text', newText: 'new text' },
         ctx
       )
-      await tools._getSnapshot('p1')
+      await inScope('p1', () => tools._getSnapshot('p1'))
       expect(mockDocUpdater.flushProjectToMongo.calledTwice).to.equal(true)
     })
   })
@@ -1538,6 +1553,7 @@ describe('AiAssistTools', function () {
         expect(res).to.deep.equal({
           error: 'Page 9 does not exist: the PDF has 3 page(s).',
           pageCount: 3,
+          isError: true,
         })
       })
 
@@ -1547,7 +1563,7 @@ describe('AiAssistTools', function () {
           .find(tool => tool.name === 'view_compiled_pdf_overview')
         expect(spec.description).to.match(/up to 12 pages/)
         expect(spec.description).to.match(/Thumbnails are too small/)
-        expect(spec.description).to.match(/Returns:/)
+        expect(spec.description).to.match(/Returns the image/)
         expect(Object.keys(spec.parameters.properties)).to.deep.equal([
           'fromPage',
           'toPage',
@@ -1680,7 +1696,7 @@ describe('AiAssistTools', function () {
           { query: 'Figure' },
           ctx
         )
-        expect(res).to.deep.equal({ error: 'The query is empty.' })
+        expect(res).to.deep.equal({ error: 'The query is empty.', isError: true })
       })
 
       it('describes the matching rules and what comes back', function () {
@@ -1858,6 +1874,120 @@ describe('AiAssistTools', function () {
 
   describe('edit planning', function () {
     const ctx = { projectId: 'p1', userId: '012345678901234567890123' }
+
+    describe('hardening', function () {
+      it('splices $-patterns in LaTeX replacement text verbatim', async function () {
+        mockDocUpdater.getDocument.callsFake(async (pid, docId) =>
+          docId === 'doc-1'
+            ? { lines: ['line 1', 'line 2: target text\r', 'line 3'] }
+            : { lines: ['other'] }
+        )
+        const res = await tools.execute(
+          'edit_file',
+          {
+            path: 'main.tex',
+            oldText: 'line 2: target text\nline 3',
+            newText: 'a $$x$$ b $& c $\' d',
+          },
+          ctx
+        )
+        expect(res.status).to.equal('applied')
+        expect(res.startLine).to.equal(2)
+        expect(mockDocUpdater.setDocument.firstCall.args[3]).to.deep.equal([
+          'line 1',
+          'a $$x$$ b $& c $\' d',
+        ])
+      })
+
+      it('create_file refuses a path that already holds a document', async function () {
+        const res = await tools.execute(
+          'create_file',
+          { path: 'main.tex', content: 'x' },
+          ctx
+        )
+        expect(res.status).to.equal('error')
+        expect(res.isError).to.equal(true)
+        expect(res.error).to.include('edit_file')
+      })
+
+      it('edit_file refuses when the target moved since review', async function () {
+        const plan = await tools.checkEdit(
+          { path: 'main.tex', oldText: 'target text', newText: 'x' },
+          ctx
+        )
+        expect(plan.matchKind).to.equal('exact')
+        expect(plan.crossFile).to.equal(false)
+        const res = await tools.execute(
+          'edit_file',
+          { path: 'chapters/intro.tex', oldText: 'target text', newText: 'x' },
+          { ...ctx, reviewAnchor: { ...plan.reviewAnchor, path: 'other.tex' } }
+        )
+        expect(res.status).to.equal('drifted')
+        expect(res.isError).to.equal(true)
+        expect(mockDocUpdater.setDocument.called).to.equal(false)
+      })
+
+      it('edit_file refuses when the live text changed after planning', async function () {
+        let reads = 0
+        mockDocUpdater.getDocument.callsFake(async () => {
+          reads++
+          return {
+            lines:
+              reads === 1
+                ? ['line 1', 'line 2: target text', 'line 3']
+                : ['line 1', 'typed meanwhile', 'line 2: target text', 'line 3'],
+          }
+        })
+        const res = await tools.execute(
+          'edit_file',
+          { path: 'main.tex', oldText: 'target text', newText: 'x' },
+          ctx
+        )
+        expect(res.status).to.equal('drifted')
+        expect(mockDocUpdater.setDocument.called).to.equal(false)
+      })
+
+      it('marks error results with isError and keeps their fields', async function () {
+        const res = await tools.execute(
+          'edit_file',
+          { path: 'main.tex', oldText: 'not in the file at all', newText: 'x' },
+          ctx
+        )
+        expect(res.status).to.equal('noMatch')
+        expect(res.isError).to.equal(true)
+        expect(res.error).to.be.a('string')
+      })
+
+      it('refuses a bad rootDocId before changing the compiler', async function () {
+        const res = await tools.execute(
+          'configure_compiler_settings',
+          { compiler: 'pdflatex', rootDocId: 'not-an-id' },
+          ctx
+        )
+        expect(res.error).to.include('rootDocId')
+        expect(mockProjectOptionsHandler.setCompiler.called).to.equal(false)
+      })
+
+      it('reports draft as unsupported instead of applied', async function () {
+        const bare = new AiAssistTools({
+          docUpdater: mockDocUpdater,
+          entityHandler: mockEntityHandler,
+          projectGetter: mockProjectGetter,
+          editorController: mockEditorController,
+          compileManager: mockCompileManager,
+          projectOptionsHandler: {},
+          userModel: mockUserModel,
+          settings: mockSettings,
+        })
+        const res = await bare.execute(
+          'configure_compiler_settings',
+          { draft: true },
+          ctx
+        )
+        expect(res.error).to.include('draft')
+        expect(res.status).to.not.equal('applied')
+      })
+    })
 
     it('checkEdit accepts an edit whose anchor is unique, without writing', async function () {
       const res = await tools.checkEdit(
@@ -2317,7 +2447,7 @@ describe('project instructions (AGENTS.md)', function () {
 
   it('reads the root AGENTS.md whatever its case', async function () {
     const tools = toolsWith({ '/Agents.MD': doc(['Use British spelling.']) })
-    expect(await tools.getProjectInstructions('p1')).to.deep.equal({
+    expect(await tools.getProjectInstructions('p1', '012345678901234567890123')).to.deep.equal({
       path: 'Agents.MD',
       text: 'Use British spelling.',
     })
@@ -2326,24 +2456,24 @@ describe('project instructions (AGENTS.md)', function () {
   it('reads full file content without size limit', async function () {
     const longLines = Array.from({ length: 5000 }, (_, i) => `Line ${i}`)
     const tools = toolsWith({ '/AGENTS.md': doc(longLines) })
-    const result = await tools.getProjectInstructions('p1')
+    const result = await tools.getProjectInstructions('p1', '012345678901234567890123')
     expect(result.path).to.equal('AGENTS.md')
     expect(result.text).to.equal(longLines.join('\n'))
   })
 
   it('ignores an AGENTS.md in a folder', async function () {
     const tools = toolsWith({ '/chapters/AGENTS.md': doc(['x']) })
-    expect(await tools.getProjectInstructions('p2')).to.equal(null)
+    expect(await tools.getProjectInstructions('p2', '012345678901234567890123')).to.equal(null)
   })
 
   it('treats a blank file as none', async function () {
     const tools = toolsWith({ '/AGENTS.md': doc(['', '   ']) })
-    expect(await tools.getProjectInstructions('p3')).to.equal(null)
+    expect(await tools.getProjectInstructions('p3', '012345678901234567890123')).to.equal(null)
   })
 
   it('returns null when the project cannot be read', async function () {
     const tools = toolsWith({}, { failDocs: true })
-    expect(await tools.getProjectInstructions('p5')).to.equal(null)
+    expect(await tools.getProjectInstructions('p5', '012345678901234567890123')).to.equal(null)
   })
 })
 

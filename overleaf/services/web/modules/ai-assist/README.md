@@ -19,14 +19,14 @@ The assistant uses the current selection, cursor, open file, compile state, PDF 
 | Mode             | What happens                                                                                                                          |
 | :--------------- | :------------------------------------------------------------------------------------------------------------------------------------ |
 | **Manual**       | Ask before each file edit, file creation, or settings change. Read-only actions run directly.                                         |
-| **Accept Edits** | Apply file edits, file creation, and project compiler settings directly. Account-level preferences still ask first.                   |
+| **Accept Edits** | Apply exact file edits, file creation, and project compiler settings directly. Fuzzy or cross-file edit matches, `AGENTS.md` edits, and account-level preferences still ask first. |
 | **Plan**         | Research and present a plan. Editing and settings tools are unavailable until the user approves a plan and continues in another mode. |
 
 ## Features
 
 ### Chat, project context, and authoring
 
-The assistant can inspect a project outline and included files, packages, labels and citations; list, read, search, edit, and create project files; compile and inspect compile output; and review or change compiler, editor, and appearance settings. Project-specific instructions can be placed in a root-level `AGENTS.md`; these are read at the start of each run.
+The assistant can inspect a project outline and included files, packages, labels and citations; list, read, search, edit, and create project files; compile and inspect compile output; and review or change compiler, editor, and appearance settings. Project-specific instructions can be placed in a root-level `AGENTS.md`; these are read at the start of each run. They set tone and typesetting preferences but cannot relax the rules on citations, data, tool use, or approvals, and the assistant always asks before editing `AGENTS.md`.
 
 Slash commands provide focused prompts: `/fix`, `/layout`, `/preamble`, `/rewrite`, `/proofread`, `/translate`, `/cite`, `/bib`, `/table`, `/figure`, `/equation`, `/explain`, `/summarize`, `/review`, and `/check`.
 
@@ -49,7 +49,7 @@ These features use the user's configured main or fast model. Their per-user pref
 
 ### Web research and external tools
 
-When web tools are enabled, `web_search` returns cited results and `web_fetch` reads pages, PDFs, and text. An optional browser sidecar can render JavaScript-heavy pages. Users can also connect external MCP servers in **Account Settings → AI Features → Connectors**; the assistant can call their tools when enabled for the chat. Connector setup supports OAuth, API-key headers, configuration import, and per-chat tool controls.
+When web tools are enabled, `web_search` returns cited results and `web_fetch` reads pages, PDFs, and text. `web_fetch` runs without asking only for URLs the user typed (or their host) and exact URLs returned by a search; any other URL asks first, so text planted in a project or web page cannot send project content to an arbitrary address. An optional browser sidecar can render JavaScript-heavy pages. Users can also connect external MCP servers in **Account Settings → AI Features → Connectors**; the assistant can call their tools when enabled for the chat. Connector setup supports OAuth, API-key headers, configuration import, and per-chat tool controls.
 
 ### Chats, background work, and recovery
 
@@ -196,6 +196,8 @@ The `overleaf-browser` service and its `./data/browser-profile` volume are comme
 
 In **Account Settings → AI Features**, each user can configure a main model and an optional fast model for lightweight writing tasks. Supported model families are **OpenAI**, **Anthropic**, **Google Gemini**, and **Ollama**, including compatible endpoints where supported. Users set the provider, model, optional base URL, API key, context window, and output limit. They can also set reasoning/thinking preferences, inline feature behavior, personal web-search providers, and MCP connectors.
 
+Provider base URLs must resolve to public addresses; private, loopback, metadata, and internal-service addresses are refused for every user. To let users reach a model on a private address (for example Ollama on the Docker host), an admin lists its exact `host:port` in `aiAssist.trustedProviderHosts` in the settings overrides file. There is no environment variable for this. Loopback and `169.254.0.0/16` stay refused even if listed. A stored API key is only sent to the provider type and base URL it was saved with.
+
 Provider API keys and connector credentials are encrypted in MongoDB using the Overleaf session secret. Keep the session secret stable (or retain its configured rotation fallbacks) to preserve access to saved credentials. Server-configured web-search credentials come from the environment and are not user model-provider credentials.
 
 ## Data and persistence
@@ -210,7 +212,7 @@ Provider API keys and connector credentials are encrypted in MongoDB using the O
 | `aiAssistOAuthClients`         | One issuer and callback pair  | OAuth client registration reused for connector authorization.                           |
 | `aiAssistOAuthStates`          | One in-flight OAuth sign-in   | Short-lived state and encrypted verifier; expired records are removed by a TTL index.   |
 
-AI Assist creates no Overleaf project role. Existing account and project permissions authorize access; **Manual**, **Accept Edits**, and **Plan** are per-run tool policies, not roles. Indexes are ensured when the enabled module starts; there are no AI Assist data migrations.
+AI Assist creates no Overleaf project role. Existing account and project permissions authorize access, and they are re-checked on every agent read, write, compile, and settings change (`AgentProjectGateway.mjs`), so removing a collaborator stops their running chat; **Manual**, **Accept Edits**, and **Plan** are per-run tool policies, not roles. Indexes are ensured when the enabled module starts; there are no AI Assist data migrations.
 
 ### Files and run state
 

@@ -14,6 +14,7 @@ import {
   autoCompactionAllowed,
   latestContextTrim,
   queuedEntry,
+  rememberUrls,
   recordContextTrim,
   recordRunStep,
   usageTokens,
@@ -24,6 +25,7 @@ import {
   userTurnContent,
 } from '../../../app/src/AiAssistRunManager.mjs'
 import { scopeRefusal } from '../../../app/src/AiAssistSlashCommands.mjs'
+import { decide } from '../../../app/src/AiAssistModePolicy.mjs'
 import Settings from '@overleaf/settings'
 import {
   emptyAgentState,
@@ -35,6 +37,19 @@ import {
   estimateRequestTokens,
   estimateToolTokens,
 } from '../../../app/src/AiAssistContextUsage.mjs'
+
+// A decision answers the approval pending for the run: its id is read from the manager.
+async function approveFor(manager, runId, decision) {
+  const pending = manager.activeRuns.get(runId)?.approvalResolver?.pendingId
+  return manager.approveEdit(runId, { ...decision, id: pending })
+}
+
+// startRun resolves once the run record exists; the loop runs in the background.
+// Tests wait for the loop so they can read its events.
+async function startRunForTest(manager, args) {
+  await manager.startRun(args)
+  await manager.waitForRun(args.runId)
+}
 
 describe('AiAssistRunManager', function () {
   let manager
@@ -55,6 +70,13 @@ describe('AiAssistRunManager', function () {
 
     mockTools = {
       execute: sinon.stub().resolves({ content: 'file content' }),
+      // An edit applies on its own in acceptEdits only when its match is exact
+      checkEdit: sinon.stub().resolves({
+        status: 'ok',
+        path: 'main.tex',
+        matchKind: 'exact',
+        crossFile: false,
+      }),
     }
 
     mockClient = {
@@ -62,6 +84,7 @@ describe('AiAssistRunManager', function () {
     }
 
     manager = new AiAssistRunManager({
+      assertProjectAccess: async () => {},
       store: mockStore,
       tools: mockTools,
       clientFactory: () => mockClient,
@@ -82,6 +105,7 @@ describe('AiAssistRunManager', function () {
       yield { type: 'text', text: 'hello' }
     })
     manager = new AiAssistRunManager({
+      assertProjectAccess: async () => {},
       store: mockStore,
       tools: mockTools,
       clientFactory: () => mockClient,
@@ -89,7 +113,7 @@ describe('AiAssistRunManager', function () {
     })
     const transcript = [{ id: 'u0', role: 'user', text: 'first message' }]
 
-    await manager.startRun({
+    await startRunForTest(manager, {
       runId: 'run-persist',
       projectId: '0123456789abcdef01234567',
       userId: 'abcdef0123456789abcdef01',
@@ -122,13 +146,14 @@ describe('AiAssistRunManager', function () {
       yield { type: 'text', text: 'hello' }
     })
     manager = new AiAssistRunManager({
+      assertProjectAccess: async () => {},
       store: mockStore,
       tools: mockTools,
       clientFactory: () => mockClient,
       chatHistoryStore,
     })
 
-    await manager.startRun({
+    await startRunForTest(manager, {
       runId: 'run-title-gone',
       projectId: '0123456789abcdef01234567',
       userId: 'abcdef0123456789abcdef01',
@@ -158,13 +183,14 @@ describe('AiAssistRunManager', function () {
       yield { type: 'text', text: 'hello' }
     })
     manager = new AiAssistRunManager({
+      assertProjectAccess: async () => {},
       store: mockStore,
       tools: mockTools,
       clientFactory: () => mockClient,
       chatHistoryStore,
     })
 
-    await manager.startRun({
+    await startRunForTest(manager, {
       runId: 'run-persist-fail',
       projectId: '0123456789abcdef01234567',
       userId: 'abcdef0123456789abcdef01',
@@ -195,7 +221,7 @@ describe('AiAssistRunManager', function () {
     })
     mockTools.execute.resolves({ error: 'File not found: missing.tex' })
 
-    await manager.startRun({
+    await startRunForTest(manager, {
       runId: 'run-tool-msg',
       projectId: 'p1',
       userId: 'u1',
@@ -233,7 +259,7 @@ describe('AiAssistRunManager', function () {
       }
     })
 
-    await manager.startRun({
+    await startRunForTest(manager, {
       runId: 'run-progress',
       projectId: 'p1',
       userId: 'u1',
@@ -262,7 +288,7 @@ describe('AiAssistRunManager', function () {
       yield { type: 'tool_call', id: `c${callCount}`, name, args: {} }
     })
 
-    await manager.startRun({
+    await startRunForTest(manager, {
       runId: 'run-spin',
       projectId: 'p1',
       userId: 'u1',
@@ -285,7 +311,7 @@ describe('AiAssistRunManager', function () {
       yield { type: 'text', text: 'Hello from server' }
     })
 
-    const runPromise = manager.startRun({
+    const runPromise = startRunForTest(manager, {
       runId: 'run-1',
       projectId: 'p1',
       userId: 'u1',
@@ -330,7 +356,7 @@ describe('AiAssistRunManager', function () {
       }
     })
 
-    await manager.startRun({
+    await startRunForTest(manager, {
       runId: 'run-usage',
       projectId: '0123456789abcdef01234567',
       userId: 'abcdef0123456789abcdef01',
@@ -405,7 +431,7 @@ describe('AiAssistRunManager', function () {
         yield { type: 'text', text: 'Recovered' }
       })
 
-      const runPromise = manager.startRun({
+      const runPromise = startRunForTest(manager, {
         runId: 'run-retry',
         projectId: 'p1',
         userId: 'u1',
@@ -434,7 +460,7 @@ describe('AiAssistRunManager', function () {
         throw serverError()
       })
 
-      const runPromise = manager.startRun({
+      const runPromise = startRunForTest(manager, {
         runId: 'run-give-up',
         projectId: 'p1',
         userId: 'u1',
@@ -462,7 +488,7 @@ describe('AiAssistRunManager', function () {
         })
       })
 
-      const runPromise = manager.startRun({
+      const runPromise = startRunForTest(manager, {
         runId: 'run-timeout',
         projectId: 'p1',
         userId: 'u1',
@@ -489,7 +515,7 @@ describe('AiAssistRunManager', function () {
         })
       })
 
-      const runPromise = manager.startRun({
+      const runPromise = startRunForTest(manager, {
         runId: 'run-auth',
         projectId: 'p1',
         userId: 'u1',
@@ -520,7 +546,7 @@ describe('AiAssistRunManager', function () {
       }
     })
 
-    const runPromise = manager.startRun({
+    const runPromise = startRunForTest(manager, {
       runId: 'run-2',
       projectId: 'p1',
       userId: 'u1',
@@ -533,7 +559,7 @@ describe('AiAssistRunManager', function () {
     expect(mockStore.setPendingApproval.calledOnce).to.be.true
 
     // Resume approval
-    await manager.approveEdit('run-2', { accepted: true })
+    await approveFor(manager, 'run-2', { accepted: true })
     await runPromise
 
     expect(mockTools.execute.calledWith('edit_file')).to.be.true
@@ -577,7 +603,7 @@ describe('AiAssistRunManager', function () {
       mockStore.getWatcherCount = sinon.stub().resolves(1)
       scriptCompile()
 
-      const runPromise = manager.startRun({
+      const runPromise = startRunForTest(manager, {
         runId: 'run-compile',
         projectId: 'p1',
         userId: 'u1',
@@ -632,7 +658,7 @@ describe('AiAssistRunManager', function () {
       mockStore.getWatcherCount = sinon.stub().resolves(1)
       scriptCompile()
 
-      const runPromise = manager.startRun({
+      const runPromise = startRunForTest(manager, {
         runId: 'run-compile-build',
         projectId: 'p1',
         userId: 'u1',
@@ -663,7 +689,7 @@ describe('AiAssistRunManager', function () {
       mockStore.getWatcherCount = sinon.stub().resolves(0)
       scriptCompile()
 
-      await manager.startRun({
+      await startRunForTest(manager, {
         runId: 'run-compile-headless',
         projectId: 'p1',
         userId: 'u1',
@@ -695,10 +721,10 @@ describe('AiAssistRunManager', function () {
       type: 'tool_call',
       id,
       name: 'view_compiled_pdf_page',
-      args: { page: 2 },
+      args: { page: Number(id.slice(1)) },
     })
     const startView = runId =>
-      manager.startRun({
+      startRunForTest(manager, {
         runId,
         projectId: 'p1',
         userId: 'u1',
@@ -832,7 +858,7 @@ describe('AiAssistRunManager', function () {
 
     mockTools.execute.resolves({ path: 'main.tex', content: 'hello' })
 
-    const runPromise = manager.startRun({
+    const runPromise = startRunForTest(manager, {
       runId: 'run-tool-name',
       projectId: 'p1',
       userId: 'u1',
@@ -861,7 +887,7 @@ describe('AiAssistRunManager', function () {
       yield { type: 'text', text: 'never reached' }
     })
 
-    const runPromise = manager.startRun({
+    const runPromise = startRunForTest(manager, {
       runId: 'run-3',
       projectId: 'p1',
       userId: 'u1',
@@ -899,7 +925,7 @@ describe('AiAssistRunManager', function () {
 
     mockTools.execute.resolves({ error: 'File not found' })
 
-    await manager.startRun({
+    await startRunForTest(manager, {
       runId: 'run-fail',
       projectId: 'p1',
       userId: 'u1',
@@ -949,7 +975,7 @@ describe('AiAssistRunManager', function () {
       }
     })
 
-    const runPromise = manager.startRun({
+    const runPromise = startRunForTest(manager, {
       runId: 'run-reject',
       projectId: 'p1',
       userId: 'u1',
@@ -961,7 +987,7 @@ describe('AiAssistRunManager', function () {
     expect(mockStore.setPendingApproval.calledOnce).to.be.true
 
     // User explicitly rejects
-    await manager.approveEdit('run-reject', { accepted: false })
+    await approveFor(manager, 'run-reject', { accepted: false })
     await runPromise
 
     // The tool list never changes during a run: changing it would throw away
@@ -1005,7 +1031,7 @@ describe('AiAssistRunManager', function () {
       }
     })
 
-    const runPromise = manager.startRun({
+    const runPromise = startRunForTest(manager, {
       runId: 'run-note',
       projectId: 'p1',
       userId: 'u1',
@@ -1014,7 +1040,7 @@ describe('AiAssistRunManager', function () {
     })
 
     await new Promise(r => setTimeout(r, 10))
-    await manager.approveEdit('run-note', {
+    await approveFor(manager, 'run-note', {
       accepted: false,
       note: 'Prefer keeping original wording',
     })
@@ -1033,6 +1059,7 @@ describe('AiAssistRunManager', function () {
 
   it('settles approval on timeout with rejection and finishes cleanly', async function () {
     const timeoutManager = new AiAssistRunManager({
+      assertProjectAccess: async () => {},
       store: mockStore,
       tools: mockTools,
       clientFactory: () => mockClient,
@@ -1054,7 +1081,7 @@ describe('AiAssistRunManager', function () {
       }
     })
 
-    const runPromise = timeoutManager.startRun({
+    const runPromise = startRunForTest(timeoutManager, {
       runId: 'run-timeout',
       projectId: 'p1',
       userId: 'u1',
@@ -1087,7 +1114,7 @@ describe('AiAssistRunManager', function () {
       yield { type: 'text', text: 'never reached' }
     })
 
-    const runPromise = manager.startRun({
+    const runPromise = startRunForTest(manager, {
       runId: 'run-single-term',
       projectId: 'p1',
       userId: 'u1',
@@ -1119,7 +1146,7 @@ describe('AiAssistRunManager', function () {
       yield { type: 'text', text: 'done' }
     })
 
-    await manager.startRun({
+    await startRunForTest(manager, {
       runId: 'run-limits',
       projectId: 'p1',
       userId: 'u1',
@@ -1154,7 +1181,7 @@ describe('AiAssistRunManager', function () {
       }
     })
 
-    await manager.startRun({
+    await startRunForTest(manager, {
       runId: 'run-coalesce',
       projectId: 'p1',
       userId: 'u1',
@@ -1183,7 +1210,7 @@ describe('AiAssistRunManager', function () {
         .some(c => c.args[1]?.type === 'text' && c.args[1].text === 'tail')
     })
 
-    await manager.startRun({
+    await startRunForTest(manager, {
       runId: 'run-tail',
       projectId: 'p1',
       userId: 'u1',
@@ -1200,7 +1227,7 @@ describe('AiAssistRunManager', function () {
       yield { type: 'text', text: 'answer' }
     })
 
-    await manager.startRun({
+    await startRunForTest(manager, {
       runId: 'run-think',
       projectId: 'p1',
       userId: 'u1',
@@ -1241,7 +1268,7 @@ describe('AiAssistRunManager', function () {
 
     mockTools.execute.resolves({ path: 'main.tex', content: 'hello' })
 
-    await manager.startRun({
+    await startRunForTest(manager, {
       runId: 'run-order',
       projectId: 'p1',
       userId: 'u1',
@@ -1290,7 +1317,7 @@ describe('AiAssistRunManager', function () {
 
     mockTools.execute.resolves({ path: 'file.tex', content: 'ok' })
 
-    await manager.startRun({
+    await startRunForTest(manager, {
       runId: 'run-unlimited',
       projectId: 'p1',
       userId: 'u1',
@@ -1532,7 +1559,7 @@ describe('AiAssistRunManager', function () {
 
   it('emits contextExhausted and finishes turn when conversation exceeds context window', async function () {
     const hugeUserMessage = 'x'.repeat(100000)
-    await manager.startRun({
+    await startRunForTest(manager, {
       runId: 'run-exhausted',
       projectId: 'p1',
       userId: 'u1',
@@ -1587,7 +1614,7 @@ describe('AiAssistRunManager', function () {
       .stub()
       .resolves({ status: 'noMatch', error: 'Could not find target text' })
 
-    await manager.startRun({
+    await startRunForTest(manager, {
       runId: 'run-nomatch',
       projectId: 'p1',
       userId: 'u1',
@@ -1628,7 +1655,7 @@ describe('AiAssistRunManager', function () {
       .stub()
       .resolves({ status: 'ok', path: 'chapters/intro.tex' })
 
-    const runPromise = manager.startRun({
+    const runPromise = startRunForTest(manager, {
       runId: 'run-redirect',
       projectId: 'p1',
       userId: 'u1',
@@ -1646,7 +1673,7 @@ describe('AiAssistRunManager', function () {
       )
     ).to.be.true
 
-    await manager.approveEdit('run-redirect', { accepted: true })
+    await approveFor(manager, 'run-redirect', { accepted: true })
     await runPromise
   })
 
@@ -1677,7 +1704,7 @@ describe('AiAssistRunManager', function () {
     })
     mockTools.execute.resolves(readResult)
 
-    await manager.startRun({
+    await startRunForTest(manager, {
       runId: 'run-render',
       projectId: 'p1',
       userId: 'u1',
@@ -1686,7 +1713,9 @@ describe('AiAssistRunManager', function () {
     })
 
     const live = secondRequest.messages.find(m => m.role === 'tool')
-    expect(live.content).to.equal('main.tex lines 1-1 of 1\n```\n1: hi\n```')
+    expect(live.content).to.equal(
+      '<tool_output source="project" trust="untrusted">\nmain.tex lines 1-1 of 1\n```\n1: hi\n```\n</tool_output>'
+    )
 
     const { toAgentMessages } =
       await import('../../../app/src/AiAssistRunManager.mjs')
@@ -1742,7 +1771,7 @@ describe('AiAssistRunManager', function () {
       return { tool: name }
     })
 
-    await manager.startRun({
+    await startRunForTest(manager, {
       runId: 'run-parallel',
       projectId: 'p1',
       userId: 'u1',
@@ -1751,12 +1780,24 @@ describe('AiAssistRunManager', function () {
     })
 
     expect(maxInFlight).to.equal(3)
-    const finished = mockStore.appendEvent
-      .getCalls()
-      .map(c => c.args[1])
+    const events = mockStore.appendEvent.getCalls().map(c => c.args[1])
+    const finished = events
       .filter(e => e.type === 'toolCallFinished')
       .map(e => e.id)
     expect(finished).to.deep.equal(['a', 'b', 'c'])
+    // Every call of the batch is shown as running while the batch runs: each
+    // start goes out once, before any of them finishes
+    const toolEvents = events
+      .filter(e => e.type === 'toolCallStarted' || e.type === 'toolCallFinished')
+      .map(e => `${e.type === 'toolCallStarted' ? 'start' : 'end'}:${e.id}`)
+    expect(toolEvents).to.deep.equal([
+      'start:a',
+      'start:b',
+      'start:c',
+      'end:a',
+      'end:b',
+      'end:c',
+    ])
   })
 
   it('does not run a read ahead of an edit that precedes it in the same turn', async function () {
@@ -1781,7 +1822,7 @@ describe('AiAssistRunManager', function () {
       }
     })
 
-    const runPromise = manager.startRun({
+    const runPromise = startRunForTest(manager, {
       runId: 'run-order',
       projectId: 'p1',
       userId: 'u1',
@@ -1793,7 +1834,7 @@ describe('AiAssistRunManager', function () {
     // Waiting for approval: the read must not have run yet.
     expect(mockTools.execute.calledWith('read_file')).to.equal(false)
 
-    await manager.approveEdit('run-order', { accepted: true })
+    await approveFor(manager, 'run-order', { accepted: true })
     await runPromise
     expect(mockTools.execute.calledWith('read_file')).to.equal(true)
   })
@@ -1848,7 +1889,7 @@ describe('AiAssistRunManager', function () {
         }
       })
 
-      const runPromise = manager.startRun({
+      const runPromise = startRunForTest(manager, {
         runId: 'run-text-rescue',
         projectId: 'p1',
         userId: 'u1',
@@ -1866,7 +1907,7 @@ describe('AiAssistRunManager', function () {
         )
       ).to.be.true
 
-      await manager.approveEdit('run-text-rescue', { accepted: true })
+      await approveFor(manager, 'run-text-rescue', { accepted: true })
       await runPromise
 
       expect(mockTools.execute.calledWith('edit_file')).to.be.true
@@ -1895,6 +1936,8 @@ describe('AiAssistRunManager', function () {
         checkEdit: async () => ({
           status: 'ok',
           path: 'main.tex',
+          matchKind: 'exact',
+          crossFile: false,
           oldText: 'a',
           newText: 'b',
         }),
@@ -1928,12 +1971,13 @@ describe('AiAssistRunManager', function () {
       }
 
       const manager = new AiAssistRunManager({
+      assertProjectAccess: async () => {},
         store: fakeStore,
         tools: fakeTools,
         clientFactory: () => fakeClient,
       })
 
-      await manager.startRun({
+      await startRunForTest(manager, {
         runId: 'test_accept_edits',
         projectId: 'p1',
         userId: 'u1',
@@ -1980,12 +2024,13 @@ describe('AiAssistRunManager', function () {
       }
 
       const manager = new AiAssistRunManager({
+      assertProjectAccess: async () => {},
         store: fakeStore,
         tools: fakeTools,
         clientFactory: () => fakeClient,
       })
 
-      await manager.startRun({
+      await startRunForTest(manager, {
         runId: 'test_plan_mode',
         projectId: 'p1',
         userId: 'u1',
@@ -2036,12 +2081,13 @@ describe('AiAssistRunManager', function () {
       }
 
       const manager = new AiAssistRunManager({
+      assertProjectAccess: async () => {},
         store: fakeStore,
         tools: fakeTools,
         clientFactory: () => fakeClient,
       })
 
-      const runPromise = manager.startRun({
+      const runPromise = startRunForTest(manager, {
         runId: 'test_present_plan',
         projectId: 'p1',
         userId: 'u1',
@@ -2052,7 +2098,7 @@ describe('AiAssistRunManager', function () {
 
       // Wait for awaitingApproval event
       await new Promise(resolve => setTimeout(resolve, 50))
-      await manager.approveEdit('test_present_plan', {
+      await approveFor(manager, 'test_present_plan', {
         accepted: true,
         nextMode: 'acceptEdits',
       })
@@ -2092,7 +2138,7 @@ describe('AiAssistRunManager', function () {
         }
       })
 
-      await manager.startRun({
+      await startRunForTest(manager, {
         runId: 'run-queue',
         projectId: 'p1',
         userId: 'u1',
@@ -2150,7 +2196,7 @@ describe('AiAssistRunManager', function () {
         }
       })
 
-      await manager.startRun({
+      await startRunForTest(manager, {
         runId: 'run-queue-images',
         projectId: 'p1',
         userId: 'u1',
@@ -2194,7 +2240,7 @@ describe('AiAssistRunManager', function () {
         }
       })
 
-      await manager.startRun({
+      await startRunForTest(manager, {
         runId: 'run-late',
         projectId: 'p1',
         userId: 'u1',
@@ -2240,7 +2286,7 @@ describe('AiAssistRunManager', function () {
         }
       })
 
-      const runPromise = manager.startRun({
+      const runPromise = startRunForTest(manager, {
         runId: 'run-unblock',
         projectId: 'p1',
         userId: 'u1',
@@ -2314,7 +2360,7 @@ describe('AiAssistRunManager', function () {
         }
       })
 
-      await manager.startRun({
+      await startRunForTest(manager, {
         runId: 'run-roundtrip',
         projectId: 'p1',
         userId: 'u1',
@@ -2393,7 +2439,7 @@ describe('AiAssistRunManager', function () {
         }
       })
 
-      await manager.startRun({
+      await startRunForTest(manager, {
         runId: 'run-no-nudge',
         projectId: 'p1',
         userId: 'u1',
@@ -2421,7 +2467,7 @@ describe('AiAssistRunManager', function () {
         yield { type: 'text', text: 'Done.' }
       })
 
-      await manager.startRun({
+      await startRunForTest(manager, {
         runId: 'run-closing',
         projectId: 'p1',
         userId: 'u1',
@@ -2444,7 +2490,7 @@ describe('AiAssistRunManager', function () {
         yield { type: 'text', text: 'never read' }
       })
 
-      await manager.startRun({
+      await startRunForTest(manager, {
         runId: 'run-stopping',
         projectId: 'p1',
         userId: 'u1',
@@ -2484,7 +2530,7 @@ describe('AiAssistRunManager', function () {
         }
       })
 
-      await manager.startRun({
+      await startRunForTest(manager, {
         runId: 'run-take-back',
         projectId: 'p1',
         userId: 'u1',
@@ -2643,7 +2689,7 @@ describe('AiAssistRunManager', function () {
         }
       })
 
-      await manager.startRun({
+      await startRunForTest(manager, {
         runId: 'run-now',
         projectId: 'p1',
         userId: 'u1',
@@ -2696,7 +2742,7 @@ describe('AiAssistRunManager', function () {
         yield { type: 'text', text: ' Done.' }
       })
 
-      await manager.startRun({
+      await startRunForTest(manager, {
         runId: 'run-empty',
         projectId: 'p1',
         userId: 'u1',
@@ -2737,7 +2783,7 @@ describe('AiAssistRunManager', function () {
         }
       })
 
-      await manager.startRun({
+      await startRunForTest(manager, {
         runId: 'run-busy',
         projectId: 'p1',
         userId: 'u1',
@@ -2757,7 +2803,7 @@ describe('AiAssistRunManager', function () {
 
   describe('failure accounting', function () {
     const start = (runId, extra = {}) =>
-      manager.startRun({
+      startRunForTest(manager, {
         runId,
         projectId: 'p1',
         userId: 'u1',
@@ -2791,7 +2837,7 @@ describe('AiAssistRunManager', function () {
 
       const runPromise = start('run-blocked')
       await new Promise(r => setTimeout(r, 10))
-      await manager.approveEdit('run-blocked', { accepted: false })
+      await approveFor(manager, 'run-blocked', { accepted: false })
       await runPromise
 
       expect(mockStore.setPendingApproval.calledOnce).to.be.true
@@ -2872,7 +2918,7 @@ describe('AiAssistRunManager', function () {
 
       const runPromise = start('run-forget')
       await new Promise(r => setTimeout(r, 20))
-      await manager.approveEdit('run-forget', { accepted: true })
+      await approveFor(manager, 'run-forget', { accepted: true })
       await runPromise
 
       expect(mockClient.streamChat.callCount).to.equal(6)
@@ -2918,7 +2964,7 @@ describe('AiAssistRunManager', function () {
 
   describe('incomplete tool calls', function () {
     const start = runId =>
-      manager.startRun({
+      startRunForTest(manager, {
         runId,
         projectId: 'p1',
         userId: 'u1',
@@ -2939,6 +2985,8 @@ describe('AiAssistRunManager', function () {
             name: 'edit_file',
             args: {
               path: 'main.tex',
+              matchKind: 'exact',
+              crossFile: false,
               oldText: 'a',
               newText: 'half of it',
               _repaired: true,
@@ -3029,7 +3077,7 @@ describe('AiAssistRunManager', function () {
 
   describe('web tools', function () {
     const start = (runId, extra = {}) =>
-      manager.startRun({
+      startRunForTest(manager, {
         runId,
         projectId: 'p1',
         userId: 'u1',
@@ -3037,6 +3085,8 @@ describe('AiAssistRunManager', function () {
           {
             role: 'user',
             content: 'which siunitx option sets the range word?',
+            // The page the model may fetch is one the user named
+            text: 'which siunitx option sets the range word? See https://docs.example.org/manual and https://www.docs.example.org/manual/',
           },
         ],
         providerSettings: { type: 'openai', apiKey: 'k', model: 'gpt-4o' },
@@ -3056,6 +3106,7 @@ describe('AiAssistRunManager', function () {
       }
       const webToolsFactory = sinon.stub().returns(webTools)
       manager = new AiAssistRunManager({
+      assertProjectAccess: async () => {},
         store: mockStore,
         tools: mockTools,
         clientFactory: () => mockClient,
@@ -3107,6 +3158,7 @@ describe('AiAssistRunManager', function () {
         }),
       }
       manager = new AiAssistRunManager({
+      assertProjectAccess: async () => {},
         store: mockStore,
         tools: mockTools,
         clientFactory: () => mockClient,
@@ -3178,6 +3230,7 @@ describe('AiAssistRunManager', function () {
           })),
         }
         manager = new AiAssistRunManager({
+      assertProjectAccess: async () => {},
           store: mockStore,
           tools: mockTools,
           clientFactory: () => mockClient,
@@ -3255,10 +3308,10 @@ describe('AiAssistRunManager', function () {
               type: 'tool_call',
               id: `f${turn}`,
               name: 'web_fetch',
-              // The first read spells the address loosely; the rest page on
+              // The first read names the same page with a fragment; the rest page on
               args:
                 turn === 1
-                  ? { url: 'docs.example.org/manual#units' }
+                  ? { url: 'https://docs.example.org/manual#units' }
                   : turn % 2
                     ? { url: 'https://docs.example.org/manual', page: turn }
                     : { url: 'https://www.docs.example.org/manual/', find: `t${turn}` },
@@ -3338,7 +3391,7 @@ describe('AiAssistRunManager', function () {
         return { content: 'x' }
       })
 
-      await manager.startRun({
+      await startRunForTest(manager, {
         runId: 'run-mode-notice',
         projectId: 'p1',
         userId: 'u1',
@@ -3375,7 +3428,7 @@ describe('AiAssistRunManager', function () {
         }
       })
       mockTools.execute.resolves({ status: 'noMatch', message: 'not found' })
-      await manager.startRun({
+      await startRunForTest(manager, {
         runId: 'run-rebuild',
         projectId: 'p1',
         userId: 'u1',
@@ -3418,7 +3471,7 @@ describe('AiAssistRunManager', function () {
         }
       })
       mockTools.execute.resolves({ error: 'No block B9 on page 1 of this build.' })
-      await manager.startRun({
+      await startRunForTest(manager, {
         runId: 'run-error-flag',
         projectId: 'p1',
         userId: 'u1',
@@ -3443,7 +3496,7 @@ describe('AiAssistRunManager', function () {
   describe('prompt prefix', function () {
     const provider = { type: 'anthropic', apiKey: 'k', model: 'claude-x' }
     const startWith = (m, runId, extra = {}) =>
-      m.startRun({
+      startRunForTest(m, {
         runId,
         projectId: 'p1',
         userId: 'u1',
@@ -3511,7 +3564,7 @@ describe('AiAssistRunManager', function () {
 
       const run = startWith(manager, 'run-modes', { mode: 'plan' })
       await new Promise(resolve => setTimeout(resolve, 20))
-      await manager.approveEdit('run-modes', {
+      await approveFor(manager, 'run-modes', {
         accepted: true,
         nextMode: 'acceptEdits',
       })
@@ -3553,6 +3606,7 @@ describe('AiAssistRunManager', function () {
         .onSecondCall()
         .resolves({ path: 'AGENTS.md', text: 'Edited while running.' })
       const m = new AiAssistRunManager({
+      assertProjectAccess: async () => {},
         store: mockStore,
         tools: mockTools,
         clientFactory: () => mockClient,
@@ -3571,6 +3625,7 @@ describe('AiAssistRunManager', function () {
         text: 'Use British spelling.',
       })
       const m = new AiAssistRunManager({
+      assertProjectAccess: async () => {},
         store: mockStore,
         tools: mockTools,
         clientFactory: () => mockClient,
@@ -3587,6 +3642,7 @@ describe('AiAssistRunManager', function () {
     it('keeps running when AGENTS.md cannot be read', async function () {
       mockTools.getProjectInstructions = sinon.stub().rejects(new Error('boom'))
       const m = new AiAssistRunManager({
+      assertProjectAccess: async () => {},
         store: mockStore,
         tools: mockTools,
         clientFactory: () => mockClient,
@@ -3618,7 +3674,7 @@ describe('AiAssistRunManager', function () {
       })
 
       const first = [{ id: 'u0', role: 'user', text: 'first question' }]
-      await manager.startRun({
+      await startRunForTest(manager, {
         runId: 'run-seq-1',
         projectId: 'p1',
         userId: 'u1',
@@ -3635,7 +3691,7 @@ describe('AiAssistRunManager', function () {
         )
       }
 
-      await manager.startRun({
+      await startRunForTest(manager, {
         runId: 'run-seq-2',
         projectId: 'p1',
         userId: 'u1',
@@ -3721,7 +3777,7 @@ describe('AiAssistRunManager', function () {
         }
       })
       const first = [{ id: 'u0', role: 'user', text: 'read main' }]
-      await manager.startRun({
+      await startRunForTest(manager, {
         runId: 'run-nudge-rebuild',
         projectId: 'p1',
         userId: 'u1',
@@ -3762,7 +3818,7 @@ describe('AiAssistRunManager', function () {
         }
       })
       const first = [{ id: 'u0', role: 'user', text: 'read main' }]
-      await manager.startRun({
+      await startRunForTest(manager, {
         runId: 'run-rescue-rebuild',
         projectId: 'p1',
         userId: 'u1',
@@ -3802,7 +3858,7 @@ describe('AiAssistRunManager', function () {
           }
         })
         const first = [{ id: 'u0', role: 'user', text: 'read main' }]
-        const run = manager.startRun({
+        const run = startRunForTest(manager, {
           runId: 'run-retry-rebuild',
           projectId: 'p1',
           userId: 'u1',
@@ -4018,12 +4074,14 @@ describe('AiAssistRunManager', function () {
       mockTools.checkEdit = sinon.stub().resolves({
         status: 'ok',
         path: 'main.tex',
+        matchKind: 'exact',
+        crossFile: false,
         oldText: 'hello',
         newText: 'world',
       })
       mockTools.execute.resolves({ status: 'applied', path: 'main.tex' })
 
-      await manager.startRun({
+      await startRunForTest(manager, {
         runId: 'run-chk-1',
         projectId: 'p1',
         userId: 'u1',
@@ -4069,7 +4127,7 @@ describe('AiAssistRunManager', function () {
       mockTools._resolveDoc = sinon.stub().resolves(null)
       mockTools.execute.resolves({ status: 'applied', path: 'new.tex' })
 
-      await manager.startRun({
+      await startRunForTest(manager, {
         runId: 'run-chk-2',
         projectId: 'p1',
         userId: 'u1',
@@ -4119,11 +4177,13 @@ describe('AiAssistRunManager', function () {
       mockTools.checkEdit = sinon.stub().resolves({
         status: 'ok',
         path: 'main.tex',
+        matchKind: 'exact',
+        crossFile: false,
         oldText: 'a',
         newText: 'b',
       })
 
-      const runPromise = manager.startRun({
+      const runPromise = startRunForTest(manager, {
         runId: 'run-chk-decline',
         projectId: 'p1',
         userId: 'u1',
@@ -4134,7 +4194,7 @@ describe('AiAssistRunManager', function () {
       })
 
       await new Promise(r => setTimeout(r, 10))
-      await manager.approveEdit('run-chk-decline', { accepted: false })
+      await approveFor(manager, 'run-chk-decline', { accepted: false })
       await runPromise
 
       expect(mockCheckpointStore.saveCheckpoint.called).to.be.false
@@ -4170,12 +4230,14 @@ describe('AiAssistRunManager', function () {
       mockTools.checkEdit = sinon.stub().resolves({
         status: 'ok',
         path: 'main.tex',
+        matchKind: 'exact',
+        crossFile: false,
         oldText: 'foo',
         newText: 'bar',
       })
       mockTools.execute.resolves({ status: 'applied', path: 'main.tex' })
 
-      const runPromise = manager.startRun({
+      const runPromise = startRunForTest(manager, {
         runId: 'run-chk-queue',
         projectId: 'p1',
         userId: 'u1',
@@ -4393,7 +4455,7 @@ describe('AiAssistRunManager', function () {
           }
         })
 
-        await manager.startRun({
+        await startRunForTest(manager, {
           runId: 'run-scope-read',
           projectId: 'p1',
           userId: 'u1',
@@ -4441,7 +4503,7 @@ describe('AiAssistRunManager', function () {
           }
         })
 
-        await manager.startRun({
+        await startRunForTest(manager, {
           runId: 'run-scope-read-ok',
           projectId: 'p1',
           userId: 'u1',
@@ -4481,7 +4543,7 @@ describe('AiAssistRunManager', function () {
           }
         })
 
-        await manager.startRun({
+        await startRunForTest(manager, {
           runId: 'run-plain-after',
           projectId: 'p1',
           userId: 'u1',
@@ -4526,7 +4588,7 @@ describe('AiAssistRunManager', function () {
           }
         })
 
-        await manager.startRun({
+        await startRunForTest(manager, {
           runId: 'run-command-after',
           projectId: 'p1',
           userId: 'u1',
@@ -4560,14 +4622,14 @@ describe('AiAssistRunManager', function () {
         mockClient.streamChat.callsFake(async function* () {
           yield { type: 'text', text: 'ok' }
         })
-        await manager.startRun({
+        await startRunForTest(manager, {
           runId: 'run-plain-turn',
           projectId: 'p1',
           userId: 'u1',
           transcript: [{ role: 'user', text: 'hi' }],
           providerSettings: provider,
         })
-        await manager.startRun({
+        await startRunForTest(manager, {
           runId: 'run-command-turn',
           projectId: 'p1',
           userId: 'u1',
@@ -4648,7 +4710,7 @@ describe('AiAssistRunManager connector tools', function () {
   }
 
   const runWith = (manager, runId, extra = {}) =>
-    manager.startRun({
+    startRunForTest(manager, {
       runId,
       projectId: 'p1',
       userId: 'u1',
@@ -4693,6 +4755,7 @@ describe('AiAssistRunManager connector tools', function () {
       { id: 'b', name: 'mcp__docs__get', args: {} },
     ])
     const manager = new AiAssistRunManager({
+      assertProjectAccess: async () => {},
       store: storeStub(),
       tools: builtIns,
       clientFactory: () => client,
@@ -4738,6 +4801,7 @@ describe('AiAssistRunManager connector tools', function () {
     const client = scriptedClient([])
     const store = storeStub()
     const manager = new AiAssistRunManager({
+      assertProjectAccess: async () => {},
       store,
       tools: builtIns,
       clientFactory: () => client,
@@ -4783,6 +4847,7 @@ describe('AiAssistRunManager connector tools', function () {
     }
     const store = storeStub()
     const manager = new AiAssistRunManager({
+      assertProjectAccess: async () => {},
       store,
       tools: builtIns,
       clientFactory: () => client,
@@ -4840,6 +4905,7 @@ describe('AiAssistRunManager connector tools', function () {
     ])
     const store = storeStub()
     const manager = new AiAssistRunManager({
+      assertProjectAccess: async () => {},
       store,
       tools: builtIns,
       clientFactory: () => client,
@@ -4898,6 +4964,7 @@ describe('AiAssistRunManager connector tools', function () {
         execute: sinon.stub().resolves({ content: 'file' }),
       }
       const manager = new AiAssistRunManager({
+      assertProjectAccess: async () => {},
         store,
         tools,
         clientFactory: () => client,
@@ -4907,7 +4974,7 @@ describe('AiAssistRunManager connector tools', function () {
       while (!store.setPendingApproval.called) {
         await new Promise(resolve => setTimeout(resolve, 1))
       }
-      await manager.approveEdit('run-decline', decision)
+      await approveFor(manager, 'run-decline', decision)
       await run
       return { session, client, store, tools }
     }
@@ -4956,7 +5023,7 @@ describe('AiAssistRunManager connector tools', function () {
         m => m.role === 'tool' && m.toolCallId === 'w'
       )
       expect(toolMessage.content).to.equal(
-        'ok\n\nThe user allowed this tool use and said:\nThen summarise it'
+        '<tool_output source="connector" trust="untrusted">\nok\n</tool_output>\n\nThe user allowed this tool use and said:\nThen summarise it'
       )
     })
   })
@@ -4980,6 +5047,7 @@ describe('AiAssistRunManager connector tools', function () {
     ])
     const store = storeStub()
     const manager = new AiAssistRunManager({
+      assertProjectAccess: async () => {},
       store,
       tools: builtIns,
       clientFactory: () => client,
@@ -4992,7 +5060,9 @@ describe('AiAssistRunManager connector tools', function () {
       m => m.role === 'tool' && m.toolCallId === 'b'
     )
     expect(toolMessage.isError).to.be.true
-    expect(toolMessage.content).to.equal('Error: Not found')
+    expect(toolMessage.content).to.equal(
+      '<tool_output source="connector" trust="untrusted">\nError: Not found\n</tool_output>'
+    )
     const finished = store.appendEvent.args
       .map(args => args[1])
       .find(e => e.type === 'toolCallFinished' && e.id === 'b')
@@ -5012,6 +5082,7 @@ describe('AiAssistRunManager connector tools', function () {
       { id: 'b', name: 'mcp__docs__unknown', args: {} },
     ])
     const manager = new AiAssistRunManager({
+      assertProjectAccess: async () => {},
       store: storeStub(),
       tools: builtIns,
       clientFactory: () => client,
@@ -5030,6 +5101,7 @@ describe('AiAssistRunManager connector tools', function () {
   it('tells the model when the connector session could not be built', async function () {
     const client = scriptedClient([])
     const manager = new AiAssistRunManager({
+      assertProjectAccess: async () => {},
       store: storeStub(),
       tools: builtIns,
       clientFactory: () => client,
@@ -5049,6 +5121,7 @@ describe('AiAssistRunManager connector tools', function () {
     const client = scriptedClient([])
     const factory = sinon.stub().resolves(connectorSession())
     const manager = new AiAssistRunManager({
+      assertProjectAccess: async () => {},
       store: storeStub(),
       tools: builtIns,
       clientFactory: () => client,
@@ -5066,6 +5139,7 @@ describe('AiAssistRunManager connector tools', function () {
 describe('AiAssistRunManager queue bounds', function () {
   it('refuses a message once the run already holds ten unread', async function () {
     const manager = new AiAssistRunManager({
+      assertProjectAccess: async () => {},
       store: { appendEvent: sinon.stub().resolves(0) },
       tools: {},
     })
@@ -5084,6 +5158,7 @@ describe('AiAssistRunManager queue bounds', function () {
 
   it('normalises a mode taken from the control channel', function () {
     const manager = new AiAssistRunManager({
+      assertProjectAccess: async () => {},
       store: {
         setMode: sinon.stub().resolves(),
         appendEvent: sinon.stub().resolves(0),
@@ -5161,6 +5236,7 @@ describe('AiAssistRunManager context meter and automatic compaction', function (
 
   function build({ client, store, history = chatStore(), compactor, tools }) {
     return new AiAssistRunManager({
+      assertProjectAccess: async () => {},
       store,
       tools: tools ?? {
         getToolSpecs: () => [spec('read_file')],
@@ -5194,7 +5270,7 @@ describe('AiAssistRunManager context meter and automatic compaction', function (
     const client = usageClient([{ text: 'Hello' }])
     const manager = build({ client, store })
 
-    await manager.startRun({
+    await startRunForTest(manager, {
       runId: 'run-usage',
       projectId: IDS.projectId,
       userId: IDS.userId,
@@ -5237,7 +5313,7 @@ describe('AiAssistRunManager context meter and automatic compaction', function (
     ])
     const manager = build({ client, store })
 
-    await manager.startRun({
+    await startRunForTest(manager, {
       runId: 'run-anchor',
       projectId: IDS.projectId,
       userId: IDS.userId,
@@ -5270,7 +5346,7 @@ describe('AiAssistRunManager context meter and automatic compaction', function (
     ])
     const manager = build({ client, store, history, compactor })
 
-    await manager.startRun({
+    await startRunForTest(manager, {
       runId: 'run-auto',
       transcript: TRANSCRIPT,
       providerSettings: PROVIDER,
@@ -5314,7 +5390,7 @@ describe('AiAssistRunManager context meter and automatic compaction', function (
     ])
     const manager = build({ client, store, history: chatStore(), compactor })
 
-    await manager.startRun({
+    await startRunForTest(manager, {
       runId: 'run-blocked',
       transcript: TRANSCRIPT,
       providerSettings: PROVIDER,
@@ -5345,17 +5421,17 @@ describe('AiAssistRunManager context meter and automatic compaction', function (
     const client = usageClient(replies)
     const manager = build({ client, store, history: chatStore(), compactor })
 
-    await manager.startRun({
+    await startRunForTest(manager, {
       runId: 'run-breaker',
       transcript: TRANSCRIPT,
       providerSettings: PROVIDER,
       ...withChat,
     })
 
-    // Steps 2, 4 and 6 try; after the third failure no more tries
-    expect(compactor.callCount).to.equal(3)
+    // Steps 2 and 4 try; a user turn gets at most two mid-run compactions
+    expect(compactor.callCount).to.equal(2)
     const events = eventsOf(store)
-    expect(events.filter(e => e.type === 'compactFailed')).to.have.length(3)
+    expect(events.filter(e => e.type === 'compactFailed')).to.have.length(2)
     expect(events.some(e => e.type === 'error')).to.equal(false)
     expect(events.at(-1)).to.deep.include({ type: 'turnFinished', reason: 'stop' })
   })
@@ -5373,7 +5449,7 @@ describe('AiAssistRunManager context meter and automatic compaction', function (
     ])
     const manager = build({ client, store, history, compactor })
 
-    await manager.startRun({
+    await startRunForTest(manager, {
       runId: 'run-no-progress',
       transcript: [{ id: 'u0', role: 'user', text: 'hi' }],
       providerSettings: PROVIDER,
@@ -5446,5 +5522,418 @@ describe('AiAssistRunManager context meter and automatic compaction', function (
     expect(autoCompactionAllowed({ lastStep: 3, failures: 0, disabled: false }, 4)).to.equal(false)
     expect(autoCompactionAllowed({ lastStep: 3, failures: 0, disabled: false }, 5)).to.equal(true)
     expect(autoCompactionAllowed({ lastStep: null, failures: 3, disabled: true }, 9)).to.equal(false)
+  })
+})
+
+describe('AiAssistRunManager run hardening', function () {
+  const PROVIDER = { type: 'openai', apiKey: 'k', model: 'gpt-4o' }
+  let store
+  let tools
+  let client
+
+  const eventsOf = () => store.appendEvent.args.map(([, event]) => event)
+  const build = (overrides = {}) =>
+    new AiAssistRunManager({
+      assertProjectAccess: async () => {},
+      store,
+      tools,
+      clientFactory: () => client,
+      ...overrides,
+    })
+  const runArgs = runId => ({
+    runId,
+    projectId: 'p1',
+    userId: 'u1',
+    transcript: [{ role: 'user', content: 'go' }],
+    providerSettings: PROVIDER,
+  })
+
+  beforeEach(function () {
+    store = {
+      createRun: sinon.stub().resolves(),
+      appendEvent: sinon.stub().resolves(1),
+      updateStatus: sinon.stub().resolves(),
+      setPendingApproval: sinon.stub().resolves(),
+      clearPendingApproval: sinon.stub().resolves(),
+      getRun: sinon.stub().resolves({ status: 'running' }),
+      touchHeartbeat: sinon.stub().resolves(),
+      isStopRequested: sinon.stub().resolves(false),
+    }
+    tools = {
+      execute: sinon.stub().resolves({ content: 'file content' }),
+      checkEdit: sinon.stub().resolves({
+        status: 'ok',
+        path: 'main.tex',
+        matchKind: 'exact',
+        crossFile: false,
+        oldText: 'a',
+        newText: 'b',
+      }),
+    }
+    client = { streamChat: sinon.stub() }
+  })
+
+  it('resolves startRun once the run record exists, before the loop finishes', async function () {
+    let release
+    const gate = new Promise(resolve => {
+      release = resolve
+    })
+    client.streamChat.callsFake(async function* () {
+      await gate
+      yield { type: 'text', text: 'late' }
+    })
+    const manager = build()
+
+    await manager.startRun(runArgs('run-early'))
+
+    expect(store.createRun.calledOnce).to.be.true
+    expect(store.createRun.firstCall.args[0].runId).to.equal('run-early')
+    expect(manager.activeRuns.has('run-early')).to.be.true
+    expect(store.updateStatus.calledWith('run-early', 'done')).to.be.false
+
+    release()
+    await manager.waitForRun('run-early')
+    expect(store.createRun.calledOnce).to.be.true
+    expect(store.updateStatus.calledWith('run-early', 'done')).to.be.true
+  })
+
+  it('answers a pending approval only with its own id', async function () {
+    let turn = 0
+    client.streamChat.callsFake(async function* () {
+      turn++
+      if (turn === 1) {
+        yield {
+          type: 'tool_call',
+          id: 'edit-bind',
+          name: 'edit_file',
+          args: { path: 'main.tex', oldText: 'a', newText: 'b' },
+        }
+      } else {
+        yield { type: 'text', text: 'ok' }
+      }
+    })
+    const manager = build({ approvalTimeoutMs: 60_000 })
+    const run = manager.startRun(runArgs('run-bind'))
+    await run
+
+    // Wait until the edit is waiting for the user
+    while (!store.setPendingApproval.called) {
+      await new Promise(resolve => setTimeout(resolve, 5))
+    }
+    await manager.approveEdit('run-bind', { accepted: true, id: 'someone-else' })
+    expect(manager.activeRuns.get('run-bind')?.approvalResolver.resolve).to.be.a(
+      'function'
+    )
+    await manager.approveEdit('run-bind', { accepted: true })
+    expect(manager.activeRuns.get('run-bind')?.approvalResolver.resolve).to.be.a(
+      'function'
+    )
+    await manager.approveEdit('run-bind', { accepted: true, id: 'edit-bind' })
+    await manager.waitForRun('run-bind')
+    expect(tools.execute.calledWith('edit_file')).to.be.true
+  })
+
+  it('ends a run that repeats an identical call eight times with toolLoop', async function () {
+    client.streamChat.callsFake(async function* () {
+      yield {
+        type: 'tool_call',
+        id: 'r',
+        name: 'read_file',
+        args: { path: 'main.tex', from: 1, to: 2 },
+      }
+    })
+    const manager = build()
+    await manager.startRun(runArgs('run-doom'))
+    await manager.waitForRun('run-doom')
+
+    const errors = eventsOf().filter(e => e.type === 'error')
+    expect(errors).to.have.length(1)
+    expect(errors[0].code).to.equal('toolLoop')
+    expect(client.streamChat.callCount).to.equal(8)
+  })
+
+  it('tells the model once, at the fifth identical call, to change course', async function () {
+    let calls = 0
+    client.streamChat.callsFake(async function* () {
+      calls++
+      if (calls <= 5) {
+        yield {
+          type: 'tool_call',
+          id: `r${calls}`,
+          name: 'read_file',
+          args: { to: 2, path: 'main.tex' },
+        }
+      } else {
+        yield { type: 'text', text: 'Done.' }
+      }
+    })
+    const manager = build()
+    await manager.startRun(runArgs('run-nudge'))
+    await manager.waitForRun('run-nudge')
+
+    const finished = eventsOf().filter(e => e.type === 'toolCallFinished')
+    expect(finished).to.have.length(5)
+    expect(JSON.stringify(finished[4].result)).to.include('now been made 5 times')
+    expect(finished.slice(0, 4).some(e => JSON.stringify(e.result).includes('times with the same'))).to.be.false
+    expect(eventsOf().some(e => e.type === 'error')).to.be.false
+  })
+
+  it('stops a hung tool at once when the run is stopped', async function () {
+    client.streamChat.callsFake(async function* () {
+      yield {
+        type: 'tool_call',
+        id: 'hang',
+        name: 'read_file',
+        args: { path: 'main.tex' },
+      }
+    })
+    tools.execute = sinon.stub().returns(new Promise(() => {}))
+    const manager = build()
+    await manager.startRun(runArgs('run-hung'))
+    await new Promise(resolve => setTimeout(resolve, 10))
+
+    await manager.stopRun('run-hung')
+    await manager.waitForRun('run-hung')
+
+    expect(store.updateStatus.calledWith('run-hung', 'stopped')).to.be.true
+  })
+
+  it('asks before an acceptEdits edit whose match is fuzzy', async function () {
+    tools.checkEdit = sinon.stub().resolves({
+      status: 'ok',
+      path: 'main.tex',
+      matchKind: 'fuzzy',
+      crossFile: false,
+      oldText: 'a',
+      newText: 'b',
+    })
+    let turn = 0
+    client.streamChat.callsFake(async function* () {
+      turn++
+      if (turn === 1) {
+        yield {
+          type: 'tool_call',
+          id: 'fz',
+          name: 'edit_file',
+          args: { path: 'main.tex', oldText: 'a', newText: 'b' },
+        }
+      } else {
+        yield { type: 'text', text: 'ok' }
+      }
+    })
+    const manager = build({ approvalTimeoutMs: 20 })
+    await manager.startRun({ ...runArgs('run-fuzzy'), mode: 'acceptEdits' })
+    await manager.waitForRun('run-fuzzy')
+
+    expect(eventsOf().some(e => e.type === 'awaitingApproval')).to.be.true
+    expect(tools.execute.calledWith('edit_file')).to.be.false
+  })
+})
+
+describe('AiAssistRunManager provider state and run identity', function () {
+  const PROJECT = '0123456789abcdef01234567'
+  const USER = 'abcdef0123456789abcdef01'
+  const provider = { type: 'anthropic', apiKey: 'k', model: 'claude-test' }
+  let manager
+  let mockStore
+  let mockTools
+  let mockClient
+  let mockCheckpointStore
+
+  beforeEach(function () {
+    mockStore = {
+      createRun: sinon.stub().resolves(),
+      appendEvent: sinon.stub().resolves(1),
+      updateStatus: sinon.stub().resolves(),
+      setPendingApproval: sinon.stub().resolves(),
+      clearPendingApproval: sinon.stub().resolves(),
+      getRun: sinon.stub().resolves({ status: 'running' }),
+      touchHeartbeat: sinon.stub().resolves(),
+    }
+    mockTools = {
+      execute: sinon.stub().resolves({ content: 'file content' }),
+      checkEdit: sinon.stub().resolves({
+        status: 'ok',
+        path: 'main.tex',
+        matchKind: 'exact',
+        crossFile: false,
+        oldText: 'hello',
+        newText: 'world',
+        reviewAnchor: { path: 'main.tex', startLine: 1, matchedText: 'hello' },
+      }),
+      getProjectInstructions: sinon.stub().resolves('Use short sentences.'),
+    }
+    mockCheckpointStore = {
+      saveCheckpoint: sinon.stub().resolves({}),
+      getCheckpoint: sinon.stub().resolves(null),
+    }
+    mockClient = { streamChat: sinon.stub() }
+    manager = new AiAssistRunManager({
+      assertProjectAccess: async () => {},
+      store: mockStore,
+      tools: mockTools,
+      clientFactory: () => mockClient,
+    })
+    manager.checkpointStore = mockCheckpointStore
+  })
+
+  it('replays the thinking blocks of a tool-use turn on the next step, and does not emit them', async function () {
+    const thinking = [
+      { type: 'thinking', thinking: 'Plan the read', signature: 'sig-abc' },
+    ]
+    let callCount = 0
+    let second = null
+    mockClient.streamChat.callsFake(async function* (opts) {
+      callCount++
+      if (callCount === 1) {
+        yield { type: 'providerState', provider: 'anthropic', anthropicThinking: thinking }
+        yield { type: 'tool_call', id: 'r1', name: 'read_file', args: { path: 'main.tex' } }
+      } else {
+        second = opts
+        yield { type: 'text', text: 'done' }
+      }
+    })
+
+    await manager.startRun({
+      runId: 'run-thinking',
+      projectId: PROJECT,
+      userId: USER,
+      transcript: [{ role: 'user', text: 'read it' }],
+      providerSettings: provider,
+    })
+    await manager.waitForRun('run-thinking')
+
+    const toolTurn = second.messages.find(
+      m => m.role === 'assistant' && m.toolCalls?.length
+    )
+    expect(toolTurn.providerState).to.deep.equal({
+      provider: 'anthropic',
+      anthropicThinking: thinking,
+    })
+    const emitted = mockStore.appendEvent.args.map(args => args[1])
+    expect(emitted.some(e => e.type === 'providerState')).to.be.false
+  })
+
+  it('keeps a Gemini thought signature on its call, in the run and in what is stored', async function () {
+    let callCount = 0
+    let second = null
+    mockClient.streamChat.callsFake(async function* (opts) {
+      callCount++
+      if (callCount === 1) {
+        yield {
+          type: 'tool_call',
+          id: 'g1',
+          name: 'read_file',
+          args: { path: 'main.tex' },
+          thoughtSignature: 'sig-gemini',
+        }
+      } else {
+        second = opts
+        yield { type: 'text', text: 'done' }
+      }
+    })
+
+    await manager.startRun({
+      runId: 'run-signature',
+      projectId: PROJECT,
+      userId: USER,
+      transcript: [{ role: 'user', text: 'read it' }],
+      providerSettings: { type: 'google', apiKey: 'k', model: 'gemini-test' },
+    })
+    await manager.waitForRun('run-signature')
+
+    const toolTurn = second.messages.find(
+      m => m.role === 'assistant' && m.toolCalls?.length
+    )
+    expect(toolTurn.toolCalls[0].thoughtSignature).to.equal('sig-gemini')
+
+    const stored = recordRunStep([], {
+      runId: 'r',
+      step: 1,
+      calls: [{ id: 'g1', name: 'read_file', args: {}, thoughtSignature: 'sig-gemini' }],
+      results: new Map(),
+    })
+    expect(stored[0].toolCalls[0].thoughtSignature).to.equal('sig-gemini')
+    const rebuilt = toAgentMessages([
+      { role: 'user', text: 'read it' },
+      { role: 'assistant', text: '', toolCalls: stored[0].toolCalls },
+    ])
+    expect(rebuilt.find(m => m.toolCalls)?.toolCalls[0].thoughtSignature).to.equal(
+      'sig-gemini'
+    )
+  })
+
+  it('checks an edit, reads AGENTS.md and applies the edit as the run user', async function () {
+    let callCount = 0
+    mockClient.streamChat.callsFake(async function* () {
+      callCount++
+      if (callCount === 1) {
+        yield {
+          type: 'tool_call',
+          id: 'e1',
+          name: 'edit_file',
+          args: { path: 'main.tex', oldText: 'hello', newText: 'world' },
+        }
+      } else {
+        yield { type: 'text', text: 'Done.' }
+      }
+    })
+
+    await manager.startRun({
+      runId: 'run-user-id',
+      projectId: PROJECT,
+      userId: USER,
+      chatId: 'chat_1',
+      mode: 'acceptEdits',
+      transcript: [{ role: 'user', text: 'change it' }],
+      providerSettings: provider,
+    })
+    await manager.waitForRun('run-user-id')
+
+    expect(mockTools.getProjectInstructions.calledWith(PROJECT, USER)).to.be.true
+    expect(mockTools.checkEdit.firstCall.args[1]).to.include({
+      projectId: PROJECT,
+      userId: USER,
+    })
+    const [name, args, options] = mockTools.execute.firstCall.args
+    expect(name).to.equal('edit_file')
+    expect(args.path).to.equal('main.tex')
+    expect(options).to.include({ projectId: PROJECT, userId: USER })
+    // The anchor the plan was made from: a write that moved since is refused
+    expect(options.reviewAnchor).to.deep.equal({
+      path: 'main.tex',
+      startLine: 1,
+      matchedText: 'hello',
+    })
+  })
+})
+
+describe('web_fetch URLs fetched without asking', function () {
+  const fetchOf = (url, knownUrls) =>
+    decide('acceptEdits', 'web_fetch', {}, { args: { url }, knownUrls })
+
+  it('trusts the whole host of a URL the user typed', function () {
+    const known = new Set()
+    rememberUrls(known, 'read https://arxiv.org/abs/2401.00001 please', {
+      hosts: true,
+    })
+    expect(fetchOf('https://arxiv.org/abs/2401.00001', known)).to.equal('allow')
+    expect(fetchOf('https://arxiv.org/pdf/2401.00001', known)).to.equal('allow')
+  })
+
+  it('trusts only the exact URL a search returned, not its host', function () {
+    const known = new Set()
+    rememberUrls(
+      known,
+      JSON.stringify({ results: [{ url: 'https://attacker.example/page' }] })
+    )
+    expect(fetchOf('https://attacker.example/page', known)).to.equal('allow')
+    expect(
+      fetchOf('https://attacker.example/?d=secret-project-text', known)
+    ).to.equal('ask')
+  })
+
+  it('asks for a URL nobody mentioned', function () {
+    expect(fetchOf('https://elsewhere.example/', new Set())).to.equal('ask')
   })
 })

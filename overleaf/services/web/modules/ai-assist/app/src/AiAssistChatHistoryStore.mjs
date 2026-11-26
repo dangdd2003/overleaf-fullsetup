@@ -450,16 +450,158 @@ function summaryOf(chat) {
   }
 }
 
-async function writeJsonAtomic(file, data) {
+/** Write-then-rename so a crash or a concurrent reader never sees a truncated file. */
+async function writeFileAtomic(file, content) {
   await fs.mkdir(Path.dirname(file), { recursive: true })
-  // Write-then-rename so a crash mid-write never leaves a truncated file.
   const tmp = `${file}.${crypto.randomBytes(6).toString('hex')}.tmp`
-  await fs.writeFile(tmp, JSON.stringify(data, null, 2))
-  await fs.rename(tmp, file)
+  try {
+    await fs.writeFile(tmp, content)
+    await fs.rename(tmp, file)
+  } catch (err) {
+    await fs.rm(tmp, { force: true }).catch(() => {})
+    throw err
+  }
 }
 
-async function writeChat(file, chat) {
-  await writeJsonAtomic(file, chat)
+async function writeJsonAtomic(file, data) {
+  await writeFileAtomic(file, JSON.stringify(data, null, 2))
+}
+
+/** Writes a chat file (its serialized content) and keeps the user's stored-bytes count in step. */
+async function writeChat(file, content, userId, projectId, chatId) {
+  await writeFileAtomic(file, content)
+  recordChatBytes(userId, projectId, chatId, Buffer.byteLength(content))
+}
+
+/**
+ * Bytes of chat files a user keeps across all their projects. A save that
+ * would take the user past it is refused, so one user cannot fill the disk.
+ */
+export const MAX_CHAT_BYTES_PER_USER = 512 * 1024 * 1024
+/**
+ * How long a user's byte count is trusted before the files are counted again.
+ * Other web processes write the same files, so their saves reach this count
+ * only through a rescan.
+ */
+const USAGE_TTL_MS = 5 * 60 * 1000
+
+export class ChatQuotaError extends Error {
+  constructor() {
+    super('chat history quota exceeded')
+    this.code = 'QUOTA_EXCEEDED'
+  }
+}
+
+/** baseDir + userId → { bytes, sizes: Map<'projectId/chatId', bytes>, scannedAt } */
+const MAX_USAGE_USERS = 1000
+const usageByUser = new Map()
+/** Scans in progress, so concurrent saves share one count to reserve from. */
+const usageScans = new Map()
+/** In-flight write reservations so a TTL rescan cannot zero out concurrent writes. */
+const inFlightSizesByUser = new Map()
+
+function rememberUsage(cacheKey, usage) {
+  if (usageByUser.has(cacheKey)) usageByUser.delete(cacheKey)
+  while (usageByUser.size >= MAX_USAGE_USERS) {
+    usageByUser.delete(usageByUser.keys().next().value)
+  }
+  usageByUser.set(cacheKey, usage)
+}
+
+function usageKey(projectId, chatId) {
+  return `${projectId}/${chatId}`
+}
+
+/** The count belongs to one data directory: a changed setting never reads another's. */
+function userUsageKey(userId) {
+  return `${baseDir()}|${String(userId)}`
+}
+
+function setInFlightBytes(userId, projectId, chatId, size) {
+  const cacheKey = userUsageKey(userId)
+  const key = usageKey(projectId, chatId)
+  if (size === null) {
+    const map = inFlightSizesByUser.get(cacheKey)
+    if (map) {
+      map.delete(key)
+      if (map.size === 0) inFlightSizesByUser.delete(cacheKey)
+    }
+    return
+  }
+  let map = inFlightSizesByUser.get(cacheKey)
+  if (!map) {
+    map = new Map()
+    inFlightSizesByUser.set(cacheKey, map)
+  }
+  map.set(key, size)
+}
+
+function recordChatBytes(userId, projectId, chatId, size) {
+  const cacheKey = userUsageKey(userId)
+  const usage = usageByUser.get(cacheKey)
+  if (!usage) return
+  const key = usageKey(projectId, chatId)
+  usage.bytes += size - (usage.sizes.get(key) ?? 0)
+  usage.sizes.set(key, size)
+}
+
+/** The user's stored bytes: counted from the files once, then kept up to date by the writes. */
+async function usageOf(userId) {
+  const cacheKey = userUsageKey(userId)
+  const cached = usageByUser.get(cacheKey)
+  if (cached && Date.now() - cached.scannedAt < USAGE_TTL_MS) {
+    rememberUsage(cacheKey, cached)
+    return cached
+  }
+  let scan = usageScans.get(cacheKey)
+  if (!scan) {
+    scan = scanUsage(userId, cacheKey).finally(() => usageScans.delete(cacheKey))
+    usageScans.set(cacheKey, scan)
+  }
+  return await scan
+}
+
+async function scanUsage(userId, cacheKey) {
+  const sizes = new Map()
+  let bytes = 0
+  for (const { dir, projectId } of await userChatDirs(userId)) {
+    for (const name of await chatFileNames(dir)) {
+      const stat = await fs.lstat(Path.join(dir, name)).catch(() => null)
+      if (!stat?.isFile()) continue
+      sizes.set(usageKey(projectId, name.slice(0, -'.json'.length)), stat.size)
+      bytes += stat.size
+    }
+  }
+  const inFlight = inFlightSizesByUser.get(cacheKey)
+  if (inFlight) {
+    for (const [k, pendingSize] of inFlight) {
+      const prev = sizes.get(k) ?? 0
+      if (pendingSize > prev) {
+        bytes += pendingSize - prev
+        sizes.set(k, pendingSize)
+      }
+    }
+  }
+  const usage = { bytes, sizes, scannedAt: Date.now() }
+  rememberUsage(cacheKey, usage)
+  return usage
+}
+
+/** Drops the counted bytes of a user's chats (all of them, or one project's). */
+function forgetUsage(userId, projectId = null) {
+  const cacheKey = userUsageKey(userId)
+  const usage = usageByUser.get(cacheKey)
+  if (!usage) return
+  if (!projectId) {
+    usageByUser.delete(cacheKey)
+    return
+  }
+  for (const [key, size] of usage.sizes) {
+    if (key.startsWith(`${projectId}/`)) {
+      usage.bytes -= size
+      usage.sizes.delete(key)
+    }
+  }
 }
 
 async function readChat(file) {
@@ -501,12 +643,12 @@ const INDEX_READ_CONCURRENCY = 8
 async function rebuildIndex(dir) {
   // A few at a time: a project with many chats must not open them all at once
   const names = await chatFileNames(dir)
-  const chats = {}
+  const chats = Object.create(null)
   const loaded = await mapWithLimit(names, INDEX_READ_CONCURRENCY, name =>
     readChat(Path.join(dir, name)).catch(() => null)
   )
   for (const chat of loaded) {
-    if (chat?.id) chats[chat.id] = summaryOf(chat)
+    if (chat?.id && isValidChatId(chat.id)) chats[chat.id] = summaryOf(chat)
   }
   return { version: 1, chats }
 }
@@ -531,10 +673,20 @@ async function indexFor(dir) {
 
 /** Sets (or, with a null summary, removes) one chat's entry. Call under the directory's lock. */
 async function setIndexEntry(dir, id, summary) {
-  const index = (await readIndexFile(dir)) ?? (await rebuildIndex(dir))
-  if (summary) index.chats[id] = summary
-  else delete index.chats[id]
-  await writeJsonAtomic(Path.join(dir, INDEX_FILE), index)
+  const existing = await readIndexFile(dir)
+  if (!summary && !existing) {
+    const names = await chatFileNames(dir)
+    if (names.length === 0) return
+  }
+  const index = existing ?? (await rebuildIndex(dir))
+  const chats = Object.assign(Object.create(null), index.chats || {})
+  if (summary) chats[id] = summary
+  else delete chats[id]
+  if (!summary && Object.keys(chats).length === 0) {
+    await fs.rm(Path.join(dir, INDEX_FILE), { force: true }).catch(() => {})
+    return
+  }
+  await writeJsonAtomic(Path.join(dir, INDEX_FILE), { ...index, chats })
 }
 
 function newestFirst(a, b) {
@@ -585,24 +737,62 @@ async function listChatPage(
   }
 }
 
-/** Every chat of the user, not only the one project's: for the per-user cap. */
-async function userChatDirs(userId) {
-  let names
+/**
+ * The chat directories whose names match `pattern` (group 1: project id,
+ * group 2: user id). Symlinks are skipped, never followed out of the data dir.
+ */
+async function chatDirsMatching(pattern) {
+  let entries
   try {
-    names = await fs.readdir(baseDir())
+    entries = await fs.readdir(baseDir(), { withFileTypes: true })
   } catch (err) {
     if (err.code === 'ENOENT') return []
     throw err
   }
-  if (!OBJECT_ID.test(String(userId))) return []
-  const ownDir = new RegExp(`^([0-9a-f]{24})-${userId}$`, 'i')
-  return names
-    .map(name => ({ name, match: ownDir.exec(name) }))
-    .filter(({ match }) => match)
-    .map(({ name, match }) => ({
-      dir: Path.join(baseDir(), name),
+  const dirs = []
+  for (const entry of entries) {
+    const match = pattern.exec(entry.name)
+    if (!match || !entry.isDirectory()) continue
+    dirs.push({
+      dir: Path.join(baseDir(), entry.name),
       projectId: match[1],
-    }))
+      userId: match[2],
+    })
+  }
+  return dirs
+}
+
+/** Every chat of the user, not only the one project's: for the per-user cap. */
+async function userChatDirs(userId) {
+  if (!OBJECT_ID.test(String(userId))) return []
+  return chatDirsMatching(new RegExp(`^([0-9a-f]{24})-(${userId})$`, 'i'))
+}
+
+/**
+ * Removes whole chat directories, each under its lock so a save landing on it
+ * finishes first. Removing an absent directory is not an error.
+ */
+async function removeChatDirs(dirs) {
+  for (const { dir } of dirs) {
+    await withDirLock(dir, () => fs.rm(dir, { recursive: true, force: true }))
+  }
+}
+
+/** Deletes every chat a user has, in all their projects. Safe to repeat. */
+export async function deleteUserChats(userId) {
+  if (!OBJECT_ID.test(String(userId))) throw new Error('invalid user id')
+  await removeChatDirs(await userChatDirs(userId))
+  forgetUsage(userId)
+}
+
+/** Deletes every chat of a project, of every user. Safe to repeat. */
+export async function deleteProjectChats(projectId) {
+  if (!OBJECT_ID.test(String(projectId))) throw new Error('invalid project id')
+  const dirs = await chatDirsMatching(
+    new RegExp(`^(${projectId})-([0-9a-f]{24})$`, 'i')
+  )
+  await removeChatDirs(dirs)
+  for (const { userId } of dirs) forgetUsage(userId, projectId)
 }
 
 /**
@@ -711,7 +901,29 @@ async function saveChat(
       stats: finalStats,
       transcript,
     }
-    await writeChat(file, chat)
+    // Refused only when the save grows the user's storage past the quota;
+    // a save that shrinks a chat is always let through
+    const content = JSON.stringify(chat, null, 2)
+    const usage = await usageOf(userId)
+    const key = usageKey(String(projectId), chatId)
+    const before = usage.sizes.get(key) ?? 0
+    const after = Buffer.byteLength(content)
+    const quota = Settings.aiAssist?.maxChatBytesPerUser ?? MAX_CHAT_BYTES_PER_USER
+    if (after > before && usage.bytes - before + after > quota) {
+      throw new ChatQuotaError()
+    }
+    // Reserved before the write, with no await since the check, so a
+    // concurrent save of another chat by this user counts these bytes
+    setInFlightBytes(userId, String(projectId), chatId, after)
+    recordChatBytes(userId, String(projectId), chatId, after)
+    try {
+      await writeChat(file, content, userId, String(projectId), chatId)
+    } catch (err) {
+      recordChatBytes(userId, String(projectId), chatId, before)
+      throw err
+    } finally {
+      setInFlightBytes(userId, String(projectId), chatId, null)
+    }
     const summary = summaryOf(chat)
     await setIndexEntry(dir, chatId, summary)
     const { transcript: _omit, ...rest } = chat
@@ -755,7 +967,7 @@ async function saveChatTitle(
     existing.titleGenerated =
       Boolean(isGenerated) || Boolean(existing.titleGenerated)
     existing.updatedAt = Date.now()
-    await writeChat(file, existing)
+    await writeChat(file, JSON.stringify(existing, null, 2), userId, String(projectId), chatId)
     await setIndexEntry(dir, chatId, summaryOf(existing))
     const { transcript: _omit, ...summary } = existing
     const transcript = Array.isArray(existing.transcript)
@@ -798,7 +1010,7 @@ export async function truncateChat(
       durationMs: totalDuration(chat.transcript),
     }
 
-    await writeChat(file, chat)
+    await writeChat(file, JSON.stringify(chat, null, 2), userId, String(projectId), chatId)
     await setIndexEntry(dir, chatId, summaryOf(chat))
     return {
       version: chat.version || 2,
@@ -815,6 +1027,12 @@ async function deleteChat(projectId, userId, chatId) {
   await withDirLock(dir, async () => {
     await fs.rm(file, { force: true })
     await setIndexEntry(dir, chatId, null)
+    const usage = usageByUser.get(userUsageKey(userId))
+    const key = usageKey(String(projectId), chatId)
+    if (usage) {
+      usage.bytes -= usage.sizes.get(key) ?? 0
+      usage.sizes.delete(key)
+    }
   })
   try {
     await deleteChatCheckpoints(projectId, userId, chatId)
@@ -829,6 +1047,8 @@ async function listChats(projectId, userId) {
 
 export default {
   listChats,
+  deleteUserChats,
+  deleteProjectChats,
   listChatPage,
   getChat,
   saveChat,

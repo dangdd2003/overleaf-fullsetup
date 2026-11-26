@@ -37,6 +37,9 @@ class FakeEventSource {
 
   close() {}
 
+  // The run client listens for heartbeats on the stream; the fake has none to send
+  addEventListener() {}
+
   emit(event: Record<string, unknown>) {
     act(() => {
       this.onmessage?.({

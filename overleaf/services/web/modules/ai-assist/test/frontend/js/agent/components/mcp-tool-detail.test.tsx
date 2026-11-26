@@ -32,17 +32,17 @@ describe('connector tool cards', function () {
     it('names the verb, the server and the argument summary', function () {
       const summary = summarise(mcpCall(), fakeT)
       expect(summary).to.deep.equal({
-        action: 'Called search_issues',
+        action: 'Search issues',
         target: 'Github',
         meta: 'overleaf latex',
       })
     })
 
-    it('shows the server while the call runs', function () {
+    it('names the tool and the server while the call runs', function () {
       const pending = mcpCall()
       delete pending.result
       const summary = summarise(pending, fakeT)
-      expect(summary.action).to.equal('Running…')
+      expect(summary.action).to.equal('Search issues')
       expect(summary.target).to.equal('Github')
     })
 
@@ -50,7 +50,7 @@ describe('connector tool cards', function () {
       const { container } = render(
         <ToolCallSummaryLine call={mcpCall() as any} />
       )
-      expect(container.textContent).to.contain('Called search_issues')
+      expect(container.textContent).to.contain('Search issues')
       expect(container.textContent).to.contain('Github')
       expect(container.textContent).to.contain('overleaf latex')
     })
@@ -107,6 +107,24 @@ describe('connector tool cards', function () {
       )
       expect(container.textContent).to.contain('"title": "Fix"')
       expect(container.textContent).to.contain('"open": true')
+    })
+
+    it('lists the pages of a search-like JSON result as web rows', function () {
+      const body = JSON.stringify({
+        search_id: 's1',
+        results: [
+          { url: 'https://example.com/a', title: 'Page A', excerpts: ['x'] },
+          { url: 'https://example.org/b', title: 'Page B' },
+        ],
+      })
+      const { container } = render(
+        <ToolCallDetailView call={mcpCall({ result: { result: body } }) as any} />
+      )
+      const rows = container.querySelectorAll('.ai-assist-mcp-links .ai-assist-web-row')
+      expect(rows).to.have.length(2)
+      expect(rows[0].textContent).to.contain('Page A')
+      expect(rows[0].getAttribute('href')).to.equal('https://example.com/a')
+      expect(container.textContent).to.contain('2 pages')
     })
 
     it('takes the paging header and trailer off a long result into a meta line', function () {

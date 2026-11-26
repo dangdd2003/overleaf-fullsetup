@@ -25,6 +25,7 @@ import { documentIndex } from "./web-fetch/doc-index.mjs";
 import { findPassages } from "./web-fetch/find.mjs";
 import { REQUEST_TIMEOUT_MS, fetchPublicUrl } from "./web-fetch/transport.mjs";
 import { WebFetcher } from "./web-fetch/WebFetcher.mjs";
+import { readLimiter, serverSearchQuota } from "./web-fetch/limits.mjs";
 import { sharedBrowserRoute } from "./web-fetch/routes/browser.mjs";
 import {
   EXA_API_BASE,
@@ -198,6 +199,104 @@ const RECENCY_VALUES = ["day", "week", "month", "year"];
  * the public addresses they are.
  */
 const endpointFetch = (url, init = {}) => connectorFetch(url, init);
+const serverEndpointFetch = (url, init = {}) =>
+  connectorFetch(url, { ...init, allowAdminEndpoint: true });
+
+const MASKED_WEB_KEY = "••••••••";
+
+function normalizedWebUrlsForBinding(providerName, provider) {
+  if (!provider || typeof provider !== "object") return [];
+  const raw = [];
+  if (Array.isArray(provider.serverUrls)) raw.push(...provider.serverUrls);
+  if (Array.isArray(provider.baseUrls)) raw.push(...provider.baseUrls);
+  if (typeof provider.baseUrl === "string" && provider.baseUrl.trim()) {
+    raw.push(provider.baseUrl);
+  }
+  const normalize =
+    providerName === "searxng"
+      ? normalizeSearxngBaseUrl
+      : providerName === "firecrawlSelfHosted"
+        ? normalizeFirecrawlBaseUrl
+        : (u) => (typeof u === "string" ? u.trim().replace(/\/+$/, "") : "");
+  return raw
+    .map((u) => {
+      try {
+        return normalize(u);
+      } catch {
+        return typeof u === "string" ? u.trim().replace(/\/+$/, "") : "";
+      }
+    })
+    .filter(Boolean);
+}
+
+/**
+ * Replaces masked ('••••••••') web search secrets with the user's stored ones,
+ * binding URL-configured providers (MCP, etc.) to their stored server URLs so
+ * a request cannot redirect a stored Bearer token or API key to an attacker URL.
+ */
+export function bindStoredWebSearchCredentials(
+  clientSettings,
+  storedWebSearch,
+) {
+  if (!clientSettings || typeof clientSettings !== "object") return clientSettings;
+  if (clientSettings.sourceMode !== "custom") return clientSettings;
+  const reqProviders = clientSettings.providers;
+  if (!reqProviders || Object.keys(reqProviders).length === 0) {
+    return storedWebSearch || clientSettings;
+  }
+  if (!storedWebSearch?.providers) return clientSettings;
+
+  const nextProviders = { ...reqProviders };
+  for (const [name, rawP] of Object.entries(reqProviders)) {
+    if (!rawP || typeof rawP !== "object") continue;
+    const storedP = Object.hasOwn(storedWebSearch.providers, name)
+      ? storedWebSearch.providers[name]
+      : null;
+    if (!storedP) continue;
+
+    const p = { ...rawP };
+    const hasMaskedBearer = p.bearerToken === MASKED_WEB_KEY;
+    const hasMaskedApiKey =
+      Array.isArray(p.apiKeys) && p.apiKeys.includes(MASKED_WEB_KEY);
+    const emptyApiKeys =
+      Array.isArray(p.apiKeys) &&
+      p.apiKeys.length === 0 &&
+      Array.isArray(storedP.apiKeys) &&
+      storedP.apiKeys.length > 0;
+
+    if (hasMaskedBearer || hasMaskedApiKey || emptyApiKeys) {
+      const reqUrls = normalizedWebUrlsForBinding(name, p);
+      const storedUrls = new Set(normalizedWebUrlsForBinding(name, storedP));
+      if (
+        reqUrls.length > 0 &&
+        storedUrls.size > 0 &&
+        reqUrls.some((u) => !storedUrls.has(u))
+      ) {
+        throw new ProviderError(
+          "The saved web search credentials belong to another server URL. Enter them again.",
+          { code: "providerKeyMismatch", status: 400 },
+        );
+      }
+    }
+
+    if (Array.isArray(p.apiKeys)) {
+      p.apiKeys = p.apiKeys
+        .map((k, idx) =>
+          k === MASKED_WEB_KEY ? (storedP.apiKeys?.[idx] ?? "") : k,
+        )
+        .filter((k) => typeof k === "string" && k.trim());
+      if (p.apiKeys.length === 0 && storedP.apiKeys?.length) {
+        p.apiKeys = storedP.apiKeys;
+      }
+    }
+    if (p.bearerToken === MASKED_WEB_KEY) {
+      p.bearerToken = storedP.bearerToken || "";
+    }
+    nextProviders[name] = p;
+  }
+
+  return { ...clientSettings, providers: nextProviders };
+}
 
 /** The most results a SearXNG instance's answer keeps. */
 const SEARXNG_MAX_RESULTS = 100;
@@ -1660,6 +1759,7 @@ export class AiAssistWebTools {
       contextWindow,
       runJob,
       prefetch = 0,
+      allowAdminEndpoint = settings === Settings.aiAssist?.serverWebSearch,
     } = {},
   ) {
     this.settings = settings;
@@ -1668,7 +1768,10 @@ export class AiAssistWebTools {
     this.prefetch = Math.max(0, Math.floor(Number(prefetch) || 0));
     // Extraction-worker jobs, such as indexing a long document
     this.runJob = runJob;
-    this.fetchFn = fetchFn;
+    this.fetchFn =
+      fetchFn === endpointFetch && allowAdminEndpoint
+        ? serverEndpointFetch
+        : fetchFn;
     this.fetchPage = fetchPage;
     this.cacheOwner = cacheOwner;
     // Pages are cut per run, for the model it serves
@@ -1872,6 +1975,11 @@ export class AiAssistWebTools {
     return structuredClone(await pending);
   }
 
+  /** True when the searches run on the instance's own keys (server mode). */
+  _usesServerKeys() {
+    return Boolean(this.settings) && this.settings === Settings.aiAssist?.serverWebSearch;
+  }
+
   async search(args, { signal, useCache = true, cacheTextKey } = {}) {
     const query = collapse(typeof args?.query === "string" ? args.query : "");
     if (!query) return { error: "web_search needs a query." };
@@ -1912,6 +2020,14 @@ export class AiAssistWebTools {
     let providerUsed = this.settings.type || "searxng";
 
     if (!found) {
+      // The instance's own search keys are spent by whoever searches, so a
+      // user who runs many searches is stopped before the keys are used
+      if (this._usesServerKeys() && !serverSearchQuota.take(this.cacheOwner)) {
+        throw webError(
+          "The instance's web search quota for your account is used up for now. Read pages with web_fetch, or try web_search again later.",
+          { kind: "network" },
+        );
+      }
       const plan = this.rotator.plan("search");
       const errors = [];
       let zeroResultAnswer = null;
@@ -2050,7 +2166,15 @@ export class AiAssistWebTools {
     for (const result of results
       .filter((result) => !result.cached)
       .slice(0, this.prefetch)) {
-      this.fetcher.read(result.url, { signal }).catch(() => {});
+      if (!readLimiter._canStart?.(this.cacheOwner, 0)) break;
+      readLimiter
+        .acquire(this.cacheOwner, { signal })
+        .then((lease) =>
+          this.fetcher
+            .read(result.url, { signal })
+            .finally(() => lease.release()),
+        )
+        .catch(() => {});
     }
   }
 
@@ -2073,16 +2197,25 @@ export class AiAssistWebTools {
     }
     url.hash = "";
 
-    const doc = await this.fetcher.read(url.toString(), { signal });
+    // Reads and their extraction share the per-user and process-wide places:
+    // a user's parallel calls, or a busy process, wait here instead of piling up
+    const lease = await readLimiter.acquire(this.cacheOwner, { signal });
+    let doc;
+    let index;
+    try {
+      doc = await this.fetcher.read(url.toString(), { signal });
+      // A cached document serves any model: its pages are cut for this one.
+      // A long document is indexed once, so paging and find stay fast at any size.
+      index = await documentIndex(doc, this.pageChars, {
+        runJob: this.runJob,
+      });
+    } finally {
+      lease.release();
+    }
     const source = this._source(url.toString(), doc);
     // A redirect lands on another address for the same page
     if (!this.sources.has(sourceKey(doc.url)))
       this.sources.set(sourceKey(doc.url), source);
-    // A cached document serves any model: its pages are cut for this one.
-    // A long document is indexed once, so paging and find stay fast at any size.
-    const index = await documentIndex(doc, this.pageChars, {
-      runJob: this.runJob,
-    });
     const pages = index.map.starts;
     const totalPages = pages.length;
     const base = {

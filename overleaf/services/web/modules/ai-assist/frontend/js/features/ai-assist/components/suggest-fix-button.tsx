@@ -7,6 +7,7 @@ import OLButton from '@/shared/components/ol/ol-button'
 import useEventListener from '@/shared/hooks/use-event-listener'
 import { AiAssistant } from '../assistant'
 import { isFixableLevel } from '../log-entry-levels'
+import { markPendingSuggestFix } from '../agent/suggest-fix-pending'
 import '../../../../stylesheets/ai-assist.scss'
 
 /**
@@ -101,6 +102,7 @@ export default function SuggestFixButton({
         toggle.click()
       }
 
+      if (entryId) markPendingSuggestFix(entryId)
       window.dispatchEvent(
         new CustomEvent('aiAssist:suggestFix', {
           detail: { entryId },

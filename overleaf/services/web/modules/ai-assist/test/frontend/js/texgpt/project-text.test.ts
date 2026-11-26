@@ -90,7 +90,10 @@ describe('texgpt: project text', function () {
         'ch.tex'
       )
     )
-    expect(keys.citeKeys).to.deep.equal(['b2', 'a1', 'c3'])
+    // The cited key leads; the rest are every defined key, in no fixed order
+    // (.bib and \bibitem keys are read in document order)
+    expect(keys.citeKeys[0]).to.equal('b2')
+    expect([...keys.citeKeys].sort()).to.deep.equal(['a1', 'b2', 'c3'])
     expect(keys.labels).to.deep.equal(['fig:a', 'sec:intro'])
   })
 

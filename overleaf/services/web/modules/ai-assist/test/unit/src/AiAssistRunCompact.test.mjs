@@ -47,6 +47,12 @@ function compactEntry(id, extra = {}) {
   }
 }
 
+// startRun resolves once the run record exists; wait for the loop to finish
+async function startAndWait(manager, args) {
+  await manager.startRun(args)
+  await manager.waitForRun(args.runId)
+}
+
 describe('AiAssist compaction on the server', function () {
   describe('toAgentMessages after a compaction', function () {
     it('starts from the compaction, then the entries after it, without a tail', function () {
@@ -295,7 +301,10 @@ describe('AiAssist compaction on the server', function () {
       }
       controller = new AiAssistRunController({
         manager: mockManager,
-        store: {},
+        store: {
+          getActiveRuns: sinon.stub().resolves([]),
+          getActiveRunsForUser: sinon.stub().resolves([]),
+        },
         subscriber: {},
         authorization: {},
       })
@@ -416,6 +425,7 @@ describe('AiAssist compaction on the server', function () {
         }
       })
       manager = new AiAssistRunManager({
+        assertProjectAccess: async () => {},
         store: mockStore,
         tools: mockTools,
         clientFactory,
@@ -431,7 +441,7 @@ describe('AiAssist compaction on the server', function () {
     })
 
     const start = (extra = {}) =>
-      manager.startRun({
+      startAndWait(manager, {
         runId: 'run_compact',
         projectId: PROJECT,
         userId: USER,

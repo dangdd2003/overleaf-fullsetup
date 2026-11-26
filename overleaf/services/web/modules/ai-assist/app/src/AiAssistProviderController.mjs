@@ -2,6 +2,7 @@ import logger from '@overleaf/logger'
 import Settings from '@overleaf/settings'
 import './ModuleSettings.mjs'
 import {
+  bindStoredApiKey,
   createProviderClient,
   normalizeProviderBaseUrl,
 } from './AiAssistProviders.mjs'
@@ -10,6 +11,7 @@ import defaultUserSettingsStore from './AiAssistUserSettingsStore.mjs'
 import { streamWithRetry } from './AiAssistRetry.mjs'
 import SessionManager from '../../../../app/src/Features/Authentication/SessionManager.mjs'
 import {
+  bindStoredWebSearchCredentials,
   normalizeWebSearchSettings,
   testWebSearch,
 } from './AiAssistWebTools.mjs'
@@ -55,7 +57,8 @@ function httpStatusFor(err) {
   if (
     err?.code === 'invalidProviderUrl' ||
     err?.code === 'restrictedProviderUrl' ||
-    err?.code === 'invalidWebSearchSettings'
+    err?.code === 'invalidWebSearchSettings' ||
+    err?.code === 'providerKeyMismatch'
   ) {
     return 400
   }
@@ -74,6 +77,37 @@ function abortOnDisconnect(req, res) {
 
 /** What the editor's text-only route passes on: no tool calls, no thinking. */
 const EDITOR_CHUNKS = new Set(['text', 'stop'])
+
+// Editor completions are short and shown inline: their limits are tight
+const EDITOR_MAX_TOKENS = 4096
+const EDITOR_CONNECT_MS = 20000
+const EDITOR_IDLE_MS = 30000
+const EDITOR_TOTAL_MS = 90000
+const EDITOR_MAX_CONCURRENT = 4
+
+// Editor streams in progress, per user, in this process
+const editorStreamsByUser = new Map()
+
+/** Whether settings the page sent describe the same provider as a stored slot. */
+function sameProvider(sent, stored) {
+  if (sent.type !== stored.type) return false
+  const base = s => normalizeProviderBaseUrl(s.type, s.baseUrl || s.baseURL) || ''
+  if (base(sent) !== base(stored)) return false
+  return !sent.model || !stored.model || sent.model === stored.model
+}
+
+/** A slot for one editor stream, or null when the user already has the maximum. */
+function acquireEditorStream(userId) {
+  const key = userId || ''
+  const count = editorStreamsByUser.get(key) ?? 0
+  if (count >= EDITOR_MAX_CONCURRENT) return null
+  editorStreamsByUser.set(key, count + 1)
+  return () => {
+    const left = (editorStreamsByUser.get(key) ?? 1) - 1
+    if (left > 0) editorStreamsByUser.set(key, left)
+    else editorStreamsByUser.delete(key)
+  }
+}
 
 // The retry policies a page may ask the relay for; anything else gets the default
 const RELAY_RETRY_POLICIES = new Set(['interactive', 'background', 'inline'])
@@ -101,30 +135,20 @@ export class AiAssistProviderController {
     this.userSettingsStore = userSettingsStore
   }
 
-  async _resolveProviderSettings(req, field = 'providerSettings') {
-    let providerSettings = req.body?.[field]
-    const userId = req.session ? SessionManager.getLoggedInUserId(req.session) : null
-    const needsStored =
-      !providerSettings ||
-      !providerSettings.type ||
-      !providerSettings.apiKey ||
-      isMaskedKey(providerSettings.apiKey)
-    if (userId && needsStored) {
-      try {
-        const internal = await this.userSettingsStore.getInternalUserSettings(userId)
-        const slot = req.body?.slot || providerSettings?.slot || (field === 'fallbackProviderSettings' || field === 'fastProviderSettings'
-          ? 'fastProvider'
-          : 'provider')
-        const stored = internal[slot]
-        if (stored?.type) {
-          if (!providerSettings || !providerSettings.type) {
-            providerSettings = stored
-          } else if (!providerSettings.apiKey || isMaskedKey(providerSettings.apiKey)) {
-            providerSettings = { ...providerSettings, apiKey: stored.apiKey }
-          }
-        }
-      } catch {}
+  /** The slot a request's settings field stands for when it names none. */
+  _slotFor(req, field, requested) {
+    if (requested?.slot) return requested.slot
+    if (
+      field === 'fallbackProviderSettings' ||
+      field === 'fastProviderSettings'
+    ) {
+      return 'fastProvider'
     }
+    return req.body?.slot || 'provider'
+  }
+
+  /** The settings with the base URL normalized, or null without a provider type. */
+  _finalizeSettings(providerSettings) {
     if (
       !providerSettings ||
       typeof providerSettings !== 'object' ||
@@ -140,6 +164,72 @@ export class AiAssistProviderController {
     }
   }
 
+  async _resolveProviderSettings(req, field = 'providerSettings') {
+    const requested = req.body?.[field]
+    const userId = req.session ? SessionManager.getLoggedInUserId(req.session) : null
+    const needsStored =
+      !requested ||
+      !requested.type ||
+      !requested.apiKey ||
+      isMaskedKey(requested.apiKey)
+    let stored = null
+    if (userId && needsStored) {
+      try {
+        const internal = await this.userSettingsStore.getInternalUserSettings(userId)
+        stored = internal[this._slotFor(req, field, requested)] ?? null
+      } catch {}
+    }
+    let providerSettings
+    if (!requested || !requested.type) {
+      // Nothing usable was sent: the stored slot stands for the whole provider
+      providerSettings = stored?.type ? stored : null
+    } else if (needsStored) {
+      // A stored key is sent only to the provider and address it was saved for
+      providerSettings = bindStoredApiKey(requested, stored)
+    } else {
+      providerSettings = requested
+    }
+    return this._finalizeSettings(providerSettings)
+  }
+
+  /**
+   * The editor's provider: the stored slot alone. Settings the page sends with
+   * an editor request are not used, so a page cannot pick the host or key.
+   */
+  async _storedProviderSettings(req, userId) {
+    if (!userId) return { primary: null, fallback: null }
+    try {
+      const internal = await this.userSettingsStore.getInternalUserSettings(userId)
+      const usable = slot =>
+        internal[slot]?.type ? this._finalizeSettings(internal[slot]) : null
+      // The page names the provider it wants by sending that slot's settings
+      // (fast model first, main model as fallback). Only the stored copy of the
+      // slot it matches is used, so the page picks a slot, never a host or key.
+      const slotOf = sent => {
+        if (!sent || typeof sent !== 'object') return null
+        if (sent.slot === 'fastProvider' || sent.slot === 'provider') {
+          return sent.slot
+        }
+        for (const slot of ['fastProvider', 'provider']) {
+          const stored = internal[slot]
+          if (stored?.type && sameProvider(sent, stored)) return slot
+        }
+        return null
+      }
+      const primarySlot =
+        (req.body?.slot === 'fastProvider' && 'fastProvider') ||
+        slotOf(req.body?.providerSettings) ||
+        'provider'
+      const fallbackSlot = slotOf(req.body?.fallbackProviderSettings)
+      const primary = usable(primarySlot)
+      const fallback =
+        fallbackSlot && fallbackSlot !== primarySlot ? usable(fallbackSlot) : null
+      return { primary, fallback }
+    } catch {
+      return { primary: null, fallback: null }
+    }
+  }
+
   /** One small search through the configured web search backend. */
   testWebSearch = async (req, res) => {
     let settings
@@ -152,31 +242,23 @@ export class AiAssistProviderController {
           Object.keys(clientSettings.providers).length === 0 ||
           Object.values(clientSettings.providers).some(
             p =>
-              (Array.isArray(p?.apiKeys) && p.apiKeys.includes(MASKED_KEY)) ||
-              isMaskedKey(p?.bearerToken)
+              p &&
+              typeof p === 'object' &&
+              ((Array.isArray(p.apiKeys) && p.apiKeys.includes(MASKED_KEY)) ||
+                (Array.isArray(p.apiKeys) && p.apiKeys.length === 0) ||
+                isMaskedKey(p.bearerToken))
           ))
       if (userId && needsStoredWebKeys) {
+        let internal = null
         try {
-          const internal = await this.userSettingsStore.getInternalUserSettings(userId)
-          if (internal.webSearch) {
-            if (!clientSettings || !clientSettings.providers || Object.keys(clientSettings.providers).length === 0) {
-              clientSettings = internal.webSearch
-            } else if (internal.webSearch.providers) {
-              for (const [name, p] of Object.entries(clientSettings.providers || {})) {
-                const storedP = internal.webSearch.providers[name]
-                if (storedP) {
-                  if (Array.isArray(p.apiKeys)) {
-                    p.apiKeys = p.apiKeys.map((k, idx) => isMaskedKey(k) ? (storedP.apiKeys?.[idx] || k) : k)
-                    if (p.apiKeys.length === 0 && storedP.apiKeys?.length) p.apiKeys = storedP.apiKeys
-                  }
-                  if (isMaskedKey(p.bearerToken) && storedP.bearerToken) {
-                    p.bearerToken = storedP.bearerToken
-                  }
-                }
-              }
-            }
-          }
+          internal = await this.userSettingsStore.getInternalUserSettings(userId)
         } catch {}
+        if (internal?.webSearch) {
+          clientSettings = bindStoredWebSearchCredentials(
+            clientSettings,
+            internal.webSearch
+          )
+        }
       }
 
       if (
@@ -224,7 +306,12 @@ export class AiAssistProviderController {
   }
 
   listModels = async (req, res) => {
-    const providerSettings = await this._resolveProviderSettings(req)
+    let providerSettings
+    try {
+      providerSettings = await this._resolveProviderSettings(req)
+    } catch (err) {
+      return res.status(httpStatusFor(err)).json({ error: errorPayload(err) })
+    }
     if (!providerSettings) return sendMissingProviderSettings(res)
     const controller = abortOnDisconnect(req, res)
     try {
@@ -242,7 +329,12 @@ export class AiAssistProviderController {
   }
 
   test = async (req, res) => {
-    const providerSettings = await this._resolveProviderSettings(req)
+    let providerSettings
+    try {
+      providerSettings = await this._resolveProviderSettings(req)
+    } catch (err) {
+      return res.status(httpStatusFor(err)).json({ error: errorPayload(err) })
+    }
     if (!providerSettings) return sendMissingProviderSettings(res)
     const controller = abortOnDisconnect(req, res)
     const startedAt = Date.now()
@@ -282,11 +374,25 @@ export class AiAssistProviderController {
    * dropped, so text in the document can never make one of these features
    * act beyond the editor, whatever it asks the model to do.
    */
-  editorText = (req, res) => this.relayChat(req, res, { tools: false })
+  editorText = (req, res) =>
+    this.relayChat(req, res, { tools: false, editor: true })
 
-  relayChat = async (req, res, { tools: toolsAllowed }) => {
-    const primarySettings = await this._resolveProviderSettings(req, 'providerSettings')
-    const fallbackSettings = await this._resolveProviderSettings(req, 'fallbackProviderSettings')
+  relayChat = async (req, res, { tools: toolsAllowed, editor = false }) => {
+    const userId = req.session ? SessionManager.getLoggedInUserId(req.session) : null
+    let primarySettings
+    let fallbackSettings = null
+    if (editor) {
+      const stored = await this._storedProviderSettings(req, userId)
+      primarySettings = stored.primary
+      fallbackSettings = stored.fallback
+    } else {
+      try {
+        primarySettings = await this._resolveProviderSettings(req, 'providerSettings')
+        fallbackSettings = await this._resolveProviderSettings(req, 'fallbackProviderSettings')
+      } catch (err) {
+        return res.status(httpStatusFor(err)).json({ error: errorPayload(err) })
+      }
+    }
     if (!primarySettings && !fallbackSettings) {
       return sendMissingProviderSettings(res)
     }
@@ -333,7 +439,27 @@ export class AiAssistProviderController {
       })
     }
 
+    const releaseEditorStream = editor ? acquireEditorStream(userId) : null
+    if (editor && !releaseEditorStream) {
+      return res.status(429).json({
+        error: errorPayload(
+          new ProviderError('Too many AI requests are running. Try again shortly.', {
+            code: 'providerBusy',
+            status: 429,
+          })
+        ),
+      })
+    }
+
     const controller = abortOnDisconnect(req, res)
+    // The editor's whole reply is bounded in time; the timer reports as a timeout
+    let timedOut = false
+    const totalTimer = editor
+      ? setTimeout(() => {
+          timedOut = true
+          controller.abort()
+        }, EDITOR_TOTAL_MS)
+      : null
     const write = openNdjson(res)
     let emittedAny = false
     let currentSettings = activePrimary
@@ -346,14 +472,25 @@ export class AiAssistProviderController {
 
     const tryStream = async settings => {
       currentSettings = settings
-      const client = this.clientFactory(settings)
+      const client = this.clientFactory(
+        editor
+          ? {
+              ...settings,
+              connectTimeoutMs: EDITOR_CONNECT_MS,
+              streamIdleTimeoutMs: EDITOR_IDLE_MS,
+            }
+          : settings
+      )
+      const maxTokens = editor
+        ? Math.min(Number(request.maxTokens) || EDITOR_MAX_TOKENS, EDITOR_MAX_TOKENS)
+        : request.maxTokens
       // A failure is retried only while nothing has reached the page yet
       const relayed = streamWithRetry(
         async function* () {
           for await (const chunk of client.streamChat({
             system: typeof request.system === 'string' ? request.system : '',
             messages: request.messages,
-            maxTokens: request.maxTokens,
+            maxTokens,
             contextWindow,
             tools: toolsAllowed ? tools : [],
             cacheHints: request.cacheHints,
@@ -396,7 +533,16 @@ export class AiAssistProviderController {
       }
       write({ type: 'done' })
     } catch (err) {
-      if (!controller.signal.aborted) {
+      if (timedOut) {
+        write({
+          type: 'error',
+          error: errorPayload(
+            new ProviderError('The provider took too long to answer.', {
+              code: 'providerTimeout',
+            })
+          ),
+        })
+      } else if (!controller.signal.aborted) {
         // A text-only model refusing the picture gets its own code: the
         // page tells the author to pick a vision model
         const error =
@@ -417,6 +563,8 @@ export class AiAssistProviderController {
         write({ type: 'error', error: errorPayload(error) })
       }
     } finally {
+      clearTimeout(totalTimer)
+      releaseEditorStream?.()
       if (!res.writableEnded) res.end()
     }
   }

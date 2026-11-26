@@ -33,7 +33,13 @@ function fakeResponse() {
   }
 }
 
-function handlerWith({ connector, loadError, fetchIconBytes, resolveOriginIcon, cache }) {
+function handlerWith({
+  connector,
+  loadError,
+  fetchIconBytes = sinon.stub().resolves(null),
+  resolveOriginIcon = sinon.stub().resolves({ icon: null, sure: true }),
+  cache,
+}) {
   const loadConnector = sinon.stub()
   if (loadError) loadConnector.rejects(loadError)
   else loadConnector.resolves(connector)
@@ -43,9 +49,8 @@ function handlerWith({ connector, loadError, fetchIconBytes, resolveOriginIcon, 
   })
   const handler = createConnectorIconHandler({
     loadConnector,
-    fetchIconBytes: fetchIconBytes || sinon.stub().resolves(null),
-    resolveOriginIcon:
-      resolveOriginIcon || sinon.stub().resolves({ icon: null, sure: true }),
+    fetchIconBytes,
+    resolveOriginIcon,
     sendIcon,
     cache: cache || new IconCache(),
   })

@@ -75,7 +75,8 @@ describe('AiAssistRunRouter', function () {
       const route = webRouter.post.args.find(
         call => call[0] === '/ai-assist/projects/:Project_id/web-tools/:name'
       )
-      expect(route).to.have.length(4)
+      // path, login, project read access, rate limit, handler
+      expect(route).to.have.length(5)
     } finally {
       Settings.aiAssist.webToolsEnabled = origWeb
       if (origEnv !== undefined) {

@@ -30,6 +30,9 @@ describe('AiAssistRunController', function () {
         .resolves([{ seq: 1, event: { type: 'text', text: 'hi' } }]),
       addWatcher: sinon.stub().resolves(1),
       removeWatcher: sinon.stub().resolves(0),
+      // Per-user run limits read the shared active-runs index
+      getActiveRuns: sinon.stub().resolves([]),
+      getActiveRunsForUser: sinon.stub().resolves([]),
     }
 
     fakeSubscriber = {
@@ -687,13 +690,47 @@ describe('AiAssistRunController', function () {
 
     await controller.streamRun(req, res)
     const listener = fakeSubscriber.listeners.get('ai-assist:run:run-1:channel')
-    listener(JSON.stringify({ seq: 5, event: { type: 'text', text: 'hi' } }))
+    listener(JSON.stringify({ seq: 1, event: { type: 'text', text: 'hi' } }))
 
     expect(
       res.write.calledWith(
-        `data: ${JSON.stringify({ seq: 5, event: { type: 'text', text: 'hi' } })}\n\n`
+        `data: ${JSON.stringify({ seq: 1, event: { type: 'text', text: 'hi' } })}\n\n`
       )
     ).to.be.true
+  })
+
+  it('replays stored events instead of skipping ahead when a live message has a gap', async function () {
+    mockStore.getEvents.resolves([])
+    const req = {
+      params: { Project_id: 'p1', runId: 'run-1' },
+      query: {},
+      session: { user: { _id: USER_ID } },
+      on: sinon.stub(),
+    }
+    const res = {
+      setHeader: sinon.stub(),
+      flushHeaders: sinon.stub(),
+      write: sinon.stub(),
+      end: sinon.stub(),
+    }
+
+    await controller.streamRun(req, res)
+    mockStore.getEvents.resetHistory()
+    mockStore.getEvents.resolves([
+      { seq: 1, event: { type: 'text', text: 'a' } },
+      { seq: 2, event: { type: 'text', text: 'b' } },
+    ])
+    const listener = fakeSubscriber.listeners.get('ai-assist:run:run-1:channel')
+    listener(JSON.stringify({ seq: 2, event: { type: 'text', text: 'b' } }))
+    await new Promise(resolve => setTimeout(resolve, 10))
+
+    expect(mockStore.getEvents.calledWith('run-1', 0)).to.be.true
+    const frames = res.write.args.map(([frame]) => frame)
+    expect(frames).to.include(
+      `data: ${JSON.stringify({ seq: 1, event: { type: 'text', text: 'a' } })}\n\n`
+    )
+    const seq2 = `data: ${JSON.stringify({ seq: 2, event: { type: 'text', text: 'b' } })}\n\n`
+    expect(frames.filter(frame => frame === seq2)).to.have.length(1)
   })
 
   it('accepts createRun with rich transcripts up to maxTranscriptBytes (e.g. 500KB)', async function () {

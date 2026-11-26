@@ -231,6 +231,16 @@ describe('read tools', function () {
     expect(matchesGlob('sections/one.tex', 'sections/*.tex')).to.equal(true)
   })
 
+  it('matches a pathological glob quickly', function () {
+    // A backtracking RegExp takes seconds on this; the matcher is linear
+    const path = 'a'.repeat(30)
+    const pattern = '*a'.repeat(8) + '*b'
+    const started = Date.now()
+    expect(matchesGlob(path, pattern)).to.equal(false)
+    expect(matchesGlob(path + 'b', pattern)).to.equal(true)
+    expect(Date.now() - started).to.be.lessThan(500)
+  })
+
   it('returns surrounding context lines', async function () {
     const { handle } = createFakeHandle({
       docs: { 'main.tex': 'before\nneedle\nafter' },

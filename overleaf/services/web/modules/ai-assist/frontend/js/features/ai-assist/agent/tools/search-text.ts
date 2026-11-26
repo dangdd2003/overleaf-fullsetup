@@ -1,31 +1,88 @@
 import { AgentTool } from './registry'
 import { MAX_SEARCH_HITS } from '../project-handle'
 
-const SPECIALS = /[.+^${}()|[\]\\]/g
+type GlobToken =
+  | { kind: 'text'; text: string }
+  | { kind: 'dirs' }
+  | { kind: 'any' }
+  | { kind: 'word' }
+  | { kind: 'char' }
 
 /**
- * Minimal glob matching: `*` stops at a slash, `**` crosses them.
+ * Minimal glob matching: `*` stops at a slash, `**` crosses them, `**\/` matches
+ * zero or more whole directories, `?` is one character that is not a slash.
  *
- * Deliberately not a dependency. The agent only ever needs `sections/*.tex`
- * shaped patterns, and a full glob library is a lot of bundle for that.
+ * Patterns come from the model, so this does not build a RegExp from them: a
+ * pattern with many stars makes a backtracking RegExp take exponential time on
+ * a path that almost matches. Instead each token moves the set of reachable
+ * positions in the path, which costs O(tokens x path length).
+ *
+ * Deliberately not a dependency. Same semantics as the server's
+ * modules/ai-assist/app/src/AiAssistGlob.mjs, which runs the same matching.
  */
 export function matchesGlob(path: string, pattern: string): boolean {
   const sanitized = String(pattern || '')
     .replace(/(?:\*\*\/)+/g, '**/')
     .replace(/\*{2,}/g, '**')
-  const source = sanitized
+  const tokens: GlobToken[] = sanitized
     .split(/(\*\*\/|\*\*|\*|\?)/)
     .filter(Boolean)
-    .map(token => {
-      if (token === '**/') return '(?:.*/)?'
-      if (token === '**') return '.*'
-      if (token === '*') return '[^/]*'
-      if (token === '?') return '[^/]'
-      return token.replace(SPECIALS, '\\$&')
+    .map((token): GlobToken => {
+      if (token === '**/') return { kind: 'dirs' }
+      if (token === '**') return { kind: 'any' }
+      if (token === '*') return { kind: 'word' }
+      if (token === '?') return { kind: 'char' }
+      return { kind: 'text', text: token }
     })
-    .join('')
 
-  return new RegExp(`^${source}$`).test(path)
+  const text = String(path)
+  const length = text.length
+  // reachable[i] is 1 when the tokens so far can match text[0, i)
+  let reachable = new Uint8Array(length + 1)
+  reachable[0] = 1
+  for (const token of tokens) {
+    const next = new Uint8Array(length + 1)
+    switch (token.kind) {
+      case 'text':
+        for (let i = 0; i <= length; i++) {
+          if (reachable[i] && text.startsWith(token.text, i)) {
+            next[i + token.text.length] = 1
+          }
+        }
+        break
+      case 'char':
+        for (let i = 0; i < length; i++) {
+          if (reachable[i] && text[i] !== '/') next[i + 1] = 1
+        }
+        break
+      case 'word':
+        // Zero or more characters, none of them a slash
+        next.set(reachable)
+        for (let i = 0; i < length; i++) {
+          if (next[i] && text[i] !== '/') next[i + 1] = 1
+        }
+        break
+      case 'any': {
+        // Zero or more characters of any kind
+        const first = reachable.indexOf(1)
+        if (first !== -1) next.fill(1, first)
+        break
+      }
+      case 'dirs': {
+        // Nothing, or anything that ends in a slash
+        next.set(reachable)
+        let started = false
+        for (let q = 1; q <= length; q++) {
+          if (reachable[q - 1]) started = true
+          if (started && text[q - 1] === '/') next[q] = 1
+        }
+        break
+      }
+    }
+    reachable = next
+    if (reachable.indexOf(1) === -1) return false
+  }
+  return reachable[length] === 1
 }
 
 export const searchTextTool: AgentTool = {

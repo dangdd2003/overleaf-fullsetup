@@ -20,7 +20,7 @@ import {
   forgetInlineSuggestionsPreferences,
   updateInlineSuggestionsPreferences,
 } from '../../../../frontend/js/features/ai-assist/inline-suggestion/preferences'
-import { completeAtCursor, THINKING_ALLOWANCE } from '../../../../frontend/js/features/ai-assist/completion/trigger'
+import { completeAtCursor } from '../../../../frontend/js/features/ai-assist/completion/trigger'
 import { COMPLETION_SYSTEM } from '../../../../frontend/js/features/ai-assist/completion/prompt'
 import { resetCompletionRate } from '../../../../frontend/js/features/ai-assist/completion/rate'
 
@@ -118,8 +118,8 @@ describe('completion: Shift+Space', function () {
     expect(body.request.system).to.equal(COMPLETION_SYSTEM)
     expect(body.request.messages[0].content).to.include(`<excerpt start="document">\nOur method${CURSOR}\n</excerpt>`)
     expect(body.request.messages[0].content).to.include('<task>')
-    // The kind's budget, and room for a reasoning model to think first
-    expect(body.request.maxTokens).to.equal(160 + THINKING_ALLOWANCE)
+    // The kind's budget alone: this model does not think before it answers
+    expect(body.request.maxTokens).to.equal(160)
     view.destroy()
   })
 
@@ -306,7 +306,7 @@ describe('completion: Shift+Space', function () {
     await waitFor(() => expect(view.state.field(suggestionField)?.status).to.equal('ready'))
     expect(view.state.field(suggestionField)!.text).to.equal(`\n${table}`)
     const body = sentBody(CHAT).request
-    expect(body.maxTokens).to.equal(700 + THINKING_ALLOWANCE)
+    expect(body.maxTokens).to.equal(700)
     expect(body.messages[0].content).to.include('announces a table')
     expect(body.messages[0].content).to.not.include('Never open \\begin{table}')
     view.destroy()

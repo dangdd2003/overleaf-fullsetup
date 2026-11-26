@@ -578,6 +578,7 @@ describe('AiAssistCompaction tail selection', () => {
       tailIndex: 4,
       tokens: selectTail(list, 0, 100000).tokens,
       turns: 3,
+      trimmed: false,
     })
   })
 
@@ -1338,3 +1339,183 @@ async function expectCode(promise, code) {
 function round(value) {
   return Math.round(value * 1000) / 1000
 }
+
+describe('AiAssistCompaction mid-run tail', () => {
+  const HUGE = 'z'.repeat(120000)
+
+  it('keeps the live request even when it is above the budget (midRun)', () => {
+    const list = [
+      user('u1', 'x'.repeat(10)),
+      assistant('a1', 'ok'),
+      user('u2', 'y'.repeat(4000), { contextText: HUGE }),
+      assistant('a2', 'working', [call('t1', 'read_file', {}, 'ok')]),
+    ]
+    expect(selectTail(list, 0, 1000).tailIndex).to.equal(null)
+    const mid = selectTail(list, 0, 1000, { midRun: true })
+    expect(mid.tailIndex).to.equal(2)
+    expect(mid.trimmed).to.equal(true)
+  })
+
+  it('does not trim the live request when it fits the budget', () => {
+    const list = [user('u1', 'hi'), assistant('a1', 'ok'), user('u2', 'now')]
+    const mid = selectTail(list, 0, 100000, { midRun: true })
+    expect(mid.tailIndex).to.equal(2)
+    expect(mid.trimmed).to.equal(false)
+  })
+
+  it('compacts the span before the live request and marks the context as dropped', async () => {
+    const transcript = [
+      ...longChat({ turns: 4, size: 6000 }),
+      user('live', `Now fix the table ${'q'.repeat(50)}`, { contextText: HUGE }),
+      assistant('live-a', 'Reading', [call('t9', 'read_file', { path: 'main.tex' }, 'content')]),
+    ]
+    const client = standardClient()
+    const entry = await compactConversation({
+      client,
+      transcript,
+      limits: WINDOW_LIMITS,
+      midRun: true,
+    })
+    expect(entry.tailFromId).to.equal('live')
+    expect(entry.tail).to.equal(true)
+    expect(entry.contextDropped).to.equal(true)
+    // The live request is not summarized: it is not in the summarized span
+    expect(client.calls[0].messages[0].content).to.not.include('Now fix the table')
+    const rendered = renderCompactionMessage(entry)
+    expect(rendered).to.include('follow verbatim after this block')
+    expect(rendered).to.include('attached editor context was dropped')
+  })
+
+  it('keeps the live request verbatim without an id by marking the tail with tail: true', async () => {
+    const transcript = [
+      ...longChat({ turns: 4, size: 6000 }),
+      { role: 'user', text: 'Now fix the table' },
+    ]
+    const entry = await compactConversation({
+      client: standardClient(),
+      transcript,
+      limits: WINDOW_LIMITS,
+      midRun: true,
+    })
+    expect(entry).to.not.have.property('tailFromId')
+    expect(entry.tail).to.equal(true)
+    expect(renderCompactionMessage(entry)).to.include('follow verbatim after this block')
+  })
+
+  it('keeps the default (not midRun) behaviour: no tail when the last turn is too big', async () => {
+    const transcript = [
+      ...longChat({ turns: 4, size: 6000 }),
+      user('live', 'Now fix', { contextText: HUGE }),
+    ]
+    const entry = await compactConversation({
+      client: standardClient(),
+      transcript,
+      limits: WINDOW_LIMITS,
+    })
+    expect(entry.tail).to.equal(false)
+    expect(entry).to.not.have.property('tailFromId')
+    expect(renderCompactionMessage(entry)).to.include('no message follows verbatim')
+  })
+})
+
+describe('AiAssistCompaction intro', () => {
+  const base = {
+    trigger: 'manual',
+    summary: '### Intent\n- Fix it.',
+    ledger: emptyLedger(),
+  }
+
+  it('says messages follow verbatim when a tail is kept', () => {
+    const text = renderCompactionMessage({ ...base, tail: true, tailFromId: 'u5' })
+    expect(text).to.include('the most recent messages follow verbatim after this block')
+  })
+
+  it('says no message follows and points at <current_work> when no tail is kept', () => {
+    const text = renderCompactionMessage({ ...base, tail: false })
+    expect(text).to.include('no message follows verbatim')
+    expect(text).to.include('<current_work>')
+    expect(text).to.not.include('follow verbatim after this block')
+  })
+
+  it('reads older entries that have tailFromId but no tail flag as having a tail', () => {
+    const text = renderCompactionMessage({ ...base, tailFromId: 'u5' })
+    expect(text).to.include('follow verbatim after this block')
+  })
+})
+
+describe('AiAssistCompaction cancellation and retry policy', () => {
+  it('makes no model request when the signal is already aborted', async () => {
+    const client = standardClient()
+    const controller = new AbortController()
+    controller.abort()
+    let error = null
+    try {
+      await compactConversation({
+        client,
+        transcript: longChat({ turns: 6, size: 6000 }),
+        limits: WINDOW_LIMITS,
+        signal: controller.signal,
+      })
+    } catch (err) {
+      error = err
+    }
+    expect(error?.name).to.equal('AbortError')
+    expect(client.calls).to.have.length(0)
+  })
+
+  it('stops after an abort: no further summary or repair request', async () => {
+    const controller = new AbortController()
+    const client = fakeClient(() => {
+      controller.abort()
+      return SUMMARY
+    })
+    let error = null
+    try {
+      await compactConversation({
+        client,
+        transcript: longChat({ turns: 6, size: 6000 }),
+        limits: WINDOW_LIMITS,
+        signal: controller.signal,
+      })
+    } catch (err) {
+      error = err
+    }
+    expect(error?.name).to.equal('AbortError')
+    expect(client.calls).to.have.length(1)
+  })
+
+  it('does not retry a transient failure under the no-retry policy', async () => {
+    const client = fakeClient(() => {
+      throw new ProviderError('Service unavailable', { status: 503 })
+    })
+    const retries = []
+    const entry = await compactConversation({
+      client,
+      transcript: longChat({ turns: 6, size: 6000 }),
+      limits: WINDOW_LIMITS,
+      retryPolicy: 'none',
+      onRetry: event => retries.push(event),
+    })
+    expect(retries).to.have.length(0)
+    expect(entry.fallback).to.equal(true)
+    expect(client.calls).to.have.length(1)
+  })
+
+  it('retries a transient failure under the default interactive policy', async () => {
+    let failed = false
+    const client = fakeClient(() => {
+      if (!failed) {
+        failed = true
+        throw new ProviderError('Service unavailable', { status: 503 })
+      }
+      return SUMMARY
+    })
+    const entry = await compactConversation({
+      client,
+      transcript: longChat({ turns: 6, size: 6000 }),
+      limits: WINDOW_LIMITS,
+    })
+    expect(entry).to.not.have.property('fallback')
+    expect(client.calls.length).to.be.above(1)
+  })
+})

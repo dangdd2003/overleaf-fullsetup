@@ -304,7 +304,8 @@ describe('ConnectorRuntime', function () {
           title: 'Search',
           summary: 'Search the docs.',
           readOnly: true,
-          destructive: false,
+          // No destructiveHint: an unannotated hint counts as destructive
+          destructive: true,
           openWorld: true,
           permission: 'ask',
         },

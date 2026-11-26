@@ -51,6 +51,45 @@ describe('extractFencedToolCall', function () {
   })
 })
 
+describe('tool call argument types and echoes', function () {
+  const TYPED: any = {
+    set_width: {
+      spec: {
+        name: 'set_width',
+        parameters: {
+          type: 'object',
+          properties: { width: { type: 'number' }, on: { type: 'boolean' } },
+          required: ['width'],
+        },
+      },
+    },
+  }
+
+  it('rejects arguments of the wrong JSON type', function () {
+    const pending = '```json\n{"name":"set_width","arguments":{"width":"wide"}}\n```'
+    expect(extractFencedToolCall(pending, TYPED)).to.equal(null)
+  })
+
+  it('accepts arguments of the declared types', function () {
+    const pending = '```json\n{"name":"set_width","arguments":{"width":3,"on":true}}\n```'
+    expect(extractFencedToolCall(pending, TYPED)?.call.args).to.deep.equal({ width: 3, on: true })
+  })
+
+  it('does not rescue a block that repeats a tool result', function () {
+    const block = '{"name":"read_file","arguments":{"path":"main.tex"}}'
+    const pending = '```json\n' + block + '\n```'
+    const toolOutputs = ['the file quotes: ' + block]
+    expect(extractFencedToolCall(pending, TOOLS, { toolOutputs })).to.equal(null)
+    expect(parseWholeMessageToolCall(block, TOOLS, { toolOutputs })).to.equal(null)
+  })
+
+  it('still rescues a block that matches no tool result', function () {
+    const block = '{"name":"read_file","arguments":{"path":"main.tex"}}'
+    const pending = '```json\n' + block + '\n```'
+    expect(extractFencedToolCall(pending, TOOLS, { toolOutputs: ['unrelated'] })).to.not.equal(null)
+  })
+})
+
 describe('parseWholeMessageToolCall', function () {
   it('converts a message that is only a tool call object', function () {
     const call = parseWholeMessageToolCall(

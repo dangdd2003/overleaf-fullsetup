@@ -9,6 +9,7 @@ import {
   AiAssistLanguageCheckStore,
   normalizeEntry,
   MAX_ENTRIES,
+  MAX_LOOKUP_CHARS,
 } from '../../../app/src/AiAssistLanguageCheckStore.mjs'
 import { AiAssistLanguageCheckController } from '../../../app/src/AiAssistLanguageCheckController.mjs'
 
@@ -129,13 +130,13 @@ describe('AiAssistLanguageCheckStore', function () {
       await controller.save(
         {
           params: { Project_id: PROJECT },
-          body: { entries: [{ key: 'k', entry: { edits: [EDIT], text: 'x', rejected: [EDIT] } }] },
+          body: { entries: [{ key: 'k', entry: { edits: [EDIT], text: 'The results shows.', rejected: [EDIT] } }] },
         },
         saved
       )
       expect(saved.statusCode).to.equal(204)
       // Only the shared parts are kept
-      expect(store.store.firstCall.args[1]).to.deep.equal([{ key: 'k', entry: { edits: [EDIT], text: 'x' } }])
+      expect(store.store.firstCall.args[1]).to.deep.equal([{ key: 'k', entry: { edits: [EDIT], text: 'The results shows.' } }])
     })
 
     it('refuses malformed or oversized requests', async function () {
@@ -159,5 +160,71 @@ describe('AiAssistLanguageCheckStore', function () {
       }
       expect(store.lookup.called || store.store.called).to.equal(false)
     })
+  })
+})
+
+describe('AiAssistLanguageCheckStore hardening', function () {
+  let dir
+  let previous
+
+  beforeEach(async function () {
+    dir = await fs.mkdtemp(Path.join(os.tmpdir(), 'ai-language-hard-'))
+    Settings.aiAssist = Settings.aiAssist || {}
+    previous = Settings.aiAssist.chatHistoryDir
+    Settings.aiAssist.chatHistoryDir = dir
+  })
+
+  afterEach(async function () {
+    Settings.aiAssist.chatHistoryDir = previous
+    await fs.rm(dir, { recursive: true, force: true })
+  })
+
+  it('moves a corrupt file aside and starts clean', async function () {
+    const file = Path.join(dir, 'language-checks', `${PROJECT}.json`)
+    await fs.mkdir(Path.dirname(file), { recursive: true })
+    await fs.writeFile(file, '{"entries": {"k1": ')
+    const fresh = new AiAssistLanguageCheckStore()
+    expect(await fresh.lookup(PROJECT, ['k1'])).to.deep.equal({})
+    const names = await fs.readdir(Path.dirname(file))
+    expect(names.some(n => n.startsWith(`${PROJECT}.json.corrupt-`))).to.equal(true)
+    expect(names).to.not.include(`${PROJECT}.json`)
+  })
+
+  it('leaves out a stored result whose original is not in its text', async function () {
+    const file = Path.join(dir, 'language-checks', `${PROJECT}.json`)
+    await fs.mkdir(Path.dirname(file), { recursive: true })
+    await fs.writeFile(
+      file,
+      JSON.stringify({
+        entries: {
+          good: { edits: [EDIT], text: 'The results shows.' },
+          bad: { edits: [EDIT], text: 'Nothing to see here.' },
+        },
+      })
+    )
+    const fresh = new AiAssistLanguageCheckStore()
+    const found = await fresh.lookup(PROJECT, ['good', 'bad'])
+    expect(Object.keys(found)).to.deep.equal(['good'])
+  })
+
+  it('answers a lookup within its size cap, leaving out what does not fit', async function () {
+    const text = 'w'.repeat(9000)
+    const big = {
+      edits: [{ from: 0, to: 1000, insert: 'i', original: text.slice(0, 1000) }],
+      text,
+    }
+    const keys = Array.from({ length: 200 }, (_, i) => `k${i}`)
+    const project = {}
+    for (const key of keys) project[key] = big
+    const file = Path.join(dir, 'language-checks', `${PROJECT}.json`)
+    await fs.mkdir(Path.dirname(file), { recursive: true })
+    await fs.writeFile(file, JSON.stringify({ entries: project }))
+
+    const fresh = new AiAssistLanguageCheckStore()
+    const found = await fresh.lookup(PROJECT, keys)
+    const size = JSON.stringify(found).length
+    expect(Object.keys(found).length).to.be.above(0)
+    expect(Object.keys(found).length).to.be.below(keys.length)
+    expect(size).to.be.at.most(MAX_LOOKUP_CHARS)
   })
 })

@@ -1,5 +1,18 @@
-import { describe, it } from 'vitest'
+import { describe, it, vi } from 'vitest'
 import { expect } from 'chai'
+
+// Tool calls check project access through AuthorizationManager. These tests
+// are about the PDF tools, so access is granted here rather than queried.
+const mockAuth = vi.hoisted(() => ({
+  canUserReadProject: vi.fn(async () => true),
+  canUserWriteProjectContent: vi.fn(async () => true),
+}))
+vi.mock(
+  '../../../../../app/src/Features/Authorization/AuthorizationManager.mjs',
+  () => ({
+    default: { promises: mockAuth },
+  })
+)
 import { AiAssistTools } from '../../../app/src/AiAssistTools.mjs'
 import { PdfPageError, PDF_PAGE_ERRORS } from '../../../../../app/src/Features/PdfInspection/PdfPageInspector.mjs'
 

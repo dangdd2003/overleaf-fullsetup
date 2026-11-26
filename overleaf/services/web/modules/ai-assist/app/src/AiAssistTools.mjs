@@ -1,32 +1,19 @@
 import logger from '@overleaf/logger'
 import { promiseMapWithLimit } from '@overleaf/promise-utils'
-import DocumentUpdaterHandler from '../../../../app/src/Features/DocumentUpdater/DocumentUpdaterHandler.mjs'
-import ProjectEntityHandler from '../../../../app/src/Features/Project/ProjectEntityHandler.mjs'
-import ProjectGetter from '../../../../app/src/Features/Project/ProjectGetter.mjs'
-import EditorController from '../../../../app/src/Features/Editor/EditorController.mjs'
-import CompileManager from '../../../../app/src/Features/Compile/CompileManager.mjs'
-import ClsiManager from '../../../../app/src/Features/Compile/ClsiManager.mjs'
-import ProjectOptionsHandler from '../../../../app/src/Features/Project/ProjectOptionsHandler.mjs'
-import { User } from '../../../../app/src/models/User.mjs'
 import {
-  inspectPdfPage,
-  overviewPdfPages,
-  searchPdfText,
-  highlightSourceInPdf,
+  projectGateway,
+  runInProjectScope,
+  checkProjectRead,
   PdfPageError,
   PDF_PAGE_ERRORS,
   REGIONS as PDF_PAGE_REGIONS,
   resolveBlock,
-} from '../../../../app/src/Features/PdfInspection/PdfPageInspector.mjs'
-import { diffBuilds as diffPdfBuilds, rememberBuildPages } from '../../../../app/src/Features/PdfInspection/PdfVisualDiff.mjs'
-import { inspectCompiledStyle } from '../../../../app/src/Features/PdfInspection/PdfStyleInspector.mjs'
-import Settings from '@overleaf/settings'
-import { LatexLogParser } from './LatexLogParser.mjs'
-import {
   buildFingerprint,
   digestContent,
   diffFingerprints,
-} from '../../../../app/src/Features/PdfInspection/BuildFingerprint.mjs'
+} from './AgentProjectGateway.mjs'
+import Settings from '@overleaf/settings'
+import { LatexLogParser } from './LatexLogParser.mjs'
 import { matchesGlob } from './AiAssistGlob.mjs'
 import { buildProjectIndex, matchSection } from './AiAssistProjectIndex.mjs'
 import { regexSearch } from './AiAssistRegexSearch.mjs'
@@ -201,6 +188,98 @@ function cleanLineNumberPrefixes(text, oldTextWasStripped = false) {
   }
 
   return text
+}
+
+function abortSignalError() {
+  const err = new Error('The tool call was cancelled.')
+  err.code = 'aborted'
+  return err
+}
+
+// A server-side compile the tool waits for at most this long.
+const COMPILE_DEADLINE_MS = 300_000
+
+/**
+ * Resolves with promise, or rejects with code 'timedOut' after ms, or with
+ * code 'aborted' when signal fires first.
+ */
+function withDeadline(promise, ms, signal) {
+  let timer
+  let onAbort
+  const stop = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const err = new Error('Timed out')
+      err.code = 'timedOut'
+      reject(err)
+    }, ms)
+    if (signal) {
+      onAbort = () => {
+        const err = new Error('Aborted')
+        err.code = 'aborted'
+        reject(err)
+      }
+      if (signal.aborted) onAbort()
+      else signal.addEventListener('abort', onAbort, { once: true })
+    }
+  })
+  return Promise.race([promise, stop]).finally(() => {
+    clearTimeout(timer)
+    if (signal && onAbort) signal.removeEventListener('abort', onAbort)
+  })
+}
+
+// get_references and get_outline results are re-sent on every later step, so
+// each list is capped. The result says how many rows there were (totals) and
+// which lists were cut (truncated).
+const MAX_REFERENCE_ROWS = 300
+const MAX_OUTLINE_ROWS = 300
+function capRowKinds(result, kinds, max) {
+  const totals = {}
+  const truncated = {}
+  const out = { ...result }
+  for (const kind of kinds) {
+    if (!Array.isArray(result[kind])) continue
+    totals[kind] = result[kind].length
+    truncated[kind] = result[kind].length > max
+    out[kind] = result[kind].slice(0, max)
+  }
+  if (Object.keys(totals).length === 0) return result
+  return { ...out, totals, truncated }
+}
+const REFERENCE_KINDS = [
+  'labels',
+  'duplicateLabels',
+  'refs',
+  'citations',
+  'bibKeys',
+  'duplicateBibKeys',
+  'incompleteBibEntries',
+]
+
+// Returned when an edit's target moved between review and write.
+const DRIFTED_EDIT_RESULT = Object.freeze({
+  status: 'drifted',
+  error:
+    'The file changed since the edit was reviewed; re-read and propose again.',
+})
+
+// Every error result carries isError: true, for the model and the UI alike.
+// The existing fields stay as they are.
+function markErrorResult(result) {
+  if (
+    !result ||
+    typeof result !== 'object' ||
+    Array.isArray(result) ||
+    !(
+      result.error ||
+      result.status === 'error' ||
+      result.status === 'drifted' ||
+      result.status === 'timedOut'
+    )
+  ) {
+    return result
+  }
+  return { ...result, isError: true }
 }
 
 function errorSignature(e) {
@@ -387,12 +466,44 @@ function locateAnchorInText(docText, anchor) {
   return null
 }
 
+const MAX_FUZZY_WORDS = 20_000
+const MAX_FUZZY_HITS = 200
+// Other documents scanned for an edit whose named file misses
+const MAX_CROSS_FILE_DOCS = 200
+
+function countWords(text) {
+  let count = 0
+  // Counted in one pass, with no array of tokens for a long file
+  const re = /\S+/g
+  while (re.exec(text) !== null) {
+    count += 1
+    if (count > MAX_FUZZY_WORDS) break
+  }
+  return count
+}
+
+/** Exact or line-number-cleaned match only: no fuzzy cascade. */
+function locateExactAnchor(docText, anchor) {
+  if (!docText || !anchor) return null
+  if (countOccurrences(docText, anchor) === 1) {
+    return { type: 'exact', anchor }
+  }
+  const cleaned = cleanOldText(anchor)
+  if (cleaned && cleaned !== anchor && countOccurrences(docText, cleaned) === 1) {
+    return { type: 'cleaned', anchor: cleaned }
+  }
+  return null
+}
+
 function cleanWord(w) {
   return (w || '').toLowerCase().replace(/[^a-z0-9\\]/g, '')
 }
 
 function findFuzzyWordWindow(docText, needleText, threshold = 0.75) {
   if (!docText || !needleText) return null
+  // The window search is O(words x window) and runs per edit: a long file
+  // would stall the run, so it is skipped above this many words.
+  if (countWords(docText) > MAX_FUZZY_WORDS) return null
   const docWords = []
   const wordRe = /\S+/g
   let m
@@ -446,8 +557,10 @@ function findFuzzyWordWindow(docText, needleText, threshold = 0.75) {
       const score = (2 * matches) / (w + nLen)
       if (score >= threshold) {
         hits.push({ startIdx: i, endIdx: i + w - 1, score })
+        if (hits.length >= MAX_FUZZY_HITS) break
       }
     }
+    if (hits.length >= MAX_FUZZY_HITS) break
   }
 
   if (hits.length === 0) return null
@@ -981,28 +1094,18 @@ const PDF_HIGHLIGHT_SPEC = {
 
 export class AiAssistTools {
   constructor({
-    docUpdater = DocumentUpdaterHandler.promises,
-    entityHandler = ProjectEntityHandler.promises,
-    projectGetter = ProjectGetter.promises,
-    editorController = EditorController,
-    compileManager = CompileManager.promises,
-    clsiManager = ClsiManager.promises,
-    projectOptionsHandler = ProjectOptionsHandler.promises,
-    userModel = User,
+    docUpdater = projectGateway.docUpdater,
+    entityHandler = projectGateway.entityHandler,
+    projectGetter = projectGateway.projectGetter,
+    editorController = projectGateway.editorController,
+    compileManager = projectGateway.compileManager,
+    clsiManager = projectGateway.clsiManager,
+    projectOptionsHandler = projectGateway.projectOptionsHandler,
+    userModel = projectGateway.userModel,
     settings = Settings,
-    pdfPageInspector = {
-      inspect: inspectPdfPage,
-      overview: overviewPdfPages,
-      search: searchPdfText,
-      highlight: highlightSourceInPdf,
-    },
-    pdfStyleInspector = {
-      inspect: inspectCompiledStyle,
-    },
-    pdfVisualDiff = {
-      diff: diffPdfBuilds,
-      remember: rememberBuildPages,
-    },
+    pdfPageInspector = projectGateway.pdfPageInspector,
+    pdfStyleInspector = projectGateway.pdfStyleInspector,
+    pdfVisualDiff = projectGateway.pdfVisualDiff,
   } = {}) {
     this.docUpdater = docUpdater
     this.entityHandler = entityHandler
@@ -1139,6 +1242,9 @@ export class AiAssistTools {
   }
 
   async _getSnapshot(projectId) {
+    // Checked before the cache: snapshots are shared by every user of the
+    // project, so a cache hit proves nothing about this caller's access.
+    await checkProjectRead()
     const key = String(projectId)
     const now = Date.now()
     const cached = this._snapshots.get(key)
@@ -1221,9 +1327,13 @@ export class AiAssistTools {
    * The project's root AGENTS.md, or null. Read from the live snapshot, so an
    * edit the agent or the user just made is seen on the next step.
    */
-  async getProjectInstructions(projectId) {
+  async getProjectInstructions(projectId, userId) {
+    if (!(await this._resolveValidUserId(userId))) return null
     try {
-      const snapshot = await this._getSnapshot(projectId)
+      const snapshot = await runInProjectScope(
+        { projectId, userId },
+        () => this._getSnapshot(projectId)
+      )
       const doc = snapshot.docs.find(
         d => !d.path.includes('/') && d.path.toLowerCase() === 'agents.md'
       )
@@ -1271,6 +1381,36 @@ export class AiAssistTools {
     // document fits: taking the first of several reads or edits the wrong file.
     const bySegments = docs.filter(d => d.path.endsWith(`/${normalized}`))
     return bySegments.length === 1 ? bySegments[0] : null
+  }
+
+  /**
+   * Reads a project document's live lines inside an authorized project scope
+   * (for checkpoints and compaction excerpts called outside `execute`).
+   * Returns null when no matching document exists; throws if access is denied
+   * or the live document read fails.
+   */
+  async readLiveDocument(projectId, userId, targetPath, { runId } = {}) {
+    const validUserId = await this._resolveValidUserId(userId)
+    if (!validUserId || !projectId) {
+      throw new Error('A valid project and user are required to read a document')
+    }
+    return runInProjectScope({ projectId, userId: validUserId, runId }, async () => {
+      await checkProjectRead()
+      const doc = await this._resolveDoc(projectId, targetPath)
+      if (!doc) return null
+      let lines = Array.isArray(doc.lines) ? doc.lines : []
+      if (this.docUpdater?.getDocument && doc._id) {
+        const fetched = await this.docUpdater.getDocument(projectId, doc._id, -1)
+        if (Array.isArray(fetched?.lines)) lines = fetched.lines
+      }
+      return {
+        doc,
+        docId: doc._id ? String(doc._id) : null,
+        path: doc.path || targetPath,
+        lines,
+        content: lines.join('\n'),
+      }
+    })
   }
 
   /**
@@ -1361,6 +1501,7 @@ export class AiAssistTools {
         const inserted = rangeNewText === '' ? [] : rangeNewText.split('\n')
         return {
           doc,
+          baseText: docText,
           lines: [
             ...docLines.slice(0, from - 1),
             ...inserted,
@@ -1375,19 +1516,21 @@ export class AiAssistTools {
       }
     }
 
-    // Whole file replacement: only when oldText matches the full file or file is empty
+    // Whole file replacement: only when oldText matches the full file or file
+    // is empty and oldText is empty
     const isDocEmpty = !doc || docText.trim().length === 0
     const isFullFileReplace =
       (typeof args.oldText === 'string' &&
         args.oldText.trim().length > 0 &&
         normalizeLines(args.oldText).trim() ===
           normalizeLines(docText).trim()) ||
-      (isDocEmpty && typeof args.oldText === 'string')
+      (isDocEmpty && args.oldText === '')
 
     if (isFullFileReplace && doc) {
       const updatedLines = sanitizedNewText.split('\n')
       return {
         doc,
+        baseText: docText,
         lines: updatedLines,
         path: doc.path,
         oldText: args.oldText,
@@ -1416,6 +1559,7 @@ export class AiAssistTools {
         appended.split('\n').length - sanitizedNewText.split('\n').length + 1
       return {
         doc,
+        baseText: docText,
         lines: appended.split('\n'),
         path: doc.path,
         oldText: '',
@@ -1482,17 +1626,16 @@ export class AiAssistTools {
     // match in a file the model never named is a guess. Candidates come from
     // the snapshot (one flush and one bulk read), and the chosen file is
     // confirmed against its live text before anything is planned on it.
+    // Only exact (or cleaned) matches are tried here, and at most
+    // MAX_CROSS_FILE_DOCS documents, so a miss costs a bounded scan.
     if (!targetMatch) {
-      const isExact = match =>
-        match && (match.type === 'exact' || match.type === 'cleaned')
       const snapshot = await this._getSnapshot(projectId)
+      let scanned = 0
       for (const other of snapshot.docs) {
         if (doc && String(other._id) === String(doc._id)) continue
-        if (
-          !isExact(
-            locateAnchorInText((other.lines || []).join('\n'), targetAnchor)
-          )
-        )
+        if (scanned >= MAX_CROSS_FILE_DOCS) break
+        scanned += 1
+        if (!locateExactAnchor((other.lines || []).join('\n'), targetAnchor))
           continue
 
         let liveText = (other.lines || []).join('\n')
@@ -1504,8 +1647,8 @@ export class AiAssistTools {
           )
           if (fetched?.lines) liveText = fetched.lines.join('\n')
         } catch {}
-        const liveMatch = locateAnchorInText(liveText, targetAnchor)
-        if (!isExact(liveMatch)) continue
+        const liveMatch = locateExactAnchor(liveText, targetAnchor)
+        if (!liveMatch) continue
 
         resolvedDoc = other
         resolvedDocText = liveText
@@ -1600,25 +1743,44 @@ export class AiAssistTools {
           sanitizedNewText +
           resolvedDocText.slice(matchStartOffset + matchedAnchor.length)
       } else {
+        // Slice-based splice: String.replace would read $&, $$, $` and $' in
+        // the LaTeX replacement text ($$x$$ would become $x$).
         const normDoc = normalizeLines(resolvedDocText)
         const normAnchor = normalizeLines(matchedAnchor)
-        matchStartOffset = Math.max(0, normDoc.indexOf(normAnchor))
-        replaced = normDoc.replace(normAnchor, sanitizedNewText)
+        const normStart = normDoc.indexOf(normAnchor)
+        if (normStart === -1) {
+          return {
+            result: {
+              status: 'noMatch',
+              error: `Could not find target text in ${args.path}. Use read_file to inspect ${args.path} and copy the exact lines to replace.`,
+            },
+          }
+        }
+        matchStartOffset = normStart
+        replaced =
+          normDoc.slice(0, normStart) +
+          sanitizedNewText +
+          normDoc.slice(normStart + normAnchor.length)
       }
     }
     const startLine = resolvedDocText
       .slice(0, Math.max(0, matchStartOffset))
       .split('\n').length
 
-    const note =
-      doc && resolvedDoc.path !== doc.path
-        ? `Text was located in '${resolvedDoc.path}' (redirected from '${args.path}').`
-        : undefined
+    const redirected = !doc || resolvedDoc.path !== doc.path
+    const note = redirected
+      ? `Text was located in '${resolvedDoc.path}' (redirected from '${args.path}').`
+      : undefined
     return {
       doc: resolvedDoc,
+      baseText: resolvedDocText,
       lines: replaced.split('\n'),
       path: resolvedDoc.path,
       note,
+      // How the anchor was found: 'exact' | 'cleaned' | 'fuzzy' | 'whitespace'
+      // | 'fuzzy_words'. The run loop asks for approval unless it is exact.
+      matchKind: targetMatch.type,
+      crossFile: redirected,
       oldText: resolvedOldText,
       newText: sanitizedNewText,
       startLine,
@@ -1633,29 +1795,51 @@ export class AiAssistTools {
    * raw, possibly-imprecise quote — the run loop shows these to the user as
    * the approval diff, so the diff matches what execute() will really apply.
    */
-  async checkEdit(args = {}, { projectId }) {
+  async checkEdit(args = {}, { projectId, userId } = {}) {
     const traversal = this._traversalError(args)
-    if (traversal) return { status: 'error', error: traversal }
-    const plan = await this._planEdit(projectId, args)
-    if (plan.result) return plan.result
+    if (traversal) return markErrorResult({ status: 'error', error: traversal })
+    // Planning reads the project, so it needs the user the edit is for. Without
+    // one, access cannot be checked and the edit is refused.
+    if (!(await this._resolveValidUserId(userId))) {
+      return markErrorResult({
+        status: 'error',
+        error: 'Project access could not be verified for this edit.',
+      })
+    }
+    return runInProjectScope({ projectId, userId }, async () => {
+      const plan = await this._planEdit(projectId, args)
+      return this._checkEditResult(plan)
+    })
+  }
+
+  _checkEditResult(plan) {
+    if (plan.result) return markErrorResult(plan.result)
     return {
       status: 'ok',
       path: plan.path,
       oldText: plan.oldText,
       newText: plan.newText,
       startLine: plan.startLine,
+      // Line-range, full-file and append plans are exact by construction.
+      matchKind: plan.matchKind ?? 'exact',
+      crossFile: Boolean(plan.crossFile),
+      // Passed back to execute() so a write that now lands somewhere else
+      // (the file or text moved since review) is refused as 'drifted'.
+      reviewAnchor: {
+        path: plan.path,
+        startLine: plan.startLine,
+        matchedText: plan.oldText,
+      },
     }
   }
 
   _traversalError(args) {
-    if (args?.path && typeof args.path === 'string') {
-      const normalized = args.path.replace(/\\/g, '/').replace(/^\/+/, '')
-      if (
-        normalized.startsWith('../') ||
-        normalized.includes('/../') ||
-        normalized === '..'
-      ) {
-        return 'Path traversal forbidden: file path cannot reference parent directories.'
+    for (const candidate of [args?.path, args?.rootDocPath]) {
+      if (candidate && typeof candidate === 'string') {
+        const segments = candidate.trim().replace(/\\/g, '/').split('/')
+        if (segments.includes('..')) {
+          return 'Path traversal forbidden: file path cannot reference parent directories.'
+        }
       }
     }
     return null
@@ -1853,6 +2037,7 @@ export class AiAssistTools {
       if (target.block !== null) {
         // A label from the margin: zoom on the source lines it typesets
         const block = resolveBlock({
+          projectId: String(projectId),
           buildId: pdf.buildId,
           page: target.page,
           blockId: target.block,
@@ -1971,6 +2156,7 @@ export class AiAssistTools {
       }
     }
     const where = resolveBlock({
+      projectId: String(projectId),
       buildId: compile.buildId,
       page,
       blockId,
@@ -2192,7 +2378,41 @@ export class AiAssistTools {
     })
   }
 
-  async execute(
+  /**
+   * Runs one tool call. Options: projectId, userId (the signed-in user; every
+   * project access is checked for them), callId, compileInEditor, images,
+   * imageProvider, `signal` (an AbortSignal: stops a long scan or compile
+   * wait early), and `reviewAnchor` (from checkEdit: an edit_file whose target
+   * moved since review is refused as 'drifted').
+   */
+  async execute(name, args = {}, options = {}) {
+    const userId = await this._resolveValidUserId(options.userId)
+    if (!userId) {
+      return markErrorResult({
+        error:
+          'A valid authenticated user context is required to execute tools.',
+      })
+    }
+    try {
+      const result = await runInProjectScope(
+        { projectId: options.projectId, userId },
+        async () => {
+          await checkProjectRead()
+          return this._executeTool(name, args, { ...options, userId })
+        }
+      )
+      return markErrorResult(result)
+    } catch (err) {
+      if (err?.code === 'accessRevoked') {
+        return markErrorResult({
+          error: 'You no longer have access to this project.',
+        })
+      }
+      throw err
+    }
+  }
+
+  async _executeTool(
     name,
     args = {},
     {
@@ -2202,15 +2422,11 @@ export class AiAssistTools {
       compileInEditor,
       images = true,
       imageProvider = null,
+      signal,
+      reviewAnchor = null,
     }
   ) {
     const userId = await this._resolveValidUserId(rawUserId)
-    if (!userId) {
-      return {
-        error:
-          'A valid authenticated user context is required to execute tools.',
-      }
-    }
 
     // Path sanitization for file operations
     const traversal = this._traversalError(args)
@@ -2261,15 +2477,24 @@ export class AiAssistTools {
           1,
           Math.min(Number(args.from) || 1, totalLines || 1)
         )
+        if (
+          Number(args.to) > 0 &&
+          Number(args.from) > 0 &&
+          Number(args.to) < Number(args.from)
+        ) {
+          return {
+            error: `Invalid line range: 'to' (${args.to}) must be greater than or equal to 'from' (${args.from}).`,
+          }
+        }
         const requestedEnd = Math.min(Number(args.to) || totalLines, totalLines)
         const capped = lines.slice(start - 1, requestedEnd).slice(0, windowSize)
-        const end = start + capped.length - 1
+        const end = capped.length > 0 ? start + capped.length - 1 : start - 1
         const nextRange =
           end < totalLines
             ? { from: end + 1, to: Math.min(end + windowSize, totalLines) }
             : undefined
         return {
-          path: args.path,
+          path: doc.path || args.path,
           from: start,
           to: end,
           totalLines,
@@ -2309,9 +2534,11 @@ export class AiAssistTools {
               caseSensitive: Boolean(args.caseSensitive),
               docs,
               limit: MAX_SEARCH_HITS,
+              signal,
             })
           } catch (err) {
             if (err.code === 'regexTimeout') return { error: err.message }
+            if (err.code === 'aborted') throw err
             // A SyntaxError message already reads "Invalid regular expression: /(/i: …".
             return {
               error:
@@ -2327,6 +2554,7 @@ export class AiAssistTools {
           const hits = []
           let total = 0
           for (const doc of docs) {
+            if (signal?.aborted) throw abortSignalError()
             const lines = doc.lines || []
             for (let i = 0; i < lines.length; i++) {
               const haystack = args.caseSensitive
@@ -2339,7 +2567,7 @@ export class AiAssistTools {
               }
             }
           }
-          found = { hits, total }
+          found = { hits, total, skippedDocs: 0 }
         }
 
         const byPath = new Map(docs.map(doc => [doc.path, doc.lines || []]))
@@ -2371,6 +2599,11 @@ export class AiAssistTools {
           }),
           total: found.total,
           truncated: found.total > found.hits.length,
+          ...(found.skippedDocs
+            ? {
+                note: `${found.skippedDocs} file(s) were not searched: the project is too large to search in one pass. Narrow the search with glob.`,
+              }
+            : {}),
         }
       }
 
@@ -2401,6 +2634,26 @@ export class AiAssistTools {
       case 'edit_file': {
         const plan = await this._planEdit(projectId, args)
         if (plan.result) return plan.result
+        // The edit was reviewed against another target: write nothing.
+        if (
+          reviewAnchor &&
+          (reviewAnchor.path !== plan.path ||
+            reviewAnchor.matchedText !== plan.oldText)
+        ) {
+          return DRIFTED_EDIT_RESULT
+        }
+        // setDocument diffs the lines sent against the live text at write
+        // time, so a line typed since the plan read would be reverted. Re-read
+        // right before writing and refuse if the text moved.
+        if (plan.baseText !== undefined) {
+          const fresh = await this.docUpdater.getDocument(
+            projectId,
+            plan.doc._id,
+            -1
+          )
+          const freshText = (fresh?.lines ?? plan.doc.lines ?? []).join('\n')
+          if (freshText !== plan.baseText) return DRIFTED_EDIT_RESULT
+        }
         await this.docUpdater.setDocument(
           projectId,
           plan.doc._id,
@@ -2428,12 +2681,40 @@ export class AiAssistTools {
 
       case 'create_file': {
         const lines = (args.content || '').split('\n')
-        const normalizedPath = (args.path || '').replace(/^\//, '')
+        const normalizedPath =
+          typeof args.path === 'string'
+            ? args.path.trim().replace(/^\/+/, '')
+            : ''
+        if (!normalizedPath) {
+          return {
+            status: 'error',
+            error: "Parameter 'path' is required for create_file.",
+          }
+        }
+        // Creating never replaces: an upsert would silently wipe a document,
+        // and a doc over a binary ref would change the file's type. Exact
+        // paths only, read fresh (not the cached snapshot).
+        const [existingDocs, existingFiles] = await Promise.all([
+          this._getDocsList(projectId),
+          this._getFilesList(projectId),
+        ])
+        if (existingDocs.some(d => d.path === normalizedPath)) {
+          return {
+            status: 'error',
+            error: `${normalizedPath} already exists. Use edit_file to change it, or create_file with a different name.`,
+          }
+        }
+        if (existingFiles.some(f => f.path === normalizedPath)) {
+          return {
+            status: 'error',
+            error: `${normalizedPath} already exists as a binary file, and create_file cannot replace it. Use a different name.`,
+          }
+        }
         const created = docId => {
           this._rememberEdit(projectId, normalizedPath, 1, lines.length)
           return {
             status: 'applied',
-            path: args.path,
+            path: normalizedPath,
             docId,
             newText: args.content,
             startLine: 1,
@@ -2442,21 +2723,23 @@ export class AiAssistTools {
         }
 
         if (this.editorController?.promises?.upsertDocWithPath) {
-          try {
-            const doc = await this.editorController.promises.upsertDocWithPath(
-              projectId,
-              normalizedPath,
-              lines,
-              'ai-assist',
-              userId
-            )
-            this.invalidateSnapshot(projectId)
-            return created(doc?._id)
-          } catch {
-            // fall through to addDoc
-          }
+          const doc = await this.editorController.promises.upsertDocWithPath(
+            projectId,
+            normalizedPath,
+            lines,
+            'ai-assist',
+            userId
+          )
+          this.invalidateSnapshot(projectId)
+          return created(doc?._id)
         }
 
+        if (normalizedPath.includes('/')) {
+          return {
+            status: 'error',
+            error: `Cannot create nested file '${normalizedPath}' without folder support.`,
+          }
+        }
         const rootFolderId =
           (await this._getRootFolderId(projectId)) || 'root-folder'
         return new Promise((resolve, reject) => {
@@ -2511,7 +2794,24 @@ export class AiAssistTools {
           }
         }
 
-        const result = await this.compileManager.compile(projectId, userId, {})
+        // The server compile gets a deadline: a wedged CLSI must not hold the
+        // run. The build itself keeps going on the server; only the wait ends.
+        let result
+        try {
+          result = await withDeadline(
+            this.compileManager.compile(projectId, userId, {}),
+            COMPILE_DEADLINE_MS,
+            signal
+          )
+        } catch (err) {
+          if (err.code === 'timedOut') {
+            return {
+              status: 'timedOut',
+              error: `Compile did not finish within ${COMPILE_DEADLINE_MS / 60_000} minutes, so the tool stopped waiting. The server may still be building: call compile_project again later.`,
+            }
+          }
+          throw err
+        }
         let errors = []
         let warnings = []
 
@@ -2531,8 +2831,19 @@ export class AiAssistTools {
               result.buildId,
               logFile.path
             )
+            const MAX_LOG_BYTES = 8 * 1024 * 1024
             const chunks = []
-            for await (const chunk of stream) chunks.push(chunk)
+            let totalBytes = 0
+            for await (const chunk of stream) {
+              const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+              if (totalBytes + buf.length > MAX_LOG_BYTES) {
+                chunks.push(buf.subarray(0, MAX_LOG_BYTES - totalBytes))
+                stream.destroy?.()
+                break
+              }
+              chunks.push(buf)
+              totalBytes += buf.length
+            }
             const rawLog = Buffer.concat(chunks).toString('utf8')
             const parsed = LatexLogParser.parse(rawLog, {
               ignoreDuplicates: true,
@@ -2660,12 +2971,16 @@ export class AiAssistTools {
         const section = typeof args.section === 'string' ? args.section : ''
 
         if (!section) {
-          return {
-            documentClass: index.outline.documentClass,
-            sections: index.outline.sections,
-            includes: index.outline.includes,
-            notes: index.outline.notes,
-          }
+          return capRowKinds(
+            {
+              documentClass: index.outline.documentClass,
+              sections: index.outline.sections,
+              includes: index.outline.includes,
+              notes: index.outline.notes,
+            },
+            ['sections', 'includes'],
+            MAX_OUTLINE_ROWS
+          )
         }
 
         const match = matchSection(index.outline, section)
@@ -2704,13 +3019,17 @@ export class AiAssistTools {
         const end = nextPeerInFile
           ? nextPeerInFile.line - 1
           : Number.MAX_SAFE_INTEGER
-        return {
-          range: { from: target.line, to: end },
-          sections: siblings.slice(startIndex, nextIndex),
-          hint: `read_file with path=${target.path} from=${target.line} to=${
-            end === Number.MAX_SAFE_INTEGER ? 'end' : end
-          } for the body`,
-        }
+        return capRowKinds(
+          {
+            range: { from: target.line, to: end },
+            sections: siblings.slice(startIndex, nextIndex),
+            hint: `read_file with path=${target.path} from=${target.line} to=${
+              end === Number.MAX_SAFE_INTEGER ? 'end' : end
+            } for the body`,
+          },
+          ['sections'],
+          MAX_OUTLINE_ROWS
+        )
       }
 
       case 'get_packages': {
@@ -2732,23 +3051,40 @@ export class AiAssistTools {
               duplicateLabels: refs.duplicateLabels,
             },
             refs: { refs: refs.refs },
-            citations: { citations: refs.citations, bibKeys: refs.bibKeys },
+            citations: {
+              citations: refs.citations,
+              bibKeys: refs.bibKeys,
+              duplicateBibKeys: refs.duplicateBibKeys,
+              incompleteBibEntries: refs.incompleteBibEntries,
+            },
             all: refs,
           }[kind] ?? refs
 
-        if (!args.unresolvedOnly) return pick
+        if (!args.unresolvedOnly) {
+          return capRowKinds(pick, REFERENCE_KINDS, MAX_REFERENCE_ROWS)
+        }
 
         const filterUnresolved = uses => uses.filter(use => !use.resolved)
-        return {
-          ...('refs' in pick ? { refs: filterUnresolved(pick.refs) } : {}),
-          ...('citations' in pick
-            ? { citations: filterUnresolved(pick.citations) }
-            : {}),
-          ...('labels' in pick
-            ? { labels: pick.labels, duplicateLabels: pick.duplicateLabels }
-            : {}),
-          ...('bibKeys' in pick ? { bibKeys: pick.bibKeys } : {}),
-        }
+        return capRowKinds(
+          {
+            ...('refs' in pick ? { refs: filterUnresolved(pick.refs) } : {}),
+            ...('citations' in pick
+              ? { citations: filterUnresolved(pick.citations) }
+              : {}),
+            ...('labels' in pick
+              ? { labels: pick.labels, duplicateLabels: pick.duplicateLabels }
+              : {}),
+            ...('bibKeys' in pick
+              ? {
+                  bibKeys: pick.bibKeys,
+                  duplicateBibKeys: pick.duplicateBibKeys,
+                  incompleteBibEntries: pick.incompleteBibEntries,
+                }
+              : {}),
+          },
+          REFERENCE_KINDS,
+          MAX_REFERENCE_ROWS
+        )
       }
 
       case 'get_project_settings': {
@@ -2938,30 +3274,8 @@ export class AiAssistTools {
         })
         if (!project) return { error: 'Project not found' }
 
-        const updated = {}
-
-        if (args.compiler != null) {
-          const comp = String(args.compiler).toLowerCase()
-          if (this.editorController?.promises?.setCompiler) {
-            await this.editorController.promises.setCompiler(projectId, comp)
-          } else if (this.projectOptionsHandler?.setCompiler) {
-            await this.projectOptionsHandler.setCompiler(projectId, comp)
-          }
-          updated.compiler = comp
-        }
-
-        if (args.imageName != null) {
-          const img = String(args.imageName)
-          if (this.editorController?.promises?.setImageName) {
-            await this.editorController.promises.setImageName(projectId, img)
-          } else if (this.projectOptionsHandler?.setImageName) {
-            await this.projectOptionsHandler.setImageName(projectId, img)
-          }
-          updated.imageName = img
-        }
-
-        // A document id is an ObjectId string. The model's arguments are JSON,
-        // so an object here would reach the database query as one.
+        // Validate every field before any change is made: a bad rootDocId must
+        // not leave the compiler already switched.
         if (
           args.rootDocId != null &&
           (typeof args.rootDocId !== 'string' ||
@@ -2970,6 +3284,14 @@ export class AiAssistTools {
           return { error: 'rootDocId must be a document id.' }
         }
         let effectiveRootDocId = args.rootDocId
+        if (effectiveRootDocId != null) {
+          const docs = await this._getDocsList(projectId)
+          if (!docs.some(d => String(d._id) === String(effectiveRootDocId))) {
+            return {
+              error: `Root document '${effectiveRootDocId}' was not found in this project.`,
+            }
+          }
+        }
         if (!effectiveRootDocId && args.rootDocPath) {
           const doc = await this._resolveDoc(projectId, args.rootDocPath)
           if (!doc)
@@ -2978,6 +3300,80 @@ export class AiAssistTools {
             }
           effectiveRootDocId = doc._id
         }
+        const compiler =
+          args.compiler != null ? String(args.compiler).toLowerCase() : null
+        const imageName = args.imageName != null ? String(args.imageName) : null
+        if (compiler !== null && !compiler.trim()) {
+          return { error: 'compiler must not be empty.' }
+        }
+        if (
+          compiler !== null &&
+          Array.isArray(this.settings?.safeCompilers) &&
+          !this.settings.safeCompilers.includes(compiler)
+        ) {
+          return {
+            error: `Unsupported compiler '${compiler}'. Allowed: ${this.settings.safeCompilers.join(', ')}.`,
+          }
+        }
+        if (imageName !== null && !imageName.trim()) {
+          return { error: 'imageName must not be empty.' }
+        }
+        if (
+          imageName !== null &&
+          Array.isArray(this.settings?.allowedImageNames) &&
+          this.settings.allowedImageNames.length > 0 &&
+          !this.settings.allowedImageNames.some(
+            img => (img?.imageName || img) === imageName
+          )
+        ) {
+          return {
+            error: `Unsupported imageName '${imageName}'.`,
+          }
+        }
+
+        // The draft and stopOnFirstError handlers are not in core. Reporting
+        // them as applied would be a lie, so they are listed as unsupported.
+        const unsupported = []
+        if (args.draft !== undefined && !this.projectOptionsHandler?.setDraft) {
+          unsupported.push('draft')
+        }
+        if (
+          args.stopOnFirstError !== undefined &&
+          !this.projectOptionsHandler?.setStopOnFirstError
+        ) {
+          unsupported.push('stopOnFirstError')
+        }
+        const applicable = validKeys.some(k => !unsupported.includes(k))
+        if (!applicable && unsupported.length > 0) {
+          return {
+            error: `${unsupported.join(' and ')} cannot be changed by the agent. Change it in the project's Settings menu.`,
+          }
+        }
+
+        const updated = {}
+
+        if (compiler !== null) {
+          if (this.editorController?.promises?.setCompiler) {
+            await this.editorController.promises.setCompiler(projectId, compiler)
+          } else if (this.projectOptionsHandler?.setCompiler) {
+            await this.projectOptionsHandler.setCompiler(projectId, compiler)
+          } else {
+            return { error: 'The compiler cannot be changed on this server.' }
+          }
+          updated.compiler = compiler
+        }
+
+        if (imageName !== null) {
+          if (this.editorController?.promises?.setImageName) {
+            await this.editorController.promises.setImageName(projectId, imageName)
+          } else if (this.projectOptionsHandler?.setImageName) {
+            await this.projectOptionsHandler.setImageName(projectId, imageName)
+          } else {
+            return { error: 'The image cannot be changed on this server.' }
+          }
+          updated.imageName = imageName
+        }
+
         if (effectiveRootDocId != null) {
           if (this.editorController?.promises?.setRootDoc) {
             await this.editorController.promises.setRootDoc(
@@ -2997,22 +3393,19 @@ export class AiAssistTools {
           if (args.rootDocPath) updated.rootDocPath = args.rootDocPath
         }
 
-        if (args.draft !== undefined) {
+        // Reached only when the handler exists (checked above).
+        if (args.draft !== undefined && !unsupported.includes('draft')) {
           const draftVal = Boolean(args.draft)
-          if (this.projectOptionsHandler?.setDraft) {
-            await this.projectOptionsHandler.setDraft(projectId, draftVal)
-          }
+          await this.projectOptionsHandler.setDraft(projectId, draftVal)
           updated.draft = draftVal
         }
 
-        if (args.stopOnFirstError !== undefined) {
+        if (
+          args.stopOnFirstError !== undefined &&
+          !unsupported.includes('stopOnFirstError')
+        ) {
           const stopVal = Boolean(args.stopOnFirstError)
-          if (this.projectOptionsHandler?.setStopOnFirstError) {
-            await this.projectOptionsHandler.setStopOnFirstError(
-              projectId,
-              stopVal
-            )
-          }
+          await this.projectOptionsHandler.setStopOnFirstError(projectId, stopVal)
           updated.stopOnFirstError = stopVal
         }
 
@@ -3020,6 +3413,7 @@ export class AiAssistTools {
         return {
           status: 'applied',
           updatedSettings: updated,
+          ...(unsupported.length > 0 ? { unsupported } : {}),
           message: 'Compiler settings updated successfully.',
         }
       }
@@ -3053,7 +3447,13 @@ export class AiAssistTools {
         const updated = {}
 
         if (args.mode !== undefined) {
-          user.ace.mode = String(args.mode)
+          const modeVal = String(args.mode)
+          if (!['default', 'vim', 'emacs'].includes(modeVal)) {
+            return {
+              error: `Invalid editor mode '${modeVal}'. Allowed: default, vim, emacs.`,
+            }
+          }
+          user.ace.mode = modeVal
           updated.mode = user.ace.mode
         }
         if (args.autoComplete !== undefined) {
@@ -3069,7 +3469,13 @@ export class AiAssistTools {
           updated.syntaxValidation = user.ace.syntaxValidation
         }
         if (args.pdfViewer !== undefined) {
-          user.ace.pdfViewer = String(args.pdfViewer)
+          const viewerVal = String(args.pdfViewer)
+          if (!['pdfjs', 'native'].includes(viewerVal)) {
+            return {
+              error: `Invalid pdfViewer '${viewerVal}'. Allowed: pdfjs, native.`,
+            }
+          }
+          user.ace.pdfViewer = viewerVal
           updated.pdfViewer = user.ace.pdfViewer
         }
         if (args.mathPreview !== undefined) {
@@ -3085,7 +3491,7 @@ export class AiAssistTools {
           updated.editorTabs = user.ace.editorTabs
         }
         if (args.spellCheckLanguage !== undefined) {
-          user.ace.spellCheckLanguage = String(args.spellCheckLanguage)
+          user.ace.spellCheckLanguage = accountText(args.spellCheckLanguage)
           updated.spellCheckLanguage = user.ace.spellCheckLanguage
         }
 
@@ -3266,7 +3672,7 @@ export class AiAssistTools {
       {
         name: 'read_file',
         description:
-          'Read a text file, or a line range of it, as numbered lines; without from/to, the first 500 lines. Take the range from get_outline or search_text.',
+          'Read a text file, or a line range of it, as numbered lines; without from/to, the first 500 lines. When the result is truncated, it gives nextRange: call again with its from and to. Take the range from get_outline or search_text.',
         parameters: {
           type: 'object',
           properties: {
@@ -3280,7 +3686,7 @@ export class AiAssistTools {
       {
         name: 'search_text',
         description:
-          "Find a string or regular expression across the project's text files, with context lines. Pass glob to search only matching files.",
+          "Find a string or regular expression across the project's text files, with context lines. Returns at most 50 hits (total and truncated say whether there are more). Regular expressions time out after 2 seconds. Pass glob to search only matching files.",
         parameters: {
           type: 'object',
           properties: {
@@ -3304,7 +3710,7 @@ export class AiAssistTools {
       {
         name: 'edit_file',
         description:
-          'Edit a project file. Replace oldText with newText, or pass startLine and endLine without oldText to replace those lines with newText (use this for blocks longer than a few lines instead of copying them). Pass oldText: "" to append newText to the end of the file. Pass newText: "" to delete.',
+          'Edit a project file. Replace oldText with newText, or pass startLine and endLine without oldText to replace those lines with newText (use this for blocks longer than a few lines instead of copying them). Pass oldText: "" to append newText to the end of the file. Pass newText: "" to delete. Refused in Plan mode.',
         parameters: {
           type: 'object',
           properties: {
@@ -3386,13 +3792,8 @@ export class AiAssistTools {
       {
         name: 'view_compiled_pdf_page',
         description: [
-          'See one page of the last compiled PDF as an image, as the PDF preview shows it, or zoom on one element of it. compile_project only reads the log, and LaTeX often builds with 0 errors while the page is visibly wrong.',
-          'When: after every successful compile_project whose edits change what a page shows (tables, figures, TikZ, equations, page breaks), and before telling the user the result looks right.',
-          'Page: pass page for a PDF page number, or path and line for the page where that source line is typeset. With neither, it shows the page of your last edit (page 1 if you have not edited). To find a page by its text use search_compiled_pdf; to see many pages at once use view_compiled_pdf_overview.',
-          'Zoom: add endLine to path and line to zoom on where that block of lines is typeset. Pass a whole environment (\\begin{table} to \\end{table}, a tikzpicture, an align) to check it at high resolution. Or pass region to zoom into the top, middle or bottom of the page.',
-          'Returns: the page image, the page count, a SyncTeX map from height on the page (% from the top) to the source file:line typeset there, and the overfull/underfull boxes on that page.',
-          "Fixing: look for content running into or past the margins, overlapping text, labels or arrows, floats far from their text, ?? or [?] for broken refs and citations, missing symbols, and bad breaks. Take the map entry nearest the problem's height, read_file that line, fix it with edit_file, compile_project, then view the page again.",
-          'Blocks: pass labels true to draw a numbered id (B1, B2, ...) beside each block on the page; resolve_pdf_block gives the file and lines of an id.',
+          'See one page of the last compiled PDF as an image, to check what a compile_project build actually looks like: LaTeX often builds with 0 errors while the page is visibly wrong.',
+          'When: after a successful compile_project whose edits change what a page shows (tables, figures, equations, page breaks), before saying the result looks right. Pass page, or path and line for the page where that line is typeset; with neither, it shows the page of your last edit. Returns the image with a SyncTeX map and the boxes on the page. Example: { "path": "main.tex", "line": 42, "endLine": 60 } zooms on that block.',
         ].join('\n'),
         parameters: {
           type: 'object',
@@ -3433,9 +3834,8 @@ export class AiAssistTools {
       {
         name: 'view_compiled_pdf_overview',
         description: [
-          'See many pages of the last compiled PDF at once: up to 12 pages as thumbnails in one image, each labelled with its page number, plus what measuring the pages found. Use it to judge the document as a whole (page count, paper size, title page, where sections start, where floats landed, page breaks, blank or half-empty pages, content sticking into the margins) and to choose which page to open with view_compiled_pdf_page. Thumbnails are too small to read text or check a table\'s cells; open the page for that.',
-          'When: the user asks how the document looks or about its layout or formatting; after edits that move content across pages (floats, \\newpage, sectioning, the document class, geometry or margins); before a layout fix, to find every page it affects.',
-          'Returns: the image; the page count, paper size and fonts that are not embedded or are bitmap (Type 3); then per page the source file:lines typeset on it and any problem found: blank, content ending early, large empty bands, ink past the margins, overfull/underfull boxes, ?? and [?] markers.',
+          'See up to 12 pages of the last compiled PDF as thumbnails, with what measuring them found. Thumbnails are too small to read text: open a page with view_compiled_pdf_page for that.',
+          'When: the user asks about the layout or the document as a whole, or after edits that move content across pages. Returns the image plus, per page, its source lines and any problem found (blank, ink past the margins, boxes, ?? markers). Example: { "fromPage": 1, "toPage": 12 }.',
         ].join('\n'),
         parameters: {
           type: 'object',

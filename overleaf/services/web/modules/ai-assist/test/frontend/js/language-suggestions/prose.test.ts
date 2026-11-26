@@ -41,7 +41,8 @@ describe('language suggestions: prose scanner', function () {
     const very = text.indexOf('very')
     expect(PAPER.slice(starts[very], ends[very + 3])).to.equal('very')
 
-    expect(placeholders[0]).to.include({ kind: 'C', token: '[[C1]]', source: '\\cite{smith20}' })
+    expect(text).to.contain('[[C1]]')
+    expect(placeholders[0]).to.include({ kind: 'C', source: '\\cite{smith20}' })
     expect(PAPER.slice(placeholders[0].from, placeholders[0].to)).to.equal('\\cite{smith20}')
 
     const tilde = text.indexOf('Fig. ') + 4

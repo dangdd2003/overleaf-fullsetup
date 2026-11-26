@@ -2,7 +2,11 @@ import crypto from "node:crypto";
 import logger from "@overleaf/logger";
 import Settings from "@overleaf/settings";
 import "./ModuleSettings.mjs";
-import defaultStore from "./AiAssistRunStore.mjs";
+import defaultStore, {
+  OWNER_ID,
+  OWNER_LEASE_RENEW_MS,
+} from "./AiAssistRunStore.mjs";
+import { assertProjectAccess, runInProjectScope } from "./AgentProjectGateway.mjs";
 import defaultTools, { compiledBuild } from "./AiAssistTools.mjs";
 import defaultChatHistoryStore, {
   compactEntryProblem,
@@ -202,11 +206,17 @@ export function toAgentMessages(transcript) {
         (entry, index) => index < boundary && entry?.id === compact.tailFromId,
       )
     : -1;
+  const tailEntries =
+    tailIndex === -1
+      ? []
+      : transcript.slice(tailIndex, boundary).map((entry, idx) =>
+          idx === 0 && compact.contextDropped && entry?.contextText
+            ? { ...entry, contextText: "" }
+            : entry,
+        );
   return [
     { role: "user", content: renderCompactionMessage(compact) },
-    ...(tailIndex === -1
-      ? []
-      : messagesFor(transcript.slice(tailIndex, boundary))),
+    ...messagesFor(tailEntries),
     ...messagesFor(transcript.slice(boundary + 1)),
   ];
 }
@@ -266,6 +276,7 @@ function messagesFor(transcript) {
           id: call.id,
           name: call.name,
           args: call.args,
+          ...thoughtSignatureOf(call),
         })),
       });
 
@@ -412,6 +423,17 @@ const MAX_COMPILE_TEXT_CHARS = 2_000;
 const MAX_MODEL_STEPS = 200;
 /** Messages the user may send into a run that has not read them yet. */
 const MAX_QUEUED_MESSAGES = 10;
+// A Gemini thought signature is sent back with its call so the model keeps its
+// reasoning. Stored with the run, so it is capped; a larger one is not kept.
+const MAX_THOUGHT_SIGNATURE_CHARS = 16_384;
+
+/** The thought signature of a call, when it is one worth keeping. */
+function thoughtSignatureOf(call) {
+  const sig = call?.thoughtSignature;
+  return typeof sig === "string" && sig.length > 0 && sig.length <= MAX_THOUGHT_SIGNATURE_CHARS
+    ? { thoughtSignature: sig }
+    : {};
+}
 
 /** Keeps only the fields a compile outcome has; it arrives from the browser. */
 function sanitizeCompileOutcome(outcome) {
@@ -502,6 +524,22 @@ export function toQueuedMessage(message, index = 0) {
 
 // The same failing call, arguments and all: the second failure carries a
 // warning in its result, the third ends the run.
+// Doom loops: the same call with the same arguments, whether it worked or not.
+// The model is nudged at the first limit and the run ends at the second.
+const DOOM_NUDGE_LIMIT = 5;
+const DOOM_STOP_LIMIT = 8;
+// A read the model asked for in a batch that does not return in this long is
+// an error for that call alone, not a hung batch
+const READ_CALL_DEADLINE_MS = 120_000;
+// Mid-run compaction: an overall deadline, at most this many per user turn,
+// and a summary must shrink the context by this share to count as progress
+const MID_RUN_COMPACT_DEADLINE_MS = 120_000;
+const MID_RUN_COMPACTS_PER_TURN = 2;
+const MID_RUN_MIN_REDUCTION = 0.15;
+// How often a wait (approval, compile) looks for a stop saved in Redis
+const DURABLE_STOP_POLL_MS = 2_000;
+// A phase that lasts this long is logged as a warning, once a minute
+const PHASE_WATCHDOG_MS = 60_000;
 const IDENTICAL_FAILURE_LIMIT = 3;
 // Model turns in a row in which every tool call failed. Counted per turn, not
 // per call: one reply with three parallel guesses that all miss is one wrong
@@ -681,6 +719,7 @@ export function recordRunStep(
       name: call.name,
       args: call.args,
       step,
+      ...thoughtSignatureOf(call),
       ...(done ? { result: done.result, isError: done.isError } : {}),
     };
   });
@@ -1041,6 +1080,126 @@ function toolFailure(err) {
   return { error: err.message || "Tool execution failed" };
 }
 
+/**
+ * Resolves or rejects with `promise`, but rejects as soon as `signal` aborts,
+ * so Stop does not wait for a tool that ignores its signal. A `timeoutMs`
+ * rejects with 'toolTimeout' instead. The underlying promise is not cancelled.
+ */
+function raceAbort(promise, signal, timeoutMs = 0) {
+  return new Promise((resolve, reject) => {
+    let timer = null;
+    const finish = () => {
+      if (timer) clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+    };
+    const onAbort = () => {
+      finish();
+      reject(abortedError());
+    };
+    // A tool may return a plain value rather than a promise
+    Promise.resolve(promise).then(
+      (value) => {
+        finish();
+        resolve(value);
+      },
+      (err) => {
+        finish();
+        reject(err);
+      },
+    );
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (timeoutMs > 0) {
+      timer = setTimeout(() => {
+        finish();
+        reject(
+          Object.assign(new Error("The tool did not finish in time"), {
+            code: "toolTimeout",
+          }),
+        );
+      }, timeoutMs);
+      timer.unref?.();
+    }
+  });
+}
+
+/**
+ * A terminal write (event, status) is retried a little, and never fails the
+ * run: a Redis blip must not leave the status at 'running'.
+ */
+async function bestEffort(write) {
+  let delayMs = 100;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await write();
+    } catch (err) {
+      if (attempt >= 3) {
+        logger.warn({ err }, "[AiAssist] terminal write failed");
+        return undefined;
+      }
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      delayMs *= 3;
+    }
+  }
+}
+
+/**
+ * A decision answers the approval that is pending, and no other: an id that
+ * is missing or different is refused (a replayed or stale answer).
+ */
+function isDecisionForPending(resolver, decision) {
+  const pending = resolver.pendingId;
+  if (pending === undefined || pending === null) return true;
+  return decision?.id === pending;
+}
+
+/** A tool failure that ends the run is thrown on, not shown to the model as a result. */
+function rethrowEnded(err, controller) {
+  if (err?.code === "accessRevoked" || controller.signal.aborted) throw err;
+}
+
+/** JSON with sorted keys, so the same arguments always give the same text. */
+export function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    const keys = Object.keys(value)
+      .filter((key) => value[key] !== undefined)
+      .sort();
+    return `{${keys
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+
+const URL_IN_TEXT = /https?:\/\/[^\s<>"'`)\]}\\]+/g;
+
+/**
+ * Remembers the http(s) URLs in `text`: the set web_fetch checks a URL against
+ * before it is fetched without asking. Only URLs the user typed vouch for
+ * their whole host. A search result or an approved fetch vouches for that one
+ * URL, or a prompt could search for a host it controls and then fetch it with
+ * project text in the address.
+ */
+export function rememberUrls(known, text, { hosts = false } = {}) {
+  if (typeof text !== "string" || !text) return;
+  for (const raw of text.match(URL_IN_TEXT) ?? []) {
+    known.add(raw);
+    if (!hosts) continue;
+    try {
+      known.add(new URL(raw).host);
+    } catch {}
+  }
+}
+
+/** Project access is checked before each model step (AgentProjectGateway). */
+async function defaultAssertProjectAccess(projectId, userId, level) {
+  return assertProjectAccess(projectId, userId, level);
+}
+
 /** The error an aborted compaction is reported with. */
 function abortedError() {
   return Object.assign(new Error("Compaction stopped"), { code: "aborted" });
@@ -1066,6 +1225,7 @@ export class AiAssistRunManager {
     checkpointStore = defaultCheckpointStore,
     approvalTimeoutMs = null,
     compileTimeoutMs = null,
+    assertProjectAccess = defaultAssertProjectAccess,
     webToolsFactory = (settings, { userId, contextWindow } = {}) =>
       new AiAssistWebTools(settings, {
         cacheOwner: userId,
@@ -1110,6 +1270,59 @@ export class AiAssistRunManager {
     // Longer than the editor's own budget (wait for a running build, then the
     // compile, then the log), so the editor reports its timeout first.
     this.compileTimeoutMs = compileTimeoutMs ?? 360_000;
+    this.assertProjectAccess = assertProjectAccess;
+    // Runs of this process hold a lease in Redis (see RunStore.renewOwnerLease)
+    this._leaseTimer = null;
+    this._pendingStarts = 0;
+    // Each run's background work, so a caller or a test can wait for it
+    this._background = new Map();
+  }
+
+  /**
+   * Keeps this process's owner lease alive while it has runs. The timer is
+   * unref'd and stops by itself once no run is left; shutdown() stops it now.
+   */
+  _ensureLeaseTimer() {
+    if (this._leaseTimer) return;
+    this._leaseTimer = setInterval(() => {
+      if (
+        this.activeRuns.size === 0 &&
+        this._background.size === 0 &&
+        this._pendingStarts === 0
+      ) {
+        this._stopLeaseTimer();
+        return;
+      }
+      this.store.renewOwnerLease?.(OWNER_ID)?.catch?.(() => {});
+    }, OWNER_LEASE_RENEW_MS);
+    this._leaseTimer.unref?.();
+  }
+
+  _stopLeaseTimer() {
+    if (this._leaseTimer) clearInterval(this._leaseTimer);
+    this._leaseTimer = null;
+  }
+
+  async shutdown() {
+    this._stopLeaseTimer();
+    const runIds = [...this.activeRuns.keys()];
+    await Promise.allSettled(runIds.map((id) => this.stopLocalRun(id)));
+    if (this._background.size > 0) {
+      let timer;
+      await Promise.race([
+        Promise.allSettled([...this._background.values()]),
+        new Promise((resolve) => {
+          timer = setTimeout(resolve, 5000);
+          timer.unref?.();
+        }),
+      ]);
+      clearTimeout(timer);
+    }
+  }
+
+  /** Resolves once the run's background work has finished (tests, shutdown). */
+  async waitForRun(runId) {
+    await this._background.get(runId);
   }
 
   attachControl(control) {
@@ -1162,10 +1375,11 @@ export class AiAssistRunManager {
   }
 
   /** The project's AGENTS.md, or null. Never fails a run. */
-  async _projectInstructions(projectId) {
+  async _projectInstructions(projectId, userId) {
     if (typeof this.tools?.getProjectInstructions !== "function") return null;
     try {
-      return await this.tools.getProjectInstructions(projectId);
+      // Read as the user who started the run; the tools refuse without one
+      return await this.tools.getProjectInstructions(projectId, userId);
     } catch (err) {
       logger.warn({ err, projectId }, "[AiAssist] AGENTS.md not loaded");
       return null;
@@ -1186,76 +1400,90 @@ export class AiAssistRunManager {
     const normalizedPath = filePath.replace(/^\//, "");
 
     try {
-      if (toolName === "create_file") {
-        let existingDoc = null;
-        if (typeof this.tools?._resolveDoc === "function") {
-          try {
-            existingDoc = await this.tools._resolveDoc(projectId, normalizedPath);
-          } catch {}
-        } else if (this.tools?.entityHandler?.getDocIdByPath) {
-          try {
+      let doc = null;
+      let originalContent = null;
+      if (typeof this.tools?.readLiveDocument === "function") {
+        const live = await this.tools.readLiveDocument(
+          projectId,
+          userId,
+          filePath,
+        );
+        if (live) {
+          doc = { _id: live.docId, path: live.path };
+          originalContent = live.content;
+        }
+      } else {
+        const resolveScoped = async () => {
+          if (typeof this.tools?._resolveDoc === "function") {
+            return this.tools._resolveDoc(projectId, filePath);
+          }
+          if (toolName === "create_file" && this.tools?.entityHandler?.getDocIdByPath) {
             const docId = await this.tools.entityHandler.getDocIdByPath(
               projectId,
-              normalizedPath
+              normalizedPath,
             );
-            if (docId) existingDoc = { _id: docId };
-          } catch {}
-        }
-
-        if (!existingDoc) {
-          await this.checkpointStore.saveCheckpoint(
-            projectId,
-            userId,
-            chatId,
-            activeUserMessageId,
-            {
-              files: {
-                [filePath]: {
-                  originalContent: "",
-                  docId: null,
-                  isNew: true,
-                },
-              },
-            }
-          );
-          return;
-        }
-      }
-
-      let doc = null;
-      if (typeof this.tools?._resolveDoc === "function") {
-        try {
-          doc = await this.tools._resolveDoc(projectId, filePath);
-        } catch {}
-      } else if (this.tools?.entityHandler?.getAllDocs) {
-        try {
-          const all = await this.tools.entityHandler.getAllDocs(projectId);
-          doc = Array.isArray(all)
-            ? all.find(
-                (d) =>
-                  (d.path || d.name || "").replace(/^\//, "") === normalizedPath
-              )
-            : null;
-        } catch {}
-      }
-
-      let originalContent = "";
-      const docId = doc?._id || null;
-      if (doc) {
-        let lines = doc.lines || [];
-        if (this.tools?.docUpdater?.getDocument && doc._id) {
-          try {
+            return docId ? { _id: docId } : null;
+          }
+          if (this.tools?.entityHandler?.getAllDocs) {
+            const all = await this.tools.entityHandler.getAllDocs(projectId);
+            return Array.isArray(all)
+              ? all.find(
+                  (d) =>
+                    (d.path || d.name || "").replace(/^\//, "") === normalizedPath,
+                )
+              : null;
+          }
+          return null;
+        };
+        const readScoped = async () => {
+          const found = await resolveScoped();
+          if (!found) return null;
+          let lines = found.lines || [];
+          if (this.tools?.docUpdater?.getDocument && found._id) {
             const fetched = await this.tools.docUpdater.getDocument(
               projectId,
-              doc._id,
-              -1
+              found._id,
+              -1,
             );
             if (fetched?.lines) lines = fetched.lines;
-          } catch {}
+          }
+          return { doc: found, content: lines.join("\n") };
+        };
+        const live =
+          projectId && userId
+            ? await runInProjectScope({ projectId, userId }, readScoped)
+            : await readScoped();
+        if (live) {
+          doc = live.doc;
+          originalContent = live.content;
         }
-        originalContent = lines.join("\n");
       }
 
+      if (!doc) {
+        if (toolName !== "create_file") {
+          // Do not persist an empty-string checkpoint for an existing file
+          // whose content could not be resolved.
+          return;
+        }
+        await this.checkpointStore.saveCheckpoint(
+          projectId,
+          userId,
+          chatId,
+          activeUserMessageId,
+          {
+            files: {
+              [filePath]: {
+                originalContent: "",
+                docId: null,
+                isNew: true,
+              },
+            },
+          },
+        );
+        return;
+      }
+
+      const docId = doc?._id || null;
       await this.checkpointStore.saveCheckpoint(
         projectId,
         userId,
@@ -1264,12 +1492,12 @@ export class AiAssistRunManager {
         {
           files: {
             [filePath]: {
-              originalContent,
+              originalContent: originalContent ?? "",
               docId: docId ? String(docId) : null,
               isNew: false,
             },
           },
-        }
+        },
       );
     } catch (err) {
       logger.warn(
@@ -1293,9 +1521,38 @@ export class AiAssistRunManager {
    * never comes. So it is ended here: the run is released and its stream told.
    */
   async startRun(args) {
+    const { runId, projectId, userId, mode } = args;
+    // Resolves only once the run record exists in the store: the caller can
+    // answer with the runId, and a stop, stream or approval that follows
+    // finds the run. Nothing else is awaited here. The chat is saved and the
+    // loop runs in the background (_runInBackground), its failures written to
+    // the run's events. A run is created once, here, never in _startRun.
+    this._pendingStarts++;
     try {
-      return await this._startRun(args);
+      this._ensureLeaseTimer();
+      await this.store.renewOwnerLease?.(OWNER_ID)?.catch?.(() => {});
+      await this.store.createRun({
+        runId,
+        projectId,
+        userId,
+        mode: normalizeMode(mode),
+        ownerId: OWNER_ID,
+      });
+      const background = this._runInBackground(args).finally(() =>
+        this._background.delete(runId),
+      );
+      this._background.set(runId, background);
+    } finally {
+      this._pendingStarts--;
+    }
+  }
+
+  /** The run loop, detached from the request that started it. Never rejects. */
+  async _runInBackground(args) {
+    try {
+      await this._startRun(args);
     } catch (err) {
+      logger.error({ err, runId: args.runId }, "[AiAssist] Run background failed");
       this.activeRuns.delete(args.runId);
       await Promise.resolve()
         .then(() =>
@@ -1311,7 +1568,6 @@ export class AiAssistRunManager {
           }),
         )
         .catch(() => {});
-      throw err;
     }
   }
 
@@ -1380,94 +1636,40 @@ export class AiAssistRunManager {
       // message the user wants answered now (see sendQueuedNow)
       interruptStep: null,
     };
-    this.activeRuns.set(runId, activeRun);
     // Called, with no await before it, once the loop has looked at the queue
     // for the last time. A message arriving after that would never be read,
     // so it is refused instead and the panel starts a run of its own for it.
+    // From then on the run is finishing: a late title is not sent (chatTitle).
+    let runFinishing = false;
     const closeQueue = () => {
       activeRun.acceptsMessages = false;
+      runFinishing = true;
     };
 
-    await this._persistChat(projectId, userId, chatId, transcript, initialMode);
-
-    await this.store.createRun({ runId, projectId, userId, mode: initialMode });
-
-    const client = this.clientFactory(providerSettings);
-    const limits =
-      DEFAULT_LIMITS[providerSettings?.type] ?? DEFAULT_LIMITS.openai;
-    const maxTokens =
-      Number(providerSettings?.maxOutputTokens) > 0
-        ? Number(providerSettings.maxOutputTokens)
-        : limits.maxOutputTokens;
-    const resolvedLimits = {
-      ...limits,
-      maxOutputTokens: maxTokens,
-      contextWindow:
-        Number(providerSettings?.contextWindow) > 0
-          ? Number(providerSettings.contextWindow)
-          : limits.contextWindow,
-    };
-    // Only runs whose user configured web search get the web tools, and the
-    // prompt section describing them. Fetched pages are cut to fit the model.
-    const webTools =
-      webSearchSettings && kind !== "compact"
-        ? this.webToolsFactory(webSearchSettings, {
-            userId,
-            contextWindow: resolvedLimits.contextWindow,
-          })
-        : null;
-
-    let connectorSession = null;
-    // Told to the model in the system prompt: a user who connected tools
-    // should not get an answer that silently ignores them
-    let connectorsFailed = false;
-    if (Settings.aiAssist?.enabled && userId && kind !== "compact") {
-      try {
-        connectorSession = await this.connectorSessionFactory({
-          userId,
-          connectorIds,
-          signal: controller.signal,
-          contextWindow: resolvedLimits.contextWindow,
-        });
-      } catch (err) {
-        connectorsFailed = true;
-        logger.warn(
-          { err, userId },
-          "[AiAssist] connector session initialization failed",
+    // Telemetry: the phase the run is in, logged when it changes
+    const phaseState = { name: null, since: Date.now(), step: 0 };
+    const setPhase = (phase) => {
+      if (phaseState.name === phase) return;
+      const now = Date.now();
+      if (phaseState.name !== null) {
+        logger.debug(
+          {
+            runId,
+            step: phaseState.step,
+            phase,
+            prevPhase: phaseState.name,
+            elapsedMs: now - phaseState.since,
+          },
+          "[AiAssist] run phase changed",
         );
       }
-    }
-    transcript = await this._withStoredHistory(
-      projectId,
-      userId,
-      chatId,
-      transcript,
-    );
-    // Sources cited in earlier turns keep their numbers in this one
-    webTools?.rememberSources?.(transcript);
+      phaseState.name = phase;
+      phaseState.since = now;
+      this.store.setPhase?.(runId, phase)?.catch?.(() => {});
+    };
 
-    // The command the run starts under: the newest user turn's, or none. A
-    // queued message later takes over (see the queue below).
-    let activeCommandId = activeCommandFrom(
-      findLatestUserEntry(transcript),
-    );
-
-    // Rebuilt byte for byte from the chat's history, cut where the last run
-    // had cut it, so this run's first request reads the whole conversation
-    // from the cache. From here on the run only appends to `messages`,
-    // keeping every earlier request a prefix of the next.
-    // Old user images go first: a long chat keeps its words, not every
-    // picture it was ever shown
-    const rebuilt = applyContextTrim(
-      limitUserImages(
-        toAgentMessages(transcript),
-        Settings.aiAssist?.maxHistoryImages ?? MAX_HISTORY_IMAGES,
-      ),
-      latestContextTrim(transcript),
-    );
-    let messages = rebuilt.messages;
-    let contextTrim = rebuilt.trim;
-
+    let watchdog = null;
+    let connectorSession = null;
     // Streamed text and thinking are buffered and written in batches: every
     // appendEvent is INCR + RPUSH + PUBLISH, and the provider stream is not
     // read again until the write resolves. Only one kind is buffered at a
@@ -1480,9 +1682,14 @@ export class AiAssistRunManager {
     const FLUSH_MS = 16;
     const FLUSH_CHARS = 256;
 
+    // A failed append must not poison the chain: every later write would
+    // then be skipped, the terminal ones included
     const write = (event) => {
-      flushChain = flushChain.then(() => this.store.appendEvent(runId, event));
-      return flushChain;
+      const next = flushChain
+        .catch(() => {})
+        .then(() => this.store.appendEvent(runId, event));
+      flushChain = next.catch(() => {});
+      return next;
     };
 
     const flushText = () => {
@@ -1526,6 +1733,112 @@ export class AiAssistRunManager {
       await write(event);
     };
 
+    // Set once the loop is over: an exact count that lands later has no
+    // breakdown left to correct. currentBreakdown is the last one emitted.
+    let breakdownLive = true;
+    let currentBreakdown = null;
+
+    try {
+      this.activeRuns.set(runId, activeRun);
+      this._ensureLeaseTimer();
+      watchdog = setInterval(() => {
+        const elapsedMs = Date.now() - phaseState.since;
+        if (phaseState.name && elapsedMs >= PHASE_WATCHDOG_MS) {
+          logger.warn(
+            { runId, step: phaseState.step, phase: phaseState.name, elapsedMs },
+            `[AiAssist] still in ${phaseState.name}`,
+          );
+        }
+      }, PHASE_WATCHDOG_MS);
+      watchdog.unref?.();
+
+      // A stop saved in Redis (by any instance) ends this run as a local stop does
+      const honourDurableStop = async () => {
+        if (controller.signal.aborted) return true;
+        const requested = await Promise.resolve(
+          this.store.isStopRequested?.(runId),
+        ).catch(() => false);
+        if (requested) controller.abort();
+        return controller.signal.aborted;
+      };
+
+      await this._persistChat(projectId, userId, chatId, transcript, initialMode);
+
+      const client = this.clientFactory(providerSettings);
+      const limits =
+        DEFAULT_LIMITS[providerSettings?.type] ?? DEFAULT_LIMITS.openai;
+      const maxTokens =
+        Number(providerSettings?.maxOutputTokens) > 0
+          ? Number(providerSettings.maxOutputTokens)
+          : limits.maxOutputTokens;
+      const resolvedLimits = {
+        ...limits,
+        maxOutputTokens: maxTokens,
+        contextWindow:
+          Number(providerSettings?.contextWindow) > 0
+            ? Number(providerSettings.contextWindow)
+            : limits.contextWindow,
+      };
+      // Only runs whose user configured web search get the web tools, and the
+      // prompt section describing them. Fetched pages are cut to fit the model.
+      const webTools =
+        webSearchSettings && kind !== "compact"
+          ? this.webToolsFactory(webSearchSettings, {
+              userId,
+              contextWindow: resolvedLimits.contextWindow,
+            })
+          : null;
+
+      // Told to the model in the system prompt: a user who connected tools
+      // should not get an answer that silently ignores them
+      let connectorsFailed = false;
+      if (Settings.aiAssist?.enabled && userId && kind !== "compact") {
+        try {
+          connectorSession = await this.connectorSessionFactory({
+            userId,
+            connectorIds,
+            signal: controller.signal,
+            contextWindow: resolvedLimits.contextWindow,
+          });
+        } catch (err) {
+          connectorsFailed = true;
+          logger.warn(
+            { err, userId },
+            "[AiAssist] connector session initialization failed",
+          );
+        }
+      }
+      transcript = await this._withStoredHistory(
+        projectId,
+        userId,
+        chatId,
+        transcript,
+      );
+      // Sources cited in earlier turns keep their numbers in this one
+      webTools?.rememberSources?.(transcript);
+
+      // The command the run starts under: the newest user turn's, or none. A
+      // queued message later takes over (see the queue below).
+      let activeCommandId = activeCommandFrom(
+        findLatestUserEntry(transcript),
+      );
+
+      // Rebuilt byte for byte from the chat's history, cut where the last run
+      // had cut it, so this run's first request reads the whole conversation
+      // from the cache. From here on the run only appends to `messages`,
+      // keeping every earlier request a prefix of the next.
+      // Old user images go first: a long chat keeps its words, not every
+      // picture it was ever shown
+      const rebuilt = applyContextTrim(
+        limitUserImages(
+          toAgentMessages(transcript),
+          Settings.aiAssist?.maxHistoryImages ?? MAX_HISTORY_IMAGES,
+        ),
+        latestContextTrim(transcript),
+      );
+      let messages = rebuilt.messages;
+      let contextTrim = rebuilt.trim;
+
     // Asynchronously auto-generate the chat title directly from the first prompt (like Claude AI).
     // The first prompt shows the full scheme of the chat; this reorganizes it into a concise title
     // and emits it immediately so the session name updates right away.
@@ -1564,7 +1877,9 @@ export class AiAssistRunManager {
                 generatedTitle,
                 true,
               );
-              if (saved) {
+              // A title that lands after the run's terminal event is saved
+              // but not sent: the stream has already ended for the turn
+              if (saved && !runFinishing) {
                 await emitEvent({
                   type: "chatTitle",
                   chatId,
@@ -1593,21 +1908,29 @@ export class AiAssistRunManager {
         id: requestId,
         clean: Boolean(clean),
       });
+      setPhase("compileWait");
       await this.store.touchHeartbeat?.(runId, 0);
 
       const outcome = await new Promise((resolve) => {
         let settled = false;
         let timer = null;
         let onAbort = null;
+        let stopPoll = null;
         const settle = (value) => {
           if (settled) return;
           settled = true;
           if (timer) clearTimeout(timer);
+          if (stopPoll) clearInterval(stopPoll);
           controller.signal.removeEventListener("abort", onAbort);
           compileResolvers.delete(requestId);
           resolve(value);
         };
         compileResolvers.set(requestId, settle);
+        stopPoll = setInterval(
+          () => void honourDurableStop(),
+          DURABLE_STOP_POLL_MS,
+        );
+        stopPoll.unref?.();
         timer = setTimeout(
           () => settle({ status: "timedout", errors: [], warnings: [] }),
           this.compileTimeoutMs,
@@ -1630,7 +1953,8 @@ export class AiAssistRunManager {
       provider: providerSettings?.type,
       model: providerSettings?.model,
     };
-    const toolContext = (call) => ({
+    // The signal lets a tool stop its own work (the compile deadline, reads)
+    const toolContext = (call, extra = {}) => ({
       projectId,
       userId,
       chatId,
@@ -1639,8 +1963,16 @@ export class AiAssistRunManager {
       compileInEditor,
       images: !imagesUnsupported,
       imageProvider,
+      signal: controller.signal,
+      ...extra,
     });
-    const runTool = (call) => {
+    // Every tool call is raced against the run's signal, so Stop takes effect
+    // at once. A timeout (read batch) gives an error for that call only.
+    const runTool = (call, timeoutMs = 0) => {
+      setPhase(`tool:${call.name}`);
+      return raceAbort(dispatchTool(call), controller.signal, timeoutMs);
+    };
+    const dispatchTool = (call) => {
       if (webTools && WEB_TOOL_NAMES.has(call.name)) {
         return webTools.execute(call.name, call.args, {
           signal: controller.signal,
@@ -1662,9 +1994,11 @@ export class AiAssistRunManager {
         type: "awaitingApproval",
         ...approvalData,
       });
+      setPhase("approval");
 
       let timer = null;
       let onAbort = null;
+      let stopPoll = null;
       let settled = false;
 
       const cleanup = () => {
@@ -1672,12 +2006,19 @@ export class AiAssistRunManager {
           clearTimeout(timer);
           timer = null;
         }
+        if (stopPoll) {
+          clearInterval(stopPoll);
+          stopPoll = null;
+        }
         if (onAbort) {
           controller.signal.removeEventListener("abort", onAbort);
           onAbort = null;
         }
         approvalPromiseResolvers.resolve = null;
         approvalPromiseResolvers.pendingId = null;
+        // However the wait ended (decision, timeout, stop), the approval is
+        // no longer pending in Redis
+        this.store.clearPendingApproval(runId, "running").catch(() => {});
       };
 
       await this.store.touchHeartbeat?.(runId, 0);
@@ -1695,6 +2036,11 @@ export class AiAssistRunManager {
           this.approvalTimeoutMs,
         );
         timer.unref?.();
+        stopPoll = setInterval(
+          () => void honourDurableStop(),
+          DURABLE_STOP_POLL_MS,
+        );
+        stopPoll.unref?.();
         onAbort = () => settle({ accepted: false, note: "Run stopped" });
         if (controller.signal.aborted) onAbort();
         else controller.signal.addEventListener("abort", onAbort);
@@ -1703,11 +2049,7 @@ export class AiAssistRunManager {
       return decision;
     };
 
-    // Set once the loop is over: an exact count that lands later has no
-    // breakdown left to correct. currentBreakdown is the last one emitted.
-    let breakdownLive = true;
-    let currentBreakdown = null;
-    try {
+    // Run loop begins inside the try block already opened above.
       if (kind === "compact") {
         // A compaction reads the chat and writes one entry: no tools, no
         // checkpoints, no title. Its own terminal events (see _runCompaction).
@@ -1743,6 +2085,15 @@ export class AiAssistRunManager {
       // nothing, so ask once for the reply before ending the run.
       let toolsRanThisRun = false;
       let finalReplyNudged = false;
+      // Identical name and arguments, counted whatever the result (see DOOM_*),
+      // since the last applied edit and within one user turn
+      const doomCalls = new Map();
+      // Addresses web_fetch may use without asking: the user's own URLs and
+      // hosts, the pages search results gave, and the ones the user approved
+      const knownUrls = new Set();
+      for (const entry of transcript) {
+        if (entry?.role === "user") rememberUrls(knownUrls, entry.text, { hosts: true });
+      }
       // The tools and the system prompt start every request, ahead of the
       // conversation, so they are settled once for the run and sent the same
       // way at every step: the same in every mode (see toolSpecsFor), and
@@ -1789,7 +2140,7 @@ export class AiAssistRunManager {
           unavailable: connectorSession?.unavailable || [],
           failed: connectorsFailed,
         },
-        projectInstructions: await this._projectInstructions(projectId),
+        projectInstructions: await this._projectInstructions(projectId, userId),
       });
       const currentSystemPrompt = joinSystemBlocks(systemBlocks);
 
@@ -1801,7 +2152,13 @@ export class AiAssistRunManager {
       let runEntries = [...transcript];
       // The usage the last response reported, and where its messages end (see anchoredRequestCount)
       let anchor = null;
-      const autoCompaction = { lastStep: null, failures: 0, disabled: false };
+      // turns: mid-run compactions this user turn (at most MID_RUN_COMPACTS_PER_TURN)
+      const autoCompaction = {
+        lastStep: null,
+        failures: 0,
+        disabled: false,
+        turns: 0,
+      };
       // The provider's own counts of the fixed parts, where its count API
       // answers. They arrive in the background: when they land, the breakdown
       // of the request they were asked for is emitted again with them.
@@ -1823,14 +2180,17 @@ export class AiAssistRunManager {
 
       const finishWithError = async (code, message) => {
         closeQueue();
-        await emitEvent({ type: "error", code, message });
-        await emitEvent({ type: "turnFinished", reason: "stop" });
-        await this.store.updateStatus(runId, "done");
+        await bestEffort(() => emitEvent({ type: "error", code, message }));
+        await bestEffort(() => emitEvent({ type: "turnFinished", reason: "stop" }));
+        await bestEffort(() => this.store.updateStatus(runId, "done"));
         shouldStop = true;
       };
 
       while (true) {
         if (controller.signal.aborted || shouldStop) break;
+        // A stop saved by any instance, and access revoked since the last step
+        if (await honourDurableStop()) break;
+        await this.assertProjectAccess(projectId, userId, "read");
 
         // A run that keeps calling tools successfully has no other end: a
         // prompt that loops the model would spend tokens until someone stops it
@@ -1852,6 +2212,7 @@ export class AiAssistRunManager {
           for (const queued of injected) {
             // Appended after the tool results, never inserted earlier: the
             // prefix the provider cached is untouched.
+            rememberUrls(knownUrls, queued.text, { hosts: true });
             const msg = { role: "user", content: queued.content };
             if (Array.isArray(queued.images) && queued.images.length > 0) {
               msg.images = queued.images;
@@ -1886,6 +2247,9 @@ export class AiAssistRunManager {
           finalReplyNudged = false;
           failedTurns = 0;
           failedCallSignatures.clear();
+          doomCalls.clear();
+          // The next turn gets its own budget of mid-run compactions
+          autoCompaction.turns = 0;
           recentCallSignatures.length = 0;
           webCalls = 0;
         }
@@ -1893,6 +2257,10 @@ export class AiAssistRunManager {
         const calls = [];
         let text = "";
         let truncated = false;
+        // The provider's reasoning state for this request (Anthropic thinking
+        // blocks). Kept in memory for this run only, so the tool round trip
+        // can send it back; it is not stored with the chat.
+        let providerState = null;
         // The provider's usage for this request, and each call's result by call
         let stepUsage = null;
         const stepResults = new Map();
@@ -1917,9 +2285,12 @@ export class AiAssistRunManager {
         const attemptStep = modelStep + 1;
         if (
           countedBefore.tokens >= compactAt &&
-          autoCompactionAllowed(autoCompaction, attemptStep)
+          autoCompactionAllowed(autoCompaction, attemptStep) &&
+          autoCompaction.turns < MID_RUN_COMPACTS_PER_TURN
         ) {
           autoCompaction.lastStep = attemptStep;
+          autoCompaction.turns += 1;
+          setPhase("compaction");
           const sizeBefore = estimateRequestTokens({
             system: currentSystemPrompt,
             tools: modeToolSpecs,
@@ -1946,20 +2317,16 @@ export class AiAssistRunManager {
                   messages: toAgentMessages(entries),
                   provider: providerSettings?.type,
                   model: providerSettings?.model,
-                }) < sizeBefore,
+                }) <= sizeBefore * (1 - MID_RUN_MIN_REDUCTION),
             });
             messages = toAgentMessages(runEntries);
             contextTrim = null;
             anchor = null;
             autoCompaction.failures = 0;
           } catch (err) {
-            if (
-              controller.signal.aborted ||
-              err.code === "aborted" ||
-              err.name === "AbortError"
-            ) {
-              throw err;
-            }
+            // Only the run's own stop ends the run; a deadline or a summary
+            // that did not shrink the context is a failure like any other
+            if (controller.signal.aborted) throw err;
             autoCompaction.failures += 1;
             if (autoCompaction.failures >= AUTO_COMPACT_FAILURE_LIMIT) {
               autoCompaction.disabled = true;
@@ -2019,6 +2386,7 @@ export class AiAssistRunManager {
         // is counted up here, and the usage the provider reports for it
         // carries the same number.
         const requestStep = ++modelStep;
+        phaseState.step = requestStep;
         const catalog = connectorCatalogOf(connectorSession);
         const breakdownInput = {
           system: systemBlocks,
@@ -2114,9 +2482,13 @@ export class AiAssistRunManager {
           streamAttempts++;
           text = "";
           calls.length = 0;
+          providerState = null;
           stepUsage = null;
           truncated = false;
 
+          setPhase("provider");
+          const streamStarted = Date.now();
+          let firstChunkMs = null;
           try {
             for await (const chunk of client.streamChat({
               system: currentSystemPrompt,
@@ -2128,6 +2500,7 @@ export class AiAssistRunManager {
               signal: stepController.signal,
             })) {
               if (controller.signal.aborted || interrupted) break;
+              if (firstChunkMs === null) firstChunkMs = Date.now() - streamStarted;
               if (chunk.type === "thinking") {
                 await emitChunk("thinking", chunk.text);
               } else if (chunk.type === "text") {
@@ -2135,6 +2508,11 @@ export class AiAssistRunManager {
                 await emitChunk("text", chunk.text);
               } else if (chunk.type === "tool_call") {
                 calls.push(chunk);
+              } else if (chunk.type === "providerState") {
+                providerState = {
+                  provider: chunk.provider,
+                  anthropicThinking: chunk.anthropicThinking,
+                };
               } else if (chunk.type === "usage") {
                 stepUsage = chunk.usage;
                 await emitEvent({
@@ -2150,6 +2528,15 @@ export class AiAssistRunManager {
               }
             }
             streamSucceeded = true;
+            logger.debug(
+              {
+                runId,
+                step: requestStep,
+                firstChunkMs,
+                streamMs: Date.now() - streamStarted,
+              },
+              "[AiAssist] provider stream finished",
+            );
           } catch (streamErr) {
             if (interrupted && !controller.signal.aborted) break;
             // A text-only model refusing a page image is not a failed run:
@@ -2205,6 +2592,7 @@ export class AiAssistRunManager {
               await emitEvent({ type: "stepText", text: "" }).catch(() => {});
             }
             await emitEvent(retryingEvent(plan, retryPolicy));
+            setPhase(`retry:${plan.attempt}`);
             await abortableSleep(plan.retryInMs, stepController.signal).catch(
               () => {},
             );
@@ -2256,13 +2644,6 @@ export class AiAssistRunManager {
             await emitEvent({ type: "nudge" });
             continue;
           }
-          if (truncated) {
-            await emitEvent({
-              type: "error",
-              code: "outputTruncated",
-              message: `The reply was cut off at the ${maxTokens}-token output limit. Raise "Max output tokens" in the AI provider settings, or ask for a shorter answer.`,
-            });
-          }
           // The user may have sent something while this reply was streaming.
           // Answer it in this run rather than ending and making them resend.
           if (queuedMessages.length > 0) {
@@ -2278,6 +2659,15 @@ export class AiAssistRunManager {
             messages.push({ role: "assistant", content: text });
             recordRunStep(runEntries, { runId, step: requestStep, text });
           }
+          // Only here does the run end, so only here is the error shown: an
+          // error event ends the stream on the client
+          if (truncated) {
+            await emitEvent({
+              type: "error",
+              code: "outputTruncated",
+              message: `The reply was cut off at the ${maxTokens}-token output limit. Raise "Max output tokens" in the AI provider settings, or ask for a shorter answer.`,
+            });
+          }
           closeQueue();
           await emitEvent({ type: "turnFinished", reason: "stop" });
           await this.store.updateStatus(runId, "done");
@@ -2292,7 +2682,12 @@ export class AiAssistRunManager {
         );
 
         toolsRanThisRun = true;
-        messages.push({ role: "assistant", content: text, toolCalls: calls });
+        messages.push({
+          role: "assistant",
+          content: text,
+          toolCalls: calls,
+          ...(providerState ? { providerState } : {}),
+        });
         anchor = anchorAt(stepUsage, messages.length);
 
         // The reads a model asks for together are independent, so run the ones
@@ -2302,15 +2697,42 @@ export class AiAssistRunManager {
         const leadingReads = [];
         for (const call of calls) {
           if (!READ_ONLY_TOOLS.has(call.name) || incomplete.has(call)) break;
+          // A fetch the user must approve first cannot run in the batch
+          if (
+            call.name === "web_fetch" &&
+            decide(activeRun.mode || initialMode, call.name, {}, {
+              args: call.args,
+              knownUrls,
+            }) === "ask"
+          ) {
+            break;
+          }
           leadingReads.push(call);
         }
+        // Calls whose toolCallStarted went out before they ran
+        const announced = new Set();
         if (leadingReads.length > 1) {
+          // Announce the whole batch before it runs, so each call shows as
+          // running while it does, not as started and finished at once. Ids
+          // are given as the loop below would give them.
+          for (const [index, call] of leadingReads.entries()) {
+            call.id = call.id || `call_${steps + index + 1}_${runId}`;
+            await emitEvent({
+              type: "toolCallStarted",
+              id: call.id,
+              name: call.name,
+              args: call.args,
+              step: modelStep,
+            });
+            announced.add(call);
+          }
           await Promise.all(
             leadingReads.map(async (call) => {
               try {
-                const value = await runTool(call);
+                const value = await runTool(call, READ_CALL_DEADLINE_MS);
                 prefetched.set(call, { result: value, isError: false });
               } catch (err) {
+                rethrowEnded(err, controller);
                 prefetched.set(call, {
                   result: toolFailure(err),
                   isError: true,
@@ -2343,7 +2765,11 @@ export class AiAssistRunManager {
             !userDeclinedEdit
           ) {
             try {
-              editPlan = await this.tools.checkEdit(call.args, { projectId });
+              editPlan = await this.tools.checkEdit(call.args, {
+                projectId,
+                userId,
+                signal: controller.signal,
+              });
               if (
                 editPlan?.status === "ok" &&
                 editPlan.path &&
@@ -2356,13 +2782,15 @@ export class AiAssistRunManager {
             }
           }
 
-          await emitEvent({
-            type: "toolCallStarted",
-            id: callId,
-            name: call.name,
-            args: call.args,
-            step: modelStep,
-          });
+          if (!announced.has(call)) {
+            await emitEvent({
+              type: "toolCallStarted",
+              id: callId,
+              name: call.name,
+              args: call.args,
+              step: modelStep,
+            });
+          }
 
           let result = null;
           let isError = false;
@@ -2374,10 +2802,15 @@ export class AiAssistRunManager {
               : null;
           // The mode and the command's scope both gate the call; the stricter
           // answer wins, so a scope can refuse but never approve.
-          const modeVerdict = decide(liveMode, call.name, {
-            ...(connectorDesc || {}),
-            path: call.args?.path,
-          });
+          const modeVerdict = decide(
+            liveMode,
+            call.name,
+            {
+              ...(connectorDesc || {}),
+              path: call.args?.path,
+            },
+            { args: call.args, knownUrls },
+          );
           const scopeVerdict = scopeDecision(
             activeCommandId ? SLASH_COMMAND_SCOPES[activeCommandId] : null,
             call.name,
@@ -2460,7 +2893,15 @@ export class AiAssistRunManager {
                   : {}),
               };
 
-              if (verdict === "allow") {
+              // acceptEdits applies an edit without asking only when the named
+              // file holds exactly the text the edit replaces. A fuzzy match, or
+              // a match in another file, is shown for approval as in manual mode
+              const exactEdit =
+                call.name !== "edit_file" ||
+                ((editPlan?.matchKind === "exact" ||
+                  editPlan?.matchKind === "cleaned") &&
+                  !editPlan?.crossFile);
+              if (verdict === "allow" && exactEdit) {
                 // acceptEdits mode: auto-apply directly
                 try {
                   await this._recordCheckpointBeforeFileChange({
@@ -2471,12 +2912,19 @@ export class AiAssistRunManager {
                     toolName: call.name,
                     args: execArgs,
                   });
+                  // Still refused if the target moved since it was planned
                   result = await this.tools.execute(
                     call.name,
                     execArgs,
-                    toolContext(call),
+                    toolContext(
+                      call,
+                      editPlan?.reviewAnchor
+                        ? { reviewAnchor: editPlan.reviewAnchor }
+                        : {},
+                    ),
                   );
                 } catch (err) {
+                  rethrowEnded(err, controller);
                   result = toolFailure(err);
                   isError = true;
                 }
@@ -2508,12 +2956,20 @@ export class AiAssistRunManager {
                       toolName: call.name,
                       args: execArgs,
                     });
+                    // The anchor the user was shown: the tool refuses to write
+                    // if the target has moved since (status 'drifted')
                     result = await this.tools.execute(
                       call.name,
                       execArgs,
-                      toolContext(call),
+                      toolContext(
+                        call,
+                        editPlan?.reviewAnchor
+                          ? { reviewAnchor: editPlan.reviewAnchor }
+                          : {},
+                      ),
                     );
                   } catch (err) {
+                    rethrowEnded(err, controller);
                     result = toolFailure(err);
                     isError = true;
                   }
@@ -2544,6 +3000,7 @@ export class AiAssistRunManager {
                   toolContext(call),
                 );
               } catch (err) {
+                rethrowEnded(err, controller);
                 result = toolFailure(err);
                 isError = true;
               }
@@ -2628,6 +3085,7 @@ export class AiAssistRunManager {
                 result = await runTool(call);
                 if (result?.error) isError = true;
               } catch (err) {
+                rethrowEnded(err, controller);
                 result = toolFailure(err);
                 isError = true;
               }
@@ -2639,19 +3097,67 @@ export class AiAssistRunManager {
                   : said;
               }
             }
+          } else if (call.name === "web_fetch" && verdict === "ask") {
+            // A page no message or result has given: the user decides first
+            const decision = await awaitUserApproval({
+              id: call.id,
+              kind: "connector",
+              connector: {
+                connectorId: "web",
+                connectorName: "Web",
+                toolName: call.name,
+                toolTitle: "Open a web page",
+                args: call.args,
+              },
+            });
+            if (!decision?.accepted) {
+              result = {
+                status: "rejected",
+                error: decision?.note
+                  ? `The user doesn't want to proceed with this tool use. The tool use was rejected. To tell you how to proceed, the user said:\n${decision.note}`
+                  : "The user doesn't want to proceed with this tool use. The tool use was rejected. STOP what you are doing and wait for the user to tell you how to proceed.",
+                note: decision?.note,
+              };
+              isError = true;
+            } else {
+              rememberUrls(knownUrls, call.args?.url);
+              try {
+                result = await runTool(call);
+                if (result?.error) isError = true;
+              } catch (err) {
+                rethrowEnded(err, controller);
+                result = toolFailure(err);
+                isError = true;
+              }
+            }
           } else if (prefetched.has(call)) {
             const done = prefetched.get(call);
             result = done.result;
             isError = done.isError;
-          } else {
+          } else if (verdict === "allow") {
             try {
               result = await runTool(call);
             } catch (err) {
+              rethrowEnded(err, controller);
               result = toolFailure(err);
               isError = true;
             }
+          } else {
+            result = {
+              status: "denied",
+              error: `${call.name} requires approval or is not permitted.`,
+            };
+            isError = true;
           }
 
+          // Pages a search returned may be fetched later without asking
+          if (
+            call.name === "web_search" &&
+            result &&
+            !toolMessageIsError(result, isError)
+          ) {
+            rememberUrls(knownUrls, JSON.stringify(result));
+          }
           // A page image goes to the provider with this step's message, never
           // into the emitted event or the stored transcript.
           const detached = detachToolImages(result, imageProvider);
@@ -2661,6 +3167,13 @@ export class AiAssistRunManager {
           // "nothing compiled yet" (status 'none') is an answer, not a failure.
           const isFailed = toolMessageIsError(result, isError);
           const callSig = `${call.name}:${JSON.stringify(call.args ?? {})}`;
+          // Doom loops: counted whether the call worked or not (see DOOM_*)
+          const doomDigest = crypto
+            .createHash("sha1")
+            .update(`${call.name}:${canonicalJson(call.args ?? {})}`)
+            .digest("base64");
+          const doomCount = (doomCalls.get(doomDigest) ?? 0) + 1;
+          doomCalls.set(doomDigest, doomCount);
           let repeats = 0;
           if (isFailed) {
             // Only a digest is kept for the run: an edit's arguments can be large
@@ -2685,6 +3198,11 @@ export class AiAssistRunManager {
           // Everything the model is told about this call is in `result` before
           // it is emitted, so the stored transcript rebuilds the same message.
           const notices = [];
+          if (doomCount === DOOM_NUDGE_LIMIT) {
+            notices.push(
+              `This exact ${call.name} call has now been made ${doomCount} times with the same arguments. Use the result you already have, or take a different approach; ${DOOM_STOP_LIMIT - doomCount} more identical calls end the run.`,
+            );
+          }
           if (activeRun.modeNotice) {
             notices.push(
               `The user switched to ${modeLabel(activeRun.modeNotice)} mode.`,
@@ -2720,6 +3238,14 @@ export class AiAssistRunManager {
           });
           stepResults.set(call, { result, isError: isFailed });
 
+          if (doomCount >= DOOM_STOP_LIMIT) {
+            await finishWithError(
+              "toolLoop",
+              `Stopped after ${doomCount} identical ${call.name} calls with the same arguments. Send a message to carry on from here.`,
+            );
+            break;
+          }
+
           if (isFailed) {
             turnFailed = true;
             if (repeats >= IDENTICAL_FAILURE_LIMIT) {
@@ -2731,8 +3257,12 @@ export class AiAssistRunManager {
             }
           } else {
             turnSucceeded = true;
-            // The project changed, so a call that failed before may succeed now.
-            if (result?.status === "applied") failedCallSignatures.clear();
+            // The project changed, so a call that failed before may succeed
+            // now, and repeating a compile or read is no longer a loop.
+            if (result?.status === "applied") {
+              failedCallSignatures.clear();
+              doomCalls.clear();
+            }
           }
 
           // Cycle detection: X, Y, X, Y with identical names AND arguments is a
@@ -2805,14 +3335,18 @@ export class AiAssistRunManager {
 
       closeQueue();
       if (controller.signal.aborted) {
-        await emitEvent({ type: "turnFinished", reason: "aborted" });
-        await this.store.updateStatus(runId, "stopped");
+        await bestEffort(() =>
+          emitEvent({ type: "turnFinished", reason: "aborted" }),
+        );
+        await bestEffort(() => this.store.updateStatus(runId, "stopped"));
       } else if (!shouldStop) {
-        await emitEvent({
-          type: "turnFinished",
-          reason: "stop",
-        });
-        await this.store.updateStatus(runId, "done");
+        await bestEffort(() =>
+          emitEvent({
+            type: "turnFinished",
+            reason: "stop",
+          }),
+        );
+        await bestEffort(() => this.store.updateStatus(runId, "done"));
       }
     } catch (err) {
       closeQueue();
@@ -2823,23 +3357,36 @@ export class AiAssistRunManager {
         err.code === "ERR_ABORTED" ||
         err.message?.includes("aborted")
       ) {
-        await emitEvent({ type: "turnFinished", reason: "aborted" });
-        await this.store.updateStatus(runId, "stopped");
+        await bestEffort(() =>
+          emitEvent({ type: "turnFinished", reason: "aborted" }),
+        );
+        await bestEffort(() => this.store.updateStatus(runId, "stopped"));
         return;
       }
+      // An error ends the run: its event and its status are written even when
+      // one of the two writes fails (see bestEffort)
       const code =
         err.code ||
         (err.status === 401 || err.status === 403
           ? "providerAuth"
           : "providerError");
-      await emitEvent({
-        type: "error",
-        code,
-        status: err.status,
-        message: err.message,
-      });
-      await this.store.updateStatus(runId, "error", { message: err.message });
+      await bestEffort(() =>
+        emitEvent({
+          type: "error",
+          code,
+          status: err.status,
+          message: err.message,
+        }),
+      );
+      await bestEffort(() =>
+        this.store.updateStatus(runId, "error", { message: err.message }),
+      );
     } finally {
+      // First: the run is over, so a stop, approval or queued message for it
+      // is no longer taken locally while its last writes are made
+      this.activeRuns.delete(runId);
+      clearInterval(watchdog);
+      setPhase("idle");
       if (flushTimer) {
         clearTimeout(flushTimer);
         flushTimer = null;
@@ -2855,8 +3402,12 @@ export class AiAssistRunManager {
       if (connectorSession) {
         await connectorSession.close().catch(() => {});
       }
+      if (chatId) {
+        await this.store
+          .releaseChatRunLock?.(projectId, userId, chatId, runId)
+          ?.catch?.(() => {});
+      }
       breakdownLive = false;
-      this.activeRuns.delete(runId);
     }
   }
 
@@ -2888,6 +3439,7 @@ export class AiAssistRunManager {
     try {
       const entry = await this._compactEntry({
         projectId,
+        userId,
         transcript,
         providerSettings,
         limits,
@@ -2948,8 +3500,16 @@ export class AiAssistRunManager {
     fits,
   }) {
     await emitEvent({ type: "compactStarted", trigger: "auto" });
+    // A mid-run compaction is not worth more than a minute of the user's
+    // wait: it ends at its deadline or with the run, whichever comes first.
+    // It is never interactive (no visible retry countdown)
+    const signal = AbortSignal.any([
+      controller.signal,
+      AbortSignal.timeout(MID_RUN_COMPACT_DEADLINE_MS),
+    ]);
     const entry = await this._compactEntry({
       projectId,
+      userId,
       transcript,
       providerSettings,
       limits,
@@ -2957,6 +3517,9 @@ export class AiAssistRunManager {
       emitEvent,
       instructions: "",
       trigger: "auto",
+      signal,
+      retryPolicy: "background",
+      midRun: true,
     });
     const next = [...transcript, entry];
     if (!fits(next)) {
@@ -2978,6 +3541,7 @@ export class AiAssistRunManager {
    */
   async _compactEntry({
     projectId,
+    userId,
     transcript,
     providerSettings,
     limits,
@@ -2985,6 +3549,9 @@ export class AiAssistRunManager {
     emitEvent,
     instructions,
     trigger,
+    signal = controller.signal,
+    retryPolicy = "interactive",
+    midRun = false,
   }) {
     // Like the titler: the provider and model of the chat, at its default effort
     const compactClient = this.clientFactory({
@@ -2993,18 +3560,33 @@ export class AiAssistRunManager {
       thinking: undefined,
     });
     const readExcerpt =
+      typeof this.tools?.readLiveDocument === "function" ||
       typeof this.tools?._resolveDoc === "function"
         ? async ({ path, from, to }) => {
             // Read-only: the live text of a file, as read_file gives it
             try {
-              const doc = await this.tools._resolveDoc(projectId, path);
-              if (!doc) return null;
-              let lines = doc.lines || [];
-              const fetched = await this.tools.docUpdater
-                ?.getDocument(projectId, doc._id, -1)
-                .catch(() => null);
-              if (fetched?.lines) lines = fetched.lines;
-              return lines.slice(Math.max(0, from - 1), to).join("\n");
+              if (typeof this.tools?.readLiveDocument === "function") {
+                const live = await this.tools.readLiveDocument(
+                  projectId,
+                  userId,
+                  path,
+                );
+                if (!live) return null;
+                return live.lines.slice(Math.max(0, from - 1), to).join("\n");
+              }
+              const readScoped = async () => {
+                const doc = await this.tools._resolveDoc(projectId, path);
+                if (!doc) return null;
+                let lines = doc.lines || [];
+                const fetched = await this.tools.docUpdater
+                  ?.getDocument(projectId, doc._id, -1)
+                  .catch(() => null);
+                if (fetched?.lines) lines = fetched.lines;
+                return lines.slice(Math.max(0, from - 1), to).join("\n");
+              };
+              return projectId && userId
+                ? await runInProjectScope({ projectId, userId }, readScoped)
+                : await readScoped();
             } catch {
               return null;
             }
@@ -3019,7 +3601,11 @@ export class AiAssistRunManager {
       limits,
       providerType: providerSettings?.type,
       model: providerSettings?.model,
-      signal: controller.signal,
+      signal,
+      // A background compaction does not hold a visible countdown for retries
+      retryPolicy,
+      // Mid-run: the compactor keeps its work small, since the user is waiting
+      midRun,
       readExcerpt,
       onProgress: async (progress) => {
         await emitEvent({ type: "compactProgress", ...progress });
@@ -3028,7 +3614,7 @@ export class AiAssistRunManager {
         await emitEvent(event);
       },
     });
-    if (controller.signal.aborted) throw abortedError();
+    if (signal.aborted) throw abortedError();
 
     const entry = {
       ...result,
@@ -3067,7 +3653,19 @@ export class AiAssistRunManager {
    * instance for one stop, so that write moves out.
    */
   async stopRun(runId) {
+    // Saved first, so the stop holds even if nobody hears the broadcast
+    await Promise.resolve(this.store.requestStop?.(runId)).catch(() => {});
     if (await this.stopLocalRun(runId)) return;
+
+    // No live owner: nothing will read the broadcast, so the run is closed here
+    const run = await this.store.getRun?.(runId);
+    if (
+      run?.ownerId &&
+      (await this.store.isOwnerAlive?.(run.ownerId)) === false
+    ) {
+      await this._closeStoppedRun(runId);
+      return;
+    }
 
     if (this.control) {
       await this.control.publish(runId, { action: "stop" }).catch(() => {});
@@ -3076,24 +3674,23 @@ export class AiAssistRunManager {
 
     // No control channel (single process, or a unit test constructing the
     // manager directly). Fall back to Task 3's behaviour so those tests pass.
-    await this.store.updateStatus(runId, "stopped");
+    await this._closeStoppedRun(runId);
+  }
+
+  async _closeStoppedRun(runId) {
     await this.store.appendEvent(runId, {
       type: "turnFinished",
       reason: "aborted",
     });
+    await this.store.updateStatus(runId, "stopped");
   }
 
   /** Same shape for approval: local first, broadcast only if not ours. */
   async approveEdit(runId, decision) {
     const active = this.activeRuns.get(runId);
     if (active?.approvalResolver?.resolve) {
-      if (
-        decision?.id &&
-        active.approvalResolver.pendingId &&
-        decision.id !== active.approvalResolver.pendingId
-      ) {
-        return;
-      }
+      // While an approval is pending, only the decision for it counts
+      if (!isDecisionForPending(active.approvalResolver, decision)) return;
       // Resume the run immediately. Redis cleanup is independent of executing
       // the approved tool, and its conditional update cannot overwrite a
       // terminal status if the run finishes first.
@@ -3293,13 +3890,7 @@ export class AiAssistRunManager {
       // a broadcast, and loop.
       const active = this.activeRuns.get(runId);
       if (active?.approvalResolver?.resolve) {
-        if (
-          decision?.id &&
-          active.approvalResolver.pendingId &&
-          decision.id !== active.approvalResolver.pendingId
-        ) {
-          return;
-        }
+        if (!isDecisionForPending(active.approvalResolver, decision)) return;
         active.approvalResolver.resolve(decision);
         void this.store.clearPendingApproval(runId, "running").catch(() => {});
       }

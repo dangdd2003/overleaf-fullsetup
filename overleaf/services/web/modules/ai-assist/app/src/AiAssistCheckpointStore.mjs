@@ -57,9 +57,14 @@ export function computeLineDiff(original, current) {
 
 export const OBJECT_ID = /^[0-9a-f]{24}$/i
 const CHAT_ID = /^[A-Za-z0-9_-]{1,64}$/
+const RESERVED_PROTO_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
 
 export function isValidChatId(chatId) {
-  return typeof chatId === 'string' && CHAT_ID.test(chatId)
+  return (
+    typeof chatId === 'string' &&
+    CHAT_ID.test(chatId) &&
+    !RESERVED_PROTO_KEYS.has(chatId)
+  )
 }
 
 export function isValidUserMessageId(id) {
@@ -104,11 +109,27 @@ function fileFor(projectId, userId, chatId, userMessageId) {
   return Path.join(dirFor(projectId, userId, chatId), `${userMessageId}.json`)
 }
 
+// Checkpoints of a chat are kept at most this many (the oldest are pruned),
+// so a long chat cannot grow its snapshot directory without limit. Rewinding
+// the recent turns never needs the pruned ones.
+export const MAX_CHECKPOINTS_PER_CHAT = 100
+
 async function writeCheckpoint(file, checkpoint) {
-  await fs.mkdir(Path.dirname(file), { recursive: true })
-  const tmp = `${file}.${crypto.randomBytes(6).toString('hex')}.tmp`
-  await fs.writeFile(tmp, JSON.stringify(checkpoint, null, 2))
-  await fs.rename(tmp, file)
+  const content = JSON.stringify(checkpoint, null, 2)
+  // A user's deletion may remove the directory between the mkdir and the
+  // write; the write is then tried once more, into a fresh directory.
+  for (let attempt = 0; ; attempt++) {
+    await fs.mkdir(Path.dirname(file), { recursive: true })
+    const tmp = `${file}.${crypto.randomBytes(6).toString('hex')}.tmp`
+    try {
+      await fs.writeFile(tmp, content)
+      await fs.rename(tmp, file)
+      return
+    } catch (err) {
+      await fs.rm(tmp, { force: true }).catch(() => {})
+      if (err.code !== 'ENOENT' || attempt > 0) throw err
+    }
+  }
 }
 
 async function readCheckpoint(file) {
@@ -128,16 +149,18 @@ export async function saveCheckpoint(
   data = {}
 ) {
   const file = fileFor(projectId, userId, chatId, userMessageId)
-  return withAiAssistFileLock(file, async () => {
+  let isNew = false
+  const checkpoint = await withAiAssistFileLock(file, async () => {
     const existing = await readCheckpoint(file).catch(() => null)
+    isNew = !existing
     const now = Date.now()
     const existingFiles = existing?.files || {}
     const incomingFiles = data?.files ? data.files : data
-    const mergedFiles = { ...existingFiles }
+    const mergedFiles = Object.assign(Object.create(null), existingFiles)
 
     if (incomingFiles && typeof incomingFiles === 'object') {
       for (const [filePath, fileInfo] of Object.entries(incomingFiles)) {
-        if (!mergedFiles[filePath]) {
+        if (!Object.hasOwn(mergedFiles, filePath)) {
           mergedFiles[filePath] = {
             originalContent: fileInfo?.originalContent ?? '',
             docId: fileInfo?.docId ? String(fileInfo.docId) : null,
@@ -161,6 +184,71 @@ export async function saveCheckpoint(
     await writeCheckpoint(file, checkpoint)
     return checkpoint
   })
+  if (isNew) {
+    await pruneChatCheckpoints(projectId, userId, chatId, userMessageId).catch(
+      () => {}
+    )
+  }
+  return checkpoint
+}
+
+/** Removes a chat's oldest checkpoints past MAX_CHECKPOINTS_PER_CHAT, never `keepId`. */
+async function pruneChatCheckpoints(projectId, userId, chatId, keepId) {
+  const dir = dirFor(projectId, userId, chatId)
+  let names
+  try {
+    names = await fs.readdir(dir)
+  } catch (err) {
+    if (err.code === 'ENOENT') return
+    throw err
+  }
+  // Counted from names first: the files are read only when there are too many
+  if (names.filter(name => name.endsWith('.json')).length <= MAX_CHECKPOINTS_PER_CHAT) {
+    return
+  }
+  const index = await loadCheckpointIndex(projectId, userId, chatId)
+  const excess = index.length - MAX_CHECKPOINTS_PER_CHAT
+  const victims = index
+    .filter(item => item.userMessageId !== keepId)
+    .slice(0, Math.max(0, excess))
+  for (const { userMessageId } of victims) {
+    await fs
+      .rm(Path.join(dir, `${userMessageId}.json`), { force: true })
+      .catch(() => {})
+  }
+}
+
+/** The checkpoint directories whose names match `pattern` (group 1: project id, group 2: user id). */
+async function checkpointDirsMatching(pattern) {
+  let entries
+  try {
+    entries = await fs.readdir(baseDir(), { withFileTypes: true })
+  } catch (err) {
+    if (err.code === 'ENOENT') return []
+    throw err
+  }
+  // Only real directories: a symlink in the data dir is never followed
+  return entries
+    .filter(entry => entry.isDirectory() && pattern.test(entry.name))
+    .map(entry => Path.join(baseDir(), entry.name))
+}
+
+/** Deletes every checkpoint a user has, in all their projects. Safe to repeat. */
+export async function deleteUserCheckpoints(userId) {
+  if (!OBJECT_ID.test(String(userId))) throw new Error('invalid user id')
+  const pattern = new RegExp(`^[0-9a-f]{24}-${userId}$`, 'i')
+  for (const dir of await checkpointDirsMatching(pattern)) {
+    await fs.rm(dir, { recursive: true, force: true })
+  }
+}
+
+/** Deletes every checkpoint of a project, of every user. Safe to repeat. */
+export async function deleteProjectCheckpoints(projectId) {
+  if (!OBJECT_ID.test(String(projectId))) throw new Error('invalid project id')
+  const pattern = new RegExp(`^${projectId}-[0-9a-f]{24}$`, 'i')
+  for (const dir of await checkpointDirsMatching(pattern)) {
+    await fs.rm(dir, { recursive: true, force: true })
+  }
 }
 
 export async function getCheckpoint(projectId, userId, chatId, userMessageId) {
@@ -308,9 +396,15 @@ function extractFileContent(val) {
 function getFileContent(currentFiles, targetPath) {
   if (!currentFiles || typeof currentFiles !== 'object') return null
   const norm = targetPath.replace(/^\//, '')
-  if (currentFiles[norm] !== undefined) return extractFileContent(currentFiles[norm])
-  if (currentFiles['/' + norm] !== undefined) return extractFileContent(currentFiles['/' + norm])
-  if (currentFiles[targetPath] !== undefined) return extractFileContent(currentFiles[targetPath])
+  if (Object.hasOwn(currentFiles, norm)) {
+    return extractFileContent(currentFiles[norm])
+  }
+  if (Object.hasOwn(currentFiles, '/' + norm)) {
+    return extractFileContent(currentFiles['/' + norm])
+  }
+  if (Object.hasOwn(currentFiles, targetPath)) {
+    return extractFileContent(currentFiles[targetPath])
+  }
   return null
 }
 
@@ -405,6 +499,9 @@ export async function copyCheckpoints(
     )
     copied.push(id)
   }
+  if (copied.length > 0) {
+    await pruneChatCheckpoints(projectId, userId, toChatId, null).catch(() => {})
+  }
   return copied
 }
 
@@ -415,6 +512,8 @@ export default {
   getRewindCheckpoint,
   checkRewind,
   deleteChatCheckpoints,
+  deleteUserCheckpoints,
+  deleteProjectCheckpoints,
   copyCheckpoints,
   isValidChatId,
   isValidUserMessageId,

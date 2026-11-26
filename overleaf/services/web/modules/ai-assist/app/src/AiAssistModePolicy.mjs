@@ -48,7 +48,6 @@ export const READ_ONLY_TOOLS = new Set([
   'get_project_settings',
   'list_available_settings',
   'web_search',
-  'web_fetch',
   CONNECTOR_SEARCH_TOOL,
   READ_CONNECTOR_RESULT_TOOL,
 ])
@@ -77,10 +76,33 @@ export const SETTINGS_TOOLS = new Set([
 
 export const PLAN_TOOL = 'present_plan'
 
+// Edits to the project's root AGENTS.md change every later run's instructions,
+// so they always ask, whatever the mode. Matches './AGENTS.md', '/agents.md'.
 export function isInstructionPath(path) {
   if (typeof path !== 'string') return false
-  const normalized = path.replace(/^\/+/, '').trim().toLowerCase()
+  const normalized = path
+    .trim()
+    .replace(/^(\.\/+|\/+)+/, '')
+    .toLowerCase()
   return normalized === 'agents.md'
+}
+
+/**
+ * web_fetch reads a URL the model chose. It runs freely only when the URL or
+ * its host already came up in this conversation (a search result, a link in
+ * the project, a URL the user typed). Anything else asks.
+ */
+export function isKnownUrl(url, knownUrls) {
+  if (typeof url !== 'string' || !url || !(knownUrls instanceof Set)) {
+    return false
+  }
+  if (knownUrls.has(url)) return true
+  try {
+    const parsed = new URL(url)
+    return knownUrls.has(parsed.origin)
+  } catch {
+    return false
+  }
 }
 
 export function isConnectorTool(name) {
@@ -123,23 +145,32 @@ export const PRESENT_PLAN_SPEC = {
 /**
  * @param {Mode} mode
  * @param {string} toolName
- * @param {{ permission?: ToolPermission, readOnly?: boolean, destructive?: boolean }} [options]
+ * @param {{ permission?: ToolPermission, readOnly?: boolean, destructive?: boolean, path?: string }} [options]
+ * @param {{ args?: object, knownUrls?: Set<string> }} [context] the call's
+ *   arguments, and the URLs and hosts already seen in the conversation
  * @returns {Decision}
  */
-export function decide(mode, toolName, options = {}) {
+export function decide(mode, toolName, options = {}, context = {}) {
   const normMode = normalizeMode(mode)
 
   if (isConnectorTool(toolName)) {
     // The user's per-tool choice wins in every mode; plan mode additionally
-    // refuses anything the server does not declare read-only
+    // refuses anything the server does not declare read-only. A connector
+    // that does not say (no hints) counts as destructive and not read-only.
     if (options?.permission === 'block') return 'deny'
     if (normMode === 'plan' && options?.readOnly !== true) return 'deny'
     // A standing "allow" covers the tools that do not change anything. A
     // destructive one still asks each time, whatever the user chose before.
-    if (options?.permission === 'allow' && options?.destructive !== true) {
+    if (options?.permission === 'allow' && options?.destructive === false) {
       return 'allow'
     }
     return 'ask'
+  }
+
+  if (toolName === 'web_fetch') {
+    // Asks in plan mode too: a fetch is not a change, but it leaves the project.
+    const url = context?.args?.url
+    return isKnownUrl(url, context?.knownUrls) ? 'allow' : 'ask'
   }
 
   if (toolName === PLAN_TOOL) {
@@ -152,7 +183,8 @@ export function decide(mode, toolName, options = {}) {
 
   if (FILE_EDIT_TOOLS.has(toolName) || PROJECT_SETTINGS_TOOLS.has(toolName)) {
     if (normMode === 'plan') return 'deny'
-    if (FILE_EDIT_TOOLS.has(toolName) && isInstructionPath(options?.path)) return 'ask'
+    const path = options?.path ?? context?.args?.path
+    if (FILE_EDIT_TOOLS.has(toolName) && isInstructionPath(path)) return 'ask'
     if (normMode === 'acceptEdits') return 'allow'
     return 'ask' // manual
   }
@@ -162,8 +194,8 @@ export function decide(mode, toolName, options = {}) {
     return 'ask' // manual & acceptEdits: these leave the project
   }
 
-  // Unknown tools: in plan mode deny; in other modes allow so standard unknown-tool handling triggers
-  return normMode === 'plan' ? 'deny' : 'allow'
+  // Unknown tools fail closed across every mode.
+  return 'deny'
 }
 
 /**

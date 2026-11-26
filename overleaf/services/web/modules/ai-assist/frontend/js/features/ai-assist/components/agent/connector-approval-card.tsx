@@ -29,12 +29,15 @@ export function ConnectorApprovalCard({
   toolName,
   toolTitle,
   args = {},
+  allowAlways = true,
   onDecision,
 }: {
   connectorName: string
   toolName: string
   toolTitle?: string
   args?: Record<string, unknown>
+  /** Off where the server cannot keep "don't ask again" (web pages). */
+  allowAlways?: boolean
   onDecision: (decision: ConnectorDecision) => void
 }) {
   const { t } = useTranslation()
@@ -50,18 +53,21 @@ export function ConnectorApprovalCard({
   const entries = Object.entries(args).filter(
     ([, v]) => v !== undefined && v !== null
   )
-  const canAmend = selected === YES || selected === NO
+  // The choices shown, in order; an index into this is the selection
+  const choices = allowAlways ? [YES, ALWAYS, NO] : [YES, NO]
+  const canAmend = choices[selected] === YES || choices[selected] === NO
   const showFeedback = feedbackOpen && canAmend
 
-  const options = [
-    t('ai_assist_connector_approve_yes', 'Yes'),
-    t(
+  const labels: Record<number, string> = {
+    [YES]: t('ai_assist_connector_approve_yes', 'Yes'),
+    [ALWAYS]: t(
       'ai_assist_connector_approve_always',
       'Yes, and don’t ask again for __name__ commands',
       { name: displayName }
     ),
-    t('ai_assist_connector_approve_no', 'No'),
-  ]
+    [NO]: t('ai_assist_connector_approve_no', 'No'),
+  }
+  const options = choices.map(choice => labels[choice])
 
   // Take focus only from the chat panel, never from the editor
   useEffect(() => {
@@ -88,8 +94,9 @@ export function ConnectorApprovalCard({
     if (submitted) return
     setSubmitted(true)
     const text = feedback?.trim() || undefined
-    if (index === YES) onDecision({ accepted: true, always: false, note: text })
-    else if (index === ALWAYS) onDecision({ accepted: true, always: true })
+    const choice = choices[index]
+    if (choice === YES) onDecision({ accepted: true, always: false, note: text })
+    else if (choice === ALWAYS) onDecision({ accepted: true, always: true })
     else onDecision({ accepted: false, note: text })
   }
 
@@ -122,7 +129,7 @@ export function ConnectorApprovalCard({
       case 'Escape':
         event.preventDefault()
         event.stopPropagation()
-        submit(NO)
+        submit(choices.indexOf(NO))
         break
     }
   }

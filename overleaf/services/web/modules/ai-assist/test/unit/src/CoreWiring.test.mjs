@@ -70,9 +70,18 @@ describe('ai-assist core wiring', () => {
       path.join(WEB_ROOT, 'config/settings.defaults.js'),
       'utf8'
     )
+    // The slot names a lazy entry, which loads the panel in its own chunk
     expect(source).toMatch(
-      /ai-assist\/frontend\/js\/features\/ai-assist\/components\/agent\/ai-assist-right-panel/
+      /ai-assist\/frontend\/js\/features\/ai-assist\/entry\/component-right-panel\.tsx/
     )
+    const entry = fs.readFileSync(
+      path.join(
+        WEB_ROOT,
+        'modules/ai-assist/frontend/js/features/ai-assist/entry/component-right-panel.tsx'
+      ),
+      'utf8'
+    )
+    expect(entry).toMatch(/components\/agent\/ai-assist-right-panel/)
   })
 
   it('adds ai-assist to the RailTabKey union', () => {

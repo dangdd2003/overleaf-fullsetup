@@ -80,7 +80,8 @@ describe('language suggestions: editor extension', function () {
       })
       const [call] = fetchMock.callHistory.calls(CHAT)
       const body = JSON.parse(call.options.body as string)
-      expect(body.providerSettings).to.include({ type: 'ollama', baseUrl: 'http://ollama:11434/v1' })
+      // Ollama is reached on its native API: a /v1 suffix is dropped
+      expect(body.providerSettings).to.include({ type: 'ollama', baseUrl: 'http://ollama:11434' })
     } finally {
       view.destroy()
     }

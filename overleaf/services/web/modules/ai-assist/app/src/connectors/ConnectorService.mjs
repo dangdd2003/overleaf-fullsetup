@@ -29,8 +29,21 @@ import { sanitizeServerIcons } from './ConnectorIcons.mjs'
 import { originOf } from './ConnectorFetch.mjs'
 
 /**
+ * What a tool says it does when it says nothing. An unannotated tool is
+ * treated as destructive and not read-only, so approval is asked for it.
+ * The MCP spec's own defaults for these hints are the opposite; they are not
+ * trusted from a server that does not state them.
+ */
+const HINT_DEFAULTS = {
+  readOnly: false,
+  destructive: true,
+  openWorld: false,
+}
+
+/**
  * MCP tool annotations are `…Hint`; older servers sent the bare names, and
  * some saved tools carry the hints at the top level. All three are read.
+ * A missing hint falls back to HINT_DEFAULTS, so stored tools read the same way.
  */
 export function toolHint(tool, name) {
   const annotations = tool?.annotations || {}
@@ -39,10 +52,14 @@ export function toolHint(tool, name) {
     annotations[name] ??
     tool?.[`${name}Hint`] ??
     tool?.[name]
+  if (value === undefined || value === null) return HINT_DEFAULTS[name] ?? false
   return Boolean(value)
 }
 
 const PERMISSION_LEVELS = new Set(['allow', 'ask', 'block'])
+
+/** Connectors one user may keep. Each one is a server the agent can reach. */
+export const MAX_CONNECTORS_PER_USER = 50
 
 /**
  * The key a tool's permission is stored under. Mongo reads a dot as a path
@@ -242,6 +259,15 @@ export class ConnectorService {
   }
 
   static async create(userId, input) {
+    const existing = await ConnectorModel.countDocuments({ user_id: userId }).exec()
+    if (existing >= MAX_CONNECTORS_PER_USER) {
+      const err = new Error(
+        `A user can keep at most ${MAX_CONNECTORS_PER_USER} connectors`
+      )
+      err.status = 400
+      err.code = 'TOO_MANY_CONNECTORS'
+      throw err
+    }
     const headers = headerMap(input.headers)
     const connector = new ConnectorModel({
       user_id: userId,
@@ -336,16 +362,23 @@ export class ConnectorService {
       const saved = (await loadCredentials(connector._id)).headers || {}
       const headers = {}
       for (const h of patch.headers) {
-        if (h.keep && !originChanged && saved[h.name]) {
-          headers[h.name] = saved[h.name]
+        const name = typeof h?.name === 'string' ? h.name.trim() : ''
+        const value = typeof h?.value === 'string' ? h.value.trim() : ''
+        if (!name) continue
+        if (h.keep && !originChanged && Object.hasOwn(saved, name)) {
+          headers[name] = saved[name]
+        } else if (value) {
+          headers[name] = value
         }
-        else if (h.name && h.value) headers[h.name] = h.value
       }
       connector.headerNames = Object.keys(headers)
       secrets.headers = headers
       reconnect = true
     }
     if (originChanged) {
+      // Drop any in-flight OAuth state bound to the previous origin so a late
+      // callback cannot attach the old server's tokens to the new URL.
+      await OAuthStateModel.deleteMany({ connector_id: connector._id }).exec()
       // Secrets were issued for, or typed in for, the old server: never send
       // them to a new host. The user signs in or enters them again.
       secrets.tokens = null
@@ -508,10 +541,24 @@ export class ConnectorService {
       }
     } catch (err) {
       if (err instanceof ConnectorAuthError) {
-        const { prm, as } = await discover({
-          url: input.url,
-          resourceMetadataUrl: err.authDetails?.resourceMetadata,
-        })
+        let prm
+        let as
+        try {
+          ;({ prm, as } = await discover({
+            url: input.url,
+            resourceMetadataUrl: err.authDetails?.resourceMetadata,
+          }))
+        } catch (discoverErr) {
+          return {
+            ok: false,
+            reachable: true,
+            requiresAuth: true,
+            transport: client.era === 'sse' ? 'sse' : 'streamable-http',
+            era: client.era,
+            preset,
+            error: discoverErr?.message || 'OAuth discovery failed',
+          }
+        }
         const supportsCimd = Boolean(
           as?.client_id_metadata_document_supported &&
             as.token_endpoint_auth_methods_supported.includes('none') &&

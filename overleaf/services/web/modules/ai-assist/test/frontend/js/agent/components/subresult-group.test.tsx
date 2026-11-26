@@ -405,6 +405,50 @@ describe('SubresultGroup Component', function () {
       }
     }
 
+    it('shows a web page fetch as the permission prompt, without "don\'t ask again"', function () {
+      const onDecision = sinon.stub()
+      render(
+        <SubresultGroup
+          items={[
+            {
+              type: 'tool_call',
+              call: {
+                id: 'c-web',
+                name: 'web_fetch',
+                args: { url: 'https://example.com/page' },
+              },
+            } as any,
+          ]}
+          isLive={false}
+          pendingApprovalId="c-web"
+          approvalContext={
+            {
+              kind: 'connector',
+              connector: {
+                connectorId: 'web',
+                connectorName: 'Web',
+                toolTitle: 'Open a web page',
+              },
+            } as any
+          }
+          onDecision={onDecision}
+        />
+      )
+      const card = screen.getByTestId('connector-approval-card')
+      expect(card.textContent).to.contain('Web — Open a web page')
+      expect(card.textContent).to.contain('https://example.com/page')
+      const options = screen.getAllByRole('option')
+      expect(options.map(o => o.textContent)).to.deep.equal([
+        '❯1.Yes',
+        '2.No',
+      ])
+      fireEvent.click(options[1])
+      expect(onDecision.firstCall.args[0]).to.deep.equal({
+        accepted: false,
+        note: undefined,
+      })
+    })
+
     it('shows the permission prompt for a pending mcp__ call', function () {
       renderPrompt()
       expect(screen.getByText('Do you want to proceed?')).to.exist
@@ -857,12 +901,7 @@ describe('SubresultGroup Component', function () {
       '.ai-assist-subresult-group-header'
     )!
     expect(headerBtn.classList.contains('is-active')).to.be.true
-
-    const spinner = container.querySelector(
-      '.ai-assist-subresult-group-spinner'
-    )
-    expect(spinner).to.exist
-    expect(spinner?.querySelector('.ai-assist-status-mark')).to.exist
+    expect(headerBtn.querySelector('.ai-assist-activity-dot')).to.exist
 
     const title = container.querySelector('.ai-assist-subresult-group-title')!
     expect(title.classList.contains('is-active')).to.be.true
@@ -878,7 +917,7 @@ describe('SubresultGroup Component', function () {
 
     const activeToolCall = itemsDom[1].querySelector('.ai-assist-tool-call')!
     expect(activeToolCall.classList.contains('is-active')).to.be.true
-    expect(activeToolCall.querySelector('.ai-assist-tool-spinner')).to.exist
+    expect(activeToolCall.querySelector('.ai-assist-activity-dot')).to.exist
   })
 
   it('renders active activity bar when first tool call is in flight with no prior completed tools', function () {
@@ -903,11 +942,7 @@ describe('SubresultGroup Component', function () {
     )
     expect(headerBtn).to.exist
     expect(headerBtn?.classList.contains('is-active')).to.be.true
-
-    const spinner = container.querySelector(
-      '.ai-assist-subresult-group-spinner'
-    )
-    expect(spinner).to.exist
+    expect(headerBtn?.querySelector('.ai-assist-activity-dot')).to.exist
 
     const title = container.querySelector('.ai-assist-subresult-group-title')!
     expect(title.textContent).to.contain('Read main.tex')

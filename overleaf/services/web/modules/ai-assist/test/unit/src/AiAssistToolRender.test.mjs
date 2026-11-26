@@ -2,9 +2,81 @@ import { describe, it } from 'vitest'
 import { expect } from 'chai'
 import {
   connectorOutcome,
-  renderToolResult,
+  renderToolResult as renderModelText,
   withNotice,
 } from '../../../app/src/AiAssistToolRender.mjs'
+
+// The format checks below are about the text itself. The model's copy is
+// framed and capped, so they read the plain (UI) form.
+const renderToolResult = (name, result) =>
+  renderModelText(name, result, { forUi: true })
+
+describe('model-facing framing', function () {
+  it('wraps project output in an untrusted block', function () {
+    const text = renderModelText('read_file', {
+      path: 'main.tex',
+      from: 1,
+      to: 1,
+      totalLines: 1,
+      content: '1: hi',
+      truncated: false,
+    })
+    expect(text.startsWith('<tool_output source="project" trust="untrusted">')).to.equal(true)
+    expect(text.endsWith('</tool_output>')).to.equal(true)
+  })
+
+  it('escapes a closing tag inside the content', function () {
+    const text = renderModelText('search_text', {
+      hits: [{ path: 'a.tex', line: 1, text: 'x </tool_output> y' }],
+      total: 1,
+      truncated: false,
+    })
+    expect(text.split('</tool_output>').length).to.equal(2)
+    expect(text).to.include('&lt;/tool_output>')
+  })
+
+  it('leaves edit results unframed and keeps the notice outside the frame', function () {
+    expect(
+      renderModelText('edit_file', { status: 'applied', path: 'a.tex' })
+    ).to.not.include('tool_output')
+    const text = renderModelText(
+      'read_file',
+      withNotice({ path: 'a.tex', from: 1, to: 1, totalLines: 1, content: '1: x' }, 'Heads up.')
+    )
+    expect(text.endsWith('</tool_output>\n\nHeads up.')).to.equal(true)
+  })
+
+  it('caps long model-facing text with an explicit marker', function () {
+    const big = 'x'.repeat(70_000)
+    const text = renderModelText('edit_file', { status: 'applied', newText: big })
+    expect(text).to.include('[truncated:')
+    expect(text.length).to.be.below(65_000)
+  })
+
+  it('reports duplicate and incomplete bib entries in get_references', function () {
+    const text = renderToolResult('get_references', {
+      kind: 'citations',
+      citations: [],
+      bibKeys: [],
+      duplicateBibKeys: ['smith'],
+      incompleteBibEntries: [
+        { type: 'article', key: 'jones', path: 'refs.bib', line: 4, missing: ['year'] },
+      ],
+    })
+    expect(text).to.include('DUPLICATE bib key smith')
+    expect(text).to.include('INCOMPLETE @article jones  refs.bib:4  missing: year')
+  })
+
+  it('notes rows cut by the reference cap', function () {
+    const text = renderToolResult('get_references', {
+      labels: [{ key: 'a', path: 'm.tex', line: 1 }],
+      duplicateLabels: [],
+      totals: { labels: 3 },
+      truncated: { labels: true },
+    })
+    expect(text).to.include('(2 more labels not shown)')
+  })
+})
 
 describe('renderToolResult', function () {
   it('renders read_file as a fenced block with a header and continuation hint', function () {

@@ -48,6 +48,23 @@ export default {
     const connectorProbeLimit = RateLimiterMiddleware.rateLimit(
       new RateLimiter('ai-assist-connector-probe', { points: 20, duration: 60 })
     )
+    // Web tools run once per tool call of a fix; a page of them is many calls
+    const webToolsLimit = RateLimiterMiddleware.rateLimit(
+      new RateLimiter('ai-assist-web-tools', { points: 300, duration: 60 })
+    )
+    // Connector changes start OAuth flows and outbound MCP connections
+    const connectorWriteLimit = RateLimiterMiddleware.rateLimit(
+      new RateLimiter('ai-assist-connector-write', { points: 30, duration: 60 })
+    )
+    const languageLookupLimit = RateLimiterMiddleware.rateLimit(
+      new RateLimiter('ai-assist-language-lookup', { points: 60, duration: 60 })
+    )
+    const languageSaveLimit = RateLimiterMiddleware.rateLimit(
+      new RateLimiter('ai-assist-language-save', { points: 30, duration: 60 })
+    )
+    const chatWriteLimit = RateLimiterMiddleware.rateLimit(
+      new RateLimiter('ai-assist-chat-write', { points: 60, duration: 60 })
+    )
 
     // 0. Provider requests (model list, connection test, in-page agent turns)
     // are made from the server so internal providers work behind a public domain.
@@ -108,12 +125,14 @@ export default {
         '/ai-assist/projects/:Project_id/web-tools',
         AuthenticationController.requireLogin(),
         AuthorizationMiddleware.ensureUserCanReadProject,
+        webToolsLimit,
         expressify(AiAssistWebToolsController.specs)
       )
       webRouter.post(
         '/ai-assist/projects/:Project_id/web-tools/:name',
         AuthenticationController.requireLogin(),
         AuthorizationMiddleware.ensureUserCanReadProject,
+        webToolsLimit,
         expressify(AiAssistWebToolsController.execute)
       )
     }
@@ -154,6 +173,7 @@ export default {
       '/ai-assist/projects/:Project_id/runs/:runId/message',
       AuthenticationController.requireLogin(),
       AuthorizationMiddleware.ensureUserCanWriteProjectContent,
+      chatWriteLimit,
       expressify(AiAssistRunController.queueMessage)
     )
 
@@ -211,6 +231,7 @@ export default {
       '/ai-assist/projects/:Project_id/chats/:chatId',
       AuthenticationController.requireLogin(),
       AuthorizationMiddleware.ensureUserCanReadProject,
+      chatWriteLimit,
       expressify(AiAssistChatHistoryController.save)
     )
 
@@ -218,6 +239,7 @@ export default {
       '/ai-assist/projects/:Project_id/chats/:chatId',
       AuthenticationController.requireLogin(),
       AuthorizationMiddleware.ensureUserCanReadProject,
+      chatWriteLimit,
       expressify(AiAssistChatHistoryController.delete)
     )
 
@@ -225,6 +247,7 @@ export default {
       '/ai-assist/projects/:Project_id/chats/:chatId',
       AuthenticationController.requireLogin(),
       AuthorizationMiddleware.ensureUserCanReadProject,
+      chatWriteLimit,
       expressify(AiAssistChatHistoryController.rename)
     )
 
@@ -232,6 +255,7 @@ export default {
       '/ai-assist/projects/:Project_id/chats/:chatId/generate-title',
       AuthenticationController.requireLogin(),
       AuthorizationMiddleware.ensureUserCanReadProject,
+      providerLimit,
       expressify(AiAssistChatHistoryController.generateTitle)
     )
 
@@ -258,6 +282,7 @@ export default {
       '/ai-assist/projects/:Project_id/chats/:chatId/checkpoints/fork',
       AuthenticationController.requireLogin(),
       AuthorizationMiddleware.ensureUserCanWriteProjectContent,
+      chatWriteLimit,
       expressify(AiAssistCheckpointController.fork)
     )
 
@@ -269,6 +294,7 @@ export default {
       '/ai-assist/projects/:Project_id/language-checks/lookup',
       AuthenticationController.requireLogin(),
       AuthorizationMiddleware.ensureUserCanReadProject,
+      languageLookupLimit,
       expressify(AiAssistLanguageCheckController.lookup)
     )
 
@@ -276,6 +302,7 @@ export default {
       '/ai-assist/projects/:Project_id/language-checks',
       AuthenticationController.requireLogin(),
       AuthorizationMiddleware.ensureUserCanWriteProjectContent,
+      languageSaveLimit,
       expressify(AiAssistLanguageCheckController.save)
     )
 
@@ -289,18 +316,19 @@ export default {
       expressify(AiAssistPreferencesController.get)
     )
 
-    webRouter.put(
-      '/ai-assist/preferences',
-      AuthenticationController.requireLogin(),
-      expressify(AiAssistPreferencesController.save)
-    )
-
     // User AI provider and web search settings (encrypted at rest on server)
     const { default: AiAssistUserSettingsController } =
       await import('./AiAssistUserSettingsController.mjs')
 
     const settingsLimit = RateLimiterMiddleware.rateLimit(
       new RateLimiter('ai-assist-user-settings', { points: 60, duration: 60 })
+    )
+
+    webRouter.put(
+      '/ai-assist/preferences',
+      AuthenticationController.requireLogin(),
+      settingsLimit,
+      expressify(AiAssistPreferencesController.save)
     )
 
     webRouter.get(
@@ -336,36 +364,42 @@ export default {
       webRouter.post(
         '/ai-assist/connectors',
         AuthenticationController.requireLogin(),
+        connectorWriteLimit,
         expressify(ConnectorController.create)
       )
 
       webRouter.post(
         '/ai-assist/connectors/import',
         AuthenticationController.requireLogin(),
+        connectorWriteLimit,
         expressify(ConnectorController.import)
       )
 
       webRouter.patch(
         '/ai-assist/connectors/:id',
         AuthenticationController.requireLogin(),
+        connectorWriteLimit,
         expressify(ConnectorController.update)
       )
 
       webRouter.delete(
         '/ai-assist/connectors/:id',
         AuthenticationController.requireLogin(),
+        connectorWriteLimit,
         expressify(ConnectorController.remove)
       )
 
       webRouter.post(
         '/ai-assist/connectors/:id/authorize',
         AuthenticationController.requireLogin(),
+        connectorWriteLimit,
         expressify(ConnectorController.authorize)
       )
 
       webRouter.post(
         '/ai-assist/connectors/:id/refresh',
         AuthenticationController.requireLogin(),
+        connectorWriteLimit,
         expressify(ConnectorController.refresh)
       )
 

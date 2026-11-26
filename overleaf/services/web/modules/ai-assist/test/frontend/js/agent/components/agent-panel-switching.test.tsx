@@ -42,6 +42,9 @@ class FakeEventSource {
 
   close() {}
 
+  // The run client listens for heartbeats on the stream; the fake has none to send
+  addEventListener() {}
+
   /** The server has sent every event the run had sent before this stream. */
   caughtUp() {
     act(() => {

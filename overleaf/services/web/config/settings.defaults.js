@@ -1020,83 +1020,83 @@ module.exports = {
     sourceEditorExtensions: [
       Path.resolve(
         __dirname,
-        '../modules/ai-assist/frontend/js/features/ai-assist/ai-edit-glow/extension.ts'
+        '../modules/ai-assist/frontend/js/features/ai-assist/entry/extension-ai-edit-glow.ts'
       ),
       Path.resolve(
         __dirname,
-        '../modules/ai-assist/frontend/js/features/ai-assist/writing-tools/extension.ts'
+        '../modules/ai-assist/frontend/js/features/ai-assist/entry/extension-writing-tools.ts'
       ),
       Path.resolve(
         __dirname,
-        '../modules/ai-assist/frontend/js/features/ai-assist/texgpt/extension.ts'
+        '../modules/ai-assist/frontend/js/features/ai-assist/entry/extension-texgpt.ts'
       ),
       Path.resolve(
         __dirname,
-        '../modules/ai-assist/frontend/js/features/ai-assist/equation/extension.ts'
+        '../modules/ai-assist/frontend/js/features/ai-assist/entry/extension-equation.ts'
       ),
       Path.resolve(
         __dirname,
-        '../modules/ai-assist/frontend/js/features/ai-assist/table/extension.ts'
+        '../modules/ai-assist/frontend/js/features/ai-assist/entry/extension-table.ts'
       ),
       Path.resolve(
         __dirname,
-        '../modules/ai-assist/frontend/js/features/ai-assist/language-suggestions/extension.ts'
+        '../modules/ai-assist/frontend/js/features/ai-assist/entry/extension-language-suggestions.ts'
       ),
       Path.resolve(
         __dirname,
-        '../modules/ai-assist/frontend/js/features/ai-assist/inline-suggestion/extension.ts'
+        '../modules/ai-assist/frontend/js/features/ai-assist/entry/extension-inline-suggestion.ts'
       ),
     ],
     sourceEditorVisualExtensions: [],
     sourceEditorComponents: [
       Path.resolve(
         __dirname,
-        '../modules/ai-assist/frontend/js/features/ai-assist/components/apply-fix-listener.tsx'
+        '../modules/ai-assist/frontend/js/features/ai-assist/entry/component-apply-fix-listener.tsx'
       ),
       Path.resolve(
         __dirname,
-        '../modules/ai-assist/frontend/js/features/ai-assist/components/writing-tools/writing-tools-card.tsx'
+        '../modules/ai-assist/frontend/js/features/ai-assist/entry/component-writing-tools-card.tsx'
       ),
       Path.resolve(
         __dirname,
-        '../modules/ai-assist/frontend/js/features/ai-assist/components/equation/equation-host.tsx'
+        '../modules/ai-assist/frontend/js/features/ai-assist/entry/component-equation-host.tsx'
       ),
       Path.resolve(
         __dirname,
-        '../modules/ai-assist/frontend/js/features/ai-assist/components/table/table-host.tsx'
+        '../modules/ai-assist/frontend/js/features/ai-assist/entry/component-table-host.tsx'
       ),
       Path.resolve(
         __dirname,
-        '../modules/ai-assist/frontend/js/features/ai-assist/components/language-suggestions/suggestion-card-host.tsx'
+        '../modules/ai-assist/frontend/js/features/ai-assist/entry/component-suggestion-card-host.tsx'
       ),
       Path.resolve(
         __dirname,
-        '../modules/ai-assist/frontend/js/features/ai-assist/components/inline-suggestion/inline-popup.tsx'
+        '../modules/ai-assist/frontend/js/features/ai-assist/entry/component-inline-popup.tsx'
       ),
     ],
     pdfLogEntryHeaderActionComponents: [
       Path.resolve(
         __dirname,
-        '../modules/ai-assist/frontend/js/features/ai-assist/components/suggest-fix-button.tsx'
+        '../modules/ai-assist/frontend/js/features/ai-assist/entry/component-suggest-fix-button.tsx'
       ),
     ],
     pdfLogEntryComponents: [
       Path.resolve(
         __dirname,
-        '../modules/ai-assist/frontend/js/features/ai-assist/components/suggest-fix-panel.tsx'
+        '../modules/ai-assist/frontend/js/features/ai-assist/entry/component-suggest-fix-panel.tsx'
       ),
     ],
     pdfLogEntriesComponents: [
       Path.resolve(
         __dirname,
-        '../modules/ai-assist/frontend/js/features/ai-assist/components/last-fix-banner.tsx'
+        '../modules/ai-assist/frontend/js/features/ai-assist/entry/component-last-fix-banner.tsx'
       ),
     ],
     pdfPreviewPromotions: [],
     diagnosticActions: [
       Path.resolve(
         __dirname,
-        '../modules/ai-assist/frontend/js/features/ai-assist/diagnostic-action.ts'
+        '../modules/ai-assist/frontend/js/features/ai-assist/entry/diagnostic-action.ts'
       ),
     ],
     sourceEditorCompletionSources: [],
@@ -1104,7 +1104,7 @@ module.exports = {
     sourceEditorToolbarStartButtons: [
       Path.resolve(
         __dirname,
-        '../modules/ai-assist/frontend/js/features/ai-assist/components/texgpt/texgpt-button.tsx'
+        '../modules/ai-assist/frontend/js/features/ai-assist/entry/component-texgpt-button.tsx'
       ),
     ],
     sourceEditorToolbarButtonGroups: [],
@@ -1112,19 +1112,19 @@ module.exports = {
     sourceEditorToolbarEndButtons: [
       Path.resolve(
         __dirname,
-        '../modules/ai-assist/frontend/js/features/ai-assist/components/language-suggestions/toolbar-control.tsx'
+        '../modules/ai-assist/frontend/js/features/ai-assist/entry/component-toolbar-control.tsx'
       ),
     ],
     sourceEditorMathGenerators: [
       Path.resolve(
         __dirname,
-        '../modules/ai-assist/frontend/js/features/ai-assist/equation/math-generator.ts'
+        '../modules/ai-assist/frontend/js/features/ai-assist/entry/generator-math.ts'
       ),
     ],
     sourceEditorTableGenerators: [
       Path.resolve(
         __dirname,
-        '../modules/ai-assist/frontend/js/features/ai-assist/table/table-generator.ts'
+        '../modules/ai-assist/frontend/js/features/ai-assist/entry/generator-table.ts'
       ),
     ],
     rootContextProviders: [],
@@ -1132,14 +1132,14 @@ module.exports = {
     mainEditorLayoutPanels: [
       Path.resolve(
         __dirname,
-        '../modules/ai-assist/frontend/js/features/ai-assist/components/agent/ai-assist-right-panel.tsx'
+        '../modules/ai-assist/frontend/js/features/ai-assist/entry/component-right-panel.tsx'
       ),
     ],
     pythonRunner: [],
     langFeedbackLinkingWidgets: [
       Path.resolve(
         __dirname,
-        '../modules/ai-assist/frontend/js/features/ai-assist/components/ai-providers-widget.tsx'
+        '../modules/ai-assist/frontend/js/features/ai-assist/entry/component-ai-providers-widget.tsx'
       ),
     ],
     labsExperiments: [],
@@ -1219,20 +1219,20 @@ module.exports = {
     settingsModalEditorTabSections: [
       Path.resolve(
         __dirname,
-        '../modules/ai-assist/frontend/js/features/ai-assist/components/inline-suggestion/ai-assistance-section.tsx'
+        '../modules/ai-assist/frontend/js/features/ai-assist/entry/section-ai-assistance.ts'
       ),
     ],
     settingsModalSpellcheckSections: [
       Path.resolve(
         __dirname,
-        '../modules/ai-assist/frontend/js/features/ai-assist/components/language-suggestions/language-suggestions-section.tsx'
+        '../modules/ai-assist/frontend/js/features/ai-assist/entry/section-language-suggestions.ts'
       ),
     ],
     editorFloatingMenuActions: [],
     reviewTooltipMenuActions: [
       Path.resolve(
         __dirname,
-        '../modules/ai-assist/frontend/js/features/ai-assist/components/writing-tools/writing-tools-action.tsx'
+        '../modules/ai-assist/frontend/js/features/ai-assist/entry/component-writing-tools-action.tsx'
       ),
     ],
     referenceIndices: [],

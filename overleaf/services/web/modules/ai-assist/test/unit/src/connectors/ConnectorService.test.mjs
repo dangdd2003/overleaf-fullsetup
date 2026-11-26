@@ -16,6 +16,7 @@ import {
   toView,
   getMeta,
   ConnectorService,
+  MAX_CONNECTORS_PER_USER,
 } from '../../../../app/src/connectors/ConnectorService.mjs'
 
 const CONNECTOR_ID = '507f1f77bcf86cd799439011'
@@ -120,7 +121,8 @@ describe('ConnectorService', function () {
       expect(search).to.include({ readOnly: true, destructive: false, permission: 'allow' })
       expect(remove).to.include({ destructive: true, permission: 'block' })
       expect(lookup).to.include({ openWorld: true, readOnly: false })
-      expect(plain).to.include({ readOnly: false, destructive: false, openWorld: false })
+      // An unannotated tool is destructive and not read-only until it says otherwise
+      expect(plain).to.include({ readOnly: false, destructive: true, openWorld: false })
       expect(plain.permission).to.equal('block')
       expect(view.defaultPermission).to.equal('block')
     })
@@ -134,6 +136,21 @@ describe('ConnectorService', function () {
       })
 
       expect(view.tools[0]).to.include({ readOnly: true, destructive: true })
+    })
+
+    it('treats a tool with no hints as destructive, and keeps an explicit false', function () {
+      const view = toView({
+        _id: CONNECTOR_ID,
+        name: 'docs',
+        url: 'https://mcp.example.com',
+        tools: [
+          { name: 'bare', inputSchema: {} },
+          { name: 'stated', annotations: { destructiveHint: false, readOnlyHint: false } },
+        ],
+      })
+
+      expect(view.tools[0]).to.include({ readOnly: false, destructive: true })
+      expect(view.tools[1]).to.include({ readOnly: false, destructive: false })
     })
 
     it('defaults a tool to ask, and the timeout to none', function () {
@@ -286,8 +303,25 @@ describe('ConnectorService', function () {
   })
 
   describe('create', function () {
+    it('refuses a connector past the per-user cap, before anything is saved', async function () {
+      vi.spyOn(ConnectorModel, 'countDocuments').mockReturnValue({
+        exec: async () => MAX_CONNECTORS_PER_USER,
+      })
+      const save = vi.spyOn(ConnectorModel.prototype, 'save')
+
+      const err = await ConnectorService.create(USER_ID, {
+        name: 'Extra',
+        url: 'https://mcp.example.com',
+      }).catch(e => e)
+      expect(err).to.include({ status: 400, code: 'TOO_MANY_CONNECTORS' })
+      expect(save.mock.calls.length).to.equal(0)
+    })
+
     // Stubs the database writes; the MCP connect is stubbed per test
     function stubStores() {
+      vi.spyOn(ConnectorModel, 'countDocuments').mockReturnValue({
+        exec: async () => 0,
+      })
       vi.spyOn(ConnectorModel.prototype, 'save').mockResolvedValue(undefined)
       vi.spyOn(ConnectorCredentialModel, 'findOne').mockReturnValue(query(null))
       return vi
@@ -486,6 +520,9 @@ describe('ConnectorService', function () {
     })
 
     it('verifies each imported connector with a real connect', async function () {
+      vi.spyOn(ConnectorModel, 'countDocuments').mockReturnValue({
+        exec: async () => 0,
+      })
       vi.spyOn(ConnectorModel.prototype, 'save').mockResolvedValue(undefined)
       vi.spyOn(ConnectorCredentialModel, 'findOne').mockReturnValue(query(null))
       vi.spyOn(ConnectorCredentialModel, 'updateOne').mockReturnValue({

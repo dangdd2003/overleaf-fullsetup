@@ -108,6 +108,12 @@ describe('curlFetch', function () {
     expect(spawnedArgs).to.include('*')
     expect(spawnedArgs).to.include('--impersonate')
     expect(spawnedArgs).to.include('chrome150')
+    // Only http(s) is fetched, on the first hop and on any redirect curl follows,
+    // and the URL comes after an end-of-options marker
+    expect(spawnedArgs).to.include('--proto-redir')
+    expect(spawnedArgs[spawnedArgs.indexOf('--proto-redir') + 1]).to.equal('=http,https')
+    expect(spawnedArgs[spawnedArgs.length - 2]).to.equal('--')
+    expect(spawnedArgs[spawnedArgs.length - 1]).to.equal('https://example.com/test')
     expect(spawnedArgs).to.include('--resolve')
     expect(spawnedArgs).to.include(
       'example.com:443:93.184.216.34,93.184.216.35'

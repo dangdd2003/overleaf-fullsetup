@@ -8,6 +8,7 @@ import React, {
 import { useTranslation } from "react-i18next";
 import { useProjectContext } from "@/shared/context/project-context";
 import AgentPanelHeader from "./agent-panel-header";
+import "../../../../../stylesheets/ai-assist.scss";
 import OLButton from "@/shared/components/ol/ol-button";
 import OLTooltip from "@/shared/components/ol/ol-tooltip";
 import useEventListener from "@/shared/hooks/use-event-listener";

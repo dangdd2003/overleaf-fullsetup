@@ -12,7 +12,8 @@ import {
 import { archiveTodayRoute, waybackRoute } from './routes/archives.mjs'
 import { directRoute } from './routes/direct.mjs'
 import { READERS, readerTimeoutMs } from './routes/readers.mjs'
-import { parseFetchUrl } from './transport.mjs'
+import { parseFetchUrl, MAX_DOWNLOAD_BYTES, MAX_PDF_BYTES } from './transport.mjs'
+import { byteBudget } from './limits.mjs'
 import { HOUR_MS, clip, webError } from './util.mjs'
 import { cacheKeyFor } from './urls.mjs'
 import {
@@ -100,9 +101,29 @@ export class WebFetcher {
     this.browser = browser
     // With the browser sidecar configured, every request this fetcher makes
     // on its own goes through it; `fetchPage` (a direct request) is never used
-    this.fetchPage = browser
+    const pageRead = browser
       ? (target, options) => browser.fetchPage(target, options)
       : fetchPage
+    // Every page read holds its body in memory until it is done: the bytes of
+    // all of them together are held to one process-wide budget. When the budget
+    // is short, the read gets a smaller cap (it still answers, truncated).
+    this.fetchPage = async (target, options = {}) => {
+      const cap = options.pdfMaxBytes ?? options.maxBytes ?? MAX_PDF_BYTES
+      const lease = await byteBudget.acquire('pages', {
+        cap,
+        signal: options.signal,
+      })
+      try {
+        if (lease.maxBytes >= cap) return await pageRead(target, options)
+        return await pageRead(target, {
+          ...options,
+          maxBytes: Math.min(options.maxBytes ?? MAX_DOWNLOAD_BYTES, lease.maxBytes),
+          pdfMaxBytes: lease.maxBytes,
+        })
+      } finally {
+        lease.release()
+      }
+    }
     this.fetchFn = fetchFn
     this.rotator = rotator
     this.cache = cache

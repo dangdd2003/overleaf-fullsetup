@@ -667,6 +667,26 @@ describe('McpOAuth', function () {
       expect(calls).to.have.lengthOf(0)
     })
 
+    it('sends the token request without following a redirect, and refuses one', async function () {
+      storedTokens({ access_token: 'old', refresh_token: 'rt-old' })
+      const { fetch, calls } = respondWith({
+        'https://as.example.com/token': {
+          status: 302,
+          body: {},
+        },
+      })
+
+      const token = await currentAccessToken({
+        connector: connectorExpiringIn(2 * 60 * 1000),
+        credentials: { tokens: { access_token: 'old', refresh_token: 'rt-old' } },
+        fetch,
+      })
+
+      expect(calls[0].options.redirect).to.equal('manual')
+      // The refresh was refused, so the saved access token is what is answered
+      expect(token).to.equal('old')
+    })
+
     it('returns null when the connector has no access token', async function () {
       const token = await currentAccessToken({
         connector: connectorExpiringIn(60 * 60 * 1000),

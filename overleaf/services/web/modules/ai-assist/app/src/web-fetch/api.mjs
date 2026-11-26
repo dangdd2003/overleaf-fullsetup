@@ -14,9 +14,27 @@ import {
  * not limited to public addresses (a SearXNG instance may be on the LAN).
  */
 
+/** Most of an upstream's own error text the model is shown. */
+const MAX_UPSTREAM_DETAIL_CHARS = 300;
+
+/**
+ * An upstream's error text as one short line of plain text: control characters
+ * (which could fake a line break or a tag in the model's context) are turned
+ * into spaces, and the text is cut at MAX_UPSTREAM_DETAIL_CHARS.
+ */
+export function cleanUpstreamDetail(text) {
+  const plain = String(text ?? "")
+    .replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return plain.length > MAX_UPSTREAM_DETAIL_CHARS
+    ? `${plain.slice(0, MAX_UPSTREAM_DETAIL_CHARS - 1).trimEnd()}…`
+    : plain;
+}
+
 export async function upstreamError(res, label, type) {
   const raw = await res.text().catch(() => "");
-  let detail = /<html|<!doctype/i.test(raw) ? "" : raw.slice(0, 300).trim();
+  let detail = /<html|<!doctype/i.test(raw) ? "" : cleanUpstreamDetail(raw);
   try {
     const parsed = JSON.parse(raw);
     let candidate =
@@ -48,7 +66,7 @@ export async function upstreamError(res, label, type) {
         candidate = candidate ? `${candidate} (${errorList})` : errorList;
       }
     }
-    if (typeof candidate === "string") detail = candidate.trim();
+    if (typeof candidate === "string") detail = cleanUpstreamDetail(candidate);
   } catch {
     // keep the raw text
   }

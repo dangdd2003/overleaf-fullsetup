@@ -47,6 +47,15 @@ import {
 } from './project-handle'
 
 const REPLY_TIMEOUT_MS = 5000
+// A background tab has its timers throttled, so the editor's reply to a bridge
+// call can come after the normal wait
+const REPLY_TIMEOUT_HIDDEN_MS = 15_000
+
+function replyTimeoutMs(): number {
+  return typeof document !== 'undefined' && document.hidden
+    ? REPLY_TIMEOUT_HIDDEN_MS
+    : REPLY_TIMEOUT_MS
+}
 const COMPILE_TIMEOUT_MS = 120000
 const POLL_INTERVAL_MS = 500
 /**
@@ -508,7 +517,7 @@ function snapshotDocs(projectSnapshot: any): Record<string, string> {
 export function readDocOverBridge(
   targetPath?: string,
   docId?: string,
-  timeoutMs = REPLY_TIMEOUT_MS
+  timeoutMs = replyTimeoutMs()
 ): Promise<string | null> {
   return new Promise(resolve => {
     let resolved = false
@@ -561,7 +570,7 @@ type BridgeEditStatus =
 
 export function applyEditOverBridge(
   detail: BridgeEditDetail,
-  timeoutMs = REPLY_TIMEOUT_MS
+  timeoutMs = replyTimeoutMs()
 ): Promise<{ status: BridgeEditStatus; message?: string }> {
   return new Promise(resolve => {
     let resolved = false
@@ -598,6 +607,51 @@ export function applyEditOverBridge(
       })
     )
   })
+}
+
+function countExactOccurrences(haystack: string, needle: string): number {
+  if (!needle) return 0
+  let count = 0
+  let idx = 0
+  while ((idx = haystack.indexOf(needle, idx)) !== -1) {
+    count++
+    idx += needle.length
+  }
+  return count
+}
+
+/**
+ * After a timed-out replacement: did the editor apply it anyway? True when the
+ * live document matches the expected replacement or reflects the exact delta.
+ */
+async function editLandedDespiteTimeout(
+  path: string,
+  docId: string | undefined,
+  beforeContent: string,
+  fromOffset: number,
+  toOffset: number,
+  oldText: string,
+  newText: string
+): Promise<boolean> {
+  const live = await readDocOverBridge(path, docId)
+  if (live === null) return false
+  const expected =
+    beforeContent.slice(0, fromOffset) +
+    newText +
+    beforeContent.slice(toOffset)
+  if (live === expected) return true
+  if (oldText === newText) return false
+  if (
+    countExactOccurrences(live, oldText) >=
+    countExactOccurrences(beforeContent, oldText)
+  ) {
+    return false
+  }
+  return (
+    !newText ||
+    countExactOccurrences(live, newText) >
+      countExactOccurrences(beforeContent, newText)
+  )
 }
 
 const DEFAULT_EDITOR_THEMES: Array<{
@@ -1180,6 +1234,24 @@ export function useProjectHandle({
           replacement: edit.newText,
           isAppend,
         })
+      }
+
+      // The editor may have applied the edit after the wait ran out. Reading the
+      // document back tells, so a retry does not apply it a second time.
+      if (
+        applied.status === 'timeout' &&
+        !isAppend &&
+        (await editLandedDespiteTimeout(
+          norm,
+          targetDocId,
+          content,
+          fromOffset,
+          toOffset,
+          resolvedOldText,
+          edit.newText
+        ))
+      ) {
+        applied = { status: 'applied' }
       }
 
       if (applied.status === 'applied') {

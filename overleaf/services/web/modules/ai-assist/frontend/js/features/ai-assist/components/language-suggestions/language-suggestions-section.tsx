@@ -6,7 +6,11 @@ import Setting from '@/features/ide-settings/components/setting'
 import ToggleSetting from '@/features/ide-settings/components/toggle-setting'
 import ButtonSetting from '@/features/ide-settings/components/button-setting'
 import type { SettingsSection } from '@/features/ide-settings/context/types'
-import { hasConsented, recordConsent } from '../../provider-store'
+import {
+  hasConsented,
+  LANGUAGE_SUGGESTIONS_CHANGED_EVENT,
+  recordConsent,
+} from '../../provider-store'
 import { isLanguageSuggestionsAvailable } from '../../language-suggestions/availability'
 import {
   effectiveSlot,
@@ -16,8 +20,10 @@ import {
 } from '../../language-suggestions/model-choice'
 import {
   EnglishVariant,
+  LanguageSuggestionsPreferences,
   ModelSlot,
   OPEN_BLOCKED_SUGGESTIONS_EVENT,
+  readLanguageSuggestionsPreferences,
   SuggestionTypes,
 } from '../../language-suggestions/preferences'
 import { useLanguageSuggestionsPreferences } from './use-language-suggestions-preferences'
@@ -219,10 +225,16 @@ function BlockedSetting() {
   )
 }
 
-/** Registered in `settingsModalSpellcheckSections`: the Language suggestions section. */
-export default function useLanguageSuggestionsSection(): SettingsSection | null {
-  const { t } = useTranslation()
-  const [preferences] = useLanguageSuggestionsPreferences()
+export function subscribeLanguageSuggestions(onChange: () => void): () => void {
+  window.addEventListener(LANGUAGE_SUGGESTIONS_CHANGED_EVENT, onChange)
+  return () =>
+    window.removeEventListener(LANGUAGE_SUGGESTIONS_CHANGED_EVENT, onChange)
+}
+
+export function buildLanguageSuggestionsSection(
+  t: (key: string, defaultValue: string) => string,
+  preferences: LanguageSuggestionsPreferences = readLanguageSuggestionsPreferences()
+): SettingsSection | null {
   if (!isLanguageSuggestionsAvailable()) return null
   // The rest of the section only applies while the toggle is on
   const on = preferences.enabled && Boolean(resolveModel(preferences.model))
@@ -241,4 +253,12 @@ export default function useLanguageSuggestionsSection(): SettingsSection | null 
         : []),
     ],
   }
+}
+
+/** Registered in `settingsModalSpellcheckSections`: the Language suggestions section. */
+export default function useLanguageSuggestionsSection(): SettingsSection | null {
+  const { t } = useTranslation()
+  const enabled = isLanguageSuggestionsAvailable()
+  const [preferences] = useLanguageSuggestionsPreferences(enabled)
+  return buildLanguageSuggestionsSection(t, preferences)
 }

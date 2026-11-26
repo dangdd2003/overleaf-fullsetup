@@ -1,7 +1,7 @@
 import React from 'react'
 import { expect } from 'chai'
 import sinon from 'sinon'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { act, render, screen, fireEvent } from '@testing-library/react'
 import { SiteIcon } from '../../../../frontend/js/features/ai-assist/components/agent/site-icon'
 
 describe('SiteIcon', function () {
@@ -40,7 +40,9 @@ describe('SiteIcon', function () {
       <SiteIcon url="https://example.com" src="/ai-assist/connectors/c1/icon" />
     )
     fireEvent.error(iconImg(container)!)
-    clock.tick(3000)
+    act(() => {
+      clock.tick(3000)
+    })
     expect(iconImg(container)?.getAttribute('src')).to.equal(
       '/ai-assist/connectors/c1/icon?retry=1'
     )
@@ -51,7 +53,9 @@ describe('SiteIcon', function () {
       <SiteIcon url="https://example.com" src="/ai-assist/favicon?origin=x" />
     )
     fireEvent.error(iconImg(container)!)
-    clock.tick(3000)
+    act(() => {
+      clock.tick(3000)
+    })
     expect(iconImg(container)?.getAttribute('src')).to.equal(
       '/ai-assist/favicon?origin=x&retry=1'
     )
@@ -65,14 +69,20 @@ describe('SiteIcon', function () {
     expect(iconImg(container)).to.be.null
     expect(screen.getByText('fallback')).to.exist
 
-    clock.tick(2999)
+    act(() => {
+      clock.tick(2999)
+    })
     expect(iconImg(container)).to.be.null
-    clock.tick(1)
+    act(() => {
+      clock.tick(1)
+    })
     expect(iconImg(container)?.getAttribute('src')).to.match(/&retry=1$/)
 
     fireEvent.error(iconImg(container)!)
     expect(iconImg(container)).to.be.null
-    clock.tick(12000)
+    act(() => {
+      clock.tick(12000)
+    })
     expect(iconImg(container)?.getAttribute('src')).to.match(/&retry=2$/)
   })
 

@@ -38,7 +38,9 @@ const WEB_SEARCH_PRIMARY_PROVIDER = "searxng";
 const ORPHAN_GRACE_SECONDS = 300;
 const APPROVAL_TIMEOUT_SECONDS = 600;
 const HEARTBEAT_STALE_SECONDS = 1800;
-const STREAM_IDLE_SECONDS = 0;
+// A reasoning model can stay silent for minutes before its first token; an
+// Anthropic stream sends pings that reset this timer, so 300s is a real stall
+const STREAM_IDLE_SECONDS = 300;
 const STREAM_KEEPALIVE_SECONDS = 15;
 // A whole chat, as sent to start a run and as saved. 32 MiB is Anthropic's
 // request ceiling (OpenAI takes 50 MB): room for a 1M-token conversation,
@@ -270,17 +272,30 @@ Settings.aiAssist = {
     "token",
     (process.env.AI_ASSIST_BROWSER_TOKEN || "").trim() || null,
   ),
-  orphanGraceSeconds: ORPHAN_GRACE_SECONDS,
-  approvalTimeoutSeconds: APPROVAL_TIMEOUT_SECONDS,
-  heartbeatStaleSeconds: HEARTBEAT_STALE_SECONDS,
-  requestTimeoutSeconds: REQUEST_TIMEOUT_SECONDS,
-  streamIdleSeconds: STREAM_IDLE_SECONDS,
-  streamKeepAliveSeconds: STREAM_KEEPALIVE_SECONDS,
-  maxTranscriptBytes: MAX_TRANSCRIPT_BYTES,
-  maxHistoryImages: MAX_HISTORY_IMAGES,
-  promptCacheTtl: PROMPT_CACHE_TTL,
-  chatHistoryDir: CHAT_HISTORY_DIR,
-  webCachePath: WEB_CACHE_PATH,
+  orphanGraceSeconds:
+    Settings.aiAssist?.orphanGraceSeconds ?? ORPHAN_GRACE_SECONDS,
+  approvalTimeoutSeconds:
+    Settings.aiAssist?.approvalTimeoutSeconds ?? APPROVAL_TIMEOUT_SECONDS,
+  heartbeatStaleSeconds:
+    Settings.aiAssist?.heartbeatStaleSeconds ?? HEARTBEAT_STALE_SECONDS,
+  requestTimeoutSeconds:
+    Settings.aiAssist?.requestTimeoutSeconds ?? REQUEST_TIMEOUT_SECONDS,
+  streamIdleSeconds:
+    Settings.aiAssist?.streamIdleSeconds ?? STREAM_IDLE_SECONDS,
+  // Admin-allowed private provider endpoints, 'host:port' each. Set only in the
+  // settings overrides file; kept when present so it is not reset here.
+  trustedProviderHosts: Array.isArray(Settings.aiAssist?.trustedProviderHosts)
+    ? Settings.aiAssist.trustedProviderHosts
+    : [],
+  streamKeepAliveSeconds:
+    Settings.aiAssist?.streamKeepAliveSeconds ?? STREAM_KEEPALIVE_SECONDS,
+  maxTranscriptBytes:
+    Settings.aiAssist?.maxTranscriptBytes ?? MAX_TRANSCRIPT_BYTES,
+  maxHistoryImages:
+    Settings.aiAssist?.maxHistoryImages ?? MAX_HISTORY_IMAGES,
+  promptCacheTtl: Settings.aiAssist?.promptCacheTtl ?? PROMPT_CACHE_TTL,
+  chatHistoryDir: Settings.aiAssist?.chatHistoryDir ?? CHAT_HISTORY_DIR,
+  webCachePath: Settings.aiAssist?.webCachePath ?? WEB_CACHE_PATH,
 };
 
 export default Settings.aiAssist;

@@ -1,4 +1,10 @@
-import { Outline, OutlineSection, parseOutline, uncomment } from './outline'
+import {
+  MAX_INDEXED_BYTES,
+  Outline,
+  OutlineSection,
+  parseOutline,
+  uncomment,
+} from './outline'
 import {
   References,
   extractReferences,
@@ -6,7 +12,7 @@ import {
 } from './references'
 
 /** Above this, environments and packages skip oversize files; parsing them would cost more than it can return. */
-export const MAX_INDEXED_BYTES = 512 * 1024
+export { MAX_INDEXED_BYTES }
 
 /** Bounds the line list per environment so a figure-heavy paper cannot bloat the index. */
 const MAX_ENV_LINES = 50
@@ -93,7 +99,7 @@ export function scanPackages(
   content: string
 ): Array<Omit<PackageUse, 'path'>> {
   const uses: Array<Omit<PackageUse, 'path'>> = []
-  const re = /\\(?:usepackage|RequirePackage)\s*(?:\[([^\]]*)\])?\s*\{([^}]*)\}/g
+  const re = /\\(?:usepackage|RequirePackage)(?:\s*\[([^\]]*)\])?\s*\{([^}]*)\}/g
   content.split('\n').forEach((rawLine, index) => {
     const line = uncomment(rawLine)
     let match = re.exec(line)

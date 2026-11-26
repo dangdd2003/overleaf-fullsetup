@@ -64,8 +64,9 @@ describe('ToolCallDetailView', function () {
       isError: true,
     }
     render(<ToolCallDetailView call={call} />)
-    expect(screen.getByText('Error')).to.exist
-    expect(screen.getByText('Text not found in main.tex')).to.exist
+    const alert = screen.getByRole('alert')
+    expect(alert.classList.contains('ai-assist-tool-detail-error')).to.be.true
+    expect(alert.textContent).to.contain('Text not found in main.tex')
   })
 
   it('renders compile log errors with file and line', function () {

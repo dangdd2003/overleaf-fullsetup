@@ -1,4 +1,5 @@
-import { describe, it, afterEach, beforeEach, vi } from 'vitest'
+import { describe, it, afterEach, vi } from 'vitest'
+import Settings from '@overleaf/settings'
 import { expect } from 'chai'
 import { EventEmitter } from 'node:events'
 import { Readable } from 'node:stream'
@@ -13,6 +14,7 @@ import {
   isSelfAddress,
   isPrivateAddress,
   providerFetch,
+  trustedProviderEndpoints,
   validateConnectorUrl,
   ConnectorHeaders,
 } from '../../../../app/src/connectors/ConnectorFetch.mjs'
@@ -81,19 +83,62 @@ describe('ConnectorFetch', function () {
         'http://100.64.1.1/mcp',
         'http://[fd12:3456::1]/mcp',
       ]) {
-        expect(() => validateConnectorUrl(url), url).to.throw(/private network address/)
+        expect(() => validateConnectorUrl(url), url).to.throw(/destination not allowed/)
       }
     })
 
-    it('accepts a private address the admin configured in an existing server URL env var', function () {
+    it('accepts a private address the admin configured in an existing server URL env var only when allowAdminEndpoint is set and port matches', function () {
       const saved = process.env.AI_ASSIST_MCP_URLS
       process.env.AI_ASSIST_MCP_URLS = 'http://192.168.77.20:8080/mcp'
       try {
-        expect(() => validateConnectorUrl('http://192.168.77.20:8080/mcp')).to.not.throw()
-        expect(() => validateConnectorUrl('http://192.168.77.21:8080/mcp')).to.throw()
+        expect(() =>
+          validateConnectorUrl('http://192.168.77.20:8080/mcp')
+        ).to.throw(/destination not allowed/)
+        expect(() =>
+          validateConnectorUrl('http://192.168.77.20:8080/mcp', {
+            allowAdminEndpoint: true,
+          })
+        ).to.not.throw()
+        expect(() =>
+          validateConnectorUrl('http://192.168.77.20:9090/mcp', {
+            allowAdminEndpoint: true,
+          })
+        ).to.throw(/destination not allowed/)
+        expect(() =>
+          validateConnectorUrl('http://192.168.77.21:8080/mcp', {
+            allowAdminEndpoint: true,
+          })
+        ).to.throw(/destination not allowed/)
       } finally {
         if (saved === undefined) delete process.env.AI_ASSIST_MCP_URLS
         else process.env.AI_ASSIST_MCP_URLS = saved
+      }
+    })
+
+    it('never trusts AI_ASSIST_BROWSER_URL or trailing-dot / NAT64 / userinfo URLs', function () {
+      const saved = process.env.AI_ASSIST_BROWSER_URL
+      process.env.AI_ASSIST_BROWSER_URL = 'http://10.0.0.5:3000'
+      try {
+        expect(() =>
+          validateConnectorUrl('http://[::ffff:10.0.0.5]:3000/v1/raw', {
+            allowAdminEndpoint: true,
+          })
+        ).to.throw(/destination not allowed/)
+        expect(() =>
+          validateConnectorUrl('http://localhost./mcp')
+        ).to.throw(/destination not allowed/)
+        expect(() =>
+          validateConnectorUrl('http://metadata.google.internal./computeMetadata/v1/')
+        ).to.throw(/destination not allowed/)
+        expect(() =>
+          validateConnectorUrl('http://[64:ff9b:1::127.0.0.1]/mcp')
+        ).to.throw(/destination not allowed/)
+        expect(() =>
+          validateConnectorUrl('http://user:pass@example.com/mcp')
+        ).to.throw(/embedded credentials/)
+      } finally {
+        if (saved === undefined) delete process.env.AI_ASSIST_BROWSER_URL
+        else process.env.AI_ASSIST_BROWSER_URL = saved
       }
     })
 
@@ -117,7 +162,7 @@ describe('ConnectorFetch', function () {
         'http://0.0.0.0/mcp',
       ]) {
         expect(() => validateConnectorUrl(url)).to.throw(
-          /points at this Overleaf server/
+          /destination not allowed/
         )
       }
     })
@@ -133,7 +178,7 @@ describe('ConnectorFetch', function () {
         'https://app.localhost/mcp',
       ]) {
         expect(() => validateConnectorUrl(url), url).to.throw(
-          /points at this Overleaf server/
+          /destination not allowed/
         )
       }
     })
@@ -232,7 +277,7 @@ describe('ConnectorFetch', function () {
       answerWith([{ address: '127.0.0.1', family: 4 }])
       const err = await errorFrom(lookup('rebind.example.com', {}))
       expect(err.code).to.equal('EADDRBLOCKED')
-      expect(err.message).to.match(/resolves to this Overleaf server/)
+      expect(err.message).to.match(/destination not allowed/)
 
       answerWith([])
       const empty = await errorFrom(lookup('nothing.example.com', {}))
@@ -303,7 +348,7 @@ describe('ConnectorFetch', function () {
       } catch (err) {
         error = err
       }
-      expect(error.message).to.match(/points at this Overleaf server/)
+      expect(error.message).to.match(/destination not allowed/)
       expect(sent).to.have.lengthOf(0)
     })
 
@@ -403,7 +448,7 @@ describe('ConnectorFetch', function () {
       } catch (err) {
         error = err
       }
-      expect(error.message).to.match(/points at this Overleaf server/)
+      expect(error.message).to.match(/destination not allowed/)
       expect(sent).to.have.lengthOf(1)
     })
 
@@ -465,10 +510,10 @@ describe('private addresses', function () {
       connectorLookup('ollama.example.com', { all: true }, e => resolve(e))
     )
     expect(err?.code).to.equal('EADDRBLOCKED')
-    expect(err.message).to.match(/private network address/)
+    expect(err.message).to.match(/destination not allowed/)
   })
 
-  it('allows the private address of a host the admin named in an existing server URL variable', async function () {
+  it('allows the private address of a host the admin named in an existing server URL variable when adminEndpoint matches', async function () {
     const saved = process.env.AI_ASSIST_SEARXNG_URLS
     process.env.AI_ASSIST_SEARXNG_URLS = 'http://searx.corp:8080'
     try {
@@ -476,7 +521,9 @@ describe('private addresses', function () {
         callback(null, [{ address: '192.168.1.5', family: 4 }])
       })
       const [address] = await new Promise((resolve, reject) =>
-        connectorLookup('searx.corp', {}, (e, a, f) => (e ? reject(e) : resolve([a, f])))
+        connectorLookup('searx.corp', { adminEndpoint: 'searx.corp:8080' }, (e, a, f) =>
+          e ? reject(e) : resolve([a, f])
+        )
       )
       expect(address).to.equal('192.168.1.5')
     } finally {
@@ -588,3 +635,39 @@ describe('connectorFetch against a local server', function () {
   })
 })
 
+
+describe('ConnectorFetch tunnelled and mapped addresses', function () {
+  it('unwraps 6to4 and Teredo tails before checking them', function () {
+    // 6to4 wrapping 127.0.0.1 is this server; wrapping 8.8.8.8 is public
+    expect(isSelfAddress('2002:7f00:1::1')).to.equal(true)
+    expect(isSelfAddress('2002:0808:0808::1')).to.equal(false)
+    expect(isPrivateAddress('2002:c0a8:101::1')).to.equal(true)
+    // Teredo wrapping 10.0.0.1 (client bits inverted)
+    expect(isPrivateAddress('2001:0:0:0:0:0:f5ff:fffe')).to.equal(true)
+  })
+
+  it('unwraps IPv4-mapped forms written in hex', function () {
+    expect(isPrivateAddress('::ffff:10.0.0.1')).to.equal(true)
+    expect(isPrivateAddress('::ffff:a00:1')).to.equal(true)
+    expect(isSelfAddress('::ffff:7f00:1')).to.equal(true)
+  })
+})
+
+describe('provider trusted endpoints', function () {
+  const saved = Settings.aiAssist?.trustedProviderHosts
+  afterEach(function () {
+    Settings.aiAssist.trustedProviderHosts = saved
+  })
+
+  it('reads only exact host:port entries', function () {
+    Settings.aiAssist.trustedProviderHosts = ['ollama.lan:11434', 'bad-entry', '10.1.2.3:80']
+    expect([...trustedProviderEndpoints()].sort()).to.deep.equal(['10.1.2.3:80', 'ollama.lan:11434'])
+  })
+
+  it('lets a provider reach a trusted private endpoint, but never the metadata service', function () {
+    Settings.aiAssist.trustedProviderHosts = ['192.168.77.20:8080', '169.254.169.254:80']
+    expect(() => validateConnectorUrl('http://192.168.77.20:8080/v1', { trusted: true })).to.not.throw()
+    expect(() => validateConnectorUrl('http://192.168.77.20:9090/v1', { trusted: true })).to.throw(/destination not allowed/)
+    expect(() => validateConnectorUrl('http://169.254.169.254/', { trusted: true })).to.throw(/destination not allowed/)
+  })
+})

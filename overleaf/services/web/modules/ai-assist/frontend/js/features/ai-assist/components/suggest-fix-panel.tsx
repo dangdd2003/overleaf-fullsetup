@@ -46,6 +46,7 @@ import { EditApprovalCard } from './agent/edit-approval-card'
 import { MarkdownContent } from './agent/markdown-content'
 import { isFixableLevel } from '../log-entry-levels'
 import { AiAssistant } from '../assistant'
+import { takePendingSuggestFix } from '../agent/suggest-fix-pending'
 import '../../../../stylesheets/ai-assist.scss'
 
 /** The host the document window would be sent to, for the consent prompt. */
@@ -385,6 +386,7 @@ export default function SuggestFixPanel({
       const detail = (event as CustomEvent<{ entryId?: string }>).detail ?? {}
       // A hidden panel must never start a run the user cannot see.
       if (!enabled || !entryId || detail.entryId !== entryId) return
+      takePendingSuggestFix(entryId)
       if (!Boolean(AiAssistant.fromStoredSettings())) return
       setOpen(true)
       setCollapsed(false)
@@ -397,6 +399,17 @@ export default function SuggestFixPanel({
   )
 
   useEventListener('aiAssist:suggestFix', onSuggestFix)
+
+  useEffect(() => {
+    if (!enabled || !entryId || !takePendingSuggestFix(entryId)) return
+    if (!Boolean(AiAssistant.fromStoredSettings())) return
+    setOpen(true)
+    setCollapsed(false)
+    setFeedback(null)
+    setDecidedEdits({})
+    setRequesting(true)
+    void startRun()
+  }, [enabled, entryId, startRun])
 
   // Clears itself once the run actually starts streaming (running flips true)
   // or fails before it gets that far (error / consent prompt).

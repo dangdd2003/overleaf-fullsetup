@@ -2,6 +2,8 @@ import { describe, it } from 'vitest'
 import { expect } from 'chai'
 import sinon from 'sinon'
 import {
+  bindStoredApiKey,
+  providerErrorText,
   anthropicSystemField,
   cacheControlValue,
   createProviderClient,
@@ -44,16 +46,16 @@ describe('AiAssistProviders', function () {
       const gateway = dockerHostGateway()
       expect(() =>
         validateSafeProviderBaseUrl(`http://${gateway}:11434`)
-      ).to.throw(/private network address/)
+      ).to.throw(/destination not allowed/)
     })
 
-    it('allows a private provider address the admin configured in an env URL', function () {
+    it('does not exempt a provider address merely because it appears in AI_ASSIST_SEARXNG_URLS', function () {
       const saved = process.env.AI_ASSIST_SEARXNG_URLS
       process.env.AI_ASSIST_SEARXNG_URLS = 'http://192.168.50.9:8888'
       try {
         expect(() =>
           validateSafeProviderBaseUrl('http://192.168.50.9:11434')
-        ).to.not.throw()
+        ).to.throw(/destination not allowed/)
       } finally {
         if (saved === undefined) delete process.env.AI_ASSIST_SEARXNG_URLS
         else process.env.AI_ASSIST_SEARXNG_URLS = saved
@@ -1023,6 +1025,7 @@ describe('AiAssistProviders', function () {
             ],
           },
         }) + '\n',
+        JSON.stringify({ done: true, done_reason: 'stop', message: { role: 'assistant', content: '' } }) + '\n',
       ].join('')
 
       const fakeResponse = {
@@ -1237,7 +1240,7 @@ describe('AiAssistProviders', function () {
       const sseBody = [
         'data: {"candidates":[{"content":{"parts":[{"text":"Thinking about solution...","thought":true}]}}]}\n\n',
         'data: {"candidates":[{"content":{"parts":[{"text":"Hello from native Gemini"}]}}]}\n\n',
-        'data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"read_file","args":{"path":"main.tex"}}}]}}]}\n\n',
+        'data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"read_file","args":{"path":"main.tex"}}}]},"finishReason":"STOP"}]}\n\n',
         'data: [DONE]\n\n',
       ].join('')
 
@@ -1289,7 +1292,7 @@ describe('AiAssistProviders', function () {
 
     it('properly URL-encodes model names containing parentheses and spaces', async function () {
       const sseBody =
-        'data: {"candidates":[{"content":{"parts":[{"text":"ok"}]}}]}\n\ndata: [DONE]\n\n'
+        'data: {"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}]}\n\ndata: [DONE]\n\n'
       const fakeResponse = {
         ok: true,
         status: 200,
@@ -2920,5 +2923,124 @@ describe('AiAssistProviders', function () {
       ])
       expect(toolImageTurns(plain).size).to.equal(0)
     })
+  })
+})
+
+describe('provider hardening', function () {
+  const sse = lines => ({
+    ok: true,
+    status: 200,
+    body: (async function* () {
+      yield new TextEncoder().encode(lines.map(l => `data: ${l}\n\n`).join(''))
+    })(),
+  })
+  const anthropic = fetchFn =>
+    createProviderClient({
+      type: 'anthropic',
+      baseUrl: 'https://api.anthropic.com',
+      apiKey: 'k',
+      model: 'claude-x',
+      fetchFn,
+    })
+  const collect = async gen => {
+    const out = []
+    for await (const c of gen) out.push(c)
+    return out
+  }
+  const req = { system: 's', messages: [{ role: 'user', content: 'hi' }], maxTokens: 10 }
+
+  it('binds a stored key only to the same type and base URL', function () {
+    const stored = { type: 'ollama', baseUrl: 'http://ollama.lan:11434', apiKey: 'sekret' }
+    expect(
+      bindStoredApiKey({ type: 'ollama', baseUrl: 'http://ollama.lan:11434', apiKey: '••••••••' }, stored).apiKey
+    ).to.equal('sekret')
+    expect(
+      bindStoredApiKey({ type: 'ollama', baseUrl: 'http://ollama.lan:11434', apiKey: '' }, stored).apiKey
+    ).to.equal('sekret')
+    expect(() =>
+      bindStoredApiKey({ type: 'ollama', baseUrl: 'http://evil.example:11434', apiKey: '••••••••' }, stored)
+    ).to.throw().with.property('code', 'providerKeyMismatch')
+    // No key for another provider (a keyless local Ollama): sent with no key
+    const keyless = { type: 'ollama', baseUrl: 'http://evil.example:11434', apiKey: '' }
+    expect(bindStoredApiKey(keyless, stored)).to.equal(keyless)
+    const explicit = { type: 'openai', baseUrl: 'https://x.example/v1', apiKey: 'typed' }
+    expect(bindStoredApiKey(explicit, stored)).to.equal(explicit)
+  })
+
+  it('cleans and caps provider error text', function () {
+    const text = providerErrorText('bad\u0000\u001b[31m thing ' + 'x'.repeat(400))
+    expect(text).to.not.match(/[\u0000-\u001f]/)
+    expect(text.length).to.be.at.most(300)
+  })
+
+  it('fails a stream that ends without message_stop', async function () {
+    const client = anthropic(async () =>
+      sse([
+        JSON.stringify({ type: 'content_block_delta', delta: { type: 'text_delta', text: 'part' } }),
+      ])
+    )
+    const err = await collect(client.streamChat(req)).catch(e => e)
+    expect(err.code).to.equal('providerStream')
+    expect(err.status).to.equal(502)
+  })
+
+  it('refuses a model refusal without a retry', async function () {
+    const client = anthropic(async () =>
+      sse([
+        JSON.stringify({ type: 'message_delta', delta: { stop_reason: 'refusal' } }),
+        JSON.stringify({ type: 'message_stop' }),
+      ])
+    )
+    const err = await collect(client.streamChat(req)).catch(e => e)
+    expect(err.code).to.equal('providerRefused')
+    expect(err.shouldRetry).to.equal(false)
+  })
+
+  it('keeps Anthropic thinking blocks and sends them back before tool_use', async function () {
+    const bodies = []
+    const client = anthropic(async (_url, opts) => {
+      bodies.push(JSON.parse(opts.body))
+      return sse([
+        JSON.stringify({ type: 'content_block_start', content_block: { type: 'thinking', thinking: '' } }),
+        JSON.stringify({ type: 'content_block_delta', delta: { type: 'thinking_delta', thinking: 'plan' } }),
+        JSON.stringify({ type: 'content_block_delta', delta: { type: 'signature_delta', signature: 'SIG' } }),
+        JSON.stringify({ type: 'content_block_stop' }),
+        JSON.stringify({ type: 'content_block_start', content_block: { type: 'tool_use', id: 't1', name: 'read' } }),
+        JSON.stringify({ type: 'content_block_delta', delta: { type: 'input_json_delta', partial_json: '{}' } }),
+        JSON.stringify({ type: 'content_block_stop' }),
+        JSON.stringify({ type: 'message_delta', delta: { stop_reason: 'tool_use' } }),
+        JSON.stringify({ type: 'message_stop' }),
+      ])
+    })
+    const chunks = await collect(client.streamChat({ ...req, thinkingForTest: true }))
+    const state = chunks.find(c => c.type === 'providerState')
+    expect(state.anthropicThinking).to.deep.equal([{ type: 'thinking', thinking: 'plan', signature: 'SIG' }])
+
+    await collect(
+      client.streamChat({
+        ...req,
+        messages: [
+          { role: 'user', content: 'hi' },
+          {
+            role: 'assistant',
+            content: '',
+            toolCalls: [{ id: 't1', name: 'read', args: {} }],
+            providerState: { anthropicThinking: state.anthropicThinking },
+          },
+          { role: 'tool', toolCallId: 't1', content: 'ok' },
+        ],
+      })
+    )
+    const assistant = bodies.at(-1).messages.find(m => m.role === 'assistant')
+    expect(assistant.content[0]).to.deep.equal({ type: 'thinking', thinking: 'plan', signature: 'SIG' })
+    expect(assistant.content[1].type).to.equal('tool_use')
+  })
+
+  it('replays a Gemini thought signature on its functionCall part', function () {
+    const [turn] = toGeminiContents([
+      { role: 'assistant', content: '', toolCalls: [{ id: 'c', name: 'read', args: {}, thoughtSignature: 'GSIG' }] },
+    ])
+    expect(turn.parts[0].thoughtSignature).to.equal('GSIG')
+    expect(turn.parts[0].functionCall.name).to.equal('read')
   })
 })

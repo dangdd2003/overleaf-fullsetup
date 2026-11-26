@@ -855,3 +855,26 @@ describe('AiAssistContextUsage', function () {
     })
   })
 })
+
+describe('AiAssistContextUsage non-ASCII letters', function () {
+  it('counts each CJK, Cyrillic or Arabic letter as about one token', function () {
+    expect(estimateTokens('你好世界')).to.equal(4)
+    expect(estimateTokens('привет')).to.equal(6)
+    expect(estimateTokens('مرحبا')).to.equal(5)
+  })
+
+  it('keeps the ASCII ratio for the Latin part of mixed text', function () {
+    // 'ab ' is 3 ASCII chars (ceil(3/4) = 1), plus 2 wide letters
+    expect(estimateTokens('ab 你好')).to.equal(3)
+    expect(estimateTokens('abcd')).to.equal(1)
+  })
+
+  it('leaves non-letter non-ASCII characters at the ASCII ratio', function () {
+    // Curly quotes are not letters: 10 chars at 4 per token
+    expect(estimateTokens('“abcdefgh”')).to.equal(3)
+  })
+
+  it('applies the same rule to JSON strings', function () {
+    expect(estimateJsonTokens('你好')).to.equal(2)
+  })
+})

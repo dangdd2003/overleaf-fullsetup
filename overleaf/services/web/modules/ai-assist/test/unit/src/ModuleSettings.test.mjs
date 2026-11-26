@@ -139,7 +139,7 @@ describe("ModuleSettings server MCP WebSearch", function () {
     expect(Settings.aiAssist.approvalTimeoutSeconds).to.equal(600);
     expect(Settings.aiAssist.heartbeatStaleSeconds).to.equal(1800);
     expect(Settings.aiAssist.requestTimeoutSeconds).to.equal(180);
-    expect(Settings.aiAssist.streamIdleSeconds).to.equal(0);
+    expect(Settings.aiAssist.streamIdleSeconds).to.equal(300);
     expect(Settings.aiAssist.streamKeepAliveSeconds).to.equal(15);
     expect(Settings.aiAssist.maxTranscriptBytes).to.equal(32 * 1024 * 1024);
     expect(Settings.aiAssist.maxHistoryImages).to.equal(20);

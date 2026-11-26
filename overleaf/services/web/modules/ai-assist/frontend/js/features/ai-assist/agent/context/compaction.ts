@@ -8,8 +8,12 @@ import type {
 // AiAssistCompaction.mjs byte for byte: the context meter and the rebuilt
 // messages have to match what the server sends.
 
-const COMPACT_INTRO =
+const COMPACT_INTRO_TAIL =
   'This chat continues an earlier conversation that was compacted to save context. The summary and ledger below replace the earlier messages; the most recent messages follow verbatim after this block. Files may have changed since: re-read a file before editing it. The next <project-context> is current and wins over anything stated here.'
+const COMPACT_INTRO_NO_TAIL =
+  'This chat continues an earlier conversation that was compacted to save context. The summary and ledger below replace all earlier messages; no message follows verbatim, so the latest user request is quoted in <current_work>. Files may have changed since: re-read a file before editing it. The next <project-context> is current and wins over anything stated here.'
+const COMPACT_INTRO_CONTEXT_DROPPED =
+  ' The latest user message follows verbatim, but its attached editor context was dropped to fit the budget: re-read the files it refers to.'
 
 function emptyLedger(): CompactLedger {
   return {
@@ -166,9 +170,16 @@ export function renderCompactionMessage(entry: CompactEntry): string {
   const date = Number.isFinite(entry.createdAt)
     ? ` date="${new Date(entry.createdAt).toISOString().slice(0, 10)}"`
     : ''
+  // Mirrors the server's `tail` and `contextDropped` fields (older entries have tailFromId only)
+  const meta = entry as CompactEntry & { tail?: boolean; contextDropped?: boolean }
+  const hasTail = meta.tail === true || typeof entry.tailFromId === 'string'
+  const intro = hasTail
+    ? COMPACT_INTRO_TAIL +
+      (meta.contextDropped === true ? COMPACT_INTRO_CONTEXT_DROPPED : '')
+    : COMPACT_INTRO_NO_TAIL
   const lines = [
     `<compacted-conversation trigger="${trigger}" turns="${turns}"${date}>`,
-    COMPACT_INTRO,
+    intro,
     '',
     '## Summary',
     String(entry.summary ?? '').trim(),

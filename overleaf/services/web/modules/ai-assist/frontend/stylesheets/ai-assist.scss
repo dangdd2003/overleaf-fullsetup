@@ -1451,8 +1451,9 @@ $ai-card-shadow:
   margin-right: 2px;
 }
 
+// Takes only the room the verb and target leave, so it is cut first
 .ai-assist-tool-call-meta {
-  flex-shrink: 3;
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1472,7 +1473,8 @@ $ai-card-shadow:
     opacity 0.15s ease,
     color 0.15s ease;
   transform: rotate(0deg);
-  margin-left: 2px;
+  margin-left: auto;
+  padding-left: 2px;
 
   &.is-expanded {
     transform: rotate(90deg);

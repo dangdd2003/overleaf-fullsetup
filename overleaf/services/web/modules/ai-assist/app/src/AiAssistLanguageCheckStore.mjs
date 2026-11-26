@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises'
 import Path from 'node:path'
 import crypto from 'node:crypto'
+import logger from '@overleaf/logger'
 import { baseDir } from './AiAssistChatHistoryStore.mjs'
 import { createLocalLock } from './AiAssistFileLock.mjs'
 
@@ -19,6 +20,11 @@ export const MAX_ENTRIES = 10000
 /** Serialized size a project keeps: the oldest results go past it, bounding file, memory and lookup size. */
 export const MAX_PROJECT_CHARS = 8 * 1024 * 1024
 export const MAX_LOOKUP_KEYS = 500
+/**
+ * Serialized size a lookup answers with. Results past it are left out: the
+ * client treats a missing key as unchecked and has the model check it.
+ */
+export const MAX_LOOKUP_CHARS = 1024 * 1024
 export const MAX_STORE_ENTRIES = 100
 const MAX_KEY = 400
 const MAX_EDITS = 40
@@ -69,6 +75,14 @@ export function normalizeEntry(raw) {
   ) {
     return null
   }
+  // Each edit replaces a part of the checked text, so it must occur in it.
+  // (A result without its text cannot be checked and is kept as sent.)
+  if (
+    text !== undefined &&
+    !edits.every(edit => edit.original === '' || text.includes(edit.original))
+  ) {
+    return null
+  }
   return {
     edits: edits.map(({ from, to, insert, original, kind }) => ({
       from,
@@ -83,7 +97,11 @@ export function normalizeEntry(raw) {
   }
 }
 
-// Writes to one project's file wait their turn (within this process)
+// Writes to one project's file wait their turn. The lock is in-process only:
+// every web process keeps its own open projects in memory, so this store
+// assumes one web process writes a project's file at a time (as the
+// deployment runs). Cross-process locking would not make the in-memory
+// copies agree, so it is not added here.
 const withFileLock = createLocalLock()
 
 /** Keys are stored as own properties only: a key such as `__proto__` must not reach a prototype. */
@@ -93,18 +111,52 @@ function ownMap(source) {
   return map
 }
 
-async function readFile(file) {
-  try {
-    const [text, stat] = await Promise.all([fs.readFile(file, 'utf8'), fs.stat(file)])
-    const parsed = JSON.parse(text)
-    const entries = ownMap(parsed?.entries)
-    return { entries, mtimeMs: stat.mtimeMs }
-  } catch (err) {
-    if (err.code === 'ENOENT' || err instanceof SyntaxError) {
-      return { entries: ownMap(null), mtimeMs: 0 }
+/**
+ * Moves a file that does not parse aside (<name>.corrupt-<ts>), so it is kept
+ * for inspection and the next write starts clean. Under the file's lock, and
+ * only if it is still unreadable: a write that landed meanwhile is left alone.
+ */
+async function quarantine(file) {
+  return withFileLock(file, async () => {
+    let text
+    try {
+      text = await fs.readFile(file, 'utf8')
+    } catch (err) {
+      if (err.code === 'ENOENT') return
+      throw err
     }
+    try {
+      JSON.parse(text)
+      return
+    } catch {}
+    const aside = `${file}.corrupt-${Date.now()}`
+    try {
+      await fs.rename(file, aside)
+      logger.warn({ file, aside }, '[AiAssist] language check file was corrupt; moved aside')
+    } catch (err) {
+      // Not movable: the next write replaces it all the same
+      logger.warn({ err, file }, '[AiAssist] corrupt language check file not moved')
+    }
+  })
+}
+
+async function readFile(file) {
+  let text
+  let stat
+  try {
+    ;[text, stat] = await Promise.all([fs.readFile(file, 'utf8'), fs.stat(file)])
+  } catch (err) {
+    if (err.code === 'ENOENT') return { entries: ownMap(null), mtimeMs: 0 }
     throw err
   }
+  let parsed
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    await quarantine(file)
+    return { entries: ownMap(null), mtimeMs: 0 }
+  }
+  return { entries: ownMap(parsed?.entries), mtimeMs: stat.mtimeMs }
 }
 
 async function mtimeOf(file) {
@@ -145,26 +197,27 @@ export class AiAssistLanguageCheckStore {
 
   /** A project's results, parsed once and read again only when the file changed. */
   async load(projectId) {
-    const file = fileFor(projectId)
-    const cached = this.open.get(projectId)
+    const id = String(projectId)
+    const file = fileFor(id)
+    const cached = this.open.get(id)
     if (cached && (cached.dirty || (await mtimeOf(file)) === cached.mtimeMs)) {
-      this.open.delete(projectId)
-      this.open.set(projectId, cached)
+      this.open.delete(id)
+      this.open.set(id, cached)
       return cached
     }
     const { entries, mtimeMs } = await readFile(file)
     // Another call may have loaded, or stored into, this project while the
     // file was read. Its object is the one the timer flushes, so a store made
     // into a replaced object would never be written.
-    const existing = this.open.get(projectId)
+    const existing = this.open.get(id)
     if (existing) {
       if (!existing.dirty) {
         existing.entries = entries
         existing.mtimeMs = mtimeMs
         Object.assign(existing, measure(entries))
       }
-      this.open.delete(projectId)
-      this.open.set(projectId, existing)
+      this.open.delete(id)
+      this.open.set(id, existing)
       return existing
     }
     const loaded = {
@@ -174,8 +227,8 @@ export class AiAssistLanguageCheckStore {
       timer: null,
       ...measure(entries),
     }
-    this.open.set(projectId, loaded)
-    await this.evict()
+    this.open.set(id, loaded)
+    await this.evict(id)
     return loaded
   }
 
@@ -186,39 +239,63 @@ export class AiAssistLanguageCheckStore {
     return chars
   }
 
-  async evict() {
-    while (
-      this.open.size > MAX_OPEN_PROJECTS ||
-      this.openChars() > MAX_OPEN_CHARS
-    ) {
-      const [oldest] = this.open.keys()
-      await this.flush(oldest)
-      const current = this.open.get(oldest)
-      if (current && !current.dirty) {
-        this.open.delete(oldest)
-      } else {
+  async evict(skipId = null) {
+    for (const key of [...this.open.keys()]) {
+      if (
+        this.open.size <= MAX_OPEN_PROJECTS &&
+        this.openChars() <= MAX_OPEN_CHARS
+      ) {
         break
+      }
+      if (key === skipId && this.open.size > 1) continue
+      try {
+        await this.flush(key)
+      } catch {
+        continue
+      }
+      const current = this.open.get(key)
+      if (current && !current.dirty) {
+        this.open.delete(key)
       }
     }
   }
 
   /** The stored results among `keys`. */
   async lookup(projectId, keys) {
-    const { entries } = await this.load(projectId)
+    const id = String(projectId)
+    const { entries } = await this.load(id)
     const found = Object.create(null)
+    let chars = 0
     for (const key of keys) {
-      if (isValidKey(key) && Object.hasOwn(entries, key)) {
-        const entry = normalizeEntry(entries[key])
-        if (entry) found[key] = entry
-      }
+      if (!isValidKey(key) || !Object.hasOwn(entries, key)) continue
+      const entry = normalizeEntry(entries[key])
+      if (!entry) continue
+      chars += key.length + JSON.stringify(entry).length
+      if (chars > MAX_LOOKUP_CHARS) break
+      found[key] = entry
     }
     return found
+  }
+
+  /** Forgets a project's results, in memory and on disk. Safe to repeat. */
+  async remove(projectId) {
+    const id = String(projectId)
+    const file = fileFor(id)
+    const project = this.open.get(id)
+    if (project) {
+      if (project.timer) clearTimeout(project.timer)
+      project.timer = null
+      project.dirty = false
+      this.open.delete(id)
+    }
+    await withFileLock(file, () => fs.rm(file, { force: true }))
   }
 
   /** Adds results, written shortly after; the oldest are dropped past `MAX_ENTRIES`. */
   async store(projectId, items) {
     if (items.length === 0) return
-    const project = await this.load(projectId)
+    const id = String(projectId)
+    const project = await this.load(id)
     for (const { key, entry } of items) {
       // Re-inserted last: insertion order is the age order
       delete project.entries[key]
@@ -248,21 +325,27 @@ export class AiAssistLanguageCheckStore {
     project.dirty = true
     if (!project.timer) {
       project.timer = setTimeout(() => {
-        this.flush(projectId).catch(() => {})
+        this.flush(id).catch(() => {})
       }, FLUSH_DELAY_MS)
       project.timer.unref?.()
+    }
+    if (this.openChars() > MAX_OPEN_CHARS) {
+      await this.evict(id)
     }
   }
 
   /** Writes a project's unsaved results now. */
   async flush(projectId) {
-    const project = this.open.get(projectId)
+    const id = String(projectId)
+    const project = this.open.get(id)
     if (!project) return
     if (project.timer) clearTimeout(project.timer)
     project.timer = null
     if (!project.dirty) return
-    const file = fileFor(projectId)
+    const file = fileFor(id)
     await withFileLock(file, async () => {
+      // Removed while waiting for the lock: its results must not come back
+      if (this.open.get(id) !== project) return
       await fs.mkdir(Path.dirname(file), { recursive: true })
       // Snapshot and clear `dirty` in the same tick: a store landing during
       // the write sets it again, so the next flush saves it.
@@ -283,4 +366,5 @@ export class AiAssistLanguageCheckStore {
   }
 }
 
-export default new AiAssistLanguageCheckStore()
+const store = new AiAssistLanguageCheckStore()
+export default store

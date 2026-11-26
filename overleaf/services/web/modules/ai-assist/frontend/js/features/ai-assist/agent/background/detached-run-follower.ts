@@ -105,7 +105,7 @@ function saveLocally(follower: Follower) {
   }, LOCAL_SAVE_MS)
 }
 
-function settle(follower: Follower, finished: boolean) {
+function settle(follower: Follower, finished: boolean, gone: boolean = false) {
   const { projectId, chatId, startedAt } = follower
   const received = !follower.replaying
   if (!forget(follower)) return
@@ -130,11 +130,9 @@ function settle(follower: Follower, finished: boolean) {
     ]
   }
 
-  // A run that ended is saved and forgotten. One whose stream was lost stays
-  // detached, to be replayed when its chat is opened. One that sent nothing
-  // at all is gone from the server: it is forgotten, and the chat is kept as
-  // it was left rather than saved without the reply it showed.
-  if (finished || !received) setDetachedRun(projectId, chatId, null)
+  // Clear the stored pointer when the run finished or is confirmed gone from
+  // the server; transient reconnect failures keep it for a reload.
+  if (finished || gone) setDetachedRun(projectId, chatId, null)
   if (!received) return
   saveConversation(projectId, chatId, entries)
   if (finished) {
@@ -177,7 +175,7 @@ function connect(follower: Follower) {
 
     },
     onDone: () => settle(follower, true),
-    onError: () => settle(follower, false),
+    onError: (_err, { gone }) => settle(follower, false, gone),
   })
 }
 

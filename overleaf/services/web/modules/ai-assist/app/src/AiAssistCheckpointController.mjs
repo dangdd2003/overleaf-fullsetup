@@ -2,6 +2,7 @@ import logger from '@overleaf/logger'
 import Settings from '@overleaf/settings'
 import './ModuleSettings.mjs'
 import defaultCheckpointStore, {
+  OBJECT_ID,
   isValidChatId,
   isValidUserMessageId,
 } from './AiAssistCheckpointStore.mjs'
@@ -38,6 +39,10 @@ export class AiAssistCheckpointController {
     const projectId = req.params.Project_id
     const userId = String(SessionManager.getLoggedInUserId(req.session) || '')
     const chatId = req.params.chatId
+    if (!OBJECT_ID.test(String(projectId)) || !OBJECT_ID.test(userId)) {
+      res.status(400).json({ error: 'Invalid project or user id' })
+      return null
+    }
     if (chatId !== undefined && !isValidChatId(chatId)) {
       res.status(400).json({ error: 'Invalid chat id' })
       return null

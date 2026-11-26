@@ -33,6 +33,40 @@ function streamErrorStatus(type) {
   return undefined
 }
 
+/**
+ * A provider's own error text as it may reach the model and the user: control
+ * characters and runs of spaces collapsed, at most 300 characters.
+ */
+export function providerErrorText(value) {
+  return String(value ?? '')
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 300)
+}
+
+/** Finish reasons that end a reply the page cannot use (a block, not a cut-off). */
+const BLOCKED_FINISH_REASONS = new Set([
+  'SAFETY',
+  'RECITATION',
+  'BLOCKLIST',
+  'PROHIBITED_CONTENT',
+  'SPII',
+  'IMAGE_SAFETY',
+  'OTHER',
+])
+
+/**
+ * A stream that ended without its terminal event is a cut-off reply, not a
+ * finished one. It is retryable: nothing the page kept depends on it.
+ */
+function truncatedStreamError(provider) {
+  return new ProviderError(`${provider} stream ended before the reply finished`, {
+    code: 'providerStream',
+    status: 502,
+  })
+}
+
 /** The most a provider's reply (or error reply) may be read to: far above any real one. */
 const MAX_JSON_REPLY_BYTES = 4 * 1024 * 1024
 
@@ -41,21 +75,45 @@ const MAX_JSON_REPLY_BYTES = 4 * 1024 * 1024
  * with one reply.
  */
 export async function readJsonReply(res, maxBytes = MAX_JSON_REPLY_BYTES) {
-  if (typeof res.body?.getReader !== 'function') return res.json()
-  const reader = res.body.getReader()
+  if (!res?.body) return res.json()
   const chunks = []
   let total = 0
-  for (;;) {
-    const { value, done } = await reader.read()
-    if (done) break
-    total += value.byteLength
-    if (total > maxBytes) {
-      await reader.cancel().catch(() => {})
-      throw new ProviderError('The provider sent more data than expected.', {
-        code: 'providerError',
-      })
+  const pushChunk = value => {
+    const buf =
+      Buffer.isBuffer(value)
+        ? value
+        : typeof value === 'string'
+          ? Buffer.from(value)
+          : Buffer.from(value.buffer, value.byteOffset, value.byteLength)
+    total += buf.byteLength
+    if (total > maxBytes) return false
+    chunks.push(buf)
+    return true
+  }
+
+  if (typeof res.body.getReader === 'function') {
+    const reader = res.body.getReader()
+    for (;;) {
+      const { value, done } = await reader.read()
+      if (done) break
+      if (!pushChunk(value)) {
+        await reader.cancel().catch(() => {})
+        throw new ProviderError('The provider sent more data than expected.', {
+          code: 'providerError',
+        })
+      }
     }
-    chunks.push(value)
+  } else if (typeof res.body[Symbol.asyncIterator] === 'function') {
+    for await (const chunk of res.body) {
+      if (!pushChunk(chunk)) {
+        res.body.destroy?.()
+        throw new ProviderError('The provider sent more data than expected.', {
+          code: 'providerError',
+        })
+      }
+    }
+  } else {
+    return res.json()
   }
   return JSON.parse(Buffer.concat(chunks).toString('utf8'))
 }
@@ -67,7 +125,7 @@ async function openAiError(res) {
     res.status === 401 || res.status === 403 ? 'providerAuth' : 'providerError'
   try {
     const body = await readJsonReply(res)
-    if (body?.error?.message) msg = body.error.message
+    if (body?.error?.message) msg = providerErrorText(body.error.message)
     if (body?.error?.code === 'invalid_api_key') code = 'providerAuth'
   } catch {}
   return new ProviderError(msg, {
@@ -189,7 +247,10 @@ export function validateSafeProviderBaseUrl(rawUrl) {
     )
   }
 
-  const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '')
+  const hostname = parsed.hostname
+    .toLowerCase()
+    .replace(/^\[|\]$/g, '')
+    .replace(/\.+$/, '')
   if (BLOCKED_INTERNAL_HOSTS.has(hostname) || hostname.endsWith('.internal')) {
     throw new ProviderError(
       `Access to internal service '${hostname}' is forbidden.`,
@@ -201,10 +262,11 @@ export function validateSafeProviderBaseUrl(rawUrl) {
   }
 
   // Loopback and this server's own addresses, by name or IP literal, the
-  // metadata services, and Overleaf's internal services. A LAN address stays
-  // allowed: that is where a self-hosted provider lives.
+  // metadata services and Overleaf's internal services are always refused. A
+  // private (LAN) address is refused too, unless the admin lists its exact
+  // 'host:port' as it is dialled in Settings.aiAssist.trustedProviderHosts.
   try {
-    validateConnectorUrl(target)
+    validateConnectorUrl(target, { trusted: true })
   } catch (err) {
     throw new ProviderError(err.message, {
       code: 'restrictedProviderUrl',
@@ -213,6 +275,43 @@ export function validateSafeProviderBaseUrl(rawUrl) {
   }
 
   return true
+}
+
+/** What the settings page shows in place of a stored key. */
+const MASKED_API_KEY = '••••••••'
+
+/**
+ * The settings to call a provider with, when a request leaves its key out or
+ * sends the mask. The stored key is used only for the provider type and base
+ * URL it was saved with, so a request cannot send a saved key to another host.
+ * A request with no key for another provider (a keyless local Ollama) goes
+ * out with no key; one that sends the mask for it gets a 400 asking for the
+ * key again.
+ */
+export function bindStoredApiKey(requested, stored) {
+  const apiKey = typeof requested?.apiKey === 'string' ? requested.apiKey : ''
+  if (apiKey && apiKey !== MASKED_API_KEY) return requested
+  // Nothing is stored to send: a mask must not reach the provider as a key
+  if (!stored?.apiKey) {
+    return apiKey === MASKED_API_KEY ? { ...requested, apiKey: '' } : requested
+  }
+  const sameType =
+    String(requested?.type ?? '').toLowerCase() ===
+    String(stored.type ?? '').toLowerCase()
+  const sameUrl =
+    normalizeProviderBaseUrl(
+      requested?.type,
+      requested?.baseUrl || requested?.baseURL
+    ) ===
+    normalizeProviderBaseUrl(stored.type, stored.baseUrl || stored.baseURL)
+  if (!sameType || !sameUrl) {
+    if (!apiKey) return requested
+    throw new ProviderError(
+      'The saved API key belongs to another provider or address. Enter the API key again.',
+      { code: 'providerKeyMismatch', status: 400 }
+    )
+  }
+  return { ...requested, apiKey: stored.apiKey }
 }
 
 /**
@@ -394,18 +493,20 @@ function withRequestTimeouts(callerSignal, { connectMs, idleMs } = {}) {
 }
 
 export function resolveDockerHostUrl(url) {
-  if (!url) return url
-  if (isRunningInDocker()) {
-    const hostGateway = dockerHostGateway()
-    return url.replace(
-      /https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/,
-      (_match, _host, port) => {
-        const portPart = port || ''
-        return `http://${hostGateway}${portPart}`
-      }
-    )
+  if (!url || !isRunningInDocker()) return url
+  let parsed
+  try {
+    parsed = new URL(url)
+  } catch {
+    return url
   }
-  return url
+  if (parsed.hostname !== 'localhost' && parsed.hostname !== '127.0.0.1') {
+    return url
+  }
+  // Only the host of the leading origin is swapped; the rest is kept as typed
+  const origin = /^(https?:\/\/(?:[^@/?#]*@)?)(localhost|127\.0\.0\.1)(?=[:/?#]|$)/i.exec(url)
+  if (!origin) return url
+  return `${origin[1]}${dockerHostGateway()}${url.slice(origin[0].length)}`
 }
 
 class StreamingThinkParser {
@@ -491,23 +592,30 @@ async function* streamLines(stream, onActivity) {
   }
   const withoutCr = line => (line.endsWith('\r') ? line.slice(0, -1) : line)
 
-  while (true) {
-    const { value, done } = await reader.next()
-    if (done) break
-    if (onActivity) onActivity()
-    const chunk = decoder.decode(value, { stream: true })
-    if (!chunk.includes('\n')) {
-      buffer += chunk
+  try {
+    while (true) {
+      const { value, done } = await reader.next()
+      if (done) break
+      if (onActivity) onActivity()
+      const chunk = decoder.decode(value, { stream: true })
+      if (!chunk.includes('\n')) {
+        buffer += chunk
+        unfinished()
+        continue
+      }
+      const lines = (buffer + chunk).split('\n')
+      buffer = lines.pop() ?? ''
       unfinished()
-      continue
+      for (const line of lines) yield withoutCr(line)
     }
-    const lines = (buffer + chunk).split('\n')
-    buffer = lines.pop() ?? ''
-    unfinished()
-    for (const line of lines) yield withoutCr(line)
-  }
 
-  if (buffer) yield withoutCr(buffer)
+    if (buffer) yield withoutCr(buffer)
+  } finally {
+    // The consumer stopped early, or a read failed: release the connection
+    try {
+      await reader.return?.()
+    } catch {}
+  }
 }
 
 async function* parseNdjsonLines(stream, onActivity) {
@@ -794,7 +902,7 @@ async function fetchModelList(fetchFn, url, headers, signal) {
       const upstream =
         body?.error?.message ||
         (typeof body?.error === 'string' ? body.error : null)
-      if (upstream) msg = upstream
+      if (upstream) msg = providerErrorText(upstream)
     } catch {}
     const code =
       res.status === 401 || res.status === 403
@@ -802,7 +910,7 @@ async function fetchModelList(fetchFn, url, headers, signal) {
         : res.status === 404 || res.status === 405
           ? 'modelsUnsupported'
           : 'providerError'
-    throw new ProviderError(msg, { code, status: res.status })
+    throw new ProviderError(providerErrorText(msg), { code, status: res.status })
   }
   return await readJsonReply(res).catch(() => null)
 }
@@ -975,7 +1083,7 @@ async function countReplyError(label, res) {
     }
     if (!detail) detail = text
   }
-  detail = String(detail).slice(0, 300)
+  detail = providerErrorText(detail)
   return new ProviderError(
     `${label} error (${res.status})${detail ? `: ${detail}` : ''}`,
     {
@@ -1005,6 +1113,23 @@ function isOllamaHost(url) {
   } catch {
     return false
   }
+}
+
+/**
+ * The thinking blocks a stored assistant turn carries, in the wire form the API
+ * issued them: thinking with its signature, or redacted_thinking with its data.
+ * They are sent back as they were; anything else is dropped.
+ */
+function anthropicThinkingBlocks(message) {
+  const blocks = message.providerState?.anthropicThinking
+  if (!Array.isArray(blocks)) return []
+  return blocks.filter(
+    block =>
+      (block?.type === 'thinking' &&
+        typeof block.thinking === 'string' &&
+        typeof block.signature === 'string') ||
+      (block?.type === 'redacted_thinking' && typeof block.data === 'string')
+  )
 }
 
 class AnthropicServerClient {
@@ -1173,7 +1298,9 @@ class AnthropicServerClient {
       }
 
       if (message.role === 'assistant' && message.toolCalls?.length) {
-        const content = []
+        // With extended thinking, the API rejects a tool-use turn whose thinking
+        // blocks (signed, unchanged) are missing, so they go back first
+        const content = anthropicThinkingBlocks(message)
         if (message.content)
           content.push({ type: 'text', text: message.content })
         for (const call of message.toolCalls) {
@@ -1297,10 +1424,16 @@ class AnthropicServerClient {
           : 'providerError'
       const retry = httpRetryFields(res)
       try {
+        timeouts.resetIdleTimer()
         const body = await readJsonReply(res)
-        if (body?.error?.message) msg = body.error.message
+        if (body?.error?.message) msg = providerErrorText(body.error.message)
         if (body?.error?.type === 'authentication_error') code = 'providerAuth'
-      } catch {}
+      } catch (err) {
+        timeouts.checkAbortReason()
+        if (err.name === 'AbortError' || err.code === 'aborted') throw err
+      } finally {
+        timeouts.clearAllTimeouts()
+      }
       throw new ProviderError(msg, {
         status: res.status,
         code,
@@ -1310,6 +1443,10 @@ class AnthropicServerClient {
 
     let activeTool = null
     let truncated = false
+    let finished = false
+    // Thinking blocks are kept whole (with their signatures) for the next turn
+    let thinkingBlock = null
+    const thinkingBlocks = []
     // message_start carries the input counts, message_delta the output count
     let reported = null
     try {
@@ -1334,7 +1471,7 @@ class AnthropicServerClient {
 
         if (parsed.type === 'error') {
           throw new ProviderError(
-            parsed.error?.message || 'Anthropic stream error',
+            providerErrorText(parsed.error?.message) || 'Anthropic stream error',
             {
               code:
                 parsed.error?.type === 'authentication_error'
@@ -1346,32 +1483,57 @@ class AnthropicServerClient {
         }
 
         if (parsed.type === 'content_block_start') {
-          if (parsed.content_block?.type === 'tool_use') {
+          const block = parsed.content_block
+          if (block?.type === 'tool_use') {
             activeTool = {
-              id: parsed.content_block.id,
-              name: parsed.content_block.name,
+              id: block.id,
+              name: block.name,
               rawArgs: '',
             }
+          } else if (block?.type === 'thinking') {
+            thinkingBlock = { type: 'thinking', thinking: '', signature: '' }
+          } else if (block?.type === 'redacted_thinking') {
+            thinkingBlocks.push({ type: 'redacted_thinking', data: block.data })
           }
         } else if (parsed.type === 'content_block_delta') {
           const delta = parsed.delta
           if (delta?.type === 'thinking_delta') {
+            if (thinkingBlock) thinkingBlock.thinking += delta.thinking ?? ''
             yield { type: 'thinking', text: delta.thinking }
+          } else if (delta?.type === 'signature_delta') {
+            if (thinkingBlock) thinkingBlock.signature += delta.signature ?? ''
           } else if (delta?.type === 'text_delta') {
             yield { type: 'text', text: delta.text }
           } else if (delta?.type === 'input_json_delta' && activeTool) {
-            activeTool.rawArgs += delta.partial_json
+            activeTool.rawArgs += delta.partial_json ?? ''
           }
-        } else if (parsed.type === 'content_block_stop' && activeTool) {
-          yield anthropicToolCall(activeTool)
-          activeTool = null
-        } else if (parsed.type === 'message_delta') {
-          if (parsed.delta?.stop_reason === 'max_tokens') truncated = true
-        } else if (parsed.type === 'message_stop') {
-          if (activeTool) {
+        } else if (parsed.type === 'content_block_stop') {
+          if (thinkingBlock) {
+            thinkingBlocks.push(thinkingBlock)
+            thinkingBlock = null
+          } else if (activeTool) {
             yield anthropicToolCall(activeTool)
             activeTool = null
           }
+        } else if (parsed.type === 'message_delta') {
+          const reason = parsed.delta?.stop_reason
+          if (reason === 'max_tokens') truncated = true
+          // A refusal is the model's answer, not a fault to retry
+          if (reason === 'refusal') {
+            throw new ProviderError('The model declined to answer this request.', {
+              code: 'providerRefused',
+              shouldRetry: false,
+            })
+          }
+          // pause_turn is for server-side tools, which this module does not run
+          if (reason === 'pause_turn') {
+            throw new ProviderError('The provider paused the reply, which is not supported.', {
+              code: 'providerPaused',
+              shouldRetry: false,
+            })
+          }
+        } else if (parsed.type === 'message_stop') {
+          finished = true
           break
         }
       }
@@ -1382,8 +1544,17 @@ class AnthropicServerClient {
       timeouts.clearAllTimeouts()
     }
 
+    if (!finished) throw truncatedStreamError('Anthropic')
+
     if (activeTool) {
       yield anthropicToolCall(activeTool)
+    }
+    if (thinkingBlocks.length > 0) {
+      yield {
+        type: 'providerState',
+        provider: 'anthropic',
+        anthropicThinking: thinkingBlocks,
+      }
     }
 
     if (reported) {
@@ -1600,13 +1771,24 @@ export class OpenAiServerClient {
       timeouts.clearConnectTimeout()
     }
 
-    if (!res.ok) throw await openAiError(res)
+    if (!res.ok) {
+      try {
+        timeouts.resetIdleTimer()
+        throw await openAiError(res)
+      } catch (err) {
+        timeouts.checkAbortReason()
+        throw err
+      } finally {
+        timeouts.clearAllTimeouts()
+      }
+    }
 
     const pendingToolCalls = []
     // wire index -> the call in pendingToolCalls open at that index
     const openToolCalls = new Map()
     const thinkParser = new StreamingThinkParser()
     let truncated = false
+    let finished = false
     let reported = null
 
     try {
@@ -1615,12 +1797,31 @@ export class OpenAiServerClient {
         timeouts.resetIdleTimer()
       )) {
         timeouts.resetIdleTimer()
-        if (data === '[DONE]') break
+        if (data === '[DONE]') {
+          finished = true
+          break
+        }
         let parsed
         try {
           parsed = JSON.parse(data)
         } catch {
           continue
+        }
+
+        // Some gateways send a failure inside a 200 stream, as a data event
+        if (parsed.error) {
+          throw new ProviderError(
+            typeof parsed.error === 'string'
+              ? providerErrorText(parsed.error)
+              : providerErrorText(parsed.error.message) || 'OpenAI stream error',
+            {
+              code: 'providerError',
+              status:
+                typeof parsed.error?.code === 'number'
+                  ? parsed.error.code
+                  : streamErrorStatus(parsed.error?.type),
+            }
+          )
         }
 
         if (parsed.usage) reported = parsed.usage
@@ -1662,6 +1863,13 @@ export class OpenAiServerClient {
 
         if (choice?.finish_reason) {
           if (choice.finish_reason === 'length') truncated = true
+          if (choice.finish_reason === 'content_filter') {
+            throw new ProviderError('The provider blocked this reply.', {
+              code: 'providerBlocked',
+              shouldRetry: false,
+            })
+          }
+          finished = true
           // Read on to [DONE] when usage was asked for: it follows this chunk
           if (!official) break
         }
@@ -1672,6 +1880,8 @@ export class OpenAiServerClient {
     } finally {
       timeouts.clearAllTimeouts()
     }
+
+    if (!finished) throw truncatedStreamError('OpenAI')
 
     for (const item of thinkParser.flush()) {
       yield item
@@ -1724,14 +1934,24 @@ export function toGeminiContents(messages) {
       let responseObj
       if (typeof message.content === 'string') {
         try {
-          responseObj = JSON.parse(message.content)
+          const parsed = JSON.parse(message.content)
+          responseObj =
+            parsed !== null &&
+            typeof parsed === 'object' &&
+            !Array.isArray(parsed)
+              ? parsed
+              : { output: parsed }
         } catch {
           responseObj = { output: message.content }
         }
-      } else if (message.content && typeof message.content === 'object') {
+      } else if (
+        message.content !== null &&
+        typeof message.content === 'object' &&
+        !Array.isArray(message.content)
+      ) {
         responseObj = message.content
       } else {
-        responseObj = { output: String(message.content ?? '') }
+        responseObj = { output: message.content ?? '' }
       }
 
       const part = {
@@ -1765,11 +1985,15 @@ export function toGeminiContents(messages) {
       }
       if (message.toolCalls?.length) {
         for (const tc of message.toolCalls) {
+          // The signature is a sibling of functionCall in the part, as sent
           parts.push({
             functionCall: {
               name: tc.name,
               args: parseCallArgs(tc.args),
             },
+            ...(typeof tc.thoughtSignature === 'string'
+              ? { thoughtSignature: tc.thoughtSignature }
+              : {}),
           })
         }
       }
@@ -2000,21 +2224,32 @@ export class GoogleServerClient {
           : 'providerError'
       const retry = httpRetryFields(res)
       try {
+        timeouts.resetIdleTimer()
         const body = await readJsonReply(res)
-        if (body?.error?.message) msg = body.error.message
+        if (body?.error?.message) msg = providerErrorText(body.error.message)
         if (
           body?.error?.status === 'UNAUTHENTICATED' ||
           body?.error?.status === 'PERMISSION_DENIED'
         ) {
           code = 'providerAuth'
         }
-      } catch {}
-      throw new ProviderError(msg, { status: res.status, code, ...retry })
+      } catch (err) {
+        timeouts.checkAbortReason()
+        if (err.name === 'AbortError' || err.code === 'aborted') throw err
+      } finally {
+        timeouts.clearAllTimeouts()
+      }
+      throw new ProviderError(providerErrorText(msg), {
+        status: res.status,
+        code,
+        ...retry,
+      })
     }
 
     const thinkParser = new StreamingThinkParser()
     let toolCallIndex = 0
     let truncated = false
+    let finished = false
     let reported = null
 
     try {
@@ -2034,8 +2269,8 @@ export class GoogleServerClient {
         if (parsed.error) {
           throw new ProviderError(
             typeof parsed.error === 'string'
-              ? parsed.error
-              : parsed.error.message || 'Gemini error',
+              ? providerErrorText(parsed.error)
+              : providerErrorText(parsed.error.message) || 'Gemini error',
             {
               code: 'providerError',
               // Google's error body carries the HTTP status as a number
@@ -2050,11 +2285,19 @@ export class GoogleServerClient {
         // Counted on every chunk, the last one to carry it wins
         if (parsed.usageMetadata) reported = parsed.usageMetadata
 
+        if (parsed.promptFeedback?.blockReason) {
+          throw new ProviderError('The provider blocked this request.', {
+            code: 'providerBlocked',
+            shouldRetry: false,
+          })
+        }
+
+        // The finish reason can ride on a chunk with no parts, so it is read first
         const candidate = parsed.candidates?.[0]
         const parts = candidate?.content?.parts
-        if (!Array.isArray(parts)) continue
+        const partList = Array.isArray(parts) ? parts : []
 
-        for (const part of parts) {
+        for (const part of partList) {
           if (part.thought) {
             yield { type: 'thinking', text: part.text || '' }
             continue
@@ -2074,12 +2317,23 @@ export class GoogleServerClient {
               id,
               name: part.functionCall.name,
               args: part.functionCall.args || {},
+              // Gemini 3 wants this signature sent back with the call
+              ...(typeof part.thoughtSignature === 'string'
+                ? { thoughtSignature: part.thoughtSignature }
+                : {}),
             }
           }
         }
 
         if (candidate?.finishReason) {
           if (candidate.finishReason === 'MAX_TOKENS') truncated = true
+          if (BLOCKED_FINISH_REASONS.has(candidate.finishReason)) {
+            throw new ProviderError(
+              `The provider stopped the reply (${candidate.finishReason}).`,
+              { code: 'providerBlocked', shouldRetry: false }
+            )
+          }
+          finished = true
           break
         }
       }
@@ -2089,6 +2343,8 @@ export class GoogleServerClient {
     } finally {
       timeouts.clearAllTimeouts()
     }
+
+    if (!finished) throw truncatedStreamError('Gemini')
 
     for (const item of thinkParser.flush()) {
       yield item
@@ -2126,12 +2382,17 @@ async function ollamaErrorMessage(res) {
   let msg = `Ollama error (${res.status})`
   try {
     const json = await readJsonReply(res)
-    if (json?.error)
-      msg =
-        typeof json.error === 'string' ? json.error : json.error.message || msg
+    if (json?.error) {
+      msg = providerErrorText(
+        typeof json.error === 'string' ? json.error : json.error.message
+      ) || msg
+    }
   } catch {}
   return msg
 }
+
+// Ollama's header wait covers loading the model, so it gets this many times the connect limit
+const OLLAMA_HEADER_TIMEOUT_FACTOR = 2
 
 export class OllamaServerClient {
   constructor({
@@ -2150,9 +2411,9 @@ export class OllamaServerClient {
     const url = normalizeProviderBaseUrl('ollama', baseURL || baseUrl)
     this.baseURL = resolveDockerHostUrl(url)
     this.fetch = fetchFn
+    // A model can take a while to load before the headers come back
     this.connectTimeoutMs =
-      connectTimeoutMs ??
-      defaultConnectMs()
+      connectTimeoutMs ?? defaultConnectMs() * OLLAMA_HEADER_TIMEOUT_FACTOR
     this.streamIdleTimeoutMs =
       streamIdleTimeoutMs ??
       defaultIdleMs()
@@ -2240,14 +2501,29 @@ export class OllamaServerClient {
             body: JSON.stringify(body),
             signal: timeouts.signal,
             providerRequest: true,
+            // The socket must not give up before the header limit above
+            timeoutMs: this.connectTimeoutMs,
           },
           { fetchFn: this.fetch, maxRetries: 0 }
         )
       } catch (err) {
         timeouts.checkAbortReason()
-        if (err.name === 'AbortError' || err.code === 'aborted') throw err
+        if (
+          err instanceof ProviderError ||
+          err.name === 'AbortError' ||
+          err.code === 'aborted' ||
+          err.code === 'EREDIRECTREFUSED'
+        ) {
+          throw err
+        }
+        const refused = refusedDestination(err)
+        if (refused) throw refused
+        let safeOrigin = 'Ollama'
+        try {
+          safeOrigin = new URL(this.baseURL).origin
+        } catch {}
         throw new ProviderError(
-          `Could not reach Ollama at ${this.baseURL}: ${err.message}`,
+          `Could not reach ${safeOrigin}: ${err.message}`,
           {
             code: 'network',
           }
@@ -2281,7 +2557,17 @@ export class OllamaServerClient {
 
     if (!res.ok) {
       const retry = httpRetryFields(res)
-      throw new ProviderError(await ollamaErrorMessage(res), {
+      let msg
+      try {
+        timeouts.resetIdleTimer()
+        msg = await ollamaErrorMessage(res)
+      } catch (err) {
+        timeouts.checkAbortReason()
+        throw err
+      } finally {
+        timeouts.clearAllTimeouts()
+      }
+      throw new ProviderError(msg, {
         status: res.status,
         code: 'providerError',
         ...retry,
@@ -2289,8 +2575,10 @@ export class OllamaServerClient {
     }
 
     const pendingToolCalls = new Map()
+    let nextToolCallSeq = 0
     const thinkParser = new StreamingThinkParser()
     let truncated = false
+    let finished = false
     let reported = null
 
     try {
@@ -2309,41 +2597,46 @@ export class OllamaServerClient {
 
         if (parsed.error) {
           throw new ProviderError(
-            typeof parsed.error === 'string'
-              ? parsed.error
-              : parsed.error.message || 'Ollama returned an error.',
+            providerErrorText(
+              typeof parsed.error === 'string'
+                ? parsed.error
+                : parsed.error.message
+            ) || 'Ollama returned an error.',
             { code: 'providerError' }
           )
         }
 
         // The done chunk carries the counts, and may have no message
-        if (parsed.done) reported = parsed
+        if (parsed.done) {
+          reported = parsed
+          finished = true
+        }
 
         const msg = parsed.message
-        if (!msg) continue
-
-        if (msg.thinking) {
-          yield { type: 'thinking', text: msg.thinking }
-        } else if (msg.reasoning) {
-          yield { type: 'thinking', text: msg.reasoning }
-        }
-
-        if (msg.content) {
-          for (const item of thinkParser.feed(msg.content)) {
-            yield item
+        if (msg) {
+          if (msg.thinking) {
+            yield { type: 'thinking', text: msg.thinking }
+          } else if (msg.reasoning) {
+            yield { type: 'thinking', text: msg.reasoning }
           }
-        }
 
-        if (Array.isArray(msg.tool_calls)) {
-          for (let i = 0; i < msg.tool_calls.length; i++) {
-            const tc = msg.tool_calls[i]
-            const index = tc.function?.index ?? i
-            const name = tc.function?.name || tc.name || ''
-            const args = tc.function?.arguments ?? tc.args ?? {}
-            const id =
-              tc.id ||
-              (name ? `call_${name}_${index}` : `call_${Date.now()}_${index}`)
-            pendingToolCalls.set(id, { id, name, args })
+          if (msg.content) {
+            for (const item of thinkParser.feed(msg.content)) {
+              yield item
+            }
+          }
+
+          if (Array.isArray(msg.tool_calls)) {
+            for (let i = 0; i < msg.tool_calls.length; i++) {
+              const tc = msg.tool_calls[i]
+              const seq = nextToolCallSeq++
+              const name = tc.function?.name || tc.name || ''
+              const args = tc.function?.arguments ?? tc.args ?? {}
+              const id =
+                tc.id ||
+                (name ? `call_${name}_${seq}` : `call_tool_${seq}`)
+              pendingToolCalls.set(id, { id, name, args })
+            }
           }
         }
 
@@ -2358,6 +2651,8 @@ export class OllamaServerClient {
     } finally {
       timeouts.clearAllTimeouts()
     }
+
+    if (!finished) throw truncatedStreamError('Ollama')
 
     for (const item of thinkParser.flush()) {
       yield item

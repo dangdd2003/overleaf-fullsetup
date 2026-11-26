@@ -5,6 +5,7 @@ import Path from 'node:path'
 import os from 'node:os'
 import Settings from '@overleaf/settings'
 import store, {
+  MAX_CHECKPOINTS_PER_CHAT,
   saveCheckpoint,
   getCheckpoint,
   checkRewind,
@@ -542,5 +543,56 @@ describe('AiAssistCheckpointStore', function () {
       expect(await copyCheckpoints(PROJECT, USER, CHAT_ID, FORK_CHAT, 'nope')).to.deep.equal([])
       expect(await getCheckpoint(PROJECT, USER, FORK_CHAT, MSG_ID_1)).to.be.null
     })
+  })
+})
+
+describe('AiAssistCheckpointStore storage', function () {
+  let dir
+  let origDir
+  const PROJ = '0123456789abcdef01234567'
+  const OTHER = 'fedcba9876543210fedcba98'
+  const USR = 'abcdef0123456789abcdef01'
+  const OTHER_USR = '111111111111111111111111'
+  const data = { 'main.tex': { originalContent: 'x' } }
+
+  beforeEach(async function () {
+    dir = await fs.mkdtemp(Path.join(os.tmpdir(), 'ai-ckpt-storage-'))
+    Settings.aiAssist = Settings.aiAssist || {}
+    origDir = Settings.aiAssist.chatHistoryDir
+    Settings.aiAssist.chatHistoryDir = dir
+  })
+
+  afterEach(async function () {
+    Settings.aiAssist.chatHistoryDir = origDir
+    await fs.rm(dir, { recursive: true, force: true })
+  })
+
+  it('keeps only the newest checkpoints of a chat', async function () {
+    const total = MAX_CHECKPOINTS_PER_CHAT + 1
+    for (let i = 0; i < total; i++) {
+      await store.saveCheckpoint(PROJ, USR, 'chat1', `m${i}`, data)
+    }
+    const names = await fs.readdir(Path.join(dir, 'checkpoints', `${PROJ}-${USR}`, 'chat1'))
+    expect(names.filter(n => n.endsWith('.json'))).to.have.length(
+      MAX_CHECKPOINTS_PER_CHAT
+    )
+    // The newest turn is always kept, so recent rewinds still work
+    expect(await store.getCheckpoint(PROJ, USR, 'chat1', `m${total - 1}`)).to.not.equal(null)
+  })
+
+  it('deletes every checkpoint of one user, and of one project', async function () {
+    await store.saveCheckpoint(PROJ, USR, 'a', 'u0', data)
+    await store.saveCheckpoint(OTHER, USR, 'b', 'u0', data)
+    await store.saveCheckpoint(PROJ, OTHER_USR, 'c', 'u0', data)
+
+    await store.deleteUserCheckpoints(USR)
+    await store.deleteUserCheckpoints(USR)
+    expect(await store.getCheckpoint(PROJ, USR, 'a', 'u0')).to.equal(null)
+    expect(await store.getCheckpoint(OTHER, USR, 'b', 'u0')).to.equal(null)
+    expect(await store.getCheckpoint(PROJ, OTHER_USR, 'c', 'u0')).to.not.equal(null)
+
+    await store.deleteProjectCheckpoints(PROJ)
+    await store.deleteProjectCheckpoints(PROJ)
+    expect(await store.getCheckpoint(PROJ, OTHER_USR, 'c', 'u0')).to.equal(null)
   })
 })

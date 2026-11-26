@@ -18,12 +18,14 @@ const LEVELS = {
   subparagraph: 5,
 }
 
+export const MAX_INDEXED_BYTES = 512 * 1024
+
 const SECTION_RE =
-  /\\(part|chapter|section|subsection|subsubsection|paragraph|subparagraph)(\*?)\s*(?:\[[^\]]*\])?\s*\{/
+  /\\(part|chapter|section|subsection|subsubsection|paragraph|subparagraph)(\*?)(?:\s*\[[^\]]*\])?\s*\{/
 const INPUT_RE = /\\(?:input|include)\s*\{/
-const CLASS_RE = /\\documentclass\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}/
-const TITLE_RE = /\\title\s*(?:\[[^\]]*\])?\s*\{/
-const PACKAGE_RE = /\\usepackage\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}/g
+const CLASS_RE = /\\documentclass(?:\s*\[[^\]]*\])?\s*\{([^}]*)\}/
+const TITLE_RE = /\\title(?:\s*\[[^\]]*\])?\s*\{/
+const PACKAGE_RE = /\\usepackage(?:\s*\[[^\]]*\])?\s*\{([^}]*)\}/g
 
 /** Strips a line comment, respecting an escaped percent sign. */
 function uncomment(line) {
@@ -49,7 +51,7 @@ export function readBraceGroup(text, openIndex) {
 
 function resolveInclude(target, docs) {
   const candidates = [target, `${target}.tex`, target.replace(/\.tex$/, '')]
-  const hit = candidates.find(candidate => candidate in docs)
+  const hit = candidates.find(candidate => Object.hasOwn(docs, candidate))
   return hit ?? (target.endsWith('.tex') ? target : `${target}.tex`)
 }
 
@@ -63,12 +65,13 @@ export function parseOutline({ docs, rootPath }) {
   let hasTitle = false
 
   const order =
-    rootPath && rootPath in docs
+    rootPath && Object.hasOwn(docs, rootPath)
       ? [rootPath, ...Object.keys(docs).filter(path => path !== rootPath)]
       : Object.keys(docs)
 
   for (const path of order) {
     if (!path.endsWith('.tex')) continue
+    if (docs[path].length > MAX_INDEXED_BYTES) continue
     const lines = docs[path].split('\n')
 
     lines.forEach((rawLine, index) => {
@@ -124,7 +127,7 @@ export function parseOutline({ docs, rootPath }) {
             from: path,
             to: target,
             line: lineNumber,
-            resolved: target in docs,
+            resolved: Object.hasOwn(docs, target),
           })
         }
       }
@@ -138,10 +141,55 @@ export function parseOutline({ docs, rootPath }) {
 
 const LABEL_RE = /\\label\s*\{([^}]*)\}/g
 const REF_RE = /\\(ref|eqref|autoref|cref|Cref|pageref)\s*\{([^}]*)\}/g
-const CITE_RE =
-  /\\(cite|citep|citet|citeauthor|citeyear|nocite)\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}/g
+// Natbib and biblatex citation commands. Longer names come first so that
+// \citep is not read as \cite followed by "p". Each may take up to two
+// optional arguments (prenote, postnote) before its key list.
+const CITE_COMMANDS = [
+  'cite',
+  'nocite',
+  'citep',
+  'citet',
+  'citealt',
+  'citealp',
+  'citeauthor',
+  'citeyear',
+  'citeyearpar',
+  'citetitle',
+  'textcite',
+  'textcites',
+  'parencite',
+  'parencites',
+  'autocite',
+  'autocites',
+  'footcite',
+  'footcites',
+  'footcitet',
+  'smartcite',
+  'supercite',
+  'fullcite',
+  'Textcite',
+  'Parencite',
+  'Autocite',
+  'Footcite',
+]
+  .sort((a, b) => b.length - a.length)
+  .join('|')
+const CITE_RE = new RegExp(
+  `\\\\(${CITE_COMMANDS})\\*?(?:\\s*\\[[^\\]]*\\]){0,2}\\s*\\{([^}]*)\\}`,
+  'g'
+)
+const EXTRA_CITE_GROUP_RE = /^(?:\s*\[[^\]]*\]){0,2}\s*\{([^}]*)\}/
 const BIB_ENTRY_RE = /^\s*@\w+\s*\{\s*([^,\s}]+)\s*,/
 const THEBIB_RE = /\\begin\{thebibliography\}/
+const BIBITEM_RE = /\\bibitem(?:\s*\[[^\]]*\])?\s*\{([^}]*)\}/g
+
+// Fields a complete entry needs, by entry type. An alternative in an array
+// ("author or editor") is met by either name.
+const REQUIRED_BIB_FIELDS = {
+  article: ['author', 'title', 'journal', 'year'],
+  book: [['author', 'editor'], 'title', 'publisher', 'year'],
+  inproceedings: ['author', 'title', 'booktitle', 'year'],
+}
 
 function keysOf(group) {
   return group
@@ -151,27 +199,78 @@ function keysOf(group) {
 }
 
 export function hasThebibliographyEnvironment({ docs }) {
-  return Object.values(docs).some(content => THEBIB_RE.test(content))
+  return Object.values(docs).some(
+    content => content.length <= MAX_INDEXED_BYTES && THEBIB_RE.test(content)
+  )
+}
+
+/**
+ * Splits a .bib file into entries and reports the ones that are incomplete.
+ * Entries are cut at each line that opens with "@"; a field is a name followed
+ * by "=". Good enough for the entries the model edits, and cheap.
+ */
+function bibEntriesOf(path, contents) {
+  const entries = []
+  const lines = contents.split('\n')
+  let current = null
+  lines.forEach((line, index) => {
+    const head = line.match(/^\s*@(\w+)\s*\{\s*([^,\s}]*)/)
+    if (head) {
+      current = {
+        type: head[1].toLowerCase(),
+        key: head[2],
+        path,
+        line: index + 1,
+        fields: new Set(),
+      }
+      entries.push(current)
+    }
+    if (current) {
+      for (const field of line.matchAll(/(?:^|[\s,{])([A-Za-z][A-Za-z_-]*)\s*=/g)) {
+        current.fields.add(field[1].toLowerCase())
+      }
+    }
+  })
+  return entries.filter(e => !['comment', 'string', 'preamble'].includes(e.type))
+}
+
+function missingBibFields(entry) {
+  const required = REQUIRED_BIB_FIELDS[entry.type]
+  if (!required) return []
+  return required
+    .filter(need => {
+      const alternatives = Array.isArray(need) ? need : [need]
+      return !alternatives.some(name => entry.fields.has(name))
+    })
+    .map(need => (Array.isArray(need) ? need.join(' or ') : need))
 }
 
 export function extractReferences({ docs }) {
   const labels = []
   const bibKeys = []
+  const bibEntries = []
   const rawRefs = []
   const rawCitations = []
 
   for (const [path, contents] of Object.entries(docs)) {
+    if (contents.length > MAX_INDEXED_BYTES) continue
     const isBib = path.endsWith('.bib')
 
-    contents.split('\n').forEach((rawLine, index) => {
-      const line = isBib ? rawLine : uncomment(rawLine)
-      const lineNumber = index + 1
+    if (isBib) {
+      bibEntries.push(...bibEntriesOf(path, contents))
+      contents.split('\n').forEach((rawLine, index) => {
+        const entry = rawLine.match(BIB_ENTRY_RE)
+        if (entry) bibKeys.push({ key: entry[1], path, line: index + 1 })
+      })
+      continue
+    }
 
-      if (isBib) {
-        const entry = line.match(BIB_ENTRY_RE)
-        if (entry) bibKeys.push({ key: entry[1], path, line: lineNumber })
-        return
-      }
+    // \bibitem keys are the bibliography when the file has the environment
+    const hasBibitems = THEBIB_RE.test(contents)
+
+    contents.split('\n').forEach((rawLine, index) => {
+      const line = uncomment(rawLine)
+      const lineNumber = index + 1
 
       LABEL_RE.lastIndex = 0
       let label = LABEL_RE.exec(line)
@@ -197,7 +296,35 @@ export function extractReferences({ docs }) {
         for (const key of keysOf(cite[2])) {
           rawCitations.push({ key, path, line: lineNumber, command: cite[1] })
         }
+        if (cite[1].endsWith('cites')) {
+          let pos = CITE_RE.lastIndex
+          for (;;) {
+            const extra = EXTRA_CITE_GROUP_RE.exec(line.slice(pos))
+            if (!extra) break
+            for (const key of keysOf(extra[1])) {
+              rawCitations.push({
+                key,
+                path,
+                line: lineNumber,
+                command: cite[1],
+              })
+            }
+            pos += extra[0].length
+          }
+          CITE_RE.lastIndex = pos
+        }
         cite = CITE_RE.exec(line)
+      }
+
+      if (hasBibitems) {
+        BIBITEM_RE.lastIndex = 0
+        let item = BIBITEM_RE.exec(line)
+        while (item) {
+          for (const key of keysOf(item[1])) {
+            bibKeys.push({ key, path, line: lineNumber, bibitem: true })
+          }
+          item = BIBITEM_RE.exec(line)
+        }
       }
     })
   }
@@ -212,10 +339,31 @@ export function extractReferences({ docs }) {
     seen.add(label.key)
   }
 
+  // Keys defined by more than one .bib entry: BibTeX keeps one and drops the rest
+  const bibSeen = new Map()
+  for (const entry of bibKeys.filter(e => !e.bibitem)) {
+    bibSeen.set(entry.key, (bibSeen.get(entry.key) || 0) + 1)
+  }
+  const duplicateBibKeys = [...bibSeen]
+    .filter(([, count]) => count > 1)
+    .map(([key]) => key)
+
+  const incompleteBibEntries = bibEntries
+    .map(entry => ({
+      key: entry.key,
+      type: entry.type,
+      path: entry.path,
+      line: entry.line,
+      missing: missingBibFields(entry),
+    }))
+    .filter(entry => entry.missing.length > 0)
+
   return {
     labels,
     bibKeys,
     duplicateLabels: [...duplicateLabels],
+    duplicateBibKeys,
+    incompleteBibEntries,
     refs: rawRefs.map(use => ({ ...use, resolved: labelKeys.has(use.key) })),
     citations: rawCitations.map(use => ({
       ...use,
@@ -225,9 +373,6 @@ export function extractReferences({ docs }) {
 }
 
 // ---- project-index.ts ----
-
-/** Above this, environments and packages skip oversize files; parsing them would cost more than it can return. */
-export const MAX_INDEXED_BYTES = 512 * 1024
 
 /** Bounds the line list per environment so a figure-heavy paper cannot bloat the index. */
 const MAX_ENV_LINES = 50
@@ -280,7 +425,7 @@ export function scanEnvironments(content) {
 }
 
 const SCAN_PACKAGE_RE =
-  /\\(?:usepackage|RequirePackage)\s*(?:\[([^\]]*)\])?\s*\{([^}]*)\}/g
+  /\\(?:usepackage|RequirePackage)(?:\s*\[([^\]]*)\])?\s*\{([^}]*)\}/g
 
 export function scanPackages(content) {
   const uses = []

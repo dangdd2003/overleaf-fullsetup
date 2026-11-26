@@ -19,9 +19,11 @@ describe('the system prompt describes the real tool surface', function () {
     expect(SYSTEM_PROMPT).to.not.contain('project_map')
   })
 
-  it('mentions every tool the model can call', function () {
-    for (const name of Object.keys(TOOLS)) {
-      expect(SYSTEM_PROMPT, `prompt omits ${name}`).to.contain(name)
+  it('offers every registry tool with a spec under its own name', function () {
+    // The short prompt does not list tools: the model gets their specs with
+    // each request, so the spec name is what has to match the registry key.
+    for (const [name, tool] of Object.entries(TOOLS)) {
+      expect(tool.spec.name, `registry key ${name}`).to.equal(name)
     }
   })
 })

@@ -357,3 +357,37 @@ describe('AiAssistRetry', function () {
     })
   })
 })
+
+describe('retry budget and terminal stream errors', function () {
+  it('gives up once the interactive wall-clock budget would be spent', function () {
+    const policy = resolveRetryPolicy('interactive')
+    policy.startedAt = Date.now() - 299800
+    const plan = planRetry(new ProviderError('busy', { status: 503 }), {
+      attempt: 0,
+      policy,
+      random: () => 0,
+    })
+    expect(plan.retry).to.equal(false)
+  })
+
+  it('keeps retrying while the budget has room', function () {
+    const policy = resolveRetryPolicy('interactive')
+    const plan = planRetry(new ProviderError('busy', { status: 503 }), {
+      attempt: 0,
+      policy,
+      random: () => 0,
+    })
+    expect(plan.retry).to.equal(true)
+  })
+
+  it('caps connect-timeout retries at two', function () {
+    const err = new ProviderError('Connection timed out', { code: 'providerTimeout' })
+    expect(planRetry(err, { attempt: 1, policy: 'interactive' }).retry).to.equal(true)
+    expect(planRetry(err, { attempt: 2, policy: 'interactive' }).retry).to.equal(false)
+  })
+
+  it('treats a stream that ended early as transient', function () {
+    const err = new ProviderError('ended', { code: 'providerStream', status: 502 })
+    expect(classifyRetry(err).retryable).to.equal(true)
+  })
+})

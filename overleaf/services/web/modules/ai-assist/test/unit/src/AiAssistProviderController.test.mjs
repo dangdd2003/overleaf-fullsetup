@@ -208,6 +208,21 @@ describe('AiAssistProviderController', function () {
   })
 
   describe('editorText: the AI inside the editor', function () {
+    const session = { user: { _id: 'user-1' } }
+    const storedProvider = {
+      type: 'ollama',
+      baseUrl: 'http://203.0.113.5:11434',
+      model: 'qwen3:8b',
+    }
+    const storeWith = provider => ({
+      getInternalUserSettings: sinon.stub().resolves({ provider, fastProvider: null }),
+    })
+    const editorRequest = {
+      system: 's',
+      messages: [{ role: 'user', content: 'hi' }],
+      maxTokens: 50,
+    }
+
     it('passes on text only: no tool call, no thinking reaches the page', async function () {
       const streamChat = sinon.spy(async function* () {
         yield { type: 'thinking', text: 'the document asks me to read files' }
@@ -217,15 +232,11 @@ describe('AiAssistProviderController', function () {
       })
       const controller = new AiAssistProviderController({
         clientFactory: () => ({ streamChat }),
+        userSettingsStore: storeWith(storedProvider),
       })
       const res = fakeRes()
       await controller.editorText(
-        {
-          body: {
-            providerSettings: settings,
-            request: { system: 's', messages: [{ role: 'user', content: 'hi' }], maxTokens: 50 },
-          },
-        },
+        { session, body: { request: editorRequest } },
         res
       )
       expect(streamChat.firstCall.args[0].tools).to.deep.equal([])
@@ -240,16 +251,15 @@ describe('AiAssistProviderController', function () {
       const streamChat = sinon.spy(async function* () {})
       const controller = new AiAssistProviderController({
         clientFactory: () => ({ streamChat }),
+        userSettingsStore: storeWith(storedProvider),
       })
       const res = fakeRes()
       await controller.editorText(
         {
+          session,
           body: {
-            providerSettings: settings,
             request: {
-              system: 's',
-              messages: [{ role: 'user', content: 'hi' }],
-              maxTokens: 50,
+              ...editorRequest,
               tools: [{ name: 'read_file', description: 'd', parameters: {} }],
             },
           },
@@ -261,14 +271,215 @@ describe('AiAssistProviderController', function () {
       expect(streamChat.called).to.equal(false)
     })
 
-    it('falls back to fallbackProviderSettings when primary client fails before emitting chunks', async function () {
-      const primarySettings = { type: 'ollama', baseUrl: 'http://bad-host:11434', model: 'qwen' }
-      const fallbackSettings = { type: 'openai', baseUrl: 'https://api.openai.com', apiKey: 'k', model: 'gpt-4o' }
-      const chunks = []
+    it('uses only the stored slot: client-sent provider settings and fallback are ignored', async function () {
+      const clientFactory = sinon.spy(() => ({
+        streamChat: async function* () {
+          yield { type: 'text', text: 'ok' }
+        },
+      }))
+      const controller = new AiAssistProviderController({
+        clientFactory,
+        userSettingsStore: storeWith(storedProvider),
+      })
+      const res = fakeRes()
+      await controller.editorText(
+        {
+          session,
+          body: {
+            providerSettings: { type: 'openai', baseUrl: 'https://evil.example', apiKey: 'x' },
+            fallbackProviderSettings: { type: 'openai', baseUrl: 'https://evil.example', apiKey: 'x' },
+            request: editorRequest,
+          },
+        },
+        res
+      )
+      expect(clientFactory.firstCall.args[0].type).to.equal('ollama')
+      expect(clientFactory.firstCall.args[0].baseUrl).to.equal('http://203.0.113.5:11434')
+      expect(clientFactory.callCount).to.equal(1)
+    })
 
+    it('picks the stored fast slot the page names, with the stored main slot as fallback', async function () {
+      const storedFast = {
+        type: 'openai',
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'gpt-mini',
+        apiKey: 'stored-fast-key',
+      }
+      const failing = {
+        streamChat: async function* () {
+          throw Object.assign(new Error('down'), { status: 500, code: 'providerError' })
+        },
+      }
+      const clientFactory = sinon.spy(settings =>
+        settings.type === 'openai'
+          ? failing
+          : {
+              streamChat: async function* () {
+                yield { type: 'text', text: 'ok' }
+              },
+            }
+      )
+      const controller = new AiAssistProviderController({
+        clientFactory,
+        userSettingsStore: {
+          getInternalUserSettings: sinon
+            .stub()
+            .resolves({ provider: storedProvider, fastProvider: storedFast }),
+        },
+      })
+      const res = fakeRes()
+      await controller.editorText(
+        {
+          session,
+          body: {
+            // The page sends masked copies; a swapped key must not be used
+            providerSettings: { ...storedFast, apiKey: 'attacker-key' },
+            fallbackProviderSettings: { ...storedProvider, apiKey: '••••••••' },
+            request: { ...editorRequest, retryPolicy: 'none' },
+            retryPolicy: 'none',
+          },
+        },
+        res
+      )
+      expect(clientFactory.firstCall.args[0].model).to.equal('gpt-mini')
+      expect(clientFactory.firstCall.args[0].apiKey).to.equal('stored-fast-key')
+      const used = clientFactory.getCalls().map(call => call.args[0].type)
+      expect(used).to.include('ollama')
+    })
+
+    it('refuses with 400 when the user has no stored provider', async function () {
+      const clientFactory = sinon.spy(() => ({}))
+      const controller = new AiAssistProviderController({
+        clientFactory,
+        userSettingsStore: storeWith(null),
+      })
+      const res = fakeRes()
+      await controller.editorText(
+        { session, body: { providerSettings: storedProvider, request: editorRequest } },
+        res
+      )
+      expect(res.statusCode).to.equal(400)
+      expect(res.body.error.code).to.equal('invalidProviderSettings')
+      expect(clientFactory.called).to.equal(false)
+    })
+
+    it('caps maxTokens at the editor ceiling and short timeouts reach the client', async function () {
+      const clientFactory = sinon.spy(() => ({
+        streamChat: async function* () {
+          yield { type: 'text', text: 'ok' }
+        },
+      }))
+      const controller = new AiAssistProviderController({
+        clientFactory,
+        userSettingsStore: storeWith(storedProvider),
+      })
+      await controller.editorText(
+        { session, body: { request: { ...editorRequest, maxTokens: 100000 } } },
+        fakeRes()
+      )
+      const settingsArg = clientFactory.firstCall.args[0]
+      expect(settingsArg.connectTimeoutMs).to.equal(20000)
+      expect(settingsArg.streamIdleTimeoutMs).to.equal(30000)
+      const streamChat = sinon.spy(async function* () {
+        yield { type: 'text', text: 'ok' }
+      })
+      const second = new AiAssistProviderController({
+        clientFactory: () => ({ streamChat }),
+        userSettingsStore: storeWith(storedProvider),
+      })
+      await second.editorText(
+        { session, body: { request: { ...editorRequest, maxTokens: 100000 } } },
+        fakeRes()
+      )
+      expect(streamChat.firstCall.args[0].maxTokens).to.equal(4096)
+    })
+
+    it('answers 429 when the user already has four editor streams running', async function () {
+      let release
+      const gate = new Promise(resolve => {
+        release = resolve
+      })
+      const streamChat = async function* () {
+        await gate
+        yield { type: 'text', text: 'ok' }
+      }
+      const controller = new AiAssistProviderController({
+        clientFactory: () => ({ streamChat }),
+        userSettingsStore: storeWith(storedProvider),
+      })
+      const running = [1, 2, 3, 4].map(() =>
+        controller.editorText({ session, body: { request: editorRequest } }, fakeRes())
+      )
+      await new Promise(resolve => setTimeout(resolve, 20))
+      const res = fakeRes()
+      await controller.editorText({ session, body: { request: editorRequest } }, res)
+      expect(res.statusCode).to.equal(429)
+      expect(res.body.error.code).to.equal('providerBusy')
+      release()
+      await Promise.all(running)
+    })
+
+    it('ends a stream that runs past the editor total limit with a timeout error', async function () {
+      const clock = sinon.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      try {
+        const streamChat = async function* ({ signal }) {
+          await new Promise((_resolve, reject) => {
+            signal.addEventListener('abort', () => reject(new Error('aborted')))
+          })
+        }
+        const controller = new AiAssistProviderController({
+          clientFactory: () => ({ streamChat }),
+          userSettingsStore: storeWith(storedProvider),
+        })
+        const res = fakeRes()
+        const done = controller.editorText(
+          { session, body: { request: editorRequest } },
+          res
+        )
+        await new Promise(resolve => setImmediate(resolve))
+        clock.tick(90000)
+        await done
+        const lines = res.written.map(line => JSON.parse(line))
+        expect(lines.at(-1)).to.deep.include({ type: 'error' })
+        expect(lines.at(-1).error.code).to.equal('providerTimeout')
+      } finally {
+        clock.restore()
+      }
+    })
+
+    it('retries with the background policy for editor requests unless asked otherwise', async function () {
+      let calls = 0
+      const streamChat = async function* () {
+        calls++
+        if (calls <= 3) throw new ProviderError('busy', { status: 503 })
+        yield { type: 'text', text: 'ok' }
+      }
+      const controller = new AiAssistProviderController({
+        clientFactory: () => ({ streamChat }),
+        userSettingsStore: storeWith(storedProvider),
+      })
+      const res = fakeRes()
+      await controller.editorText(
+        { session, body: { request: editorRequest } },
+        res
+      )
+      // Background allows three retries: four tries in all
+      expect(calls).to.equal(4)
+      expect(res.written.map(line => JSON.parse(line)).at(-1)).to.deep.equal({
+        type: 'done',
+      })
+    })
+
+    it('falls back from fast slot to main slot when primary fails before emitting chunks', async function () {
+      const storedFast = {
+        type: 'openai',
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'gpt-mini',
+        apiKey: 'stored-fast-key',
+      }
       const controller = new AiAssistProviderController({
         clientFactory: settings => {
-          if (settings.type === 'ollama') {
+          if (settings.type === 'openai') {
             return {
               streamChat: async function* () {
                 throw new Error('Connection refused')
@@ -281,89 +492,34 @@ describe('AiAssistProviderController', function () {
             },
           }
         },
-      })
-
-      const req = {
-        body: {
-          providerSettings: primarySettings,
-          fallbackProviderSettings: fallbackSettings,
-          request: { messages: [{ role: 'user', content: 'test' }] },
-        },
-      }
-      const res = createMockRes(chunks)
-      await controller.editorText(req, res)
-
-      const texts = chunks.filter(c => c.type === 'text').map(c => c.text)
-      expect(texts).to.deep.equal(['fallback output'])
-      expect(chunks.some(c => c.type === 'done')).to.be.true
-    })
-
-    it('falls back to fallbackProviderSettings when clientFactory throws synchronously', async function () {
-      const primarySettings = { type: 'ollama', baseUrl: 'http://bad-host:11434', model: 'qwen' }
-      const fallbackSettings = { type: 'openai', baseUrl: 'https://api.openai.com', apiKey: 'k', model: 'gpt-4o' }
-      const chunks = []
-
-      const controller = new AiAssistProviderController({
-        clientFactory: settings => {
-          if (settings.type === 'ollama') {
-            throw new Error('Invalid base URL')
-          }
-          return {
-            streamChat: async function* () {
-              yield { type: 'text', text: 'recovered fallback' }
-            },
-          }
+        userSettingsStore: {
+          getInternalUserSettings: sinon
+            .stub()
+            .resolves({ provider: storedProvider, fastProvider: storedFast }),
         },
       })
-
-      const req = {
-        body: {
-          providerSettings: primarySettings,
-          fallbackProviderSettings: fallbackSettings,
-          request: { messages: [{ role: 'user', content: 'test' }] },
-        },
-      }
-      const res = createMockRes(chunks)
-      await controller.editorText(req, res)
-
-      const texts = chunks.filter(c => c.type === 'text').map(c => c.text)
-      expect(texts).to.deep.equal(['recovered fallback'])
-      expect(chunks.some(c => c.type === 'done')).to.be.true
-    })
-
-    it('uses fallbackProviderSettings directly when primary providerSettings is omitted', async function () {
-      const fallbackSettings = { type: 'openai', baseUrl: 'https://api.openai.com', apiKey: 'k', model: 'gpt-4o' }
-      const chunks = []
-
-      const controller = new AiAssistProviderController({
-        clientFactory: settings => ({
-          streamChat: async function* () {
-            yield { type: 'text', text: 'direct fallback' }
-          },
-        }),
-      })
-
-      const req = {
-        body: {
-          fallbackProviderSettings: fallbackSettings,
-          request: { messages: [{ role: 'user', content: 'test' }] },
-        },
-      }
-      const res = createMockRes(chunks)
-      await controller.editorText(req, res)
-
-      const texts = chunks.filter(c => c.type === 'text').map(c => c.text)
-      expect(texts).to.deep.equal(['direct fallback'])
+      const res = fakeRes()
+      await controller.editorText(
+        { session, body: { slot: 'fastProvider', request: editorRequest } },
+        res
+      )
+      const lines = res.written.map(line => JSON.parse(line))
+      expect(lines.filter(l => l.type === 'text').map(l => l.text)).to.deep.equal([
+        'fallback output',
+      ])
+      expect(lines.at(-1)).to.deep.equal({ type: 'done' })
     })
 
     it('does not fall back if primary client fails after emitting chunks', async function () {
-      const primarySettings = { type: 'ollama', baseUrl: 'http://bad-host:11434', model: 'qwen' }
-      const fallbackSettings = { type: 'openai', baseUrl: 'https://api.openai.com', apiKey: 'k', model: 'gpt-4o' }
-      const chunks = []
-
+      const storedFast = {
+        type: 'openai',
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'gpt-mini',
+        apiKey: 'stored-fast-key',
+      }
       const controller = new AiAssistProviderController({
         clientFactory: settings => {
-          if (settings.type === 'ollama') {
+          if (settings.type === 'openai') {
             return {
               streamChat: async function* () {
                 yield { type: 'text', text: 'partial' }
@@ -377,22 +533,23 @@ describe('AiAssistProviderController', function () {
             },
           }
         },
-      })
-
-      const req = {
-        body: {
-          providerSettings: primarySettings,
-          fallbackProviderSettings: fallbackSettings,
-          request: { messages: [{ role: 'user', content: 'test' }] },
+        userSettingsStore: {
+          getInternalUserSettings: sinon
+            .stub()
+            .resolves({ provider: storedProvider, fastProvider: storedFast }),
         },
-      }
-      const res = createMockRes(chunks)
-      await controller.editorText(req, res)
-
-      const texts = chunks.filter(c => c.type === 'text').map(c => c.text)
-      expect(texts).to.deep.equal(['partial'])
-      expect(chunks.some(c => c.type === 'error')).to.be.true
-      expect(chunks.some(c => c.type === 'done')).to.be.false
+      })
+      const res = fakeRes()
+      await controller.editorText(
+        { session, body: { slot: 'fastProvider', request: editorRequest } },
+        res
+      )
+      const lines = res.written.map(line => JSON.parse(line))
+      expect(lines.filter(l => l.type === 'text').map(l => l.text)).to.deep.equal([
+        'partial',
+      ])
+      expect(lines.some(l => l.type === 'error')).to.equal(true)
+      expect(lines.some(l => l.type === 'done')).to.equal(false)
     })
   })
 
@@ -506,30 +663,6 @@ describe('AiAssistProviderController', function () {
       const lines = res.written.map(line => JSON.parse(line))
       expect(calls).to.equal(1)
       expect(lines.map(line => line.type)).to.deep.equal(['text', 'error'])
-    })
-
-    it('uses the background policy for editor requests unless asked otherwise', async function () {
-      let calls = 0
-      const streamChat = async function* () {
-        calls++
-        if (calls <= 3) throw new ProviderError('busy', { status: 503 })
-        yield { type: 'text', text: 'ok' }
-      }
-      const controller = new AiAssistProviderController({
-        clientFactory: () => ({ streamChat }),
-      })
-      const res = fakeRes()
-
-      await controller.editorText(
-        { body: { providerSettings: settings, request } },
-        res
-      )
-
-      // Background allows three retries: four tries in all
-      expect(calls).to.equal(4)
-      expect(res.written.map(line => JSON.parse(line)).at(-1)).to.deep.equal({
-        type: 'done',
-      })
     })
   })
 

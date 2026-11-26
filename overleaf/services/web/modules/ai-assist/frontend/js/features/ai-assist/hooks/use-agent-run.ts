@@ -58,6 +58,52 @@ const RUN_END_WAIT_MS = 10_000
 // How long a stopped run is followed for the events it sent before it saw
 // the stop
 const STOP_WAIT_MS = 5_000
+// How long a compile claim holds. A tab that claimed a compile and then
+// closed or stalled must not block the others for longer than this.
+const COMPILE_CLAIM_TTL_MS = 150_000
+const COMPILE_CLAIM_PREFIX = 'aiAssist:compileClaim:'
+// Claims this tab made, released when the page goes away
+const ownedCompileClaims = new Set<string>()
+let compileClaimCleanupInstalled = false
+
+/**
+ * Removes claim keys older than the TTL, and every claim this tab made when
+ * the page is left. Claims are stored as their time of claim.
+ */
+function sweepCompileClaims() {
+  try {
+    if (!compileClaimCleanupInstalled && typeof window !== 'undefined') {
+      compileClaimCleanupInstalled = true
+      window.addEventListener('pagehide', () => {
+        for (const key of ownedCompileClaims) {
+          try {
+            window.localStorage.removeItem(key)
+          } catch {}
+        }
+        ownedCompileClaims.clear()
+      })
+    }
+    const now = Date.now()
+    const stale: string[] = []
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const key = window.localStorage.key(i)
+      if (!key || !key.startsWith(COMPILE_CLAIM_PREFIX)) continue
+      const claimedAt = Number(window.localStorage.getItem(key))
+      if (!(now - claimedAt < COMPILE_CLAIM_TTL_MS)) stale.push(key)
+    }
+    for (const key of stale) {
+      window.localStorage.removeItem(key)
+      ownedCompileClaims.delete(key)
+    }
+    for (const key of ownedCompileClaims) {
+      if (window.localStorage.getItem(key) == null) {
+        ownedCompileClaims.delete(key)
+      }
+    }
+  } catch {
+    // no storage: nothing to sweep
+  }
+}
 
 export function useAgentRun({
   tools,
@@ -267,10 +313,13 @@ export function useAgentRun({
           if (finishedCallIdsRef.current.has(id)) return
           if (currentRunIdRef.current !== runId) return
           // Every open tab of the project watches the run; only one compiles.
-          const claimKey = `aiAssist:compileClaim:${runId}:${id}`
+          const claimKey = `${COMPILE_CLAIM_PREFIX}${runId}:${id}`
           try {
-            if (window.localStorage.getItem(claimKey)) return
-            window.localStorage.setItem(claimKey, '1')
+            sweepCompileClaims()
+            const claimedAt = Number(window.localStorage.getItem(claimKey))
+            if (Date.now() - claimedAt < COMPILE_CLAIM_TTL_MS) return
+            window.localStorage.setItem(claimKey, String(Date.now()))
+            ownedCompileClaims.add(claimKey)
           } catch {
             // no storage: compile anyway
           }
@@ -286,6 +335,9 @@ export function useAgentRun({
               })
             )
             .catch(() => {})
+            .finally(() => {
+              ownedCompileClaims.delete(claimKey)
+            })
         }, REPLAY_SETTLE_MS)
       }
     }
@@ -673,7 +725,9 @@ export function useAgentRun({
           onEvent: onRunEvent,
           onDone: () => {
             runEnded()
+            if (currentRunIdRef.current !== runId) return
             currentRunIdRef.current = null
+            setApprovalContext(null)
             setStoredActiveRunId(projectId, null)
             setState(current => ({
               ...current,
@@ -681,11 +735,13 @@ export function useAgentRun({
               pendingApproval: null,
             }))
           },
-          onError: _err => {
+          onError: (_err, { gone }) => {
             runEnded()
-            if (!currentRunIdRef.current) return
+            if (currentRunIdRef.current !== runId) return
             currentRunIdRef.current = null
-            setStoredActiveRunId(projectId, null)
+            setApprovalContext(null)
+            // A run that may still be going keeps its id for a reload
+            if (gone) setStoredActiveRunId(projectId, null)
             setState(current => ({
               ...current,
               running: false,
@@ -770,6 +826,21 @@ export function useAgentRun({
       currentRunIdRef.current = runId
       lastSeqRef.current = since
       const runEnded = followRunEnd()
+      const pending = pendingApprovalRef.current
+      if (pending) {
+        if (pending.kind === 'connector' || pending.kind === 'connectorAuth') {
+          setApprovalContext({
+            callId: pending.id,
+            kind: pending.kind,
+            connector: pending.connector,
+          })
+        } else if (pending.edit?.startLine) {
+          setApprovalContext({
+            callId: pending.id,
+            startLine: pending.edit.startLine,
+          })
+        }
+      }
       setStoredActiveRunId(projectId, runId, startedAt, runChatId)
       setState(current => ({ ...current, running: true, error: null }))
       setCatchingUp(true)
@@ -779,6 +850,7 @@ export function useAgentRun({
         if (currentRunIdRef.current !== runId) return
         setCatchingUp(false)
         currentRunIdRef.current = null
+        setApprovalContext(null)
         setStoredActiveRunId(projectId, null)
         setState(current => ({
           ...current,
@@ -804,7 +876,24 @@ export function useAgentRun({
           if (currentRunIdRef.current === runId) setCatchingUp(false)
         },
         onDone: finish,
-        onError: finish,
+        onError: (_err, { gone }) => {
+          runEnded()
+          if (currentRunIdRef.current !== runId) return
+          setCatchingUp(false)
+          currentRunIdRef.current = null
+          setApprovalContext(null)
+          // A run that may still be going keeps its id for a reload
+          if (gone) setStoredActiveRunId(projectId, null)
+          setState(current => ({
+            ...current,
+            running: false,
+            pendingApproval: null,
+            error: current.error ?? {
+              code: 'network',
+              message: 'Connection to AI background run failed.',
+            },
+          }))
+        },
       })
     },
     [onRunEvent, projectId, systemPrompt, followRunEnd]
@@ -865,6 +954,10 @@ export function useAgentRun({
     }
     return () => {
       streamCleanupRef.current?.()
+      streamCleanupRef.current = null
+      // Otherwise attach would see this run as already followed and skip the
+      // reattach when the effect runs again (e.g. remount)
+      currentRunIdRef.current = null
     }
   }, [attach, projectId, systemPrompt])
 

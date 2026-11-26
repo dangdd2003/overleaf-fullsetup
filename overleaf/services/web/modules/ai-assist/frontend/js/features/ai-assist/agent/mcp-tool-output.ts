@@ -37,6 +37,24 @@ export function humanizeServer(segment: string): string {
     .join(' ')
 }
 
+/** The tool segment of `mcp__<server>__<tool>`. */
+export function mcpToolSegment(name: string): string {
+  const parts = name.split('__')
+  return parts.slice(2).join('__') || parts[1] || name
+}
+
+/** `web_search` reads as `Web search`, `getIssue` as `Get issue`. */
+export function mcpToolLabel(name: string): string {
+  const words = mcpToolSegment(name)
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .split(/[_\-\s.]+/)
+    .filter(Boolean)
+    .map(word => word.toLowerCase())
+  if (words.length === 0) return name
+  const text = words.join(' ')
+  return text.charAt(0).toUpperCase() + text.slice(1)
+}
+
 /** The same sanitising ConnectorRuntime applies to a connector's name. */
 export function sanitizeIdentifier(text: string): string {
   return text
@@ -53,6 +71,10 @@ function clip(text: string, max: number): string {
 
 const ARG_SUMMARY_KEYS = [
   'query',
+  'q',
+  'objective',
+  'question',
+  'prompt',
   'message',
   'channel',
   'repo',
@@ -271,4 +293,53 @@ export function connectorOutcome(
     truncated,
     notice,
   }
+}
+
+/** A page a connector result lists, as a web search lists its hits. */
+export type McpLinkItem = { url: string; title?: string; date?: string }
+
+const LIST_KEYS = ['results', 'items', 'data', 'documents', 'hits', 'sources', 'pages', 'organic_results']
+const URL_KEYS = ['url', 'link', 'href', 'source_url', 'sourceUrl']
+const TITLE_KEYS = ['title', 'name', 'heading']
+const DATE_KEYS = ['publish_date', 'published', 'published_date', 'date']
+const LINK_ENTRY_KEYS = new Set([...URL_KEYS, ...TITLE_KEYS, ...DATE_KEYS])
+
+function firstString(record: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = record[key]
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+  return undefined
+}
+
+/**
+ * The pages a connector result lists, when it is a list of pages: a JSON
+ * array (top level or under `results`, `items`, …) whose entries carry a URL
+ * without additional non-URL fields that compact rows would omit.
+ * Null for any other shape, which is then shown as it came.
+ */
+export function mcpLinkItems(value: unknown): McpLinkItem[] | null {
+  let list: unknown = value
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const record = value as Record<string, unknown>
+    list = LIST_KEYS.map(key => record[key]).find(Array.isArray)
+  }
+  if (!Array.isArray(list) || list.length === 0) return null
+  const items: McpLinkItem[] = []
+  for (const entry of list) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null
+    const record = entry as Record<string, unknown>
+    const url = firstString(record, URL_KEYS)
+    if (!url || !/^https?:\/\//i.test(url)) return null
+    const hasExtraFields = Object.entries(record).some(
+      ([k, v]) => !LINK_ENTRY_KEYS.has(k) && v !== undefined && v !== null && v !== ''
+    )
+    if (hasExtraFields) return null
+    items.push({
+      url,
+      title: firstString(record, TITLE_KEYS),
+      date: firstString(record, DATE_KEYS),
+    })
+  }
+  return items
 }

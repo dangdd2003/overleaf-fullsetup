@@ -6,6 +6,9 @@ import defaultControl from './AiAssistRunControl.mjs'
 // The sweep interval (30s) must be shorter than the orphan grace (300s),
 // or a run can sit abandoned for grace + interval before anyone notices.
 const SWEEP_INTERVAL_MS = 30_000
+// A sweep that does not finish by then (a Redis call that hangs) is abandoned
+// so the next tick can run; the sweep itself keeps going until its calls end.
+const SWEEP_DEADLINE_MS = 25_000
 
 const watchersOf = run =>
   Number(run.watchers || 0) + Number(run.followers || 0)
@@ -42,46 +45,59 @@ export class AiAssistRunReaper {
       return []
     }
     this._sweeping = true
+    let timer = null
     try {
-      return await this._sweep()
+      const deadline = new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error('ai-assist orphan reaper sweep timed out'))
+        }, SWEEP_DEADLINE_MS)
+        timer.unref?.()
+      })
+      return await Promise.race([this._sweep(), deadline])
     } finally {
+      clearTimeout(timer)
       this._sweeping = false
     }
   }
 
   async _sweep() {
     const graceMs = (Settings.aiAssist?.orphanGraceSeconds ?? 300) * 1000
-    if (graceMs <= 0) return [] // reaping disabled
     const heartbeatStaleMs = (Settings.aiAssist?.heartbeatStaleSeconds ?? 1800) * 1000
 
     const cancelled = []
-    for (const runId of await this.store.getActiveRuns()) {
-      const run = await this.store.getRun(runId)
-      if (!run) continue
-      if (TERMINAL_STATUSES.includes(run.status)) continue
+    if (graceMs > 0) {
+      for (const runId of await this.store.getActiveRuns()) {
+        const run = await this.store.getRun(runId)
+        if (!run) continue
+        if (TERMINAL_STATUSES.includes(run.status)) continue
+        // Nobody is listening on the control channel for a dead owner's run:
+        // reconcileStaleRuns below marks it, whatever its watcher counts say.
+        if (run.ownerId && (await this.store.isOwnerAlive?.(run.ownerId)) === false) continue
 
-      // A chat followed off screen keeps its run as much as one on screen
-      if (watchersOf(run) > 0) {
-        if (run.zeroSince) await this.store.clearZeroSince(runId)
-        continue
+        // A chat followed off screen keeps its run as much as one on screen
+        if (watchersOf(run) > 0) {
+          if (run.zeroSince) await this.store.clearZeroSince(runId)
+          continue
+        }
+
+        const zeroSince = Number(run.zeroSince || 0)
+        if (!zeroSince) {
+          // First time we have seen it unwatched: stamp it, do not act yet.
+          await this.store.setZeroSince(runId, Date.now())
+          continue
+        }
+        if (Date.now() - zeroSince < graceMs) continue
+
+        // Re-read immediately before acting: a watcher may have reconnected
+        // while this sweep was walking the index.
+        const fresh = await this.store.getRun(runId)
+        if (!fresh || watchersOf(fresh) > 0) continue
+        if (TERMINAL_STATUSES.includes(fresh.status)) continue
+
+        await Promise.resolve(this.store.requestStop?.(runId)).catch(() => {})
+        await this.control.publish(runId, { action: 'stop' })
+        cancelled.push(runId)
       }
-
-      const zeroSince = Number(run.zeroSince || 0)
-      if (!zeroSince) {
-        // First time we have seen it unwatched: stamp it, do not act yet.
-        await this.store.setZeroSince(runId, Date.now())
-        continue
-      }
-      if (Date.now() - zeroSince < graceMs) continue
-
-      // Re-read immediately before acting: a watcher may have reconnected
-      // while this sweep was walking the index.
-      const fresh = await this.store.getRun(runId)
-      if (!fresh || watchersOf(fresh) > 0) continue
-      if (TERMINAL_STATUSES.includes(fresh.status)) continue
-
-      await this.control.publish(runId, { action: 'stop' })
-      cancelled.push(runId)
     }
 
     // Separate concern: runs whose driving process is gone.

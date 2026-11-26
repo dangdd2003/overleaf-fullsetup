@@ -435,7 +435,9 @@ describe('AiAssistWebTools', function () {
 
       const result = await tools.execute('web_search', { query: 'x' })
 
-      expect(JSON.stringify(result)).to.include('points at this Overleaf server')
+      // The refusal is generic: the reply does not say which address was refused
+      expect(JSON.stringify(result)).to.include('destination not allowed')
+      expect(JSON.stringify(result)).to.not.include('169.254.169.254')
     })
 
     it('keeps at most 100 SearXNG results, however many the instance sends', async function () {
@@ -640,7 +642,7 @@ describe('AiAssistWebTools', function () {
       expect(first.content.length).to.be.at.most(PAGE_CHARS)
       expect(first.content.startsWith('## Section 1')).to.be.true
       expect(second.page).to.equal(2)
-      const rendered = renderToolResult('web_fetch', first)
+      const rendered = renderToolResult('web_fetch', first, { forUi: true })
       expect(
         rendered.startsWith(`[web_fetch] Page 1 of ${first.totalPages} · `)
       ).to.be.true
@@ -914,8 +916,8 @@ describe('AiAssistWebTools', function () {
         results: [
           { source: 1, title: 'T', url: 'https://a.org', snippet: 'S' },
         ],
-      })
-      expect(rendered).to.equal(
+      }, { forUi: true })
+      expect(rendered).to.include(
         '<web_results query="q">\n[1] T\n    https://a.org\n    S\n</web_results>'
       )
     })

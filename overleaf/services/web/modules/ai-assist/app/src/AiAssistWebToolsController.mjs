@@ -5,6 +5,7 @@ import {
   AiAssistWebTools,
   PREFETCH_RESULTS,
   WEB_TOOL_NAMES,
+  bindStoredWebSearchCredentials,
 } from './AiAssistWebTools.mjs'
 import { renderToolResult } from './AiAssistToolRender.mjs'
 import { resolveWebSearchSettings } from './AiAssistRunController.mjs'
@@ -82,31 +83,28 @@ export class AiAssistWebToolsController {
         Object.keys(clientSettings.providers).length === 0 ||
         Object.values(clientSettings.providers).some(
           p =>
-            (Array.isArray(p?.apiKeys) && p.apiKeys.includes('••••••••')) ||
-            p?.bearerToken === '••••••••'
+            p &&
+            typeof p === 'object' &&
+            ((Array.isArray(p.apiKeys) && p.apiKeys.includes('••••••••')) ||
+              (Array.isArray(p.apiKeys) && p.apiKeys.length === 0) ||
+              p.bearerToken === '••••••••')
         ))
     if (userId && needsStoredKeys) {
+      let internal = null
       try {
-        const internal = await defaultUserSettingsStore.getInternalUserSettings(userId)
-        if (internal.webSearch) {
-          if (!clientSettings || !clientSettings.providers || Object.keys(clientSettings.providers).length === 0) {
-            clientSettings = internal.webSearch
-          } else if (internal.webSearch.providers) {
-            for (const [name, p] of Object.entries(clientSettings.providers || {})) {
-              const storedP = internal.webSearch.providers[name]
-              if (storedP) {
-                if (Array.isArray(p.apiKeys)) {
-                  p.apiKeys = p.apiKeys.map((k, idx) => k === '••••••••' ? (storedP.apiKeys?.[idx] || k) : k)
-                  if (p.apiKeys.length === 0 && storedP.apiKeys?.length) p.apiKeys = storedP.apiKeys
-                }
-                if (p.bearerToken === '••••••••' && storedP.bearerToken) {
-                  p.bearerToken = storedP.bearerToken
-                }
-              }
-            }
-          }
-        }
+        internal = await defaultUserSettingsStore.getInternalUserSettings(userId)
       } catch {}
+      if (internal?.webSearch) {
+        try {
+          clientSettings = bindStoredWebSearchCredentials(
+            clientSettings,
+            internal.webSearch
+          )
+        } catch (err) {
+          res.status(400).json({ error: err.message })
+          return null
+        }
+      }
     }
     let settings
     try {

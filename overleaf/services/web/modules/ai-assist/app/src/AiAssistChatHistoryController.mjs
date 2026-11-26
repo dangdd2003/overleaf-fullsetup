@@ -2,28 +2,65 @@ import logger from '@overleaf/logger'
 import Settings from '@overleaf/settings'
 import './ModuleSettings.mjs'
 import defaultStore, {
+  ChatQuotaError,
   MAX_CHATS_PER_USER,
   compactEntriesProblem,
   isValidChatCursor,
   isValidChatId,
 } from './AiAssistChatHistoryStore.mjs'
-import { createProviderClient } from './AiAssistProviders.mjs'
+import {
+  bindStoredApiKey,
+  createProviderClient,
+  normalizeProviderBaseUrl,
+  validateSafeProviderBaseUrl,
+} from './AiAssistProviders.mjs'
+import defaultUserSettingsStore from './AiAssistUserSettingsStore.mjs'
+import { OBJECT_ID } from './AiAssistCheckpointStore.mjs'
 import { generateChatTitle } from './AiAssistChatTitler.mjs'
 import SessionManager from '../../../../app/src/Features/Authentication/SessionManager.mjs'
+
+const MASKED_API_KEY = '••••••••'
+const ALLOWED_STATS_KEYS = [
+  'promptTokens',
+  'completionTokens',
+  'totalTokens',
+  'cachedTokens',
+  'reasoningTokens',
+  'toolCalls',
+]
+
+function sanitizeStats(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const out = {}
+  for (const key of ALLOWED_STATS_KEYS) {
+    if (typeof raw[key] === 'number' && Number.isFinite(raw[key])) {
+      out[key] = raw[key]
+    }
+  }
+  return Object.keys(out).length > 0 ? out : undefined
+}
 
 export class AiAssistChatHistoryController {
   constructor({
     store = defaultStore,
     clientFactory = createProviderClient,
+    userSettingsStore = defaultUserSettingsStore,
   } = {}) {
     this.store = store
     this.clientFactory = clientFactory
+    this.userSettingsStore = userSettingsStore
   }
 
   #ids(req, res) {
     const projectId = req.params.Project_id
     const userId = String(SessionManager.getLoggedInUserId(req.session) || '')
     const chatId = req.params.chatId
+    // The ids name the storage directory, so they must be exactly what the
+    // store writes under: an ObjectId hex each
+    if (!OBJECT_ID.test(String(projectId)) || !OBJECT_ID.test(userId)) {
+      res.status(400).json({ error: 'Invalid project or user id' })
+      return null
+    }
     if (chatId !== undefined && !isValidChatId(chatId)) {
       res.status(400).json({ error: 'Invalid chat id' })
       return null
@@ -95,7 +132,7 @@ export class AiAssistChatHistoryController {
     const mode = req.body?.mode
     const title = req.body?.title
     const titleGenerated = req.body?.titleGenerated
-    const stats = req.body?.stats
+    const stats = sanitizeStats(req.body?.stats)
     if (!Array.isArray(transcript)) {
       return res.status(400).json({ error: 'transcript must be an array' })
     }
@@ -123,6 +160,10 @@ export class AiAssistChatHistoryController {
         )
       )
     } catch (err) {
+      if (err instanceof ChatQuotaError) {
+        // The same refusal as an oversized save: the panel keeps the chat locally
+        return res.status(413).json({ error: 'Chat history is full' })
+      }
       logger.error(
         { err, projectId: ids.projectId },
         '[AiAssist] save chat failed'
@@ -159,9 +200,55 @@ export class AiAssistChatHistoryController {
   generateTitle = async (req, res) => {
     const ids = this.#ids(req, res)
     if (!ids) return
-    const { providerSettings, prompt } = req.body || {}
-    if (!providerSettings) {
+    const { prompt } = req.body || {}
+    let providerSettings = req.body?.providerSettings
+    const needsStoredProviderKey =
+      !providerSettings ||
+      typeof providerSettings !== 'object' ||
+      !providerSettings.type ||
+      !providerSettings.apiKey ||
+      providerSettings.apiKey === MASKED_API_KEY
+    if (needsStoredProviderKey) {
+      let internal = null
+      try {
+        internal = await this.userSettingsStore.getInternalUserSettings(ids.userId)
+      } catch {}
+      if (
+        internal?.provider?.type &&
+        (!providerSettings ||
+          typeof providerSettings !== 'object' ||
+          !providerSettings.type)
+      ) {
+        providerSettings = internal.provider
+      } else if (
+        providerSettings &&
+        typeof providerSettings === 'object' &&
+        providerSettings.type
+      ) {
+        try {
+          providerSettings = bindStoredApiKey(
+            providerSettings,
+            internal?.provider ?? null
+          )
+        } catch (err) {
+          return res.status(400).json({ error: err.message })
+        }
+      }
+    }
+    if (!providerSettings || typeof providerSettings !== 'object') {
       return res.status(400).json({ error: 'Missing providerSettings' })
+    }
+    const rawBaseUrl = providerSettings.baseUrl || providerSettings.baseURL
+    if (rawBaseUrl) {
+      try {
+        const baseUrl = normalizeProviderBaseUrl(providerSettings.type, rawBaseUrl)
+        if (baseUrl) {
+          validateSafeProviderBaseUrl(baseUrl)
+          providerSettings = { ...providerSettings, baseUrl }
+        }
+      } catch (err) {
+        return res.status(400).json({ error: err.message })
+      }
     }
     try {
       // A title is a few words; it runs at the provider's default effort
@@ -172,7 +259,7 @@ export class AiAssistChatHistoryController {
       })
       const title = await generateChatTitle({
         client,
-        firstMessageText: prompt || '',
+        firstMessageText: typeof prompt === 'string' ? prompt : '',
       })
       if (title && ids.chatId) {
         await this.store.saveChatTitle(
@@ -184,6 +271,14 @@ export class AiAssistChatHistoryController {
       }
       res.json({ title })
     } catch (err) {
+      if (
+        err?.status === 400 ||
+        err?.code === 'invalidProviderUrl' ||
+        err?.code === 'restrictedProviderUrl' ||
+        err?.code === 'invalidProviderSettings'
+      ) {
+        return res.status(400).json({ error: err.message })
+      }
       logger.error(
         { err, projectId: ids.projectId },
         '[AiAssist] generate chat title failed'

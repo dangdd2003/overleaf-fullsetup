@@ -33,12 +33,14 @@ const LEVELS: Record<string, number> = {
   subparagraph: 5,
 }
 
+export const MAX_INDEXED_BYTES = 512 * 1024
+
 const SECTION_RE =
-  /\\(part|chapter|section|subsection|subsubsection|paragraph|subparagraph)(\*?)\s*(?:\[[^\]]*\])?\s*\{/
+  /\\(part|chapter|section|subsection|subsubsection|paragraph|subparagraph)(\*?)(?:\s*\[[^\]]*\])?\s*\{/
 const INPUT_RE = /\\(?:input|include)\s*\{/
-const CLASS_RE = /\\documentclass\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}/
-const TITLE_RE = /\\title\s*(?:\[[^\]]*\])?\s*\{/
-const PACKAGE_RE = /\\usepackage\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}/g
+const CLASS_RE = /\\documentclass(?:\s*\[[^\]]*\])?\s*\{([^}]*)\}/
+const TITLE_RE = /\\title(?:\s*\[[^\]]*\])?\s*\{/
+const PACKAGE_RE = /\\usepackage(?:\s*\[[^\]]*\])?\s*\{([^}]*)\}/g
 
 /** Strips a line comment, respecting an escaped percent sign. */
 export function uncomment(line: string): string {
@@ -73,7 +75,7 @@ export function readBraceGroup(
 
 function resolveInclude(target: string, docs: Record<string, string>) {
   const candidates = [target, `${target}.tex`, target.replace(/\.tex$/, '')]
-  const hit = candidates.find(candidate => candidate in docs)
+  const hit = candidates.find(candidate => Object.hasOwn(docs, candidate))
   return hit ?? (target.endsWith('.tex') ? target : `${target}.tex`)
 }
 
@@ -99,12 +101,13 @@ export function parseOutline({
   let hasTitle = false
 
   const order =
-    rootPath && rootPath in docs
+    rootPath && Object.hasOwn(docs, rootPath)
       ? [rootPath, ...Object.keys(docs).filter(path => path !== rootPath)]
       : Object.keys(docs)
 
   for (const path of order) {
     if (!path.endsWith('.tex')) continue
+    if (docs[path].length > MAX_INDEXED_BYTES) continue
     const lines = docs[path].split('\n')
 
     lines.forEach((rawLine, index) => {
@@ -160,7 +163,7 @@ export function parseOutline({
             from: path,
             to: target,
             line: lineNumber,
-            resolved: target in docs,
+            resolved: Object.hasOwn(docs, target),
           })
         }
       }

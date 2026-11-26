@@ -4,6 +4,12 @@ import sinon from 'sinon'
 import { AiAssistRunControl } from '../../../app/src/AiAssistRunControl.mjs'
 import { AiAssistRunManager } from '../../../app/src/AiAssistRunManager.mjs'
 
+// startRun resolves once the run record exists; wait for the loop to finish
+async function startAndWait(manager, args) {
+  await manager.startRun(args)
+  await manager.waitForRun(args.runId)
+}
+
 describe('AiAssistRunControl', function () {
   function createFakeRedis() {
     const listeners = []
@@ -99,11 +105,13 @@ describe('AiAssistRunControl', function () {
     }
 
     const managerA = new AiAssistRunManager({
+      assertProjectAccess: async () => {},
       store: mockStore,
       tools: mockTools,
       clientFactory: () => mockClient,
     })
     const managerB = new AiAssistRunManager({
+      assertProjectAccess: async () => {},
       store: mockStore,
       tools: mockTools,
       clientFactory: () => mockClient,
@@ -120,7 +128,7 @@ describe('AiAssistRunControl', function () {
     })
 
     // Manager A starts the run
-    const runPromise = managerA.startRun({
+    const runPromise = startAndWait(managerA, {
       runId: 'run-cross',
       projectId: 'p1',
       userId: 'u1',
@@ -177,11 +185,13 @@ describe('AiAssistRunControl', function () {
     }
 
     const managerA = new AiAssistRunManager({
+      assertProjectAccess: async () => {},
       store: mockStore,
       tools: mockTools,
       clientFactory: () => mockClient,
     })
     const managerB = new AiAssistRunManager({
+      assertProjectAccess: async () => {},
       store: mockStore,
       tools: mockTools,
       clientFactory: () => mockClient,
@@ -197,7 +207,7 @@ describe('AiAssistRunControl', function () {
       onCommand: cmd => managerB.onCommand(cmd),
     })
 
-    const runPromise = managerA.startRun({
+    const runPromise = startAndWait(managerA, {
       runId: 'run-approve-cross',
       projectId: 'p1',
       userId: 'u1',
@@ -208,7 +218,7 @@ describe('AiAssistRunControl', function () {
     await new Promise(r => setTimeout(r, 10))
 
     // Manager B receives the approval decision
-    await managerB.approveEdit('run-approve-cross', { accepted: true })
+    await managerB.approveEdit('run-approve-cross', { accepted: true, id: 'edit-1' })
     await runPromise
 
     expect(mockTools.execute.calledWith('edit_file')).to.be.true
@@ -232,8 +242,10 @@ describe('AiAssistRunControl', function () {
       updateStatus: sinon.stub().resolves(),
       touchHeartbeat: sinon.stub().resolves(),
     }
-    const managerA = new AiAssistRunManager({ store: mockStore })
-    const managerB = new AiAssistRunManager({ store: mockStore })
+    const managerA = new AiAssistRunManager({
+      assertProjectAccess: async () => {}, store: mockStore })
+    const managerB = new AiAssistRunManager({
+      assertProjectAccess: async () => {}, store: mockStore })
 
     managerA.attachControl(controlA)
     managerB.attachControl(controlB)

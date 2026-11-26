@@ -26,6 +26,7 @@ import { indentUnit } from './layout'
 import { CursorSituation, describeCursor } from './placement'
 import { cacheKey, completionCache, completionGate } from './rate'
 import { claimModel } from '../inline-context/model-priority'
+import type { ProviderSettings } from '../providers/types'
 
 /**
  * Added to a request's output budget: a reasoning model thinks before its
@@ -33,6 +34,23 @@ import { claimModel } from '../inline-context/model-priority'
  * written. The text is still held to the kind's natural end (clean.ts).
  */
 export const THINKING_ALLOWANCE = 1024
+
+function isOpenAiReasoningModel(model: string): boolean {
+  const lower = model.toLowerCase()
+  if (lower.includes('chat-latest')) return false
+  return /^(?:o[1-9]|gpt-5)/.test(lower)
+}
+
+/**
+ * Whether the request thinks before it answers. Completion settings come from
+ * writingToolsSettings: thinking is switched off for every provider but OpenAI,
+ * where Auto (`reasoningEffort === undefined`) still thinks on reasoning models.
+ */
+function thinksBeforeAnswering(settings: ProviderSettings): boolean {
+  if (settings.thinking === true) return true
+  if (settings.reasoningEffort) return settings.reasoningEffort !== 'none'
+  return settings.type === 'openai' && isOpenAiReasoningModel(settings.model || '')
+}
 
 type CompletionRun = {
   pos: number
@@ -178,7 +196,12 @@ function runCompletion(view: EditorView, run: CompletionRun) {
         content: buildCompletionMessage({ window, facts, kind, situation, rejected }),
       },
     ],
-    maxTokens: MAX_TOKENS[kind] + THINKING_ALLOWANCE,
+    maxTokens:
+      MAX_TOKENS[kind] +
+      (thinksBeforeAnswering(model.settings) ||
+      (fallbackModel ? thinksBeforeAnswering(fallbackModel.settings) : false)
+        ? THINKING_ALLOWANCE
+        : 0),
   })
   const options = {
     kind,

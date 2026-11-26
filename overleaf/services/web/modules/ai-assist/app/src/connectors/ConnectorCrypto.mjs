@@ -9,6 +9,11 @@ import Settings from '@overleaf/settings'
 // (security.sessionSecretFallback) still open what the old one sealed.
 //
 //   v2:<keyId>:<iv>:<authTag>:<ciphertext>   (hex)
+//
+// The key id is an HMAC of the key, not a hash of it: a plain SHA-256 of the
+// key let anyone who can read the rows test guesses of the secret against a
+// fingerprint. Seals written before this (keyId = SHA-256 of the key) still
+// open: `open` tries every configured key when no id matches.
 
 const SALT = Buffer.from('overleaf-ai-connectors-salt', 'utf8')
 const INFO = Buffer.from('connectors-encryption-key', 'utf8')
@@ -34,8 +39,14 @@ function keyFor(secret) {
       32
     )
   )
-  const id = crypto.createHash('sha256').update(key).digest('hex').slice(0, 8)
-  return { id, key }
+  const id = crypto
+    .createHmac('sha256', key)
+    .update('ai-assist-key-id')
+    .digest('hex')
+    .slice(0, 8)
+  // The id the seals of earlier versions carry
+  const legacyId = crypto.createHash('sha256').update(key).digest('hex').slice(0, 8)
+  return { id, legacyId, key }
 }
 
 const keyCache = new Map()
@@ -96,18 +107,28 @@ export function open(sealed, context) {
     throw new ConnectorSecretUnavailableError()
   }
   const [, keyId, ivHex, tagHex, cipherHex] = parts
-  const candidates = keys().filter(k => k.id === keyId)
+  if (
+    !/^[0-9a-f]{24}$/i.test(ivHex) ||
+    !/^[0-9a-f]{32}$/i.test(tagHex)
+  ) {
+    throw new ConnectorSecretUnavailableError()
+  }
+  const iv = Buffer.from(ivHex, 'hex')
+  const tag = Buffer.from(tagHex, 'hex')
+  const ciphertext = Buffer.from(cipherHex, 'hex')
+  const all = keys()
+  const matching = all.filter(k => k.id === keyId || k.legacyId === keyId)
+  // An id that matches no key (or a key that changed) still gets every key tried
+  const candidates = matching.length ? matching : all
   for (const { key } of candidates) {
     try {
-      const decipher = crypto.createDecipheriv(
-        'aes-256-gcm',
-        key,
-        Buffer.from(ivHex, 'hex')
-      )
+      const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv, {
+        authTagLength: 16,
+      })
       decipher.setAAD(aadFor(context))
-      decipher.setAuthTag(Buffer.from(tagHex, 'hex'))
+      decipher.setAuthTag(tag)
       const text = Buffer.concat([
-        decipher.update(Buffer.from(cipherHex, 'hex')),
+        decipher.update(ciphertext),
         decipher.final(),
       ]).toString('utf8')
       return JSON.parse(text)

@@ -10,11 +10,14 @@ import { cancelledError, ProviderError } from './AiAssistErrors.mjs'
  */
 export const RETRY_POLICIES = {
   // An agent run, compaction, or a relayed chat with a visible status line
+  // totalMs bounds the whole call (attempts included): with a 180s connect
+  // limit, ten retries could otherwise hold a person's run for half an hour
   interactive: {
     maxRetries: 10,
     baseMs: 500,
     capMs: 32000,
     maxRetryAfterMs: 60000,
+    totalMs: 300000,
   },
   // Titles and other jobs nobody is watching
   background: {
@@ -39,10 +42,20 @@ export const RETRY_POLICIES = {
   },
 }
 
-/** A copy of the named policy, so a caller can never change the shared one. */
+/**
+ * A copy of the named policy, so a caller can never change the shared one. The
+ * copy starts the policy's wall-clock budget (totalMs) now, so one resolved per
+ * call bounds that call's retries.
+ */
 export function resolveRetryPolicy(name) {
-  return { ...(RETRY_POLICIES[name] ?? RETRY_POLICIES.none) }
+  return {
+    ...(RETRY_POLICIES[name] ?? RETRY_POLICIES.none),
+    startedAt: Date.now(),
+  }
 }
+
+// A connect timeout is the slowest failure to repeat: two more tries at most
+const MAX_TIMEOUT_RETRIES = 2
 
 function policyOf(policy) {
   return typeof policy === 'string'
@@ -52,9 +65,22 @@ function policyOf(policy) {
 
 function readHeader(headers, name) {
   if (!headers) return null
-  const value =
-    typeof headers.get === 'function' ? headers.get(name) : headers[name]
+  let value
+  if (typeof headers.get === 'function') {
+    value = headers.get(name)
+  } else if (Object.hasOwn(headers, name)) {
+    value = headers[name]
+  } else {
+    const lower = name.toLowerCase()
+    const match = Object.keys(headers).find(k => k.toLowerCase() === lower)
+    value = match !== undefined ? headers[match] : undefined
+  }
   return value == null ? null : String(value).trim()
+}
+
+function finiteRetryMs(ms) {
+  if (!Number.isFinite(ms)) return Number.MAX_SAFE_INTEGER
+  return Math.max(0, Math.min(Number.MAX_SAFE_INTEGER, Math.round(ms)))
 }
 
 /**
@@ -63,11 +89,11 @@ function readHeader(headers, name) {
  */
 export function parseRetryAfterMs(headers, now = Date.now()) {
   const ms = readHeader(headers, 'retry-after-ms')
-  if (ms && /^\d+(\.\d+)?$/.test(ms)) return Math.round(Number(ms))
+  if (ms && /^\d+(\.\d+)?$/.test(ms)) return finiteRetryMs(Number(ms))
 
   const seconds = readHeader(headers, 'retry-after')
   if (!seconds) return null
-  if (/^\d+(\.\d+)?$/.test(seconds)) return Math.round(Number(seconds) * 1000)
+  if (/^\d+(\.\d+)?$/.test(seconds)) return finiteRetryMs(Number(seconds) * 1000)
   const date = Date.parse(seconds)
   if (Number.isFinite(date)) return Math.max(0, date - now)
   return null
@@ -159,6 +185,9 @@ export function classifyRetry(err) {
     return retryable('Connection timed out', status)
   }
   if (err.code === 'providerStalled') return retryable('Stream stalled', status)
+  if (err.code === 'providerStream') {
+    return retryable('Stream ended early', status)
+  }
 
   if (status === 429) return retryable('Rate limited (429)', status)
   if (status === 529) return retryable('API overloaded (529)', status)
@@ -189,6 +218,9 @@ export function planRetry(err, { attempt = 0, policy, random = Math.random }) {
   if (!verdict.retryable || attempt >= resolved.maxRetries) {
     return { retry: false, error: err }
   }
+  if (err.code === 'providerTimeout' && attempt >= MAX_TIMEOUT_RETRIES) {
+    return { retry: false, error: err }
+  }
 
   const retryAfterMs = Number.isFinite(err.retryAfterMs)
     ? err.retryAfterMs
@@ -207,10 +239,20 @@ export function planRetry(err, { attempt = 0, policy, random = Math.random }) {
     }
   }
 
+  const retryInMs = retryDelayMs(attempt + 1, resolved, retryAfterMs, random)
+  // The wait is spent before the next attempt, so it counts against the budget
+  if (
+    resolved.totalMs > 0 &&
+    Number.isFinite(resolved.startedAt) &&
+    Date.now() - resolved.startedAt + retryInMs >= resolved.totalMs
+  ) {
+    return { retry: false, error: err }
+  }
+
   return {
     retry: true,
     attempt: attempt + 1,
-    retryInMs: retryDelayMs(attempt + 1, resolved, retryAfterMs, random),
+    retryInMs,
     message: verdict.reason,
     status: verdict.status,
   }

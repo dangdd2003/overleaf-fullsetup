@@ -6,6 +6,7 @@ import { AgentMode } from '../agent-mode'
 import { SlashCommandInvocation } from '../slash-commands/types'
 import customLocalStorage from '@/infrastructure/local-storage'
 import { getCsrfHeaders } from '../../utils/csrf'
+import { debugConsole } from '@/utils/debugging'
 
 const ACTIVE_RUN_KEY = (projectId: string) =>
   `ai-assist:active-run:${projectId}`
@@ -176,12 +177,20 @@ export async function startBackgroundRun({
     throw Object.assign(new Error(errorMsg), code ? { code } : {})
   }
   const data = await res.json()
-  if (trackActive) setStoredActiveRunId(projectId, data.runId, Date.now())
+  if (trackActive) setStoredActiveRunId(projectId, data.runId, Date.now(), chatId)
   return data.runId
 }
 
-const DEFAULT_MAX_RECONNECTS = 5
 const DEFAULT_RECONNECT_DELAY_MS = 1000
+/** The server sends a heartbeat every 15s; a stream silent this long is dead. */
+const HEARTBEAT_WATCHDOG_MS = 45_000
+/** Reconnect delays grow from the base up to this cap. */
+const RECONNECT_MAX_DELAY_MS = 30_000
+/**
+ * Failures this long in a row are reported. A run keeps going on the server
+ * meanwhile, so a short outage is never shown as a failed run.
+ */
+const RECONNECT_BUDGET_MS = 10 * 60_000
 
 export function connectRunStream({
   runId,
@@ -191,7 +200,6 @@ export function connectRunStream({
   onCaughtUp,
   onDone,
   onError,
-  maxReconnects = DEFAULT_MAX_RECONNECTS,
   reconnectDelayMs = DEFAULT_RECONNECT_DELAY_MS,
   passive = false,
 }: {
@@ -203,8 +211,13 @@ export function connectRunStream({
   /** Every event the run sent before this stream opened has arrived. */
   onCaughtUp?: () => void
   onDone: () => void
-  onError: (err: unknown) => void
-  maxReconnects?: number
+  /**
+   * Only once the run is gone, or the stream has failed for
+   * RECONNECT_BUDGET_MS. `gone` is false in the second case: the run may
+   * still be going, so its stored id is kept for a reload to reattach.
+   */
+  onError: (err: unknown, info: { gone: boolean }) => void
+  /** The first reconnect delay; later ones double, up to RECONNECT_MAX_DELAY_MS. */
   reconnectDelayMs?: number
   /**
    * Following a chat that is not on screen: the run does not count it as an
@@ -215,83 +228,249 @@ export function connectRunStream({
   const clearActiveRun = () => {
     if (!passive) setStoredActiveRunId(projectId, null)
   }
+  const streamPath = (from: number) =>
+    `/ai-assist/projects/${encodeURIComponent(projectId)}/runs/${encodeURIComponent(runId)}/stream?since=${from}`
   // The run lives on the server and keeps going when this connection drops
   // (proxy idle timeout, network blip, laptop sleep). Resume from the last
   // event seen instead of abandoning a run that is still producing output.
   let lastSeq = since
   let failures = 0
+  let failingSince: number | null = null
   let finished = false
   let current: EventSource | null = null
   let retryTimer: ReturnType<typeof setTimeout> | null = null
+  let watchdogTimer: ReturnType<typeof setTimeout> | null = null
+  let probeController: AbortController | null = null
+  // Only a server that sends heartbeats is watched for silence. The watchdog
+  // starts with the first one, so an older server never looks dead.
+  let watchdogArmed = false
 
-  const finish = () => {
-    finished = true
+  const clearTimers = () => {
     if (retryTimer) {
       clearTimeout(retryTimer)
       retryTimer = null
     }
+    if (watchdogTimer) {
+      clearTimeout(watchdogTimer)
+      watchdogTimer = null
+    }
+  }
+
+  const finish = () => {
+    finished = true
+    clearTimers()
+    probeController?.abort()
+    probeController = null
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('online', reconnectNow)
+    }
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
     current?.close()
+    current = null
+  }
+
+  const giveUp = (err: unknown, gone: boolean) => {
+    if (gone) clearActiveRun()
+    finish()
+    safely(() => onError(err, { gone }))
+  }
+
+  const armWatchdog = () => {
+    if (watchdogTimer) clearTimeout(watchdogTimer)
+    watchdogTimer = setTimeout(() => {
+      watchdogTimer = null
+      dropConnection(new Error('The run stream went quiet'))
+    }, HEARTBEAT_WATCHDOG_MS)
+  }
+
+  const markAlive = () => {
+    failures = 0
+    failingSince = null
+    if (watchdogArmed) armWatchdog()
+  }
+
+  /**
+   * Whether the run is gone for good: its stream endpoint answers 404/410,
+   * auth is rejected/redirected to login. Transient errors keep trying.
+   */
+  const runIsGone = async (): Promise<boolean> => {
+    probeController?.abort()
+    const controller =
+      typeof AbortController !== 'undefined' ? new AbortController() : null
+    probeController = controller
+    try {
+      const res = await fetch(`${streamPath(lastSeq)}&watch=0`, {
+        credentials: 'same-origin',
+        ...(controller ? { signal: controller.signal } : {}),
+      })
+      // Only the status is wanted: the stream is not read
+      void Promise.resolve(res?.body?.cancel()).catch(() => {})
+      if (
+        res?.status === 404 ||
+        res?.status === 410 ||
+        res?.status === 401 ||
+        res?.status === 403
+      ) {
+        return true
+      }
+      if (res?.redirected && typeof res.url === 'string' && /\/login\b/.test(res.url)) {
+        return true
+      }
+      return false
+    } catch {
+      return false
+    } finally {
+      if (probeController === controller) probeController = null
+    }
+  }
+
+  /**
+   * The current connection is lost. Schedules a reconnect from `lastSeq` with
+   * a capped, jittered backoff, and gives up only once the run is gone or the
+   * failure has lasted RECONNECT_BUDGET_MS.
+   */
+  const dropConnection = (err: unknown) => {
+    if (finished) return
+    current?.close()
+    current = null
+    if (watchdogTimer) {
+      clearTimeout(watchdogTimer)
+      watchdogTimer = null
+    }
+    if (retryTimer) return
+    const now = Date.now()
+    failingSince ??= now
+    if (now - failingSince >= RECONNECT_BUDGET_MS) {
+      giveUp(err, false)
+      return
+    }
+    failures += 1
+    const backoff = Math.min(
+      RECONNECT_MAX_DELAY_MS,
+      reconnectDelayMs * 2 ** (failures - 1)
+    )
+    // Jitter spreads out the tabs that all lost the same connection
+    const delay = Math.round(backoff * (0.8 + 0.2 * Math.random()))
+    retryTimer = setTimeout(() => {
+      retryTimer = null
+      if (!finished) open()
+    }, delay)
+    void runIsGone().then(gone => {
+      if (gone && !finished) giveUp(err, true)
+    })
+  }
+
+  // Back online, or the tab is shown again: do not wait out the backoff
+  const reconnectNow = () => {
+    if (
+      finished ||
+      current?.readyState === EventSource.OPEN ||
+      current?.readyState === EventSource.CONNECTING
+    ) {
+      return
+    }
+    if (retryTimer) {
+      clearTimeout(retryTimer)
+      retryTimer = null
+    }
+    open()
+  }
+  const onVisibilityChange = () => {
+    if (document.visibilityState === 'visible') reconnectNow()
+  }
+
+  const onMessage = (msg: MessageEvent) => {
+    // A message already queued when the stream was closed must not land:
+    // its chat may no longer be the one on screen
+    if (finished) return
+    let data: any
+    try {
+      data = JSON.parse(msg.data)
+    } catch (err) {
+      // A frame that cannot be read ends this connection. Resuming from the
+      // last seq sends it again.
+      debugConsole.warn('Unreadable run stream frame:', err)
+      dropConnection(err)
+      return
+    }
+    if (data.caughtUp) {
+      if (watchdogArmed) armWatchdog()
+      safely(() => onCaughtUp?.())
+      return
+    }
+    if (typeof data.seq === 'number') {
+      // Already handled before a reconnect: the stream replays from the last seq
+      if (data.seq <= lastSeq) return
+      lastSeq = data.seq
+    }
+    markAlive()
+    if (data.event) {
+      try {
+        onEvent(data.event, lastSeq)
+      } catch (err) {
+        // A failing handler must not cut the stream short
+        debugConsole.error('Run event handler failed:', err)
+      }
+      if (
+        data.event.type === 'turnFinished' ||
+        data.event.type === 'error'
+      ) {
+        clearActiveRun()
+        finish()
+        safely(() => onDone())
+      }
+    }
+  }
+
+  const onHeartbeat = () => {
+    if (finished) return
+    watchdogArmed = true
+    markAlive()
   }
 
   const open = () => {
+    current?.close()
     const eventSource = new EventSource(
-      `/ai-assist/projects/${encodeURIComponent(projectId)}/runs/${encodeURIComponent(runId)}/stream?since=${lastSeq}${passive ? '&watch=0' : ''}`
+      streamPath(lastSeq) + (passive ? '&watch=0' : '')
     )
     current = eventSource
+    if (watchdogArmed) armWatchdog()
 
-    eventSource.onmessage = msg => {
-      // A message already queued when the stream was closed must not land:
-      // its chat may no longer be the one on screen
-      if (finished) return
-      try {
-        const data = JSON.parse(msg.data)
-        failures = 0
-        if (data.caughtUp) {
-          onCaughtUp?.()
-          return
-        }
-        if (typeof data.seq === 'number' && data.seq > lastSeq) {
-          lastSeq = data.seq
-        }
-        if (data.event) {
-          onEvent(data.event, lastSeq)
-          if (
-            data.event.type === 'turnFinished' ||
-            data.event.type === 'error'
-          ) {
-            clearActiveRun()
-            finish()
-            onDone()
-          }
-        }
-      } catch (err) {
-        clearActiveRun()
-        finish()
-        onError(err)
-      }
-    }
-
+    eventSource.onmessage = onMessage
+    eventSource.addEventListener('heartbeat', onHeartbeat)
     eventSource.onerror = err => {
-      eventSource.close()
-      if (finished) return
-      if (failures >= maxReconnects) {
-        clearActiveRun()
-        finish()
-        onError(err)
+      if (current !== eventSource) {
+        eventSource.close()
         return
       }
-      failures += 1
-      retryTimer = setTimeout(() => {
-        retryTimer = null
-        if (!finished) open()
-      }, reconnectDelayMs * failures)
+      current = null
+      eventSource.close()
+      dropConnection(err)
     }
+  }
+
+  if (typeof window !== 'undefined') {
+    window.addEventListener('online', reconnectNow)
+  }
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', onVisibilityChange)
   }
 
   open()
 
   return () => {
     finish()
+  }
+}
+
+/** Runs a caller's callback; an error in it is logged, never thrown into the stream. */
+function safely(fn: () => void) {
+  try {
+    fn()
+  } catch (err) {
+    debugConsole.error('Run stream callback failed:', err)
   }
 }
 

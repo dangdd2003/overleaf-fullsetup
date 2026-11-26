@@ -4,11 +4,13 @@ import { ToolCallRecord } from '../../agent/agent-messages'
 import {
   ConnectorOutcome,
   connectorOutcome,
+  McpLinkItem,
+  mcpLinkItems,
   OutputSegment,
   outputSegments,
   parseJsonOutput,
 } from '../../agent/mcp-tool-output'
-import CodeView from './code-view'
+import { WebPageRow } from './web-page-row'
 import { MarkdownContent } from './markdown-content'
 import { CopyToClipboard } from '@/shared/components/copy-to-clipboard'
 import type { TranslateFn } from './pdf-tool-shared'
@@ -17,6 +19,8 @@ import type { TranslateFn } from './pdf-tool-shared'
 const LONG_TEXT_CHARS = 250
 const LONG_TEXT_LINES = 3
 const MAX_CHIPS = 12
+/** Past this many pages, a list of pages is clamped. */
+const LINK_ROWS = 6
 
 const isPrimitive = (value: unknown) =>
   value === null || ['string', 'number', 'boolean'].includes(typeof value)
@@ -166,19 +170,40 @@ function pagingLabel(outcome: ConnectorOutcome, t: TranslateFn): string {
 function OutputBody({
   body,
   segments,
-  jsonLines,
+  json,
+  links,
 }: {
   body: string
   segments: OutputSegment[]
-  jsonLines?: string[]
+  json?: string
+  links: McpLinkItem[] | null
 }) {
-  if (jsonLines !== undefined) {
+  // A list of pages reads as one, like the built-in web search
+  if (links) {
     return (
       <ClampedBlock
-        long={jsonLines.length > LONG_TEXT_LINES}
+        long={links.length > LINK_ROWS}
+        className="ai-assist-mcp-links ai-assist-web-detail"
+      >
+        {links.map((link, index) => (
+          <WebPageRow
+            key={`${link.url}-${index}`}
+            url={link.url}
+            title={link.title}
+            hint={[link.title, link.date].filter(Boolean).join(' · ') || undefined}
+          />
+        ))}
+      </ClampedBlock>
+    )
+  }
+
+  if (json !== undefined) {
+    return (
+      <ClampedBlock
+        long={isLong(json, LONG_TEXT_LINES)}
         className="ai-assist-mcp-code-wrap"
       >
-        <CodeView lines={jsonLines} startLine={1} />
+        <pre className="ai-assist-mcp-code">{json}</pre>
       </ClampedBlock>
     )
   }
@@ -222,18 +247,20 @@ function OutputSection({
 }) {
   const { t } = useTranslation()
 
-  const { segments, jsonLines, hasOutput } = useMemo(() => {
+  const { segments, json, links, hasOutput } = useMemo(() => {
     const segs = outputSegments(outcome.body)
     const isAllText = segs.every((segment) => segment.kind === 'text')
-    const json = isAllText ? parseJsonOutput(outcome.body) : undefined
-    const lines =
-      json !== undefined
-        ? JSON.stringify(json, null, 2).split('\n')
-        : undefined
+    const parsed = isAllText ? parseJsonOutput(outcome.body) : undefined
     const hasOut = segs.some(
       (segment) => segment.kind === 'image' || segment.text.trim() !== ''
     )
-    return { segments: segs, jsonLines: lines, hasOutput: hasOut }
+    return {
+      segments: segs,
+      json:
+        parsed !== undefined ? JSON.stringify(parsed, null, 2) : undefined,
+      links: parsed !== undefined ? mcpLinkItems(parsed) : null,
+      hasOutput: hasOut,
+    }
   }, [outcome.body])
 
   if (outcome.isError) {
@@ -247,7 +274,17 @@ function OutputSection({
     )
   }
 
-  const label = pagingLabel(outcome, t)
+  const label = [
+    links
+      ? t('ai_assist_mcp_pages', {
+          count: links.length,
+          defaultValue: `${links.length} page${links.length === 1 ? '' : 's'}`,
+        })
+      : '',
+    pagingLabel(outcome, t),
+  ]
+    .filter(Boolean)
+    .join(' · ')
 
   return (
     <div className="ai-assist-mcp-output">
@@ -266,7 +303,8 @@ function OutputSection({
         <OutputBody
           body={outcome.body}
           segments={segments}
-          jsonLines={jsonLines}
+          json={json}
+          links={links}
         />
       ) : (
         <div className="ai-assist-mcp-empty">

@@ -51,7 +51,9 @@ export function canTriggerAt(
   { takeOver = false }: { takeOver?: boolean } = {}
 ): boolean {
   const { state } = view
-  if (!state.facet(EditorView.editable) || state.readOnly) return false
+  if (view.composing || !state.facet(EditorView.editable) || state.readOnly) {
+    return false
+  }
   if (state.selection.ranges.length > 1 || !state.selection.main.empty) return false
   if (!takeOver && completionStatus(state) !== null) return false
   if (vimBlocksTyping(view)) return false

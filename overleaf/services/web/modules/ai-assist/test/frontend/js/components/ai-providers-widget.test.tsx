@@ -319,7 +319,9 @@ describe('AiProvidersWidget', function () {
 
     const card = screen.getByTestId('fast-provider-current')
     expect(card.textContent).to.contain('Qwen3 4B')
-    expect(card.textContent).to.contain('http://ollama:11434/v1')
+    // Ollama is reached on its native API: a /v1 suffix is dropped
+    expect(card.textContent).to.contain('http://ollama:11434')
+    expect(card.textContent).not.to.contain('/v1')
     expect(card.textContent).to.contain('Ollama')
 
     fireEvent.click(screen.getByRole('button', { name: 'Remove fast model' }))

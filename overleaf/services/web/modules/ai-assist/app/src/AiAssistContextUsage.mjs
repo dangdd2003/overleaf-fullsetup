@@ -129,6 +129,23 @@ export function charsPerToken(kind, pricing = null) {
   return usesNewerTokenizer(pricing ?? {}) ? base * NEWER_TOKENIZER_SCALE : base
 }
 
+// Letters outside ASCII (CJK, Cyrillic, Arabic, ...). A tokenizer splits them
+// far finer than Latin words, so each counts as about one token.
+const NON_ASCII = /[^\x00-\x7F]/
+const WIDE_LETTER = /(?![\x00-\x7F])\p{L}/gu
+
+/** Tokens of text at `ratio` chars per token; wide letters count one token each. */
+function tokensAt(text, ratio) {
+  if (!NON_ASCII.test(text)) return Math.ceil(text.length / ratio)
+  let wide = 0
+  let wideUnits = 0
+  for (const match of text.matchAll(WIDE_LETTER)) {
+    wide++
+    wideUnits += match[0].length
+  }
+  return Math.ceil((text.length - wideUnits) / ratio) + wide
+}
+
 /**
  * Tokens in a piece of prose, LaTeX or code (see the constants above).
  * `pricing` is { provider, model }, which picks the ratio (charsPerToken).
@@ -136,13 +153,13 @@ export function charsPerToken(kind, pricing = null) {
 export function estimateTokens(text, pricing = null) {
   if (typeof text !== 'string' || text.length === 0) return 0
   const kind = syntaxDenseText(text) ? 'latex' : 'prose'
-  return Math.ceil(text.length / charsPerToken(kind, pricing))
+  return tokensAt(text, charsPerToken(kind, pricing))
 }
 
 /** Tokens in JSON: a value (serialised here) or a string already in JSON. */
 export function estimateJsonTokens(value, pricing = null) {
   const text = typeof value === 'string' ? value : (JSON.stringify(value) ?? '')
-  return Math.ceil(text.length / charsPerToken('json', pricing))
+  return tokensAt(text, charsPerToken('json', pricing))
 }
 
 // A tool result that is a JSON object or array, the shape the tools return
@@ -323,8 +340,18 @@ export const BLOCK_BUFFER_CAP = 3000
 export const BLOCK_BUFFER_SHARE = 0.03
 
 export function contextThresholds({ contextWindow, maxOutputTokens }) {
-  const reserve = Math.min(maxOutputTokens, RESERVE_CAP_TOKENS)
-  const effective = contextWindow - reserve
+  const window =
+    Number.isFinite(contextWindow) && contextWindow > 0 ? contextWindow : 0
+  const rawReserve =
+    Number.isFinite(maxOutputTokens) && maxOutputTokens > 0
+      ? maxOutputTokens
+      : 0
+  const reserve = Math.min(
+    rawReserve,
+    RESERVE_CAP_TOKENS,
+    Math.floor(window * 0.5)
+  )
+  const effective = Math.max(0, window - reserve)
   const autoCompactBuffer = Math.min(
     AUTO_COMPACT_BUFFER_CAP,
     Math.floor(effective * AUTO_COMPACT_BUFFER_SHARE)
@@ -682,12 +709,19 @@ function countEndpointKey(type, baseUrl) {
 // Sets a hold-off and drops the expired ones, which lookup treats as absent.
 // Each map has one TTL, so re-inserting keeps it in expiry order and the scan
 // stops at the first live entry.
+const HOLD_OFF_MAX_ENTRIES = 500
+
 function holdOff(map, key, until, now) {
   for (const [held, heldUntil] of map) {
     if (heldUntil > now) break
     map.delete(held)
   }
   map.delete(key)
+  while (map.size >= HOLD_OFF_MAX_ENTRIES) {
+    const oldest = map.keys().next().value
+    if (oldest === undefined) break
+    map.delete(oldest)
+  }
   map.set(key, until)
 }
 

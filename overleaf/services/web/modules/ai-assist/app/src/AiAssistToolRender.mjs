@@ -4,6 +4,17 @@ import {
   isConnectorTool,
 } from './AiAssistModePolicy.mjs'
 
+/** One line per list the tool cut short, with how many rows it left out. */
+function truncationNotes(result) {
+  if (!result.truncated || !result.totals) return []
+  return Object.keys(result.truncated)
+    .filter(kind => result.truncated[kind])
+    .map(
+      kind =>
+        `(${result.totals[kind] - (result[kind]?.length ?? 0)} more ${kind} not shown)`
+    )
+}
+
 function outlineLine(section) {
   return `${'  '.repeat(section.level + 1)}${section.path}:${section.line} ${section.title}`
 }
@@ -850,6 +861,7 @@ const RENDERERS = {
       return [
         `section lines ${result.range.from}-${toStr}`,
         ...result.sections.map(outlineLine),
+        ...truncationNotes(result),
         result.hint ?? '',
       ]
         .filter(Boolean)
@@ -864,6 +876,7 @@ const RENDERERS = {
             `\\input ${i.from}:${i.line} -> ${i.to}${i.resolved ? '' : ' (UNRESOLVED)'}`
         ),
         ...(result.notes || []),
+        ...truncationNotes(result),
       ].join('\n')
     }
     return JSON.stringify(result)
@@ -905,9 +918,19 @@ const RENDERERS = {
     }
     if (result.bibKeys) {
       lines.push(
-        ...result.bibKeys.map(b => `bib ${b.key}  ${b.path}:${b.line}`)
+        ...result.bibKeys.map(
+          b => `${b.bibitem ? 'bibitem' : 'bib'} ${b.key}  ${b.path}:${b.line}`
+        )
       )
     }
+    lines.push(
+      ...(result.duplicateBibKeys ?? []).map(k => `DUPLICATE bib key ${k}`),
+      ...(result.incompleteBibEntries ?? []).map(
+        e =>
+          `INCOMPLETE @${e.type} ${e.key}  ${e.path}:${e.line}  missing: ${e.missing.join(', ')}`
+      )
+    )
+    lines.push(...truncationNotes(result))
     return lines.length > 0
       ? lines.join('\n')
       : '(no labels, references, or citations found in project)'
@@ -962,6 +985,9 @@ const RENDERERS = {
     }
     if (result.truncated) {
       lines.push(`(truncated - ${result.total - result.hits.length} more hits)`)
+    }
+    if (result.note) {
+      lines.push(result.note)
     }
     return lines.join('\n')
   },
@@ -1088,9 +1114,64 @@ export function withNotice(result, notice) {
   }
 }
 
-export function renderToolResult(name, result) {
-  // A notice is the harness talking, not the tool: it goes after the result,
-  // and lives in the result object so a rebuilt transcript renders the same.
+// Model-facing text is capped: a result is re-sent on every later step.
+export const MAX_TOOL_RESULT_CHARS = 60_000
+
+// Where the text of a tool's result came from. Its text is written by someone
+// other than the user or the harness, so the model is told it is data.
+const UNTRUSTED_SOURCE = {
+  read_file: 'project',
+  edit_file: 'project',
+  search_text: 'project',
+  search_project: 'project',
+  list_files: 'project',
+  project_map: 'project',
+  get_outline: 'project',
+  get_references: 'project',
+  get_packages: 'project',
+  get_project_settings: 'project',
+  compile_project: 'log',
+  get_compile_result: 'log',
+  get_compile_log: 'log',
+  view_compiled_pdf_page: 'pdf',
+  view_compiled_pdf_overview: 'pdf',
+  search_compiled_pdf: 'pdf',
+  resolve_pdf_block: 'pdf',
+  diff_compiled_pdf: 'pdf',
+  inspect_compiled_style: 'pdf',
+  web_search: 'web',
+  web_fetch: 'web',
+}
+
+function untrustedSourceOf(name) {
+  if (isConnectorTool(name) || name === CONNECTOR_SEARCH_TOOL) return 'connector'
+  if (name === READ_CONNECTOR_RESULT_TOOL) return 'connector'
+  return Object.hasOwn(UNTRUSTED_SOURCE, name) ? UNTRUSTED_SOURCE[name] : null
+}
+
+/**
+ * Wraps tool output in a delimited block marked untrusted. A closing tag inside
+ * the content is escaped, so the content cannot end the block early.
+ */
+export function frameUntrusted(source, text) {
+  const body = String(text).replace(/<\/tool_output/gi, '&lt;/tool_output')
+  return `<tool_output source="${source}" trust="untrusted">\n${body}\n</tool_output>`
+}
+
+function capResultText(text) {
+  if (text.length <= MAX_TOOL_RESULT_CHARS) return text
+  const cut = text.length - MAX_TOOL_RESULT_CHARS
+  return `${text.slice(0, MAX_TOOL_RESULT_CHARS)}\n... [truncated: ${cut} more characters not shown]`
+}
+
+/**
+ * The text a tool result becomes. The model reads it (the default). The
+ * frontend's own tool cards pass forUi, and get the plain text with no cap and
+ * no frame. A notice is the harness talking, not the tool: it goes after the
+ * result, outside the frame, and lives in the result object so a rebuilt
+ * transcript renders the same.
+ */
+export function renderToolResult(name, result, { forUi = false } = {}) {
   if (
     result &&
     typeof result === 'object' &&
@@ -1099,8 +1180,16 @@ export function renderToolResult(name, result) {
     result.notice
   ) {
     const { notice, ...rest } = result
-    return `${renderToolResult(name, rest)}\n\n${notice}`
+    return `${renderToolResult(name, rest, { forUi })}\n\n${notice}`
   }
+  const body = renderToolBody(name, result)
+  if (forUi) return body
+  const capped = capResultText(body)
+  const source = untrustedSourceOf(name)
+  return source ? frameUntrusted(source, capped) : capped
+}
+
+function renderToolBody(name, result) {
   if (name === 'web_fetch' && result?.error && result.snippet && result.url) {
     return renderFetchFailure(result)
   }

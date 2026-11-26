@@ -43,6 +43,11 @@ function conversation(toolResults: number): AgentMessage[] {
 }
 
 describe('estimateTokens', function () {
+  it('counts each non-ASCII letter as about one token', function () {
+    expect(estimateTokens('你好世界')).to.equal(4)
+    expect(estimateTokens('ab 你好')).to.equal(3)
+  })
+
   it('grows with length and never returns a negative', function () {
     expect(estimateTokens('')).to.equal(0)
     expect(estimateTokens('x'.repeat(370))).to.be.greaterThan(50)

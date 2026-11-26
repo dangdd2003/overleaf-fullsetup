@@ -183,3 +183,21 @@ describe('AiAssistPreferencesStore', function () {
     expect(await store.get(USER)).to.not.have.property('inlineSuggestions')
   })
 })
+
+describe('AiAssistPreferencesStore removal', function () {
+  it('removes a user\'s preferences, and is safe to repeat', async function () {
+    const dir = await fs.mkdtemp(Path.join(os.tmpdir(), 'ai-prefs-remove-'))
+    const previous = Settings.aiAssist?.chatHistoryDir
+    Settings.aiAssist = Settings.aiAssist || {}
+    Settings.aiAssist.chatHistoryDir = dir
+    try {
+      await store.save(USER, { reasoningEffort: {}, thinking: {} })
+      await store.remove(USER)
+      await store.remove(USER)
+      expect(await store.get(USER)).to.equal(null)
+    } finally {
+      Settings.aiAssist.chatHistoryDir = previous
+      await fs.rm(dir, { recursive: true, force: true })
+    }
+  })
+})
