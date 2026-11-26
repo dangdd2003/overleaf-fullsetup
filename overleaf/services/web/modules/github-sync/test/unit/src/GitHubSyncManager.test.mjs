@@ -292,6 +292,63 @@ describe('GitHubSyncManager', function () {
     expect(result.sha).to.equal('sha-merged')
   })
 
+  it('continueAfterManualMerge resets to origin branch and applies remote tree when pull still conflicts (e.g. squash merge)', async function () {
+    state.doc.syncState = 'conflict'
+    state.engine.mergeOrigin = async () => ({ merged: false, conflict: true })
+    let fetched = 0
+    state.engine.fetchOrigin = async () => {
+      fetched += 1
+    }
+    const gitCalls = []
+    state.engine.runGit = async (_dir, args) => {
+      gitCalls.push(args)
+      return { stdout: '', stderr: '' }
+    }
+    // The local commit must reach GitHub before the reset drops it
+    let rescuedBeforeReset = false
+    state.engine.pushRescueBranch = async () => {
+      rescuedBeforeReset = !gitCalls.some(args => args[0] === 'reset')
+      return 'overleaf-sync-rescue'
+    }
+    let headCall = 0
+    state.engine.getHeadSha = async () => {
+      headCall += 1
+      return headCall === 1 ? 'sha-local' : 'sha-remote-squash'
+    }
+    state.engine.diffChangeSet = async () => [
+      { type: 'D', path: 'removed-on-github.tex' },
+      { type: 'M', path: 'main.tex' },
+    ]
+    const appliedChangeSets = []
+    state.fileOps.applyChangeSet = async (_pid, _uid, _dir, changes) => {
+      appliedChangeSets.push(changes)
+      return []
+    }
+    let importedTree = false
+    state.fileOps.applyImportTree = async () => {
+      importedTree = true
+      return [{ path: 'skip.bin', code: 'github_large_files_error' }]
+    }
+
+    const result = await manager.promises.continueAfterManualMerge('proj1')
+
+    expect(result.code).to.equal('ok')
+    expect(result.sha).to.equal('sha-remote-squash')
+    expect(result.warnings).to.deep.equal([
+      { path: 'skip.bin', code: 'github_large_files_error' },
+    ])
+    expect(fetched).to.be.greaterThanOrEqual(2)
+    expect(rescuedBeforeReset).to.equal(true)
+    expect(gitCalls).to.deep.include(['reset', '--hard', 'origin/main'])
+    expect(appliedChangeSets).to.deep.equal([
+      [{ type: 'D', path: 'removed-on-github.tex' }],
+    ])
+    expect(importedTree).to.equal(true)
+    expect(state.doc.syncState).to.equal('idle')
+    expect(state.doc.lastSyncedCommitSha).to.equal('sha-remote-squash')
+    expect(state.doc.outgoing).to.equal(false)
+  })
+
   it('importProject creates project, clones repo, imports tree and stores state', async function () {
     state.doc = null
     const result = await manager.promises.importProject('user1', {

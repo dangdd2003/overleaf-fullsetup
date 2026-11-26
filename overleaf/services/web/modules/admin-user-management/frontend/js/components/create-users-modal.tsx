@@ -74,6 +74,14 @@ function createEmptyRow(): BulkUserRow {
   }
 }
 
+const CSV_FORMULA_PREFIX_RE = /^[=+\-@\t\r]/
+
+export function escapeCSV(val: unknown): string {
+  const str = val === undefined || val === null ? '' : String(val)
+  const safe = CSV_FORMULA_PREFIX_RE.test(str) ? `'${str}` : str
+  return `"${safe.replace(/"/g, '""')}"`
+}
+
 export default function CreateUsersModal({
   show,
   onHide,
@@ -379,17 +387,7 @@ export default function CreateUsersModal({
 
     const csvContent =
       '\uFEFF' +
-      rows
-        .map(row =>
-          row
-            .map(val => {
-              const str = val === undefined || val === null ? '' : String(val)
-              const escaped = str.replace(/"/g, '""')
-              return `"${escaped}"`
-            })
-            .join(',')
-        )
-        .join('\r\n')
+      rows.map(row => row.map(escapeCSV).join(',')).join('\r\n')
 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)

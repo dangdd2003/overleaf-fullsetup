@@ -15,15 +15,41 @@ function _deepestFirst(paths) {
   )
 }
 
-async function _upsertFromRepo(projectId, userId, repoDir, relPath, warnings) {
+async function _upsertFromRepo(projectId, userId, repoDir, relPath, warnings, symlinkPaths) {
+  const resolvedRepoDir = path.resolve(repoDir)
   const absPath = path.join(repoDir, relPath)
-  if (!path.resolve(absPath).startsWith(path.resolve(repoDir) + path.sep)) {
+  const resolvedAbsPath = path.resolve(absPath)
+  if (!resolvedAbsPath.startsWith(resolvedRepoDir + path.sep)) {
     warnings.push({ path: relPath, code: 'invalid_path' })
     return
   }
+
+  let current = resolvedRepoDir
+  let stat = null
+  for (const segment of path.relative(resolvedRepoDir, resolvedAbsPath).split(path.sep)) {
+    if (!segment) continue
+    current = path.join(current, segment)
+    if (symlinkPaths.has(path.relative(resolvedRepoDir, current).split(path.sep).join('/'))) {
+      warnings.push({ path: relPath, code: 'github_symlink_error' })
+      return
+    }
+    const segStat = await fs.lstat(current).catch(err => {
+      if (err?.code === 'ENOENT' || err?.code === 'ENOTDIR') return null
+      throw err
+    })
+    if (!segStat) {
+      stat = null
+      break
+    }
+    if (segStat.isSymbolicLink()) {
+      warnings.push({ path: relPath, code: 'github_symlink_error' })
+      return
+    }
+    stat = segStat
+  }
+
   let fsPath = absPath
   let tmpDir = null
-  const stat = await fs.lstat(absPath).catch(() => null)
   if (!stat) {
     // not present in the working tree — stage a copy from git
     const staged = await SyncEngine.promises.writeFileFromRepo(repoDir, relPath)
@@ -85,8 +111,13 @@ async function applyChangeSet(projectId, userId, repoDir, changes) {
   }
 
   const upserts = changes.filter(c => ['A', 'M', 'R'].includes(c.type))
+  // Only upserts read the index, so a delete-only change set skips the git call
+  const symlinkPaths =
+    upserts.length > 0
+      ? await SyncEngine.promises.getSymlinkPaths(repoDir)
+      : new Set()
   for (const change of upserts) {
-    await _upsertFromRepo(projectId, userId, repoDir, change.path, warnings)
+    await _upsertFromRepo(projectId, userId, repoDir, change.path, warnings, symlinkPaths)
   }
 
   return warnings
@@ -94,17 +125,19 @@ async function applyChangeSet(projectId, userId, repoDir, changes) {
 
 async function applyImportTree(projectId, userId, repoDir) {
   const warnings = []
-  const tree = await ProjectContentIO.promises.readProjectTree(repoDir)
+  const symlinkPaths = await SyncEngine.promises.getSymlinkPaths(repoDir)
+  const tree = await ProjectContentIO.promises.readProjectTree(repoDir, symlinkPaths)
   for (const entry of tree) {
     const verdict = classifySyncEntry(entry.relPath, {
       sizeBytes: entry.sizeBytes,
       symlinkTarget: entry.symlinkTarget,
+      isSymlink: entry.isSymlink,
     })
     if (verdict.verdict === 'skip') {
       warnings.push({ path: entry.relPath, code: verdict.code })
       continue
     }
-    await _upsertFromRepo(projectId, userId, repoDir, entry.relPath, warnings)
+    await _upsertFromRepo(projectId, userId, repoDir, entry.relPath, warnings, symlinkPaths)
   }
   return warnings
 }

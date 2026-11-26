@@ -61,6 +61,7 @@ export class ExtractWorkerPool {
         maxOldGenerationSizeMb: WORKER_HEAP_MB,
       },
     })
+    worker.unref?.()
 
     worker.on('message', msg => {
       const active = this.activeJobs.get(worker)
@@ -206,8 +207,11 @@ export class ExtractWorkerPool {
   }
 }
 
-const defaultExtractPool = new ExtractWorkerPool()
+let defaultExtractPool = null
 
 export function runExtractJob(job) {
+  if (!defaultExtractPool) {
+    defaultExtractPool = new ExtractWorkerPool()
+  }
   return defaultExtractPool.runJob(job)
 }

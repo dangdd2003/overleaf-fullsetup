@@ -50,7 +50,7 @@ describe('SyncEngine', function () {
     await execFileP('git', ['push', 'origin', 'main'], { cwd: seed })
   }
 
-  it('cloneRepo clones with a clean remote URL', async function () {
+  it('cloneRepo clones with a clean remote URL and disables core.symlinks', async function () {
     await commitUpstream('main.tex', 'hello v1\n')
     const repoDir = path.join(workDir, 'clone-1')
     await SyncEngine.promises.cloneRepo(repoDir, upstreamUrl, 'main', 'unused')
@@ -58,6 +58,8 @@ describe('SyncEngine', function () {
     expect(content).to.equal('hello v1\n')
     const { stdout } = await execFileP('git', ['remote', 'get-url', 'origin'], { cwd: repoDir })
     expect(stdout.trim()).to.equal(upstreamUrl) // no token in URL
+    const { stdout: symlinksCfg } = await execFileP('git', ['config', '--get', 'core.symlinks'], { cwd: repoDir })
+    expect(symlinksCfg.trim()).to.equal('false')
   })
 
   it('commitAll returns null when clean, sha when staged', async function () {
@@ -164,12 +166,14 @@ describe('SyncEngine', function () {
     expect(stat.mode & 0o777).to.equal(0o700)
   })
 
-  it('createRepo initializes a repo with default branch and remote origin', async function () {
+  it('createRepo initializes a repo with default branch, remote origin, and core.symlinks disabled', async function () {
     const repoDir = path.join(workDir, 'new-repo')
     await SyncEngine.promises.createRepo(repoDir, upstreamUrl, 'main')
     expect(await SyncEngine.promises.ensureRepoExists(repoDir)).to.equal(true)
     const { stdout } = await execFileP('git', ['remote', 'get-url', 'origin'], { cwd: repoDir })
     expect(stdout.trim()).to.equal(upstreamUrl)
+    const { stdout: symlinksCfg } = await execFileP('git', ['config', '--get', 'core.symlinks'], { cwd: repoDir })
+    expect(symlinksCfg.trim()).to.equal('false')
   })
 
   it('pushRef pushes local ref to remote ref', async function () {
@@ -185,18 +189,23 @@ describe('SyncEngine', function () {
     expect(content).to.equal('pushed\n')
   })
 
-  it('pushRescueBranch creates and pushes rescue branch with timestamp', async function () {
+  it('pushRescueBranch creates and pushes rescue branch with unique timestamp suffix', async function () {
     const repoDir = path.join(workDir, 'clone-rescue')
     await SyncEngine.promises.cloneRepo(repoDir, upstreamUrl, 'main', 'unused')
     await fs.writeFile(path.join(repoDir, 'rescue.tex'), 'rescue\n')
     await SyncEngine.promises.commitAll(repoDir, 'rescue commit', 'Rescuer', 'rescuer@example.com')
     const branchName = await SyncEngine.promises.pushRescueBranch(repoDir, 'unused')
-    expect(branchName).to.match(/^overleaf-sync-\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}$/)
+    expect(branchName).to.match(
+      /^overleaf-sync-\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}-\d{3}-[0-9a-f]{6}$/
+    )
+    const branchName2 = await SyncEngine.promises.pushRescueBranch(repoDir, 'unused')
+    expect(branchName2).to.not.equal(branchName)
 
     const seed = path.join(workDir, 'seed')
     await execFileP('git', ['fetch', 'origin'], { cwd: seed })
     const { stdout } = await execFileP('git', ['branch', '-r'], { cwd: seed })
     expect(stdout).to.contain(`origin/${branchName}`)
+    expect(stdout).to.contain(`origin/${branchName2}`)
   })
 
   it('writeFileFromRepo reads file and writes to temp directory', async function () {

@@ -5,8 +5,13 @@ import './ModuleSettings.mjs'
 import defaultManager from './AiAssistRunManager.mjs'
 import defaultStore, { TERMINAL_STATUSES } from './AiAssistRunStore.mjs'
 import defaultSubscriber from './AiAssistRunSubscriber.mjs'
-import defaultUserSettingsStore from './AiAssistUserSettingsStore.mjs'
 import defaultChatHistoryStore from './AiAssistChatHistoryStore.mjs'
+import defaultUserSettingsStore, {
+  MASKED_SECRET,
+  applyStoredProviderSecret,
+  resolveStoredWebSearchSettings,
+  stripMaskedProviderSecret,
+} from './AiAssistUserSettingsStore.mjs'
 import {
   bindStoredApiKey,
   normalizeProviderBaseUrl,
@@ -196,10 +201,10 @@ export class AiAssistRunController {
       !providerSettings ||
       !providerSettings.type ||
       !providerSettings.apiKey ||
-      providerSettings.apiKey === MASKED_API_KEY
+      providerSettings.apiKey === MASKED_SECRET
 
+    let internal = null
     if (needsStoredProviderKey) {
-      let internal = null
       try {
         internal = await this.userSettingsStore.getInternalUserSettings(userId)
       } catch {}
@@ -220,6 +225,7 @@ export class AiAssistRunController {
         }
       }
     }
+    providerSettings = stripMaskedProviderSecret(providerSettings)
 
     if (
       !transcript ||
@@ -292,39 +298,16 @@ export class AiAssistRunController {
       } catch (err) {
         return res.status(400).json({ error: err.message })
       }
-      providerSettings = { ...providerSettings, baseUrl }
+      const { baseURL: _omitBaseURL, ...rest } = providerSettings
+      providerSettings = { ...rest, baseUrl }
     }
 
-    let clientWebSearchSettings = req.body?.webSearchSettings
-    const needsStoredWebKeys =
-      clientWebSearchSettings?.sourceMode === 'custom' &&
-      (!clientWebSearchSettings.providers ||
-        Object.keys(clientWebSearchSettings.providers).length === 0 ||
-        Object.values(clientWebSearchSettings.providers).some(
-          p =>
-            p &&
-            typeof p === 'object' &&
-            ((Array.isArray(p.apiKeys) && p.apiKeys.includes('••••••••')) ||
-              (Array.isArray(p.apiKeys) && p.apiKeys.length === 0) ||
-              p.bearerToken === '••••••••')
-        ))
-
-    if (needsStoredWebKeys) {
-      let internal = null
-      try {
-        internal = await this.userSettingsStore.getInternalUserSettings(userId)
-      } catch {}
-      if (internal?.webSearch) {
-        try {
-          clientWebSearchSettings = bindStoredWebSearchCredentials(
-            clientWebSearchSettings,
-            internal.webSearch
-          )
-        } catch (err) {
-          return res.status(400).json({ error: err.message })
-        }
-      }
-    }
+    const clientWebSearchSettings = await resolveStoredWebSearchSettings(
+      req.body?.webSearchSettings,
+      this.userSettingsStore,
+      userId,
+      internal
+    )
 
     let webSearchSettings
     try {

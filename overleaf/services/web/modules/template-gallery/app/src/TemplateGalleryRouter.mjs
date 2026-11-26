@@ -37,13 +37,15 @@ function adminRateLimit(name, points) {
   )
 }
 
-const adminWriteRateLimit = adminRateLimit('template-gallery-admin-write', 60)
-const adminHeavyRateLimit = adminRateLimit('template-gallery-admin-heavy', 10)
+let adminWriteRateLimit = null
+let adminHeavyRateLimit = null
 
 // The session cookie is a single short string; keep its body small.
 const credentialJsonParser = express.json({ limit: '16kb' })
 
 export function apply(webRouter) {
+  adminWriteRateLimit ??= adminRateLimit('template-gallery-admin-write', 60)
+  adminHeavyRateLimit ??= adminRateLimit('template-gallery-admin-heavy', 10)
   const requireLogin = AuthenticationController.requireLogin()
 
   if (

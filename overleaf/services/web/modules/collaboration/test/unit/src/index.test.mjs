@@ -9,8 +9,14 @@ const {
   mockTrackChangesController,
   mockPreferencesController,
   mockNotificationHandler,
+  mockDb,
 } = vi.hoisted(() => ({
   mockSettings: { enableCollaboration: undefined },
+  mockDb: {
+    notificationsPreferences: {
+      deleteMany: vi.fn(),
+    },
+  },
   mockCommentController: {
     getThreads: vi.fn(),
     getThread: vi.fn(),
@@ -76,6 +82,9 @@ vi.mock(
 )
 vi.mock('../../../../../app/src/infrastructure/RateLimiter.mjs', () => ({
   RateLimiter: vi.fn(),
+}))
+vi.mock('../../../../../app/src/infrastructure/mongodb.mjs', () => ({
+  db: mockDb,
 }))
 
 async function applyRoutes() {
@@ -204,6 +213,41 @@ describe('collaboration module routes', () => {
       expect(
         mockNotificationHandler.handleCommentMessageSent
       ).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('cleanup lifecycle hooks', () => {
+    it('deletes orphaned notification preferences on deleteUser, expireDeletedUser, and projectExpired when enabled', async () => {
+      mockSettings.enableCollaboration = true
+      mockDb.notificationsPreferences.deleteMany.mockResolvedValue()
+      vi.resetModules()
+      const mod = (await import('../../../index.mjs')).default
+
+      await mod.hooks.promises.deleteUser({ toString: () => 'u1' })
+      await mod.hooks.promises.expireDeletedUser('u2')
+      await mod.hooks.promises.projectExpired({ toString: () => 'p1' })
+
+      expect(mockDb.notificationsPreferences.deleteMany).toHaveBeenCalledWith({
+        user_id: 'u1',
+      })
+      expect(mockDb.notificationsPreferences.deleteMany).toHaveBeenCalledWith({
+        user_id: 'u2',
+      })
+      expect(mockDb.notificationsPreferences.deleteMany).toHaveBeenCalledWith({
+        project_id: 'p1',
+      })
+    })
+
+    it('does nothing on cleanup hooks when disabled', async () => {
+      mockSettings.enableCollaboration = false
+      vi.resetModules()
+      const mod = (await import('../../../index.mjs')).default
+
+      await mod.hooks.promises.deleteUser('u1')
+      await mod.hooks.promises.expireDeletedUser('u1')
+      await mod.hooks.promises.projectExpired('p1')
+
+      expect(mockDb.notificationsPreferences.deleteMany).not.toHaveBeenCalled()
     })
   })
 })

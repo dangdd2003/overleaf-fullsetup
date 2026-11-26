@@ -381,7 +381,9 @@ async function runDetailsPhase(run, phase, { isStopped }) {
         })
       await refill
     }
-    return queue.shift() ?? null
+    const token = queue.shift() ?? null
+    if (token) taken.add(token)
+    return token
   }
 
   // Every route is blocked or resting: wait instead of refusing every item
@@ -395,7 +397,6 @@ async function runDetailsPhase(run, phase, { isStopped }) {
       }
       const token = await nextToken()
       if (!token) return
-      taken.add(token)
       inFlight.add(token)
       try {
         await mirror.syncItem(token, { before })

@@ -3,6 +3,7 @@ import { vi, describe, it, expect, beforeEach } from 'vitest'
 const { mockDb, mockSessionManager } = vi.hoisted(() => {
   const mockCollection = {
     findOne: vi.fn(),
+    find: vi.fn(),
     updateOne: vi.fn(),
   }
   const mockDb = {
@@ -67,6 +68,7 @@ describe('NotificationPreferencesController', () => {
           commentOnInvitedProject: false,
           repliesOnAuthoredThread: true,
           repliesOnParticipatingThread: true,
+          mentionsInThread: true,
           muteAllNotifications: false,
         })
       )
@@ -128,6 +130,34 @@ describe('NotificationPreferencesController', () => {
         { upsert: true }
       )
       expect(res.sendStatus).toHaveBeenCalledWith(200)
+    })
+  })
+
+  describe('getUsersProjectPreferences', () => {
+    it('batches preference lookups with $in and falls back to defaults', async () => {
+      mockDb.notificationsPreferences.find.mockReturnValue({
+        toArray: vi.fn().mockResolvedValue([
+          {
+            user_id: 'u1',
+            project_id: 'p1',
+            preferences: { mentionsInThread: false },
+          },
+        ]),
+      })
+
+      const result =
+        await NotificationPreferencesController.getUsersProjectPreferences(
+          ['u1', 'u2'],
+          'p1'
+        )
+
+      expect(mockDb.notificationsPreferences.find).toHaveBeenCalledWith({
+        user_id: { $in: ['u1', 'u2'] },
+        project_id: 'p1',
+      })
+      expect(result.get('u1').mentionsInThread).toBe(false)
+      expect(result.get('u1').repliesOnAuthoredThread).toBe(true)
+      expect(result.get('u2').mentionsInThread).toBe(true)
     })
   })
 })

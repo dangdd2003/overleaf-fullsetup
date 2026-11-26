@@ -628,6 +628,46 @@ describe('AdminUserSelfServiceEmailsController', () => {
         '127.0.0.1',
         { email: 'secondary@example.com' }
       )
+      expect(UserUpdater.promises.removeEmailAddress).not.toHaveBeenCalled()
+    })
+
+    it('removes the old primary email when delete-unconfirmed-primary is passed and old primary is unconfirmed', async () => {
+      const { req, res } = createMockReqRes({
+        body: { email: 'secondary@example.com' },
+        query: { 'delete-unconfirmed-primary': '' },
+      })
+      UserGetter.promises.getUser.mockResolvedValue({
+        _id: '507f1f77bcf86cd799439011',
+        email: 'primary@example.com',
+        emails: [
+          { email: 'primary@example.com', confirmedAt: null },
+          { email: 'secondary@example.com', confirmedAt: new Date() },
+        ],
+      })
+      UserUpdater.promises.setDefaultEmailAddress.mockResolvedValue()
+      UserUpdater.promises.removeEmailAddress.mockResolvedValue()
+      UserSessionsManager.promises.removeSessionsFromRedis.mockResolvedValue()
+      UserAuditLogHandler.promises.addEntry.mockResolvedValue()
+
+      await AdminUserSelfServiceEmailsController.setDefaultEmail(req, res)
+
+      expect(res.statusCode).toBe(200)
+      expect(UserUpdater.promises.setDefaultEmailAddress).toHaveBeenCalledWith(
+        '507f1f77bcf86cd799439011',
+        'secondary@example.com',
+        false,
+        expect.objectContaining({ initiatorId: '507f1f77bcf86cd799439011' }),
+        true,
+        true
+      )
+      expect(UserUpdater.promises.removeEmailAddress).toHaveBeenCalledWith(
+        '507f1f77bcf86cd799439011',
+        'primary@example.com',
+        expect.objectContaining({
+          initiatorId: '507f1f77bcf86cd799439011',
+          ipAddress: '127.0.0.1',
+        })
+      )
     })
   })
 

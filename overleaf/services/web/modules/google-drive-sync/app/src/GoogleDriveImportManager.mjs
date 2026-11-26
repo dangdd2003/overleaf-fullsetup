@@ -23,6 +23,50 @@ function _toObjectId(id) {
   return id
 }
 
+async function _filterStaleProjectStates(projectStates) {
+  const canQueryFind = typeof db.projects?.find === 'function'
+  const canQueryFindOne = typeof db.projects?.findOne === 'function'
+  if (!canQueryFind && !canQueryFindOne) {
+    return projectStates
+  }
+
+  const projectIds = projectStates.map(st => st.projectId).filter(Boolean)
+  if (projectIds.length === 0) {
+    return projectStates
+  }
+
+  const existingById = new Map()
+  if (canQueryFind) {
+    const docs = await db.projects
+      .find(
+        { _id: { $in: projectIds.map(_toObjectId) } },
+        { projection: { _id: 1, deleted: 1 } }
+      )
+      .toArray()
+    for (const doc of docs || []) {
+      existingById.set(String(doc._id), doc)
+    }
+  } else {
+    for (const pid of projectIds) {
+      const doc = await db.projects.findOne(
+        { _id: _toObjectId(pid) },
+        { projection: { _id: 1, deleted: 1 } }
+      )
+      if (doc) {
+        existingById.set(String(doc._id || pid), doc)
+      }
+    }
+  }
+
+  // Listing only hides these states. A deleted project can still be restored
+  // with its Drive link; the state is removed when the project is purged.
+  return projectStates.filter(st => {
+    if (!st.projectId) return true
+    const existingProject = existingById.get(String(st.projectId))
+    return Boolean(existingProject && !existingProject.deleted)
+  })
+}
+
 /**
  * Fast-lists direct folder children under the user's Overleaf Google Drive root folder.
  * Only queries folder names and IDs without traversing subdirectories or file contents.
@@ -34,9 +78,10 @@ async function listImportableFolders(userId) {
   const userObjectId = _toObjectId(userId)
   const rootFolderId = await GoogleDriveClient.getOrCreateRootFolder(userId)
 
-  const projectStates = await db.googleDriveProjectStates
+  const rawProjectStates = await db.googleDriveProjectStates
     .find({ userId: userObjectId })
     .toArray()
+  const projectStates = await _filterStaleProjectStates(rawProjectStates)
 
   const projectByFolderId = new Map()
   const projectByFolderName = new Map()

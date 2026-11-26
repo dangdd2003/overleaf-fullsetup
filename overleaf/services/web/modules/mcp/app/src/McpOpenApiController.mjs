@@ -45,6 +45,14 @@ const OPENAPI_SPEC = {
         responses: { '200': { description: 'Created project' } },
       },
     },
+    '/profile': {
+      get: {
+        summary: 'Get your profile',
+        operationId: 'getProfile',
+        description: 'Returns your profile: an opaque id derived from your user id (not your Overleaf user id), plus name and email when they are set. Requires a token with the mcp scope.',
+        responses: { '200': { description: 'Profile with id, and name and email when set.' } },
+      },
+    },
     '/projects-zip': {
       get: {
         summary: 'Download several projects as one zip (projectIds as a comma-separated query)',

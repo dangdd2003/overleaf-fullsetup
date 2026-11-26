@@ -146,13 +146,20 @@ async function _prepare(projectId) {
   }
 }
 
-async function pull(projectId) {
+async function _pull(projectId, { skipRescueOnConflict = false } = {}) {
   const { stateDoc, token, creds, repoDir } = await _prepare(projectId)
   try {
     await ProjectContentIO.promises.materializeProject(projectId, repoDir)
     await SyncEngine.promises.commitAll(repoDir, 'Sync from Overleaf', creds.githubUsername, creds.email)
     const { conflict } = await SyncEngine.promises.mergeOrigin(repoDir, stateDoc.repoDefaultBranch)
     if (conflict) {
+      if (skipRescueOnConflict) {
+        await releaseLock(projectId, {
+          syncState: 'conflict',
+          lastError: stateDoc.lastError || { code: 'conflict', message: '', at: new Date() },
+        })
+        return { code: 'conflict' }
+      }
       const branchName = await SyncEngine.promises.pushRescueBranch(repoDir, token)
       await releaseLock(projectId, {
         syncState: 'conflict',
@@ -184,6 +191,10 @@ async function pull(projectId) {
     await _failSync(projectId, err)
     throw err
   }
+}
+
+async function pull(projectId) {
+  return _pull(projectId)
 }
 
 async function push(projectId, commitMessage) {
@@ -235,6 +246,68 @@ async function push(projectId, commitMessage) {
   }
 }
 
+async function _resetToOriginAndApply(projectId) {
+  const { stateDoc, token, repoDir } = await _prepare(projectId)
+  try {
+    const beforeResetSha = await SyncEngine.promises.getHeadSha(repoDir)
+    // The reset drops the local "Sync from Overleaf" commit, which may hold
+    // Overleaf edits made since the first conflict. Keep it on GitHub first.
+    await SyncEngine.promises.pushRescueBranch(repoDir, token)
+    await SyncEngine.promises.runGit(repoDir, [
+      'reset',
+      '--hard',
+      `origin/${stateDoc.repoDefaultBranch}`,
+    ])
+    const remoteSha = await SyncEngine.promises.getHeadSha(repoDir)
+    const warnings = []
+    if (beforeResetSha && remoteSha && beforeResetSha !== remoteSha) {
+      const changes = await SyncEngine.promises.diffChangeSet(
+        repoDir,
+        beforeResetSha,
+        remoteSha
+      )
+      const deletions = []
+      for (const change of changes || []) {
+        if (change.type === 'D') {
+          deletions.push(change)
+        } else if (change.type === 'R') {
+          deletions.push({ type: 'D', path: change.oldPath })
+        }
+      }
+      if (deletions.length > 0) {
+        const delWarnings = await SyncFileOps.promises.applyChangeSet(
+          projectId,
+          stateDoc.user_id,
+          repoDir,
+          deletions
+        )
+        if (Array.isArray(delWarnings)) {
+          warnings.push(...delWarnings)
+        }
+      }
+    }
+    const treeWarnings = await SyncFileOps.promises.applyImportTree(
+      projectId,
+      stateDoc.user_id,
+      repoDir
+    )
+    if (Array.isArray(treeWarnings)) {
+      warnings.push(...treeWarnings)
+    }
+    await releaseLock(projectId, {
+      syncState: 'idle',
+      outgoing: false,
+      lastSyncedCommitSha: remoteSha,
+      lastError: null,
+      status: { incomingCommits: 0, checkedAt: new Date() },
+    })
+    return { code: 'ok', sha: remoteSha, warnings }
+  } catch (err) {
+    await _failSync(projectId, err)
+    throw err
+  }
+}
+
 async function continueAfterManualMerge(projectId) {
   const stateDoc = await getState(projectId)
   if (!stateDoc) {
@@ -245,7 +318,18 @@ async function continueAfterManualMerge(projectId) {
     err.code = 'notInConflict'
     throw err
   }
-  return pull(projectId)
+  try {
+    const result = await _pull(projectId, { skipRescueOnConflict: true })
+    if (result?.code === 'conflict') {
+      return _resetToOriginAndApply(projectId)
+    }
+    return result
+  } catch (err) {
+    if (err?.code === 'mergeConflict' || err?.code === 'conflict') {
+      return _resetToOriginAndApply(projectId)
+    }
+    throw err
+  }
 }
 
 async function importProject(userId, { repoOwner, repoName, branch, projectName }) {

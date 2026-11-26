@@ -51,6 +51,7 @@ describe('GoogleDriveSyncManager', function () {
       findOneAndUpdate: vi.fn(),
       insertOne: vi.fn(),
       updateOne: vi.fn(),
+      deleteOne: vi.fn(),
     },
   }
 
@@ -1199,13 +1200,10 @@ describe('GoogleDriveSyncManager', function () {
 
       expect(error?.code).toBe('forbidden')
       expect(GoogleDriveClient.getOrCreateRootFolder).not.toHaveBeenCalled()
-      // The lock taken for the attempt is still released.
-      expect(db.googleDriveProjectStates.updateOne).toHaveBeenCalledWith(
-        { projectId: expect.anything(), lockToken: expect.any(String) },
-        expect.objectContaining({
-          $set: { isSyncing: false, lockExpiresAt: null },
-        })
-      )
+      // Authorization runs before acquiring a project lock or creating a state stub.
+      expect(db.googleDriveProjectStates.findOneAndUpdate).not.toHaveBeenCalled()
+      expect(db.googleDriveProjectStates.insertOne).not.toHaveBeenCalled()
+      expect(db.googleDriveProjectStates.updateOne).not.toHaveBeenCalled()
     })
 
     it('refuses to sync a project unlinked because its Drive folder was trashed', async function () {
@@ -1238,6 +1236,11 @@ describe('GoogleDriveSyncManager', function () {
     })
 
     it('throws error when project lock cannot be acquired', async function () {
+      ProjectGetter.promises.getProject.mockResolvedValue({
+        _id: projectId,
+        name: 'Thesis',
+        owner_ref: userId,
+      })
       db.googleDriveProjectStates.findOneAndUpdate.mockResolvedValue(null)
       db.googleDriveProjectStates.findOne.mockResolvedValue({
         projectId: new MockObjectId(projectId),
@@ -1253,6 +1256,60 @@ describe('GoogleDriveSyncManager', function () {
       }
       expect(error).toBeDefined()
       expect(error.message).toMatch(/Could not acquire project lock/i)
+    })
+
+    it('does not acquire lock when project does not exist', async function () {
+      ProjectGetter.promises.getProject.mockResolvedValue(null)
+
+      let error
+      try {
+        await GoogleDriveSyncManager.syncProject(projectId, userId)
+      } catch (err) {
+        error = err
+      }
+      expect(error).toBeDefined()
+      expect(error.message).toMatch(/Project not found for sync/)
+      expect(db.googleDriveProjectStates.findOneAndUpdate).not.toHaveBeenCalled()
+      expect(db.googleDriveProjectStates.insertOne).not.toHaveBeenCalled()
+    })
+
+    it('cleans up an unlinked stub state document if syncProject fails before linking driveFolderId', async function () {
+      ProjectGetter.promises.getProject.mockResolvedValue({
+        _id: projectId,
+        name: 'Thesis',
+        owner_ref: userId,
+      })
+      db.googleDriveProjectStates.findOne.mockResolvedValue(null)
+      db.googleDriveProjectStates.findOneAndUpdate.mockResolvedValue({
+        value: { projectId: new MockObjectId(projectId) },
+      })
+      db.googleDriveProjectStates.deleteOne.mockResolvedValue({
+        deletedCount: 1,
+      })
+      GoogleDriveClient.getOrCreateRootFolder.mockRejectedValue(
+        new Error('Drive API failure')
+      )
+
+      let error
+      try {
+        await GoogleDriveSyncManager.syncProject(projectId, userId)
+      } catch (err) {
+        error = err
+      }
+      expect(error).toBeDefined()
+      expect(error.message).toMatch(/Drive API failure/)
+
+      expect(db.googleDriveProjectStates.deleteOne).toHaveBeenCalledWith({
+        projectId: expect.anything(),
+        driveFolderId: { $exists: false },
+        syncSuspended: { $ne: true },
+      })
+      expect(db.googleDriveProjectStates.updateOne).not.toHaveBeenCalledWith(
+        { projectId: expect.anything() },
+        expect.objectContaining({
+          $set: expect.objectContaining({ syncStatus: 'error' }),
+        })
+      )
     })
 
     it('flushes pending document-updater edits to Mongo before reading docs', async function () {
@@ -1994,6 +2051,9 @@ describe('GoogleDriveSyncManager', function () {
       const res = await GoogleDriveSyncManager.downloadDriveFolderToOverleaf(projectId, userId, projectFolderId)
 
       expect(res.success).toBe(true)
+      expect(
+        DocumentUpdaterHandler.promises.flushProjectToMongo
+      ).toHaveBeenCalledWith(projectId)
       expect(EditorController.promises.upsertFileWithPath).toHaveBeenCalledWith(
         projectId,
         '/logo.png',
@@ -2129,6 +2189,62 @@ describe('GoogleDriveSyncManager', function () {
       expect(res.success).toBe(true)
       // Must NOT delete from Overleaf; pushes instead
       expect(EditorController.promises.deleteEntityWithPath).not.toHaveBeenCalled()
+    })
+
+    it('guards pendingChanges clear in syncProject with timestamp captured before flushProjectToMongo', async function () {
+      db.googleDriveProjectStates.findOneAndUpdate.mockResolvedValue({
+        value: { projectId: new MockObjectId(projectId) },
+      })
+      db.googleDriveProjectStates.updateOne.mockResolvedValue({ modifiedCount: 1 })
+      ProjectGetter.promises.getProject.mockResolvedValue({
+        _id: new MockObjectId(projectId),
+        name: 'My Project',
+        owner_ref: new MockObjectId(userId),
+      })
+      GoogleDriveClient.getOrCreateRootFolder.mockResolvedValue(rootFolderId)
+      GoogleDriveClient.getOrCreateProjectFolder.mockResolvedValue(projectFolderId)
+      db.googleDriveProjectStates.findOne.mockResolvedValue({
+        projectId: new MockObjectId(projectId),
+        userId: new MockObjectId(userId),
+        driveFolderId: projectFolderId,
+        fileMap: {},
+      })
+      let duringFlushTime
+      DocumentUpdaterHandler.promises.flushProjectToMongo.mockImplementation(
+        async () => {
+          await new Promise(resolve => setTimeout(resolve, 10))
+          duringFlushTime = new Date()
+        }
+      )
+      ProjectEntityHandler.promises.getAllEntities.mockResolvedValue({
+        docs: [],
+        files: [],
+      })
+      DocstoreManager.promises.getAllDocs.mockResolvedValue([])
+      GoogleDriveClient.listFiles.mockResolvedValue({
+        files: [],
+        nextPageToken: null,
+      })
+
+      await GoogleDriveSyncManager.syncProject(projectId, userId)
+
+      const clearCall = db.googleDriveProjectStates.updateOne.mock.calls.find(
+        ([, update]) => update.$unset?.outboundDirtyAt !== undefined
+      )
+      expect(clearCall).toBeDefined()
+      const [filter, update] = clearCall
+      expect(filter.$or).toEqual([
+        { outboundDirtyAt: { $lte: expect.any(Date) } },
+        { outboundDirtyAt: null },
+        { outboundDirtyAt: { $exists: false } },
+      ])
+      expect(filter.$or[0].outboundDirtyAt.$lte.getTime()).toBeLessThanOrEqual(
+        duringFlushTime.getTime()
+      )
+      expect(update).toEqual({
+        $set: { pendingChanges: {} },
+        $unset: { outboundDirtyAt: '' },
+      })
     })
   })
 
@@ -3365,6 +3481,251 @@ describe('GoogleDriveSyncManager', function () {
           })
         )
       })
+    })
+
+    it('flushes live editor state to Mongo once per project before reading entities/docs during poll', async function () {
+      db.googleDriveUserCredentials.findOne.mockResolvedValue({
+        user_id: new MockObjectId(userId),
+        rootFolderId,
+        startPageToken: 'token-flush-1',
+      })
+      GoogleDriveClient.getChanges.mockResolvedValue({
+        changes: [
+          {
+            fileId: 'file-flush-1',
+            removed: false,
+            file: {
+              id: 'file-flush-1',
+              name: 'main.tex',
+              mimeType: 'text/plain',
+              parents: [projectFolderId],
+              trashed: false,
+              md5Checksum: 'chk-new',
+            },
+          },
+        ],
+        nextPageToken: null,
+        newStartPageToken: 'token-flush-2',
+      })
+      db.googleDriveProjectStates.find.mockReturnValue({
+        toArray: vi.fn().mockResolvedValue([
+          {
+            projectId: new MockObjectId(projectId),
+            userId: new MockObjectId(userId),
+            driveFolderId: projectFolderId,
+            folderName: 'My Project',
+            fileMap: {},
+          },
+        ]),
+      })
+      DocstoreManager.promises.getAllDocs.mockResolvedValue([])
+      ProjectEntityHandler.promises.getAllEntities.mockResolvedValue({
+        docs: [],
+        files: [],
+      })
+      GoogleDriveClient.downloadFileBuffer.mockResolvedValue(
+        Buffer.from('line1\r\nline2\rline3', 'utf8')
+      )
+      EditorController.promises.upsertDocWithPath.mockResolvedValue({
+        doc: { _id: docId, rev: 1 },
+      })
+
+      const res = await GoogleDriveSyncManager.pollUserChanges(userId)
+
+      expect(res.success).toBe(true)
+      expect(
+        DocumentUpdaterHandler.promises.flushProjectToMongo
+      ).toHaveBeenCalledTimes(1)
+      expect(
+        DocumentUpdaterHandler.promises.flushProjectToMongo
+      ).toHaveBeenCalledWith(new MockObjectId(projectId))
+      const flushOrder =
+        DocumentUpdaterHandler.promises.flushProjectToMongo.mock
+          .invocationCallOrder[0]
+      const getAllDocsOrder =
+        DocstoreManager.promises.getAllDocs.mock.invocationCallOrder[0]
+      expect(flushOrder).toBeLessThan(getAllDocsOrder)
+      // Also verifies CRLF / CR normalization on inbound poll doc upsert
+      expect(EditorController.promises.upsertDocWithPath).toHaveBeenCalledWith(
+        expect.anything(),
+        '/main.tex',
+        ['line1', 'line2', 'line3'],
+        'google-drive',
+        userId
+      )
+    })
+
+    it('normalizes CRLF line endings when creating a conflict copy during poll', async function () {
+      db.googleDriveUserCredentials.findOne.mockResolvedValue({
+        user_id: new MockObjectId(userId),
+        rootFolderId,
+        startPageToken: 'token-crlf-1',
+      })
+      GoogleDriveClient.getChanges.mockResolvedValue({
+        changes: [
+          {
+            fileId: 'file-doc-conflicting',
+            removed: false,
+            file: {
+              id: 'file-doc-conflicting',
+              name: 'main.tex',
+              mimeType: 'text/plain',
+              parents: [projectFolderId],
+              trashed: false,
+            },
+          },
+        ],
+        nextPageToken: null,
+        newStartPageToken: 'token-crlf-2',
+      })
+      db.googleDriveProjectStates.find.mockReturnValue({
+        toArray: vi.fn().mockResolvedValue([
+          {
+            projectId: new MockObjectId(projectId),
+            userId: new MockObjectId(userId),
+            driveFolderId: projectFolderId,
+            folderName: 'My Project',
+            fileMap: {
+              'main.tex': {
+                driveFileId: 'file-doc-conflicting',
+                rev: 1,
+              },
+            },
+          },
+        ]),
+      })
+      GoogleDriveClient.downloadFileBuffer.mockResolvedValue(
+        Buffer.from('Drive\r\nCRLF\rline', 'utf8')
+      )
+      DocstoreManager.promises.getAllDocs.mockResolvedValue([
+        { _id: docId, lines: ['Local edit'], rev: 2 },
+      ])
+      ProjectEntityHandler.promises.getAllEntities.mockResolvedValue({
+        docs: [{ path: '/main.tex', doc: { _id: new MockObjectId(docId), name: 'main.tex' } }],
+        files: [],
+      })
+      EditorController.promises.upsertDocWithPath.mockResolvedValue(true)
+
+      await GoogleDriveSyncManager.pollUserChanges(userId)
+
+      expect(EditorController.promises.upsertDocWithPath).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.stringMatching(/^\/main \(Google Drive Conflict .*\)\.tex$/),
+        ['Drive', 'CRLF', 'line'],
+        'google-drive',
+        userId
+      )
+    })
+
+    it('defers changes targeting a busy project while still applying changes to unlocked projects', async function () {
+      const unlockedProjectId = '60d5ecb8b392d40015b6d5b2'
+      const busyProjectId = '60d5ecb8b392d40015b6d5f8'
+      const unlockedFolderId = 'folder-unlocked-1'
+      const busyFolderId = 'folder-busy-2'
+
+      db.googleDriveUserCredentials.findOne.mockResolvedValue({
+        user_id: new MockObjectId(userId),
+        rootFolderId,
+        startPageToken: 'token-busy-1',
+      })
+      GoogleDriveClient.getChanges.mockResolvedValue({
+        changes: [
+          {
+            fileId: 'file-in-busy',
+            removed: false,
+            file: {
+              id: 'file-in-busy',
+              name: 'busy.tex',
+              mimeType: 'text/plain',
+              parents: [busyFolderId],
+              trashed: false,
+              md5Checksum: 'chk-busy',
+            },
+          },
+          {
+            fileId: 'file-in-unlocked',
+            removed: false,
+            file: {
+              id: 'file-in-unlocked',
+              name: 'unlocked.tex',
+              mimeType: 'text/plain',
+              parents: [unlockedFolderId],
+              trashed: false,
+              md5Checksum: 'chk-unlocked',
+            },
+          },
+        ],
+        nextPageToken: null,
+        newStartPageToken: 'token-busy-2',
+      })
+      db.googleDriveProjectStates.find.mockReturnValue({
+        toArray: vi.fn().mockResolvedValue([
+          {
+            projectId: new MockObjectId(busyProjectId),
+            userId: new MockObjectId(userId),
+            driveFolderId: busyFolderId,
+            folderName: 'Busy Project',
+            fileMap: {},
+          },
+          {
+            projectId: new MockObjectId(unlockedProjectId),
+            userId: new MockObjectId(userId),
+            driveFolderId: unlockedFolderId,
+            folderName: 'Unlocked Project',
+            fileMap: {},
+          },
+        ]),
+      })
+      // Busy project fails lock acquisition; unlocked project succeeds.
+      db.googleDriveProjectStates.findOneAndUpdate.mockImplementation(query => {
+        if (String(query.projectId) === busyProjectId) {
+          return Promise.resolve(null)
+        }
+        return Promise.resolve({ value: { projectId: query.projectId } })
+      })
+      db.googleDriveProjectStates.findOne.mockImplementation(query => {
+        if (String(query.projectId) === busyProjectId) {
+          return Promise.resolve({
+            projectId: new MockObjectId(busyProjectId),
+            isSyncing: true,
+            lockExpiresAt: new Date(Date.now() + 50000),
+          })
+        }
+        return Promise.resolve(null)
+      })
+
+      DocstoreManager.promises.getAllDocs.mockResolvedValue([])
+      ProjectEntityHandler.promises.getAllEntities.mockResolvedValue({
+        docs: [],
+        files: [],
+      })
+      GoogleDriveClient.downloadFileBuffer.mockResolvedValue(
+        Buffer.from('unlocked content', 'utf8')
+      )
+      EditorController.promises.upsertDocWithPath.mockResolvedValue({
+        doc: { _id: docId, rev: 1 },
+      })
+
+      const res = await GoogleDriveSyncManager.pollUserChanges(userId)
+
+      expect(res.success).toBe(true)
+      expect(res.deferredChanges).toBe(true)
+      // Unlocked project was synced
+      expect(EditorController.promises.upsertDocWithPath).toHaveBeenCalledTimes(1)
+      expect(EditorController.promises.upsertDocWithPath).toHaveBeenCalledWith(
+        new MockObjectId(unlockedProjectId),
+        '/unlocked.tex',
+        ['unlocked content'],
+        'google-drive',
+        userId
+      )
+      // Page token was NOT advanced because busy project's change was deferred
+      expect(db.googleDriveUserCredentials.updateOne).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          $set: expect.objectContaining({ startPageToken: 'token-busy-2' }),
+        })
+      )
     })
   })
 

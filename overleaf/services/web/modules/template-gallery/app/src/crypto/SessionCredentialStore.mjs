@@ -28,8 +28,6 @@ export function warnIfFallbackSecret() {
   return true
 }
 
-warnIfFallbackSecret()
-
 // The cipher lives in SecretBox; these names are kept for existing callers.
 export const encryptCookie = encryptSecret
 export const decryptCookie = decryptSecret
@@ -39,6 +37,13 @@ export const decryptCookie = decryptSecret
  */
 export async function saveSessionCredential(collection, cookieValue) {
   if (!collection) throw new Error('MongoDB collection required')
+  if (!hasConfiguredSecret()) {
+    const err = new Error(
+      'Cannot save session credential: sessionSecret is not configured'
+    )
+    err.code = 'secret_not_configured'
+    throw err
+  }
   const encrypted = encryptSecret(cookieValue)
   const now = new Date()
 

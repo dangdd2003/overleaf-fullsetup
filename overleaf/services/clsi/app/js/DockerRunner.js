@@ -245,27 +245,33 @@ function isContainerOnlyPath(p) {
 }
 
 // Only chmod when the mode is wrong, so trees that are already writable are
-// not rewritten on every compile. statSync follows a symlink, as chmodSync
-// does, so the top-level directory behaves as before.
-function ensureMode(p, mode) {
-  if ((fs.statSync(p).mode & 0o777) !== mode) fs.chmodSync(p, mode)
+// not rewritten on every compile. fs.promises.stat follows a symlink, as
+// fs.promises.chmod does, so the top-level directory behaves as before.
+async function ensureMode(p, mode) {
+  const stat = await fs.promises.stat(p)
+  if ((stat.mode & 0o777) !== mode) {
+    await fs.promises.chmod(p, mode)
+  }
 }
 
 // The tex user in the image is not the owner of the files clsi writes, so the
 // whole tree (including subdirectories of included files) must be writable.
 // Symlinked entries inside the tree are not followed.
-function makeWritable(directory) {
-  ensureMode(directory, 0o777)
-  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-    const p = Path.join(directory, entry.name)
-    try {
-      if (entry.isDirectory()) {
-        makeWritable(p)
-      } else if (entry.isFile()) {
-        ensureMode(p, 0o666)
-      }
-    } catch (e) {}
-  }
+async function makeWritable(directory) {
+  await ensureMode(directory, 0o777)
+  const entries = await fs.promises.readdir(directory, { withFileTypes: true })
+  await Promise.all(
+    entries.map(async entry => {
+      const p = Path.join(directory, entry.name)
+      try {
+        if (entry.isDirectory()) {
+          await makeWritable(p)
+        } else if (entry.isFile()) {
+          await ensureMode(p, 0o666)
+        }
+      } catch (e) {}
+    })
+  )
 }
 
 function resolveHostPath(containerPath, mounts) {
@@ -369,7 +375,7 @@ const DockerRunner = {
     // applied after validation (as in Server Pro)
     selectedImage = AutoPullManager.resolveImageName(selectedImage)
 
-    getDetectedMounts((mountsErr, mounts) => {
+    getDetectedMounts(async (mountsErr, mounts) => {
       // Not fatal by itself: explicit SANDBOXED_COMPILES_HOST_DIR_* mappings
       // still work, and the refusal below covers directories that stay
       // untranslated inside a container.
@@ -525,7 +531,7 @@ const DockerRunner = {
 
       if (!isReadOnly && directory && compileGroup !== 'png2pdf') {
         try {
-          makeWritable(directory)
+          await makeWritable(directory)
         } catch (err) {
           logger.warn({ err, directory }, 'could not chmod compile directory')
         }
@@ -1021,59 +1027,67 @@ const DockerRunner = {
     const nowInSeconds = Date.now() / 1000
     const maxAgeInSeconds = this.MAX_CONTAINER_AGE / 1000
 
-    docker.listContainers({ all: true }, (err, containers) => {
-      if (err) return callback(err)
-      if (!Array.isArray(containers)) return callback(null)
+    withDeadline(
+      'listContainers',
+      cb => docker.listContainers({ all: true }, cb),
+      (err, containers) => {
+        if (err) return callback(err)
+        if (!Array.isArray(containers)) return callback(null)
 
-      const toDestroy = containers.filter(c => {
-        const rawName = c.Names?.[0] || c.Name || ''
-        const name = rawName.replace(/^\//, '')
-        if (
-          !name.startsWith('sandbox-compiler-') &&
-          !name.startsWith('project-')
-        )
-          return false
+        const toDestroy = containers.filter(c => {
+          const rawName = c.Names?.[0] || c.Name || ''
+          const name = rawName.replace(/^\//, '')
+          if (
+            !name.startsWith('sandbox-compiler-') &&
+            !name.startsWith('project-')
+          )
+            return false
 
-        const match =
-          name.match(/^sandbox-compiler-(.+)-[a-f0-9]{32}$/) ||
-          name.match(/^project-([a-f0-9]+)-/)
-        if (!match) return false
-        const projectId = match[1]
+          const match =
+            name.match(/^sandbox-compiler-(.+)-[a-f0-9]{32}$/) ||
+            name.match(/^project-([a-f0-9]+)-/)
+          if (!match) return false
+          const projectId = match[1]
 
-        const lastAccess = LastProjectAccess.getLastProjectAccessTime(projectId)
-        if (lastAccess && Date.now() - lastAccess < this.MAX_CONTAINER_AGE) {
-          return false
-        }
-
-        const ageInSeconds = nowInSeconds - (c.Created || 0)
-        return ageInSeconds > maxAgeInSeconds
-      })
-
-      let remaining = toDestroy.length
-      if (remaining === 0) return callback(null)
-
-      let firstErr = null
-      for (const c of toDestroy) {
-        const rawName = c.Names?.[0] || c.Name || ''
-        const name = rawName.replace(/^\//, '')
-        // queued like a run on that container, so a compile that is starting
-        // on it cannot have the container removed under it
-        runExclusive(
-          name,
-          release => {
-            if (runningContainers.has(name)) return release()
-            this._destroyContainer(c.Id || name, false, release)
-          },
-          destroyErr => {
-            if (destroyErr && !firstErr) firstErr = destroyErr
-            remaining--
-            if (remaining === 0) {
-              callback(firstErr)
-            }
+          const lastAccess =
+            LastProjectAccess.getLastProjectAccessTime(projectId)
+          if (
+            lastAccess &&
+            Date.now() - lastAccess < this.MAX_CONTAINER_AGE
+          ) {
+            return false
           }
-        )
+
+          const ageInSeconds = nowInSeconds - (c.Created || 0)
+          return ageInSeconds > maxAgeInSeconds
+        })
+
+        let remaining = toDestroy.length
+        if (remaining === 0) return callback(null)
+
+        let firstErr = null
+        for (const c of toDestroy) {
+          const rawName = c.Names?.[0] || c.Name || ''
+          const name = rawName.replace(/^\//, '')
+          // queued like a run on that container, so a compile that is starting
+          // on it cannot have the container removed under it
+          runExclusive(
+            name,
+            release => {
+              if (runningContainers.has(name)) return release()
+              this._destroyContainer(c.Id || name, false, release)
+            },
+            destroyErr => {
+              if (destroyErr && !firstErr) firstErr = destroyErr
+              remaining--
+              if (remaining === 0) {
+                callback(firstErr)
+              }
+            }
+          )
+        }
       }
-    })
+    )
   },
 
   // Every distinct command/env gets its own container per project. After a
@@ -1085,8 +1099,13 @@ const DockerRunner = {
     const isSibling = name =>
       name.startsWith(prefix) &&
       /^[a-f0-9]{32}$/.test(name.slice(prefix.length))
-    this._getDocker().listContainers(
-      { all: true, filters: { name: [prefix] } },
+    withDeadline(
+      'listContainers',
+      cb =>
+        this._getDocker().listContainers(
+          { all: true, filters: { name: [prefix] } },
+          cb
+        ),
       (err, containers) => {
         if (err || !Array.isArray(containers)) return
         for (const c of containers) {

@@ -64,6 +64,11 @@ function accessibleProjects(all) {
   return rows
 }
 
+/** Split document content into lines after normalizing CRLF/CR line endings. */
+function splitLines(content) {
+  return String(content).replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n')
+}
+
 export {
   ACCESS_BUCKETS,
   accessibleProjects,
@@ -71,4 +76,5 @@ export {
   isTrueParam,
   hasDotSegment,
   invalid,
+  splitLines,
 }

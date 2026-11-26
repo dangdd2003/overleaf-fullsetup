@@ -98,7 +98,9 @@ async function _updateActiveJob(job, update) {
  * @returns {Promise<void>}
  */
 async function _syncOneProject(job, entry) {
+  let syncStartedAt
   for (let attempt = 1; ; attempt++) {
+    syncStartedAt = new Date()
     try {
       await GoogleDriveSyncManager.syncProject(
         entry.projectId.toString(),
@@ -113,9 +115,17 @@ async function _syncOneProject(job, entry) {
     }
   }
 
-  // Same as a manual "Sync now": a full reconcile subsumes every queued path.
+  // Same as a manual "Sync now": a full reconcile subsumes every queued path,
+  // unless newer edits landed after this sync started.
   await db.googleDriveProjectStates.updateOne(
-    { projectId: entry.projectId },
+    {
+      projectId: entry.projectId,
+      $or: [
+        { outboundDirtyAt: { $lte: syncStartedAt } },
+        { outboundDirtyAt: null },
+        { outboundDirtyAt: { $exists: false } },
+      ],
+    },
     { $set: { pendingChanges: {} }, $unset: { outboundDirtyAt: '' } }
   )
 }

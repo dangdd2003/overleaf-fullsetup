@@ -294,6 +294,29 @@ function transportError(code, message) {
   return err
 }
 
+function signalError(signal, url, timeoutMs = null) {
+  if (signal?.reason?.name === 'TimeoutError') {
+    return transportError(
+      'ETIMEDOUT',
+      timeoutMs != null
+        ? `Request to ${url} timed out after ${timeoutMs}ms`
+        : `TLS handshake with ${url.hostname} timed out`
+    )
+  }
+  if (
+    signal?.reason instanceof Error &&
+    typeof signal.reason.code === 'string'
+  ) {
+    return signal.reason
+  }
+  const err = transportError(
+    'ABORT_ERR',
+    signal?.reason?.message || 'Request aborted'
+  )
+  err.name = 'AbortError'
+  return err
+}
+
 function decoderFor(encoding) {
   if (encoding === 'gzip' || encoding === 'x-gzip') return zlib.createGunzip()
   if (encoding === 'deflate') return zlib.createInflate()
@@ -402,26 +425,50 @@ async function egressAddress(url, egress, lookupFn) {
  * egressAddress). The TLS handshake that follows checks the certificate
  * against the hostname, whichever way the name was resolved.
  */
-async function openEgressSocket(url, egress, lookupFn) {
+async function openEgressSocket(url, egress, lookupFn, signal = null) {
+  if (signal?.aborted) {
+    throw signalError(signal, url)
+  }
   const address = await egressAddress(url, egress, lookupFn)
+  if (signal?.aborted) {
+    throw signalError(signal, url)
+  }
   const tunnel = await openTunnel(
     egress,
     address || url.hostname,
     Number(url.port || 443)
   )
+  if (signal?.aborted) {
+    tunnel.destroy()
+    throw signalError(signal, url)
+  }
   const secure = tls.connect({
     socket: tunnel,
     servername: net.isIP(url.hostname) ? undefined : url.hostname,
   })
   const timer = setTimeout(() => {
-    secure.destroy(new Error(`TLS handshake with ${url.hostname} timed out`))
+    secure.destroy(
+      transportError('ETIMEDOUT', `TLS handshake with ${url.hostname} timed out`)
+    )
   }, HANDSHAKE_TIMEOUT_MS)
+  const onAbort = () => {
+    secure.destroy(signalError(signal, url))
+  }
+  signal?.addEventListener('abort', onAbort, { once: true })
   try {
+    if (signal?.aborted) {
+      throw signalError(signal, url)
+    }
     await new Promise((resolve, reject) => {
       secure.once('secureConnect', resolve)
       secure.once('error', reject)
       secure.once('close', () =>
-        reject(new Error(`connection to ${url.hostname} closed during TLS handshake`))
+        reject(
+          transportError(
+            'ECONNRESET',
+            `connection to ${url.hostname} closed during TLS handshake`
+          )
+        )
       )
     })
   } catch (err) {
@@ -430,6 +477,7 @@ async function openEgressSocket(url, egress, lookupFn) {
     throw err
   } finally {
     clearTimeout(timer)
+    signal?.removeEventListener('abort', onAbort)
   }
   return secure
 }
@@ -438,6 +486,43 @@ async function openEgressSocket(url, egress, lookupFn) {
 // an egress hop reuses the tunnel that was opened for it.
 function connectOptions(tunnel, lookupFn) {
   return tunnel ? { createConnection: () => tunnel } : { lookup: lookupFn }
+}
+
+function startHopRequest(
+  transport,
+  currentUrl,
+  requestOptions,
+  tunnel,
+  combinedSignal,
+  timeoutMs,
+  onResponse,
+  reject
+) {
+  if (combinedSignal.aborted) {
+    tunnel?.destroy()
+    reject(signalError(combinedSignal, currentUrl, timeoutMs))
+    return null
+  }
+  let req
+  try {
+    req = transport.request(currentUrl, requestOptions, onResponse)
+  } catch (err) {
+    tunnel?.destroy()
+    reject(
+      combinedSignal.aborted
+        ? signalError(combinedSignal, currentUrl, timeoutMs)
+        : err
+    )
+    return null
+  }
+  req.on('error', err => {
+    tunnel?.destroy()
+    if (combinedSignal.aborted) {
+      return reject(signalError(combinedSignal, currentUrl, timeoutMs))
+    }
+    reject(err)
+  })
+  return req
 }
 
 /**
@@ -470,21 +555,22 @@ export async function requestRaw(urlString, options = {}) {
   let currentHeaders = headers
 
   for (let hop = 0; hop <= maxRedirects; hop++) {
+    const isHttps = currentUrl.protocol === 'https:'
+    const transport = isHttps ? https : http
+
+    const timeoutSignal = AbortSignal.timeout(timeoutMs)
+    const combinedSignal = signal
+      ? AbortSignal.any([signal, timeoutSignal])
+      : timeoutSignal
+
+    const reqHeaders = buildRequestHeaders(currentUrl, currentHeaders)
+
     const tunnel = egress
-      ? await openEgressSocket(currentUrl, egress, lookupFn)
+      ? await openEgressSocket(currentUrl, egress, lookupFn, combinedSignal)
       : null
     const response = await new Promise((resolve, reject) => {
-      const isHttps = currentUrl.protocol === 'https:'
-      const transport = isHttps ? https : http
-
-      const timeoutSignal = AbortSignal.timeout(timeoutMs)
-      const combinedSignal = signal
-        ? AbortSignal.any([signal, timeoutSignal])
-        : timeoutSignal
-
-      const reqHeaders = buildRequestHeaders(currentUrl, currentHeaders)
-
-      const req = transport.request(
+      const req = startHopRequest(
+        transport,
         currentUrl,
         {
           method: currentMethod,
@@ -493,6 +579,9 @@ export async function requestRaw(urlString, options = {}) {
           signal: combinedSignal,
           agent: false,
         },
+        tunnel,
+        combinedSignal,
+        timeoutMs,
         res => {
           const status = res.statusCode ?? 0
 
@@ -603,19 +692,10 @@ export async function requestRaw(urlString, options = {}) {
               )
             }
           })
-        }
+        },
+        reject
       )
-
-      req.on('error', err => {
-        if (combinedSignal.aborted) {
-          const abortErr = new Error(
-            `Request to ${currentUrl} timed out after ${timeoutMs}ms`
-          )
-          abortErr.code = 'ETIMEDOUT'
-          return reject(abortErr)
-        }
-        reject(err)
-      })
+      if (!req) return
 
       if (currentBody) {
         if (Buffer.isBuffer(currentBody) || typeof currentBody === 'string') {
@@ -713,10 +793,11 @@ export async function fetchStream(url, opts = {}) {
     const reqHeaders = buildRequestHeaders(currentUrl, currentHeaders)
 
     const tunnel = egress
-      ? await openEgressSocket(currentUrl, egress, lookupFn)
+      ? await openEgressSocket(currentUrl, egress, lookupFn, combinedSignal)
       : null
     const { redirect, result } = await new Promise((resolve, reject) => {
-      const req = transport.request(
+      const req = startHopRequest(
+        transport,
         currentUrl,
         {
           method: 'GET',
@@ -725,6 +806,9 @@ export async function fetchStream(url, opts = {}) {
           signal: combinedSignal,
           agent: false,
         },
+        tunnel,
+        combinedSignal,
+        timeoutMs,
         res => {
           const status = res.statusCode ?? 0
           if (status >= 300 && status < 400 && res.headers.location) {
@@ -819,19 +903,10 @@ export async function fetchStream(url, opts = {}) {
               url: currentUrl.toString(),
             },
           })
-        }
+        },
+        reject
       )
-
-      req.on('error', err => {
-        if (combinedSignal.aborted) {
-          const abortErr = new Error(
-            `Request to ${currentUrl} timed out after ${timeoutMs}ms`
-          )
-          abortErr.code = 'ETIMEDOUT'
-          return reject(abortErr)
-        }
-        reject(err)
-      })
+      if (!req) return
 
       req.end()
     })

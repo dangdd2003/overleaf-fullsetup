@@ -9,17 +9,19 @@ import defaultStore, {
   isValidChatId,
 } from './AiAssistChatHistoryStore.mjs'
 import {
-  bindStoredApiKey,
   createProviderClient,
   normalizeProviderBaseUrl,
   validateSafeProviderBaseUrl,
 } from './AiAssistProviders.mjs'
-import defaultUserSettingsStore from './AiAssistUserSettingsStore.mjs'
 import { OBJECT_ID } from './AiAssistCheckpointStore.mjs'
 import { generateChatTitle } from './AiAssistChatTitler.mjs'
+import defaultUserSettingsStore, {
+  MASKED_SECRET,
+  applyStoredProviderSecret,
+  stripMaskedProviderSecret,
+} from './AiAssistUserSettingsStore.mjs'
 import SessionManager from '../../../../app/src/Features/Authentication/SessionManager.mjs'
 
-const MASKED_API_KEY = '••••••••'
 const ALLOWED_STATS_KEYS = [
   'promptTokens',
   'completionTokens',
@@ -202,40 +204,35 @@ export class AiAssistChatHistoryController {
     if (!ids) return
     const { prompt } = req.body || {}
     let providerSettings = req.body?.providerSettings
-    const needsStoredProviderKey =
+    const needsStored =
       !providerSettings ||
       typeof providerSettings !== 'object' ||
       !providerSettings.type ||
       !providerSettings.apiKey ||
-      providerSettings.apiKey === MASKED_API_KEY
-    if (needsStoredProviderKey) {
-      let internal = null
+      providerSettings.apiKey === MASKED_SECRET
+    if (ids.userId && needsStored) {
       try {
-        internal = await this.userSettingsStore.getInternalUserSettings(ids.userId)
+        const internal = await this.userSettingsStore.getInternalUserSettings(
+          ids.userId
+        )
+        const requestedSlot = req.body?.slot || providerSettings?.slot
+        const slot =
+          requestedSlot === 'fastProvider' ? 'fastProvider' : 'provider'
+        const fallbackSlots = requestedSlot
+          ? []
+          : [slot === 'provider' ? 'fastProvider' : 'provider']
+        providerSettings = applyStoredProviderSecret(providerSettings, internal, {
+          slot,
+          fallbackSlots,
+        })
       } catch {}
-      if (
-        internal?.provider?.type &&
-        (!providerSettings ||
-          typeof providerSettings !== 'object' ||
-          !providerSettings.type)
-      ) {
-        providerSettings = internal.provider
-      } else if (
-        providerSettings &&
-        typeof providerSettings === 'object' &&
-        providerSettings.type
-      ) {
-        try {
-          providerSettings = bindStoredApiKey(
-            providerSettings,
-            internal?.provider ?? null
-          )
-        } catch (err) {
-          return res.status(400).json({ error: err.message })
-        }
-      }
     }
-    if (!providerSettings || typeof providerSettings !== 'object') {
+    providerSettings = stripMaskedProviderSecret(providerSettings)
+    if (
+      !providerSettings ||
+      typeof providerSettings !== 'object' ||
+      !providerSettings.type
+    ) {
       return res.status(400).json({ error: 'Missing providerSettings' })
     }
     const rawBaseUrl = providerSettings.baseUrl || providerSettings.baseURL
@@ -252,8 +249,11 @@ export class AiAssistChatHistoryController {
     }
     try {
       // A title is a few words; it runs at the provider's default effort
+      const { baseURL: _omitBaseURL, ...restSettings } = providerSettings
+      const rawBaseUrl = providerSettings.baseUrl || providerSettings.baseURL
       const client = this.clientFactory({
-        ...providerSettings,
+        ...restSettings,
+        ...(rawBaseUrl ? { baseUrl: rawBaseUrl } : {}),
         reasoningEffort: undefined,
         thinking: undefined,
       })

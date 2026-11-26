@@ -1,3 +1,5 @@
+import path from 'node:path'
+
 export const MODES = ['manual', 'acceptEdits', 'plan']
 export const DEFAULT_MODE = 'manual'
 
@@ -76,15 +78,17 @@ export const SETTINGS_TOOLS = new Set([
 
 export const PLAN_TOOL = 'present_plan'
 
-// Edits to the project's root AGENTS.md change every later run's instructions,
-// so they always ask, whatever the mode. Matches './AGENTS.md', '/agents.md'.
-export function isInstructionPath(path) {
-  if (typeof path !== 'string') return false
-  const normalized = path
-    .trim()
-    .replace(/^(\.\/+|\/+)+/, '')
-    .toLowerCase()
-  return normalized === 'agents.md'
+export function isInstructionPath(filePath) {
+  if (typeof filePath !== 'string') return false
+  const cleaned = filePath.trim().replace(/\\/g, '/')
+  if (!cleaned) return false
+  const normalized = path.posix
+    .normalize(cleaned)
+    .replace(/^(?:\.\/|\/)+/, '')
+    .replace(/\/+$/, '')
+  if (!normalized || normalized === '.') return false
+  // Only the root AGENTS.md is loaded as instructions
+  return normalized.toLowerCase() === 'agents.md'
 }
 
 /**

@@ -7,7 +7,12 @@ import {
   normalizeProviderBaseUrl,
 } from './AiAssistProviders.mjs'
 import { ProviderError } from './AiAssistErrors.mjs'
-import defaultUserSettingsStore from './AiAssistUserSettingsStore.mjs'
+import defaultUserSettingsStore, {
+  MASKED_SECRET,
+  applyStoredProviderSecret,
+  resolveStoredWebSearchSettings,
+  stripMaskedProviderSecret,
+} from './AiAssistUserSettingsStore.mjs'
 import { streamWithRetry } from './AiAssistRetry.mjs'
 import SessionManager from '../../../../app/src/Features/Authentication/SessionManager.mjs'
 import {
@@ -30,8 +35,7 @@ import {
  */
 
 /** What the page shows in place of a stored API key it must not see again. */
-const MASKED_KEY = '••••••••'
-const isMaskedKey = key => key === MASKED_KEY
+const isMaskedKey = key => key === MASKED_SECRET
 
 function errorPayload(err) {
   return {
@@ -158,8 +162,9 @@ export class AiAssistProviderController {
     }
     const rawBaseUrl = providerSettings.baseUrl || providerSettings.baseURL
     const baseUrl = normalizeProviderBaseUrl(providerSettings.type, rawBaseUrl)
+    const { baseURL: _omitBaseURL, ...rest } = providerSettings
     return {
-      ...providerSettings,
+      ...rest,
       baseUrl,
     }
   }
@@ -189,6 +194,7 @@ export class AiAssistProviderController {
     } else {
       providerSettings = requested
     }
+    providerSettings = stripMaskedProviderSecret(providerSettings)
     return this._finalizeSettings(providerSettings)
   }
 
@@ -234,32 +240,12 @@ export class AiAssistProviderController {
   testWebSearch = async (req, res) => {
     let settings
     try {
-      let clientSettings = req.body?.webSearchSettings
       const userId = req.session ? SessionManager.getLoggedInUserId(req.session) : null
-      const needsStoredWebKeys =
-        clientSettings?.sourceMode === 'custom' &&
-        (!clientSettings.providers ||
-          Object.keys(clientSettings.providers).length === 0 ||
-          Object.values(clientSettings.providers).some(
-            p =>
-              p &&
-              typeof p === 'object' &&
-              ((Array.isArray(p.apiKeys) && p.apiKeys.includes(MASKED_KEY)) ||
-                (Array.isArray(p.apiKeys) && p.apiKeys.length === 0) ||
-                isMaskedKey(p.bearerToken))
-          ))
-      if (userId && needsStoredWebKeys) {
-        let internal = null
-        try {
-          internal = await this.userSettingsStore.getInternalUserSettings(userId)
-        } catch {}
-        if (internal?.webSearch) {
-          clientSettings = bindStoredWebSearchCredentials(
-            clientSettings,
-            internal.webSearch
-          )
-        }
-      }
+      const clientSettings = await resolveStoredWebSearchSettings(
+        req.body?.webSearchSettings,
+        this.userSettingsStore,
+        userId
+      )
 
       if (
         clientSettings?.sourceMode === 'server' &&

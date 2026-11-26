@@ -1,3 +1,4 @@
+import { normalizeProjectPath } from './AiAssistProjectPath.mjs'
 import logger from '@overleaf/logger'
 import { promiseMapWithLimit } from '@overleaf/promise-utils'
 import {
@@ -1347,11 +1348,15 @@ export class AiAssistTools {
     }
   }
 
+  _normalizePath(filePath) {
+    return normalizeProjectPath(filePath)
+  }
+
   async _resolveDoc(projectId, targetPath) {
-    if (!targetPath || typeof targetPath !== 'string' || !targetPath.trim()) {
+    const normalized = this._normalizePath(targetPath)
+    if (!normalized) {
       return null
     }
-    const normalized = targetPath.trim().replace(/^\//, '')
     if (this.entityHandler.getDocIdByPath) {
       try {
         const docId = await this.entityHandler.getDocIdByPath(
@@ -1836,8 +1841,7 @@ export class AiAssistTools {
   _traversalError(args) {
     for (const candidate of [args?.path, args?.rootDocPath]) {
       if (candidate && typeof candidate === 'string') {
-        const segments = candidate.trim().replace(/\\/g, '/').split('/')
-        if (segments.includes('..')) {
+        if (this._normalizePath(candidate) === null) {
           return 'Path traversal forbidden: file path cannot reference parent directories.'
         }
       }
@@ -2436,7 +2440,7 @@ export class AiAssistTools {
       case 'read_file': {
         const doc = await this._resolveDoc(projectId, args.path)
         if (!doc) {
-          const wanted = String(args.path || '').replace(/^\//, '')
+          const wanted = this._normalizePath(args.path) || ''
           const files = await this._getFilesList(projectId).catch(() => [])
           if (files.some(file => file.path === wanted)) {
             return {
@@ -2681,14 +2685,14 @@ export class AiAssistTools {
 
       case 'create_file': {
         const lines = (args.content || '').split('\n')
-        const normalizedPath =
-          typeof args.path === 'string'
-            ? args.path.trim().replace(/^\/+/, '')
-            : ''
+        const normalizedPath = this._normalizePath(args.path)
         if (!normalizedPath) {
           return {
             status: 'error',
-            error: "Parameter 'path' is required for create_file.",
+            error:
+              normalizedPath === null
+                ? 'Path traversal forbidden: file path cannot reference parent directories.'
+                : "Parameter 'path' is required for create_file.",
           }
         }
         // Creating never replaces: an upsert would silently wipe a document,

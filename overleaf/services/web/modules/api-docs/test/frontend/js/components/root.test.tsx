@@ -618,4 +618,30 @@ describe('ApiDocsPageRoot', function () {
     const samples = buildSamples(testSpec, endpointItem, 'http://localhost')
     expect(samples.curl).to.include("-d '{}'")
   })
+
+  it('scrolls to initial URL hash and keeps the hashed endpoint active in the sidebar', async function () {
+    const originalHash = window.location.hash
+    const scrollCalls: string[] = []
+    const origScrollIntoView = HTMLElement.prototype.scrollIntoView
+    HTMLElement.prototype.scrollIntoView = function () {
+      scrollCalls.push(this.id)
+    }
+    window.location.hash = '#exportPdf'
+    try {
+      await renderPage()
+      expect(scrollCalls).to.include('exportPdf')
+      const nav = screen.getByRole('navigation', { name: 'API reference' })
+      const link = within(nav).getByRole('link', {
+        name: /^GET \/api\/v0\/mcp\/projects\/\{projectId\}\/export\.pdf/,
+      })
+      // The active anchor is set in an effect after the spec loads
+      await waitFor(() => {
+        expect(link.classList.contains('is-active')).to.equal(true)
+        expect(link.getAttribute('aria-current')).to.equal('location')
+      })
+    } finally {
+      window.location.hash = originalHash
+      HTMLElement.prototype.scrollIntoView = origScrollIntoView
+    }
+  })
 })

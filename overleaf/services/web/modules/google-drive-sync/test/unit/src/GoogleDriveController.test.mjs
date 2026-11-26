@@ -644,6 +644,31 @@ describe('GoogleDriveController', () => {
 
       expect(db.googleDriveProjectStates.updateOne).not.toHaveBeenCalled()
     })
+
+    it('guards pending queue clear against edits made after syncProject started', async () => {
+      req.params.Project_id = 'proj-456'
+      GoogleDriveSyncManager.enforceManualSyncCooldown.mockResolvedValue({
+        allowed: true,
+      })
+      let duringSyncTime
+      GoogleDriveSyncManager.syncProject.mockImplementation(async () => {
+        await new Promise(resolve => setTimeout(resolve, 10))
+        duringSyncTime = new Date()
+        return { success: true }
+      })
+
+      await GoogleDriveController.syncProjectNow(req, res)
+
+      const [filter] = db.googleDriveProjectStates.updateOne.mock.calls[0]
+      expect(filter.$or).toEqual([
+        { outboundDirtyAt: { $lte: expect.any(Date) } },
+        { outboundDirtyAt: null },
+        { outboundDirtyAt: { $exists: false } },
+      ])
+      expect(filter.$or[0].outboundDirtyAt.$lte.getTime()).toBeLessThanOrEqual(
+        duringSyncTime.getTime()
+      )
+    })
   })
 
   describe('scanExistingProjects', () => {

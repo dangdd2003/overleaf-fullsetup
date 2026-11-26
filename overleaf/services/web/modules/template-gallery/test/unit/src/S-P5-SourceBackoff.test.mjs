@@ -16,6 +16,12 @@ vi.mock('../../../../../app/src/infrastructure/RedisWrapper.mjs', () => ({
   },
 }))
 
+// Pacing per route would add seconds per call; these tests only need the calls.
+vi.mock('../../../app/src/transport/RateGate.mjs', async importOriginal => ({
+  ...(await importOriginal()),
+  withHostSlot: async (hostKey, opts, fn) => fn({ egress: null }),
+}))
+
 // Tier 1 talks to a fake overleaf.com through requestRaw.
 vi.mock(
   '../../../app/src/transport/GuardedHttps.mjs',

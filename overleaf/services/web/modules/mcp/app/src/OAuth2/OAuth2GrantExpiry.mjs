@@ -32,20 +32,54 @@ export const GRANT_INDEXES = [
   SUPERSEDED_HASH_INDEX,
 ]
 
+// Mongoose autoIndex is off in production, so the module builds these too.
+export const APPLICATION_INDEXES = [
+  {
+    key: { id: 1 },
+    name: 'id_1',
+    unique: true,
+    sparse: true,
+  },
+]
+
+export const AUTHORIZATION_CODE_INDEXES = [
+  {
+    key: { authorizationCode: 1 },
+    name: 'authorizationCode_1',
+    unique: true,
+  },
+  // Same options as the upstream oauth_tokens_ttl migration: any difference
+  // conflicts with the index it already built and fails at every boot.
+  {
+    key: { expiresAt: 1 },
+    name: 'expiresAt_1',
+    partialFilterExpression: { expiresAt: { $exists: true } },
+    expireAfterSeconds: 0,
+  },
+]
+
+const COLLECTION_INDEXES = [
+  ['oauthAccessTokens', GRANT_INDEXES],
+  ['oauthApplications', APPLICATION_INDEXES],
+  ['oauthAuthorizationCodes', AUTHORIZATION_CODE_INDEXES],
+]
+
 /**
- * Creates the grant indexes. Each is a no-op once it exists. Only the enabled
+ * Creates the OAuth2 indexes. Each is a no-op once it exists. Only the enabled
  * module calls this.
  */
 export async function ensureGrantExpiry() {
   await waitForDb()
-  for (const { key, ...options } of GRANT_INDEXES) {
-    try {
-      await db.oauthAccessTokens.createIndex(key, options)
-    } catch (err) {
-      logger.error(
-        { err, index: options.name },
-        '[MCP] grant index not created'
-      )
+  for (const [collectionName, indexes] of COLLECTION_INDEXES) {
+    for (const { key, ...options } of indexes) {
+      try {
+        await db[collectionName].createIndex(key, options)
+      } catch (err) {
+        logger.error(
+          { err, collection: collectionName, index: options.name },
+          '[MCP] OAuth2 index not created'
+        )
+      }
     }
   }
   // Runs at each startup. Grants written before accessTokenExpiresAt was

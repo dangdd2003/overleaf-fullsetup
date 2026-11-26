@@ -257,6 +257,9 @@ function requestOnce(
         else if (encoding === 'deflate') stream = res.pipe(zlib.createInflate())
         else if (encoding === 'br')
           stream = res.pipe(zlib.createBrotliDecompress())
+        if (stream !== res) {
+          res.on('error', err => stream.destroy(err))
+        }
 
         const chunks = []
         let size = 0
@@ -282,6 +285,7 @@ function requestOnce(
             truncated = true
             finish()
             res.destroy()
+            if (stream !== res) stream.destroy()
             return
           }
           chunks.push(chunk)
@@ -291,6 +295,8 @@ function requestOnce(
           if (truncated) return
           if (settled) return
           settled = true
+          if (stream !== res) stream.destroy()
+          res.destroy()
           reject(err)
         })
       }

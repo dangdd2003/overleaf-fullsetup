@@ -1013,3 +1013,152 @@ describe('AiAssistRunController streamRun after headers are sent', function () {
     expect(release.called).to.be.true
   })
 })
+
+describe('AiAssistRunController stored secret origin isolation', function () {
+  it('refuses to inject stored provider or webSearch secrets across mismatched origins', async function () {
+    const savedWebTools = Settings.aiAssist?.webToolsEnabled
+    Settings.aiAssist = { ...(Settings.aiAssist || {}), webToolsEnabled: true }
+    try {
+      const mockManager = {
+        startRun: sinon.stub().resolves(),
+      }
+      const userSettingsStore = {
+        getInternalUserSettings: sinon.stub().resolves({
+          provider: {
+            type: 'openai',
+            baseUrl: 'https://api.openai.com/v1',
+            apiKey: 'sk-stored-secret',
+            model: 'gpt-4o',
+          },
+          webSearch: {
+            sourceMode: 'custom',
+            providers: {
+              mcp: {
+                enabled: true,
+                serverUrls: ['https://mcp.example.com'],
+                bearerToken: 'mcp-secret-token',
+              },
+            },
+          },
+        }),
+      }
+      const controller = new AiAssistRunController({
+        manager: mockManager,
+        userSettingsStore,
+      })
+
+      const res = {
+        json: sinon.stub(),
+        status: sinon.stub().returnsThis(),
+      }
+
+      await controller.createRun(
+        {
+          params: { Project_id: 'proj-1' },
+          session: { user: { _id: USER_ID } },
+          body: {
+            transcript: [{ role: 'user', content: 'test' }],
+            providerSettings: {
+              type: 'openai',
+              baseUrl: 'https://evil.example.com/v1',
+              apiKey: '••••••••',
+              model: 'gpt-4o',
+            },
+            webSearchSettings: {
+              sourceMode: 'custom',
+              providers: {
+                mcp: {
+                  enabled: true,
+                  serverUrls: ['https://evil.example.com'],
+                  bearerToken: '••••••••',
+                },
+              },
+            },
+          },
+        },
+        res
+      )
+
+      expect(mockManager.startRun.calledOnce).to.be.true
+      const started = mockManager.startRun.firstCall.args[0]
+      expect(started.providerSettings.apiKey).to.equal('')
+      expect(started.webSearchSettings.providers.mcp.bearerToken).to.be.undefined
+    } finally {
+      Settings.aiAssist.webToolsEnabled = savedWebTools
+    }
+  })
+
+  it('injects stored provider and webSearch secrets when origins match', async function () {
+    const savedWebTools = Settings.aiAssist?.webToolsEnabled
+    Settings.aiAssist = { ...(Settings.aiAssist || {}), webToolsEnabled: true }
+    try {
+      const mockManager = {
+        startRun: sinon.stub().resolves(),
+      }
+      const userSettingsStore = {
+        getInternalUserSettings: sinon.stub().resolves({
+          provider: {
+            type: 'openai',
+            baseUrl: 'https://api.openai.com/v1',
+            apiKey: 'sk-stored-secret',
+            model: 'gpt-4o',
+          },
+          webSearch: {
+            sourceMode: 'custom',
+            providers: {
+              mcp: {
+                enabled: true,
+                serverUrls: ['https://mcp.example.com/v1'],
+                bearerToken: 'mcp-secret-token',
+              },
+            },
+          },
+        }),
+      }
+      const controller = new AiAssistRunController({
+        manager: mockManager,
+        userSettingsStore,
+      })
+
+      const res = {
+        json: sinon.stub(),
+        status: sinon.stub().returnsThis(),
+      }
+
+      await controller.createRun(
+        {
+          params: { Project_id: 'proj-1' },
+          session: { user: { _id: USER_ID } },
+          body: {
+            transcript: [{ role: 'user', content: 'test' }],
+            providerSettings: {
+              type: 'openai',
+              baseUrl: 'https://api.openai.com',
+              apiKey: '••••••••',
+              model: 'gpt-4o',
+            },
+            webSearchSettings: {
+              sourceMode: 'custom',
+              providers: {
+                mcp: {
+                  enabled: true,
+                  serverUrls: ['https://mcp.example.com/v2'],
+                  bearerToken: '••••••••',
+                },
+              },
+            },
+          },
+        },
+        res
+      )
+
+      const started = mockManager.startRun.firstCall.args[0]
+      expect(started.providerSettings.apiKey).to.equal('sk-stored-secret')
+      expect(started.webSearchSettings.providers.mcp.bearerToken).to.equal(
+        'mcp-secret-token'
+      )
+    } finally {
+      Settings.aiAssist.webToolsEnabled = savedWebTools
+    }
+  })
+})

@@ -1,3 +1,4 @@
+import { normalizeProjectPath } from "./AiAssistProjectPath.mjs";
 import crypto from "node:crypto";
 import logger from "@overleaf/logger";
 import Settings from "@overleaf/settings";
@@ -554,6 +555,17 @@ function fetchedPageKey(args) {
   const raw = typeof args?.url === "string" ? args.url.trim() : "";
   if (!raw) return "";
   return cacheKeyFor(/^[a-z][a-z0-9+.-]*:/i.test(raw) ? raw : `https://${raw}`);
+}
+
+/** Canonical batch dedup key for concurrent identical web_fetch calls. */
+function webFetchBatchKey(args) {
+  const pageKey = fetchedPageKey(args);
+  if (!pageKey) return "";
+  const find = typeof args?.find === "string" ? args.find.trim() : "";
+  const query = typeof args?.query === "string" ? args.query.trim() : "";
+  const section = typeof args?.section === "string" ? args.section.trim() : "";
+  const page = find || query ? "" : (args?.page ?? 1);
+  return JSON.stringify([pageKey, find, query, page, section]);
 }
 
 /**
@@ -1397,7 +1409,8 @@ export class AiAssistRunManager {
     if (!this.checkpointStore || !chatId || !activeUserMessageId) return;
     const filePath = args?.path;
     if (!filePath || typeof filePath !== "string") return;
-    const normalizedPath = filePath.replace(/^\//, "");
+    const normalizedPath = normalizeProjectPath(filePath);
+    if (!normalizedPath) return;
 
     try {
       let doc = null;
@@ -1426,12 +1439,23 @@ export class AiAssistRunManager {
           }
           if (this.tools?.entityHandler?.getAllDocs) {
             const all = await this.tools.entityHandler.getAllDocs(projectId);
-            return Array.isArray(all)
-              ? all.find(
+            if (Array.isArray(all)) {
+              return (
+                all.find(
                   (d) =>
-                    (d.path || d.name || "").replace(/^\//, "") === normalizedPath,
-                )
-              : null;
+                    normalizeProjectPath(d?.path || d?.name || "") ===
+                    normalizedPath,
+                ) || null
+              );
+            }
+            if (all && typeof all === "object") {
+              const match = Object.entries(all).find(
+                ([docPath, d]) =>
+                  normalizeProjectPath(docPath || d?.path || d?.name || "") ===
+                  normalizedPath,
+              );
+              return match ? match[1] : null;
+            }
           }
           return null;
         };
@@ -1472,7 +1496,7 @@ export class AiAssistRunManager {
           activeUserMessageId,
           {
             files: {
-              [filePath]: {
+              [normalizedPath]: {
                 originalContent: "",
                 docId: null,
                 isNew: true,
@@ -1491,7 +1515,7 @@ export class AiAssistRunManager {
         activeUserMessageId,
         {
           files: {
-            [filePath]: {
+            [normalizedPath]: {
               originalContent: originalContent ?? "",
               docId: docId ? String(docId) : null,
               isNew: false,
@@ -2726,18 +2750,32 @@ export class AiAssistRunManager {
             });
             announced.add(call);
           }
+          const inflightWebFetch = new Map();
           await Promise.all(
             leadingReads.map(async (call) => {
-              try {
-                const value = await runTool(call, READ_CALL_DEADLINE_MS);
-                prefetched.set(call, { result: value, isError: false });
-              } catch (err) {
-                rethrowEnded(err, controller);
-                prefetched.set(call, {
-                  result: toolFailure(err),
-                  isError: true,
-                });
+              const fetchKey =
+                call.name === "web_fetch" ? webFetchBatchKey(call.args) : "";
+              let promise = fetchKey ? inflightWebFetch.get(fetchKey) : null;
+              if (!promise) {
+                promise = (async () => {
+                  try {
+                    const value = await runTool(call, READ_CALL_DEADLINE_MS);
+                    return { result: value, isError: false };
+                  } catch (err) {
+                    rethrowEnded(err, controller);
+                    return { result: toolFailure(err), isError: true };
+                  }
+                })();
+                if (fetchKey) inflightWebFetch.set(fetchKey, promise);
               }
+              const settled = await promise;
+              prefetched.set(call, {
+                result:
+                  settled.result && typeof settled.result === "object"
+                    ? { ...settled.result }
+                    : settled.result,
+                isError: settled.isError,
+              });
             }),
           );
         }

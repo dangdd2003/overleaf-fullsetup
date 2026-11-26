@@ -5,11 +5,12 @@ import {
   AiAssistWebTools,
   PREFETCH_RESULTS,
   WEB_TOOL_NAMES,
-  bindStoredWebSearchCredentials,
 } from './AiAssistWebTools.mjs'
 import { renderToolResult } from './AiAssistToolRender.mjs'
 import { resolveWebSearchSettings } from './AiAssistRunController.mjs'
-import defaultUserSettingsStore from './AiAssistUserSettingsStore.mjs'
+import defaultUserSettingsStore, {
+  resolveStoredWebSearchSettings,
+} from './AiAssistUserSettingsStore.mjs'
 
 // Earlier web calls of one fix run; a fix is capped far below this
 const MAX_KNOWN_CALLS = 50
@@ -66,46 +67,23 @@ export class AiAssistWebToolsController {
         contextWindow,
         prefetch: PREFETCH_RESULTS,
       }),
+    userSettingsStore = defaultUserSettingsStore,
   } = {}) {
     this.webToolsFactory = webToolsFactory
+    this.userSettingsStore = userSettingsStore
   }
 
   async _tools(req, res) {
-    let clientSettings = req.body?.webSearchSettings
     const loggedIn = SessionManager.getLoggedInUserId(req.session)
     const userId =
       loggedIn && /^[0-9a-f]{24}$/i.test(String(loggedIn))
         ? String(loggedIn)
         : null
-    const needsStoredKeys =
-      clientSettings?.sourceMode === 'custom' &&
-      (!clientSettings.providers ||
-        Object.keys(clientSettings.providers).length === 0 ||
-        Object.values(clientSettings.providers).some(
-          p =>
-            p &&
-            typeof p === 'object' &&
-            ((Array.isArray(p.apiKeys) && p.apiKeys.includes('••••••••')) ||
-              (Array.isArray(p.apiKeys) && p.apiKeys.length === 0) ||
-              p.bearerToken === '••••••••')
-        ))
-    if (userId && needsStoredKeys) {
-      let internal = null
-      try {
-        internal = await defaultUserSettingsStore.getInternalUserSettings(userId)
-      } catch {}
-      if (internal?.webSearch) {
-        try {
-          clientSettings = bindStoredWebSearchCredentials(
-            clientSettings,
-            internal.webSearch
-          )
-        } catch (err) {
-          res.status(400).json({ error: err.message })
-          return null
-        }
-      }
-    }
+    const clientSettings = await resolveStoredWebSearchSettings(
+      req.body?.webSearchSettings,
+      this.userSettingsStore,
+      userId
+    )
     let settings
     try {
       settings = resolveWebSearchSettings(clientSettings)

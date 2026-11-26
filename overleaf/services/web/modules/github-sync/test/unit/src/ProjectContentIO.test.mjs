@@ -4,7 +4,7 @@ import path from 'node:path'
 import os from 'node:os'
 import { Readable } from 'node:stream'
 
-describe('resolveSafeWritePath', function () {
+describe('resolveSafeWritePath', { timeout: 20_000 }, function () {
   it('refuses excluded paths after resolving them inside the repository', async function () {
     const { resolveSafeWritePath } = await import('../../../app/src/ProjectContentIO.mjs')
     const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'ghsync-repo-'))
@@ -58,6 +58,7 @@ describe('ProjectContentIO', function () {
   let mockEntities
   let mockDocs
   let mockBlobStreams
+  let symlinkPaths
 
   beforeEach(async function () {
     workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ghsync-io-test-'))
@@ -78,6 +79,10 @@ describe('ProjectContentIO', function () {
     }
 
     vi.resetModules()
+    symlinkPaths = new Set()
+    vi.doMock('../../../app/src/SyncEngine.mjs', () => ({
+      default: { promises: { getSymlinkPaths: async () => symlinkPaths } },
+    }))
 
     const projectEntityHandlerMock = {
       default: {
@@ -135,7 +140,7 @@ describe('ProjectContentIO', function () {
 
   afterEach(async function () {
     if (workDir) {
-      await fs.rm(workDir, { recursive: true, force: true })
+      await fs.rm(workDir, { recursive: true, force: true, maxRetries: 3 })
     }
   })
 
@@ -223,6 +228,36 @@ describe('ProjectContentIO', function () {
     expect(link.symlinkTarget).to.equal('target.txt')
     expect(link.sizeBytes).to.equal(0)
   })
+
+  it('classifies Git symlinks checked out as regular files', async function () {
+    symlinkPaths.add('link.tex')
+    await fs.writeFile(path.join(workDir, 'link.tex'), '../target.tex')
+    const tree = await ProjectContentIO.promises.readProjectTree(workDir)
+    expect(tree).to.deep.equal([
+      { relPath: 'link.tex', sizeBytes: 0, symlinkTarget: null, isSymlink: true },
+    ])
+  })
+
+  it.each(['docs', 'files'])(
+    'preserves Git symlink contents during materialization of %s and pruning',
+    async function (entityType) {
+      symlinkPaths.add('main.tex')
+      symlinkPaths.add('img/logo.png')
+      symlinkPaths.add('unimported.tex')
+      await fs.mkdir(path.join(workDir, 'img'))
+      for (const relPath of symlinkPaths) {
+        await fs.writeFile(path.join(workDir, relPath), '../target')
+      }
+      mockEntities[entityType === 'docs' ? 'files' : 'docs'] = []
+
+      const manifest = await ProjectContentIO.promises.materializeProject('proj1', workDir)
+
+      expect(manifest).to.deep.equal([])
+      for (const relPath of symlinkPaths) {
+        expect(await fs.readFile(path.join(workDir, relPath), 'utf8')).to.equal('../target')
+      }
+    }
+  )
 
   it('skips .git directory and internal git files in readProjectTree', async function () {
     const gitDir = path.join(workDir, '.git')
@@ -328,14 +363,18 @@ describe('ProjectContentIO', function () {
   })
 
   it('refuses a repo tree over the entry cap', async function () {
-    for (let i = 0; i < 5001; i++) {
-      await fs.writeFile(path.join(workDir, `f${i}.txt`), '')
+    for (let start = 0; start < 5001; start += 500) {
+      await Promise.all(
+        Array.from({ length: Math.min(500, 5001 - start) }, (_, i) =>
+          fs.writeFile(path.join(workDir, `f${start + i}.txt`), '')
+        )
+      )
     }
     const err = await ProjectContentIO.promises
       .readProjectTree(workDir)
       .catch(e => e)
     expect(err.code).to.equal('project_too_large')
-  })
+  }, 30_000)
 
   it('handles empty doc lines or missing docs gracefully', async function () {
     mockEntities = {

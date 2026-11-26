@@ -16,6 +16,7 @@ import {
   CONNECTOR_SEARCH_TOOL,
   READ_CONNECTOR_RESULT_TOOL,
   isConnectorCallName,
+  isInstructionPath,
   modeLabel,
 } from '../../../app/src/AiAssistModePolicy.mjs'
 
@@ -66,6 +67,32 @@ describe('AiAssistModePolicy', () => {
       expect(decide('acceptEdits', 'create_file')).to.equal('allow')
       expect(decide('acceptEdits', 'configure_editor_settings')).to.equal('ask')
       expect(decide('acceptEdits', 'present_plan')).to.equal('deny')
+    })
+
+    it('still asks for AGENTS.md variants in acceptEdits mode', () => {
+      for (const variant of [
+        'AGENTS.md',
+        '/AGENTS.md',
+        './AGENTS.md',
+        '/./AGENTS.md',
+        'a/../AGENTS.md',
+        '.\\AGENTS.md',
+        'agents.md',
+      ]) {
+        expect(isInstructionPath(variant), variant).to.equal(true)
+        expect(decide('acceptEdits', 'edit_file', { path: variant }), variant).to.equal('ask')
+        expect(decide('acceptEdits', 'create_file', { path: variant }), variant).to.equal('ask')
+      }
+      for (const regular of [
+        'main.tex',
+        './main.tex',
+        'my-agents.md',
+        'AGENTS.md/notes.tex',
+        'chapters/AGENTS.md',
+      ]) {
+        expect(isInstructionPath(regular), regular).to.equal(false)
+        expect(decide('acceptEdits', 'edit_file', { path: regular }), regular).to.equal('allow')
+      }
     })
 
     it('applies project settings without asking in acceptEdits mode', () => {

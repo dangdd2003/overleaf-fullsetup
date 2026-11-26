@@ -117,16 +117,20 @@ export async function imageExists(imageName) {
  * Checks all configured TeX Live images and pulls missing ones sequentially in background.
  */
 export async function checkAndPullImages() {
-  const rawList = process.env.ALL_TEX_LIVE_DOCKER_IMAGES || ''
-  const defaultImage = process.env.TEX_LIVE_DOCKER_IMAGE || ''
+  const rawLegacyList = process.env.ALL_TEX_LIVE_DOCKER_IMAGES || ''
+  const rawAllowedList = process.env.ALLOWED_IMAGES || ''
+  const defaultLegacyImage = process.env.TEX_LIVE_DOCKER_IMAGE || ''
+  const defaultImage = process.env.TEXLIVE_IMAGE || ''
 
   // also the images compiles are validated against (ALLOWED_IMAGES), and
   // under the registry override compiles actually run
   const images = [
     ...new Set(
       [
+        defaultLegacyImage,
         defaultImage,
-        ...rawList.split(','),
+        ...rawLegacyList.split(/[ ,]+/),
+        ...rawAllowedList.split(/[ ,]+/),
         ...(Settings.clsi?.docker?.allowedImages || []),
       ]
         .map(s => s.trim())

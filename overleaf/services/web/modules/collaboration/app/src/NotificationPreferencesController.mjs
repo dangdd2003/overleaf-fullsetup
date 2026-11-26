@@ -9,6 +9,7 @@ export const DEFAULT_PROJECT_PREFERENCES = {
   commentOnInvitedProject: false,
   repliesOnAuthoredThread: true,
   repliesOnParticipatingThread: true,
+  mentionsInThread: true,
   muteAllNotifications: false,
   commentResolvedOnAuthoredThread: true,
   commentResolvedOnParticipatingThread: true,
@@ -30,6 +31,34 @@ export async function getUserProjectPreferences(userId, projectId) {
     ...DEFAULT_PROJECT_PREFERENCES,
     ...record.preferences,
   }
+}
+
+export async function getUsersProjectPreferences(userIds, projectId) {
+  const ids = [...new Set(userIds.map(id => id.toString()))]
+  const byUserId = new Map()
+  if (ids.length === 0) {
+    return byUserId
+  }
+
+  const records = await db.notificationsPreferences
+    .find({
+      user_id: { $in: ids },
+      project_id: projectId.toString(),
+    })
+    .toArray()
+
+  for (const record of records) {
+    byUserId.set(record.user_id, {
+      ...DEFAULT_PROJECT_PREFERENCES,
+      ...(record.preferences || {}),
+    })
+  }
+  for (const id of ids) {
+    if (!byUserId.has(id)) {
+      byUserId.set(id, { ...DEFAULT_PROJECT_PREFERENCES })
+    }
+  }
+  return byUserId
 }
 
 async function getPreferences(req, res) {
@@ -81,5 +110,6 @@ export default {
   getPreferences: expressify(getPreferences),
   updatePreferences: expressify(updatePreferences),
   getUserProjectPreferences,
+  getUsersProjectPreferences,
   DEFAULT_PROJECT_PREFERENCES,
 }
