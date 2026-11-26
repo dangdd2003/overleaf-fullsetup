@@ -566,15 +566,10 @@ async function projectListPage(req, res, next) {
     logger.error({ err: error }, 'Failed to get individual subscription')
   }
 
-  // Skip the AI entitlement lookups entirely when the ai-assist module is off
   const aiBlocked =
-    Boolean(Settings.aiAssist?.enabled) &&
-    Features.hasFeature('saas') &&
-    !(await _canUseAIAssist(user))
+    Features.hasFeature('saas') && !(await _canUseAIAssist(user))
   const hasUnlimitedAi =
-    Boolean(Settings.aiAssist?.enabled) &&
-    Features.hasFeature('saas') &&
-    (await _userHasUnlimitedAiTier(user))
+    Features.hasFeature('saas') && (await _userHasUnlimitedAiTier(user))
 
   const splitTests = [
     // Split tests that will be made available to the frontend
