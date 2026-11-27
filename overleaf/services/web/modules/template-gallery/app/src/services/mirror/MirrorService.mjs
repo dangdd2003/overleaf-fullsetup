@@ -848,7 +848,7 @@ const FAILURE_FIELDS = {
   },
 }
 
-async function recordFailure(token, step, attempts, err) {
+async function recordFailure(filter, step, attempts, err) {
   // A closed-off or saturated host says nothing about the item itself.
   if (isHostRejection(err)) return
   const fields = FAILURE_FIELDS[step]
@@ -860,7 +860,7 @@ async function recordFailure(token, step, attempts, err) {
   const nextAttemptAt = new Date(Date.now() + delayMs)
   const col = await itemsCol()
   await col.updateOne(
-    { token },
+    filter,
     {
       $set: {
         [fields.attempts]: count,
@@ -927,12 +927,12 @@ function detailFields(item, detail) {
   const { cta } = detail
   const set = {}
   assignDefined(set, {
-    publishedId: cta.publishedId,
-    brandVariationId: cta.brandVariationId,
-    templateName: cta.templateName,
-    mainFile: cta.mainFile,
-    latexEngine: cta.latexEngine,
-    texImage: cta.texImage,
+    publishedId: cta?.publishedId,
+    brandVariationId: cta?.brandVariationId,
+    templateName: cta?.templateName,
+    mainFile: cta?.mainFile,
+    latexEngine: cta?.latexEngine,
+    texImage: cta?.texImage,
     lastUpdatedAt: detail.lastUpdatedAt,
     licenseLabel: detail.licenseLabel,
     abstractHtml: detail.abstractHtml,
@@ -945,7 +945,7 @@ function detailFields(item, detail) {
     tags: item.tags?.length ? undefined : detail.tags,
     official: item.official == null && detail.official ? true : undefined,
   })
-  if (!item.objectID && cta.objectID) {
+  if (!item.objectID && cta?.objectID) {
     set.objectID = cta.objectID
     const num = Number(cta.objectID)
     if (Number.isSafeInteger(num)) set.objectIDNum = num
@@ -970,10 +970,10 @@ async function refreshDetail(
   try {
     page = await Fetch.fetchOverleafPage(itemHref(item), { priority })
     if (page.status === 200) {
-      detail = parseDetailPage(page.html, { throwOnError: true })
+      detail = parseDetailPage(page.html, { token, throwOnError: true })
     }
   } catch (err) {
-    await recordFailure(token, 'detail', attempts, err)
+    await recordFailure({ token }, 'detail', attempts, err)
     incMetric('mirror_detail', { status: 'failed' })
     throw err
   }
@@ -1000,6 +1000,8 @@ async function refreshDetail(
     ...detailFields(item, detail),
     'mirror.detailAt': now,
     'mirror.detailHash': detail.detailHash,
+    'mirror.hasOpenTemplate': Boolean(detail.cta),
+    'mirror.pdfHref': detail.pdfHref,
     'mirror.attempts': 0,
     'mirror.lastError': null,
     'mirror.nextAttemptAt': null,
@@ -1008,8 +1010,18 @@ async function refreshDetail(
   }
   // A changed page means a republished item: refetch its PDF (the old blob
   // keeps being served until then).
-  if (item.mirror?.detailHash && item.mirror.detailHash !== detail.detailHash) {
+  const defaultPdfHref = itemPdfHref(item)
+  const pdfHrefChanged =
+    (item.mirror?.pdfHref || defaultPdfHref) !==
+    (detail.pdfHref || defaultPdfHref)
+  if (
+    pdfHrefChanged ||
+    (item.mirror?.detailHash && item.mirror.detailHash !== detail.detailHash)
+  ) {
     set['mirror.pdfAt'] = null
+    set['mirror.pdfAttempts'] = 0
+    set['mirror.pdfLastError'] = null
+    set['mirror.pdfNextAttemptAt'] = null
   }
 
   const imageHeld = !ignoreImageBackoff && imageBackedOff(item)
@@ -1159,19 +1171,30 @@ export async function runDetailBatch({
 async function refreshPdf(token, { priority = 'background' } = {}) {
   const item = await findItem(token)
   if (!isMirrorable(item)) return null
+  const storedHref = item.mirror?.pdfHref
+  // A detail refresh can change the PDF while a download is in flight.
+  const filter = {
+    token,
+    duplicateOf: null,
+    'mirror.pdfHref': storedHref ?? null,
+    'mirror.detailHash': item.mirror?.detailHash ?? null,
+    ...(!storedHref && { slug: item.slug, family: item.family }),
+  }
   const attempts = (item.mirror?.pdfAttempts || 0) + 1
   let res
   try {
-    res = await Fetch.storeOverleafPdf(itemPdfHref(item), { priority })
+    res = await Fetch.storeOverleafPdf(storedHref || itemPdfHref(item), {
+      priority,
+    })
   } catch (err) {
-    await recordFailure(token, 'pdf', attempts, err)
+    await recordFailure(filter, 'pdf', attempts, err)
     incMetric('mirror_pdf', { status: 'failed' })
     throw err
   }
   if (res.status !== 200) {
     const col = await itemsCol()
     await col.updateOne(
-      { token },
+      filter,
       {
         $set: {
           'mirror.pdfAt': new Date(),
@@ -1193,8 +1216,8 @@ async function refreshPdf(token, { priority = 'background' } = {}) {
   }
   set['media.pdfSha'] = res.sha256
   set['media.pdfBytes'] = res.sizeBytes
-  // duplicateOf: null skips tombstoned duplicates (no blob refs on them)
-  await col.updateOne({ token, duplicateOf: null }, { $set: set })
+  const updated = await col.updateOne(filter, { $set: set })
+  if (updated?.matchedCount === 0) return null
   incMetric('mirror_pdf', { status: 'ok' })
   return { sha: res.sha256, bytes: res.sizeBytes }
 }

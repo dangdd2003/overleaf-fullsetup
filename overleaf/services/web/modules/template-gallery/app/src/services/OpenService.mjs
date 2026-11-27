@@ -7,6 +7,7 @@ import { InvalidZipFileError } from '../../../../../app/src/Features/Uploads/Arc
 import { DEFAULTS } from '../TemplateGalleryDefaults.mjs'
 import { itemsCol } from '../persistence/Collections.mjs'
 import BlobStore from '../storage/BlobStore.mjs'
+import { cachedSourceKey } from '../storage/BlobRefs.mjs'
 import { scratchPath } from '../storage/Paths.mjs'
 import { isValidToken } from '../util/GalleryUrls.mjs'
 import TemplateSourceAcquisitionService from './TemplateSourceAcquisitionService.mjs'
@@ -36,14 +37,22 @@ function codedError(code, message) {
 export async function findOpenableItem(token, { allowUnpublished = false } = {}) {
   if (!token || typeof token !== 'string') return null
   const item = await findItemDoc(token, { allowUnpublished })
-  if (!item?.duplicateOf) return item
+  if (!item?.duplicateOf) return withOpenAction(item)
   // A tombstoned duplicate opens its canonical item (one hop)
   const col = await itemsCol()
-  return col.findOne({
+  const canonical = await col.findOne({
     token: item.duplicateOf,
     duplicateOf: null,
     ...(allowUnpublished ? {} : { state: 'published' }),
   })
+  return withOpenAction(canonical)
+}
+
+function withOpenAction(item) {
+  if (item?.mirror?.hasOpenTemplate === false && !cachedSourceKey(item)) {
+    return null
+  }
+  return item
 }
 
 async function findItemDoc(token, { allowUnpublished }) {

@@ -35,7 +35,8 @@ block content
 											span.badge-content= translate('official')
 					.row.cta-links-container
 						.col-md-12.cta-links
-							a.btn.btn-primary.cta-link(href=item.openHref rel='nofollow')= translate('open_as_template')
+							if item.openHref
+								a.btn.btn-primary.cta-link(href=item.openHref rel='nofollow')= translate('open_as_template')
 							if item.mainText !== null
 								button.btn.btn-secondary.cta-link(
 									type='button'

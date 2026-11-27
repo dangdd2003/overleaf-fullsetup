@@ -11,6 +11,7 @@ const SOURCE_STATUS_BG = {
   pending: 'light',
   failed: 'danger',
   backoff: 'warning',
+  unavailable: 'light',
 } as const
 
 const SOURCE_STATUS_LABEL_KEY = {
@@ -18,17 +19,19 @@ const SOURCE_STATUS_LABEL_KEY = {
   pending: 'template_gallery_admin_source_not_fetched',
   failed: 'template_gallery_admin_status_failed',
   backoff: 'template_gallery_admin_status_backoff',
+  unavailable: 'template_gallery_admin_source_not_published',
 } as const
 
 const MISSING = <span className="text-muted">—</span>
 
 export function SourceStatusBadge({ status }: { status: SourceStatus }) {
   const { t } = useTranslation()
+  const light = SOURCE_STATUS_BG[status] === 'light'
   return (
     <OLBadge
       bg={SOURCE_STATUS_BG[status]}
-      text={status === 'pending' ? 'dark' : undefined}
-      className={status === 'pending' ? 'border' : undefined}
+      text={light ? 'dark' : undefined}
+      className={light ? 'border' : undefined}
     >
       {t(SOURCE_STATUS_LABEL_KEY[status])}
     </OLBadge>

@@ -1,5 +1,6 @@
 import { itemsCol, configCol } from '../persistence/Collections.mjs'
 import BlobStore from '../storage/BlobStore.mjs'
+import { cachedSourceKey } from '../storage/BlobRefs.mjs'
 import SessionCredentialStore from '../crypto/SessionCredentialStore.mjs'
 import { ensureDetail } from './mirror/MirrorService.mjs'
 import { acquireViaCloudSession } from './tiers/Tier1SessionAcquisition.mjs'
@@ -48,7 +49,7 @@ function servedCached(cached, opts, code = null) {
 }
 
 async function cachedSource(item, storageDir) {
-  const sha = item.sourceBlobStoreKey || item.zip?.sha256
+  const sha = cachedSourceKey(item)
   if (!sha || !(await BlobStore.exists(sha, storageDir))) return null
   return {
     acquired: true,
@@ -235,6 +236,11 @@ async function acquireUncached(item, opts) {
   const storageDir = resolveStorageDir(cfg, opts.storageDir)
 
   const cached = await cachedSource(item, storageDir)
+  if (item.mirror?.hasOpenTemplate === false) {
+    return !opts.force && cached
+      ? cached
+      : { acquired: false, reason: 'source_not_published' }
+  }
   if (cached && !opts.force && (await canReuse(cached, item))) {
     return cached
   }
@@ -270,6 +276,11 @@ async function acquireUncached(item, opts) {
       transient: true,
       code: err?.code || 'upstream_busy',
     }
+  }
+  if (detailed.mirror?.hasOpenTemplate === false) {
+    return !opts.force && cached
+      ? cached
+      : { acquired: false, reason: 'source_not_published' }
   }
   const { result, reasons, transient, transientCodes } = await runTiers(
     detailed,

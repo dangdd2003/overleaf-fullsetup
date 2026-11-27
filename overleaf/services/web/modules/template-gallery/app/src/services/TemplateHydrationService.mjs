@@ -37,7 +37,16 @@ export async function hydrateItem(id, opts = {}) {
   const detailed = await MirrorService.ensureDetail(found.token, ensureOpts)
 
   if (detailed) {
-    await MirrorService.ensurePdf(found.token, { ...ensureOpts, throwOnError: false })
+    const pdfRequired = detailed.mirror?.hasOpenTemplate === false
+    const pdf = await MirrorService.ensurePdf(found.token, {
+      ...ensureOpts,
+      throwOnError: pdfRequired,
+    })
+    if (pdfRequired && !pdf) {
+      throw Object.assign(new Error('The upstream PDF could not be mirrored'), {
+        code: 'pdf_unavailable',
+      })
+    }
   }
   return col.findOne({ _id: found._id })
 }

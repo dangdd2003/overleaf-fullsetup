@@ -20,7 +20,7 @@
 // compressed stream is simply not matched by (b). Missed matches are the safe side.
 
 import crypto from 'node:crypto'
-import { BLOB_REF_FIELDS, blobRefsOf } from './BlobRefs.mjs'
+import { BLOB_REF_FIELDS, blobRefsOf, cachedSourceKey } from './BlobRefs.mjs'
 import { isValidSha256 } from './Paths.mjs'
 import { isValidToken } from '../util/GalleryUrls.mjs'
 
@@ -214,10 +214,13 @@ export function groupDuplicates(items, opts = {}) {
     keys.set(key, entry)
   }
   candidates.forEach((item, index) => {
-    // Every rule also needs the same family and a title
+    // A duplicate redirects to its canonical item, so it must offer the same
+    // kind of access even if the PDF itself is identical.
     const title = normalizeTitle(item.title)
     if (!title) return
-    const scope = `${item.family ?? ''}|${title}`
+    const pdfOnly = item.mirror?.hasOpenTemplate === false
+    const cachedOnly = pdfOnly && Boolean(cachedSourceKey(item))
+    const scope = `${item.family ?? ''}|${pdfOnly}|${cachedOnly}|${title}`
     const pdfSha = item.media?.pdfSha
     if (isValidSha256(pdfSha)) addKey(`pdf:${pdfSha}|${scope}`, index, 'same_pdf')
     const normSha = item.dedup?.pdfNormSha

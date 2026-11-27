@@ -5,7 +5,12 @@ export type SyncDetailStatus =
   | 'failed'
   | 'removed'
 
-export type SyncSourceStatus = 'ok' | 'pending' | 'failed' | 'backoff'
+export type SyncSourceStatus =
+  | 'ok'
+  | 'pending'
+  | 'failed'
+  | 'backoff'
+  | 'unavailable'
 
 export type SyncFilter = 'all' | SyncDetailStatus
 

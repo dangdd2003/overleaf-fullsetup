@@ -136,6 +136,21 @@ describe('S-P7 duplicate grouping', () => {
     expect(Planner.groupDuplicates(items)).toEqual([])
   })
 
+  it('keeps editable and PDF-only entries separate even when their PDFs match', () => {
+    const items = [
+      item('aaaaaaaaaaaa', {
+        media: { pdfSha: P1 },
+        mirror: { hasOpenTemplate: true },
+      }),
+      item('bbbbbbbbbbbb', {
+        media: { pdfSha: P1 },
+        mirror: { hasOpenTemplate: false },
+        featured: true,
+      }),
+    ]
+    expect(Planner.groupDuplicates(items)).toEqual([])
+  })
+
   it('never groups on a generic preview and title alone', () => {
     const items = [
       // two-word title: too generic to link on a shared preview

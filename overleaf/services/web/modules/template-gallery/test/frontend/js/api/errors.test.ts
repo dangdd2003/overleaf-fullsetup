@@ -158,7 +158,7 @@ describe('template-gallery admin API errors', function () {
       )
       result.reason = 'unparseable'
       expect(detailsRefetchFailureMessage(i18n.t, result)).to.include(
-        'repeating refresh will not repair'
+        'recognizable gallery details'
       )
     })
   })

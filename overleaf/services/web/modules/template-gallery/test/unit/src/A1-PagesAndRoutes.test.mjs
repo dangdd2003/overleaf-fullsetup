@@ -753,6 +753,23 @@ describe('A1 TemplateGalleryRouter & GalleryController', function () {
     expect(nextUpper).toHaveBeenCalled()
   })
 
+  it('offers the PDF without an open action for PDF-only upstream entries', async function () {
+    const token = 'nscmycbqznzp'
+    vi.spyOn(GalleryReadService, 'getItemByToken').mockResolvedValue({
+      token,
+      family: 'template',
+      slug: 'psi-proposal',
+      state: 'published',
+      mirror: { hasOpenTemplate: false },
+    })
+    const res = makeRes()
+    await GalleryController.renderDetail({ params: { token } }, res, vi.fn())
+    expect(res.locals.item.openHref).toBeNull()
+    expect(res.locals.item.pdfHref).toBe(
+      `/latex/templates/psi-proposal/${token}.pdf`
+    )
+  })
+
   it('serves thumbnails (ETag 304, data URI fallback) and rejects uppercase .PDF', async function () {
     vi.spyOn(GalleryReadService, 'getMediaItem').mockResolvedValue({
       token: 'fqrcrzrkynpp',

@@ -106,9 +106,11 @@ export function toSyncBlock(item, now = new Date(), syncing = null) {
   else if (detailed) detailStatus = 'ok'
 
   const tier = Number(item?.acquisitionTier)
-  const sourceAcquired = Boolean(item?.sourceAcquired)
+  const sourceNotPublished = mirror.hasOpenTemplate === false
+  const sourceAcquired = !sourceNotPublished && Boolean(item?.sourceAcquired)
   let sourceStatus = 'pending'
-  if (sourceAcquired) sourceStatus = 'ok'
+  if (sourceNotPublished) sourceStatus = 'unavailable'
+  else if (sourceAcquired) sourceStatus = 'ok'
   else if (backoffActive(item, now)) sourceStatus = 'backoff'
   else if (item?.zip?.attemptedAt || backoff?.attemptedAt) sourceStatus = 'failed'
 
