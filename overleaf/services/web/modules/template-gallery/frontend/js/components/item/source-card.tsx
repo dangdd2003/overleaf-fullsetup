@@ -84,14 +84,16 @@ export default function SourceCard({ item, onSynced }: SourceCardProps) {
         </DetailRow>
       </dl>
 
-      <OLButton
-        variant="secondary"
-        leadingIcon="refresh"
-        disabled={busy}
-        onClick={() => setConfirming(true)}
-      >
-        {t('template_gallery_admin_refetch_source')}
-      </OLButton>
+      {sync.sourceStatus !== 'unavailable' && (
+        <OLButton
+          variant="secondary"
+          leadingIcon="refresh"
+          disabled={busy}
+          onClick={() => setConfirming(true)}
+        >
+          {t('template_gallery_admin_refetch_source')}
+        </OLButton>
+      )}
 
       <ConfirmActionModal
         show={confirming}

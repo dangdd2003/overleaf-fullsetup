@@ -32,6 +32,7 @@ import AbstractSanitizer, {
 } from '../../../app/src/services/mirror/AbstractSanitizer.mjs'
 import * as Fetch from '../../../app/src/services/mirror/Fetch.mjs'
 import * as MirrorService from '../../../app/src/services/mirror/MirrorService.mjs'
+import { toSyncBlock } from '../../../app/src/services/CatalogueService.mjs'
 import TemplateHydrationService, {
   hydrateItem,
 } from '../../../app/src/services/TemplateHydrationService.mjs'
@@ -468,12 +469,26 @@ describe('B2 Mirror Service & Parsers', () => {
       expect(detail.abstractHtml).not.toContain('<script>')
     })
 
-    it('parseDetailPage returns null when title or CTA link is missing', () => {
+    it('parseDetailPage returns null without a title or any valid gallery action', () => {
       const noTitle = '<a href="/project/new/template/1">Open</a>'
       expect(parseDetailPage(noTitle)).toBeNull()
 
       const noCta = '<div class="gallery-item-title"><h1>Title Only</h1></div>'
       expect(parseDetailPage(noCta)).toBeNull()
+    })
+
+    it('rejects a PDF-only page whose link belongs to a different item or host', () => {
+      for (const href of [
+        '/latex/templates/other/bcdefghijklm.pdf',
+        'https://example.com/latex/templates/sample/abcdefghijkl.pdf',
+      ]) {
+        expect(
+          parseDetailPage(
+            `<h1>Unexpected page</h1><div class="cta-links"><a href="${href}">View PDF</a></div>`,
+            { token: 'abcdefghijkl' }
+          )
+        ).toBeNull()
+      }
     })
 
     it('recovers a changed title layout and skips invalid CTA links', () => {
@@ -513,7 +528,7 @@ describe('B2 Mirror Service & Parsers', () => {
     it('rejects missing required fields with actionable diagnostics', () => {
       expect(() =>
         parseDetailPage('<h1>Unexpected page</h1>', { throwOnError: true })
-      ).toThrow(/valid Open as Template link/)
+      ).toThrow(/valid gallery PDF or Open as Template link/)
       expect(
         parseDetailPage(
           '<h1>Unexpected page</h1><form method="post" action="/project/new/template/42"></form>'
@@ -1118,7 +1133,9 @@ describe('B2 Mirror Service & Parsers', () => {
       expect(failed.mainText).toBe('Cached source')
       expect(failed.mirror.detailAt).toBe(detailAt)
       expect(failed.mirror.attempts).toBe(1)
-      expect(failed.mirror.lastError).toContain('valid Open as Template link')
+      expect(failed.mirror.lastError).toContain(
+        'valid gallery PDF or Open as Template link'
+      )
       fetchSpy.mockResolvedValue({
         status: 200,
         html: '<main><h1>Recovered</h1><a href="/project/new/template/42">Open</a></main>',
@@ -1144,6 +1161,50 @@ describe('B2 Mirror Service & Parsers', () => {
       expect((await mockItemsCol.findOne({ token })).mirror.detailAt).toBe(
         recovered.mirror.detailAt
       )
+    })
+
+    it('does not replace the current PDF with a download from the previous URL', async () => {
+      const token = 'aaaaaaaaaaaa'
+      const oldHref = `/latex/templates/old/${token}.pdf`
+      const newHref = `/latex/templates/new/${token}.pdf`
+      await mockItemsCol.updateOne(
+        { token },
+        {
+          $set: {
+            token,
+            family: 'template',
+            slug: 'old',
+            mirror: { pdfHref: oldHref },
+          },
+        },
+        { upsert: true }
+      )
+      const started = Promise.withResolvers()
+      const oldDownload = Promise.withResolvers()
+      vi.spyOn(Fetch, 'storeOverleafPdf').mockImplementation(href => {
+        if (href === oldHref) {
+          started.resolve()
+          return oldDownload.promise
+        }
+        return Promise.resolve({
+          status: 200,
+          sha256: 'b'.repeat(64),
+          sizeBytes: 2,
+        })
+      })
+
+      const pending = MirrorService.ensurePdf(token, { force: true })
+      await started.promise
+      vi.spyOn(Fetch, 'fetchOverleafPage').mockResolvedValue({
+        status: 200,
+        html: `<h1>PDF only</h1><a class="cta-link" href="${newHref}">View PDF</a>`,
+      })
+      await hydrateItem(token, { force: true })
+      oldDownload.resolve({ status: 200, sha256: 'a'.repeat(64), sizeBytes: 1 })
+      await pending
+
+      const item = await mockItemsCol.findOne({ token })
+      expect(item.media.pdfSha).toBe('b'.repeat(64))
     })
 
     it('ensurePdf fetches and records PDF metadata, reuses existing blob when present', async () => {
@@ -1281,6 +1342,79 @@ describe('B2 Mirror Service & Parsers', () => {
   // 7. TemplateHydrationService tests
   // -------------------------------------------------------------------------
   describe('TemplateHydrationService', () => {
+    it('reports a missing PDF when refetching a PDF-only entry', async () => {
+      const token = 'aaaaaaaaaaaa'
+      await mockItemsCol.updateOne(
+        { token },
+        { $set: { token, family: 'template', slug: 'pdf-only' } },
+        { upsert: true }
+      )
+      vi.spyOn(Fetch, 'fetchOverleafPage').mockResolvedValue({
+        status: 200,
+        html: `<h1>PDF only</h1><a class="cta-link" href="/latex/templates/pdf-only/${token}.pdf">View PDF</a>`,
+      })
+      vi.spyOn(Fetch, 'storeOverleafPdf').mockResolvedValue({ status: 404 })
+
+      const error = await hydrateItem(token, { force: true }).catch(err => err)
+      expect(error).toMatchObject({
+        code: 'pdf_unavailable',
+      })
+    })
+
+    it('refetches a failed PDF-only entry without requiring an open link', async () => {
+      const token = 'nscmycbqznzp'
+      const slug = 'proposal-template-psi-for-bernina-swissfel-plus-addams-surface-diffractometer'
+      const pdfHref = `/latex/templates/${slug}/${token}.pdf`
+      await mockItemsCol.updateOne(
+        { token },
+        {
+          $set: {
+            _id: 'pdf-only',
+            token,
+            family: 'example',
+            slug,
+            mirror: { attempts: 5, nextAttemptAt: new Date('2099-01-01') },
+          },
+        },
+        { upsert: true }
+      )
+      vi.spyOn(Fetch, 'fetchOverleafPage').mockResolvedValue({
+        status: 200,
+        html: `
+          <div class="gallery-item-title"><h1>PSI proposal</h1></div>
+          <div class="cta-links"><a class="cta-link" href="${pdfHref}">View PDF</a></div>
+          <div class="template-detail"><div><b>Author:</b></div><div>H Lemke</div></div>
+        `,
+      })
+      const storePdf = vi.spyOn(Fetch, 'storeOverleafPdf').mockResolvedValue({
+        status: 200,
+        sha256: 'b'.repeat(64),
+        sizeBytes: 5000,
+      })
+
+      const item = await hydrateItem(token, { force: true })
+      expect(item).toMatchObject({
+        title: 'PSI proposal',
+        author: 'H Lemke',
+        mainText: null,
+        mirror: {
+          detailAt: expect.any(String),
+          hasOpenTemplate: false,
+          attempts: 0,
+          nextAttemptAt: null,
+          lastError: null,
+        },
+        media: { pdfSha: 'b'.repeat(64) },
+      })
+      expect(item.publishedId).toBeUndefined()
+      expect(storePdf).toHaveBeenCalledWith(pdfHref, { priority: 'admin' })
+      expect(toSyncBlock(item)).toMatchObject({
+        detailStatus: 'ok',
+        sourceStatus: 'unavailable',
+        nextAttemptAt: null,
+      })
+    })
+
     it('hydrateItem refreshes detail and PDF via MirrorService', async () => {
       const hydrateToken = 'hhhhhhhhaxyz'
       await mockItemsCol.updateOne(

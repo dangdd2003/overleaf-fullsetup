@@ -3,11 +3,13 @@ import * as cheerio from 'cheerio'
 import { parsePublishedImage } from './ListingParser.mjs'
 import { tagNameFromHref } from './TagParser.mjs'
 import { sanitizeAbstractHtml } from './AbstractSanitizer.mjs'
+import { parseItemUrl } from '../../util/GalleryUrls.mjs'
 
 // Parses an official item detail page (/latex/templates/<slug>/<token>,
 // /latex/examples/..., /articles/...) per MASTER-SPEC 4.7 / 7.3.
 
 const OPEN_TEMPLATE_PATH = /^\/project\/new\/template\/(\d+)\/?$/
+const OVERLEAF_ORIGIN = 'https://www.overleaf.com'
 
 function cleanText(value) {
   return String(value ?? '')
@@ -34,7 +36,7 @@ export function parseOpenTemplateHref(href) {
   if (!href) return null
   let url
   try {
-    url = new URL(String(href), 'https://www.overleaf.com')
+    url = new URL(String(href), OVERLEAF_ORIGIN)
   } catch {
     return null
   }
@@ -58,6 +60,23 @@ export function parseOpenTemplateHref(href) {
     latexEngine: nonEmpty(params.get('latexEngine')),
     texImage: nonEmpty(params.get('texImage')),
   }
+}
+
+function galleryPdfHref($, token) {
+  for (const link of $('.cta-links a[href], a.cta-link[href]').toArray()) {
+    const url = URL.parse($(link).attr('href'), OVERLEAF_ORIGIN)
+    if (
+      url?.origin !== OVERLEAF_ORIGIN ||
+      url.username ||
+      url.password ||
+      !url.pathname.endsWith('.pdf')
+    ) {
+      continue
+    }
+    const item = parseItemUrl(url.pathname.slice(0, -4))
+    if (item && (!token || item.token === token)) return url.pathname
+  }
+  return null
 }
 
 // `.template-detail` rows: <div><b>Label:</b></div><div>value</div>.
@@ -107,7 +126,7 @@ export function computeDetailHash(detail) {
  * Parses an official detail page. Returns null when the page does not look
  * like a gallery item (layout change, interstitial, error page).
  */
-export function parseDetailPage(html, { throwOnError = false } = {}) {
+export function parseDetailPage(html, { token, throwOnError = false } = {}) {
   const $ = cheerio.load(html || '')
   const titleBlock = $('.gallery-item-title').first()
   const title =
@@ -130,7 +149,7 @@ export function parseDetailPage(html, { throwOnError = false } = {}) {
     if (el.tagName === 'form') {
       if ((node.attr('method') || 'get').toLowerCase() !== 'get') return
       try {
-        const url = new URL(href, 'https://www.overleaf.com')
+        const url = new URL(href, OVERLEAF_ORIGIN)
         node.find('input[name]').each((_, input) => {
           const field = $(input)
           if (!field.is('[disabled]'))
@@ -144,11 +163,12 @@ export function parseDetailPage(html, { throwOnError = false } = {}) {
     const parsed = parseOpenTemplateHref(href)
     if (parsed?.publishedId) cta = parsed
   })
-  if (!title || !cta?.publishedId) {
+  const pdfHref = galleryPdfHref($, token)
+  if (!title || (!cta && !pdfHref)) {
     if (!throwOnError) return null
     const missing = [
       !title && 'template title',
-      !cta?.publishedId && 'valid Open as Template link',
+      !cta && !pdfHref && 'valid gallery PDF or Open as Template link',
     ].filter(Boolean)
     const err = new Error(
       `Template refresh could not find ${missing.join(' and ')} in the upstream page. Cached template content was kept.`
@@ -201,10 +221,7 @@ export function parseDetailPage(html, { throwOnError = false } = {}) {
     cta,
     mainText: mainText && mainText.trim() ? mainText : null,
     preview: previewImage, // { publishedId, url } (signed for 4 h) or null
-    pdfHref:
-      $('.cta-links a[href$=".pdf"]').first().attr('href') ||
-      $('a.cta-link[href$=".pdf"]').first().attr('href') ||
-      null,
+    pdfHref,
   }
   detail.detailHash = computeDetailHash(detail)
   return detail

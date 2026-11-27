@@ -49,6 +49,7 @@ const PLAN_PROJECTION = Object.freeze({
   _id: 1,
   token: 1,
   title: 1,
+  family: 1,
   state: 1,
   featured: 1,
   sourceAcquired: 1,
@@ -63,6 +64,7 @@ const PLAN_PROJECTION = Object.freeze({
   pdfBlobStoreKey: 1,
   zip: 1,
   'mirror.removedAt': 1,
+  'mirror.hasOpenTemplate': 1,
 })
 
 // Test seams. Production uses the real lock, snapshot export and snapshot refs.

@@ -40,6 +40,10 @@ export const BLOB_REF_FIELDS = Object.freeze([
 
 const SHA_REGEX = /^[a-f0-9]{64}$/
 
+export function cachedSourceKey(item) {
+  return item?.sourceBlobStoreKey || item?.zip?.sha256 || null
+}
+
 export const BLOB_REF_PROJECTION = Object.freeze(
   Object.fromEntries(BLOB_REF_FIELDS.map(ref => [ref.path, 1]))
 )

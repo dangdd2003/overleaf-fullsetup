@@ -37,6 +37,8 @@ export function refetchReason(err) {
   if (code === 'timeout') return 'timeout'
   if (code === 'detail_unparseable') return 'unparseable'
   if (code === 'session_unauthorized') return 'session_rejected'
+  if (code === 'source_not_published') return 'source_not_published'
+  if (code === 'pdf_unavailable') return 'pdf_unavailable'
   if (SOURCE_UNAVAILABLE_CODES.has(code)) return 'source_unavailable'
   if (code === 'unexpected_status' || Number(err?.status)) {
     return 'upstream_status'

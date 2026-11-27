@@ -145,6 +145,32 @@ describe('S-P5 source acquisition backoff', () => {
   })
 
   describe('uncached items', () => {
+    it('reuses a cached source when the latest detail is PDF-only', async () => {
+      vi.spyOn(BlobStore, 'exists').mockResolvedValue(true)
+      const item = makeItem({
+        sourceBlobStoreKey: CACHED_SHA,
+        acquisitionTier: 1,
+        mirror: { hasOpenTemplate: false },
+      })
+      const result = await TemplateSourceAcquisitionService.acquire(item, { cfg })
+      expect(result).toMatchObject({
+        acquired: true,
+        cached: true,
+        zipSha256: CACHED_SHA,
+      })
+    })
+
+    it('does not acquire a project for a PDF-only upstream entry', async () => {
+      const item = makeItem({
+        mainText: MAIN_TEX,
+        mirror: { hasOpenTemplate: false },
+      })
+      expect(
+        await TemplateSourceAcquisitionService.acquire(item, { cfg, force: true })
+      ).toEqual({ acquired: false, reason: 'source_not_published' })
+      expect(recordedBackoff()).toBeUndefined()
+    })
+
     it('does not repeat the Tier 1 project create/delete inside the backoff window', async () => {
       fakeUpstream()
       const first = await TemplateSourceAcquisitionService.acquire(makeItem(), {

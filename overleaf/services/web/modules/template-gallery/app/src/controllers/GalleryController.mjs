@@ -5,6 +5,7 @@ import SessionManager from '../../../../../app/src/Features/Authentication/Sessi
 import AuthorizationManager from '../../../../../app/src/Features/Authorization/AuthorizationManager.mjs'
 import GalleryReadService from '../services/GalleryReadService.mjs'
 import BlobStore from '../storage/BlobStore.mjs'
+import { cachedSourceKey } from '../storage/BlobRefs.mjs'
 import {
   isValidToken,
   scopeBase,
@@ -284,7 +285,10 @@ export async function renderDetail(req, res, next) {
             title: tag.title || tag.name,
             href: taggedHref('gallery', tag.name),
           })),
-        openHref: itemOpenHref(item),
+        openHref:
+          item.mirror?.hasOpenTemplate === false && !cachedSourceKey(item)
+            ? null
+            : itemOpenHref(item),
         pdfHref: itemPdfHref(item),
         previewUrl: previewHref(item),
       },

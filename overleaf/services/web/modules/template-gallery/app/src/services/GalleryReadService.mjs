@@ -38,7 +38,6 @@ const CARD_PROJECTION = Object.freeze({
 
 const DETAIL_PROJECTION = Object.freeze({
   thumbDataUri: 0,
-  sourceBlobStoreKey: 0,
 })
 
 const MEDIA_PROJECTION = Object.freeze({
@@ -49,6 +48,7 @@ const MEDIA_PROJECTION = Object.freeze({
   state: 1,
   source: 1,
   objectID: 1,
+  'mirror.pdfHref': 1,
   media: 1,
   thumbDataUri: 1,
   duplicateOf: 1,
@@ -304,7 +304,7 @@ export async function getItemByToken(requestedToken, { includeUnpublished = fals
   const filter = { token, ...visibilityFilter({ includeUnpublished }) }
   const item = await col.findOne(filter, { projection: DETAIL_PROJECTION })
   if (!item) return null
-  if (item.objectID && !item.mirror?.detailAt) {
+  if ((item.objectID || item.mirror?.listedAt) && !item.mirror?.detailAt) {
     const fresh = await settleWithin(`detail:${token}`, DETAIL_WAIT_MS, () =>
       MirrorService.ensureDetail(token, { priority: 'interactive' })
     )
@@ -367,7 +367,7 @@ export async function ensureMedia(item, kind) {
  * Mirrors the compiled PDF on demand. Returns { sha, bytes } | null.
  */
 export async function ensurePdf(item) {
-  if (!item?.objectID) return null
+  if (!item?.objectID && !item?.mirror?.pdfHref) return null
   return settleWithin(`pdf:${item.token}`, PDF_WAIT_MS, () =>
     MirrorService.ensurePdf(item.token, { priority: 'interactive' })
   )
